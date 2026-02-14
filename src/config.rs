@@ -75,7 +75,7 @@ pub fn parse_toml(input: &str) -> Result<Config, String> {
 
     let mut rules = Vec::new();
     let mut wrappers = Vec::new();
-    let mut security = SecurityConfig { blocked_paths: vec![] };
+    let mut security = SecurityConfig::default();
 
     if let Some(toml::Value::Array(rule_arr)) = doc.get("rules") {
         for rule_val in rule_arr {
@@ -95,7 +95,10 @@ pub fn parse_toml(input: &str) -> Result<Config, String> {
                 if let toml::Value::String(s) = p {
                     let re = regex::Regex::new(s)
                         .map_err(|e| format!("invalid blocked_path regex '{s}': {e}"))?;
-                    security.blocked_paths.push(re);
+                    // Append user patterns to defaults (security filters cannot be overridden)
+                    if !security.blocked_paths.iter().any(|existing| existing.as_str() == re.as_str()) {
+                        security.blocked_paths.push(re);
+                    }
                 }
             }
         }

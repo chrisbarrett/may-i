@@ -30,7 +30,7 @@ reason = "Firewall manipulation"
 # -- Allow: read-only operations -----------------------------------------------
 
 [[rules]]
-command = ["cat", "head", "tail", "less", "more", "wc", "sort", "uniq", "tee"]
+command = ["cat", "head", "tail", "less", "more", "wc", "sort", "uniq"]
 decision = "allow"
 reason = "Read-only file operations"
 
@@ -40,9 +40,9 @@ decision = "allow"
 reason = "Read-only filesystem inspection"
 
 [[rules]]
-command = ["grep", "rg", "ag", "ack", "sed", "awk"]
+command = ["grep", "rg", "ag", "ack"]
 decision = "allow"
-reason = "Text search and processing"
+reason = "Text search"
 
 [[rules]]
 command = ["locate", "which", "whereis", "type"]
@@ -73,14 +73,14 @@ reason = "Path utilities"
 
 [security]
 blocked_paths = [
-  '\\.env',
-  '\\.ssh/',
-  '\\.aws/',
-  '\\.gnupg/',
-  '\\.docker/',
-  '\\.kube/',
-  'credentials\\.json',
-  '\\.netrc',
-  '\\.npmrc',
-  '\\.pypirc',
+  '(^|/)\\.env($|[./])',
+  '(^|/)\\.ssh/',
+  '(^|/)\\.aws/',
+  '(^|/)\\.gnupg/',
+  '(^|/)\\.docker/',
+  '(^|/)\\.kube/',
+  '(^|/)credentials\\.json($|[./])',
+  '(^|/)\\.netrc($|[./])',
+  '(^|/)\\.npmrc($|[./])',
+  '(^|/)\\.pypirc($|[./])',
 ]

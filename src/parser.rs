@@ -131,6 +131,24 @@ impl Word {
         }
     }
 
+    /// Returns true if this word contains dynamic shell constructs whose runtime
+    /// value cannot be determined by static analysis.
+    pub fn has_dynamic_parts(&self) -> bool {
+        self.parts.iter().any(|part| match part {
+            WordPart::CommandSubstitution(_)
+            | WordPart::Backtick(_)
+            | WordPart::Parameter(_)
+            | WordPart::ParameterExpansion(_)
+            | WordPart::Arithmetic(_)
+            | WordPart::ProcessSubstitution { .. } => true,
+            WordPart::DoubleQuoted(inner) => {
+                let w = Word { parts: inner.clone() };
+                w.has_dynamic_parts()
+            }
+            _ => false,
+        })
+    }
+
     /// Flatten this word to a plain string for matching purposes.
     pub fn to_str(&self) -> String {
         let mut out = String::new();

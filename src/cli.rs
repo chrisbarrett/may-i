@@ -21,6 +21,7 @@ pub fn run() -> Result<(), String> {
 fn cmd_hook() -> Result<(), String> {
     let mut input = String::new();
     std::io::stdin()
+        .take(65536)
         .read_to_string(&mut input)
         .map_err(|e| format!("Failed to read stdin: {e}"))?;
 

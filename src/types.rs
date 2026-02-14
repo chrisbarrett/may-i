@@ -69,18 +69,6 @@ impl std::fmt::Debug for Pattern {
     }
 }
 
-impl From<&str> for Pattern {
-    fn from(s: &str) -> Self {
-        Pattern::new(s).expect("invalid regex pattern")
-    }
-}
-
-impl From<String> for Pattern {
-    fn from(s: String) -> Self {
-        Pattern::from(s.as_str())
-    }
-}
-
 /// Top-level configuration.
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -108,16 +96,16 @@ impl Default for SecurityConfig {
     fn default() -> Self {
         SecurityConfig {
             blocked_paths: [
-                r"\.env",
-                r"\.ssh/",
-                r"\.aws/",
-                r"\.gnupg/",
-                r"\.docker/",
-                r"\.kube/",
-                r"credentials\.json",
-                r"\.netrc",
-                r"\.npmrc",
-                r"\.pypirc",
+                r"(^|/)\.env($|[./])",
+                r"(^|/)\.ssh/",
+                r"(^|/)\.aws/",
+                r"(^|/)\.gnupg/",
+                r"(^|/)\.docker/",
+                r"(^|/)\.kube/",
+                r"(^|/)credentials\.json($|[./])",
+                r"(^|/)\.netrc($|[./])",
+                r"(^|/)\.npmrc($|[./])",
+                r"(^|/)\.pypirc($|[./])",
             ]
             .iter()
             .map(|p| regex::Regex::new(p).expect("invalid default blocked path regex"))

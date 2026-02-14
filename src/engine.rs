@@ -15,6 +15,14 @@ pub fn evaluate(input: &str, config: &Config) -> EvalResult {
         };
     }
 
+    // Dynamic shell constructs prevent static analysis — escalate to ask
+    if let Some(reason) = security::check_dynamic_parts(input) {
+        return EvalResult {
+            decision: Decision::Ask,
+            reason: Some(reason),
+        };
+    }
+
     // Parse the command
     let ast = parser::parse(input);
 
