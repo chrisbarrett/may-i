@@ -8,7 +8,7 @@ prepend to (and override) defaults.
 
 ## R10: Config file location
 
-1. `$YOLT_CONFIG`
+1. `$MAYI_CONFIG`
 2. `$XDG_CONFIG_HOME/may-i/config.toml`
 3. `~/.config/may-i/config.toml`
 

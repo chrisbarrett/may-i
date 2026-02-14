@@ -3,45 +3,15 @@
 
 use std::path::PathBuf;
 
-use crate::engine::{ArgMatcher, Decision, Rule, Wrapper, WrapperKind};
-
-/// Top-level configuration.
-#[derive(Debug, Clone)]
-pub struct Config {
-    pub rules: Vec<Rule>,
-    pub wrappers: Vec<Wrapper>,
-    pub security: SecurityConfig,
-}
-
-/// Security section of config.
-#[derive(Debug, Clone)]
-pub struct SecurityConfig {
-    pub blocked_paths: Vec<String>,
-}
-
-impl Default for SecurityConfig {
-    fn default() -> Self {
-        SecurityConfig {
-            blocked_paths: vec![
-                r"\.env".into(),
-                r"\.ssh/".into(),
-                r"\.aws/".into(),
-                r"\.gnupg/".into(),
-                r"\.docker/".into(),
-                r"\.kube/".into(),
-                r"credentials\.json".into(),
-                r"\.netrc".into(),
-                r"\.npmrc".into(),
-                r"\.pypirc".into(),
-            ],
-        }
-    }
-}
+use crate::types::{
+    ArgMatcher, CommandMatcher, Config, Decision, Example, Pattern, Rule, SecurityConfig, Wrapper,
+    WrapperKind,
+};
 
 /// Find the config file path per R10.
 pub fn config_path() -> Option<PathBuf> {
-    // 1. $YOLT_CONFIG
-    if let Ok(p) = std::env::var("YOLT_CONFIG") {
+    // 1. $MAYI_CONFIG
+    if let Ok(p) = std::env::var("MAYI_CONFIG") {
         let path = PathBuf::from(p);
         if path.exists() {
             return Some(path);
@@ -67,45 +37,35 @@ pub fn config_path() -> Option<PathBuf> {
     None
 }
 
-/// Load config from the default location, merging with built-in defaults.
+/// Load config, creating a starter config file if none exists.
 pub fn load() -> Result<Config, String> {
-    let defaults = crate::defaults::builtin_config();
-
-    match config_path() {
-        Some(path) => {
-            let content = std::fs::read_to_string(&path)
-                .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
-            let user = parse_toml(&content)?;
-            Ok(merge(user, defaults))
+    let path = match config_path() {
+        Some(path) => path,
+        None => {
+            let path = default_config_path()
+                .ok_or("cannot determine config directory")?;
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("Failed to create {}: {e}", parent.display()))?;
+            }
+            std::fs::write(&path, include_str!("starter_config.toml"))
+                .map_err(|e| format!("Failed to write {}: {e}", path.display()))?;
+            eprintln!("Created starter config at {}", path.display());
+            path
         }
-        None => Ok(defaults),
-    }
-}
-
-/// Load config from a specific path, merging with built-in defaults.
-pub fn load_from(path: &std::path::Path) -> Result<Config, String> {
-    let defaults = crate::defaults::builtin_config();
-    let content = std::fs::read_to_string(path)
-        .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
-    let user = parse_toml(&content)?;
-    Ok(merge(user, defaults))
-}
-
-/// Merge user config with defaults. User rules prepend to defaults.
-fn merge(user: Config, defaults: Config) -> Config {
-    let mut rules = user.rules;
-    rules.extend(defaults.rules);
-
-    let mut wrappers = user.wrappers;
-    wrappers.extend(defaults.wrappers);
-
-    let security = if user.security.blocked_paths.is_empty() {
-        defaults.security
-    } else {
-        user.security
     };
 
-    Config { rules, wrappers, security }
+    let content = std::fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+    parse_toml(&content)
+}
+
+/// The preferred config path (XDG or ~/.config fallback).
+fn default_config_path() -> Option<PathBuf> {
+    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+        return Some(PathBuf::from(xdg).join("may-i/config.toml"));
+    }
+    dirs::home_dir().map(|h| h.join(".config/may-i/config.toml"))
 }
 
 /// Parse TOML config string into Config.
@@ -133,7 +93,9 @@ pub fn parse_toml(input: &str) -> Result<Config, String> {
         if let Some(toml::Value::Array(paths)) = sec.get("blocked_paths") {
             for p in paths {
                 if let toml::Value::String(s) = p {
-                    security.blocked_paths.push(s.clone());
+                    let re = regex::Regex::new(s)
+                        .map_err(|e| format!("invalid blocked_path regex '{s}': {e}"))?;
+                    security.blocked_paths.push(re);
                 }
             }
         }
@@ -146,7 +108,9 @@ fn parse_command_matcher(val: &toml::Value) -> Result<CommandMatcher, String> {
     match val {
         toml::Value::String(s) => {
             if s.starts_with('^') {
-                Ok(CommandMatcher::Regex(s.clone()))
+                let re = regex::Regex::new(s)
+                    .map_err(|e| format!("invalid command regex '{s}': {e}"))?;
+                Ok(CommandMatcher::Regex(re))
             } else {
                 Ok(CommandMatcher::Exact(s.clone()))
             }
@@ -164,13 +128,6 @@ fn parse_command_matcher(val: &toml::Value) -> Result<CommandMatcher, String> {
         }
         _ => Err("command must be string or array".into()),
     }
-}
-
-#[derive(Debug, Clone)]
-pub enum CommandMatcher {
-    Exact(String),
-    Regex(String),
-    List(Vec<String>),
 }
 
 fn parse_rule(val: &toml::Value) -> Result<Rule, String> {
@@ -200,13 +157,13 @@ fn parse_rule(val: &toml::Value) -> Result<Rule, String> {
     let mut matchers = Vec::new();
     if let Some(toml::Value::Table(args)) = table.get("args") {
         if let Some(v) = args.get("positional") {
-            matchers.push(ArgMatcher::Positional(parse_string_list(v)?));
+            matchers.push(ArgMatcher::Positional(parse_pattern_list(v)?));
         }
         if let Some(v) = args.get("anywhere") {
-            matchers.push(ArgMatcher::Anywhere(parse_string_list(v)?));
+            matchers.push(ArgMatcher::Anywhere(parse_pattern_list(v)?));
         }
         if let Some(v) = args.get("anywhere_also") {
-            matchers.push(ArgMatcher::Anywhere(parse_string_list(v)?));
+            matchers.push(ArgMatcher::Anywhere(parse_pattern_list(v)?));
         }
         if let Some(v) = args.get("forbidden") {
             matchers.push(ArgMatcher::Forbidden(parse_string_list(v)?));
@@ -284,6 +241,30 @@ fn parse_wrapper(val: &toml::Value) -> Result<Wrapper, String> {
     })
 }
 
+fn parse_pattern_list(val: &toml::Value) -> Result<Vec<Pattern>, String> {
+    match val {
+        toml::Value::Array(arr) => {
+            let mut result = Vec::new();
+            for v in arr {
+                if let toml::Value::String(s) = v {
+                    let pat = Pattern::new(s)
+                        .map_err(|e| format!("invalid pattern regex '{s}': {e}"))?;
+                    result.push(pat);
+                } else {
+                    return Err("expected string in array".into());
+                }
+            }
+            Ok(result)
+        }
+        toml::Value::String(s) => {
+            let pat = Pattern::new(s)
+                .map_err(|e| format!("invalid pattern regex '{s}': {e}"))?;
+            Ok(vec![pat])
+        }
+        _ => Err("expected string or array".into()),
+    }
+}
+
 fn parse_string_list(val: &toml::Value) -> Result<Vec<String>, String> {
     match val {
         toml::Value::Array(arr) => {
@@ -302,25 +283,18 @@ fn parse_string_list(val: &toml::Value) -> Result<Vec<String>, String> {
     }
 }
 
-/// An embedded example for config validation.
-#[derive(Debug, Clone)]
-pub struct Example {
-    pub command: String,
-    pub expected: Decision,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn config_location_env_var() {
-        // R10: $YOLT_CONFIG takes priority
-        unsafe { std::env::set_var("YOLT_CONFIG", "/nonexistent/path") };
+        // R10: $MAYI_CONFIG takes priority
+        unsafe { std::env::set_var("MAYI_CONFIG", "/nonexistent/path") };
         let path = config_path();
         // Path doesn't exist, so should fall through
         assert!(path.is_none() || path.unwrap().to_str().unwrap().contains("nonexistent"));
-        unsafe { std::env::remove_var("YOLT_CONFIG") };
+        unsafe { std::env::remove_var("MAYI_CONFIG") };
     }
 
     #[test]

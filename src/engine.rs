@@ -1,82 +1,9 @@
 // Rule engine — R7, R8, R9
 // Evaluates parsed commands against rules, handles wrappers and flag expansion.
 
-use crate::config::{CommandMatcher, Config, Example};
 use crate::parser::{self, SimpleCommand, Word};
 use crate::security;
-
-/// The three possible authorization decisions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Decision {
-    Allow,
-    Ask,
-    Deny,
-}
-
-impl Decision {
-    /// Returns the more restrictive of two decisions.
-    pub fn most_restrictive(self, other: Self) -> Self {
-        match (self, other) {
-            (Decision::Deny, _) | (_, Decision::Deny) => Decision::Deny,
-            (Decision::Ask, _) | (_, Decision::Ask) => Decision::Ask,
-            _ => Decision::Allow,
-        }
-    }
-}
-
-impl std::fmt::Display for Decision {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Decision::Allow => write!(f, "allow"),
-            Decision::Ask => write!(f, "ask"),
-            Decision::Deny => write!(f, "deny"),
-        }
-    }
-}
-
-/// A configured authorization rule.
-#[derive(Debug, Clone)]
-pub struct Rule {
-    pub command: CommandMatcher,
-    pub matchers: Vec<ArgMatcher>,
-    pub decision: Decision,
-    pub reason: Option<String>,
-    pub examples: Vec<Example>,
-}
-
-/// Argument matching strategies.
-#[derive(Debug, Clone)]
-pub enum ArgMatcher {
-    /// Match positional args by position (skip flags). "*" = any value.
-    Positional(Vec<String>),
-    /// Token appears anywhere in argv.
-    Anywhere(Vec<String>),
-    /// Rule matches only if these patterns are NOT found.
-    Forbidden(Vec<String>),
-}
-
-/// Wrapper configuration for command unwrapping.
-#[derive(Debug, Clone)]
-pub struct Wrapper {
-    pub command: String,
-    pub positional_args: Vec<String>,
-    pub kind: WrapperKind,
-}
-
-#[derive(Debug, Clone)]
-pub enum WrapperKind {
-    /// Inner command starts after all flags (e.g., nohup, env).
-    AfterFlags,
-    /// Inner command starts after a specific delimiter (e.g., mise exec --).
-    AfterDelimiter(String),
-}
-
-/// Result of evaluating a command.
-#[derive(Debug, Clone)]
-pub struct EvalResult {
-    pub decision: Decision,
-    pub reason: Option<String>,
-}
+use crate::types::{ArgMatcher, CommandMatcher, Config, Decision, EvalResult, WrapperKind};
 
 /// Evaluate a shell command string against the config.
 pub fn evaluate(input: &str, config: &Config) -> EvalResult {
@@ -181,11 +108,7 @@ fn evaluate_simple_command(sc: &SimpleCommand, config: &Config, depth: usize) ->
 fn command_matches(name: &str, matcher: &CommandMatcher) -> bool {
     match matcher {
         CommandMatcher::Exact(s) => name == s,
-        CommandMatcher::Regex(pattern) => {
-            regex::Regex::new(pattern)
-                .map(|re| re.is_match(name))
-                .unwrap_or(false)
-        }
+        CommandMatcher::Regex(re) => re.is_match(name),
         CommandMatcher::List(names) => names.iter().any(|n| n == name),
     }
 }
@@ -208,29 +131,17 @@ fn matcher_matches(matcher: &ArgMatcher, args: &[String]) -> bool {
             }
 
             patterns.iter().enumerate().all(|(i, pat)| {
-                if pat == "*" {
+                if pat.is_wildcard() {
                     true
-                } else if pat.starts_with('^') {
-                    regex::Regex::new(pat)
-                        .map(|re| re.is_match(&positional[i]))
-                        .unwrap_or(false)
                 } else {
-                    positional.get(i).is_some_and(|arg| arg == pat)
+                    positional.get(i).is_some_and(|arg| pat.is_match(arg))
                 }
             })
         }
         ArgMatcher::Anywhere(tokens) => {
             // Any of the listed tokens appears anywhere in args (OR semantics).
             // Multiple Anywhere matchers on one rule are AND-ed at the outer level.
-            tokens.iter().any(|token| {
-                if token.starts_with('^') {
-                    regex::Regex::new(token)
-                        .map(|re| args.iter().any(|a| re.is_match(a)))
-                        .unwrap_or(false)
-                } else {
-                    args.iter().any(|a| a == token)
-                }
-            })
+            tokens.iter().any(|token| args.iter().any(|a| token.is_match(a)))
         }
         ArgMatcher::Forbidden(tokens) => {
             // Rule matches if NONE of the forbidden tokens are found
@@ -340,33 +251,6 @@ fn unwrap_wrapper(sc: &SimpleCommand, config: &Config) -> Option<SimpleCommand> 
     }
 
     None
-}
-
-/// Run all embedded examples from config rules, return (passed, failed, errors).
-pub fn check_examples(config: &Config) -> Vec<ExampleResult> {
-    let mut results = Vec::new();
-
-    for rule in &config.rules {
-        for example in &rule.examples {
-            let eval = evaluate(&example.command, config);
-            results.push(ExampleResult {
-                command: example.command.clone(),
-                expected: example.expected,
-                actual: eval.decision,
-                passed: eval.decision == example.expected,
-            });
-        }
-    }
-
-    results
-}
-
-#[derive(Debug)]
-pub struct ExampleResult {
-    pub command: String,
-    pub expected: Decision,
-    pub actual: Decision,
-    pub passed: bool,
 }
 
 #[cfg(test)]

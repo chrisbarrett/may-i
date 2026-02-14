@@ -1,9 +1,9 @@
 mod cli;
 mod config;
-mod defaults;
 mod engine;
 mod parser;
 mod security;
+mod types;
 
 fn main() {
     if let Err(e) = cli::run() {

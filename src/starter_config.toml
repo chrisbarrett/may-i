@@ -1,0 +1,86 @@
+# may-i configuration
+# Rules are evaluated in order. First match wins (deny rules always win).
+# Commands with no matching rule default to "ask".
+
+# -- Deny: dangerous operations -----------------------------------------------
+
+[[rules]]
+command = "rm"
+decision = "deny"
+reason = "Recursive deletion from root is dangerous"
+[rules.args]
+anywhere = ["-r", "--recursive"]
+anywhere_also = ["/"]
+
+[[rules]]
+command = ["mkfs", "dd", "fdisk", "parted", "gdisk"]
+decision = "deny"
+reason = "Dangerous filesystem or device operation"
+
+[[rules]]
+command = ["shutdown", "reboot", "halt", "poweroff", "init"]
+decision = "deny"
+reason = "System power control"
+
+[[rules]]
+command = ["iptables", "nft", "pfctl"]
+decision = "deny"
+reason = "Firewall manipulation"
+
+# -- Allow: read-only operations -----------------------------------------------
+
+[[rules]]
+command = ["cat", "head", "tail", "less", "more", "wc", "sort", "uniq", "tee"]
+decision = "allow"
+reason = "Read-only file operations"
+
+[[rules]]
+command = ["ls", "tree", "file", "stat", "du", "df"]
+decision = "allow"
+reason = "Read-only filesystem inspection"
+
+[[rules]]
+command = ["grep", "rg", "ag", "ack", "sed", "awk"]
+decision = "allow"
+reason = "Text search and processing"
+
+[[rules]]
+command = ["locate", "which", "whereis", "type"]
+decision = "allow"
+reason = "File and command lookup"
+
+[[rules]]
+command = ["echo", "printf", "true", "false", "test", "["]
+decision = "allow"
+reason = "Shell builtins"
+
+[[rules]]
+command = ["date", "hostname", "uname", "whoami", "id", "printenv", "env"]
+decision = "allow"
+reason = "System information (read-only)"
+
+[[rules]]
+command = ["ps", "top", "uptime", "free", "vmstat", "iostat"]
+decision = "allow"
+reason = "Process and system monitoring"
+
+[[rules]]
+command = ["basename", "dirname", "realpath", "readlink", "pwd"]
+decision = "allow"
+reason = "Path utilities"
+
+# -- Security: blocked credential paths ----------------------------------------
+
+[security]
+blocked_paths = [
+  '\\.env',
+  '\\.ssh/',
+  '\\.aws/',
+  '\\.gnupg/',
+  '\\.docker/',
+  '\\.kube/',
+  'credentials\\.json',
+  '\\.netrc',
+  '\\.npmrc',
+  '\\.pypirc',
+]

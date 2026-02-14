@@ -4,6 +4,7 @@ use std::io::Read;
 
 use crate::config;
 use crate::engine;
+use crate::types::{Config, Decision};
 
 /// Main entry point for the CLI.
 pub fn run() -> Result<(), String> {
@@ -88,7 +89,7 @@ fn cmd_eval(args: &[String]) -> Result<(), String> {
 /// R3: Check subcommand — validate config and run examples.
 fn cmd_check() -> Result<(), String> {
     let config = config::load()?;
-    let results = engine::check_examples(&config);
+    let results = check_examples(&config);
 
     let mut passed = 0;
     let mut failed = 0;
@@ -110,4 +111,31 @@ fn cmd_check() -> Result<(), String> {
     } else {
         Ok(())
     }
+}
+
+/// Run all embedded examples from config rules and compare against expected decisions.
+fn check_examples(config: &Config) -> Vec<ExampleResult> {
+    let mut results = Vec::new();
+
+    for rule in &config.rules {
+        for example in &rule.examples {
+            let eval = engine::evaluate(&example.command, config);
+            results.push(ExampleResult {
+                command: example.command.clone(),
+                expected: example.expected,
+                actual: eval.decision,
+                passed: eval.decision == example.expected,
+            });
+        }
+    }
+
+    results
+}
+
+#[derive(Debug)]
+struct ExampleResult {
+    command: String,
+    expected: Decision,
+    actual: Decision,
+    passed: bool,
 }
