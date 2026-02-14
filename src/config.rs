@@ -89,16 +89,16 @@ pub fn parse_toml(input: &str) -> Result<Config, String> {
         }
     }
 
-    if let Some(toml::Value::Table(sec)) = doc.get("security") {
-        if let Some(toml::Value::Array(paths)) = sec.get("blocked_paths") {
-            for p in paths {
-                if let toml::Value::String(s) = p {
-                    let re = regex::Regex::new(s)
-                        .map_err(|e| format!("invalid blocked_path regex '{s}': {e}"))?;
-                    // Append user patterns to defaults (security filters cannot be overridden)
-                    if !security.blocked_paths.iter().any(|existing| existing.as_str() == re.as_str()) {
-                        security.blocked_paths.push(re);
-                    }
+    if let Some(toml::Value::Table(sec)) = doc.get("security")
+        && let Some(toml::Value::Array(paths)) = sec.get("blocked_paths")
+    {
+        for p in paths {
+            if let toml::Value::String(s) = p {
+                let re = regex::Regex::new(s)
+                    .map_err(|e| format!("invalid blocked_path regex '{s}': {e}"))?;
+                // Append user patterns to defaults (security filters cannot be overridden)
+                if !security.blocked_paths.iter().any(|existing| existing.as_str() == re.as_str()) {
+                    security.blocked_paths.push(re);
                 }
             }
         }
@@ -231,10 +231,10 @@ fn parse_wrapper(val: &toml::Value) -> Result<Wrapper, String> {
     };
 
     let mut positional = Vec::new();
-    if let Some(toml::Value::Table(args)) = table.get("args") {
-        if let Some(v) = args.get("positional") {
-            positional = parse_string_list(v)?;
-        }
+    if let Some(toml::Value::Table(args)) = table.get("args")
+        && let Some(v) = args.get("positional")
+    {
+        positional = parse_string_list(v)?;
     }
 
     Ok(Wrapper {
@@ -292,12 +292,18 @@ mod tests {
 
     #[test]
     fn config_location_env_var() {
-        // R10: $MAYI_CONFIG takes priority
-        unsafe { std::env::set_var("MAYI_CONFIG", "/nonexistent/path") };
+        // R10: $MAYI_CONFIG takes priority when the file exists
+        let dir = std::env::temp_dir().join("may-i-test-config");
+        let _ = std::fs::create_dir_all(&dir);
+        let config_file = dir.join("config.toml");
+        std::fs::write(&config_file, "# test").unwrap();
+
+        unsafe { std::env::set_var("MAYI_CONFIG", &config_file) };
         let path = config_path();
-        // Path doesn't exist, so should fall through
-        assert!(path.is_none() || path.unwrap().to_str().unwrap().contains("nonexistent"));
+        assert_eq!(path.unwrap(), config_file);
         unsafe { std::env::remove_var("MAYI_CONFIG") };
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

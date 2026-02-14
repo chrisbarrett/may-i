@@ -44,14 +44,14 @@ pub fn check_blocked_paths(input: &str, config: &Config) -> Option<String> {
     let simple_commands = parser::extract_simple_commands(&ast);
     for sc in &simple_commands {
         for redir in &sc.redirections {
-            if let RedirectionTarget::Heredoc(content) = &redir.target {
-                if !content.is_empty() {
-                    for pattern in patterns {
-                        if pattern.is_match(content) {
-                            return Some(format!(
-                                "Access to credential/sensitive file in heredoc: {content}"
-                            ));
-                        }
+            if let RedirectionTarget::Heredoc(content) = &redir.target
+                && !content.is_empty()
+            {
+                for pattern in patterns {
+                    if pattern.is_match(content) {
+                        return Some(format!(
+                            "Access to credential/sensitive file in heredoc: {content}"
+                        ));
                     }
                 }
             }

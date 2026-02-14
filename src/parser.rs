@@ -485,11 +485,9 @@ impl Lexer {
                     tokens.push(Token::RParen);
                 }
                 Some(ch) if is_redirect_start(ch) => {
-                    if let Some(tok) = self.try_read_redirect_or_process_sub(&mut tokens) {
+                    if let Some(tok) = self.try_read_redirect_or_process_sub() {
                         tokens.push(tok);
                     }
-                    // If try_read_redirect_or_process_sub pushed tokens directly
-                    // (for process substitution folded into word), we continue
                 }
                 _ => {
                     // Try to read a word (may include fd prefix for redirect)
@@ -502,7 +500,7 @@ impl Lexer {
         tokens
     }
 
-    fn try_read_redirect_or_process_sub(&mut self, _tokens: &mut Vec<Token>) -> Option<Token> {
+    fn try_read_redirect_or_process_sub(&mut self) -> Option<Token> {
         // Check for process substitution <(cmd) or >(cmd)
         let ch = self.peek()?;
         if (ch == '<' || ch == '>') && self.peek_at(1) == Some('(') {
@@ -956,15 +954,15 @@ impl Lexer {
         }
 
         if !fd_str.is_empty() {
-            if let Some(ch) = self.peek() {
-                if ch == '<' || ch == '>' {
-                    let fd: Option<i32> = fd_str.parse().ok();
-                    if let Some(mut tok) = self.read_redirection() {
-                        if let Token::Redirect(ref mut redir) = tok {
-                            redir.fd = fd;
-                        }
-                        return Some(tok);
+            if let Some(ch) = self.peek()
+                && (ch == '<' || ch == '>')
+            {
+                let fd: Option<i32> = fd_str.parse().ok();
+                if let Some(mut tok) = self.read_redirection() {
+                    if let Token::Redirect(ref mut redir) = tok {
+                        redir.fd = fd;
                     }
+                    return Some(tok);
                 }
             }
             // Not a redirect prefix, restore and read as word
@@ -977,45 +975,42 @@ impl Lexer {
         }
 
         // Check if this is a keyword (single literal part)
-        if parts.len() == 1 {
-            if let WordPart::Literal(ref s) = parts[0] {
-                match s.as_str() {
-                    "if" => return Some(Token::If),
-                    "then" => return Some(Token::Then),
-                    "elif" => return Some(Token::Elif),
-                    "else" => return Some(Token::Else),
-                    "fi" => return Some(Token::Fi),
-                    "for" => return Some(Token::For),
-                    "in" => return Some(Token::In),
-                    "while" => return Some(Token::While),
-                    "until" => return Some(Token::Until),
-                    "do" => return Some(Token::Do),
-                    "done" => return Some(Token::Done),
-                    "case" => return Some(Token::Case),
-                    "esac" => return Some(Token::Esac),
-                    "function" => return Some(Token::Function),
-                    "{" => return Some(Token::LBrace),
-                    "}" => return Some(Token::RBrace),
-                    _ => {}
-                }
+        if parts.len() == 1
+            && let WordPart::Literal(ref s) = parts[0]
+        {
+            match s.as_str() {
+                "if" => return Some(Token::If),
+                "then" => return Some(Token::Then),
+                "elif" => return Some(Token::Elif),
+                "else" => return Some(Token::Else),
+                "fi" => return Some(Token::Fi),
+                "for" => return Some(Token::For),
+                "in" => return Some(Token::In),
+                "while" => return Some(Token::While),
+                "until" => return Some(Token::Until),
+                "do" => return Some(Token::Do),
+                "done" => return Some(Token::Done),
+                "case" => return Some(Token::Case),
+                "esac" => return Some(Token::Esac),
+                "function" => return Some(Token::Function),
+                "{" => return Some(Token::LBrace),
+                "}" => return Some(Token::RBrace),
+                _ => {}
             }
         }
 
         // Check for assignment (NAME=VALUE in the first literal part)
-        if parts.len() >= 1 {
-            if let WordPart::Literal(ref s) = parts[0] {
-                if let Some(eq_pos) = s.find('=') {
-                    let name = &s[..eq_pos];
-                    if !name.is_empty()
-                        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-                        && name.chars().next().map_or(false, |c| !c.is_ascii_digit())
-                    {
-                        // It's an assignment
-                        let _value_str = &s[eq_pos + 1..];
-                        // Assignments are detected at the parser level.
-                        // Just return the whole thing as a word token.
-                    }
-                }
+        if !parts.is_empty()
+            && let WordPart::Literal(ref s) = parts[0]
+            && let Some(_eq_pos) = s.find('=')
+        {
+            let name = &s[.._eq_pos];
+            if !name.is_empty()
+                && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                && name.chars().next().is_some_and(|c| !c.is_ascii_digit())
+            {
+                // It's an assignment — detected at the parser level.
+                // Just return the whole thing as a word token.
             }
         }
 
@@ -1218,11 +1213,11 @@ impl Parser {
             match self.peek().clone() {
                 Token::Word(ref w) => {
                     // Check for assignment (VAR=value) before any command words
-                    if words.is_empty() {
-                        if let Some(assignment) = self.try_parse_assignment() {
-                            assignments.push(assignment);
-                            continue;
-                        }
+                    if words.is_empty()
+                        && let Some(assignment) = self.try_parse_assignment()
+                    {
+                        assignments.push(assignment);
+                        continue;
                     }
                     let word = w.clone();
                     self.advance();
@@ -1242,11 +1237,10 @@ impl Parser {
         }
 
         // If only assignments and no words, return as assignment command
-        if !assignments.is_empty() && words.is_empty() {
-            if assignments.len() == 1 {
-                return Command::Assignment(assignments.pop().unwrap());
-            }
-            // Multiple assignments without a command — wrap in Simple
+        if !assignments.is_empty() && words.is_empty()
+            && assignments.len() == 1
+        {
+            return Command::Assignment(assignments.pop().unwrap());
         }
 
         Command::Simple(SimpleCommand {
@@ -1257,41 +1251,39 @@ impl Parser {
     }
 
     fn try_parse_assignment(&mut self) -> Option<Assignment> {
-        if let Token::Word(ref w) = self.peek().clone() {
-            if w.parts.len() >= 1 {
-                if let WordPart::Literal(ref s) = w.parts[0] {
-                    if let Some(eq_pos) = s.find('=') {
-                        let name = &s[..eq_pos];
-                        if !name.is_empty()
-                            && name
-                                .chars()
-                                .all(|c| c.is_ascii_alphanumeric() || c == '_')
-                            && name
-                                .chars()
-                                .next()
-                                .map_or(false, |c| !c.is_ascii_digit())
-                        {
-                            let value_start = &s[eq_pos + 1..];
-                            let mut value_parts = Vec::new();
-                            if !value_start.is_empty() {
-                                value_parts
-                                    .push(WordPart::Literal(value_start.to_string()));
-                            }
-                            // Include additional word parts
-                            for part in &w.parts[1..] {
-                                value_parts.push(part.clone());
-                            }
-                            let value = if value_parts.is_empty() {
-                                Word::literal("")
-                            } else {
-                                Word { parts: value_parts }
-                            };
-                            let name = name.to_string();
-                            self.advance();
-                            return Some(Assignment { name, value });
-                        }
-                    }
+        if let Token::Word(ref w) = self.peek().clone()
+            && !w.parts.is_empty()
+            && let WordPart::Literal(ref s) = w.parts[0]
+            && let Some(eq_pos) = s.find('=')
+        {
+            let name = &s[..eq_pos];
+            if !name.is_empty()
+                && name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_')
+                && name
+                    .chars()
+                    .next()
+                    .is_some_and(|c| !c.is_ascii_digit())
+            {
+                let value_start = &s[eq_pos + 1..];
+                let mut value_parts = Vec::new();
+                if !value_start.is_empty() {
+                    value_parts
+                        .push(WordPart::Literal(value_start.to_string()));
                 }
+                // Include additional word parts
+                for part in &w.parts[1..] {
+                    value_parts.push(part.clone());
+                }
+                let value = if value_parts.is_empty() {
+                    Word::literal("")
+                } else {
+                    Word { parts: value_parts }
+                };
+                let name = name.to_string();
+                self.advance();
+                return Some(Assignment { name, value });
             }
         }
         None
@@ -1441,13 +1433,9 @@ impl Parser {
 
             // Read patterns separated by |
             let mut patterns = Vec::new();
-            loop {
-                if let Token::Word(w) = self.peek().clone() {
-                    patterns.push(w.clone());
-                    self.advance();
-                } else {
-                    break;
-                }
+            while let Token::Word(w) = self.peek().clone() {
+                patterns.push(w.clone());
+                self.advance();
                 if matches!(self.peek(), Token::Pipe) {
                     self.advance();
                 } else {

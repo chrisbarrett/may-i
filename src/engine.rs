@@ -68,10 +68,10 @@ fn evaluate_simple_command(sc: &SimpleCommand, config: &Config, depth: usize) ->
     };
 
     // R9: Check if this is a wrapper command
-    if depth < 5 {
-        if let Some(inner) = unwrap_wrapper(sc, config) {
-            return evaluate_simple_command(&inner, config, depth + 1);
-        }
+    if depth < 5
+        && let Some(inner) = unwrap_wrapper(sc, config)
+    {
+        return evaluate_simple_command(&inner, config, depth + 1);
     }
 
     // Expand flags: -abc → -a -b -c (R8)
