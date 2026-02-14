@@ -193,3 +193,233 @@ impl From<Vec<&str>> for CommandMatcher {
         CommandMatcher::List(v.into_iter().map(|s| s.to_string()).collect())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- Decision::most_restrictive ---
+
+    #[test]
+    fn most_restrictive_allow_allow() {
+        assert_eq!(Decision::Allow.most_restrictive(Decision::Allow), Decision::Allow);
+    }
+
+    #[test]
+    fn most_restrictive_allow_ask() {
+        assert_eq!(Decision::Allow.most_restrictive(Decision::Ask), Decision::Ask);
+    }
+
+    #[test]
+    fn most_restrictive_allow_deny() {
+        assert_eq!(Decision::Allow.most_restrictive(Decision::Deny), Decision::Deny);
+    }
+
+    #[test]
+    fn most_restrictive_ask_allow() {
+        assert_eq!(Decision::Ask.most_restrictive(Decision::Allow), Decision::Ask);
+    }
+
+    #[test]
+    fn most_restrictive_ask_ask() {
+        assert_eq!(Decision::Ask.most_restrictive(Decision::Ask), Decision::Ask);
+    }
+
+    #[test]
+    fn most_restrictive_ask_deny() {
+        assert_eq!(Decision::Ask.most_restrictive(Decision::Deny), Decision::Deny);
+    }
+
+    #[test]
+    fn most_restrictive_deny_allow() {
+        assert_eq!(Decision::Deny.most_restrictive(Decision::Allow), Decision::Deny);
+    }
+
+    #[test]
+    fn most_restrictive_deny_ask() {
+        assert_eq!(Decision::Deny.most_restrictive(Decision::Ask), Decision::Deny);
+    }
+
+    #[test]
+    fn most_restrictive_deny_deny() {
+        assert_eq!(Decision::Deny.most_restrictive(Decision::Deny), Decision::Deny);
+    }
+
+    // --- Decision::Display ---
+
+    #[test]
+    fn decision_display_allow() {
+        assert_eq!(format!("{}", Decision::Allow), "allow");
+    }
+
+    #[test]
+    fn decision_display_ask() {
+        assert_eq!(format!("{}", Decision::Ask), "ask");
+    }
+
+    #[test]
+    fn decision_display_deny() {
+        assert_eq!(format!("{}", Decision::Deny), "deny");
+    }
+
+    // --- Pattern::new ---
+
+    #[test]
+    fn pattern_new_literal() {
+        let p = Pattern::new("hello").unwrap();
+        assert!(matches!(p, Pattern::Literal(s) if s == "hello"));
+    }
+
+    #[test]
+    fn pattern_new_regex() {
+        let p = Pattern::new("^foo.*bar$").unwrap();
+        assert!(matches!(p, Pattern::Regex(_)));
+    }
+
+    #[test]
+    fn pattern_new_invalid_regex() {
+        let result = Pattern::new("^[invalid");
+        assert!(result.is_err());
+    }
+
+    // --- Pattern::is_match ---
+
+    #[test]
+    fn pattern_literal_exact_match() {
+        let p = Pattern::new("hello").unwrap();
+        assert!(p.is_match("hello"));
+    }
+
+    #[test]
+    fn pattern_literal_no_match() {
+        let p = Pattern::new("hello").unwrap();
+        assert!(!p.is_match("world"));
+    }
+
+    #[test]
+    fn pattern_literal_no_partial_match() {
+        let p = Pattern::new("hello").unwrap();
+        assert!(!p.is_match("hello world"));
+    }
+
+    #[test]
+    fn pattern_regex_match() {
+        let p = Pattern::new("^foo.*bar$").unwrap();
+        assert!(p.is_match("fooXbar"));
+    }
+
+    #[test]
+    fn pattern_regex_no_match() {
+        let p = Pattern::new("^foo.*bar$").unwrap();
+        assert!(!p.is_match("baz"));
+    }
+
+    // --- Pattern::is_wildcard ---
+
+    #[test]
+    fn pattern_is_wildcard_star() {
+        let p = Pattern::new("*").unwrap();
+        assert!(p.is_wildcard());
+    }
+
+    #[test]
+    fn pattern_is_wildcard_not_star() {
+        let p = Pattern::new("hello").unwrap();
+        assert!(!p.is_wildcard());
+    }
+
+    #[test]
+    fn pattern_is_wildcard_regex_not_wildcard() {
+        let p = Pattern::new("^.*$").unwrap();
+        assert!(!p.is_wildcard());
+    }
+
+    // --- Pattern::Debug ---
+
+    #[test]
+    fn pattern_debug_literal() {
+        let p = Pattern::new("hello").unwrap();
+        assert_eq!(format!("{:?}", p), r#"Literal("hello")"#);
+    }
+
+    #[test]
+    fn pattern_debug_regex() {
+        let p = Pattern::new("^foo$").unwrap();
+        assert_eq!(format!("{:?}", p), r#"Regex("^foo$")"#);
+    }
+
+    // --- CommandMatcher::from ---
+
+    #[test]
+    fn command_matcher_from_str() {
+        let m = CommandMatcher::from("git");
+        assert!(matches!(m, CommandMatcher::Exact(s) if s == "git"));
+    }
+
+    #[test]
+    fn command_matcher_from_vec() {
+        let m = CommandMatcher::from(vec!["git", "hg"]);
+        match m {
+            CommandMatcher::List(v) => assert_eq!(v, vec!["git", "hg"]),
+            _ => panic!("expected List"),
+        }
+    }
+
+    // --- CommandMatcher::Debug ---
+
+    #[test]
+    fn command_matcher_debug_exact() {
+        let m = CommandMatcher::Exact("git".to_string());
+        assert_eq!(format!("{:?}", m), r#"Exact("git")"#);
+    }
+
+    #[test]
+    fn command_matcher_debug_regex() {
+        let m = CommandMatcher::Regex(regex::Regex::new("^git.*$").unwrap());
+        assert_eq!(format!("{:?}", m), r#"Regex("^git.*$")"#);
+    }
+
+    #[test]
+    fn command_matcher_debug_list() {
+        let m = CommandMatcher::List(vec!["a".into(), "b".into()]);
+        assert_eq!(format!("{:?}", m), r#"List(["a", "b"])"#);
+    }
+
+    // --- SecurityConfig::default ---
+
+    #[test]
+    fn security_config_default_has_expected_paths() {
+        let sc = SecurityConfig::default();
+        let patterns: Vec<&str> = sc.blocked_paths.iter().map(|r| r.as_str()).collect();
+        assert!(patterns.iter().any(|p| p.contains(".env")));
+        assert!(patterns.iter().any(|p| p.contains(".ssh")));
+        assert!(patterns.iter().any(|p| p.contains(".aws")));
+        assert!(patterns.iter().any(|p| p.contains(".gnupg")));
+        assert!(patterns.iter().any(|p| p.contains(".docker")));
+        assert!(patterns.iter().any(|p| p.contains(".kube")));
+        assert!(patterns.iter().any(|p| p.contains("credentials")));
+        assert!(patterns.iter().any(|p| p.contains(".netrc")));
+        assert!(patterns.iter().any(|p| p.contains(".npmrc")));
+        assert!(patterns.iter().any(|p| p.contains(".pypirc")));
+        assert_eq!(sc.blocked_paths.len(), 10);
+    }
+
+    #[test]
+    fn security_config_default_blocks_dotenv() {
+        let sc = SecurityConfig::default();
+        let env_re = sc.blocked_paths.iter().find(|r| r.as_str().contains(".env")).unwrap();
+        assert!(env_re.is_match(".env"));
+        assert!(env_re.is_match("path/.env"));
+        assert!(env_re.is_match(".env.local"));
+    }
+
+    // --- SecurityConfig::Debug ---
+
+    #[test]
+    fn security_config_debug() {
+        let sc = SecurityConfig::default();
+        let dbg = format!("{:?}", sc);
+        assert!(dbg.contains("SecurityConfig"));
+        assert!(dbg.contains(".env"));
+    }
+}

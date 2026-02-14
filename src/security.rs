@@ -92,27 +92,285 @@ mod tests {
         }
     }
 
+    // ── check_blocked_paths: default patterns ──────────────────────────
+
     #[test]
-    fn security_blocks_env_file() {
-        let config = test_config();
+    fn blocks_dot_env() {
+        let c = test_config();
+        assert!(check_blocked_paths("cat .env", &c).is_some());
+    }
+
+    #[test]
+    fn blocks_dot_env_local() {
+        let c = test_config();
+        assert!(check_blocked_paths("cat .env.local", &c).is_some());
+    }
+
+    #[test]
+    fn blocks_dot_env_production() {
+        let c = test_config();
+        assert!(check_blocked_paths("cat .env.production", &c).is_some());
+    }
+
+    #[test]
+    fn blocks_nested_dot_env() {
+        let c = test_config();
+        assert!(check_blocked_paths("cat config/.env", &c).is_some());
+    }
+
+    #[test]
+    fn blocks_absolute_dot_env() {
+        let c = test_config();
+        assert!(check_blocked_paths("cat /home/user/.env", &c).is_some());
+    }
+
+    #[test]
+    fn blocks_ssh_directory() {
+        let c = test_config();
+        assert!(check_blocked_paths("cat .ssh/id_rsa", &c).is_some());
+    }
+
+    #[test]
+    fn blocks_absolute_ssh() {
+        let c = test_config();
+        assert!(check_blocked_paths("cat /home/user/.ssh/config", &c).is_some());
+    }
+
+    #[test]
+    fn blocks_aws_directory() {
+        let c = test_config();
+        assert!(check_blocked_paths("cat .aws/credentials", &c).is_some());
+    }
+
+    #[test]
+    fn blocks_absolute_aws() {
+        let c = test_config();
+        assert!(check_blocked_paths("cat /home/user/.aws/config", &c).is_some());
+    }
+
+    #[test]
+    fn blocks_gnupg_directory() {
+        let c = test_config();
+        assert!(check_blocked_paths("cat .gnupg/pubring.kbx", &c).is_some());
+    }
+
+    #[test]
+    fn blocks_docker_directory() {
+        let c = test_config();
+        assert!(check_blocked_paths("cat .docker/config.json", &c).is_some());
+    }
+
+    #[test]
+    fn blocks_kube_directory() {
+        let c = test_config();
+        assert!(check_blocked_paths("cat .kube/config", &c).is_some());
+    }
+
+    #[test]
+    fn blocks_credentials_json() {
+        let c = test_config();
+        assert!(check_blocked_paths("cat credentials.json", &c).is_some());
+    }
+
+    #[test]
+    fn blocks_nested_credentials_json() {
+        let c = test_config();
+        assert!(check_blocked_paths("cat app/credentials.json", &c).is_some());
+    }
+
+    #[test]
+    fn blocks_netrc() {
+        let c = test_config();
+        assert!(check_blocked_paths("cat .netrc", &c).is_some());
+    }
+
+    #[test]
+    fn blocks_npmrc() {
+        let c = test_config();
+        assert!(check_blocked_paths("cat .npmrc", &c).is_some());
+    }
+
+    #[test]
+    fn blocks_pypirc() {
+        let c = test_config();
+        assert!(check_blocked_paths("cat .pypirc", &c).is_some());
+    }
+
+    // ── check_blocked_paths: negative cases / edge cases ─────────────
+
+    #[test]
+    fn allows_normal_files() {
+        let c = test_config();
+        assert!(check_blocked_paths("cat README.md", &c).is_none());
+    }
+
+    #[test]
+    fn allows_env_without_dot() {
+        let c = test_config();
+        // "env" is not ".env"
+        assert!(check_blocked_paths("env FOO=1 cmd", &c).is_none());
+    }
+
+    #[test]
+    fn allows_envrc() {
+        let c = test_config();
+        // .envrc is not matched by the .env pattern (the pattern requires .env
+        // to be followed by nothing, a dot, or a slash)
+        assert!(check_blocked_paths("cat .envrc", &c).is_none());
+    }
+
+    #[test]
+    fn allows_ssh_without_slash() {
+        let c = test_config();
+        // ".ssh" alone (no trailing slash) should not match the directory pattern
+        assert!(check_blocked_paths("echo .ssh", &c).is_none());
+    }
+
+    #[test]
+    fn allows_partial_credential_name() {
+        let c = test_config();
+        assert!(check_blocked_paths("cat my_credentials.json.bak", &c).is_none());
+    }
+
+    #[test]
+    fn allows_unrelated_json() {
+        let c = test_config();
+        assert!(check_blocked_paths("cat package.json", &c).is_none());
+    }
+
+    // ── check_blocked_paths: flag value extraction ───────────────────
+
+    #[test]
+    fn blocks_flag_equals_env() {
+        let c = test_config();
+        assert!(check_blocked_paths("cmd --config=.env", &c).is_some());
+    }
+
+    #[test]
+    fn blocks_flag_equals_ssh_path() {
+        let c = test_config();
+        assert!(check_blocked_paths("cmd --key=/home/user/.ssh/id_rsa", &c).is_some());
+    }
+
+    #[test]
+    fn blocks_flag_equals_credentials() {
+        let c = test_config();
+        assert!(check_blocked_paths("cmd --file=credentials.json", &c).is_some());
+    }
+
+    // ── check_blocked_paths: heredoc scanning ────────────────────────
+
+    #[test]
+    fn blocks_env_in_heredoc() {
+        let c = test_config();
+        let cmd = "cat <<EOF\n.env\nEOF";
+        assert!(check_blocked_paths(cmd, &c).is_some());
+    }
+
+    // ── check_blocked_paths: multiple args ───────────────────────────
+
+    #[test]
+    fn blocks_when_sensitive_file_among_many_args() {
+        let c = test_config();
+        assert!(check_blocked_paths("cat foo.txt bar.txt .env baz.txt", &c).is_some());
+    }
+
+    #[test]
+    fn allows_when_all_args_safe() {
+        let c = test_config();
+        assert!(check_blocked_paths("cat foo.txt bar.txt baz.txt", &c).is_none());
+    }
+
+    // ── check_blocked_paths: custom config patterns ──────────────────
+
+    #[test]
+    fn blocks_custom_pattern() {
+        let mut config = test_config();
+        let custom = regex::Regex::new(r"(^|/)secret\.yaml$").unwrap();
+        config.security.blocked_paths.push(custom);
+        assert!(check_blocked_paths("cat secret.yaml", &config).is_some());
+    }
+
+    #[test]
+    fn custom_pattern_coexists_with_defaults() {
+        let mut config = test_config();
+        let custom = regex::Regex::new(r"(^|/)secret\.yaml$").unwrap();
+        config.security.blocked_paths.push(custom);
+        // Custom pattern blocks
+        assert!(check_blocked_paths("cat secret.yaml", &config).is_some());
+        // Default pattern still blocks
         assert!(check_blocked_paths("cat .env", &config).is_some());
-    }
-
-    #[test]
-    fn security_blocks_ssh_directory() {
-        let config = test_config();
-        assert!(check_blocked_paths("cat .ssh/id_rsa", &config).is_some());
-    }
-
-    #[test]
-    fn security_blocks_flag_value() {
-        let config = test_config();
-        assert!(check_blocked_paths("cmd --config=.env", &config).is_some());
-    }
-
-    #[test]
-    fn security_allows_normal_files() {
-        let config = test_config();
+        // Unrelated file still allowed
         assert!(check_blocked_paths("cat README.md", &config).is_none());
+    }
+
+    // ── check_blocked_paths: message content ─────────────────────────
+
+    #[test]
+    fn blocked_message_contains_path() {
+        let c = test_config();
+        let msg = check_blocked_paths("cat .ssh/id_rsa", &c).unwrap();
+        assert!(msg.contains(".ssh/id_rsa"));
+    }
+
+    // ── check_dynamic_parts ──────────────────────────────────────────
+
+    #[test]
+    fn dynamic_detects_command_substitution() {
+        assert!(check_dynamic_parts("echo $(whoami)").is_some());
+    }
+
+    #[test]
+    fn dynamic_detects_backtick_substitution() {
+        assert!(check_dynamic_parts("echo `whoami`").is_some());
+    }
+
+    #[test]
+    fn dynamic_detects_variable_expansion() {
+        assert!(check_dynamic_parts("echo $HOME").is_some());
+    }
+
+    #[test]
+    fn dynamic_allows_plain_command() {
+        assert!(check_dynamic_parts("echo hello world").is_none());
+    }
+
+    #[test]
+    fn dynamic_allows_flags_and_args() {
+        assert!(check_dynamic_parts("ls -la /tmp").is_none());
+    }
+
+    #[test]
+    fn dynamic_message_content() {
+        let msg = check_dynamic_parts("echo $(id)").unwrap();
+        assert!(msg.contains("Dynamic shell constructs"));
+    }
+
+    // ── check_blocked_paths: piped commands ──────────────────────────
+
+    #[test]
+    fn blocks_sensitive_file_in_piped_command() {
+        let c = test_config();
+        assert!(check_blocked_paths("cat .env | grep SECRET", &c).is_some());
+    }
+
+    #[test]
+    fn blocks_sensitive_file_after_pipe() {
+        let c = test_config();
+        assert!(check_blocked_paths("echo foo | tee .aws/creds", &c).is_some());
+    }
+
+    // ── check_blocked_paths: subshells / compound commands ───────────
+
+    #[test]
+    fn blocks_sensitive_in_and_chain() {
+        let c = test_config();
+        assert!(check_blocked_paths("true && cat .ssh/id_rsa", &c).is_some());
+    }
+
+    #[test]
+    fn blocks_sensitive_in_semicolon_chain() {
+        let c = test_config();
+        assert!(check_blocked_paths("cd /tmp; cat .env", &c).is_some());
     }
 }

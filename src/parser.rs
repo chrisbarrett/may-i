@@ -1547,4 +1547,1521 @@ mod tests {
             _ => panic!("Expected simple command"),
         }
     }
+
+    #[test]
+    fn test_empty_input() {
+        let cmd = parse("");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert!(sc.words.is_empty());
+                assert!(sc.assignments.is_empty());
+                assert!(sc.redirections.is_empty());
+            }
+            _ => panic!("Expected empty simple command"),
+        }
+    }
+
+    #[test]
+    fn test_whitespace_only() {
+        let cmd = parse("   \t  ");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert!(sc.words.is_empty());
+            }
+            _ => panic!("Expected empty simple command"),
+        }
+    }
+
+    // --- Pipelines ---
+
+    #[test]
+    fn test_pipeline() {
+        let cmd = parse("echo foo | grep bar");
+        match &cmd {
+            Command::Pipeline(cmds) => {
+                assert_eq!(cmds.len(), 2);
+                match &cmds[0] {
+                    Command::Simple(sc) => assert_eq!(sc.command_name(), Some("echo")),
+                    _ => panic!("Expected simple command in pipeline"),
+                }
+                match &cmds[1] {
+                    Command::Simple(sc) => assert_eq!(sc.command_name(), Some("grep")),
+                    _ => panic!("Expected simple command in pipeline"),
+                }
+            }
+            _ => panic!("Expected pipeline"),
+        }
+    }
+
+    #[test]
+    fn test_pipeline_three_commands() {
+        let cmd = parse("cat file | sort | uniq");
+        match &cmd {
+            Command::Pipeline(cmds) => assert_eq!(cmds.len(), 3),
+            _ => panic!("Expected pipeline"),
+        }
+    }
+
+    // --- And / Or ---
+
+    #[test]
+    fn test_and() {
+        let cmd = parse("cmd1 && cmd2");
+        match &cmd {
+            Command::And(left, right) => {
+                match left.as_ref() {
+                    Command::Simple(sc) => assert_eq!(sc.command_name(), Some("cmd1")),
+                    _ => panic!("Expected simple command"),
+                }
+                match right.as_ref() {
+                    Command::Simple(sc) => assert_eq!(sc.command_name(), Some("cmd2")),
+                    _ => panic!("Expected simple command"),
+                }
+            }
+            _ => panic!("Expected And command"),
+        }
+    }
+
+    #[test]
+    fn test_or() {
+        let cmd = parse("cmd1 || cmd2");
+        match &cmd {
+            Command::Or(left, right) => {
+                match left.as_ref() {
+                    Command::Simple(sc) => assert_eq!(sc.command_name(), Some("cmd1")),
+                    _ => panic!("Expected simple command"),
+                }
+                match right.as_ref() {
+                    Command::Simple(sc) => assert_eq!(sc.command_name(), Some("cmd2")),
+                    _ => panic!("Expected simple command"),
+                }
+            }
+            _ => panic!("Expected Or command"),
+        }
+    }
+
+    #[test]
+    fn test_and_or_chained() {
+        let cmd = parse("a && b || c");
+        match &cmd {
+            Command::Or(left, _) => {
+                match left.as_ref() {
+                    Command::And(_, _) => {}
+                    _ => panic!("Expected And inside Or"),
+                }
+            }
+            _ => panic!("Expected Or command"),
+        }
+    }
+
+    // --- Sequences ---
+
+    #[test]
+    fn test_sequence() {
+        let cmd = parse("cmd1; cmd2; cmd3");
+        match &cmd {
+            Command::Sequence(cmds) => {
+                assert_eq!(cmds.len(), 3);
+            }
+            _ => panic!("Expected sequence, got {:?}", cmd),
+        }
+    }
+
+    #[test]
+    fn test_sequence_trailing_semi() {
+        let cmd = parse("cmd1; cmd2;");
+        match &cmd {
+            Command::Sequence(cmds) => assert_eq!(cmds.len(), 2),
+            _ => panic!("Expected sequence"),
+        }
+    }
+
+    // --- Background ---
+
+    #[test]
+    fn test_background() {
+        let cmd = parse("sleep 10 &");
+        match &cmd {
+            Command::Background(inner) => {
+                match inner.as_ref() {
+                    Command::Simple(sc) => assert_eq!(sc.command_name(), Some("sleep")),
+                    _ => panic!("Expected simple command"),
+                }
+            }
+            _ => panic!("Expected background command"),
+        }
+    }
+
+    #[test]
+    fn test_background_in_sequence() {
+        let cmd = parse("cmd1 & cmd2");
+        match &cmd {
+            Command::Sequence(cmds) => {
+                assert_eq!(cmds.len(), 2);
+                match &cmds[0] {
+                    Command::Background(_) => {}
+                    _ => panic!("Expected background"),
+                }
+            }
+            _ => panic!("Expected sequence"),
+        }
+    }
+
+    // --- Subshell ---
+
+    #[test]
+    fn test_subshell() {
+        let cmd = parse("(cmd1; cmd2)");
+        match &cmd {
+            Command::Subshell(inner) => {
+                match inner.as_ref() {
+                    Command::Sequence(cmds) => assert_eq!(cmds.len(), 2),
+                    _ => panic!("Expected sequence inside subshell"),
+                }
+            }
+            _ => panic!("Expected subshell"),
+        }
+    }
+
+    #[test]
+    fn test_subshell_single_command() {
+        let cmd = parse("(echo hello)");
+        match &cmd {
+            Command::Subshell(inner) => {
+                match inner.as_ref() {
+                    Command::Simple(sc) => assert_eq!(sc.command_name(), Some("echo")),
+                    _ => panic!("Expected simple command"),
+                }
+            }
+            _ => panic!("Expected subshell"),
+        }
+    }
+
+    // --- Brace group ---
+
+    #[test]
+    fn test_brace_group() {
+        let cmd = parse("{ cmd1; cmd2; }");
+        match &cmd {
+            Command::BraceGroup(inner) => {
+                match inner.as_ref() {
+                    Command::Sequence(cmds) => assert_eq!(cmds.len(), 2),
+                    _ => panic!("Expected sequence inside brace group"),
+                }
+            }
+            _ => panic!("Expected brace group"),
+        }
+    }
+
+    // --- If / elif / else ---
+
+    #[test]
+    fn test_if_then_fi() {
+        let cmd = parse("if true; then echo yes; fi");
+        match &cmd {
+            Command::If { condition, then_branch, elif_branches, else_branch } => {
+                match condition.as_ref() {
+                    Command::Simple(sc) => assert_eq!(sc.command_name(), Some("true")),
+                    _ => panic!("Expected simple condition"),
+                }
+                match then_branch.as_ref() {
+                    Command::Simple(sc) => assert_eq!(sc.command_name(), Some("echo")),
+                    _ => panic!("Expected simple then branch"),
+                }
+                assert!(elif_branches.is_empty());
+                assert!(else_branch.is_none());
+            }
+            _ => panic!("Expected if command"),
+        }
+    }
+
+    #[test]
+    fn test_if_else() {
+        let cmd = parse("if true; then echo yes; else echo no; fi");
+        match &cmd {
+            Command::If { else_branch, .. } => {
+                assert!(else_branch.is_some());
+            }
+            _ => panic!("Expected if command"),
+        }
+    }
+
+    #[test]
+    fn test_if_elif_else() {
+        let cmd = parse("if a; then b; elif c; then d; elif e; then f; else g; fi");
+        match &cmd {
+            Command::If { elif_branches, else_branch, .. } => {
+                assert_eq!(elif_branches.len(), 2);
+                assert!(else_branch.is_some());
+            }
+            _ => panic!("Expected if command"),
+        }
+    }
+
+    // --- For loop ---
+
+    #[test]
+    fn test_for_loop() {
+        let cmd = parse("for x in a b c; do echo $x; done");
+        match &cmd {
+            Command::For { var, words, body } => {
+                assert_eq!(var, "x");
+                assert_eq!(words.len(), 3);
+                assert_eq!(words[0].to_str(), "a");
+                assert_eq!(words[1].to_str(), "b");
+                assert_eq!(words[2].to_str(), "c");
+                match body.as_ref() {
+                    Command::Simple(sc) => assert_eq!(sc.command_name(), Some("echo")),
+                    _ => panic!("Expected simple body"),
+                }
+            }
+            _ => panic!("Expected for command"),
+        }
+    }
+
+    // --- While loop ---
+
+    #[test]
+    fn test_while_loop() {
+        let cmd = parse("while true; do echo loop; done");
+        match &cmd {
+            Command::While { condition, body } => {
+                match condition.as_ref() {
+                    Command::Simple(sc) => assert_eq!(sc.command_name(), Some("true")),
+                    _ => panic!("Expected simple condition"),
+                }
+                match body.as_ref() {
+                    Command::Simple(sc) => assert_eq!(sc.command_name(), Some("echo")),
+                    _ => panic!("Expected simple body"),
+                }
+            }
+            _ => panic!("Expected while command"),
+        }
+    }
+
+    // --- Until loop ---
+
+    #[test]
+    fn test_until_loop() {
+        let cmd = parse("until false; do echo loop; done");
+        match &cmd {
+            Command::Until { condition, body } => {
+                match condition.as_ref() {
+                    Command::Simple(sc) => assert_eq!(sc.command_name(), Some("false")),
+                    _ => panic!("Expected simple condition"),
+                }
+                match body.as_ref() {
+                    Command::Simple(sc) => assert_eq!(sc.command_name(), Some("echo")),
+                    _ => panic!("Expected simple body"),
+                }
+            }
+            _ => panic!("Expected until command"),
+        }
+    }
+
+    // --- Case statement ---
+
+    #[test]
+    fn test_case_basic() {
+        let cmd = parse("case $x in a) echo a;; b) echo b;; esac");
+        match &cmd {
+            Command::Case { word, arms } => {
+                assert!(word.has_dynamic_parts()); // $x is dynamic
+                assert_eq!(arms.len(), 2);
+                assert_eq!(arms[0].patterns[0].to_str(), "a");
+                assert_eq!(arms[0].terminator, CaseTerminator::Break);
+                assert_eq!(arms[1].patterns[0].to_str(), "b");
+            }
+            _ => panic!("Expected case command"),
+        }
+    }
+
+    #[test]
+    fn test_case_multiple_patterns() {
+        let cmd = parse("case $x in a|b) echo ab;; esac");
+        match &cmd {
+            Command::Case { arms, .. } => {
+                assert_eq!(arms[0].patterns.len(), 2);
+                assert_eq!(arms[0].patterns[0].to_str(), "a");
+                assert_eq!(arms[0].patterns[1].to_str(), "b");
+            }
+            _ => panic!("Expected case command"),
+        }
+    }
+
+    #[test]
+    fn test_case_fallthrough() {
+        let cmd = parse("case $x in a) echo a;& b) echo b;; esac");
+        match &cmd {
+            Command::Case { arms, .. } => {
+                assert_eq!(arms[0].terminator, CaseTerminator::Fallthrough);
+                assert_eq!(arms[1].terminator, CaseTerminator::Break);
+            }
+            _ => panic!("Expected case command"),
+        }
+    }
+
+    #[test]
+    fn test_case_continue() {
+        let cmd = parse("case $x in a) echo a;;& b) echo b;; esac");
+        match &cmd {
+            Command::Case { arms, .. } => {
+                assert_eq!(arms[0].terminator, CaseTerminator::Continue);
+            }
+            _ => panic!("Expected case command"),
+        }
+    }
+
+    #[test]
+    fn test_case_glob_pattern() {
+        let cmd = parse("case $x in *) echo default;; esac");
+        match &cmd {
+            Command::Case { arms, .. } => {
+                assert_eq!(arms.len(), 1);
+                // The * is parsed as a glob
+                assert!(arms[0].patterns[0].parts.iter().any(|p| matches!(p, WordPart::Glob(_))));
+            }
+            _ => panic!("Expected case command"),
+        }
+    }
+
+    #[test]
+    fn test_case_empty_body() {
+        let cmd = parse("case $x in a) ;; esac");
+        match &cmd {
+            Command::Case { arms, .. } => {
+                assert!(arms[0].body.is_none());
+            }
+            _ => panic!("Expected case command"),
+        }
+    }
+
+    // --- Function definitions ---
+
+    #[test]
+    fn test_function_def() {
+        let cmd = parse("function foo() { echo hello; }");
+        match &cmd {
+            Command::FunctionDef { name, body } => {
+                assert_eq!(name, "foo");
+                match body.as_ref() {
+                    Command::BraceGroup(_) => {}
+                    _ => panic!("Expected brace group body"),
+                }
+            }
+            _ => panic!("Expected function def"),
+        }
+    }
+
+    #[test]
+    fn test_function_def_no_parens() {
+        let cmd = parse("function bar { echo hi; }");
+        match &cmd {
+            Command::FunctionDef { name, .. } => {
+                assert_eq!(name, "bar");
+            }
+            _ => panic!("Expected function def"),
+        }
+    }
+
+    // --- Assignments ---
+
+    #[test]
+    fn test_assignment_standalone() {
+        let cmd = parse("VAR=value");
+        match &cmd {
+            Command::Assignment(a) => {
+                assert_eq!(a.name, "VAR");
+                assert_eq!(a.value.to_str(), "value");
+            }
+            _ => panic!("Expected assignment, got {:?}", cmd),
+        }
+    }
+
+    #[test]
+    fn test_assignment_empty_value() {
+        let cmd = parse("VAR=");
+        match &cmd {
+            Command::Assignment(a) => {
+                assert_eq!(a.name, "VAR");
+                assert_eq!(a.value.to_str(), "");
+            }
+            _ => panic!("Expected assignment"),
+        }
+    }
+
+    #[test]
+    fn test_assignment_with_command() {
+        let cmd = parse("VAR=value cmd arg");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.assignments.len(), 1);
+                assert_eq!(sc.assignments[0].name, "VAR");
+                assert_eq!(sc.assignments[0].value.to_str(), "value");
+                assert_eq!(sc.command_name(), Some("cmd"));
+                assert_eq!(sc.args().len(), 1);
+            }
+            _ => panic!("Expected simple command with assignment"),
+        }
+    }
+
+    // --- Redirections ---
+
+    #[test]
+    fn test_redirect_output() {
+        let cmd = parse("echo hello > file.txt");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.redirections.len(), 1);
+                assert_eq!(sc.redirections[0].kind, RedirectionKind::Output);
+                assert!(sc.redirections[0].fd.is_none());
+                match &sc.redirections[0].target {
+                    RedirectionTarget::File(w) => assert_eq!(w.to_str(), "file.txt"),
+                    _ => panic!("Expected file target"),
+                }
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn test_redirect_input() {
+        let cmd = parse("cat < input.txt");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.redirections.len(), 1);
+                assert_eq!(sc.redirections[0].kind, RedirectionKind::Input);
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn test_redirect_append() {
+        let cmd = parse("echo hello >> file.txt");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.redirections.len(), 1);
+                assert_eq!(sc.redirections[0].kind, RedirectionKind::Append);
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn test_redirect_clobber() {
+        let cmd = parse("echo hello >| file.txt");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.redirections.len(), 1);
+                assert_eq!(sc.redirections[0].kind, RedirectionKind::Clobber);
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn test_redirect_dup_output() {
+        let cmd = parse("cmd >&2");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.redirections.len(), 1);
+                assert_eq!(sc.redirections[0].kind, RedirectionKind::DupOutput);
+                match &sc.redirections[0].target {
+                    RedirectionTarget::Fd(fd) => assert_eq!(*fd, 2),
+                    _ => panic!("Expected Fd target"),
+                }
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn test_redirect_dup_input() {
+        let cmd = parse("cmd <&3");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.redirections.len(), 1);
+                assert_eq!(sc.redirections[0].kind, RedirectionKind::DupInput);
+                match &sc.redirections[0].target {
+                    RedirectionTarget::Fd(fd) => assert_eq!(*fd, 3),
+                    _ => panic!("Expected Fd target"),
+                }
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn test_redirect_fd_prefix() {
+        let cmd = parse("cmd 2>errors.txt");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.redirections.len(), 1);
+                assert_eq!(sc.redirections[0].fd, Some(2));
+                assert_eq!(sc.redirections[0].kind, RedirectionKind::Output);
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn test_redirect_herestring() {
+        let cmd = parse("cat <<< hello");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.redirections.len(), 1);
+                assert_eq!(sc.redirections[0].kind, RedirectionKind::Herestring);
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    // --- Quoting ---
+
+    #[test]
+    fn test_single_quotes() {
+        let cmd = parse("echo 'hello world'");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.words.len(), 2);
+                match &sc.words[1].parts[0] {
+                    WordPart::SingleQuoted(s) => assert_eq!(s, "hello world"),
+                    _ => panic!("Expected single quoted"),
+                }
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn test_double_quotes_literal() {
+        let cmd = parse(r#"echo "hello world""#);
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.words.len(), 2);
+                match &sc.words[1].parts[0] {
+                    WordPart::DoubleQuoted(parts) => {
+                        assert_eq!(parts.len(), 1);
+                        match &parts[0] {
+                            WordPart::Literal(s) => assert_eq!(s, "hello world"),
+                            _ => panic!("Expected literal inside double quotes"),
+                        }
+                    }
+                    _ => panic!("Expected double quoted"),
+                }
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn test_double_quotes_with_variable() {
+        let cmd = parse(r#"echo "hello $name""#);
+        match &cmd {
+            Command::Simple(sc) => {
+                match &sc.words[1].parts[0] {
+                    WordPart::DoubleQuoted(parts) => {
+                        assert_eq!(parts.len(), 2);
+                        assert!(matches!(&parts[0], WordPart::Literal(s) if s == "hello "));
+                        assert!(matches!(&parts[1], WordPart::Parameter(s) if s == "name"));
+                    }
+                    _ => panic!("Expected double quoted"),
+                }
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn test_double_quotes_with_command_sub() {
+        let cmd = parse(r#"echo "today is $(date)""#);
+        match &cmd {
+            Command::Simple(sc) => {
+                match &sc.words[1].parts[0] {
+                    WordPart::DoubleQuoted(parts) => {
+                        assert!(parts.iter().any(|p| matches!(p, WordPart::CommandSubstitution(s) if s == "date")));
+                    }
+                    _ => panic!("Expected double quoted"),
+                }
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn test_double_quotes_with_backtick() {
+        let cmd = parse(r#"echo "today is `date`""#);
+        match &cmd {
+            Command::Simple(sc) => {
+                match &sc.words[1].parts[0] {
+                    WordPart::DoubleQuoted(parts) => {
+                        assert!(parts.iter().any(|p| matches!(p, WordPart::Backtick(s) if s == "date")));
+                    }
+                    _ => panic!("Expected double quoted"),
+                }
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn test_ansi_c_quoting() {
+        let cmd = parse("echo $'hello\\nworld'");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.words.len(), 2);
+                assert!(sc.words[1].parts.iter().any(|p| matches!(p, WordPart::AnsiCQuoted(s) if s == "hello\\nworld")));
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn test_backslash_escape() {
+        let cmd = parse("echo hello\\ world");
+        match &cmd {
+            Command::Simple(sc) => {
+                // backslash-space joins "hello" and "world" into a single word
+                assert_eq!(sc.words.len(), 2);
+                let text = sc.words[1].to_str();
+                assert_eq!(text, "hello world");
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    // --- Variable expansion ---
+
+    #[test]
+    fn test_parameter() {
+        let cmd = parse("echo $VAR");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert!(sc.words[1].parts.iter().any(|p| matches!(p, WordPart::Parameter(s) if s == "VAR")));
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn test_parameter_expansion() {
+        let cmd = parse("echo ${VAR}");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert!(sc.words[1].parts.iter().any(|p| matches!(p, WordPart::ParameterExpansion(s) if s == "VAR")));
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn test_special_variables() {
+        for var in &["$@", "$?", "$$", "$!", "$#", "$*", "$-"] {
+            let input = format!("echo {}", var);
+            let cmd = parse(&input);
+            match &cmd {
+                Command::Simple(sc) => {
+                    assert!(sc.words[1].has_dynamic_parts(), "Expected dynamic for {}", var);
+                }
+                _ => panic!("Expected simple command for {}", var),
+            }
+        }
+    }
+
+    // --- Command substitution ---
+
+    #[test]
+    fn test_command_substitution() {
+        let cmd = parse("echo $(whoami)");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert!(sc.words[1].parts.iter().any(|p| matches!(p, WordPart::CommandSubstitution(s) if s == "whoami")));
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn test_backtick_substitution() {
+        let cmd = parse("echo `whoami`");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert!(sc.words[1].parts.iter().any(|p| matches!(p, WordPart::Backtick(s) if s == "whoami")));
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn test_nested_command_substitution() {
+        let cmd = parse("echo $(echo $(whoami))");
+        match &cmd {
+            Command::Simple(sc) => {
+                match &sc.words[1].parts[0] {
+                    WordPart::CommandSubstitution(s) => assert_eq!(s, "echo $(whoami)"),
+                    _ => panic!("Expected command substitution"),
+                }
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    // --- Arithmetic ---
+
+    #[test]
+    fn test_arithmetic_expansion() {
+        let cmd = parse("echo $((1 + 2))");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert!(sc.words[1].parts.iter().any(|p| matches!(p, WordPart::Arithmetic(s) if s == "1 + 2")));
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    // --- Globs ---
+
+    #[test]
+    fn test_glob_star() {
+        let cmd = parse("echo *.txt");
+        match &cmd {
+            Command::Simple(sc) => {
+                let word = &sc.words[1];
+                assert!(word.parts.iter().any(|p| matches!(p, WordPart::Glob(s) if s == "*")));
+                assert!(word.parts.iter().any(|p| matches!(p, WordPart::Literal(s) if s == ".txt")));
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn test_glob_question() {
+        let cmd = parse("echo file?.txt");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert!(sc.words[1].parts.iter().any(|p| matches!(p, WordPart::Glob(s) if s == "?")));
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn test_glob_bracket() {
+        let cmd = parse("echo [abc].txt");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert!(sc.words[1].parts.iter().any(|p| matches!(p, WordPart::Glob(s) if s == "[abc]")));
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    // --- Brace expansion ---
+
+    #[test]
+    fn test_brace_expansion() {
+        let cmd = parse("echo {a,b,c}");
+        match &cmd {
+            Command::Simple(sc) => {
+                match &sc.words[1].parts[0] {
+                    WordPart::BraceExpansion(items) => {
+                        assert_eq!(items, &["a", "b", "c"]);
+                    }
+                    _ => panic!("Expected brace expansion"),
+                }
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn test_brace_no_comma_is_literal() {
+        let cmd = parse("echo {foo}");
+        match &cmd {
+            Command::Simple(sc) => {
+                // Without comma, should be literal { and }
+                let text = sc.words[1].to_str();
+                assert_eq!(text, "{foo}");
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    // --- Process substitution ---
+
+    #[test]
+    fn test_process_substitution_input() {
+        let cmd = parse("diff <(sort a) <(sort b)");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.words.len(), 3); // diff, <(sort a), <(sort b)
+                match &sc.words[1].parts[0] {
+                    WordPart::ProcessSubstitution { direction, command } => {
+                        assert_eq!(*direction, ProcessDirection::Input);
+                        assert_eq!(command, "sort a");
+                    }
+                    _ => panic!("Expected process substitution"),
+                }
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn test_process_substitution_output() {
+        let cmd = parse("tee >(grep error)");
+        match &cmd {
+            Command::Simple(sc) => {
+                match &sc.words[1].parts[0] {
+                    WordPart::ProcessSubstitution { direction, command } => {
+                        assert_eq!(*direction, ProcessDirection::Output);
+                        assert_eq!(command, "grep error");
+                    }
+                    _ => panic!("Expected process substitution"),
+                }
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    // --- Comments ---
+
+    #[test]
+    fn test_comment() {
+        let cmd = parse("echo foo # this is a comment");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.command_name(), Some("echo"));
+                assert_eq!(sc.args().len(), 1);
+                assert_eq!(sc.args()[0].to_str(), "foo");
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn test_comment_only() {
+        let cmd = parse("# just a comment");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert!(sc.words.is_empty());
+            }
+            _ => panic!("Expected empty simple command"),
+        }
+    }
+
+    // --- Word helper methods ---
+
+    #[test]
+    fn test_word_literal() {
+        let w = Word::literal("hello");
+        assert_eq!(w.parts.len(), 1);
+        assert_eq!(w.to_str(), "hello");
+        assert!(!w.has_dynamic_parts());
+    }
+
+    #[test]
+    fn test_word_to_str_various_parts() {
+        let w = Word {
+            parts: vec![
+                WordPart::Literal("hello".to_string()),
+                WordPart::SingleQuoted("world".to_string()),
+            ],
+        };
+        assert_eq!(w.to_str(), "helloworld");
+    }
+
+    #[test]
+    fn test_word_to_str_brace_expansion() {
+        let w = Word {
+            parts: vec![WordPart::BraceExpansion(vec![
+                "a".to_string(),
+                "b".to_string(),
+                "c".to_string(),
+            ])],
+        };
+        assert_eq!(w.to_str(), "a,b,c");
+    }
+
+    #[test]
+    fn test_word_to_str_process_substitution() {
+        let w = Word {
+            parts: vec![WordPart::ProcessSubstitution {
+                direction: ProcessDirection::Input,
+                command: "sort file".to_string(),
+            }],
+        };
+        assert_eq!(w.to_str(), "sort file");
+    }
+
+    #[test]
+    fn test_word_has_dynamic_parts_parameter() {
+        let w = Word {
+            parts: vec![WordPart::Parameter("HOME".to_string())],
+        };
+        assert!(w.has_dynamic_parts());
+    }
+
+    #[test]
+    fn test_word_has_dynamic_parts_command_sub() {
+        let w = Word {
+            parts: vec![WordPart::CommandSubstitution("date".to_string())],
+        };
+        assert!(w.has_dynamic_parts());
+    }
+
+    #[test]
+    fn test_word_has_dynamic_parts_backtick() {
+        let w = Word {
+            parts: vec![WordPart::Backtick("date".to_string())],
+        };
+        assert!(w.has_dynamic_parts());
+    }
+
+    #[test]
+    fn test_word_has_dynamic_parts_arithmetic() {
+        let w = Word {
+            parts: vec![WordPart::Arithmetic("1+1".to_string())],
+        };
+        assert!(w.has_dynamic_parts());
+    }
+
+    #[test]
+    fn test_word_has_dynamic_parts_process_sub() {
+        let w = Word {
+            parts: vec![WordPart::ProcessSubstitution {
+                direction: ProcessDirection::Input,
+                command: "cmd".to_string(),
+            }],
+        };
+        assert!(w.has_dynamic_parts());
+    }
+
+    #[test]
+    fn test_word_has_dynamic_parts_parameter_expansion() {
+        let w = Word {
+            parts: vec![WordPart::ParameterExpansion("HOME".to_string())],
+        };
+        assert!(w.has_dynamic_parts());
+    }
+
+    #[test]
+    fn test_word_has_dynamic_parts_in_double_quotes() {
+        let w = Word {
+            parts: vec![WordPart::DoubleQuoted(vec![
+                WordPart::Literal("hello ".to_string()),
+                WordPart::Parameter("name".to_string()),
+            ])],
+        };
+        assert!(w.has_dynamic_parts());
+    }
+
+    #[test]
+    fn test_word_no_dynamic_parts_static() {
+        let w = Word {
+            parts: vec![
+                WordPart::Literal("hello".to_string()),
+                WordPart::SingleQuoted("world".to_string()),
+                WordPart::Glob("*".to_string()),
+                WordPart::BraceExpansion(vec!["a".to_string()]),
+            ],
+        };
+        assert!(!w.has_dynamic_parts());
+    }
+
+    #[test]
+    fn test_word_to_str_double_quoted() {
+        let w = Word {
+            parts: vec![WordPart::DoubleQuoted(vec![
+                WordPart::Literal("hello ".to_string()),
+                WordPart::Parameter("name".to_string()),
+            ])],
+        };
+        assert_eq!(w.to_str(), "hello name");
+    }
+
+    // --- SimpleCommand helpers ---
+
+    #[test]
+    fn test_simple_command_name_none() {
+        let sc = SimpleCommand {
+            assignments: vec![],
+            words: vec![],
+            redirections: vec![],
+        };
+        assert_eq!(sc.command_name(), None);
+    }
+
+    #[test]
+    fn test_simple_command_args_empty() {
+        let sc = SimpleCommand {
+            assignments: vec![],
+            words: vec![Word::literal("echo")],
+            redirections: vec![],
+        };
+        assert!(sc.args().is_empty());
+    }
+
+    #[test]
+    fn test_simple_command_args_multiple() {
+        let cmd = parse("echo a b c");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.command_name(), Some("echo"));
+                assert_eq!(sc.args().len(), 3);
+                assert_eq!(sc.args()[0].to_str(), "a");
+                assert_eq!(sc.args()[1].to_str(), "b");
+                assert_eq!(sc.args()[2].to_str(), "c");
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn test_simple_command_name_non_literal() {
+        let sc = SimpleCommand {
+            assignments: vec![],
+            words: vec![Word {
+                parts: vec![WordPart::Parameter("cmd".to_string())],
+            }],
+            redirections: vec![],
+        };
+        // command_name returns "" for non-literal first part
+        assert_eq!(sc.command_name(), Some(""));
+    }
+
+    // --- extract_simple_commands ---
+
+    #[test]
+    fn test_extract_simple_commands_from_pipeline() {
+        let cmd = parse("echo foo | grep bar | wc -l");
+        let scs = extract_simple_commands(&cmd);
+        assert_eq!(scs.len(), 3);
+        assert_eq!(scs[0].command_name(), Some("echo"));
+        assert_eq!(scs[1].command_name(), Some("grep"));
+        assert_eq!(scs[2].command_name(), Some("wc"));
+    }
+
+    #[test]
+    fn test_extract_simple_commands_from_and_or() {
+        let cmd = parse("a && b || c");
+        let scs = extract_simple_commands(&cmd);
+        assert_eq!(scs.len(), 3);
+    }
+
+    #[test]
+    fn test_extract_simple_commands_from_sequence() {
+        let cmd = parse("a; b; c");
+        let scs = extract_simple_commands(&cmd);
+        assert_eq!(scs.len(), 3);
+    }
+
+    #[test]
+    fn test_extract_simple_commands_from_if() {
+        let cmd = parse("if a; then b; elif c; then d; else e; fi");
+        let scs = extract_simple_commands(&cmd);
+        assert_eq!(scs.len(), 5); // a, b, c, d, e
+    }
+
+    #[test]
+    fn test_extract_simple_commands_from_for() {
+        let cmd = parse("for x in a b; do echo $x; done");
+        let scs = extract_simple_commands(&cmd);
+        assert_eq!(scs.len(), 1); // just the echo
+    }
+
+    #[test]
+    fn test_extract_simple_commands_from_while() {
+        let cmd = parse("while true; do echo loop; done");
+        let scs = extract_simple_commands(&cmd);
+        // While only collects from body, not condition
+        assert_eq!(scs.len(), 1);
+        assert_eq!(scs[0].command_name(), Some("echo"));
+    }
+
+    #[test]
+    fn test_extract_simple_commands_from_until() {
+        let cmd = parse("until false; do echo loop; done");
+        let scs = extract_simple_commands(&cmd);
+        // Until only collects from body, not condition
+        assert_eq!(scs.len(), 1);
+        assert_eq!(scs[0].command_name(), Some("echo"));
+    }
+
+    #[test]
+    fn test_extract_simple_commands_from_case() {
+        let cmd = parse("case $x in a) echo a;; b) echo b;; esac");
+        let scs = extract_simple_commands(&cmd);
+        assert_eq!(scs.len(), 2);
+    }
+
+    #[test]
+    fn test_extract_simple_commands_from_function() {
+        let cmd = parse("function foo() { echo hello; }");
+        let scs = extract_simple_commands(&cmd);
+        assert_eq!(scs.len(), 1);
+        assert_eq!(scs[0].command_name(), Some("echo"));
+    }
+
+    #[test]
+    fn test_extract_simple_commands_from_background() {
+        let cmd = parse("sleep 10 &");
+        let scs = extract_simple_commands(&cmd);
+        assert_eq!(scs.len(), 1);
+        assert_eq!(scs[0].command_name(), Some("sleep"));
+    }
+
+    #[test]
+    fn test_extract_simple_commands_from_subshell() {
+        let cmd = parse("(echo hello)");
+        let scs = extract_simple_commands(&cmd);
+        assert_eq!(scs.len(), 1);
+    }
+
+    #[test]
+    fn test_extract_simple_commands_from_brace_group() {
+        let cmd = parse("{ echo hello; }");
+        let scs = extract_simple_commands(&cmd);
+        assert_eq!(scs.len(), 1);
+    }
+
+    #[test]
+    fn test_extract_simple_commands_from_assignment() {
+        let cmd = parse("FOO=bar");
+        let scs = extract_simple_commands(&cmd);
+        assert_eq!(scs.len(), 0); // assignments don't contain simple commands
+    }
+
+    // --- extract_all_words ---
+
+    #[test]
+    fn test_extract_all_words_simple() {
+        let cmd = parse("echo hello world");
+        let words = extract_all_words(&cmd);
+        assert_eq!(words.len(), 3);
+    }
+
+    #[test]
+    fn test_extract_all_words_with_redirections() {
+        let cmd = parse("echo hello > file.txt");
+        let words = extract_all_words(&cmd);
+        // echo, hello, file.txt (redirect target)
+        assert_eq!(words.len(), 3);
+    }
+
+    #[test]
+    fn test_extract_all_words_with_assignment() {
+        let cmd = parse("VAR=value cmd arg");
+        let words = extract_all_words(&cmd);
+        // assignment value + cmd + arg
+        assert_eq!(words.len(), 3);
+    }
+
+    #[test]
+    fn test_extract_all_words_standalone_assignment() {
+        let cmd = parse("VAR=value");
+        let words = extract_all_words(&cmd);
+        assert_eq!(words.len(), 1); // just the assignment value
+    }
+
+    #[test]
+    fn test_extract_all_words_from_for() {
+        let cmd = parse("for x in a b c; do echo $x; done");
+        let words = extract_all_words(&cmd);
+        // a, b, c (for-loop words) + echo, $x (body words)
+        assert_eq!(words.len(), 5);
+    }
+
+    #[test]
+    fn test_extract_all_words_from_case() {
+        let cmd = parse("case $x in a) echo hello;; esac");
+        let words = extract_all_words(&cmd);
+        // $x (case word) + a (pattern) + echo, hello (body words)
+        assert_eq!(words.len(), 4);
+    }
+
+    #[test]
+    fn test_extract_all_words_from_pipeline() {
+        let cmd = parse("echo a | grep b");
+        let words = extract_all_words(&cmd);
+        assert_eq!(words.len(), 4); // echo, a, grep, b
+    }
+
+    #[test]
+    fn test_extract_all_words_from_and_or() {
+        let cmd = parse("cmd1 arg1 && cmd2 arg2");
+        let words = extract_all_words(&cmd);
+        assert_eq!(words.len(), 4);
+    }
+
+    #[test]
+    fn test_extract_all_words_from_background() {
+        let cmd = parse("echo hello &");
+        let words = extract_all_words(&cmd);
+        assert_eq!(words.len(), 2);
+    }
+
+    #[test]
+    fn test_extract_all_words_from_subshell() {
+        let cmd = parse("(echo hello)");
+        let words = extract_all_words(&cmd);
+        assert_eq!(words.len(), 2);
+    }
+
+    #[test]
+    fn test_extract_all_words_from_if() {
+        let cmd = parse("if true; then echo yes; else echo no; fi");
+        let words = extract_all_words(&cmd);
+        // true, echo, yes, echo, no
+        assert_eq!(words.len(), 5);
+    }
+
+    #[test]
+    fn test_extract_all_words_from_while() {
+        let cmd = parse("while true; do echo x; done");
+        let words = extract_all_words(&cmd);
+        // true, echo, x
+        assert_eq!(words.len(), 3);
+    }
+
+    #[test]
+    fn test_extract_all_words_from_function() {
+        let cmd = parse("function foo() { echo bar; }");
+        let words = extract_all_words(&cmd);
+        assert_eq!(words.len(), 2); // echo, bar
+    }
+
+    // --- Complex / combined constructs ---
+
+    #[test]
+    fn test_pipeline_with_redirections() {
+        let cmd = parse("cat < input.txt | sort > output.txt");
+        match &cmd {
+            Command::Pipeline(cmds) => {
+                assert_eq!(cmds.len(), 2);
+                match &cmds[0] {
+                    Command::Simple(sc) => {
+                        assert_eq!(sc.command_name(), Some("cat"));
+                        assert_eq!(sc.redirections.len(), 1);
+                        assert_eq!(sc.redirections[0].kind, RedirectionKind::Input);
+                    }
+                    _ => panic!("Expected simple command"),
+                }
+                match &cmds[1] {
+                    Command::Simple(sc) => {
+                        assert_eq!(sc.command_name(), Some("sort"));
+                        assert_eq!(sc.redirections.len(), 1);
+                        assert_eq!(sc.redirections[0].kind, RedirectionKind::Output);
+                    }
+                    _ => panic!("Expected simple command"),
+                }
+            }
+            _ => panic!("Expected pipeline"),
+        }
+    }
+
+    #[test]
+    fn test_complex_nested_structure() {
+        let cmd = parse("if true; then for x in a b; do echo $x; done; fi");
+        match &cmd {
+            Command::If { then_branch, .. } => {
+                match then_branch.as_ref() {
+                    Command::For { var, words, .. } => {
+                        assert_eq!(var, "x");
+                        assert_eq!(words.len(), 2);
+                    }
+                    _ => panic!("Expected for loop in then branch"),
+                }
+            }
+            _ => panic!("Expected if command"),
+        }
+    }
+
+    #[test]
+    fn test_newline_separated_commands() {
+        // Multiple commands separated by semicolons produce a sequence
+        let cmd = parse("echo a; echo b; echo c");
+        match &cmd {
+            Command::Sequence(cmds) => {
+                assert_eq!(cmds.len(), 3);
+                for c in cmds {
+                    match c {
+                        Command::Simple(sc) => assert_eq!(sc.command_name(), Some("echo")),
+                        _ => panic!("Expected simple command in sequence"),
+                    }
+                }
+            }
+            _ => panic!("Expected sequence"),
+        }
+    }
+
+    #[test]
+    fn test_mixed_word_parts() {
+        let cmd = parse("echo prefix${VAR}suffix");
+        match &cmd {
+            Command::Simple(sc) => {
+                let word = &sc.words[1];
+                assert!(word.parts.len() >= 3);
+                assert!(matches!(&word.parts[0], WordPart::Literal(s) if s == "prefix"));
+                assert!(matches!(&word.parts[1], WordPart::ParameterExpansion(s) if s == "VAR"));
+                assert!(matches!(&word.parts[2], WordPart::Literal(s) if s == "suffix"));
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn test_bare_dollar() {
+        let cmd = parse("echo $");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert!(sc.words[1].parts.iter().any(|p| matches!(p, WordPart::Literal(s) if s == "$")));
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn test_multiple_redirections() {
+        let cmd = parse("cmd > out.txt 2>&1");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.redirections.len(), 2);
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn test_heredoc() {
+        let cmd = parse("cat << EOF");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.redirections.len(), 1);
+                assert_eq!(sc.redirections[0].kind, RedirectionKind::Heredoc);
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn test_heredoc_strip() {
+        let cmd = parse("cat <<- EOF");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.redirections.len(), 1);
+                assert_eq!(sc.redirections[0].kind, RedirectionKind::HeredocStrip);
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn test_double_quotes_with_escape() {
+        let cmd = parse(r#"echo "hello\"world""#);
+        match &cmd {
+            Command::Simple(sc) => {
+                match &sc.words[1].parts[0] {
+                    WordPart::DoubleQuoted(parts) => {
+                        // Should have literal containing the escaped quote
+                        let text: String = parts.iter().map(|p| match p {
+                            WordPart::Literal(s) => s.clone(),
+                            _ => String::new(),
+                        }).collect();
+                        assert!(text.contains("hello"));
+                        assert!(text.contains("\""));
+                        assert!(text.contains("world"));
+                    }
+                    _ => panic!("Expected double quoted"),
+                }
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn test_word_to_str_ansi_c() {
+        let w = Word {
+            parts: vec![WordPart::AnsiCQuoted("hello".to_string())],
+        };
+        assert_eq!(w.to_str(), "hello");
+    }
+
+    #[test]
+    fn test_word_to_str_glob() {
+        let w = Word {
+            parts: vec![WordPart::Glob("*".to_string())],
+        };
+        assert_eq!(w.to_str(), "*");
+    }
+
+    #[test]
+    fn test_has_dynamic_parts_double_quoted_static() {
+        let w = Word {
+            parts: vec![WordPart::DoubleQuoted(vec![
+                WordPart::Literal("static".to_string()),
+            ])],
+        };
+        assert!(!w.has_dynamic_parts());
+    }
+
+    #[test]
+    fn test_has_dynamic_parts_ansi_c_is_static() {
+        let w = Word {
+            parts: vec![WordPart::AnsiCQuoted("hello".to_string())],
+        };
+        assert!(!w.has_dynamic_parts());
+    }
+
+    #[test]
+    fn test_extract_all_words_redirect_fd_target() {
+        let cmd = parse("cmd >&2");
+        let words = extract_all_words(&cmd);
+        // cmd word only; Fd(2) is not a File target so not collected
+        assert_eq!(words.len(), 1);
+    }
+
+    #[test]
+    fn test_case_with_empty_body_arm() {
+        let cmd = parse("case $x in a) ;; b) echo b;; esac");
+        match &cmd {
+            Command::Case { arms, .. } => {
+                assert_eq!(arms.len(), 2);
+                assert!(arms[0].body.is_none());
+                assert!(arms[1].body.is_some());
+            }
+            _ => panic!("Expected case"),
+        }
+    }
+
+    #[test]
+    fn test_extract_simple_commands_case_empty_body() {
+        let cmd = parse("case $x in a) ;; esac");
+        let scs = extract_simple_commands(&cmd);
+        assert_eq!(scs.len(), 0);
+    }
+
+    #[test]
+    fn test_if_without_else() {
+        let cmd = parse("if true; then echo yes; fi");
+        let scs = extract_simple_commands(&cmd);
+        assert_eq!(scs.len(), 2); // true + echo
+    }
+
+    #[test]
+    fn test_extract_all_words_elif() {
+        let cmd = parse("if a; then b; elif c; then d; fi");
+        let words = extract_all_words(&cmd);
+        // a, b, c, d
+        assert_eq!(words.len(), 4);
+    }
+
+    #[test]
+    fn test_extract_all_words_until() {
+        let cmd = parse("until false; do echo x; done");
+        let words = extract_all_words(&cmd);
+        // false, echo, x
+        assert_eq!(words.len(), 3);
+    }
 }

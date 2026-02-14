@@ -317,5 +317,548 @@ reason = "Read-only"
         let config = parse_toml(toml).unwrap();
         assert_eq!(config.rules.len(), 1);
         assert_eq!(config.rules[0].decision, Decision::Allow);
+        assert_eq!(config.rules[0].reason.as_deref(), Some("Read-only"));
+    }
+
+    #[test]
+    fn config_parse_rule_no_reason() {
+        let toml = r#"
+[[rules]]
+command = "ls"
+decision = "deny"
+"#;
+        let config = parse_toml(toml).unwrap();
+        assert_eq!(config.rules[0].decision, Decision::Deny);
+        assert!(config.rules[0].reason.is_none());
+    }
+
+    #[test]
+    fn config_parse_ask_decision() {
+        let toml = r#"
+[[rules]]
+command = "rm"
+decision = "ask"
+"#;
+        let config = parse_toml(toml).unwrap();
+        assert_eq!(config.rules[0].decision, Decision::Ask);
+    }
+
+    #[test]
+    fn config_parse_unknown_decision() {
+        let toml = r#"
+[[rules]]
+command = "rm"
+decision = "maybe"
+"#;
+        assert!(parse_toml(toml).is_err());
+    }
+
+    #[test]
+    fn config_parse_multiple_rules() {
+        let toml = r#"
+[[rules]]
+command = "cat"
+decision = "allow"
+
+[[rules]]
+command = "rm"
+decision = "deny"
+
+[[rules]]
+command = "git"
+decision = "ask"
+"#;
+        let config = parse_toml(toml).unwrap();
+        assert_eq!(config.rules.len(), 3);
+        assert_eq!(config.rules[0].decision, Decision::Allow);
+        assert_eq!(config.rules[1].decision, Decision::Deny);
+        assert_eq!(config.rules[2].decision, Decision::Ask);
+    }
+
+    #[test]
+    fn config_parse_empty_config() {
+        let config = parse_toml("").unwrap();
+        assert!(config.rules.is_empty());
+        assert!(config.wrappers.is_empty());
+        // Security defaults should still be present
+        assert!(!config.security.blocked_paths.is_empty());
+    }
+
+    #[test]
+    fn config_parse_regex_command() {
+        let toml = r#"
+[[rules]]
+command = "^git.*$"
+decision = "allow"
+"#;
+        let config = parse_toml(toml).unwrap();
+        match &config.rules[0].command {
+            CommandMatcher::Regex(re) => assert!(re.is_match("git-log")),
+            _ => panic!("expected Regex command matcher"),
+        }
+    }
+
+    #[test]
+    fn config_parse_list_command() {
+        let toml = r#"
+[[rules]]
+command = ["cat", "head", "tail"]
+decision = "allow"
+"#;
+        let config = parse_toml(toml).unwrap();
+        match &config.rules[0].command {
+            CommandMatcher::List(v) => assert_eq!(v, &["cat", "head", "tail"]),
+            _ => panic!("expected List command matcher"),
+        }
+    }
+
+    #[test]
+    fn config_parse_command_list_non_string_error() {
+        let toml = r#"
+[[rules]]
+command = [1, 2]
+decision = "allow"
+"#;
+        assert!(parse_toml(toml).is_err());
+    }
+
+    #[test]
+    fn config_parse_command_invalid_type_error() {
+        let toml = r#"
+[[rules]]
+command = 42
+decision = "allow"
+"#;
+        assert!(parse_toml(toml).is_err());
+    }
+
+    #[test]
+    fn config_parse_positional_args() {
+        let toml = r#"
+[[rules]]
+command = "git"
+decision = "allow"
+[rules.args]
+positional = ["commit", "*"]
+"#;
+        let config = parse_toml(toml).unwrap();
+        assert_eq!(config.rules[0].matchers.len(), 1);
+        match &config.rules[0].matchers[0] {
+            ArgMatcher::Positional(patterns) => {
+                assert_eq!(patterns.len(), 2);
+                assert!(patterns[0].is_match("commit"));
+                assert!(patterns[1].is_wildcard());
+            }
+            _ => panic!("expected Positional"),
+        }
+    }
+
+    #[test]
+    fn config_parse_anywhere_args() {
+        let toml = r#"
+[[rules]]
+command = "git"
+decision = "allow"
+[rules.args]
+anywhere = ["--no-verify"]
+"#;
+        let config = parse_toml(toml).unwrap();
+        match &config.rules[0].matchers[0] {
+            ArgMatcher::Anywhere(patterns) => {
+                assert!(patterns[0].is_match("--no-verify"));
+            }
+            _ => panic!("expected Anywhere"),
+        }
+    }
+
+    #[test]
+    fn config_parse_anywhere_also_args() {
+        let toml = r#"
+[[rules]]
+command = "git"
+decision = "allow"
+[rules.args]
+anywhere_also = ["--force"]
+"#;
+        let config = parse_toml(toml).unwrap();
+        match &config.rules[0].matchers[0] {
+            ArgMatcher::Anywhere(patterns) => {
+                assert!(patterns[0].is_match("--force"));
+            }
+            _ => panic!("expected Anywhere from anywhere_also"),
+        }
+    }
+
+    #[test]
+    fn config_parse_forbidden_args() {
+        let toml = r#"
+[[rules]]
+command = "git"
+decision = "allow"
+[rules.args]
+forbidden = ["--force"]
+"#;
+        let config = parse_toml(toml).unwrap();
+        match &config.rules[0].matchers[0] {
+            ArgMatcher::Forbidden(strings) => {
+                assert_eq!(strings, &["--force"]);
+            }
+            _ => panic!("expected Forbidden"),
+        }
+    }
+
+    #[test]
+    fn config_parse_single_string_pattern_list() {
+        let toml = r#"
+[[rules]]
+command = "git"
+decision = "allow"
+[rules.args]
+positional = "commit"
+"#;
+        let config = parse_toml(toml).unwrap();
+        match &config.rules[0].matchers[0] {
+            ArgMatcher::Positional(patterns) => {
+                assert_eq!(patterns.len(), 1);
+                assert!(patterns[0].is_match("commit"));
+            }
+            _ => panic!("expected Positional"),
+        }
+    }
+
+    #[test]
+    fn config_parse_single_string_for_forbidden() {
+        let toml = r#"
+[[rules]]
+command = "git"
+decision = "allow"
+[rules.args]
+forbidden = "--force"
+"#;
+        let config = parse_toml(toml).unwrap();
+        match &config.rules[0].matchers[0] {
+            ArgMatcher::Forbidden(strings) => {
+                assert_eq!(strings, &["--force"]);
+            }
+            _ => panic!("expected Forbidden"),
+        }
+    }
+
+    #[test]
+    fn config_parse_regex_in_pattern_list() {
+        let toml = r#"
+[[rules]]
+command = "git"
+decision = "allow"
+[rules.args]
+positional = ["^(commit|push)$"]
+"#;
+        let config = parse_toml(toml).unwrap();
+        match &config.rules[0].matchers[0] {
+            ArgMatcher::Positional(patterns) => {
+                assert!(patterns[0].is_match("commit"));
+                assert!(patterns[0].is_match("push"));
+                assert!(!patterns[0].is_match("pull"));
+            }
+            _ => panic!("expected Positional"),
+        }
+    }
+
+    #[test]
+    fn config_parse_examples() {
+        let toml = r#"
+[[rules]]
+command = "git"
+decision = "allow"
+[[rules.examples]]
+command = "git commit -m 'test'"
+expected = "allow"
+[[rules.examples]]
+command = "git push --force"
+expected = "deny"
+"#;
+        let config = parse_toml(toml).unwrap();
+        assert_eq!(config.rules[0].examples.len(), 2);
+        assert_eq!(config.rules[0].examples[0].command, "git commit -m 'test'");
+        assert_eq!(config.rules[0].examples[0].expected, Decision::Allow);
+        assert_eq!(config.rules[0].examples[1].expected, Decision::Deny);
+    }
+
+    #[test]
+    fn config_parse_example_unknown_expected() {
+        let toml = r#"
+[[rules]]
+command = "git"
+decision = "allow"
+[[rules.examples]]
+command = "git status"
+expected = "maybe"
+"#;
+        assert!(parse_toml(toml).is_err());
+    }
+
+    #[test]
+    fn config_parse_wrapper_after_flags() {
+        let toml = r#"
+[[wrappers]]
+command = "nohup"
+inner_command = "after_flags"
+"#;
+        let config = parse_toml(toml).unwrap();
+        assert_eq!(config.wrappers.len(), 1);
+        assert_eq!(config.wrappers[0].command, "nohup");
+        assert!(matches!(config.wrappers[0].kind, WrapperKind::AfterFlags));
+        assert!(config.wrappers[0].positional_args.is_empty());
+    }
+
+    #[test]
+    fn config_parse_wrapper_after_delimiter() {
+        let toml = r#"
+[[wrappers]]
+command = "mise"
+inner_command = { after = "--" }
+[wrappers.args]
+positional = ["exec"]
+"#;
+        let config = parse_toml(toml).unwrap();
+        assert_eq!(config.wrappers[0].command, "mise");
+        match &config.wrappers[0].kind {
+            WrapperKind::AfterDelimiter(d) => assert_eq!(d, "--"),
+            _ => panic!("expected AfterDelimiter"),
+        }
+        assert_eq!(config.wrappers[0].positional_args, vec!["exec"]);
+    }
+
+    #[test]
+    fn config_parse_wrapper_invalid_inner_command() {
+        let toml = r#"
+[[wrappers]]
+command = "bad"
+inner_command = 42
+"#;
+        assert!(parse_toml(toml).is_err());
+    }
+
+    #[test]
+    fn config_parse_wrapper_table_missing_after() {
+        let toml = r#"
+[[wrappers]]
+command = "bad"
+inner_command = { foo = "bar" }
+"#;
+        assert!(parse_toml(toml).is_err());
+    }
+
+    #[test]
+    fn config_parse_security_custom_blocked_paths() {
+        let toml = r#"
+[security]
+blocked_paths = ["^/secret/"]
+"#;
+        let config = parse_toml(toml).unwrap();
+        // Should have defaults + the custom one
+        let patterns: Vec<&str> = config.security.blocked_paths.iter().map(|r| r.as_str()).collect();
+        assert!(patterns.contains(&"^/secret/"));
+        // Defaults still present
+        assert!(patterns.iter().any(|p| p.contains(".env")));
+    }
+
+    #[test]
+    fn config_parse_security_duplicate_not_added() {
+        let toml = r#"
+[security]
+blocked_paths = ["(^|/)\\.env($|[./])"]
+"#;
+        let config = parse_toml(toml).unwrap();
+        // Should still have exactly 10 (the default set, not 11)
+        assert_eq!(config.security.blocked_paths.len(), 10);
+    }
+
+    #[test]
+    fn config_parse_security_invalid_regex() {
+        let toml = r#"
+[security]
+blocked_paths = ["^[invalid"]
+"#;
+        assert!(parse_toml(toml).is_err());
+    }
+
+    #[test]
+    fn config_parse_invalid_toml() {
+        assert!(parse_toml("this is not valid toml {{{").is_err());
+    }
+
+    #[test]
+    fn config_parse_rule_missing_command() {
+        let toml = r#"
+[[rules]]
+decision = "allow"
+"#;
+        assert!(parse_toml(toml).is_err());
+    }
+
+    #[test]
+    fn config_parse_rule_missing_decision() {
+        let toml = r#"
+[[rules]]
+command = "cat"
+"#;
+        assert!(parse_toml(toml).is_err());
+    }
+
+    #[test]
+    fn config_parse_invalid_pattern_in_args() {
+        let toml = r#"
+[[rules]]
+command = "git"
+decision = "allow"
+[rules.args]
+positional = ["^[invalid"]
+"#;
+        assert!(parse_toml(toml).is_err());
+    }
+
+    #[test]
+    fn config_parse_non_string_in_pattern_list() {
+        let toml = r#"
+[[rules]]
+command = "git"
+decision = "allow"
+[rules.args]
+positional = [1, 2]
+"#;
+        assert!(parse_toml(toml).is_err());
+    }
+
+    #[test]
+    fn config_parse_invalid_pattern_list_type() {
+        let toml = r#"
+[[rules]]
+command = "git"
+decision = "allow"
+[rules.args]
+positional = 42
+"#;
+        assert!(parse_toml(toml).is_err());
+    }
+
+    #[test]
+    fn config_parse_non_string_in_string_list() {
+        let toml = r#"
+[[rules]]
+command = "git"
+decision = "allow"
+[rules.args]
+forbidden = [1, 2]
+"#;
+        assert!(parse_toml(toml).is_err());
+    }
+
+    #[test]
+    fn config_parse_invalid_string_list_type() {
+        let toml = r#"
+[[rules]]
+command = "git"
+decision = "allow"
+[rules.args]
+forbidden = 42
+"#;
+        assert!(parse_toml(toml).is_err());
+    }
+
+    #[test]
+    fn config_parse_invalid_command_regex() {
+        let toml = r#"
+[[rules]]
+command = "^[invalid"
+decision = "allow"
+"#;
+        assert!(parse_toml(toml).is_err());
+    }
+
+    #[test]
+    fn config_parse_rule_not_a_table() {
+        let toml = r#"
+rules = ["not a table"]
+"#;
+        // "rules" is an array but elements are strings, not tables
+        assert!(parse_toml(toml).is_err());
+    }
+
+    #[test]
+    fn config_parse_wrapper_not_a_table() {
+        let toml = r#"
+wrappers = ["not a table"]
+"#;
+        assert!(parse_toml(toml).is_err());
+    }
+
+    #[test]
+    fn config_parse_wrapper_missing_command() {
+        let toml = r#"
+[[wrappers]]
+inner_command = "after_flags"
+"#;
+        assert!(parse_toml(toml).is_err());
+    }
+
+    #[test]
+    fn config_parse_wrapper_missing_inner_command() {
+        let toml = r#"
+[[wrappers]]
+command = "nohup"
+"#;
+        assert!(parse_toml(toml).is_err());
+    }
+
+    #[test]
+    fn config_parse_combined_rules_and_wrappers() {
+        let toml = r#"
+[[rules]]
+command = "cat"
+decision = "allow"
+
+[[wrappers]]
+command = "nohup"
+inner_command = "after_flags"
+"#;
+        let config = parse_toml(toml).unwrap();
+        assert_eq!(config.rules.len(), 1);
+        assert_eq!(config.wrappers.len(), 1);
+    }
+
+    #[test]
+    fn config_parse_example_missing_command() {
+        let toml = r#"
+[[rules]]
+command = "git"
+decision = "allow"
+[[rules.examples]]
+expected = "allow"
+"#;
+        assert!(parse_toml(toml).is_err());
+    }
+
+    #[test]
+    fn config_parse_example_missing_expected() {
+        let toml = r#"
+[[rules]]
+command = "git"
+decision = "allow"
+[[rules.examples]]
+command = "git status"
+"#;
+        assert!(parse_toml(toml).is_err());
+    }
+
+    #[test]
+    fn config_parse_example_not_a_table() {
+        let toml = r#"
+[[rules]]
+command = "git"
+decision = "allow"
+examples = ["not a table"]
+"#;
+        assert!(parse_toml(toml).is_err());
     }
 }
