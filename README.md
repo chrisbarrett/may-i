@@ -6,6 +6,24 @@ hook for Claude Code to control which Bash commands require user confirmation.
 
 ## Installation
 
+### Nix (recommended)
+
+Build with the included flake:
+
+```bash
+nix build
+```
+
+The binary will be at `result/bin/may-i`.
+
+To enter a development shell with Rust tooling:
+
+```bash
+nix develop
+```
+
+### Cargo
+
 ```bash
 cargo build --release
 ```
