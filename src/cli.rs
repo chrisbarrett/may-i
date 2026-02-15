@@ -1,25 +1,63 @@
-// CLI interface — R1, R2, R3, R4
+// CLI interface — clap derive with TTY detection
 
-use std::io::Read;
+use std::io::{IsTerminal, Read};
+
+use clap::{CommandFactory, Parser, Subcommand};
 
 use may_i::config;
 use may_i::engine;
 use may_i::parser;
 use may_i::types::{Config, Decision};
 
+#[derive(Parser)]
+#[command(name = "may-i", version, about = "Shell command authorization evaluator")]
+struct Cli {
+    /// Output as JSON
+    #[arg(long, global = true)]
+    json: bool,
+
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Evaluate a shell command against the loaded config
+    Eval { command: String },
+    /// Validate config and run all embedded examples
+    Check,
+    /// Parse a shell command and print the AST
+    Parse {
+        command: Option<String>,
+        /// Read command from a file (use `-` for stdin)
+        #[arg(short = 'f', long = "file")]
+        file: Option<String>,
+    },
+}
+
 /// Main entry point for the CLI.
 pub fn run() -> Result<(), String> {
-    let args: Vec<String> = std::env::args().collect();
+    let cli = Cli::parse();
 
-    match args.get(1).map(|s| s.as_str()) {
-        Some("eval") => cmd_eval(&args[2..]),
-        Some("check") => cmd_check(),
-        Some("parse") => cmd_parse(&args[2..]),
-        _ => cmd_hook(),
+    match cli.command {
+        Some(Command::Eval { command }) => cmd_eval(&command, cli.json),
+        Some(Command::Check) => cmd_check(cli.json),
+        Some(Command::Parse { command, file }) => cmd_parse(command, file),
+        None => {
+            if std::io::stdin().is_terminal() {
+                Cli::command()
+                    .print_help()
+                    .map_err(|e| format!("Failed to print help: {e}"))?;
+                println!();
+                Ok(())
+            } else {
+                cmd_hook()
+            }
+        }
     }
 }
 
-/// R1: Hook mode — read Claude Code hook payload from stdin, evaluate, respond.
+/// Hook mode — read Claude Code hook payload from stdin, evaluate, respond.
 fn cmd_hook() -> Result<(), String> {
     let mut input = String::new();
     std::io::stdin()
@@ -61,13 +99,8 @@ fn cmd_hook() -> Result<(), String> {
     Ok(())
 }
 
-/// R2: Eval subcommand — evaluate a command and print result.
-fn cmd_eval(args: &[String]) -> Result<(), String> {
-    let json_mode = args.first().is_some_and(|a| a == "--json");
-    let cmd_args = if json_mode { &args[1..] } else { args };
-
-    let command = cmd_args.first().ok_or("Usage: may-i eval [--json] '<command>'")?;
-
+/// Eval subcommand — evaluate a command and print result.
+fn cmd_eval(command: &str, json_mode: bool) -> Result<(), String> {
     let config = config::load()?;
     let result = engine::evaluate(command, &config);
 
@@ -89,25 +122,51 @@ fn cmd_eval(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// R3: Check subcommand — validate config and run examples.
-fn cmd_check() -> Result<(), String> {
+/// Check subcommand — validate config and run examples.
+fn cmd_check(json_mode: bool) -> Result<(), String> {
     let config = config::load()?;
     let results = check_examples(&config);
 
     let mut passed = 0;
     let mut failed = 0;
 
-    for r in &results {
-        if r.passed {
-            passed += 1;
-            println!("  PASS: {} → {}", r.command, r.actual);
-        } else {
-            failed += 1;
-            println!("  FAIL: {} → {} (expected {})", r.command, r.actual, r.expected);
-        }
-    }
+    if json_mode {
+        let json_results: Vec<serde_json::Value> = results
+            .iter()
+            .map(|r| {
+                if r.passed {
+                    passed += 1;
+                } else {
+                    failed += 1;
+                }
+                serde_json::json!({
+                    "command": r.command,
+                    "expected": r.expected.to_string(),
+                    "actual": r.actual.to_string(),
+                    "passed": r.passed
+                })
+            })
+            .collect();
 
-    println!("\n{passed} passed, {failed} failed");
+        let output = serde_json::json!({
+            "passed": passed,
+            "failed": failed,
+            "results": json_results
+        });
+        println!("{}", serde_json::to_string(&output).unwrap());
+    } else {
+        for r in &results {
+            if r.passed {
+                passed += 1;
+                println!("  PASS: {} → {}", r.command, r.actual);
+            } else {
+                failed += 1;
+                println!("  FAIL: {} → {} (expected {})", r.command, r.actual, r.expected);
+            }
+        }
+
+        println!("\n{passed} passed, {failed} failed");
+    }
 
     if failed > 0 {
         Err(format!("{failed} example(s) failed"))
@@ -117,13 +176,8 @@ fn cmd_check() -> Result<(), String> {
 }
 
 /// Parse subcommand — parse a shell command and print the AST.
-///
-/// Usage:
-///   may-i parse '<command>'   — parse the given string
-///   may-i parse -f <file>     — parse the contents of a file (use `-` for stdin)
-fn cmd_parse(args: &[String]) -> Result<(), String> {
-    let input = if args.first().is_some_and(|a| a == "-f") {
-        let path = args.get(1).ok_or("Usage: may-i parse -f <file>")?;
+fn cmd_parse(command: Option<String>, file: Option<String>) -> Result<(), String> {
+    let input = if let Some(path) = file {
         if path == "-" {
             let mut buf = String::new();
             std::io::stdin()
@@ -131,13 +185,13 @@ fn cmd_parse(args: &[String]) -> Result<(), String> {
                 .map_err(|e| format!("Failed to read stdin: {e}"))?;
             buf
         } else {
-            std::fs::read_to_string(path)
+            std::fs::read_to_string(&path)
                 .map_err(|e| format!("Failed to read {path}: {e}"))?
         }
+    } else if let Some(cmd) = command {
+        cmd
     } else {
-        args.first()
-            .ok_or("Usage: may-i parse '<command>' or may-i parse -f <file>")?
-            .clone()
+        return Err("Usage: may-i parse '<command>' or may-i parse -f <file>".to_string());
     };
 
     let ast = parser::parse(&input);
