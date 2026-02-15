@@ -68,13 +68,13 @@ fn cmd_hook() -> Result<(), String> {
     let payload: serde_json::Value =
         serde_json::from_str(&input).map_err(|e| format!("Invalid JSON: {e}"))?;
 
-    // If type is not "Bash", exit silently
-    let tool_type = payload
-        .get("type")
+    // If tool is not "Bash", exit silently (allow the call)
+    let tool_name = payload
+        .get("tool_name")
         .and_then(|v| v.as_str())
         .unwrap_or("");
 
-    if tool_type != "Bash" {
+    if tool_name != "Bash" {
         return Ok(());
     }
 
