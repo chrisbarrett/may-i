@@ -601,12 +601,54 @@ impl Lexer {
                 }
             }
             RedirectionKind::Heredoc | RedirectionKind::HeredocStrip => {
-                // Read delimiter word, then heredoc body until delimiter on its own line
                 self.skip_whitespace();
-                let _delim = self.read_plain_word_text();
-                // For simplicity, treat heredoc body as empty in tokenizer
-                // (full heredoc parsing requires multi-line lookahead)
-                RedirectionTarget::Heredoc(String::new())
+                let strip = matches!(kind, RedirectionKind::HeredocStrip);
+                let delim = self.read_heredoc_delimiter();
+
+                // Scan forward line-by-line to collect the heredoc body
+                // Move past the current line (skip to the newline after the delimiter word)
+                while let Some(ch) = self.peek() {
+                    self.advance();
+                    if ch == '\n' {
+                        break;
+                    }
+                }
+
+                let mut body = String::new();
+                loop {
+                    if self.peek().is_none() {
+                        break; // EOF before delimiter — graceful degradation
+                    }
+                    // Read one line
+                    let mut line = String::new();
+                    while let Some(ch) = self.peek() {
+                        self.advance();
+                        if ch == '\n' {
+                            break;
+                        }
+                        line.push(ch);
+                    }
+
+                    // Check if this line is the delimiter
+                    let compare = if strip {
+                        line.trim_start_matches('\t').to_string()
+                    } else {
+                        line.clone()
+                    };
+                    if compare == delim {
+                        break;
+                    }
+
+                    // Apply tab-stripping for <<- to the body lines too
+                    if strip {
+                        body.push_str(line.trim_start_matches('\t'));
+                    } else {
+                        body.push_str(&line);
+                    }
+                    body.push('\n');
+                }
+
+                RedirectionTarget::Heredoc(body)
             }
             RedirectionKind::Herestring => {
                 self.skip_whitespace();
@@ -632,6 +674,30 @@ impl Lexer {
             }
         }
         s
+    }
+
+    /// Read a heredoc delimiter, handling quoted (`'EOF'`, `"EOF"`) and
+    /// backslash-escaped (`\EOF`) forms by stripping the quoting.
+    fn read_heredoc_delimiter(&mut self) -> String {
+        match self.peek() {
+            Some('\'') => {
+                self.advance();
+                let s = self.read_until_char('\'');
+                self.advance(); // skip closing quote
+                s
+            }
+            Some('"') => {
+                self.advance();
+                let s = self.read_until_char('"');
+                self.advance(); // skip closing quote
+                s
+            }
+            Some('\\') => {
+                self.advance(); // skip leading backslash
+                self.read_plain_word_text()
+            }
+            _ => self.read_plain_word_text(),
+        }
     }
 
     fn read_word_value(&mut self) -> Word {
@@ -2952,6 +3018,138 @@ mod tests {
             Command::Simple(sc) => {
                 assert_eq!(sc.redirections.len(), 1);
                 assert_eq!(sc.redirections[0].kind, RedirectionKind::HeredocStrip);
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn test_heredoc_body_basic() {
+        let cmd = parse("cat <<EOF\nhello\nworld\nEOF");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.redirections.len(), 1);
+                match &sc.redirections[0].target {
+                    RedirectionTarget::Heredoc(body) => {
+                        assert_eq!(body, "hello\nworld\n");
+                    }
+                    _ => panic!("Expected Heredoc target"),
+                }
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn test_heredoc_body_strip_tabs() {
+        let cmd = parse("cat <<-EOF\n\t\thello\n\t\tworld\n\t\tEOF");
+        match &cmd {
+            Command::Simple(sc) => {
+                match &sc.redirections[0].target {
+                    RedirectionTarget::Heredoc(body) => {
+                        assert_eq!(body, "hello\nworld\n");
+                    }
+                    _ => panic!("Expected Heredoc target"),
+                }
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn test_heredoc_single_quoted_delimiter() {
+        let cmd = parse("cat <<'EOF'\nhello\nEOF");
+        match &cmd {
+            Command::Simple(sc) => {
+                match &sc.redirections[0].target {
+                    RedirectionTarget::Heredoc(body) => {
+                        assert_eq!(body, "hello\n");
+                    }
+                    _ => panic!("Expected Heredoc target"),
+                }
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn test_heredoc_double_quoted_delimiter() {
+        let cmd = parse("cat <<\"EOF\"\nhello\nEOF");
+        match &cmd {
+            Command::Simple(sc) => {
+                match &sc.redirections[0].target {
+                    RedirectionTarget::Heredoc(body) => {
+                        assert_eq!(body, "hello\n");
+                    }
+                    _ => panic!("Expected Heredoc target"),
+                }
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn test_heredoc_backslash_escaped_delimiter() {
+        let cmd = parse("cat <<\\EOF\nhello\nEOF");
+        match &cmd {
+            Command::Simple(sc) => {
+                match &sc.redirections[0].target {
+                    RedirectionTarget::Heredoc(body) => {
+                        assert_eq!(body, "hello\n");
+                    }
+                    _ => panic!("Expected Heredoc target"),
+                }
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn test_heredoc_empty_body() {
+        let cmd = parse("cat <<EOF\nEOF");
+        match &cmd {
+            Command::Simple(sc) => {
+                match &sc.redirections[0].target {
+                    RedirectionTarget::Heredoc(body) => {
+                        assert_eq!(body, "");
+                    }
+                    _ => panic!("Expected Heredoc target"),
+                }
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn test_heredoc_unterminated() {
+        let cmd = parse("cat <<EOF\nhello\nworld");
+        match &cmd {
+            Command::Simple(sc) => {
+                match &sc.redirections[0].target {
+                    RedirectionTarget::Heredoc(body) => {
+                        // Graceful degradation: collects what's available
+                        assert!(body.contains("hello"));
+                        assert!(body.contains("world"));
+                    }
+                    _ => panic!("Expected Heredoc target"),
+                }
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn test_heredoc_with_command() {
+        let cmd = parse("cat <<EOF\nline\nEOF");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.command_name(), Some("cat"));
+                match &sc.redirections[0].target {
+                    RedirectionTarget::Heredoc(body) => {
+                        assert_eq!(body, "line\n");
+                    }
+                    _ => panic!("Expected Heredoc target"),
+                }
             }
             _ => panic!("Expected simple command"),
         }

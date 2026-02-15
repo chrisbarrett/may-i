@@ -267,6 +267,27 @@ mod tests {
         assert!(check_blocked_paths(cmd, &c).is_some());
     }
 
+    #[test]
+    fn blocks_ssh_path_in_heredoc() {
+        let c = test_config();
+        let cmd = "cat <<EOF\n.ssh/id_rsa\nEOF";
+        assert!(check_blocked_paths(cmd, &c).is_some());
+    }
+
+    #[test]
+    fn blocks_sensitive_in_heredoc_strip() {
+        let c = test_config();
+        let cmd = "cat <<-EOF\n\t.ssh/config\n\tEOF";
+        assert!(check_blocked_paths(cmd, &c).is_some());
+    }
+
+    #[test]
+    fn allows_safe_heredoc_content() {
+        let c = test_config();
+        let cmd = "cat <<EOF\nhello world\nEOF";
+        assert!(check_blocked_paths(cmd, &c).is_none());
+    }
+
     // ── check_blocked_paths: multiple args ───────────────────────────
 
     #[test]

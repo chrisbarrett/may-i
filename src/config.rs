@@ -70,7 +70,6 @@ fn default_config_path() -> Option<PathBuf> {
 
 /// Parse TOML config string into Config.
 pub fn parse_toml(input: &str) -> Result<Config, String> {
-    // TODO: implement full TOML parsing
     let doc: toml::Value = input.parse().map_err(|e: toml::de::Error| e.to_string())?;
 
     let mut rules = Vec::new();

@@ -33,3 +33,23 @@ evaluation falls through to default `ask`
 Never panic on untrusted input.
 
 **Verify:** `cargo-fuzz`; `proptest`
+
+## R7: `parse` subcommand
+
+`may-i parse` prints the Debug representation of the AST for a given shell
+command. Useful for debugging rules and inspecting how the parser decomposes
+input.
+
+```
+may-i parse '<command>'     # parse a string argument
+may-i parse -f <file>       # parse the contents of a file
+may-i parse -f -            # parse from stdin
+```
+
+**Given** a valid shell command **Then** print the full AST to stdout using
+Rust's `{:#?}` formatter
+
+**Given** malformed input **Then** print the partial AST (same graceful
+degradation as R6)
+
+**Verify:** `cargo run -- parse 'echo hello && ls'`

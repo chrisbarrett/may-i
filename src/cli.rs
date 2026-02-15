@@ -4,6 +4,7 @@ use std::io::Read;
 
 use crate::config;
 use crate::engine;
+use crate::parser;
 use crate::types::{Config, Decision};
 
 /// Main entry point for the CLI.
@@ -13,6 +14,7 @@ pub fn run() -> Result<(), String> {
     match args.get(1).map(|s| s.as_str()) {
         Some("eval") => cmd_eval(&args[2..]),
         Some("check") => cmd_check(),
+        Some("parse") => cmd_parse(&args[2..]),
         _ => cmd_hook(),
     }
 }
@@ -112,6 +114,35 @@ fn cmd_check() -> Result<(), String> {
     } else {
         Ok(())
     }
+}
+
+/// Parse subcommand — parse a shell command and print the AST.
+///
+/// Usage:
+///   may-i parse '<command>'   — parse the given string
+///   may-i parse -f <file>     — parse the contents of a file (use `-` for stdin)
+fn cmd_parse(args: &[String]) -> Result<(), String> {
+    let input = if args.first().is_some_and(|a| a == "-f") {
+        let path = args.get(1).ok_or("Usage: may-i parse -f <file>")?;
+        if path == "-" {
+            let mut buf = String::new();
+            std::io::stdin()
+                .read_to_string(&mut buf)
+                .map_err(|e| format!("Failed to read stdin: {e}"))?;
+            buf
+        } else {
+            std::fs::read_to_string(path)
+                .map_err(|e| format!("Failed to read {path}: {e}"))?
+        }
+    } else {
+        args.first()
+            .ok_or("Usage: may-i parse '<command>' or may-i parse -f <file>")?
+            .clone()
+    };
+
+    let ast = parser::parse(&input);
+    println!("{ast:#?}");
+    Ok(())
 }
 
 /// Run all embedded examples from config rules and compare against expected decisions.
