@@ -464,7 +464,7 @@ mod complex {
     #[test]
     fn nested_if_in_while() {
         insta::assert_debug_snapshot!(parse(
-            "while true; do if test -f done; then break; fi; done"
+            "while true; do if test -f marker; then break; fi; done"
         ));
     }
 

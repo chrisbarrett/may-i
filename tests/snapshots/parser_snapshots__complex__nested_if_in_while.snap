@@ -1,6 +1,6 @@
 ---
 source: tests/parser_snapshots.rs
-expression: "parse(\"while true; do if test -f done; then break; fi; done\")"
+expression: "parse(\"while true; do if test -f marker; then break; fi; done\")"
 ---
 While {
     condition: Simple(
@@ -37,6 +37,13 @@ While {
                             ),
                         ],
                     },
+                    Word {
+                        parts: [
+                            Literal(
+                                "marker",
+                            ),
+                        ],
+                    },
                 ],
                 redirections: [],
             },
@@ -44,7 +51,15 @@ While {
         then_branch: Simple(
             SimpleCommand {
                 assignments: [],
-                words: [],
+                words: [
+                    Word {
+                        parts: [
+                            Literal(
+                                "break",
+                            ),
+                        ],
+                    },
+                ],
                 redirections: [],
             },
         ),

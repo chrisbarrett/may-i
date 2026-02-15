@@ -16,7 +16,7 @@ Simple(
             Word {
                 parts: [
                     AnsiCQuoted(
-                        "hello\\nworld",
+                        "hello\nworld",
                     ),
                 ],
             },

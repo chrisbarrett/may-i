@@ -39,6 +39,10 @@ pub enum Command {
         name: String,
         body: Box<Command>,
     },
+    Redirected {
+        command: Box<Command>,
+        redirections: Vec<Redirection>,
+    },
     Assignment(Assignment),
 }
 
@@ -255,6 +259,9 @@ fn collect_simple_commands<'a>(cmd: &'a Command, out: &mut Vec<&'a SimpleCommand
         Command::FunctionDef { body, .. } => {
             collect_simple_commands(body, out);
         }
+        Command::Redirected { command, .. } => {
+            collect_simple_commands(command, out);
+        }
         Command::Assignment(_) => {}
     }
 }
@@ -333,6 +340,16 @@ fn collect_all_words<'a>(cmd: &'a Command, out: &mut Vec<&'a Word>) {
         }
         Command::FunctionDef { body, .. } => {
             collect_all_words(body, out);
+        }
+        Command::Redirected { command, redirections } => {
+            collect_all_words(command, out);
+            for r in redirections {
+                match &r.target {
+                    RedirectionTarget::File(w) => out.push(w),
+                    RedirectionTarget::Heredoc(_) => {}
+                    RedirectionTarget::Fd(_) => {}
+                }
+            }
         }
         Command::Assignment(a) => {
             out.push(&a.value);
@@ -871,7 +888,7 @@ impl Lexer {
             Some('\'') => {
                 // ANSI-C quoting $'...'
                 self.advance(); // skip '
-                let s = self.read_until_char('\'');
+                let s = self.read_ansi_c_string();
                 self.advance(); // skip closing '
                 Some(WordPart::AnsiCQuoted(s))
             }
@@ -910,6 +927,128 @@ impl Lexer {
             }
             s.push(ch);
             self.advance();
+        }
+        s
+    }
+
+    fn read_ansi_c_string(&mut self) -> String {
+        let mut s = String::new();
+        while let Some(ch) = self.peek() {
+            if ch == '\'' {
+                break;
+            }
+            self.advance();
+            if ch == '\\' {
+                match self.peek() {
+                    None => s.push('\\'),
+                    Some(esc) => {
+                        self.advance();
+                        match esc {
+                            '\\' => s.push('\\'),
+                            'n' => s.push('\n'),
+                            't' => s.push('\t'),
+                            'r' => s.push('\r'),
+                            'a' => s.push('\x07'),
+                            'b' => s.push('\x08'),
+                            'e' | 'E' => s.push('\x1B'),
+                            'f' => s.push('\x0C'),
+                            'v' => s.push('\x0B'),
+                            '\'' => s.push('\''),
+                            '"' => s.push('"'),
+                            '0' => {
+                                // Octal: \0NNN (up to 3 octal digits)
+                                let mut oct = String::new();
+                                for _ in 0..3 {
+                                    match self.peek() {
+                                        Some(c) if c.is_ascii_digit() && c < '8' => {
+                                            oct.push(c);
+                                            self.advance();
+                                        }
+                                        _ => break,
+                                    }
+                                }
+                                if oct.is_empty() {
+                                    s.push('\0');
+                                } else if let Ok(val) = u32::from_str_radix(&oct, 8)
+                                    && let Some(c) = char::from_u32(val)
+                                {
+                                    s.push(c);
+                                }
+                            }
+                            'x' => {
+                                // Hex: \xHH (up to 2 hex digits)
+                                let mut hex = String::new();
+                                for _ in 0..2 {
+                                    match self.peek() {
+                                        Some(c) if c.is_ascii_hexdigit() => {
+                                            hex.push(c);
+                                            self.advance();
+                                        }
+                                        _ => break,
+                                    }
+                                }
+                                if let Ok(val) = u32::from_str_radix(&hex, 16)
+                                    && let Some(c) = char::from_u32(val)
+                                {
+                                    s.push(c);
+                                }
+                            }
+                            'u' => {
+                                // Unicode: \uHHHH (up to 4 hex digits)
+                                let mut hex = String::new();
+                                for _ in 0..4 {
+                                    match self.peek() {
+                                        Some(c) if c.is_ascii_hexdigit() => {
+                                            hex.push(c);
+                                            self.advance();
+                                        }
+                                        _ => break,
+                                    }
+                                }
+                                if let Ok(val) = u32::from_str_radix(&hex, 16)
+                                    && let Some(c) = char::from_u32(val)
+                                {
+                                    s.push(c);
+                                }
+                            }
+                            'U' => {
+                                // Unicode: \UHHHHHHHH (up to 8 hex digits)
+                                let mut hex = String::new();
+                                for _ in 0..8 {
+                                    match self.peek() {
+                                        Some(c) if c.is_ascii_hexdigit() => {
+                                            hex.push(c);
+                                            self.advance();
+                                        }
+                                        _ => break,
+                                    }
+                                }
+                                if let Ok(val) = u32::from_str_radix(&hex, 16)
+                                    && let Some(c) = char::from_u32(val)
+                                {
+                                    s.push(c);
+                                }
+                            }
+                            'c' => {
+                                // Control character: \cX
+                                if let Some(ctrl) = self.peek() {
+                                    self.advance();
+                                    let ctrl_val = (ctrl as u32) & 0x1F;
+                                    if let Some(c) = char::from_u32(ctrl_val) {
+                                        s.push(c);
+                                    }
+                                }
+                            }
+                            other => {
+                                // Unknown escape: literal character (bash behavior)
+                                s.push(other);
+                            }
+                        }
+                    }
+                }
+            } else {
+                s.push(ch);
+            }
         }
         s
     }
@@ -1257,7 +1396,7 @@ impl Parser {
     }
 
     fn parse_command(&mut self) -> Command {
-        match self.peek().clone() {
+        let cmd = match self.peek().clone() {
             Token::If => self.parse_if(),
             Token::For => self.parse_for(),
             Token::While => self.parse_while(),
@@ -1266,7 +1405,24 @@ impl Parser {
             Token::Function => self.parse_function_def(),
             Token::LParen => self.parse_subshell(),
             Token::LBrace => self.parse_brace_group(),
-            _ => self.parse_simple_command(),
+            _ => return self.parse_simple_command(),
+        };
+        self.maybe_wrap_redirections(cmd)
+    }
+
+    fn maybe_wrap_redirections(&mut self, cmd: Command) -> Command {
+        let mut redirections = Vec::new();
+        while let Token::Redirect(ref r) = self.peek().clone() {
+            redirections.push(r.clone());
+            self.advance();
+        }
+        if redirections.is_empty() {
+            cmd
+        } else {
+            Command::Redirected {
+                command: Box::new(cmd),
+                redirections,
+            }
         }
     }
 
@@ -1288,6 +1444,25 @@ impl Parser {
                     let word = w.clone();
                     self.advance();
                     words.push(word);
+
+                    // Check for POSIX function definition: name() { body }
+                    if words.len() == 1
+                        && assignments.is_empty()
+                        && matches!(self.peek(), Token::LParen)
+                    {
+                        // Peek further for RParen
+                        if self.tokens.get(self.pos + 1).is_some_and(|t| matches!(t, Token::RParen)) {
+                            let name = words.pop().unwrap().to_str();
+                            self.advance(); // skip LParen
+                            self.advance(); // skip RParen
+                            self.skip_newlines();
+                            let body = self.parse_command();
+                            return Command::FunctionDef {
+                                name,
+                                body: Box::new(body),
+                            };
+                        }
+                    }
                 }
                 Token::Redirect(ref r) => {
                     let redir = r.clone();
@@ -2277,7 +2452,7 @@ mod tests {
         match &cmd {
             Command::Simple(sc) => {
                 assert_eq!(sc.words.len(), 2);
-                assert!(sc.words[1].parts.iter().any(|p| matches!(p, WordPart::AnsiCQuoted(s) if s == "hello\\nworld")));
+                assert!(sc.words[1].parts.iter().any(|p| matches!(p, WordPart::AnsiCQuoted(s) if s == "hello\nworld")));
             }
             _ => panic!("Expected simple command"),
         }

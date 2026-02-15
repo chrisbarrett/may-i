@@ -16,7 +16,7 @@ Simple(
             Word {
                 parts: [
                     AnsiCQuoted(
-                        "col1\\tcol2",
+                        "col1\tcol2",
                     ),
                 ],
             },
