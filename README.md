@@ -1,79 +1,28 @@
 # may-i
 
-A Rust CLI that evaluates shell commands against user-configurable authorization
-rules, returning `allow`, `deny`, or `ask` decisions. Designed as a pre-tool-use
-hook for Claude Code to control which Bash commands require user confirmation.
+A tool allowing you to declare rich, realiable Bash tool authorization rules in
+Claude Code, improving safety while nagging you less with permission prompts.
+It's a nice middle-ground between "nag me for everything" and "dangerously wipe
+my boot partition". ᕕ( ᐛ )ᕗ
+
+`may-i` is configured using a TOML file at `~/.config/may-i/config.toml`. Edits
+to this file take effect immediately--no need to re-launch Claude Code to pick
+up changes. 😇
+
+Permissions checks use a fully-featured Bash parser, making your rules much more
+accurate than naive globbing. It can handle all the conditionals, complex
+redirections, and other shell features that your agents might use.
 
 ## Installation
 
-### Nix (recommended)
+Build this program and add it to your PATH:
 
-Build with the included flake:
+1. you can do it with Cargo, or
+2. use the flake as an input; the derivation to use will be at
+   `packages.default.${system}`.
 
-```bash
-nix build
-```
-
-The binary will be at `result/bin/may-i`.
-
-To enter a development shell with Rust tooling:
-
-```bash
-nix develop
-```
-
-### Cargo
-
-```bash
-cargo build --release
-```
-
-The binary will be at `target/release/may-i`.
-
-## Usage
-
-### Hook Mode (Default)
-
-Reads a Claude Code hook JSON payload from stdin, extracts the command, evaluates
-it, and writes a hook response to stdout. Non-Bash tool types are silently passed
-through.
-
-```bash
-echo '{"type":"Bash","tool_input":{"command":"ls -la"}}' | may-i
-# Output: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","permissionDecisionReason":"Read-only filesystem inspection"}}
-```
-
-### Direct Evaluation
-
-Evaluate a command directly and print the result.
-
-```bash
-may-i eval 'cat README.md'
-# Output: allow: Read-only file operations
-
-may-i eval 'rm -rf /'
-# Output: deny: Recursive deletion from root is dangerous
-
-may-i eval --json 'git push'
-# Output: {"decision":"ask","reason":"No matching rule"}
-```
-
-### Config Validation
-
-Validate the config file and run all embedded examples.
-
-```bash
-may-i check
-# Output:
-#   PASS: curl -I https://example.com → allow
-#   PASS: curl --head https://example.com → allow
-#
-# 2 passed, 0 failed
-```
-
-## Claude Code Integration
-
-Add to `.claude/settings.json` in your project:
+Then, tell Claude Code to use `may-i` as a bash tool pre-authorizer in your
+`.claude/settings.json`:
 
 ```json
 {
@@ -88,20 +37,39 @@ Add to `.claude/settings.json` in your project:
 }
 ```
 
-Now Claude Code will consult may-i before executing Bash commands. Commands that
-return `allow` run immediately, `deny` blocks execution, and `ask` prompts the
-user.
+`may-i` will create a starter config for you at
+`~/.config/may-i/config.toml`--customise it to your heart's content.
+
+## Direct Evaluation
+
+You can use `may-i eval "${command}"` to test out the authorier.
+
+```bash
+may-i eval 'cat README.md'
+# Output: allow: Read-only file operations
+
+may-i eval 'rm -rf /'
+# Output: deny: Recursive deletion from root is dangerous
+
+may-i eval --json 'git push'
+# Output: {"decision":"ask","reason":"No matching rule"}
+```
+
+## Validation & Testing
+
+Use `may-i check` to test whether your config is valid. Any inline
+examples+expectations you wrote will also be checked.
+
+```bash
+may-i check
+# Output:
+#   PASS: curl -I https://example.com → allow
+#   PASS: curl --head https://example.com → allow
+#
+# 2 passed, 0 failed
+```
 
 ## Configuration
-
-Config location (in priority order):
-
-1. `$MAYI_CONFIG`
-2. `$XDG_CONFIG_HOME/may-i/config.toml`
-3. `~/.config/may-i/config.toml`
-
-A starter config is created automatically on first run. The config has three
-sections:
 
 ### Rules
 
@@ -160,8 +128,9 @@ forbidden = ["-d", "--data", "-F", "--form"]
 
 ### Wrappers
 
-Wrappers recognize commands that wrap other commands and extract the inner
-command for evaluation. Recursion is capped at depth 5.
+You can teach `may-i` to treat certain commands as _wrappers_; this is
+particularly useful for commands like `time`, `mise`, etc. Validation is
+performed against the inner command.
 
 ```toml
 [[wrappers]]
@@ -173,84 +142,4 @@ command = "mise"
 inner_command = { after = "--" }
 [wrappers.args]
 positional = ["exec"]
-```
-
-### Security
-
-Regex patterns for blocked credential paths. User config can only add to these
-defaults, never replace them.
-
-```toml
-[security]
-blocked_paths = [
-  '(^|/)\\.env($|[./])',
-  '(^|/)\\.ssh/',
-  '(^|/)\\.aws/',
-  # ... more patterns
-]
-```
-
-## How Evaluation Works
-
-1. **Security filters** — Deny on credential/sensitive file access (`.env`,
-   `.ssh/`, `.aws/`, etc.)
-2. **Dynamic shell detection** — Command substitution, parameter expansion, etc.
-   escalate to `ask` (can't be statically analyzed)
-3. **AST decomposition** — Extract all simple commands from compound structures
-   (pipelines, `&&`/`||`, subshells, etc.)
-4. **Per-command evaluation** — Check wrappers, then deny rules, then
-   first-match
-5. **Aggregate decision** — Most restrictive wins (`deny` > `ask` > `allow`)
-6. **Default fallback** — No matching rule defaults to `ask`
-
-## Starter Config Defaults
-
-**Denied operations:**
-
-- `rm` with `-r`/`--recursive` and `/`
-- Filesystem tools: `mkfs`, `dd`, `fdisk`, `parted`, `gdisk`
-- System control: `shutdown`, `reboot`, `halt`, `poweroff`, `init`
-- Firewall: `iptables`, `nft`, `pfctl`
-
-**Allowed operations:**
-
-- File reading: `cat`, `head`, `tail`, `less`, `more`, `wc`, `sort`, `uniq`
-- Filesystem inspection: `ls`, `tree`, `file`, `stat`, `du`, `df`
-- Text search: `grep`, `rg`, `ag`, `ack`
-- File lookup: `locate`, `which`, `whereis`, `type`
-- Shell builtins: `echo`, `printf`, `true`, `false`, `test`, `[`
-- System info: `date`, `hostname`, `uname`, `whoami`, `id`, `printenv`, `env`
-- Monitoring: `ps`, `top`, `uptime`, `free`, `vmstat`, `iostat`
-- Path utilities: `basename`, `dirname`, `realpath`, `readlink`, `pwd`
-
-Commands removed from allow list for safety:
-
-- `tee` — writes files
-- `sed`, `awk` — can modify files in-place
-
-## Technical Details
-
-- **Shell parser** — Recursive descent parser producing typed AST supporting
-  pipelines, compound commands, redirections, quoting, parameter expansion,
-  command substitution, process substitution, brace expansion, globs, heredocs,
-  etc.
-- **Flag expansion** — `-abc` is expanded to `-a -b -c` before matching
-- **Security anchoring** — `blocked_path` patterns are anchored as path
-  components to avoid false positives
-- **Performance** — Designed for <50ms p99 latency in hook mode
-- **Input limits** — Handles up to 64KB stdin input
-- **Reliability** — No panics on any input
-
-## Project Structure
-
-```
-src/
-  main.rs         — entry point
-  cli.rs          — CLI interface (hook mode, eval, check)
-  config.rs       — TOML config loading and parsing
-  engine.rs       — rule evaluation engine
-  parser.rs       — recursive descent shell parser
-  security.rs     — security filters (blocked paths, dynamic parts)
-  types.rs        — shared domain types
-specs/            — specification documents
 ```
