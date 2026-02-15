@@ -1,0 +1,32 @@
+---
+source: tests/parser_snapshots.rs
+expression: "parse(\"echo hello\\\\ world\")"
+---
+Simple(
+    SimpleCommand {
+        assignments: [],
+        words: [
+            Word {
+                parts: [
+                    Literal(
+                        "echo",
+                    ),
+                ],
+            },
+            Word {
+                parts: [
+                    Literal(
+                        "hello",
+                    ),
+                    Literal(
+                        " ",
+                    ),
+                    Literal(
+                        "world",
+                    ),
+                ],
+            },
+        ],
+        redirections: [],
+    },
+)

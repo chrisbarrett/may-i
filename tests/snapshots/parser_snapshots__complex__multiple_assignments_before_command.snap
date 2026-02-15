@@ -1,0 +1,57 @@
+---
+source: tests/parser_snapshots.rs
+expression: "parse(\"A=1 B=2 C=3 cmd arg\")"
+---
+Simple(
+    SimpleCommand {
+        assignments: [
+            Assignment {
+                name: "A",
+                value: Word {
+                    parts: [
+                        Literal(
+                            "1",
+                        ),
+                    ],
+                },
+            },
+            Assignment {
+                name: "B",
+                value: Word {
+                    parts: [
+                        Literal(
+                            "2",
+                        ),
+                    ],
+                },
+            },
+            Assignment {
+                name: "C",
+                value: Word {
+                    parts: [
+                        Literal(
+                            "3",
+                        ),
+                    ],
+                },
+            },
+        ],
+        words: [
+            Word {
+                parts: [
+                    Literal(
+                        "cmd",
+                    ),
+                ],
+            },
+            Word {
+                parts: [
+                    Literal(
+                        "arg",
+                    ),
+                ],
+            },
+        ],
+        redirections: [],
+    },
+)

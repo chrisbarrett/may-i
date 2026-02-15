@@ -1,0 +1,87 @@
+---
+source: tests/parser_snapshots.rs
+expression: "parse(\"case $x in a) echo a;;& b) echo b;; esac\")"
+---
+Case {
+    word: Word {
+        parts: [
+            Parameter(
+                "x",
+            ),
+        ],
+    },
+    arms: [
+        CaseArm {
+            patterns: [
+                Word {
+                    parts: [
+                        Literal(
+                            "a",
+                        ),
+                    ],
+                },
+            ],
+            body: Some(
+                Simple(
+                    SimpleCommand {
+                        assignments: [],
+                        words: [
+                            Word {
+                                parts: [
+                                    Literal(
+                                        "echo",
+                                    ),
+                                ],
+                            },
+                            Word {
+                                parts: [
+                                    Literal(
+                                        "a",
+                                    ),
+                                ],
+                            },
+                        ],
+                        redirections: [],
+                    },
+                ),
+            ),
+            terminator: Continue,
+        },
+        CaseArm {
+            patterns: [
+                Word {
+                    parts: [
+                        Literal(
+                            "b",
+                        ),
+                    ],
+                },
+            ],
+            body: Some(
+                Simple(
+                    SimpleCommand {
+                        assignments: [],
+                        words: [
+                            Word {
+                                parts: [
+                                    Literal(
+                                        "echo",
+                                    ),
+                                ],
+                            },
+                            Word {
+                                parts: [
+                                    Literal(
+                                        "b",
+                                    ),
+                                ],
+                            },
+                        ],
+                        redirections: [],
+                    },
+                ),
+            ),
+            terminator: Break,
+        },
+    ],
+}

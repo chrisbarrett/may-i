@@ -1,0 +1,40 @@
+---
+source: tests/parser_snapshots.rs
+expression: "parse(\"echo hello >| out.txt\")"
+---
+Simple(
+    SimpleCommand {
+        assignments: [],
+        words: [
+            Word {
+                parts: [
+                    Literal(
+                        "echo",
+                    ),
+                ],
+            },
+            Word {
+                parts: [
+                    Literal(
+                        "hello",
+                    ),
+                ],
+            },
+        ],
+        redirections: [
+            Redirection {
+                fd: None,
+                kind: Clobber,
+                target: File(
+                    Word {
+                        parts: [
+                            Literal(
+                                "out.txt",
+                            ),
+                        ],
+                    },
+                ),
+            },
+        ],
+    },
+)

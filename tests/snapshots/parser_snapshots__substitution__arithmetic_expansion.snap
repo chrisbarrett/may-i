@@ -1,0 +1,26 @@
+---
+source: tests/parser_snapshots.rs
+expression: "parse(\"echo $((1 + 2))\")"
+---
+Simple(
+    SimpleCommand {
+        assignments: [],
+        words: [
+            Word {
+                parts: [
+                    Literal(
+                        "echo",
+                    ),
+                ],
+            },
+            Word {
+                parts: [
+                    Arithmetic(
+                        "1 + 2",
+                    ),
+                ],
+            },
+        ],
+        redirections: [],
+    },
+)

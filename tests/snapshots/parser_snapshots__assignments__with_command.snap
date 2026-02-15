@@ -1,0 +1,37 @@
+---
+source: tests/parser_snapshots.rs
+expression: "parse(\"FOO=bar cmd arg\")"
+---
+Simple(
+    SimpleCommand {
+        assignments: [
+            Assignment {
+                name: "FOO",
+                value: Word {
+                    parts: [
+                        Literal(
+                            "bar",
+                        ),
+                    ],
+                },
+            },
+        ],
+        words: [
+            Word {
+                parts: [
+                    Literal(
+                        "cmd",
+                    ),
+                ],
+            },
+            Word {
+                parts: [
+                    Literal(
+                        "arg",
+                    ),
+                ],
+            },
+        ],
+        redirections: [],
+    },
+)

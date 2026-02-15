@@ -1,0 +1,19 @@
+---
+source: tests/parser_snapshots.rs
+expression: "parse(\"f() { local x=1; echo $x > /dev/null; }\")"
+---
+Simple(
+    SimpleCommand {
+        assignments: [],
+        words: [
+            Word {
+                parts: [
+                    Literal(
+                        "f",
+                    ),
+                ],
+            },
+        ],
+        redirections: [],
+    },
+)

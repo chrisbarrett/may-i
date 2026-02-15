@@ -1,0 +1,26 @@
+---
+source: tests/parser_snapshots.rs
+expression: "parse(\"echo $(echo $(whoami))\")"
+---
+Simple(
+    SimpleCommand {
+        assignments: [],
+        words: [
+            Word {
+                parts: [
+                    Literal(
+                        "echo",
+                    ),
+                ],
+            },
+            Word {
+                parts: [
+                    CommandSubstitution(
+                        "echo $(whoami)",
+                    ),
+                ],
+            },
+        ],
+        redirections: [],
+    },
+)

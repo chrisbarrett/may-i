@@ -1,0 +1,50 @@
+---
+source: tests/parser_snapshots.rs
+expression: "parse(\"while read line; do echo $line; done\")"
+---
+While {
+    condition: Simple(
+        SimpleCommand {
+            assignments: [],
+            words: [
+                Word {
+                    parts: [
+                        Literal(
+                            "read",
+                        ),
+                    ],
+                },
+                Word {
+                    parts: [
+                        Literal(
+                            "line",
+                        ),
+                    ],
+                },
+            ],
+            redirections: [],
+        },
+    ),
+    body: Simple(
+        SimpleCommand {
+            assignments: [],
+            words: [
+                Word {
+                    parts: [
+                        Literal(
+                            "echo",
+                        ),
+                    ],
+                },
+                Word {
+                    parts: [
+                        Parameter(
+                            "line",
+                        ),
+                    ],
+                },
+            ],
+            redirections: [],
+        },
+    ),
+}

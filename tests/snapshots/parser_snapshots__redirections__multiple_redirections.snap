@@ -1,0 +1,42 @@
+---
+source: tests/parser_snapshots.rs
+expression: "parse(\"cmd > out.txt 2>&1\")"
+---
+Simple(
+    SimpleCommand {
+        assignments: [],
+        words: [
+            Word {
+                parts: [
+                    Literal(
+                        "cmd",
+                    ),
+                ],
+            },
+        ],
+        redirections: [
+            Redirection {
+                fd: None,
+                kind: Output,
+                target: File(
+                    Word {
+                        parts: [
+                            Literal(
+                                "out.txt",
+                            ),
+                        ],
+                    },
+                ),
+            },
+            Redirection {
+                fd: Some(
+                    2,
+                ),
+                kind: DupOutput,
+                target: Fd(
+                    1,
+                ),
+            },
+        ],
+    },
+)

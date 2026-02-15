@@ -1,0 +1,19 @@
+---
+source: tests/parser_snapshots.rs
+expression: "parse(\"greet() { echo hello; }\")"
+---
+Simple(
+    SimpleCommand {
+        assignments: [],
+        words: [
+            Word {
+                parts: [
+                    Literal(
+                        "greet",
+                    ),
+                ],
+            },
+        ],
+        redirections: [],
+    },
+)

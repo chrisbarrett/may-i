@@ -1,0 +1,16 @@
+---
+source: tests/parser_snapshots.rs
+expression: "parse(\"FOO=bar\")"
+---
+Assignment(
+    Assignment {
+        name: "FOO",
+        value: Word {
+            parts: [
+                Literal(
+                    "bar",
+                ),
+            ],
+        },
+    },
+)

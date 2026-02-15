@@ -2,10 +2,10 @@
 
 use std::io::Read;
 
-use crate::config;
-use crate::engine;
-use crate::parser;
-use crate::types::{Config, Decision};
+use may_i::config;
+use may_i::engine;
+use may_i::parser;
+use may_i::types::{Config, Decision};
 
 /// Main entry point for the CLI.
 pub fn run() -> Result<(), String> {

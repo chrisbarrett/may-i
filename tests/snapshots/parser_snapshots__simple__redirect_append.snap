@@ -1,0 +1,40 @@
+---
+source: tests/parser_snapshots.rs
+expression: "parse(\"echo hello >> log.txt\")"
+---
+Simple(
+    SimpleCommand {
+        assignments: [],
+        words: [
+            Word {
+                parts: [
+                    Literal(
+                        "echo",
+                    ),
+                ],
+            },
+            Word {
+                parts: [
+                    Literal(
+                        "hello",
+                    ),
+                ],
+            },
+        ],
+        redirections: [
+            Redirection {
+                fd: None,
+                kind: Append,
+                target: File(
+                    Word {
+                        parts: [
+                            Literal(
+                                "log.txt",
+                            ),
+                        ],
+                    },
+                ),
+            },
+        ],
+    },
+)
