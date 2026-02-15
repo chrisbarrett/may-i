@@ -10,18 +10,17 @@
     };
   };
 
-  outputs = { nixpkgs, flake-utils, ... }:
+  outputs = { nixpkgs, flake-utils, rust-overlay, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = nixpkgs.legacyPackages.${system};
+        overlays = [ rust-overlay.overlays.default ];
+        pkgs = import nixpkgs { inherit system overlays; };
+        rustToolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
       in
       {
         devShells.default = pkgs.mkShell {
           buildInputs = [
-            pkgs.rustc
-            pkgs.cargo
-            pkgs.clippy
-            pkgs.rustfmt
+            rustToolchain
             pkgs.prek
           ];
 
