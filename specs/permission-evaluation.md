@@ -5,14 +5,14 @@ rules, returning `allow`/`deny`/`ask` decisions. Primary consumer is Claude Code
 (pre-tool-use hook). Also exposes `eval` and `check` subcommands for standalone
 use.
 
-Config lives at `~/.config/may-i/config.toml`. Built-in defaults are compiled
+Config lives at `~/.config/may-i/config.lisp`. Built-in defaults are compiled
 into the binary; user rules prepend to (and override) defaults.
 
 ### Related specs
 
 - [CLI Interface](cli-interface.md) — R1–R5
 - [Shell Parser](shell-parser.md) — R5, R6
-- [Configuration](configuration.md) — R10, R10a, R10b, R10c
+- [Configuration](configuration.md) — R10, R10a–R10f
 - [Security Filters](security-filters.md) — R11
 
 ---
@@ -52,7 +52,7 @@ Built-in wrappers: `nohup`, `env`, `nice`, `time`, `strace` (after-flags);
 `mise exec --`, `terragrunt exec --` (after delimiter);
 `nix shell/develop --command`, `nix-shell --run` (after keyword).
 
-User-configurable via `[[wrappers]]` in config (see R10).
+User-configurable via `(wrapper ...)` in config (see R10).
 
 **Verify:** `cargo test -- engine::wrapper`
 
@@ -64,8 +64,8 @@ User-configurable via `[[wrappers]]` in config (see R10).
 - **Input size:** handle up to 64KB without degradation
 - **Safety:** no panics on any input; all public APIs return `Result`/`Option`;
   no `unsafe` in parser or evaluator; fuzz testing required
-- **Compat:** TOML config; hook JSON matches Claude Code protocol exactly;
-  statically linkable binary
+- **Compat:** S-expression config; hook JSON matches Claude Code protocol
+  exactly; statically linkable binary
 
 ---
 
@@ -75,8 +75,9 @@ User-configurable via `[[wrappers]]` in config (see R10).
 - [ ] [R7,R8,R9] Rule engine: priority pipeline, compound eval, wrappers, flag
       expansion
 - [ ] [R11] Security filters with deep AST path extraction
-- [ ] [R10,R10a,R10b] Config loader: TOML parsing, matchers, example validation
-- [ ] [R10c] Port built-in defaults from reference implementation
+- [ ] [R10,R10a–R10f] Config loader: s-expression parsing, matchers, example
+      validation
+- [ ] [R10e] Port built-in defaults from reference implementation
 - [ ] [R1] Hook mode (stdin JSON → eval → stdout JSON)
 - [ ] [R2] Eval subcommand
 - [ ] [R3] Check subcommand

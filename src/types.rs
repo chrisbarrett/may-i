@@ -118,7 +118,7 @@ impl Default for SecurityConfig {
 #[derive(Debug, Clone)]
 pub struct Rule {
     pub command: CommandMatcher,
-    pub matchers: Vec<ArgMatcher>,
+    pub matcher: Option<ArgMatcher>,
     pub decision: Decision,
     pub reason: Option<String>,
     pub examples: Vec<Example>,
@@ -133,6 +133,12 @@ pub enum ArgMatcher {
     Anywhere(Vec<Pattern>),
     /// Rule matches only if these patterns are NOT found.
     Forbidden(Vec<String>),
+    /// All sub-matchers must match.
+    And(Vec<ArgMatcher>),
+    /// Any sub-matcher must match.
+    Or(Vec<ArgMatcher>),
+    /// Inverts a sub-matcher.
+    Not(Box<ArgMatcher>),
 }
 
 /// Wrapper configuration for command unwrapping.

@@ -1,108 +1,150 @@
 # Configuration
 
-TOML-based configuration for authorization rules, wrapper definitions, and
-security settings. Built-in defaults are compiled into the binary; user rules
-prepend to (and override) defaults.
+S-expression DSL for authorization rules, wrapper definitions, and security
+settings. Built-in defaults are compiled into the binary; user rules prepend to
+(and override) defaults.
 
 ---
 
 ## R10: Config file location
 
 1. `$MAYI_CONFIG`
-2. `$XDG_CONFIG_HOME/may-i/config.toml`
-3. `~/.config/may-i/config.toml`
+2. `$XDG_CONFIG_HOME/may-i/config.lisp`
+3. `~/.config/may-i/config.lisp`
 
 No config file → built-in defaults only.
 
 **Verify:** `cargo test -- config::location`
 
-## R10a: Config schema
+## R10a: S-expression grammar
 
-```toml
-# Rules evaluated in order. Deny rules always win regardless of position.
-# User rules prepend to built-in defaults.
+```
+file      = form*
+form      = rule | wrapper | security
 
-[[rules]]
-command = "rm"                          # string, regex, or array of strings
-args.anywhere = ["-r", "--recursive"]   # any token matches
-args.anywhere_also = ["/"]              # AND with above
-decision = "deny"
-reason = "Recursive deletion from root"
+rule      = "(" "rule" command args? decision example* ")"
+command   = "(" "command" cmd-val ")"
+cmd-val   = STRING | "(" "oneof" STRING+ ")" | "(" "regex" STRING ")"
+args      = "(" "args" matcher ")"
+matcher   = pos | any | forb | and | or | not
+pos       = "(" "positional" pat+ ")"
+any       = "(" "anywhere" pat+ ")"
+forb      = "(" "forbidden" pat+ ")"
+and       = "(" "and" matcher matcher+ ")"
+or        = "(" "or" matcher matcher+ ")"
+not       = "(" "not" matcher ")"
+pat       = STRING | "*" | "(" "regex" STRING ")" | "(" "oneof" STRING+ ")"
+decision  = "(" "allow" reason? ")" | "(" "deny" reason? ")" | "(" "ask" reason? ")"
+reason    = STRING
 
-[[rules]]
-command = ["cat", "ls", "grep"]
-decision = "allow"
+example   = "(" "example" STRING decision-kw ")"
+decision-kw = "allow" | "deny" | "ask"
 
-[[rules]]
-command = "curl"
-args.forbidden = ["-d", "--data", "-F", "--form", "-X", "--request"]
-decision = "allow"
-reason = "GET request (no mutating flags)"
+wrapper   = "(" "wrapper" STRING kind ")"
+          | "(" "wrapper" STRING "(" "positional" STRING+ ")" kind ")"
+kind      = "after-flags" | "(" "after" STRING ")"
 
-[[rules]]
-command = "aws"
-args.positional = ["*", "^(get|describe|list).*"]
-decision = "allow"
+security  = "(" "blocked-paths" STRING+ ")"
 
-[[rules]]
-command = "curl"
-args.anywhere = ["-I", "--head"]
-decision = "allow"
-reason = "HEAD request is read-only"
+STRING    = quoted string (double-quote, backslash escapes)
+```
 
-  [[rules.examples]]
-  command = "curl -I https://example.com"
-  expected = "allow"
+Comments: `;` to end of line.
 
-  [[rules.examples]]
-  command = "curl --head https://example.com"
-  expected = "allow"
+## R10b: Config example
 
-[[wrappers]]
-command = "nohup"
-inner_command = "after_flags"
+```scheme
+;; Rules evaluated in order. Deny rules always win regardless of position.
+;; User rules prepend to built-in defaults.
 
-[[wrappers]]
-command = "mise"
-args.positional = ["exec"]
-inner_command = { after = "--" }
+;; Deny: recursive deletion from root
+(rule (command "rm")
+      (args (and (anywhere "-r" "--recursive")
+                 (anywhere "/")))
+      (deny "Recursive deletion from root"))
 
-[[wrappers]]
-command = "nix"
-args.positional = ["shell"]
-inner_command = { after = "--command" }
+;; Allow: simple read-only commands
+(rule (command (oneof "cat" "ls" "grep"))
+      (allow))
 
-[security]
-blocked_paths = [
-  '\.env',
-  '\.ssh/',
-  '\.aws/',
-  '\.gnupg/',
-  '\.docker/',
-  '\.kube/',
-  'credentials\.json',
-  '\.netrc',
-  '\.npmrc',
-  '\.pypirc',
-]
+;; Allow: curl without mutating flags (defaults to GET)
+(rule (command "curl")
+      (args (forbidden "-d" "--data" "-F" "--form" "-X" "--request"))
+      (allow "GET request (no mutating flags)"))
+
+;; Allow: aws read-only operations
+(rule (command "aws")
+      (args (positional * (regex "^(get|describe|list).*")))
+      (allow))
+
+;; Allow: curl HEAD requests
+(rule (command "curl")
+      (args (anywhere "-I" "--head"))
+      (allow "HEAD request is read-only")
+      (example "curl -I https://example.com" allow)
+      (example "curl --head https://example.com" allow))
+
+;; Deny: dangerous gh operations (unions of positional patterns)
+(rule (command "gh")
+      (args (or (positional "repo" (oneof "create" "delete" "fork"))
+                (positional "release" (oneof "create" "delete" "upload"))
+                (positional "secret" (oneof "set" "delete"))
+                (positional "ssh-key" (oneof "add" "delete"))))
+      (deny "Supply chain attack vector"))
+
+;; Allow: read-only gh api (GET, no fields)
+(rule (command "gh")
+      (args (and (positional "api")
+                 (forbidden "-X" "--method" "-f" "--field" "-F" "--raw-field")))
+      (allow "Read-only API call"))
+
+;; Wrappers
+(wrapper "nohup" after-flags)
+(wrapper "mise" (positional "exec") (after "--"))
+(wrapper "nix" (positional "shell") (after "--command"))
+
+;; Security: blocked path patterns (regexes, appended to built-in defaults)
+(blocked-paths
+  "\\.env"
+  "\\.ssh/"
+  "\\.aws/")
 ```
 
 **Verify:** `cargo test -- config::parse`; `may-i check`
 
-## R10b: Arg matcher semantics
+## R10c: Matcher semantics
 
-| Matcher      | Semantics                                        |
-| :----------- | :----------------------------------------------- |
-| `positional` | Match positional args (skip flags). `"*"` = any. |
-| `anywhere`   | Token appears anywhere in argv                   |
-| `forbidden`  | Rule matches if pattern is NOT found             |
+| Form           | Semantics                                            |
+| :------------- | :--------------------------------------------------- |
+| `positional`   | Match positional args (skip flags). `*` = any value. |
+| `anywhere`     | Token appears anywhere in argv (OR over values)      |
+| `forbidden`    | Rule matches if NONE of the patterns are found       |
+| `and`          | All sub-matchers must match                          |
+| `or`           | Any sub-matcher must match                           |
+| `not`          | Inverts a sub-matcher                                |
 
-Multiple matchers on one rule are AND-ed. Values: `"literal"` (exact),
-`"^regex"` (starts with `^` → regex), `["a", "b"]` (enum), `"*"` (wildcard).
+Pattern values: `"literal"` (exact match), `(regex "^pat")` (regex match),
+`(oneof "a" "b")` (any of), `*` (wildcard, unquoted).
 
 **Verify:** `cargo test -- config::matchers`
 
-## R10c: Built-in defaults
+## R10d: Examples in rules
+
+Rules may contain inline `(example ...)` forms for self-testing:
+
+```scheme
+(rule (command "curl")
+      (args (anywhere "-I" "--head"))
+      (allow "HEAD request")
+      (example "curl -I https://example.com" allow)
+      (example "curl --head https://example.com" allow))
+```
+
+`may-i check` evaluates all examples (built-in and user) and reports failures.
+
+**Verify:** `may-i check`
+
+## R10e: Built-in defaults
 
 The binary ships with defaults matching the [reference implementation][ref]:
 
@@ -116,3 +158,18 @@ The binary ships with defaults matching the [reference implementation][ref]:
 [ref]: /Users/chris/src/chrisbarrett/claude-plugins/plugins/core-hooks/hooks/pre-tool-use/bash-authorizer/rules.ts
 
 **Verify:** `cargo test -- defaults`; `may-i check` exercises built-in examples
+
+## R10f: S-expression parser
+
+The parser is a standalone module (`config::sexpr`) with no external
+dependencies. It produces a simple AST:
+
+```
+Atom(String) | List(Vec<Sexpr>)
+```
+
+Quoted strings support `\\`, `\"`, `\n`, `\t` escapes. Unquoted atoms are bare
+words (letters, digits, `-`, `_`, `*`, `.`, `/`, `^`). Parentheses delimit
+lists. `;` comments extend to end of line.
+
+**Verify:** `cargo test -- config::sexpr`

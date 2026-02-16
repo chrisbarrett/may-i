@@ -85,7 +85,11 @@ fn evaluate_simple_command(sc: &SimpleCommand, config: &Config, depth: usize) ->
             continue;
         }
 
-        if !matchers_match(&rule.matchers, &expanded_args) {
+        let args_match = match &rule.matcher {
+            None => true,
+            Some(m) => matcher_matches(m, &expanded_args),
+        };
+        if !args_match {
             continue;
         }
 
@@ -121,14 +125,6 @@ fn command_matches(name: &str, matcher: &CommandMatcher) -> bool {
     }
 }
 
-/// Check if all matchers match the given args.
-fn matchers_match(matchers: &[ArgMatcher], args: &[String]) -> bool {
-    if matchers.is_empty() {
-        return true;
-    }
-    matchers.iter().all(|m| matcher_matches(m, args))
-}
-
 fn matcher_matches(matcher: &ArgMatcher, args: &[String]) -> bool {
     match matcher {
         ArgMatcher::Positional(patterns) => {
@@ -148,13 +144,15 @@ fn matcher_matches(matcher: &ArgMatcher, args: &[String]) -> bool {
         }
         ArgMatcher::Anywhere(tokens) => {
             // Any of the listed tokens appears anywhere in args (OR semantics).
-            // Multiple Anywhere matchers on one rule are AND-ed at the outer level.
             tokens.iter().any(|token| args.iter().any(|a| token.is_match(a)))
         }
         ArgMatcher::Forbidden(tokens) => {
             // Rule matches if NONE of the forbidden tokens are found
             tokens.iter().all(|token| !args.iter().any(|a| a == token))
         }
+        ArgMatcher::And(matchers) => matchers.iter().all(|m| matcher_matches(m, args)),
+        ArgMatcher::Or(matchers) => matchers.iter().any(|m| matcher_matches(m, args)),
+        ArgMatcher::Not(inner) => !matcher_matches(inner, args),
     }
 }
 
@@ -291,7 +289,7 @@ mod tests {
     fn allow_rule(cmd: &str) -> Rule {
         Rule {
             command: CommandMatcher::Exact(cmd.to_string()),
-            matchers: vec![],
+            matcher: None,
             decision: Decision::Allow,
             reason: Some("allowed".into()),
             examples: vec![],
@@ -301,7 +299,7 @@ mod tests {
     fn deny_rule(cmd: &str) -> Rule {
         Rule {
             command: CommandMatcher::Exact(cmd.to_string()),
-            matchers: vec![],
+            matcher: None,
             decision: Decision::Deny,
             reason: Some("denied".into()),
             examples: vec![],
@@ -311,7 +309,7 @@ mod tests {
     fn ask_rule(cmd: &str) -> Rule {
         Rule {
             command: CommandMatcher::Exact(cmd.to_string()),
-            matchers: vec![],
+            matcher: None,
             decision: Decision::Ask,
             reason: Some("ask".into()),
             examples: vec![],
@@ -591,26 +589,36 @@ mod tests {
         assert!(!matcher_matches(&matcher, &args));
     }
 
-    // ── matchers_match() ────────────────────────────────────────────
+    // ── And/Or/Not matchers ──────────────────────────────────────────
 
     #[test]
-    fn empty_matchers_always_match() {
-        assert!(matchers_match(&[], &["anything".into()]));
+    fn and_matcher_all_must_pass() {
+        let m = ArgMatcher::And(vec![
+            ArgMatcher::Positional(vec![Pattern::new("push").unwrap()]),
+            ArgMatcher::Forbidden(vec!["--force".into()]),
+        ]);
+        assert!(matcher_matches(&m, &["push".into(), "origin".into()]));
+        assert!(!matcher_matches(&m, &["push".into(), "--force".into()]));
     }
 
     #[test]
-    fn multiple_matchers_all_must_pass() {
-        let matchers = vec![
-            ArgMatcher::Positional(vec![Pattern::new("push").unwrap()]),
-            ArgMatcher::Forbidden(vec!["--force".into()]),
-        ];
-        // "push" without --force → matches
-        assert!(matchers_match(&matchers, &["push".into(), "origin".into()]));
-        // "push" with --force → forbidden matcher fails
-        assert!(!matchers_match(
-            &matchers,
-            &["push".into(), "--force".into()]
-        ));
+    fn or_matcher_any_must_pass() {
+        let m = ArgMatcher::Or(vec![
+            ArgMatcher::Anywhere(vec![Pattern::new("-v").unwrap()]),
+            ArgMatcher::Anywhere(vec![Pattern::new("--verbose").unwrap()]),
+        ]);
+        assert!(matcher_matches(&m, &["-v".into()]));
+        assert!(matcher_matches(&m, &["--verbose".into()]));
+        assert!(!matcher_matches(&m, &["--quiet".into()]));
+    }
+
+    #[test]
+    fn not_matcher_inverts() {
+        let m = ArgMatcher::Not(Box::new(ArgMatcher::Anywhere(vec![
+            Pattern::new("--force").unwrap(),
+        ])));
+        assert!(matcher_matches(&m, &["push".into()]));
+        assert!(!matcher_matches(&m, &["--force".into()]));
     }
 
     // ── extract_positional_args() ───────────────────────────────────
@@ -652,9 +660,9 @@ mod tests {
     fn rule_with_positional_matcher() {
         let rule = Rule {
             command: CommandMatcher::Exact("git".into()),
-            matchers: vec![ArgMatcher::Positional(vec![
+            matcher: Some(ArgMatcher::Positional(vec![
                 Pattern::new("status").unwrap(),
-            ])],
+            ])),
             decision: Decision::Allow,
             reason: None,
             examples: vec![],
@@ -668,9 +676,9 @@ mod tests {
     fn rule_with_positional_no_match() {
         let rule = Rule {
             command: CommandMatcher::Exact("git".into()),
-            matchers: vec![ArgMatcher::Positional(vec![
+            matcher: Some(ArgMatcher::Positional(vec![
                 Pattern::new("status").unwrap(),
-            ])],
+            ])),
             decision: Decision::Allow,
             reason: None,
             examples: vec![],
@@ -687,9 +695,9 @@ mod tests {
             allow_rule("rm"),
             Rule {
                 command: CommandMatcher::Exact("rm".into()),
-                matchers: vec![ArgMatcher::Anywhere(vec![
+                matcher: Some(ArgMatcher::Anywhere(vec![
                     Pattern::new("-r").unwrap(),
-                ])],
+                ])),
                 decision: Decision::Deny,
                 reason: Some("dangerous".into()),
                 examples: vec![],
@@ -707,14 +715,14 @@ mod tests {
         let rules = vec![
             Rule {
                 command: CommandMatcher::Exact("git".into()),
-                matchers: vec![],
+                matcher: None,
                 decision: Decision::Ask,
                 reason: Some("first".into()),
                 examples: vec![],
             },
             Rule {
                 command: CommandMatcher::Exact("git".into()),
-                matchers: vec![],
+                matcher: None,
                 decision: Decision::Allow,
                 reason: Some("second".into()),
                 examples: vec![],
@@ -730,7 +738,7 @@ mod tests {
     fn regex_command_matcher_in_rule() {
         let rule = Rule {
             command: CommandMatcher::Regex(regex::Regex::new("^(cat|bat|less)$").unwrap()),
-            matchers: vec![],
+            matcher: None,
             decision: Decision::Allow,
             reason: None,
             examples: vec![],
@@ -746,7 +754,7 @@ mod tests {
     fn list_command_matcher_in_rule() {
         let rule = Rule {
             command: CommandMatcher::List(vec!["cat".into(), "bat".into()]),
-            matchers: vec![],
+            matcher: None,
             decision: Decision::Allow,
             reason: None,
             examples: vec![],
@@ -938,10 +946,10 @@ mod tests {
     fn forbidden_matcher_denies_with_forbidden_flag() {
         let rule = Rule {
             command: CommandMatcher::Exact("git".into()),
-            matchers: vec![
+            matcher: Some(ArgMatcher::And(vec![
                 ArgMatcher::Positional(vec![Pattern::new("push").unwrap()]),
                 ArgMatcher::Forbidden(vec!["--force".into(), "-f".into()]),
-            ],
+            ])),
             decision: Decision::Allow,
             reason: Some("safe push".into()),
             examples: vec![],
@@ -966,9 +974,9 @@ mod tests {
     fn anywhere_matcher_regex_pattern() {
         let rule = Rule {
             command: CommandMatcher::Exact("grep".into()),
-            matchers: vec![ArgMatcher::Anywhere(vec![
+            matcher: Some(ArgMatcher::Anywhere(vec![
                 Pattern::new("^-r$").unwrap(),
-            ])],
+            ])),
             decision: Decision::Allow,
             reason: None,
             examples: vec![],

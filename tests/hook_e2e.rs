@@ -16,23 +16,16 @@ use tempfile::NamedTempFile;
 
 /// Minimal config that allows `ls` and denies `rm -rf /`.
 const TEST_CONFIG: &str = r#"
-[[rules]]
-command = ["ls", "tree"]
-decision = "allow"
-reason = "Read-only filesystem inspection"
+(rule (command (oneof "ls" "tree"))
+      (allow "Read-only filesystem inspection"))
 
-[[rules]]
-command = "rm"
-decision = "deny"
-reason = "Dangerous deletion"
-[rules.args]
-anywhere = ["-r", "--recursive"]
-anywhere_also = ["/"]
+(rule (command "rm")
+      (args (and (anywhere "-r" "--recursive")
+                 (anywhere "/")))
+      (deny "Dangerous deletion"))
 
-[[rules]]
-command = "echo"
-decision = "allow"
-reason = "Shell builtin"
+(rule (command "echo")
+      (allow "Shell builtin"))
 "#;
 
 fn write_config() -> NamedTempFile {
@@ -256,7 +249,7 @@ fn hook_exits_2_on_missing_command_field() {
 fn hook_exits_2_on_bad_config() {
     let mut bad_cfg = NamedTempFile::new().expect("create temp");
     bad_cfg
-        .write_all(b"this is not valid [[[toml")
+        .write_all(b"this is not valid (((")
         .expect("write");
 
     let mut cmd = cargo_bin_cmd!("may-i");

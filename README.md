@@ -1,13 +1,13 @@
 # may-i
 
-A tool allowing you to declare rich, realiable Bash tool authorization rules in
+A tool allowing you to declare rich, reliable Bash tool authorization rules in
 Claude Code, improving safety while nagging you less with permission prompts.
 It's a nice middle-ground between "nag me for everything" and "dangerously wipe
-my boot partition". ᕕ( ᐛ )ᕗ
+my boot partition".
 
-`may-i` is configured using a TOML file at `~/.config/may-i/config.toml`. Edits
-to this file take effect immediately--no need to re-launch Claude Code to pick
-up changes. 😇
+`may-i` is configured using an s-expression file at
+`~/.config/may-i/config.lisp`. Edits to this file take effect immediately--no
+need to re-launch Claude Code to pick up changes.
 
 Permissions checks use a fully-featured Bash parser, making your rules much more
 accurate than naive globbing. It can handle all the conditionals, complex
@@ -38,18 +38,18 @@ Then, tell Claude Code to use `may-i` as a bash tool pre-authorizer in your
 ```
 
 `may-i` will create a starter config for you at
-`~/.config/may-i/config.toml`--customise it to your heart's content.
+`~/.config/may-i/config.lisp`--customise it to your heart's content.
 
 ## Direct Evaluation
 
-You can use `may-i eval "${command}"` to test out the authorier.
+You can use `may-i eval "${command}"` to test out the authorizer.
 
 ```bash
 may-i eval 'cat README.md'
 # Output: allow: Read-only file operations
 
 may-i eval 'rm -rf /'
-# Output: deny: Recursive deletion from root is dangerous
+# Output: deny: Recursive deletion from root
 
 may-i eval --json 'git push'
 # Output: {"decision":"ask","reason":"No matching rule"}
@@ -75,28 +75,42 @@ may-i check
 
 Rules match commands by exact name, list of names, or regex. Each rule specifies
 a decision (`allow`, `deny`, or `ask`) and optional matchers for arguments.
+Matchers can be composed with `and`, `or`, and `not`.
 
-```toml
-[[rules]]
-command = "rm"
-decision = "deny"
-reason = "Recursive deletion from root is dangerous"
-[rules.args]
-anywhere = ["-r", "--recursive"]
-anywhere_also = ["/"]
+```scheme
+;; Deny recursive deletion from root
+(rule (command "rm")
+      (args (and (anywhere "-r" "--recursive")
+                 (anywhere "/")))
+      (deny "Recursive deletion from root"))
 
-[[rules]]
-command = ["cat", "head", "tail"]
-decision = "allow"
-reason = "Read-only file operations"
+;; Allow simple read-only commands
+(rule (command (oneof "cat" "head" "tail"))
+      (allow "Read-only file operations"))
+
+;; Allow curl without mutating flags
+(rule (command "curl")
+      (args (forbidden "-d" "--data" "-F" "--form" "-X" "--request"))
+      (allow "GET request (no mutating flags)"))
+
+;; Deny dangerous gh operations
+(rule (command "gh")
+      (args (or (positional "repo" (oneof "create" "delete" "fork"))
+                (positional "secret" (oneof "set" "delete"))))
+      (deny "Supply chain attack vector"))
 ```
 
 Available argument matchers:
 
-- `positional` — Match arguments at specific positions
-- `anywhere` — Match if any of these tokens appear anywhere
-- `anywhere_also` — Additional required tokens (logical AND with `anywhere`)
-- `forbidden` — Deny if any of these flags are present
+- `positional` — Match arguments at specific positions (skip flags); `*` = any
+- `anywhere` — Match if any of these tokens appear anywhere (OR semantics)
+- `forbidden` — Rule matches only if none of these flags are present
+- `and` — All sub-matchers must match
+- `or` — Any sub-matcher must match
+- `not` — Inverts a sub-matcher
+
+Pattern values: `"literal"` (exact match), `(regex "^pat")` (regex match),
+`(oneof "a" "b")` (any of), `*` (wildcard, unquoted).
 
 **Deny rules always win** regardless of position. For other rules, first match
 wins. Commands with no matching rule default to `ask`.
@@ -105,25 +119,12 @@ wins. Commands with no matching rule default to `ask`.
 
 Rules can embed examples for validation via `may-i check`.
 
-```toml
-[[rules]]
-command = "curl"
-decision = "allow"
-reason = "HTTP client (read-only operations)"
-[rules.args]
-forbidden = ["-d", "--data", "-F", "--form"]
-
-  [[rules.examples]]
-  command = "curl -I https://example.com"
-  expected = "allow"
-
-  [[rules.examples]]
-  command = "curl --head https://example.com"
-  expected = "allow"
-
-  [[rules.examples]]
-  command = "curl -d 'data' https://example.com"
-  expected = "deny"
+```scheme
+(rule (command "curl")
+      (args (anywhere "-I" "--head"))
+      (allow "HEAD request is read-only")
+      (example "curl -I https://example.com" allow)
+      (example "curl --head https://example.com" allow))
 ```
 
 ### Wrappers
@@ -132,14 +133,8 @@ You can teach `may-i` to treat certain commands as _wrappers_; this is
 particularly useful for commands like `time`, `mise`, etc. Validation is
 performed against the inner command.
 
-```toml
-[[wrappers]]
-command = "nohup"
-inner_command = "after_flags"
-
-[[wrappers]]
-command = "mise"
-inner_command = { after = "--" }
-[wrappers.args]
-positional = ["exec"]
+```scheme
+(wrapper "nohup" after-flags)
+(wrapper "mise" (positional "exec") (after "--"))
+(wrapper "nix" (positional "shell") (after "--command"))
 ```
