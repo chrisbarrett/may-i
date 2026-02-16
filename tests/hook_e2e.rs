@@ -16,7 +16,7 @@ use tempfile::NamedTempFile;
 
 /// Minimal config that allows `ls` and denies `rm -rf /`.
 const TEST_CONFIG: &str = r#"
-(rule (command (oneof "ls" "tree"))
+(rule (command (or "ls" "tree"))
       (allow "Read-only filesystem inspection"))
 
 (rule (command "rm")

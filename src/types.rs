@@ -147,7 +147,7 @@ pub enum ArgMatcher {
 #[derive(Debug, Clone)]
 pub struct Wrapper {
     pub command: String,
-    pub positional_args: Vec<String>,
+    pub positional_args: Vec<Pattern>,
     pub kind: WrapperKind,
 }
 

@@ -13,7 +13,7 @@
 ;   (rule (command "grep")                           ; exact command name
 ;         (allow "Text search"))                     ; decision + optional reason
 ;
-;   (rule (command (oneof "cat" "head" "tail"))      ; match any of these commands
+;   (rule (command (or "cat" "head" "tail"))      ; match any of these commands
 ;         (allow))
 ;
 ;   (rule (command (regex "^git-.*"))                 ; match by regex
@@ -34,7 +34,7 @@
 ;   "literal"                         ; exact string match
 ;   *                                 ; wildcard (matches anything)
 ;   (regex "^(get|list).*")           ; regex match
-;   (oneof "create" "delete" "fork")  ; match any of these strings
+;   (or "create" "delete" "fork")  ; match any of these strings
 ;
 ; INLINE EXAMPLES (validated by `may-i check`)
 ;
@@ -57,37 +57,37 @@
                  (anywhere "/")))
       (deny "Recursive deletion from root"))
 
-(rule (command (oneof "mkfs" "dd" "fdisk" "parted" "gdisk"))
+(rule (command (or "mkfs" "dd" "fdisk" "parted" "gdisk"))
       (deny "Dangerous filesystem or device operation"))
 
-(rule (command (oneof "shutdown" "reboot" "halt" "poweroff" "init"))
+(rule (command (or "shutdown" "reboot" "halt" "poweroff" "init"))
       (deny "System power control"))
 
-(rule (command (oneof "iptables" "nft" "pfctl"))
+(rule (command (or "iptables" "nft" "pfctl"))
       (deny "Firewall manipulation"))
 
 ; -- Allow: read-only operations -----------------------------------------------
 
-(rule (command (oneof "cat" "head" "tail" "less" "more" "wc" "sort" "uniq"))
+(rule (command (or "cat" "head" "tail" "less" "more" "wc" "sort" "uniq"))
       (allow "Read-only file operations"))
 
-(rule (command (oneof "ls" "tree" "file" "stat" "du" "df"))
+(rule (command (or "ls" "tree" "file" "stat" "du" "df"))
       (allow "Read-only filesystem inspection"))
 
-(rule (command (oneof "grep" "rg" "ag" "ack"))
+(rule (command (or "grep" "rg" "ag" "ack"))
       (allow "Text search"))
 
-(rule (command (oneof "locate" "which" "whereis" "type"))
+(rule (command (or "locate" "which" "whereis" "type"))
       (allow "File and command lookup"))
 
-(rule (command (oneof "echo" "printf" "true" "false" "test" "["))
+(rule (command (or "echo" "printf" "true" "false" "test" "["))
       (allow "Shell builtins"))
 
-(rule (command (oneof "date" "hostname" "uname" "whoami" "id" "printenv" "env"))
+(rule (command (or "date" "hostname" "uname" "whoami" "id" "printenv" "env"))
       (allow "System information"))
 
-(rule (command (oneof "ps" "top" "uptime" "free" "vmstat" "iostat"))
+(rule (command (or "ps" "top" "uptime" "free" "vmstat" "iostat"))
       (allow "Process and system monitoring"))
 
-(rule (command (oneof "basename" "dirname" "realpath" "readlink" "pwd"))
+(rule (command (or "basename" "dirname" "realpath" "readlink" "pwd"))
       (allow "Path utilities"))

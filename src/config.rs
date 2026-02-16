@@ -190,13 +190,13 @@ fn parse_command(sexpr: &Sexpr) -> Result<CommandMatcher, String> {
             }
             let tag = list[0].as_atom().ok_or("command form tag must be an atom")?;
             match tag {
-                "oneof" => {
+                "or" => {
                     let names: Result<Vec<String>, _> = list[1..]
                         .iter()
                         .map(|s| {
                             s.as_atom()
                                 .map(|s| s.to_string())
-                                .ok_or("oneof values must be strings".to_string())
+                                .ok_or("or values must be strings".to_string())
                         })
                         .collect();
                     Ok(CommandMatcher::List(names?))
@@ -292,19 +292,19 @@ fn parse_pattern(sexpr: &Sexpr) -> Result<Pattern, String> {
                         .map_err(|e| format!("invalid regex '{pat}': {e}"))?;
                     Ok(Pattern::Regex(re))
                 }
-                "oneof" => {
+                "or" => {
                     // Compile to regex: ^(a|b|c)$
                     let alternatives: Result<Vec<String>, _> = list[1..]
                         .iter()
                         .map(|s| {
                             s.as_atom()
                                 .map(regex::escape)
-                                .ok_or("oneof values must be strings".to_string())
+                                .ok_or("or values must be strings".to_string())
                         })
                         .collect();
                     let pat = format!("^({})$", alternatives?.join("|"));
                     let re = regex::Regex::new(&pat)
-                        .map_err(|e| format!("invalid oneof regex: {e}"))?;
+                        .map_err(|e| format!("invalid or regex: {e}"))?;
                     Ok(Pattern::Regex(re))
                 }
                 other => Err(format!("unknown pattern form: {other}")),
@@ -338,11 +338,7 @@ fn parse_wrapper(parts: &[Sexpr]) -> Result<Wrapper, String> {
                 match tag {
                     "positional" => {
                         for item in &list[1..] {
-                            positional_args.push(
-                                item.as_atom()
-                                    .ok_or("positional value must be a string")?
-                                    .to_string(),
-                            );
+                            positional_args.push(parse_pattern(item)?);
                         }
                     }
                     "after" => {
@@ -420,9 +416,9 @@ mod tests {
     }
 
     #[test]
-    fn command_oneof() {
+    fn command_or() {
         let config =
-            parse(r#"(rule (command (oneof "cat" "ls" "grep")) (allow))"#).unwrap();
+            parse(r#"(rule (command (or "cat" "ls" "grep")) (allow))"#).unwrap();
         match &config.rules[0].command {
             CommandMatcher::List(v) => assert_eq!(v, &["cat", "ls", "grep"]),
             _ => panic!("expected List"),
@@ -553,8 +549,8 @@ mod tests {
     fn or_matcher() {
         let config = parse(
             r#"(rule (command "gh")
-                   (args (or (positional "repo" (oneof "create" "delete"))
-                             (positional "secret" (oneof "set" "delete"))))
+                   (args (or (positional "repo" (or "create" "delete"))
+                             (positional "secret" (or "set" "delete"))))
                    (deny))"#,
         )
         .unwrap();
@@ -583,10 +579,10 @@ mod tests {
     }
 
     #[test]
-    fn oneof_pattern() {
+    fn or_pattern() {
         let config = parse(
             r#"(rule (command "gh")
-                   (args (positional "repo" (oneof "create" "delete" "fork")))
+                   (args (positional "repo" (or "create" "delete" "fork")))
                    (deny))"#,
         )
         .unwrap();
@@ -661,7 +657,8 @@ mod tests {
             WrapperKind::AfterDelimiter(d) => assert_eq!(d, "--"),
             _ => panic!("expected AfterDelimiter"),
         }
-        assert_eq!(config.wrappers[0].positional_args, vec!["exec"]);
+        assert_eq!(config.wrappers[0].positional_args.len(), 1);
+        assert!(config.wrappers[0].positional_args[0].is_match("exec"));
     }
 
     #[test]
@@ -698,7 +695,7 @@ mod tests {
                              (anywhere "/")))
                   (deny "Recursive deletion from root"))
 
-            (rule (command (oneof "cat" "ls" "grep"))
+            (rule (command (or "cat" "ls" "grep"))
                   (allow))
 
             (rule (command "aws")
@@ -887,8 +884,8 @@ mod tests {
         let config = parse(
             r#"
             (rule (command "gh")
-                  (args (or (positional "repo" (oneof "create" "delete"))
-                            (positional "secret" (oneof "set" "delete"))))
+                  (args (or (positional "repo" (or "create" "delete"))
+                            (positional "secret" (or "set" "delete"))))
                   (deny "Supply chain attack"))
 
             (rule (command "gh")

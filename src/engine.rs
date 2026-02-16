@@ -232,7 +232,7 @@ fn unwrap_wrapper(sc: &SimpleCommand, config: &Config) -> Option<SimpleCommand> 
                 .positional_args
                 .iter()
                 .enumerate()
-                .all(|(i, pat)| positional.get(i).is_some_and(|a| *a == pat));
+                .all(|(i, pat)| positional.get(i).is_some_and(|a| pat.is_match(a)));
             if !matches {
                 continue;
             }
@@ -874,7 +874,7 @@ mod tests {
             rules: vec![allow_rule("ls")],
             wrappers: vec![Wrapper {
                 command: "docker".into(),
-                positional_args: vec!["exec".into()],
+                positional_args: vec![Pattern::new("exec").unwrap()],
                 kind: WrapperKind::AfterFlags,
             }],
             security: SecurityConfig {
@@ -898,7 +898,7 @@ mod tests {
             rules: vec![allow_rule("docker")],
             wrappers: vec![Wrapper {
                 command: "docker".into(),
-                positional_args: vec!["exec".into()],
+                positional_args: vec![Pattern::new("exec").unwrap()],
                 kind: WrapperKind::AfterFlags,
             }],
             security: SecurityConfig {

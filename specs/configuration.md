@@ -24,7 +24,7 @@ form      = rule | wrapper | security
 
 rule      = "(" "rule" command args? decision example* ")"
 command   = "(" "command" cmd-val ")"
-cmd-val   = STRING | "(" "oneof" STRING+ ")" | "(" "regex" STRING ")"
+cmd-val   = STRING | "(" "or" STRING+ ")" | "(" "regex" STRING ")"
 args      = "(" "args" matcher ")"
 matcher   = pos | exact | any | forb | and | or | not
 pos       = "(" "positional" pat+ ")"
@@ -34,7 +34,7 @@ forb      = "(" "forbidden" pat+ ")"
 and       = "(" "and" matcher matcher+ ")"
 or        = "(" "or" matcher matcher+ ")"
 not       = "(" "not" matcher ")"
-pat       = STRING | "*" | "(" "regex" STRING ")" | "(" "oneof" STRING+ ")"
+pat       = STRING | "*" | "(" "regex" STRING ")" | "(" "or" STRING+ ")"
 decision  = "(" "allow" reason? ")" | "(" "deny" reason? ")" | "(" "ask" reason? ")"
 reason    = STRING
 
@@ -42,7 +42,7 @@ example   = "(" "example" STRING decision-kw ")"
 decision-kw = "allow" | "deny" | "ask"
 
 wrapper   = "(" "wrapper" STRING kind ")"
-          | "(" "wrapper" STRING "(" "positional" STRING+ ")" kind ")"
+          | "(" "wrapper" STRING "(" "positional" pat+ ")" kind ")"
 kind      = "after-flags" | "(" "after" STRING ")"
 
 security  = "(" "blocked-paths" STRING+ ")"
@@ -65,7 +65,7 @@ Comments: `;` to end of line.
       (deny "Recursive deletion from root"))
 
 ;; Allow: simple read-only commands
-(rule (command (oneof "cat" "ls" "grep"))
+(rule (command (or "cat" "ls" "grep"))
       (allow))
 
 ;; Allow: curl without mutating flags (defaults to GET)
@@ -87,10 +87,10 @@ Comments: `;` to end of line.
 
 ;; Deny: dangerous gh operations (unions of positional patterns)
 (rule (command "gh")
-      (args (or (positional "repo" (oneof "create" "delete" "fork"))
-                (positional "release" (oneof "create" "delete" "upload"))
-                (positional "secret" (oneof "set" "delete"))
-                (positional "ssh-key" (oneof "add" "delete"))))
+      (args (or (positional "repo" (or "create" "delete" "fork"))
+                (positional "release" (or "create" "delete" "upload"))
+                (positional "secret" (or "set" "delete"))
+                (positional "ssh-key" (or "add" "delete"))))
       (deny "Supply chain attack vector"))
 
 ;; Allow: read-only gh api (GET, no fields)
@@ -126,7 +126,7 @@ Comments: `;` to end of line.
 | `not`          | Inverts a sub-matcher                                |
 
 Pattern values: `"literal"` (exact match), `(regex "^pat")` (regex match),
-`(oneof "a" "b")` (any of), `*` (wildcard, unquoted).
+`(or "a" "b")` (any of), `*` (wildcard, unquoted).
 
 **Verify:** `cargo test -- config::matchers`
 
