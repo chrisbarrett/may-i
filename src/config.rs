@@ -230,6 +230,11 @@ fn parse_matcher(sexpr: &Sexpr) -> Result<ArgMatcher, String> {
                 list[1..].iter().map(parse_pattern).collect();
             Ok(ArgMatcher::Positional(patterns?))
         }
+        "exact" => {
+            let patterns: Result<Vec<Pattern>, _> =
+                list[1..].iter().map(parse_pattern).collect();
+            Ok(ArgMatcher::ExactPositional(patterns?))
+        }
         "anywhere" => {
             let patterns: Result<Vec<Pattern>, _> =
                 list[1..].iter().map(parse_pattern).collect();
@@ -462,6 +467,37 @@ mod tests {
                 assert!(!pats[1].is_match("delete-instance"));
             }
             _ => panic!("expected Positional"),
+        }
+    }
+
+    #[test]
+    fn exact_matcher() {
+        let config = parse(
+            r#"(rule (command "git") (args (exact "remote")) (allow))"#,
+        )
+        .unwrap();
+        match config.rules[0].matcher.as_ref().unwrap() {
+            ArgMatcher::ExactPositional(pats) => {
+                assert_eq!(pats.len(), 1);
+                assert!(pats[0].is_match("remote"));
+            }
+            _ => panic!("expected ExactPositional"),
+        }
+    }
+
+    #[test]
+    fn exact_matcher_with_wildcard() {
+        let config = parse(
+            r#"(rule (command "git") (args (exact * "show")) (allow))"#,
+        )
+        .unwrap();
+        match config.rules[0].matcher.as_ref().unwrap() {
+            ArgMatcher::ExactPositional(pats) => {
+                assert_eq!(pats.len(), 2);
+                assert!(pats[0].is_wildcard());
+                assert!(pats[1].is_match("show"));
+            }
+            _ => panic!("expected ExactPositional"),
         }
     }
 
@@ -811,6 +847,35 @@ mod tests {
         );
         assert_eq!(
             engine::evaluate("curl -d data https://example.com", &config).decision,
+            Decision::Ask
+        );
+    }
+
+    #[test]
+    fn exact_vs_positional_evaluates_correctly() {
+        use crate::engine;
+
+        let config = parse(
+            r#"
+            (rule (command "git")
+                  (args (exact "remote"))
+                  (allow "bare remote"))
+
+            (rule (command "git")
+                  (args (positional "remote"))
+                  (ask "remote subcommand"))
+            "#,
+        )
+        .unwrap();
+
+        // Exactly "git remote" → allow (exact matches)
+        assert_eq!(
+            engine::evaluate("git remote", &config).decision,
+            Decision::Allow
+        );
+        // "git remote add origin url" → ask (exact rejects, positional matches)
+        assert_eq!(
+            engine::evaluate("git remote add origin url", &config).decision,
             Decision::Ask
         );
     }

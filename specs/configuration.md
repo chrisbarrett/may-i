@@ -26,8 +26,9 @@ rule      = "(" "rule" command args? decision example* ")"
 command   = "(" "command" cmd-val ")"
 cmd-val   = STRING | "(" "oneof" STRING+ ")" | "(" "regex" STRING ")"
 args      = "(" "args" matcher ")"
-matcher   = pos | any | forb | and | or | not
+matcher   = pos | exact | any | forb | and | or | not
 pos       = "(" "positional" pat+ ")"
+exact     = "(" "exact" pat+ ")"
 any       = "(" "anywhere" pat+ ")"
 forb      = "(" "forbidden" pat+ ")"
 and       = "(" "and" matcher matcher+ ")"
@@ -117,6 +118,7 @@ Comments: `;` to end of line.
 | Form           | Semantics                                            |
 | :------------- | :--------------------------------------------------- |
 | `positional`   | Match positional args (skip flags). `*` = any value. |
+| `exact`        | Like `positional`, but requires exact arg count match |
 | `anywhere`     | Token appears anywhere in argv (OR over values)      |
 | `forbidden`    | Rule matches if NONE of the patterns are found       |
 | `and`          | All sub-matchers must match                          |

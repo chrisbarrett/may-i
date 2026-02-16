@@ -129,6 +129,8 @@ pub struct Rule {
 pub enum ArgMatcher {
     /// Match positional args by position (skip flags). "*" = any value.
     Positional(Vec<Pattern>),
+    /// Like `Positional`, but requires exactly as many positional args as patterns.
+    ExactPositional(Vec<Pattern>),
     /// Token appears anywhere in argv.
     Anywhere(Vec<Pattern>),
     /// Rule matches only if these patterns are NOT found.

@@ -142,6 +142,21 @@ fn matcher_matches(matcher: &ArgMatcher, args: &[String]) -> bool {
                 }
             })
         }
+        ArgMatcher::ExactPositional(patterns) => {
+            let positional = extract_positional_args(args);
+
+            if patterns.len() != positional.len() {
+                return false;
+            }
+
+            patterns.iter().enumerate().all(|(i, pat)| {
+                if pat.is_wildcard() {
+                    true
+                } else {
+                    positional.get(i).is_some_and(|arg| pat.is_match(arg))
+                }
+            })
+        }
         ArgMatcher::Anywhere(tokens) => {
             // Any of the listed tokens appears anywhere in args (OR semantics).
             tokens.iter().any(|token| args.iter().any(|a| token.is_match(a)))
@@ -538,6 +553,40 @@ mod tests {
         let patterns = vec![Pattern::new("status").unwrap()];
         let matcher = ArgMatcher::Positional(patterns);
         // Flags are skipped by extract_positional_args, leaving "status"
+        let args = vec!["-v".to_string(), "status".to_string()];
+        assert!(matcher_matches(&matcher, &args));
+    }
+
+    // ── ArgMatcher::ExactPositional ──────────────────────────────────
+
+    #[test]
+    fn exact_positional_matches_exact_count() {
+        let patterns = vec![Pattern::new("status").unwrap()];
+        let matcher = ArgMatcher::ExactPositional(patterns);
+        assert!(matcher_matches(&matcher, &["status".into()]));
+    }
+
+    #[test]
+    fn exact_positional_rejects_extra_args() {
+        let patterns = vec![Pattern::new("remote").unwrap()];
+        let matcher = ArgMatcher::ExactPositional(patterns);
+        assert!(!matcher_matches(&matcher, &["remote".into(), "add".into()]));
+    }
+
+    #[test]
+    fn exact_positional_rejects_too_few() {
+        let patterns = vec![
+            Pattern::new("a").unwrap(),
+            Pattern::new("b").unwrap(),
+        ];
+        let matcher = ArgMatcher::ExactPositional(patterns);
+        assert!(!matcher_matches(&matcher, &["a".into()]));
+    }
+
+    #[test]
+    fn exact_positional_skips_flags() {
+        let patterns = vec![Pattern::new("status").unwrap()];
+        let matcher = ArgMatcher::ExactPositional(patterns);
         let args = vec!["-v".to_string(), "status".to_string()];
         assert!(matcher_matches(&matcher, &args));
     }
