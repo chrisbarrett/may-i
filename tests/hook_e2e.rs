@@ -17,15 +17,15 @@ use tempfile::NamedTempFile;
 /// Minimal config that allows `ls` and denies `rm -rf /`.
 const TEST_CONFIG: &str = r#"
 (rule (command (or "ls" "tree"))
-      (allow "Read-only filesystem inspection"))
+      (effect :allow "Read-only filesystem inspection"))
 
 (rule (command "rm")
       (args (and (anywhere "-r" "--recursive")
                  (anywhere "/")))
-      (deny "Dangerous deletion"))
+      (effect :deny "Dangerous deletion"))
 
 (rule (command "echo")
-      (allow "Shell builtin"))
+      (effect :allow "Shell builtin"))
 "#;
 
 fn write_config() -> NamedTempFile {

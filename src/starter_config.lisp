@@ -11,13 +11,13 @@
 ; RULES
 ;
 ;   (rule (command "grep")                           ; exact command name
-;         (allow "Text search"))                     ; decision + optional reason
+;         (effect :allow "Text search"))             ; decision + optional reason
 ;
 ;   (rule (command (or "cat" "head" "tail"))      ; match any of these commands
-;         (allow))
+;         (effect :allow))
 ;
 ;   (rule (command (regex "^git-.*"))                 ; match by regex
-;         (allow))
+;         (effect :allow))
 ;
 ; ARGUMENT MATCHERS (inside (args ...))
 ;
@@ -38,8 +38,8 @@
 ;
 ; INLINE EXAMPLES (validated by `may-i check`)
 ;
-;   (example "curl -I https://x.com" allow)
-;   (example "curl -d data https://x.com" ask)
+;   (example :allow "curl -I https://x.com")
+;   (example :ask "curl -d data https://x.com")
 ;
 ; WRAPPERS (unwrap to evaluate the inner command)
 ;
@@ -55,39 +55,39 @@
 (rule (command "rm")
       (args (and (anywhere "-r" "--recursive")
                  (anywhere "/")))
-      (deny "Recursive deletion from root"))
+      (effect :deny "Recursive deletion from root"))
 
 (rule (command (or "mkfs" "dd" "fdisk" "parted" "gdisk"))
-      (deny "Dangerous filesystem or device operation"))
+      (effect :deny "Dangerous filesystem or device operation"))
 
 (rule (command (or "shutdown" "reboot" "halt" "poweroff" "init"))
-      (deny "System power control"))
+      (effect :deny "System power control"))
 
 (rule (command (or "iptables" "nft" "pfctl"))
-      (deny "Firewall manipulation"))
+      (effect :deny "Firewall manipulation"))
 
 ; -- Allow: read-only operations -----------------------------------------------
 
 (rule (command (or "cat" "head" "tail" "less" "more" "wc" "sort" "uniq"))
-      (allow "Read-only file operations"))
+      (effect :allow "Read-only file operations"))
 
 (rule (command (or "ls" "tree" "file" "stat" "du" "df"))
-      (allow "Read-only filesystem inspection"))
+      (effect :allow "Read-only filesystem inspection"))
 
 (rule (command (or "grep" "rg" "ag" "ack"))
-      (allow "Text search"))
+      (effect :allow "Text search"))
 
 (rule (command (or "locate" "which" "whereis" "type"))
-      (allow "File and command lookup"))
+      (effect :allow "File and command lookup"))
 
 (rule (command (or "echo" "printf" "true" "false" "test" "["))
-      (allow "Shell builtins"))
+      (effect :allow "Shell builtins"))
 
 (rule (command (or "date" "hostname" "uname" "whoami" "id" "printenv" "env"))
-      (allow "System information"))
+      (effect :allow "System information"))
 
 (rule (command (or "ps" "top" "uptime" "free" "vmstat" "iostat"))
-      (allow "Process and system monitoring"))
+      (effect :allow "Process and system monitoring"))
 
 (rule (command (or "basename" "dirname" "realpath" "readlink" "pwd"))
-      (allow "Path utilities"))
+      (effect :allow "Path utilities"))

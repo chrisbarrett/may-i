@@ -135,15 +135,20 @@ fn parse_rule(parts: &[Sexpr]) -> Result<Rule, String> {
                 }
                 matcher = Some(parse_matcher(&list[1])?);
             }
-            "allow" | "deny" | "ask" => {
-                decision = Some(match tag {
-                    "allow" => Decision::Allow,
-                    "deny" => Decision::Deny,
-                    _ => Decision::Ask,
+            "effect" => {
+                if list.len() < 2 {
+                    return Err("effect must have a keyword (:allow, :deny, or :ask)".into());
+                }
+                let kw = list[1].as_atom().ok_or("effect keyword must be an atom")?;
+                decision = Some(match kw {
+                    ":allow" => Decision::Allow,
+                    ":deny" => Decision::Deny,
+                    ":ask" => Decision::Ask,
+                    other => return Err(format!("unknown effect keyword: {other}")),
                 });
-                if list.len() > 1 {
+                if list.len() > 2 {
                     reason = Some(
-                        list[1]
+                        list[2]
                             .as_atom()
                             .ok_or("reason must be a string")?
                             .to_string(),
@@ -152,17 +157,17 @@ fn parse_rule(parts: &[Sexpr]) -> Result<Rule, String> {
             }
             "example" => {
                 if list.len() < 3 {
-                    return Err("example must have command and expected decision".into());
+                    return Err("example must have decision keyword and command".into());
                 }
-                let cmd = list[1]
-                    .as_atom()
-                    .ok_or("example command must be a string")?;
-                let expected = match list[2].as_atom().ok_or("example expected must be an atom")? {
-                    "allow" => Decision::Allow,
-                    "deny" => Decision::Deny,
-                    "ask" => Decision::Ask,
+                let expected = match list[1].as_atom().ok_or("example decision must be an atom")? {
+                    ":allow" => Decision::Allow,
+                    ":deny" => Decision::Deny,
+                    ":ask" => Decision::Ask,
                     other => return Err(format!("unknown expected decision: {other}")),
                 };
+                let cmd = list[2]
+                    .as_atom()
+                    .ok_or("example command must be a string")?;
                 examples.push(Example {
                     command: cmd.to_string(),
                     expected,
@@ -388,7 +393,7 @@ mod tests {
 
     #[test]
     fn simple_allow_rule() {
-        let config = parse(r#"(rule (command "cat") (allow))"#).unwrap();
+        let config = parse(r#"(rule (command "cat") (effect :allow))"#).unwrap();
         assert_eq!(config.rules.len(), 1);
         assert_eq!(config.rules[0].decision, Decision::Allow);
         assert!(config.rules[0].matcher.is_none());
@@ -397,14 +402,14 @@ mod tests {
 
     #[test]
     fn deny_with_reason() {
-        let config = parse(r#"(rule (command "rm") (deny "dangerous"))"#).unwrap();
+        let config = parse(r#"(rule (command "rm") (effect :deny "dangerous"))"#).unwrap();
         assert_eq!(config.rules[0].decision, Decision::Deny);
         assert_eq!(config.rules[0].reason.as_deref(), Some("dangerous"));
     }
 
     #[test]
     fn ask_with_reason() {
-        let config = parse(r#"(rule (command "curl") (ask "network op"))"#).unwrap();
+        let config = parse(r#"(rule (command "curl") (effect :ask "network op"))"#).unwrap();
         assert_eq!(config.rules[0].decision, Decision::Ask);
         assert_eq!(config.rules[0].reason.as_deref(), Some("network op"));
     }
@@ -412,7 +417,7 @@ mod tests {
     #[test]
     fn command_or() {
         let config =
-            parse(r#"(rule (command (or "cat" "ls" "grep")) (allow))"#).unwrap();
+            parse(r#"(rule (command (or "cat" "ls" "grep")) (effect :allow))"#).unwrap();
         match &config.rules[0].command {
             CommandMatcher::List(v) => assert_eq!(v, &["cat", "ls", "grep"]),
             _ => panic!("expected List"),
@@ -422,7 +427,7 @@ mod tests {
     #[test]
     fn command_regex() {
         let config =
-            parse(r#"(rule (command (regex "^git.*$")) (allow))"#).unwrap();
+            parse(r#"(rule (command (regex "^git.*$")) (effect :allow))"#).unwrap();
         match &config.rules[0].command {
             CommandMatcher::Regex(re) => assert!(re.is_match("git-log")),
             _ => panic!("expected Regex"),
@@ -432,7 +437,7 @@ mod tests {
     #[test]
     fn positional_matcher() {
         let config = parse(
-            r#"(rule (command "git") (args (positional "status")) (allow))"#,
+            r#"(rule (command "git") (args (positional "status")) (effect :allow))"#,
         )
         .unwrap();
         match config.rules[0].matcher.as_ref().unwrap() {
@@ -447,7 +452,7 @@ mod tests {
     #[test]
     fn positional_wildcard() {
         let config = parse(
-            r#"(rule (command "aws") (args (positional * (regex "^get.*"))) (allow))"#,
+            r#"(rule (command "aws") (args (positional * (regex "^get.*"))) (effect :allow))"#,
         )
         .unwrap();
         match config.rules[0].matcher.as_ref().unwrap() {
@@ -463,7 +468,7 @@ mod tests {
     #[test]
     fn exact_matcher() {
         let config = parse(
-            r#"(rule (command "git") (args (exact "remote")) (allow))"#,
+            r#"(rule (command "git") (args (exact "remote")) (effect :allow))"#,
         )
         .unwrap();
         match config.rules[0].matcher.as_ref().unwrap() {
@@ -478,7 +483,7 @@ mod tests {
     #[test]
     fn exact_matcher_with_wildcard() {
         let config = parse(
-            r#"(rule (command "git") (args (exact * "show")) (allow))"#,
+            r#"(rule (command "git") (args (exact * "show")) (effect :allow))"#,
         )
         .unwrap();
         match config.rules[0].matcher.as_ref().unwrap() {
@@ -494,7 +499,7 @@ mod tests {
     #[test]
     fn anywhere_matcher() {
         let config = parse(
-            r#"(rule (command "curl") (args (anywhere "-I" "--head")) (allow))"#,
+            r#"(rule (command "curl") (args (anywhere "-I" "--head")) (effect :allow))"#,
         )
         .unwrap();
         match config.rules[0].matcher.as_ref().unwrap() {
@@ -509,7 +514,7 @@ mod tests {
     #[test]
     fn forbidden_desugars_to_not_anywhere() {
         let config = parse(
-            r#"(rule (command "curl") (args (forbidden "-d" "--data")) (allow))"#,
+            r#"(rule (command "curl") (args (forbidden "-d" "--data")) (effect :allow))"#,
         )
         .unwrap();
         match config.rules[0].matcher.as_ref().unwrap() {
@@ -531,7 +536,7 @@ mod tests {
             r#"(rule (command "rm")
                    (args (and (anywhere "-r" "--recursive")
                               (anywhere "/")))
-                   (deny "dangerous"))"#,
+                   (effect :deny "dangerous"))"#,
         )
         .unwrap();
         match config.rules[0].matcher.as_ref().unwrap() {
@@ -550,7 +555,7 @@ mod tests {
             r#"(rule (command "gh")
                    (args (or (positional "repo" (or "create" "delete"))
                              (positional "secret" (or "set" "delete"))))
-                   (deny))"#,
+                   (effect :deny))"#,
         )
         .unwrap();
         match config.rules[0].matcher.as_ref().unwrap() {
@@ -566,7 +571,7 @@ mod tests {
     #[test]
     fn not_matcher() {
         let config = parse(
-            r#"(rule (command "curl") (args (not (anywhere "--force"))) (allow))"#,
+            r#"(rule (command "curl") (args (not (anywhere "--force"))) (effect :allow))"#,
         )
         .unwrap();
         match config.rules[0].matcher.as_ref().unwrap() {
@@ -582,7 +587,7 @@ mod tests {
         let config = parse(
             r#"(rule (command "gh")
                    (args (positional "repo" (or "create" "delete" "fork")))
-                   (deny))"#,
+                   (effect :deny))"#,
         )
         .unwrap();
         match config.rules[0].matcher.as_ref().unwrap() {
@@ -602,7 +607,7 @@ mod tests {
         let config = parse(
             r#"(rule (command "aws")
                    (args (positional * (regex "^(get|describe|list).*")))
-                   (allow))"#,
+                   (effect :allow))"#,
         )
         .unwrap();
         match config.rules[0].matcher.as_ref().unwrap() {
@@ -622,9 +627,9 @@ mod tests {
         let config = parse(
             r#"(rule (command "curl")
                    (args (anywhere "-I"))
-                   (allow "HEAD request")
-                   (example "curl -I https://example.com" allow)
-                   (example "curl --head https://example.com" allow))"#,
+                   (effect :allow "HEAD request")
+                   (example :allow "curl -I https://example.com")
+                   (example :allow "curl --head https://example.com"))"#,
         )
         .unwrap();
         assert_eq!(config.rules[0].examples.len(), 2);
@@ -692,14 +697,14 @@ mod tests {
             (rule (command "rm")
                   (args (and (anywhere "-r" "--recursive")
                              (anywhere "/")))
-                  (deny "Recursive deletion from root"))
+                  (effect :deny "Recursive deletion from root"))
 
             (rule (command (or "cat" "ls" "grep"))
-                  (allow))
+                  (effect :allow))
 
             (rule (command "aws")
                   (args (positional * (regex "^(get|describe|list).*")))
-                  (allow))
+                  (effect :allow))
 
             (wrapper "nohup" after-flags)
             (wrapper "mise" (positional "exec") (after "--"))
@@ -731,7 +736,7 @@ mod tests {
 
     #[test]
     fn error_rule_missing_command() {
-        assert!(parse(r#"(rule (allow))"#).is_err());
+        assert!(parse(r#"(rule (effect :allow))"#).is_err());
     }
 
     #[test]
@@ -741,33 +746,33 @@ mod tests {
 
     #[test]
     fn error_unknown_rule_element() {
-        assert!(parse(r#"(rule (command "cat") (allow) (bogus))"#).is_err());
+        assert!(parse(r#"(rule (command "cat") (effect :allow) (bogus))"#).is_err());
     }
 
     #[test]
     fn error_unknown_matcher() {
         assert!(parse(
-            r#"(rule (command "cat") (args (bogus "x")) (allow))"#
+            r#"(rule (command "cat") (args (bogus "x")) (effect :allow))"#
         )
         .is_err());
     }
 
     #[test]
     fn error_unknown_command_form() {
-        assert!(parse(r#"(rule (command (bogus "x")) (allow))"#).is_err());
+        assert!(parse(r#"(rule (command (bogus "x")) (effect :allow))"#).is_err());
     }
 
     #[test]
     fn error_invalid_regex_pattern() {
         assert!(parse(
-            r#"(rule (command "git") (args (positional (regex "^[invalid"))) (allow))"#
+            r#"(rule (command "git") (args (positional (regex "^[invalid"))) (effect :allow))"#
         )
         .is_err());
     }
 
     #[test]
     fn error_invalid_command_regex() {
-        assert!(parse(r#"(rule (command (regex "^[invalid")) (allow))"#).is_err());
+        assert!(parse(r#"(rule (command (regex "^[invalid")) (effect :allow))"#).is_err());
     }
 
     #[test]
@@ -788,7 +793,7 @@ mod tests {
     #[test]
     fn error_unknown_expected_in_example() {
         assert!(parse(
-            r#"(rule (command "cat") (allow) (example "cat foo" maybe))"#
+            r#"(rule (command "cat") (effect :allow) (example :maybe "cat foo"))"#
         )
         .is_err());
     }
@@ -796,7 +801,7 @@ mod tests {
     #[test]
     fn error_not_with_multiple_matchers() {
         assert!(parse(
-            r#"(rule (command "x") (args (not (anywhere "a") (anywhere "b"))) (allow))"#
+            r#"(rule (command "x") (args (not (anywhere "a") (anywhere "b"))) (effect :allow))"#
         )
         .is_err());
     }
@@ -804,7 +809,7 @@ mod tests {
     #[test]
     fn error_unknown_pattern_form() {
         assert!(parse(
-            r#"(rule (command "x") (args (positional (bogus "a"))) (allow))"#
+            r#"(rule (command "x") (args (positional (bogus "a"))) (effect :allow))"#
         )
         .is_err());
     }
@@ -820,17 +825,17 @@ mod tests {
             (rule (command "rm")
                   (args (and (anywhere "-r" "--recursive")
                              (anywhere "/")))
-                  (deny "Recursive deletion from root"))
+                  (effect :deny "Recursive deletion from root"))
 
             (rule (command "rm")
-                  (allow))
+                  (effect :allow))
 
             (rule (command "curl")
                   (args (forbidden "-d" "--data" "-F" "--form" "-X" "--request"))
-                  (allow "GET request"))
+                  (effect :allow "GET request"))
 
             (rule (command "curl")
-                  (ask "Network operation"))
+                  (effect :ask "Network operation"))
             "#,
         )
         .unwrap();
@@ -855,11 +860,11 @@ mod tests {
             r#"
             (rule (command "git")
                   (args (exact "remote"))
-                  (allow "bare remote"))
+                  (effect :allow "bare remote"))
 
             (rule (command "git")
                   (args (positional "remote"))
-                  (ask "remote subcommand"))
+                  (effect :ask "remote subcommand"))
             "#,
         )
         .unwrap();
@@ -885,10 +890,10 @@ mod tests {
             (rule (command "gh")
                   (args (or (positional "repo" (or "create" "delete"))
                             (positional "secret" (or "set" "delete"))))
-                  (deny "Supply chain attack"))
+                  (effect :deny "Supply chain attack"))
 
             (rule (command "gh")
-                  (allow))
+                  (effect :allow))
             "#,
         )
         .unwrap();

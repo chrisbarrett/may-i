@@ -35,11 +35,11 @@ and       = "(" "and" matcher matcher+ ")"
 or        = "(" "or" matcher matcher+ ")"
 not       = "(" "not" matcher ")"
 pat       = STRING | "*" | "(" "regex" STRING ")" | "(" "or" STRING+ ")"
-decision  = "(" "allow" reason? ")" | "(" "deny" reason? ")" | "(" "ask" reason? ")"
+decision  = "(" "effect" decision-kw reason? ")"
+decision-kw = ":allow" | ":deny" | ":ask"
 reason    = STRING
 
-example   = "(" "example" STRING decision-kw ")"
-decision-kw = "allow" | "deny" | "ask"
+example   = "(" "example" decision-kw STRING ")"
 
 wrapper   = "(" "wrapper" STRING kind ")"
           | "(" "wrapper" STRING "(" "positional" pat+ ")" kind ")"
@@ -62,28 +62,28 @@ Comments: `;` to end of line.
 (rule (command "rm")
       (args (and (anywhere "-r" "--recursive")
                  (anywhere "/")))
-      (deny "Recursive deletion from root"))
+      (effect :deny "Recursive deletion from root"))
 
 ;; Allow: simple read-only commands
 (rule (command (or "cat" "ls" "grep"))
-      (allow))
+      (effect :allow))
 
 ;; Allow: curl without mutating flags (defaults to GET)
 (rule (command "curl")
       (args (forbidden "-d" "--data" "-F" "--form" "-X" "--request"))
-      (allow "GET request (no mutating flags)"))
+      (effect :allow "GET request (no mutating flags)"))
 
 ;; Allow: aws read-only operations
 (rule (command "aws")
       (args (positional * (regex "^(get|describe|list).*")))
-      (allow))
+      (effect :allow))
 
 ;; Allow: curl HEAD requests
 (rule (command "curl")
       (args (anywhere "-I" "--head"))
-      (allow "HEAD request is read-only")
-      (example "curl -I https://example.com" allow)
-      (example "curl --head https://example.com" allow))
+      (effect :allow "HEAD request is read-only")
+      (example :allow "curl -I https://example.com")
+      (example :allow "curl --head https://example.com"))
 
 ;; Deny: dangerous gh operations (unions of positional patterns)
 (rule (command "gh")
@@ -91,13 +91,13 @@ Comments: `;` to end of line.
                 (positional "release" (or "create" "delete" "upload"))
                 (positional "secret" (or "set" "delete"))
                 (positional "ssh-key" (or "add" "delete"))))
-      (deny "Supply chain attack vector"))
+      (effect :deny "Supply chain attack vector"))
 
 ;; Allow: read-only gh api (GET, no fields)
 (rule (command "gh")
       (args (and (positional "api")
                  (forbidden "-X" "--method" "-f" "--field" "-F" "--raw-field")))
-      (allow "Read-only API call"))
+      (effect :allow "Read-only API call"))
 
 ;; Wrappers
 (wrapper "nohup" after-flags)
@@ -137,9 +137,9 @@ Rules may contain inline `(example ...)` forms for self-testing:
 ```scheme
 (rule (command "curl")
       (args (anywhere "-I" "--head"))
-      (allow "HEAD request")
-      (example "curl -I https://example.com" allow)
-      (example "curl --head https://example.com" allow))
+      (effect :allow "HEAD request")
+      (example :allow "curl -I https://example.com")
+      (example :allow "curl --head https://example.com"))
 ```
 
 `may-i check` evaluates all examples (built-in and user) and reports failures.
@@ -171,7 +171,7 @@ Atom(String) | List(Vec<Sexpr>)
 ```
 
 Quoted strings support `\\`, `\"`, `\n`, `\t` escapes. Unquoted atoms are bare
-words (letters, digits, `-`, `_`, `*`, `.`, `/`, `^`). Parentheses delimit
+words (letters, digits, `-`, `_`, `*`, `.`, `/`, `^`, `:`). Parentheses delimit
 lists. `;` comments extend to end of line.
 
 **Verify:** `cargo test -- config::sexpr`

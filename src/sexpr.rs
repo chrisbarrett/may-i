@@ -2,7 +2,7 @@
 // Zero-dependency parser producing Atom | List AST.
 //
 // Quoted strings: "hello\nworld" (supports \\, \", \n, \t)
-// Bare atoms: letters, digits, - _ * . / ^
+// Bare atoms: letters, digits, - _ * . / ^ :
 // Comments: ; to end of line
 // Parentheses delimit lists.
 
@@ -66,7 +66,7 @@ enum Token {
 }
 
 fn is_atom_char(c: char) -> bool {
-    c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '*' | '.' | '/' | '^')
+    c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '*' | '.' | '/' | '^' | ':')
 }
 
 fn tokenize(input: &str) -> Result<Vec<Token>, String> {
@@ -500,7 +500,7 @@ mod tests {
 
     #[test]
     fn display_round_trip() {
-        let input = r#"(rule (command "rm") (args (and (anywhere "-r") (anywhere "/"))) (deny "bad"))"#;
+        let input = r#"(rule (command "rm") (args (and (anywhere "-r") (anywhere "/"))) (effect :deny "bad"))"#;
         let parsed = parse(input).unwrap();
         let displayed = format!("{}", parsed[0]);
         let reparsed = parse(&displayed).unwrap();
@@ -529,7 +529,7 @@ mod tests {
             (rule (command "rm")
                   (args (and (anywhere "-r" "--recursive")
                              (anywhere "/")))
-                  (deny "Recursive deletion from root"))
+                  (effect :deny "Recursive deletion from root"))
         "#;
         let forms = parse(input).unwrap();
         assert_eq!(forms.len(), 1);
@@ -545,9 +545,10 @@ mod tests {
         let and = args[1].as_list().unwrap();
         assert_eq!(and[0].as_atom(), Some("and"));
 
-        let deny = rule[3].as_list().unwrap();
-        assert_eq!(deny[0].as_atom(), Some("deny"));
-        assert_eq!(deny[1].as_atom(), Some("Recursive deletion from root"));
+        let effect = rule[3].as_list().unwrap();
+        assert_eq!(effect[0].as_atom(), Some("effect"));
+        assert_eq!(effect[1].as_atom(), Some(":deny"));
+        assert_eq!(effect[2].as_atom(), Some("Recursive deletion from root"));
     }
 
     #[test]
@@ -577,15 +578,15 @@ mod tests {
             (rule (command "rm")
                   (args (and (anywhere "-r" "--recursive")
                              (anywhere "/")))
-                  (deny "Recursive deletion from root"))
+                  (effect :deny "Recursive deletion from root"))
 
             ;; Allow rules
             (rule (command (oneof "cat" "ls" "grep"))
-                  (allow))
+                  (effect :allow))
 
             (rule (command "aws")
                   (args (positional * (regex "^(get|describe|list).*")))
-                  (allow))
+                  (effect :allow))
 
             ;; Wrappers
             (wrapper "nohup" after-flags)
