@@ -24,7 +24,7 @@
 ;   (positional "push" *)             ; match by position (skip flags); * = any
 ;   (exact "remote")                  ; like positional but requires exact arg count
 ;   (anywhere "-r" "--recursive")     ; any of these tokens appears in argv
-;   (forbidden "-d" "--data")         ; rule matches only if NONE are present
+;   (forbidden "-d" "--data")         ; sugar for (not (anywhere ...)))
 ;   (and (anywhere "-r") (anywhere "/"))   ; all sub-matchers must match
 ;   (or (positional "a") (positional "b")) ; any sub-matcher must match
 ;   (not (anywhere "--force"))             ; inverts a sub-matcher

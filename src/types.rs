@@ -133,8 +133,6 @@ pub enum ArgMatcher {
     ExactPositional(Vec<Pattern>),
     /// Token appears anywhere in argv.
     Anywhere(Vec<Pattern>),
-    /// Rule matches only if these patterns are NOT found.
-    Forbidden(Vec<String>),
     /// All sub-matchers must match.
     And(Vec<ArgMatcher>),
     /// Any sub-matcher must match.

@@ -241,15 +241,9 @@ fn parse_matcher(sexpr: &Sexpr) -> Result<ArgMatcher, String> {
             Ok(ArgMatcher::Anywhere(patterns?))
         }
         "forbidden" => {
-            let strings: Result<Vec<String>, _> = list[1..]
-                .iter()
-                .map(|s| {
-                    s.as_atom()
-                        .map(|s| s.to_string())
-                        .ok_or("forbidden values must be strings".to_string())
-                })
-                .collect();
-            Ok(ArgMatcher::Forbidden(strings?))
+            let patterns: Result<Vec<Pattern>, _> =
+                list[1..].iter().map(parse_pattern).collect();
+            Ok(ArgMatcher::Not(Box::new(ArgMatcher::Anywhere(patterns?))))
         }
         "and" => {
             let matchers: Result<Vec<ArgMatcher>, _> =
@@ -513,16 +507,21 @@ mod tests {
     }
 
     #[test]
-    fn forbidden_matcher() {
+    fn forbidden_desugars_to_not_anywhere() {
         let config = parse(
             r#"(rule (command "curl") (args (forbidden "-d" "--data")) (allow))"#,
         )
         .unwrap();
         match config.rules[0].matcher.as_ref().unwrap() {
-            ArgMatcher::Forbidden(strings) => {
-                assert_eq!(strings, &["-d", "--data"]);
-            }
-            _ => panic!("expected Forbidden"),
+            ArgMatcher::Not(inner) => match inner.as_ref() {
+                ArgMatcher::Anywhere(pats) => {
+                    assert_eq!(pats.len(), 2);
+                    assert!(pats[0].is_match("-d"));
+                    assert!(pats[1].is_match("--data"));
+                }
+                _ => panic!("expected Anywhere inside Not"),
+            },
+            _ => panic!("expected Not"),
         }
     }
 

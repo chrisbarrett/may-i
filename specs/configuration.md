@@ -120,7 +120,7 @@ Comments: `;` to end of line.
 | `positional`   | Match positional args (skip flags). `*` = any value. |
 | `exact`        | Like `positional`, but requires exact arg count match |
 | `anywhere`     | Token appears anywhere in argv (OR over values)      |
-| `forbidden`    | Rule matches if NONE of the patterns are found       |
+| `forbidden`    | Sugar for `(not (anywhere ...))` — none found        |
 | `and`          | All sub-matchers must match                          |
 | `or`           | Any sub-matcher must match                           |
 | `not`          | Inverts a sub-matcher                                |

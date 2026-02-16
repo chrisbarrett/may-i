@@ -161,10 +161,6 @@ fn matcher_matches(matcher: &ArgMatcher, args: &[String]) -> bool {
             // Any of the listed tokens appears anywhere in args (OR semantics).
             tokens.iter().any(|token| args.iter().any(|a| token.is_match(a)))
         }
-        ArgMatcher::Forbidden(tokens) => {
-            // Rule matches if NONE of the forbidden tokens are found
-            tokens.iter().all(|token| !args.iter().any(|a| a == token))
-        }
         ArgMatcher::And(matchers) => matchers.iter().all(|m| matcher_matches(m, args)),
         ArgMatcher::Or(matchers) => matchers.iter().any(|m| matcher_matches(m, args)),
         ArgMatcher::Not(inner) => !matcher_matches(inner, args),
@@ -622,29 +618,15 @@ mod tests {
         assert!(!matcher_matches(&matcher, &["--verbose".into()]));
     }
 
-    // ── ArgMatcher::Forbidden ───────────────────────────────────────
-
-    #[test]
-    fn forbidden_matcher_allows_when_absent() {
-        let matcher = ArgMatcher::Forbidden(vec!["--force".into()]);
-        let args = vec!["push".into(), "origin".into()];
-        assert!(matcher_matches(&matcher, &args));
-    }
-
-    #[test]
-    fn forbidden_matcher_blocks_when_present() {
-        let matcher = ArgMatcher::Forbidden(vec!["--force".into()]);
-        let args = vec!["push".into(), "--force".into()];
-        assert!(!matcher_matches(&matcher, &args));
-    }
-
     // ── And/Or/Not matchers ──────────────────────────────────────────
 
     #[test]
     fn and_matcher_all_must_pass() {
         let m = ArgMatcher::And(vec![
             ArgMatcher::Positional(vec![Pattern::new("push").unwrap()]),
-            ArgMatcher::Forbidden(vec!["--force".into()]),
+            ArgMatcher::Not(Box::new(ArgMatcher::Anywhere(vec![
+                Pattern::new("--force").unwrap(),
+            ]))),
         ]);
         assert!(matcher_matches(&m, &["push".into(), "origin".into()]));
         assert!(!matcher_matches(&m, &["push".into(), "--force".into()]));
@@ -989,15 +971,18 @@ mod tests {
         assert_eq!(result.reason.as_deref(), Some("Unknown command"));
     }
 
-    // ── Forbidden matcher with rule integration ─────────────────────
+    // ── Not+Anywhere (forbidden) with rule integration ─────────────
 
     #[test]
-    fn forbidden_matcher_denies_with_forbidden_flag() {
+    fn not_anywhere_denies_with_forbidden_flag() {
         let rule = Rule {
             command: CommandMatcher::Exact("git".into()),
             matcher: Some(ArgMatcher::And(vec![
                 ArgMatcher::Positional(vec![Pattern::new("push").unwrap()]),
-                ArgMatcher::Forbidden(vec!["--force".into(), "-f".into()]),
+                ArgMatcher::Not(Box::new(ArgMatcher::Anywhere(vec![
+                    Pattern::new("--force").unwrap(),
+                    Pattern::new("-f").unwrap(),
+                ]))),
             ])),
             decision: Decision::Allow,
             reason: Some("safe push".into()),
@@ -1010,7 +995,7 @@ mod tests {
             evaluate("git push origin main", &config).decision,
             Decision::Allow
         );
-        // push with --force → Forbidden matcher fails, no rule matches → Ask
+        // push with --force → not(anywhere) fails, no rule matches → Ask
         assert_eq!(
             evaluate("git push --force origin main", &config).decision,
             Decision::Ask
