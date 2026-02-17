@@ -128,6 +128,80 @@ pub enum RedirectionTarget {
     Heredoc(String),
 }
 
+/// If a command substitution contains `cat` fed only by static heredocs
+/// (and/or herestrings), the output is fully determined at parse time.
+/// Parse the inner command and return the concatenated body if static.
+fn try_fold_static_cat(cmd: &str) -> Option<String> {
+    let ast = parse(cmd);
+    // Unwrap a Redirected wrapping a Simple command
+    let sc = match &ast {
+        Command::Simple(sc) => sc,
+        Command::Redirected { command, redirections } => match command.as_ref() {
+            Command::Simple(sc) => {
+                // Merge redirections from both levels below
+                let mut merged = sc.clone();
+                merged.redirections.extend(redirections.iter().cloned());
+                return check_cat_heredoc(&merged);
+            }
+            _ => return None,
+        },
+        _ => return None,
+    };
+    check_cat_heredoc(sc)
+}
+
+fn check_cat_heredoc(sc: &SimpleCommand) -> Option<String> {
+    // Must be `cat` with no extra arguments
+    if sc.command_name() != Some("cat") {
+        return None;
+    }
+    if sc.words.len() > 1 {
+        return None; // cat has file arguments — not purely heredoc-fed
+    }
+    if sc.assignments.is_empty() && sc.redirections.is_empty() {
+        return None; // bare `cat` with no input
+    }
+
+    // All redirections must be heredocs/herestrings (stdin), and there
+    // must be at least one.
+    let mut body = String::new();
+    let mut has_heredoc = false;
+    for redir in &sc.redirections {
+        match (&redir.kind, &redir.target) {
+            (
+                RedirectionKind::Heredoc | RedirectionKind::HeredocStrip,
+                RedirectionTarget::Heredoc(text),
+            ) => {
+                if !body.is_empty() {
+                    body.push('\n');
+                }
+                body.push_str(text);
+                has_heredoc = true;
+            }
+            (RedirectionKind::Herestring, RedirectionTarget::File(word)) => {
+                if word.has_dynamic_parts() {
+                    return None;
+                }
+                if !body.is_empty() {
+                    body.push('\n');
+                }
+                body.push_str(&word.to_str());
+                has_heredoc = true;
+            }
+            _ => return None, // other redirections (file input, output) — bail
+        }
+    }
+
+    if has_heredoc {
+        // The parser's heredoc body may include a trailing newline;
+        // strip it to match the actual output of `cat`.
+        let body = body.strip_suffix('\n').unwrap_or(&body).to_string();
+        Some(body)
+    } else {
+        None
+    }
+}
+
 /// Abbreviate a string for use in error messages. Multi-line content is
 /// reduced to the first line with "…" appended; long single lines are
 /// truncated at 60 chars.
@@ -1041,7 +1115,14 @@ impl Lexer {
                 } else {
                     // Command substitution $(cmd)
                     let cmd = self.read_balanced_parens();
-                    Some(WordPart::CommandSubstitution(cmd))
+                    // If the command substitution is `cat` fed only by
+                    // static heredocs, fold it to a literal — the output
+                    // is fully determined at parse time.
+                    if let Some(body) = try_fold_static_cat(&cmd) {
+                        Some(WordPart::Literal(body))
+                    } else {
+                        Some(WordPart::CommandSubstitution(cmd))
+                    }
                 }
             }
             Some('{') => {
@@ -3601,5 +3682,126 @@ mod tests {
         let words = extract_all_words(&cmd);
         // false, echo, x
         assert_eq!(words.len(), 3);
+    }
+
+    // ── static cat heredoc folding ─────────────────────────────────
+
+    #[test]
+    fn cat_heredoc_single_quoted_is_literal() {
+        let cmd = parse("echo $(cat <<'EOF'\nhello world\nEOF\n)");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(
+                    sc.words[1].parts,
+                    vec![WordPart::Literal("hello world".to_string())]
+                );
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn cat_heredoc_multiline_body() {
+        let cmd = parse("echo $(cat <<'EOF'\nline one\nline two\nline three\nEOF\n)");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(
+                    sc.words[1].parts,
+                    vec![WordPart::Literal("line one\nline two\nline three".to_string())]
+                );
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn cat_heredoc_strip_tabs() {
+        let cmd = parse("echo $(cat <<-'EOF'\n\t\thello\n\t\tEOF\n)");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(
+                    sc.words[1].parts,
+                    vec![WordPart::Literal("hello".to_string())]
+                );
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn cat_heredoc_unquoted_delim_folds() {
+        // The parser doesn't expand variables in heredoc bodies,
+        // so unquoted delimiters also produce static bodies.
+        let cmd = parse("echo $(cat <<EOF\nhello\nEOF\n)");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(
+                    sc.words[1].parts,
+                    vec![WordPart::Literal("hello".to_string())]
+                );
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn cat_heredoc_double_quoted_delim_folds() {
+        let cmd = parse("echo $(cat <<\"EOF\"\nhello\nEOF\n)");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(
+                    sc.words[1].parts,
+                    vec![WordPart::Literal("hello".to_string())]
+                );
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn cat_with_file_arg_stays_dynamic() {
+        let cmd = parse("echo $(cat /etc/hostname)");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert!(sc.words[1].parts.iter().any(|p| matches!(p, WordPart::CommandSubstitution(_))));
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn cat_herestring_static_folds() {
+        let cmd = parse("echo $(cat <<< 'hello')");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(
+                    sc.words[1].parts,
+                    vec![WordPart::Literal("hello".to_string())]
+                );
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn cat_herestring_dynamic_stays() {
+        let cmd = parse("echo $(cat <<< $HOME)");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert!(sc.words[1].parts.iter().any(|p| matches!(p, WordPart::CommandSubstitution(_))));
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn non_cat_command_sub_stays_dynamic() {
+        let cmd = parse("echo $(whoami)");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert!(sc.words[1].parts.iter().any(|p| matches!(p, WordPart::CommandSubstitution(_))));
+            }
+            _ => panic!("Expected simple command"),
+        }
     }
 }
