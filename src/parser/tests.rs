@@ -1140,18 +1140,18 @@ fn test_extract_simple_commands_from_for() {
 fn test_extract_simple_commands_from_while() {
     let cmd = parse("while true; do echo loop; done");
     let scs = extract_simple_commands(&cmd);
-    // While only collects from body, not condition
-    assert_eq!(scs.len(), 1);
-    assert_eq!(scs[0].command_name(), Some("echo"));
+    assert_eq!(scs.len(), 2);
+    assert_eq!(scs[0].command_name(), Some("true"));
+    assert_eq!(scs[1].command_name(), Some("echo"));
 }
 
 #[test]
 fn test_extract_simple_commands_from_until() {
     let cmd = parse("until false; do echo loop; done");
     let scs = extract_simple_commands(&cmd);
-    // Until only collects from body, not condition
-    assert_eq!(scs.len(), 1);
-    assert_eq!(scs[0].command_name(), Some("echo"));
+    assert_eq!(scs.len(), 2);
+    assert_eq!(scs[0].command_name(), Some("false"));
+    assert_eq!(scs[1].command_name(), Some("echo"));
 }
 
 #[test]

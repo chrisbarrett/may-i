@@ -25,48 +25,11 @@ pub fn extract_simple_commands(cmd: &Command) -> Vec<&SimpleCommand> {
 }
 
 fn collect_simple_commands<'a>(cmd: &'a Command, out: &mut Vec<&'a SimpleCommand>) {
-    match cmd {
-        Command::Simple(sc) => out.push(sc),
-        Command::Pipeline(cmds) | Command::Sequence(cmds) => {
-            for c in cmds {
-                collect_simple_commands(c, out);
-            }
-        }
-        Command::And(a, b) | Command::Or(a, b) => {
-            collect_simple_commands(a, out);
-            collect_simple_commands(b, out);
-        }
-        Command::Background(c) | Command::Subshell(c) | Command::BraceGroup(c) => {
-            collect_simple_commands(c, out);
-        }
-        Command::If { condition, then_branch, elif_branches, else_branch } => {
-            collect_simple_commands(condition, out);
-            collect_simple_commands(then_branch, out);
-            for (cond, body) in elif_branches {
-                collect_simple_commands(cond, out);
-                collect_simple_commands(body, out);
-            }
-            if let Some(eb) = else_branch {
-                collect_simple_commands(eb, out);
-            }
-        }
-        Command::For { body, .. } | Command::While { body, .. } | Command::Until { body, .. } => {
-            collect_simple_commands(body, out);
-        }
-        Command::Case { arms, .. } => {
-            for arm in arms {
-                if let Some(body) = &arm.body {
-                    collect_simple_commands(body, out);
-                }
-            }
-        }
-        Command::FunctionDef { body, .. } => {
-            collect_simple_commands(body, out);
-        }
-        Command::Redirected { command, .. } => {
-            collect_simple_commands(command, out);
-        }
-        Command::Assignment(_) => {}
+    if let Command::Simple(sc) = cmd {
+        out.push(sc);
+    }
+    for child in cmd.children() {
+        collect_simple_commands(child, out);
     }
 }
 
@@ -79,85 +42,41 @@ pub fn extract_all_words(cmd: &Command) -> Vec<&Word> {
 }
 
 fn collect_all_words<'a>(cmd: &'a Command, out: &mut Vec<&'a Word>) {
+    // Collect words from the current node's variant-specific data
     match cmd {
         Command::Simple(sc) => {
-            for w in &sc.words {
-                out.push(w);
-            }
-            for a in &sc.assignments {
-                out.push(&a.value);
-            }
+            out.extend(&sc.words);
+            out.extend(sc.assignments.iter().map(|a| &a.value));
             for r in &sc.redirections {
-                match &r.target {
-                    RedirectionTarget::File(w) => out.push(w),
-                    RedirectionTarget::Heredoc(_) => {
-                        // Treat heredoc content as a synthetic word for scanning
-                        // (handled separately since it's a String, not Word)
-                    }
-                    RedirectionTarget::Fd(_) => {}
+                if let RedirectionTarget::File(w) = &r.target {
+                    out.push(w);
                 }
             }
         }
-        Command::Pipeline(cmds) | Command::Sequence(cmds) => {
-            for c in cmds {
-                collect_all_words(c, out);
-            }
+        Command::For { words, .. } => {
+            out.extend(words);
         }
-        Command::And(a, b) | Command::Or(a, b) => {
-            collect_all_words(a, out);
-            collect_all_words(b, out);
-        }
-        Command::Background(c) | Command::Subshell(c) | Command::BraceGroup(c) => {
-            collect_all_words(c, out);
-        }
-        Command::If { condition, then_branch, elif_branches, else_branch } => {
-            collect_all_words(condition, out);
-            collect_all_words(then_branch, out);
-            for (cond, body) in elif_branches {
-                collect_all_words(cond, out);
-                collect_all_words(body, out);
-            }
-            if let Some(eb) = else_branch {
-                collect_all_words(eb, out);
-            }
-        }
-        Command::For { words, body, .. } => {
-            for w in words {
-                out.push(w);
-            }
-            collect_all_words(body, out);
-        }
-        Command::While { condition, body } | Command::Until { condition, body } => {
-            collect_all_words(condition, out);
-            collect_all_words(body, out);
-        }
-        Command::Case { word, arms } => {
+        Command::Case { word, arms, .. } => {
             out.push(word);
             for arm in arms {
-                for p in &arm.patterns {
-                    out.push(p);
-                }
-                if let Some(body) = &arm.body {
-                    collect_all_words(body, out);
-                }
+                out.extend(&arm.patterns);
             }
         }
-        Command::FunctionDef { body, .. } => {
-            collect_all_words(body, out);
-        }
-        Command::Redirected { command, redirections } => {
-            collect_all_words(command, out);
+        Command::Redirected { redirections, .. } => {
             for r in redirections {
-                match &r.target {
-                    RedirectionTarget::File(w) => out.push(w),
-                    RedirectionTarget::Heredoc(_) => {}
-                    RedirectionTarget::Fd(_) => {}
+                if let RedirectionTarget::File(w) = &r.target {
+                    out.push(w);
                 }
             }
         }
         Command::Assignment(a) => {
             out.push(&a.value);
         }
+        _ => {}
+    }
+    // Recurse into child commands
+    for child in cmd.children() {
+        collect_all_words(child, out);
     }
 }
 
@@ -175,55 +94,25 @@ fn collect_structural_dynamic_parts(
     env: &std::collections::HashMap<String, String>,
     out: &mut Vec<String>,
 ) {
+    // Collect dynamic parts from structural positions (for-loop words, case discriminants/patterns)
     match cmd {
-        Command::For { words, body, .. } => {
+        Command::For { words, .. } => {
             for w in words {
                 out.extend(w.resolve(env).dynamic_parts());
             }
-            collect_structural_dynamic_parts(body, env, out);
         }
-        Command::Case { word, arms } => {
+        Command::Case { word, arms, .. } => {
             out.extend(word.resolve(env).dynamic_parts());
             for arm in arms {
                 for p in &arm.patterns {
                     out.extend(p.resolve(env).dynamic_parts());
                 }
-                if let Some(body) = &arm.body {
-                    collect_structural_dynamic_parts(body, env, out);
-                }
             }
         }
-        Command::Pipeline(cmds) | Command::Sequence(cmds) => {
-            for c in cmds {
-                collect_structural_dynamic_parts(c, env, out);
-            }
-        }
-        Command::And(a, b) | Command::Or(a, b) => {
-            collect_structural_dynamic_parts(a, env, out);
-            collect_structural_dynamic_parts(b, env, out);
-        }
-        Command::Background(c) | Command::Subshell(c) | Command::BraceGroup(c) => {
-            collect_structural_dynamic_parts(c, env, out);
-        }
-        Command::If { condition, then_branch, elif_branches, else_branch } => {
-            collect_structural_dynamic_parts(condition, env, out);
-            collect_structural_dynamic_parts(then_branch, env, out);
-            for (cond, body) in elif_branches {
-                collect_structural_dynamic_parts(cond, env, out);
-                collect_structural_dynamic_parts(body, env, out);
-            }
-            if let Some(eb) = else_branch {
-                collect_structural_dynamic_parts(eb, env, out);
-            }
-        }
-        Command::While { condition, body } | Command::Until { condition, body } => {
-            collect_structural_dynamic_parts(condition, env, out);
-            collect_structural_dynamic_parts(body, env, out);
-        }
-        Command::FunctionDef { body, .. } => collect_structural_dynamic_parts(body, env, out),
-        Command::Redirected { command, .. } => {
-            collect_structural_dynamic_parts(command, env, out);
-        }
-        Command::Simple(_) | Command::Assignment(_) => {}
+        _ => {}
+    }
+    // Recurse into child commands
+    for child in cmd.children() {
+        collect_structural_dynamic_parts(child, env, out);
     }
 }

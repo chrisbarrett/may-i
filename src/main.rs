@@ -4,10 +4,10 @@ use std::io::{IsTerminal, Read};
 
 use clap::{CommandFactory, Parser, Subcommand};
 
+use may_i::check;
 use may_i::config;
 use may_i::engine;
 use may_i::parser;
-use may_i::types::{Config, Decision};
 
 #[derive(Parser)]
 #[command(name = "may-i", version, about = "Shell command authorization evaluator")]
@@ -134,7 +134,7 @@ fn cmd_eval(command: &str, json_mode: bool) -> Result<(), String> {
 /// Check subcommand — validate config and run examples.
 fn cmd_check(json_mode: bool) -> Result<(), String> {
     let config = config::load()?;
-    let results = check_examples(&config);
+    let results = check::check_examples(&config);
 
     let mut passed = 0;
     let mut failed = 0;
@@ -208,29 +208,3 @@ fn cmd_parse(command: Option<String>, file: Option<String>) -> Result<(), String
     Ok(())
 }
 
-/// Run all embedded examples from config rules and compare against expected decisions.
-fn check_examples(config: &Config) -> Vec<ExampleResult> {
-    let mut results = Vec::new();
-
-    for rule in &config.rules {
-        for example in &rule.examples {
-            let eval = engine::evaluate(&example.command, config);
-            results.push(ExampleResult {
-                command: example.command.clone(),
-                expected: example.expected,
-                actual: eval.decision,
-                passed: eval.decision == example.expected,
-            });
-        }
-    }
-
-    results
-}
-
-#[derive(Debug)]
-struct ExampleResult {
-    command: String,
-    expected: Decision,
-    actual: Decision,
-    passed: bool,
-}

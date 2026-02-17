@@ -4,6 +4,17 @@
 use crate::parser::{self, Command, RedirectionTarget};
 use crate::types::Config;
 
+/// Check if a text value matches any blocked path pattern.
+/// Returns the matching text if blocked, None otherwise.
+pub fn matches_blocked_path(text: &str, patterns: &[regex::Regex]) -> Option<String> {
+    for pattern in patterns {
+        if pattern.is_match(text) {
+            return Some(text.to_string());
+        }
+    }
+    None
+}
+
 /// Check if any word in the command references a blocked path.
 /// Returns the reason string if blocked, None otherwise.
 pub fn check_blocked_paths(ast: &Command, input: &str, config: &Config) -> Option<String> {
@@ -13,12 +24,10 @@ pub fn check_blocked_paths(ast: &Command, input: &str, config: &Config) -> Optio
 
     for word in &words {
         let text = word.to_str();
-        for pattern in patterns {
-            if pattern.is_match(&text) {
-                return Some(format!(
-                    "Access to credential/sensitive file: {text}"
-                ));
-            }
+        if let Some(matched) = matches_blocked_path(&text, patterns) {
+            return Some(format!(
+                "Access to credential/sensitive file: {matched}"
+            ));
         }
     }
 
@@ -28,33 +37,27 @@ pub fn check_blocked_paths(ast: &Command, input: &str, config: &Config) -> Optio
         for redir in &sc.redirections {
             if let RedirectionTarget::Heredoc(content) = &redir.target
                 && !content.is_empty()
+                && let Some(matched) = matches_blocked_path(content, patterns)
             {
-                for pattern in patterns {
-                    if pattern.is_match(content) {
-                        return Some(format!(
-                            "Access to credential/sensitive file in heredoc: {content}"
-                        ));
-                    }
-                }
+                return Some(format!(
+                    "Access to credential/sensitive file in heredoc: {matched}"
+                ));
             }
         }
     }
 
     // Also check the raw input for content the AST might not fully capture
-    for pattern in patterns {
-        // Check against raw tokens split by whitespace as a fallback
-        for token in input.split_whitespace() {
-            // Strip flag prefixes for --config=.env style
-            let value = if let Some((_flag, val)) = token.split_once('=') {
-                val
-            } else {
-                token
-            };
-            if pattern.is_match(value) {
-                return Some(format!(
-                    "Access to credential/sensitive file: {value}"
-                ));
-            }
+    for token in input.split_whitespace() {
+        // Strip flag prefixes for --config=.env style
+        let value = if let Some((_flag, val)) = token.split_once('=') {
+            val
+        } else {
+            token
+        };
+        if let Some(matched) = matches_blocked_path(value, patterns) {
+            return Some(format!(
+                "Access to credential/sensitive file: {matched}"
+            ));
         }
     }
 

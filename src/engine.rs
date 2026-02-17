@@ -129,25 +129,21 @@ fn evaluate_simple_command(
     let patterns = &config.security.blocked_paths;
     for word in &resolved.words {
         let text = word.to_str();
-        for pattern in patterns {
-            if pattern.is_match(&text) {
-                return EvalResult {
-                    decision: Decision::Deny,
-                    reason: Some(format!("Access to credential/sensitive file: {text}")),
-                };
-            }
+        if let Some(matched) = security::matches_blocked_path(&text, patterns) {
+            return EvalResult {
+                decision: Decision::Deny,
+                reason: Some(format!("Access to credential/sensitive file: {matched}")),
+            };
         }
     }
     for redir in &resolved.redirections {
         if let crate::parser::RedirectionTarget::File(w) = &redir.target {
             let text = w.to_str();
-            for pattern in patterns {
-                if pattern.is_match(&text) {
-                    return EvalResult {
-                        decision: Decision::Deny,
-                        reason: Some(format!("Access to credential/sensitive file: {text}")),
-                    };
-                }
+            if let Some(matched) = security::matches_blocked_path(&text, patterns) {
+                return EvalResult {
+                    decision: Decision::Deny,
+                    reason: Some(format!("Access to credential/sensitive file: {matched}")),
+                };
             }
         }
     }

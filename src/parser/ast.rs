@@ -275,6 +275,83 @@ pub(super) fn format_param_op(name: &str, op: &ParameterOperator) -> String {
     }
 }
 
+/// Returns true if any part in the slice is a dynamic shell construct.
+fn has_dynamic_in(parts: &[WordPart]) -> bool {
+    parts.iter().any(|part| match part {
+        WordPart::CommandSubstitution(_)
+        | WordPart::Backtick(_)
+        | WordPart::Parameter(_)
+        | WordPart::ParameterExpansion(_)
+        | WordPart::ParameterExpansionOp { .. }
+        | WordPart::Arithmetic(_)
+        | WordPart::ProcessSubstitution { .. } => true,
+        WordPart::DoubleQuoted(inner) => has_dynamic_in(inner),
+        _ => false,
+    })
+}
+
+/// Collect human-readable descriptions of dynamic parts from a part slice.
+fn collect_dynamic_from(parts: &[WordPart], out: &mut Vec<String>) {
+    for part in parts {
+        match part {
+            WordPart::Parameter(name) => out.push(format!("${name}")),
+            WordPart::ParameterExpansion(name) => out.push(format!("${{{name}}}")),
+            WordPart::CommandSubstitution(cmd) => {
+                out.push(format!("$({})", abbreviate(cmd)));
+            }
+            WordPart::Backtick(cmd) => {
+                out.push(format!("`{}`", abbreviate(cmd)));
+            }
+            WordPart::Arithmetic(expr) => {
+                out.push(format!("$(({}))", abbreviate(expr)));
+            }
+            WordPart::ProcessSubstitution { direction, command } => {
+                let sigil = match direction {
+                    ProcessDirection::Input => '<',
+                    ProcessDirection::Output => '>',
+                };
+                out.push(format!("{sigil}({})", abbreviate(command)));
+            }
+            WordPart::ParameterExpansionOp { name, op } => {
+                out.push(format!("${{{}}}", format_param_op(name, op)));
+            }
+            WordPart::DoubleQuoted(inner) => {
+                collect_dynamic_from(inner, out);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Flatten a slice of word parts to a plain string.
+fn parts_to_str(parts: &[WordPart], out: &mut String) {
+    for part in parts {
+        match part {
+            WordPart::Literal(s)
+            | WordPart::SingleQuoted(s)
+            | WordPart::AnsiCQuoted(s)
+            | WordPart::Parameter(s)
+            | WordPart::ParameterExpansion(s)
+            | WordPart::CommandSubstitution(s)
+            | WordPart::Backtick(s)
+            | WordPart::Arithmetic(s)
+            | WordPart::Glob(s) => out.push_str(s),
+            WordPart::ParameterExpansionOp { name, op } => {
+                out.push_str(&format_param_op(name, op));
+            }
+            WordPart::DoubleQuoted(inner) => {
+                parts_to_str(inner, out);
+            }
+            WordPart::BraceExpansion(items) => {
+                out.push_str(&items.join(","));
+            }
+            WordPart::ProcessSubstitution { command, .. } => {
+                out.push_str(command);
+            }
+        }
+    }
+}
+
 impl Word {
     pub fn literal(s: &str) -> Self {
         Word {
@@ -285,60 +362,15 @@ impl Word {
     /// Returns true if this word contains dynamic shell constructs whose runtime
     /// value cannot be determined by static analysis.
     pub fn has_dynamic_parts(&self) -> bool {
-        self.parts.iter().any(|part| match part {
-            WordPart::CommandSubstitution(_)
-            | WordPart::Backtick(_)
-            | WordPart::Parameter(_)
-            | WordPart::ParameterExpansion(_)
-            | WordPart::ParameterExpansionOp { .. }
-            | WordPart::Arithmetic(_)
-            | WordPart::ProcessSubstitution { .. } => true,
-            WordPart::DoubleQuoted(inner) => {
-                let w = Word { parts: inner.clone() };
-                w.has_dynamic_parts()
-            }
-            _ => false,
-        })
+        has_dynamic_in(&self.parts)
     }
 
     /// Collect human-readable descriptions of the dynamic parts in this word.
     /// Returns items like `"$HOME"`, `"$(whoami)"`, `` "`cmd`" ``, `"$((x+1))"`.
     pub fn dynamic_parts(&self) -> Vec<String> {
         let mut out = Vec::new();
-        self.collect_dynamic_parts(&mut out);
+        collect_dynamic_from(&self.parts, &mut out);
         out
-    }
-
-    fn collect_dynamic_parts(&self, out: &mut Vec<String>) {
-        for part in &self.parts {
-            match part {
-                WordPart::Parameter(name) => out.push(format!("${name}")),
-                WordPart::ParameterExpansion(name) => out.push(format!("${{{name}}}")),
-                WordPart::CommandSubstitution(cmd) => {
-                    out.push(format!("$({})", abbreviate(cmd)));
-                }
-                WordPart::Backtick(cmd) => {
-                    out.push(format!("`{}`", abbreviate(cmd)));
-                }
-                WordPart::Arithmetic(expr) => {
-                    out.push(format!("$(({}))", abbreviate(expr)));
-                }
-                WordPart::ProcessSubstitution { direction, command } => {
-                    let sigil = match direction {
-                        ProcessDirection::Input => '<',
-                        ProcessDirection::Output => '>',
-                    };
-                    out.push(format!("{sigil}({})", abbreviate(command)));
-                }
-                WordPart::ParameterExpansionOp { name, op } => {
-                    out.push(format!("${{{}}}", format_param_op(name, op)));
-                }
-                WordPart::DoubleQuoted(inner) => {
-                    Word { parts: inner.clone() }.collect_dynamic_parts(out);
-                }
-                _ => {}
-            }
-        }
     }
 
     /// Resolve known environment variables, replacing `Parameter` and
@@ -347,56 +379,70 @@ impl Word {
     /// Other dynamic parts (command substitution, backticks, etc.) are left as-is.
     pub fn resolve(&self, env: &std::collections::HashMap<String, String>) -> Word {
         Word {
-            parts: self.parts.iter().map(|part| match part {
-                WordPart::Parameter(name) | WordPart::ParameterExpansion(name) => {
-                    if let Some(val) = env.get(name.as_str()) {
-                        WordPart::Literal(val.clone())
-                    } else {
-                        part.clone()
-                    }
-                }
-                WordPart::ParameterExpansionOp { name, op } => {
-                    resolve_param_op(name, op, env)
-                }
-                WordPart::DoubleQuoted(inner) => {
-                    let resolved = Word { parts: inner.clone() }.resolve(env);
-                    WordPart::DoubleQuoted(resolved.parts)
-                }
-                _ => part.clone(),
-            }).collect(),
+            parts: resolve_parts(&self.parts, env),
         }
     }
 
     /// Flatten this word to a plain string for matching purposes.
     pub fn to_str(&self) -> String {
         let mut out = String::new();
-        for part in &self.parts {
-            match part {
-                WordPart::Literal(s)
-                | WordPart::SingleQuoted(s)
-                | WordPart::AnsiCQuoted(s)
-                | WordPart::Parameter(s)
-                | WordPart::ParameterExpansion(s)
-                | WordPart::CommandSubstitution(s)
-                | WordPart::Backtick(s)
-                | WordPart::Arithmetic(s)
-                | WordPart::Glob(s) => out.push_str(s),
-                WordPart::ParameterExpansionOp { name, op } => {
-                    out.push_str(&format_param_op(name, op));
-                }
-                WordPart::DoubleQuoted(parts) => {
-                    let w = Word { parts: parts.clone() };
-                    out.push_str(&w.to_str());
-                }
-                WordPart::BraceExpansion(items) => {
-                    out.push_str(&items.join(","));
-                }
-                WordPart::ProcessSubstitution { command, .. } => {
-                    out.push_str(command);
-                }
+        parts_to_str(&self.parts, &mut out);
+        out
+    }
+}
+
+/// Resolve environment variables in a slice of word parts.
+fn resolve_parts(
+    parts: &[WordPart],
+    env: &std::collections::HashMap<String, String>,
+) -> Vec<WordPart> {
+    parts.iter().map(|part| match part {
+        WordPart::Parameter(name) | WordPart::ParameterExpansion(name) => {
+            if let Some(val) = env.get(name.as_str()) {
+                WordPart::Literal(val.clone())
+            } else {
+                part.clone()
             }
         }
-        out
+        WordPart::ParameterExpansionOp { name, op } => {
+            resolve_param_op(name, op, env)
+        }
+        WordPart::DoubleQuoted(inner) => {
+            WordPart::DoubleQuoted(resolve_parts(inner, env))
+        }
+        _ => part.clone(),
+    }).collect()
+}
+
+impl Command {
+    /// Returns all direct child commands of this node.
+    pub fn children(&self) -> Vec<&Command> {
+        match self {
+            Command::Simple(_) | Command::Assignment(_) => vec![],
+            Command::Pipeline(cmds) | Command::Sequence(cmds) => cmds.iter().collect(),
+            Command::And(a, b) | Command::Or(a, b) => vec![a, b],
+            Command::Background(c) | Command::Subshell(c) | Command::BraceGroup(c) => vec![c],
+            Command::If { condition, then_branch, elif_branches, else_branch } => {
+                let mut children = vec![condition.as_ref(), then_branch.as_ref()];
+                for (cond, body) in elif_branches {
+                    children.push(cond);
+                    children.push(body);
+                }
+                if let Some(eb) = else_branch {
+                    children.push(eb);
+                }
+                children
+            }
+            Command::For { body, .. } => vec![body],
+            Command::While { condition, body } | Command::Until { condition, body } => {
+                vec![condition, body]
+            }
+            Command::Case { arms, .. } => {
+                arms.iter().filter_map(|arm| arm.body.as_ref()).collect()
+            }
+            Command::FunctionDef { body, .. } => vec![body],
+            Command::Redirected { command, .. } => vec![command],
+        }
     }
 }
 

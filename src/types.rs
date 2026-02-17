@@ -191,18 +191,6 @@ pub struct Example {
     pub expected: Decision,
 }
 
-impl From<&str> for CommandMatcher {
-    fn from(s: &str) -> Self {
-        CommandMatcher::Exact(s.to_string())
-    }
-}
-
-impl From<Vec<&str>> for CommandMatcher {
-    fn from(v: Vec<&str>) -> Self {
-        CommandMatcher::List(v.into_iter().map(|s| s.to_string()).collect())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -355,23 +343,6 @@ mod tests {
     fn pattern_debug_regex() {
         let p = Pattern::new("^foo$").unwrap();
         assert_eq!(format!("{:?}", p), r#"Regex("^foo$")"#);
-    }
-
-    // --- CommandMatcher::from ---
-
-    #[test]
-    fn command_matcher_from_str() {
-        let m = CommandMatcher::from("git");
-        assert!(matches!(m, CommandMatcher::Exact(s) if s == "git"));
-    }
-
-    #[test]
-    fn command_matcher_from_vec() {
-        let m = CommandMatcher::from(vec!["git", "hg"]);
-        match m {
-            CommandMatcher::List(v) => assert_eq!(v, vec!["git", "hg"]),
-            _ => panic!("expected List"),
-        }
     }
 
     // --- CommandMatcher::Debug ---

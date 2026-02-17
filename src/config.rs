@@ -52,7 +52,7 @@ pub fn load() -> Result<Config, String> {
 
     let content =
         std::fs::read_to_string(&path).map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
-    crate::check::parse(&content)
+    crate::config_parse::parse(&content)
 }
 
 /// The preferred config path (XDG or ~/.config fallback).
