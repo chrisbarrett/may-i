@@ -90,14 +90,9 @@ pub fn check_blocked_paths(ast: &Command, input: &str, config: &Config) -> Optio
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::SecurityConfig;
 
     fn test_config() -> Config {
-        Config {
-            rules: vec![],
-            wrappers: vec![],
-            security: SecurityConfig::default(),
-        }
+        Config::default()
     }
 
     /// Helper: parse input and call check_blocked_paths with the AST.

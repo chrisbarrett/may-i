@@ -70,7 +70,7 @@ impl std::fmt::Debug for Pattern {
 }
 
 /// Top-level configuration.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Config {
     pub rules: Vec<Rule>,
     pub wrappers: Vec<Wrapper>,

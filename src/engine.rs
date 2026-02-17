@@ -342,24 +342,13 @@ mod tests {
     // ── Helpers ──────────────────────────────────────────────────────
 
     fn empty_config() -> Config {
-        Config {
-            rules: vec![],
-            wrappers: vec![],
-            security: SecurityConfig {
-                blocked_paths: vec![],
-                safe_env_vars: std::collections::HashSet::new(),
-            },
-        }
+        Config::default()
     }
 
     fn config_with_rules(rules: Vec<Rule>) -> Config {
         Config {
             rules,
-            wrappers: vec![],
-            security: SecurityConfig {
-                blocked_paths: vec![],
-                safe_env_vars: std::collections::HashSet::new(),
-            },
+            ..Config::default()
         }
     }
 
@@ -873,10 +862,7 @@ mod tests {
                 positional_args: vec![],
                 kind: WrapperKind::AfterFlags,
             }],
-            security: SecurityConfig {
-                blocked_paths: vec![],
-                safe_env_vars: std::collections::HashSet::new(),
-            },
+            ..Config::default()
         };
         let result = evaluate("sudo ls", &config);
         assert_eq!(result.decision, Decision::Allow);
@@ -891,10 +877,7 @@ mod tests {
                 positional_args: vec![],
                 kind: WrapperKind::AfterFlags,
             }],
-            security: SecurityConfig {
-                blocked_paths: vec![],
-                safe_env_vars: std::collections::HashSet::new(),
-            },
+            ..Config::default()
         };
         // sudo -u root ls → inner command is "ls"
         let result = evaluate("sudo -u ls", &config);
@@ -910,10 +893,7 @@ mod tests {
                 positional_args: vec![],
                 kind: WrapperKind::AfterDelimiter("--".into()),
             }],
-            security: SecurityConfig {
-                blocked_paths: vec![],
-                safe_env_vars: std::collections::HashSet::new(),
-            },
+            ..Config::default()
         };
         let result = evaluate("env FOO=bar -- ls -la", &config);
         assert_eq!(result.decision, Decision::Allow);
@@ -928,10 +908,7 @@ mod tests {
                 positional_args: vec![Pattern::new("exec").unwrap()],
                 kind: WrapperKind::AfterFlags,
             }],
-            security: SecurityConfig {
-                blocked_paths: vec![],
-                safe_env_vars: std::collections::HashSet::new(),
-            },
+            ..Config::default()
         };
         // "docker exec container ls" matches the wrapper
         let result = evaluate("docker exec container ls", &config);
@@ -953,10 +930,7 @@ mod tests {
                 positional_args: vec![Pattern::new("exec").unwrap()],
                 kind: WrapperKind::AfterFlags,
             }],
-            security: SecurityConfig {
-                blocked_paths: vec![],
-                safe_env_vars: std::collections::HashSet::new(),
-            },
+            ..Config::default()
         };
         // "docker run container" does not match "exec" positional requirement,
         // so no unwrapping; "docker" is evaluated as-is with allow_rule
@@ -973,10 +947,7 @@ mod tests {
                 positional_args: vec![],
                 kind: WrapperKind::AfterFlags,
             }],
-            security: SecurityConfig {
-                blocked_paths: vec![],
-                safe_env_vars: std::collections::HashSet::new(),
-            },
+            ..Config::default()
         };
         // "nohup" is not "sudo", so no unwrapping happens
         let result = evaluate("nohup sleep 10", &config);
@@ -989,8 +960,7 @@ mod tests {
     fn security_blocked_path_denies() {
         let config = Config {
             rules: vec![allow_rule("cat")],
-            wrappers: vec![],
-            security: SecurityConfig::default(),
+            ..Config::default()
         };
         let result = evaluate("cat .env", &config);
         assert_eq!(result.decision, Decision::Deny);
@@ -1011,8 +981,7 @@ mod tests {
     fn security_ssh_path_blocked() {
         let config = Config {
             rules: vec![allow_rule("cat")],
-            wrappers: vec![],
-            security: SecurityConfig::default(),
+            ..Config::default()
         };
         let result = evaluate("cat .ssh/id_rsa", &config);
         assert_eq!(result.decision, Decision::Deny);
@@ -1022,8 +991,7 @@ mod tests {
     fn security_normal_file_allowed() {
         let config = Config {
             rules: vec![allow_rule("cat")],
-            wrappers: vec![],
-            security: SecurityConfig::default(),
+            ..Config::default()
         };
         let result = evaluate("cat README.md", &config);
         assert_eq!(result.decision, Decision::Allow);
@@ -1132,11 +1100,11 @@ mod tests {
         unsafe { std::env::set_var("TEST_MAYI_HOME", "/home/user") };
         let config = Config {
             rules: vec![allow_rule("echo"), allow_rule("ls")],
-            wrappers: vec![],
             security: SecurityConfig {
-                blocked_paths: vec![],
                 safe_env_vars: ["TEST_MAYI_HOME".to_string()].into(),
+                ..SecurityConfig::default()
             },
+            ..Config::default()
         };
         let result = evaluate("echo $TEST_MAYI_HOME && ls", &config);
         assert_eq!(result.decision, Decision::Allow);
@@ -1147,11 +1115,7 @@ mod tests {
     fn unresolved_env_var_triggers_ask() {
         let config = Config {
             rules: vec![allow_rule("echo"), allow_rule("ls")],
-            wrappers: vec![],
-            security: SecurityConfig {
-                blocked_paths: vec![],
-                safe_env_vars: std::collections::HashSet::new(),
-            },
+            ..Config::default()
         };
         let result = evaluate("echo $HOME && ls", &config);
         assert_eq!(result.decision, Decision::Ask);
@@ -1165,11 +1129,11 @@ mod tests {
         unsafe { std::env::set_var("TEST_MAYI_HOME2", "/home/user") };
         let config = Config {
             rules: vec![allow_rule("cat")],
-            wrappers: vec![],
             security: SecurityConfig {
-                blocked_paths: SecurityConfig::default().blocked_paths,
                 safe_env_vars: ["TEST_MAYI_HOME2".to_string()].into(),
+                ..SecurityConfig::default()
             },
+            ..Config::default()
         };
         let result = evaluate("cat $TEST_MAYI_HOME2/.ssh/id_rsa", &config);
         assert_eq!(result.decision, Decision::Deny);
@@ -1181,11 +1145,7 @@ mod tests {
     fn command_sub_never_resolvable() {
         let config = Config {
             rules: vec![allow_rule("echo"), allow_rule("ls")],
-            wrappers: vec![],
-            security: SecurityConfig {
-                blocked_paths: vec![],
-                safe_env_vars: std::collections::HashSet::new(),
-            },
+            ..Config::default()
         };
         let result = evaluate("echo $(whoami) && ls", &config);
         assert_eq!(result.decision, Decision::Ask);
@@ -1199,11 +1159,11 @@ mod tests {
         unsafe { std::env::set_var("TEST_MAYI_HOME3", "/tmp") };
         let config = Config {
             rules: vec![deny_rule("ls"), allow_rule("echo")],
-            wrappers: vec![],
             security: SecurityConfig {
-                blocked_paths: vec![],
                 safe_env_vars: ["TEST_MAYI_HOME3".to_string()].into(),
+                ..SecurityConfig::default()
             },
+            ..Config::default()
         };
         let result = evaluate("ls && echo $TEST_MAYI_HOME3", &config);
         assert_eq!(result.decision, Decision::Deny);
@@ -1214,11 +1174,7 @@ mod tests {
     fn for_loop_dynamic_iteration_words_ask() {
         let config = Config {
             rules: vec![allow_rule("echo")],
-            wrappers: vec![],
-            security: SecurityConfig {
-                blocked_paths: vec![],
-                safe_env_vars: std::collections::HashSet::new(),
-            },
+            ..Config::default()
         };
         let result = evaluate("for f in $items; do echo $f; done", &config);
         assert_eq!(result.decision, Decision::Ask);
@@ -1233,11 +1189,11 @@ mod tests {
         unsafe { std::env::set_var("TEST_MAYI_PATH", "/usr/local/bin") };
         let config = Config {
             rules: vec![allow_rule("echo")],
-            wrappers: vec![],
             security: SecurityConfig {
-                blocked_paths: vec![],
                 safe_env_vars: ["TEST_MAYI_PATH".to_string()].into(),
+                ..SecurityConfig::default()
             },
+            ..Config::default()
         };
         let result = evaluate("echo ${TEST_MAYI_PATH##*/}", &config);
         assert_eq!(result.decision, Decision::Allow);
@@ -1248,11 +1204,7 @@ mod tests {
     fn param_op_unresolved_triggers_ask() {
         let config = Config {
             rules: vec![allow_rule("echo")],
-            wrappers: vec![],
-            security: SecurityConfig {
-                blocked_paths: vec![],
-                safe_env_vars: std::collections::HashSet::new(),
-            },
+            ..Config::default()
         };
         let result = evaluate("echo ${UNKNOWN_VAR#pat}", &config);
         assert_eq!(result.decision, Decision::Ask);
@@ -1265,11 +1217,11 @@ mod tests {
         unsafe { std::env::set_var("TEST_MAYI_OPT", "value") };
         let config = Config {
             rules: vec![allow_rule("echo")],
-            wrappers: vec![],
             security: SecurityConfig {
-                blocked_paths: vec![],
                 safe_env_vars: ["TEST_MAYI_OPT".to_string()].into(),
+                ..SecurityConfig::default()
             },
+            ..Config::default()
         };
         let result = evaluate("echo ${TEST_MAYI_OPT:-fallback}", &config);
         assert_eq!(result.decision, Decision::Allow);
@@ -1281,11 +1233,11 @@ mod tests {
         unsafe { std::env::set_var("TEST_MAYI_FILE", "archive.tar.gz") };
         let config = Config {
             rules: vec![allow_rule("echo")],
-            wrappers: vec![],
             security: SecurityConfig {
-                blocked_paths: vec![],
                 safe_env_vars: ["TEST_MAYI_FILE".to_string()].into(),
+                ..SecurityConfig::default()
             },
+            ..Config::default()
         };
         let result = evaluate(r#"echo "${TEST_MAYI_FILE%%.*}""#, &config);
         assert_eq!(result.decision, Decision::Allow);
