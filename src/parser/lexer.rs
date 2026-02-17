@@ -1096,21 +1096,6 @@ impl Lexer {
             }
         }
 
-        // Check for assignment (NAME=VALUE in the first literal part)
-        if !parts.is_empty()
-            && let WordPart::Literal(ref s) = parts[0]
-            && let Some(_eq_pos) = s.find('=')
-        {
-            let name = &s[.._eq_pos];
-            if !name.is_empty()
-                && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-                && name.chars().next().is_some_and(|c| !c.is_ascii_digit())
-            {
-                // It's an assignment — detected at the parser level.
-                // Just return the whole thing as a word token.
-            }
-        }
-
         Some(Token::Word(Word { parts }))
     }
 }

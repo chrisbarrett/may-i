@@ -15,6 +15,29 @@ pub fn matches_blocked_path(text: &str, patterns: &[regex::Regex]) -> Option<Str
     None
 }
 
+/// Check if a simple command's words or file redirections reference a blocked path.
+/// Returns the reason string if blocked, None otherwise.
+pub fn check_simple_command_paths(
+    sc: &parser::SimpleCommand,
+    patterns: &[regex::Regex],
+) -> Option<String> {
+    for word in &sc.words {
+        let text = word.to_str();
+        if let Some(matched) = matches_blocked_path(&text, patterns) {
+            return Some(format!("Access to credential/sensitive file: {matched}"));
+        }
+    }
+    for redir in &sc.redirections {
+        if let RedirectionTarget::File(w) = &redir.target {
+            let text = w.to_str();
+            if let Some(matched) = matches_blocked_path(&text, patterns) {
+                return Some(format!("Access to credential/sensitive file: {matched}"));
+            }
+        }
+    }
+    None
+}
+
 /// Check if any word in the command references a blocked path.
 /// Returns the reason string if blocked, None otherwise.
 pub fn check_blocked_paths(ast: &Command, input: &str, config: &Config) -> Option<String> {

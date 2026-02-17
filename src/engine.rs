@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use crate::parser::{self, SimpleCommand, Word};
 use crate::security;
-use crate::types::{ArgMatcher, CommandMatcher, Config, Decision, EvalResult, WrapperKind};
+use crate::types::{ArgMatcher, CommandMatcher, Config, Decision, EvalResult, Pattern, WrapperKind};
 
 /// Deduplicate a list of dynamic part descriptions while preserving order.
 fn dedup_parts(parts: &[String]) -> Vec<&str> {
@@ -126,26 +126,13 @@ fn evaluate_simple_command(
     }
 
     // Re-check blocked paths on resolved values
-    let patterns = &config.security.blocked_paths;
-    for word in &resolved.words {
-        let text = word.to_str();
-        if let Some(matched) = security::matches_blocked_path(&text, patterns) {
-            return EvalResult {
-                decision: Decision::Deny,
-                reason: Some(format!("Access to credential/sensitive file: {matched}")),
-            };
-        }
-    }
-    for redir in &resolved.redirections {
-        if let crate::parser::RedirectionTarget::File(w) = &redir.target {
-            let text = w.to_str();
-            if let Some(matched) = security::matches_blocked_path(&text, patterns) {
-                return EvalResult {
-                    decision: Decision::Deny,
-                    reason: Some(format!("Access to credential/sensitive file: {matched}")),
-                };
-            }
-        }
+    if let Some(reason) =
+        security::check_simple_command_paths(&resolved, &config.security.blocked_paths)
+    {
+        return EvalResult {
+            decision: Decision::Deny,
+            reason: Some(reason),
+        };
     }
 
     let cmd_name = match resolved.command_name() {
@@ -216,38 +203,24 @@ fn command_matches(name: &str, matcher: &CommandMatcher) -> bool {
     }
 }
 
+fn match_positional(patterns: &[Pattern], args: &[String], exact: bool) -> bool {
+    let positional = extract_positional_args(args);
+    if exact {
+        if patterns.len() != positional.len() {
+            return false;
+        }
+    } else if patterns.len() > positional.len() {
+        return false;
+    }
+    patterns.iter().enumerate().all(|(i, pat)| {
+        pat.is_wildcard() || positional.get(i).is_some_and(|arg| pat.is_match(arg))
+    })
+}
+
 fn matcher_matches(matcher: &ArgMatcher, args: &[String]) -> bool {
     match matcher {
-        ArgMatcher::Positional(patterns) => {
-            let positional = extract_positional_args(args);
-
-            if patterns.len() > positional.len() {
-                return false;
-            }
-
-            patterns.iter().enumerate().all(|(i, pat)| {
-                if pat.is_wildcard() {
-                    true
-                } else {
-                    positional.get(i).is_some_and(|arg| pat.is_match(arg))
-                }
-            })
-        }
-        ArgMatcher::ExactPositional(patterns) => {
-            let positional = extract_positional_args(args);
-
-            if patterns.len() != positional.len() {
-                return false;
-            }
-
-            patterns.iter().enumerate().all(|(i, pat)| {
-                if pat.is_wildcard() {
-                    true
-                } else {
-                    positional.get(i).is_some_and(|arg| pat.is_match(arg))
-                }
-            })
-        }
+        ArgMatcher::Positional(patterns) => match_positional(patterns, args, false),
+        ArgMatcher::ExactPositional(patterns) => match_positional(patterns, args, true),
         ArgMatcher::Anywhere(tokens) => {
             // Any of the listed tokens appears anywhere in args (OR semantics).
             tokens.iter().any(|token| args.iter().any(|a| token.is_match(a)))

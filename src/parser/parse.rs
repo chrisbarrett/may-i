@@ -241,10 +241,6 @@ impl Parser {
             }
         }
 
-        if assignments.is_empty() && words.is_empty() && redirections.is_empty() {
-            // Empty command, return empty simple
-        }
-
         // If only assignments and no words, return as assignment command
         if !assignments.is_empty() && words.is_empty()
             && assignments.len() == 1

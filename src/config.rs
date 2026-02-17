@@ -14,23 +14,8 @@ pub fn config_path() -> Option<PathBuf> {
         }
     }
 
-    // 2. $XDG_CONFIG_HOME/may-i/config.lisp
-    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-        let path = PathBuf::from(xdg).join("may-i/config.lisp");
-        if path.exists() {
-            return Some(path);
-        }
-    }
-
-    // 3. ~/.config/may-i/config.lisp
-    if let Some(home) = dirs::home_dir() {
-        let path = home.join(".config/may-i/config.lisp");
-        if path.exists() {
-            return Some(path);
-        }
-    }
-
-    None
+    // 2-3. $XDG_CONFIG_HOME or ~/.config fallback
+    default_config_path().filter(|p| p.exists())
 }
 
 /// Load config, creating a starter config file if none exists.
