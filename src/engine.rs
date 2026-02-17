@@ -30,16 +30,16 @@ fn build_env_snapshot(config: &Config) -> HashMap<String, String> {
 
 /// Evaluate a shell command string against the config.
 pub fn evaluate(input: &str, config: &Config) -> EvalResult {
-    // R11: Security filters first (on raw input)
-    if let Some(reason) = security::check_blocked_paths(input, config) {
+    // Parse the command once, before any analysis
+    let ast = parser::parse(input);
+
+    // R11: Security filters (on parsed AST + raw input fallback)
+    if let Some(reason) = security::check_blocked_paths(&ast, input, config) {
         return EvalResult {
             decision: Decision::Deny,
             reason: Some(reason),
         };
     }
-
-    // Parse the command
-    let ast = parser::parse(input);
 
     // Build env snapshot for safe variable resolution
     let env = build_env_snapshot(config);
