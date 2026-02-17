@@ -98,6 +98,12 @@ pub fn parse(input: &str) -> Result<Config, String> {
                     }
                 }
             }
+            "safe-env-vars" => {
+                for item in &list[1..] {
+                    let s = item.as_atom().ok_or("safe-env-vars entry must be a string")?;
+                    security.safe_env_vars.insert(s.to_string());
+                }
+            }
             other => return Err(format!("unknown top-level form: {other}")),
         }
     }
@@ -879,6 +885,38 @@ mod tests {
             engine::evaluate("git remote add origin url", &config).decision,
             Decision::Ask
         );
+    }
+
+    // ── safe-env-vars parsing ──────────────────────────────────────────
+
+    #[test]
+    fn safe_env_vars_basic() {
+        let config = parse(r#"(safe-env-vars "HOME" "PWD" "USER")"#).unwrap();
+        assert!(config.security.safe_env_vars.contains("HOME"));
+        assert!(config.security.safe_env_vars.contains("PWD"));
+        assert!(config.security.safe_env_vars.contains("USER"));
+        assert_eq!(config.security.safe_env_vars.len(), 3);
+    }
+
+    #[test]
+    fn safe_env_vars_empty() {
+        let config = parse(r#"(safe-env-vars)"#).unwrap();
+        assert!(config.security.safe_env_vars.is_empty());
+    }
+
+    #[test]
+    fn safe_env_vars_with_other_config() {
+        let input = r#"
+            (safe-env-vars "HOME" "EDITOR")
+            (rule (command "ls") (effect :allow))
+            (blocked-paths "\\.secret/")
+        "#;
+        let config = parse(input).unwrap();
+        assert_eq!(config.security.safe_env_vars.len(), 2);
+        assert!(config.security.safe_env_vars.contains("HOME"));
+        assert!(config.security.safe_env_vars.contains("EDITOR"));
+        assert_eq!(config.rules.len(), 1);
+        assert!(config.security.blocked_paths.len() > 10); // defaults + custom
     }
 
     #[test]

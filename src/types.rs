@@ -81,6 +81,7 @@ pub struct Config {
 #[derive(Clone)]
 pub struct SecurityConfig {
     pub blocked_paths: Vec<regex::Regex>,
+    pub safe_env_vars: std::collections::HashSet<String>,
 }
 
 impl std::fmt::Debug for SecurityConfig {
@@ -88,6 +89,7 @@ impl std::fmt::Debug for SecurityConfig {
         let patterns: Vec<&str> = self.blocked_paths.iter().map(|r| r.as_str()).collect();
         f.debug_struct("SecurityConfig")
             .field("blocked_paths", &patterns)
+            .field("safe_env_vars", &self.safe_env_vars)
             .finish()
     }
 }
@@ -95,6 +97,7 @@ impl std::fmt::Debug for SecurityConfig {
 impl Default for SecurityConfig {
     fn default() -> Self {
         SecurityConfig {
+            safe_env_vars: std::collections::HashSet::new(),
             blocked_paths: [
                 r"(^|/)\.env($|[./])",
                 r"(^|/)\.ssh/",

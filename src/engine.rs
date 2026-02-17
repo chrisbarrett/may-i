@@ -1,13 +1,36 @@
 // Rule engine — R7, R8, R9
 // Evaluates parsed commands against rules, handles wrappers and flag expansion.
 
+use std::collections::HashMap;
+
 use crate::parser::{self, SimpleCommand, Word};
 use crate::security;
 use crate::types::{ArgMatcher, CommandMatcher, Config, Decision, EvalResult, WrapperKind};
 
+/// Deduplicate a list of dynamic part descriptions while preserving order.
+fn dedup_parts(parts: &[String]) -> Vec<&str> {
+    let mut seen = std::collections::HashSet::new();
+    parts
+        .iter()
+        .filter(|p| seen.insert(p.as_str()))
+        .map(|p| p.as_str())
+        .collect()
+}
+
+/// Build a snapshot of safe environment variable values.
+fn build_env_snapshot(config: &Config) -> HashMap<String, String> {
+    let mut env = HashMap::new();
+    for name in &config.security.safe_env_vars {
+        if let Ok(val) = std::env::var(name) {
+            env.insert(name.clone(), val);
+        }
+    }
+    env
+}
+
 /// Evaluate a shell command string against the config.
 pub fn evaluate(input: &str, config: &Config) -> EvalResult {
-    // R11: Security filters first
+    // R11: Security filters first (on raw input)
     if let Some(reason) = security::check_blocked_paths(input, config) {
         return EvalResult {
             decision: Decision::Deny,
@@ -15,16 +38,25 @@ pub fn evaluate(input: &str, config: &Config) -> EvalResult {
         };
     }
 
-    // Dynamic shell constructs prevent static analysis — escalate to ask
-    if let Some(reason) = security::check_dynamic_parts(input) {
-        return EvalResult {
-            decision: Decision::Ask,
-            reason: Some(reason),
-        };
-    }
-
     // Parse the command
     let ast = parser::parse(input);
+
+    // Build env snapshot for safe variable resolution
+    let env = build_env_snapshot(config);
+
+    // Check structural dynamic parts (for-loop words, case discriminants/patterns)
+    let structural = parser::find_structural_dynamic_parts(&ast, &env);
+    if !structural.is_empty() {
+        let parts = dedup_parts(&structural);
+        return EvalResult {
+            decision: Decision::Ask,
+            reason: Some(format!(
+                "Cannot statically analyse dynamic value{}: {}",
+                if parts.len() == 1 { "" } else { "s" },
+                parts.join(", "),
+            )),
+        };
+    }
 
     // Extract all simple commands
     let simple_commands = parser::extract_simple_commands(&ast);
@@ -43,7 +75,7 @@ pub fn evaluate(input: &str, config: &Config) -> EvalResult {
     };
 
     for sc in &simple_commands {
-        let result = evaluate_simple_command(sc, config, 0);
+        let result = evaluate_simple_command(sc, config, 0, &env);
         if result.decision == Decision::Deny {
             return result;
         }
@@ -56,8 +88,71 @@ pub fn evaluate(input: &str, config: &Config) -> EvalResult {
 }
 
 /// Evaluate a single simple command against rules.
-fn evaluate_simple_command(sc: &SimpleCommand, config: &Config, depth: usize) -> EvalResult {
-    let cmd_name = match sc.command_name() {
+fn evaluate_simple_command(
+    sc: &SimpleCommand,
+    config: &Config,
+    depth: usize,
+    env: &HashMap<String, String>,
+) -> EvalResult {
+    // Resolve safe env vars
+    let resolved = sc.resolve(env);
+
+    // Check if the resolved command still has dynamic parts
+    let mut dynamic = Vec::new();
+    for word in &resolved.words {
+        dynamic.extend(word.dynamic_parts());
+    }
+    for assignment in &resolved.assignments {
+        dynamic.extend(assignment.value.dynamic_parts());
+    }
+    for redir in &resolved.redirections {
+        if let crate::parser::RedirectionTarget::File(w) = &redir.target {
+            dynamic.extend(w.dynamic_parts());
+        }
+    }
+    if !dynamic.is_empty() {
+        let cmd_label = resolved
+            .command_name()
+            .unwrap_or("<unknown>");
+        let parts = dedup_parts(&dynamic);
+        return EvalResult {
+            decision: Decision::Ask,
+            reason: Some(format!(
+                "Command `{cmd_label}` contains dynamic value{} that cannot be statically analysed: {}",
+                if parts.len() == 1 { "" } else { "s" },
+                parts.join(", "),
+            )),
+        };
+    }
+
+    // Re-check blocked paths on resolved values
+    let patterns = &config.security.blocked_paths;
+    for word in &resolved.words {
+        let text = word.to_str();
+        for pattern in patterns {
+            if pattern.is_match(&text) {
+                return EvalResult {
+                    decision: Decision::Deny,
+                    reason: Some(format!("Access to credential/sensitive file: {text}")),
+                };
+            }
+        }
+    }
+    for redir in &resolved.redirections {
+        if let crate::parser::RedirectionTarget::File(w) = &redir.target {
+            let text = w.to_str();
+            for pattern in patterns {
+                if pattern.is_match(&text) {
+                    return EvalResult {
+                        decision: Decision::Deny,
+                        reason: Some(format!("Access to credential/sensitive file: {text}")),
+                    };
+                }
+            }
+        }
+    }
+
+    let cmd_name = match resolved.command_name() {
         Some(name) if !name.is_empty() => name,
         _ => {
             return EvalResult {
@@ -69,13 +164,13 @@ fn evaluate_simple_command(sc: &SimpleCommand, config: &Config, depth: usize) ->
 
     // R9: Check if this is a wrapper command
     if depth < 5
-        && let Some(inner) = unwrap_wrapper(sc, config)
+        && let Some(inner) = unwrap_wrapper(&resolved, config)
     {
-        return evaluate_simple_command(&inner, config, depth + 1);
+        return evaluate_simple_command(&inner, config, depth + 1, env);
     }
 
     // Expand flags: -abc → -a -b -c (R8)
-    let expanded_args = expand_flags(sc.args());
+    let expanded_args = expand_flags(resolved.args());
 
     // Evaluate against rules: deny rules first, then first match
     let mut first_match: Option<EvalResult> = None;
@@ -283,6 +378,7 @@ mod tests {
             wrappers: vec![],
             security: SecurityConfig {
                 blocked_paths: vec![],
+                safe_env_vars: std::collections::HashSet::new(),
             },
         }
     }
@@ -293,6 +389,7 @@ mod tests {
             wrappers: vec![],
             security: SecurityConfig {
                 blocked_paths: vec![],
+                safe_env_vars: std::collections::HashSet::new(),
             },
         }
     }
@@ -809,6 +906,7 @@ mod tests {
             }],
             security: SecurityConfig {
                 blocked_paths: vec![],
+                safe_env_vars: std::collections::HashSet::new(),
             },
         };
         let result = evaluate("sudo ls", &config);
@@ -826,6 +924,7 @@ mod tests {
             }],
             security: SecurityConfig {
                 blocked_paths: vec![],
+                safe_env_vars: std::collections::HashSet::new(),
             },
         };
         // sudo -u root ls → inner command is "ls"
@@ -844,6 +943,7 @@ mod tests {
             }],
             security: SecurityConfig {
                 blocked_paths: vec![],
+                safe_env_vars: std::collections::HashSet::new(),
             },
         };
         let result = evaluate("env FOO=bar -- ls -la", &config);
@@ -861,6 +961,7 @@ mod tests {
             }],
             security: SecurityConfig {
                 blocked_paths: vec![],
+                safe_env_vars: std::collections::HashSet::new(),
             },
         };
         // "docker exec container ls" matches the wrapper
@@ -885,6 +986,7 @@ mod tests {
             }],
             security: SecurityConfig {
                 blocked_paths: vec![],
+                safe_env_vars: std::collections::HashSet::new(),
             },
         };
         // "docker run container" does not match "exec" positional requirement,
@@ -904,6 +1006,7 @@ mod tests {
             }],
             security: SecurityConfig {
                 blocked_paths: vec![],
+                safe_env_vars: std::collections::HashSet::new(),
             },
         };
         // "nohup" is not "sudo", so no unwrapping happens
@@ -930,7 +1033,9 @@ mod tests {
         let config = config_with_rules(vec![allow_rule("echo")]);
         let result = evaluate("echo $(whoami)", &config);
         assert_eq!(result.decision, Decision::Ask);
-        assert!(result.reason.unwrap().contains("Dynamic"));
+        let reason = result.reason.unwrap();
+        assert!(reason.contains("echo"), "should mention the command: {reason}");
+        assert!(reason.contains("$(whoami)"), "should mention the dynamic part: {reason}");
     }
 
     #[test]
@@ -966,7 +1071,7 @@ mod tests {
             redirections: vec![],
         };
         let config = empty_config();
-        let result = evaluate_simple_command(&sc, &config, 0);
+        let result = evaluate_simple_command(&sc, &config, 0, &HashMap::new());
         assert_eq!(result.decision, Decision::Ask);
         assert_eq!(result.reason.as_deref(), Some("Unknown command"));
     }
@@ -1049,5 +1154,106 @@ mod tests {
         let config = config_with_rules(vec![allow_rule("echo"), allow_rule("ls")]);
         let result = evaluate("{ echo hi; ls; }", &config);
         assert_eq!(result.decision, Decision::Allow);
+    }
+
+    // ── Per-command dynamic analysis with env var resolution ──────────
+
+    #[test]
+    fn env_var_resolved_allows_static_analysis() {
+        unsafe { std::env::set_var("TEST_MAYI_HOME", "/home/user") };
+        let config = Config {
+            rules: vec![allow_rule("echo"), allow_rule("ls")],
+            wrappers: vec![],
+            security: SecurityConfig {
+                blocked_paths: vec![],
+                safe_env_vars: ["TEST_MAYI_HOME".to_string()].into(),
+            },
+        };
+        let result = evaluate("echo $TEST_MAYI_HOME && ls", &config);
+        assert_eq!(result.decision, Decision::Allow);
+        unsafe { std::env::remove_var("TEST_MAYI_HOME") };
+    }
+
+    #[test]
+    fn unresolved_env_var_triggers_ask() {
+        let config = Config {
+            rules: vec![allow_rule("echo"), allow_rule("ls")],
+            wrappers: vec![],
+            security: SecurityConfig {
+                blocked_paths: vec![],
+                safe_env_vars: std::collections::HashSet::new(),
+            },
+        };
+        let result = evaluate("echo $HOME && ls", &config);
+        assert_eq!(result.decision, Decision::Ask);
+        let reason = result.reason.unwrap();
+        assert!(reason.contains("echo"), "should mention the command: {reason}");
+        assert!(reason.contains("$HOME"), "should mention the variable: {reason}");
+    }
+
+    #[test]
+    fn resolved_env_var_blocked_path_denies() {
+        unsafe { std::env::set_var("TEST_MAYI_HOME2", "/home/user") };
+        let config = Config {
+            rules: vec![allow_rule("cat")],
+            wrappers: vec![],
+            security: SecurityConfig {
+                blocked_paths: SecurityConfig::default().blocked_paths,
+                safe_env_vars: ["TEST_MAYI_HOME2".to_string()].into(),
+            },
+        };
+        let result = evaluate("cat $TEST_MAYI_HOME2/.ssh/id_rsa", &config);
+        assert_eq!(result.decision, Decision::Deny);
+        assert!(result.reason.unwrap().contains(".ssh/"));
+        unsafe { std::env::remove_var("TEST_MAYI_HOME2") };
+    }
+
+    #[test]
+    fn command_sub_never_resolvable() {
+        let config = Config {
+            rules: vec![allow_rule("echo"), allow_rule("ls")],
+            wrappers: vec![],
+            security: SecurityConfig {
+                blocked_paths: vec![],
+                safe_env_vars: std::collections::HashSet::new(),
+            },
+        };
+        let result = evaluate("echo $(whoami) && ls", &config);
+        assert_eq!(result.decision, Decision::Ask);
+        let reason = result.reason.unwrap();
+        assert!(reason.contains("echo"), "should mention the command: {reason}");
+        assert!(reason.contains("$(whoami)"), "should mention command substitution: {reason}");
+    }
+
+    #[test]
+    fn deny_wins_with_resolved_env_var() {
+        unsafe { std::env::set_var("TEST_MAYI_HOME3", "/tmp") };
+        let config = Config {
+            rules: vec![deny_rule("ls"), allow_rule("echo")],
+            wrappers: vec![],
+            security: SecurityConfig {
+                blocked_paths: vec![],
+                safe_env_vars: ["TEST_MAYI_HOME3".to_string()].into(),
+            },
+        };
+        let result = evaluate("ls && echo $TEST_MAYI_HOME3", &config);
+        assert_eq!(result.decision, Decision::Deny);
+        unsafe { std::env::remove_var("TEST_MAYI_HOME3") };
+    }
+
+    #[test]
+    fn for_loop_dynamic_iteration_words_ask() {
+        let config = Config {
+            rules: vec![allow_rule("echo")],
+            wrappers: vec![],
+            security: SecurityConfig {
+                blocked_paths: vec![],
+                safe_env_vars: std::collections::HashSet::new(),
+            },
+        };
+        let result = evaluate("for f in $items; do echo $f; done", &config);
+        assert_eq!(result.decision, Decision::Ask);
+        let reason = result.reason.unwrap();
+        assert!(reason.contains("$items"), "should mention the variable: {reason}");
     }
 }

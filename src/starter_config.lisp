@@ -50,6 +50,10 @@
 ;
 ;   (blocked-paths "\\.secret/" "^/private/")
 ;
+; ENV VAR RESOLUTION (allow static analysis to resolve these env vars)
+;
+;   (safe-env-vars "HOME" "PWD" "USER" "SHELL" "EDITOR" "TERM")
+;
 ; -- Deny: dangerous operations -----------------------------------------------
 
 (rule (command "rm")

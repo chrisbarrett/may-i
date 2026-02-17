@@ -128,6 +128,21 @@ pub enum RedirectionTarget {
     Heredoc(String),
 }
 
+/// Abbreviate a string for use in error messages. Multi-line content is
+/// reduced to the first line with "…" appended; long single lines are
+/// truncated at 60 chars.
+fn abbreviate(s: &str) -> String {
+    let first_line = s.lines().next().unwrap_or(s);
+    let is_multiline = s.contains('\n');
+    if first_line.len() > 60 {
+        format!("{}…", &first_line[..60])
+    } else if is_multiline {
+        format!("{first_line} …")
+    } else {
+        first_line.to_string()
+    }
+}
+
 impl Word {
     pub fn literal(s: &str) -> Self {
         Word {
@@ -151,6 +166,65 @@ impl Word {
             }
             _ => false,
         })
+    }
+
+    /// Collect human-readable descriptions of the dynamic parts in this word.
+    /// Returns items like `"$HOME"`, `"$(whoami)"`, `` "`cmd`" ``, `"$((x+1))"`.
+    pub fn dynamic_parts(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        self.collect_dynamic_parts(&mut out);
+        out
+    }
+
+    fn collect_dynamic_parts(&self, out: &mut Vec<String>) {
+        for part in &self.parts {
+            match part {
+                WordPart::Parameter(name) => out.push(format!("${name}")),
+                WordPart::ParameterExpansion(name) => out.push(format!("${{{name}}}")),
+                WordPart::CommandSubstitution(cmd) => {
+                    out.push(format!("$({})", abbreviate(cmd)));
+                }
+                WordPart::Backtick(cmd) => {
+                    out.push(format!("`{}`", abbreviate(cmd)));
+                }
+                WordPart::Arithmetic(expr) => {
+                    out.push(format!("$(({}))", abbreviate(expr)));
+                }
+                WordPart::ProcessSubstitution { direction, command } => {
+                    let sigil = match direction {
+                        ProcessDirection::Input => '<',
+                        ProcessDirection::Output => '>',
+                    };
+                    out.push(format!("{sigil}({})", abbreviate(command)));
+                }
+                WordPart::DoubleQuoted(inner) => {
+                    Word { parts: inner.clone() }.collect_dynamic_parts(out);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Resolve known environment variables, replacing `Parameter` and
+    /// `ParameterExpansion` parts with `Literal` when the variable name is in `env`.
+    /// Other dynamic parts (command substitution, backticks, etc.) are left as-is.
+    pub fn resolve(&self, env: &std::collections::HashMap<String, String>) -> Word {
+        Word {
+            parts: self.parts.iter().map(|part| match part {
+                WordPart::Parameter(name) | WordPart::ParameterExpansion(name) => {
+                    if let Some(val) = env.get(name.as_str()) {
+                        WordPart::Literal(val.clone())
+                    } else {
+                        part.clone()
+                    }
+                }
+                WordPart::DoubleQuoted(inner) => {
+                    let resolved = Word { parts: inner.clone() }.resolve(env);
+                    WordPart::DoubleQuoted(resolved.parts)
+                }
+                _ => part.clone(),
+            }).collect(),
+        }
     }
 
     /// Flatten this word to a plain string for matching purposes.
@@ -183,6 +257,77 @@ impl Word {
     }
 }
 
+/// Check structural (non-simple-command) positions in the AST for dynamic words
+/// that remain unresolved after env var resolution.
+/// Returns the list of dynamic part descriptions found, empty if none.
+/// This covers: For iteration words, Case discriminant, Case arm patterns.
+pub fn find_structural_dynamic_parts(
+    cmd: &Command,
+    env: &std::collections::HashMap<String, String>,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    collect_structural_dynamic_parts(cmd, env, &mut out);
+    out
+}
+
+fn collect_structural_dynamic_parts(
+    cmd: &Command,
+    env: &std::collections::HashMap<String, String>,
+    out: &mut Vec<String>,
+) {
+    match cmd {
+        Command::For { words, body, .. } => {
+            for w in words {
+                out.extend(w.resolve(env).dynamic_parts());
+            }
+            collect_structural_dynamic_parts(body, env, out);
+        }
+        Command::Case { word, arms } => {
+            out.extend(word.resolve(env).dynamic_parts());
+            for arm in arms {
+                for p in &arm.patterns {
+                    out.extend(p.resolve(env).dynamic_parts());
+                }
+                if let Some(body) = &arm.body {
+                    collect_structural_dynamic_parts(body, env, out);
+                }
+            }
+        }
+        Command::Pipeline(cmds) | Command::Sequence(cmds) => {
+            for c in cmds {
+                collect_structural_dynamic_parts(c, env, out);
+            }
+        }
+        Command::And(a, b) | Command::Or(a, b) => {
+            collect_structural_dynamic_parts(a, env, out);
+            collect_structural_dynamic_parts(b, env, out);
+        }
+        Command::Background(c) | Command::Subshell(c) | Command::BraceGroup(c) => {
+            collect_structural_dynamic_parts(c, env, out);
+        }
+        Command::If { condition, then_branch, elif_branches, else_branch } => {
+            collect_structural_dynamic_parts(condition, env, out);
+            collect_structural_dynamic_parts(then_branch, env, out);
+            for (cond, body) in elif_branches {
+                collect_structural_dynamic_parts(cond, env, out);
+                collect_structural_dynamic_parts(body, env, out);
+            }
+            if let Some(eb) = else_branch {
+                collect_structural_dynamic_parts(eb, env, out);
+            }
+        }
+        Command::While { condition, body } | Command::Until { condition, body } => {
+            collect_structural_dynamic_parts(condition, env, out);
+            collect_structural_dynamic_parts(body, env, out);
+        }
+        Command::FunctionDef { body, .. } => collect_structural_dynamic_parts(body, env, out),
+        Command::Redirected { command, .. } => {
+            collect_structural_dynamic_parts(command, env, out);
+        }
+        Command::Simple(_) | Command::Assignment(_) => {}
+    }
+}
+
 impl SimpleCommand {
     /// The command name (first word), if any.
     pub fn command_name(&self) -> Option<&str> {
@@ -194,6 +339,26 @@ impl SimpleCommand {
                 ""
             }
         })
+    }
+
+    /// Resolve known environment variables in all words, assignment values,
+    /// and redirect file targets.
+    pub fn resolve(&self, env: &std::collections::HashMap<String, String>) -> SimpleCommand {
+        SimpleCommand {
+            assignments: self.assignments.iter().map(|a| Assignment {
+                name: a.name.clone(),
+                value: a.value.resolve(env),
+            }).collect(),
+            words: self.words.iter().map(|w| w.resolve(env)).collect(),
+            redirections: self.redirections.iter().map(|r| Redirection {
+                fd: r.fd,
+                kind: r.kind.clone(),
+                target: match &r.target {
+                    RedirectionTarget::File(w) => RedirectionTarget::File(w.resolve(env)),
+                    other => other.clone(),
+                },
+            }).collect(),
+        }
     }
 
     /// The arguments (all words after the first).

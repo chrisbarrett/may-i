@@ -4,23 +4,6 @@
 use crate::parser::{self, RedirectionTarget};
 use crate::types::Config;
 
-/// Check if any word in the command contains dynamic shell constructs
-/// that prevent static analysis.
-pub fn check_dynamic_parts(input: &str) -> Option<String> {
-    let ast = parser::parse(input);
-    let words = parser::extract_all_words(&ast);
-
-    for word in &words {
-        if word.has_dynamic_parts() {
-            return Some(
-                "Dynamic shell constructs prevent static analysis of this command".to_string(),
-            );
-        }
-    }
-
-    None
-}
-
 /// Check if any word in the command references a blocked path.
 /// Returns the reason string if blocked, None otherwise.
 pub fn check_blocked_paths(input: &str, config: &Config) -> Option<String> {
@@ -332,39 +315,6 @@ mod tests {
         let c = test_config();
         let msg = check_blocked_paths("cat .ssh/id_rsa", &c).unwrap();
         assert!(msg.contains(".ssh/id_rsa"));
-    }
-
-    // ── check_dynamic_parts ──────────────────────────────────────────
-
-    #[test]
-    fn dynamic_detects_command_substitution() {
-        assert!(check_dynamic_parts("echo $(whoami)").is_some());
-    }
-
-    #[test]
-    fn dynamic_detects_backtick_substitution() {
-        assert!(check_dynamic_parts("echo `whoami`").is_some());
-    }
-
-    #[test]
-    fn dynamic_detects_variable_expansion() {
-        assert!(check_dynamic_parts("echo $HOME").is_some());
-    }
-
-    #[test]
-    fn dynamic_allows_plain_command() {
-        assert!(check_dynamic_parts("echo hello world").is_none());
-    }
-
-    #[test]
-    fn dynamic_allows_flags_and_args() {
-        assert!(check_dynamic_parts("ls -la /tmp").is_none());
-    }
-
-    #[test]
-    fn dynamic_message_content() {
-        let msg = check_dynamic_parts("echo $(id)").unwrap();
-        assert!(msg.contains("Dynamic shell constructs"));
     }
 
     // ── check_blocked_paths: piped commands ──────────────────────────
