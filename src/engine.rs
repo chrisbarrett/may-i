@@ -1256,4 +1256,70 @@ mod tests {
         let reason = result.reason.unwrap();
         assert!(reason.contains("$items"), "should mention the variable: {reason}");
     }
+
+    // ── Parameter expansion operator integration ─────────────────────
+
+    #[test]
+    fn param_op_resolved_safe_env_allows() {
+        unsafe { std::env::set_var("TEST_MAYI_PATH", "/usr/local/bin") };
+        let config = Config {
+            rules: vec![allow_rule("echo")],
+            wrappers: vec![],
+            security: SecurityConfig {
+                blocked_paths: vec![],
+                safe_env_vars: ["TEST_MAYI_PATH".to_string()].into(),
+            },
+        };
+        let result = evaluate("echo ${TEST_MAYI_PATH##*/}", &config);
+        assert_eq!(result.decision, Decision::Allow);
+        unsafe { std::env::remove_var("TEST_MAYI_PATH") };
+    }
+
+    #[test]
+    fn param_op_unresolved_triggers_ask() {
+        let config = Config {
+            rules: vec![allow_rule("echo")],
+            wrappers: vec![],
+            security: SecurityConfig {
+                blocked_paths: vec![],
+                safe_env_vars: std::collections::HashSet::new(),
+            },
+        };
+        let result = evaluate("echo ${UNKNOWN_VAR#pat}", &config);
+        assert_eq!(result.decision, Decision::Ask);
+        let reason = result.reason.unwrap();
+        assert!(reason.contains("UNKNOWN_VAR"), "should mention the variable: {reason}");
+    }
+
+    #[test]
+    fn param_op_default_value_with_safe_env() {
+        unsafe { std::env::set_var("TEST_MAYI_OPT", "value") };
+        let config = Config {
+            rules: vec![allow_rule("echo")],
+            wrappers: vec![],
+            security: SecurityConfig {
+                blocked_paths: vec![],
+                safe_env_vars: ["TEST_MAYI_OPT".to_string()].into(),
+            },
+        };
+        let result = evaluate("echo ${TEST_MAYI_OPT:-fallback}", &config);
+        assert_eq!(result.decision, Decision::Allow);
+        unsafe { std::env::remove_var("TEST_MAYI_OPT") };
+    }
+
+    #[test]
+    fn param_op_in_double_quotes_resolved() {
+        unsafe { std::env::set_var("TEST_MAYI_FILE", "archive.tar.gz") };
+        let config = Config {
+            rules: vec![allow_rule("echo")],
+            wrappers: vec![],
+            security: SecurityConfig {
+                blocked_paths: vec![],
+                safe_env_vars: ["TEST_MAYI_FILE".to_string()].into(),
+            },
+        };
+        let result = evaluate(r#"echo "${TEST_MAYI_FILE%%.*}""#, &config);
+        assert_eq!(result.decision, Decision::Allow);
+        unsafe { std::env::remove_var("TEST_MAYI_FILE") };
+    }
 }

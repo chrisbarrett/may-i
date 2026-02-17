@@ -15,9 +15,13 @@ Simple(
             },
             Word {
                 parts: [
-                    ParameterExpansion(
-                        "var:+alternate",
-                    ),
+                    ParameterExpansionOp {
+                        name: "var",
+                        op: Alternative {
+                            colon: true,
+                            value: "alternate",
+                        },
+                    },
                 ],
             },
         ],

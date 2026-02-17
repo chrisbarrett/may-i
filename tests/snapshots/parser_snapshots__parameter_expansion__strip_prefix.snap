@@ -15,9 +15,13 @@ Simple(
             },
             Word {
                 parts: [
-                    ParameterExpansion(
-                        "var##*.",
-                    ),
+                    ParameterExpansionOp {
+                        name: "var",
+                        op: StripPrefix {
+                            longest: true,
+                            pattern: "*.",
+                        },
+                    },
                 ],
             },
         ],

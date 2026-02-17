@@ -87,6 +87,7 @@ pub enum WordPart {
     AnsiCQuoted(String),
     Parameter(String),
     ParameterExpansion(String),
+    ParameterExpansionOp { name: String, op: ParameterOperator },
     CommandSubstitution(String),
     Backtick(String),
     Arithmetic(String),
@@ -99,6 +100,22 @@ pub enum WordPart {
 pub enum ProcessDirection {
     Input,  // <(cmd)
     Output, // >(cmd)
+}
+
+/// Structured representation of parameter expansion operators.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ParameterOperator {
+    Length,                                                        // ${#VAR}
+    StripPrefix { longest: bool, pattern: String },                // ${VAR#pat} / ${VAR##pat}
+    StripSuffix { longest: bool, pattern: String },                // ${VAR%pat} / ${VAR%%pat}
+    Replace { all: bool, pattern: String, replacement: String },   // ${VAR/pat/rep} / ${VAR//pat/rep}
+    Default { colon: bool, value: String },                        // ${VAR:-val} / ${VAR-val}
+    Alternative { colon: bool, value: String },                    // ${VAR:+val} / ${VAR+val}
+    Error { colon: bool, message: String },                        // ${VAR:?msg} / ${VAR?msg}
+    Assign { colon: bool, value: String },                         // ${VAR:=val} / ${VAR=val}
+    Substring { offset: String, length: Option<String> },          // ${VAR:n} / ${VAR:n:m}
+    Uppercase { all: bool },                                       // ${VAR^} / ${VAR^^}
+    Lowercase { all: bool },                                       // ${VAR,} / ${VAR,,}
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -215,6 +232,338 @@ fn abbreviate(s: &str) -> String {
     }
 }
 
+/// Match a glob pattern against text. Supports `*`, `?`, and `[...]` character
+/// classes (including negation with `!` or `^`). Returns true if the entire text
+/// matches the pattern.
+fn glob_match(pattern: &str, text: &str) -> bool {
+    let pat: Vec<char> = pattern.chars().collect();
+    let txt: Vec<char> = text.chars().collect();
+    glob_match_inner(&pat, &txt)
+}
+
+fn glob_match_inner(pat: &[char], txt: &[char]) -> bool {
+    let (mut pi, mut ti) = (0, 0);
+    let (mut star_pi, mut star_ti) = (usize::MAX, usize::MAX);
+
+    while ti < txt.len() {
+        if pi < pat.len() && pat[pi] == '?' {
+            pi += 1;
+            ti += 1;
+        } else if pi < pat.len() && pat[pi] == '*' {
+            star_pi = pi;
+            star_ti = ti;
+            pi += 1;
+        } else if pi < pat.len() && pat[pi] == '[' {
+            if let Some((matched, end)) = glob_match_bracket(&pat[pi..], txt[ti]) {
+                if matched {
+                    pi += end;
+                    ti += 1;
+                } else if star_pi != usize::MAX {
+                    pi = star_pi + 1;
+                    star_ti += 1;
+                    ti = star_ti;
+                } else {
+                    return false;
+                }
+            } else {
+                // Malformed bracket — treat as literal
+                if pat[pi] == txt[ti] {
+                    pi += 1;
+                    ti += 1;
+                } else if star_pi != usize::MAX {
+                    pi = star_pi + 1;
+                    star_ti += 1;
+                    ti = star_ti;
+                } else {
+                    return false;
+                }
+            }
+        } else if pi < pat.len() && pat[pi] == txt[ti] {
+            pi += 1;
+            ti += 1;
+        } else if star_pi != usize::MAX {
+            pi = star_pi + 1;
+            star_ti += 1;
+            ti = star_ti;
+        } else {
+            return false;
+        }
+    }
+
+    while pi < pat.len() && pat[pi] == '*' {
+        pi += 1;
+    }
+    pi == pat.len()
+}
+
+/// Try to match a bracket expression `[...]` at the start of `pat` against
+/// character `ch`. Returns `Some((matched, chars_consumed))` or `None` if
+/// the bracket is malformed (no closing `]`).
+fn glob_match_bracket(pat: &[char], ch: char) -> Option<(bool, usize)> {
+    // pat[0] == '['
+    let mut i = 1;
+    let negate = if i < pat.len() && (pat[i] == '!' || pat[i] == '^') {
+        i += 1;
+        true
+    } else {
+        false
+    };
+
+    let mut matched = false;
+    // A ']' immediately after '[' (or '[!' / '[^') is treated as literal
+    if i < pat.len() && pat[i] == ']' {
+        if ch == ']' {
+            matched = true;
+        }
+        i += 1;
+    }
+
+    while i < pat.len() && pat[i] != ']' {
+        if i + 2 < pat.len() && pat[i + 1] == '-' && pat[i + 2] != ']' {
+            // Range: [a-z]
+            let lo = pat[i];
+            let hi = pat[i + 2];
+            if ch >= lo && ch <= hi {
+                matched = true;
+            }
+            i += 3;
+        } else {
+            if pat[i] == ch {
+                matched = true;
+            }
+            i += 1;
+        }
+    }
+
+    if i < pat.len() && pat[i] == ']' {
+        Some((matched ^ negate, i + 1))
+    } else {
+        None // no closing ]
+    }
+}
+
+/// Strip the shortest or longest prefix matching `pattern` from `text`.
+fn glob_strip_prefix<'a>(pattern: &str, text: &'a str, longest: bool) -> &'a str {
+    let chars: Vec<char> = text.chars().collect();
+    let mut result: Option<usize> = None;
+    // Try each prefix length from 0..=len
+    for i in 0..=chars.len() {
+        let prefix: String = chars[..i].iter().collect();
+        if glob_match(pattern, &prefix) {
+            result = Some(i);
+            if !longest {
+                break; // shortest match found
+            }
+        }
+    }
+    match result {
+        Some(n) => {
+            let byte_offset: usize = chars[..n].iter().map(|c| c.len_utf8()).sum();
+            &text[byte_offset..]
+        }
+        None => text,
+    }
+}
+
+/// Strip the shortest or longest suffix matching `pattern` from `text`.
+fn glob_strip_suffix<'a>(pattern: &str, text: &'a str, longest: bool) -> &'a str {
+    let chars: Vec<char> = text.chars().collect();
+    let mut result: Option<usize> = None;
+    // Try each suffix starting position from len down to 0
+    for i in (0..=chars.len()).rev() {
+        let suffix: String = chars[i..].iter().collect();
+        if glob_match(pattern, &suffix) {
+            result = Some(i);
+            if !longest {
+                break; // shortest match found
+            }
+        }
+    }
+    match result {
+        Some(n) => {
+            let byte_offset: usize = chars[..n].iter().map(|c| c.len_utf8()).sum();
+            &text[..byte_offset]
+        }
+        None => text,
+    }
+}
+
+/// Find the first occurrence of `pattern` in `text` using glob matching, and
+/// replace it (or all occurrences if `all` is true) with `replacement`.
+fn glob_replace(pattern: &str, text: &str, replacement: &str, all: bool) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut result = String::new();
+    let mut i = 0;
+
+    while i <= chars.len() {
+        let mut matched = false;
+        // Try match lengths from longest to shortest at position i
+        for j in (i..=chars.len()).rev() {
+            let substr: String = chars[i..j].iter().collect();
+            if glob_match(pattern, &substr) {
+                result.push_str(replacement);
+                i = j;
+                matched = true;
+                if !all {
+                    // Append the rest and return
+                    let rest: String = chars[i..].iter().collect();
+                    result.push_str(&rest);
+                    return result;
+                }
+                break;
+            }
+        }
+        if !matched {
+            if i < chars.len() {
+                result.push(chars[i]);
+            }
+            i += 1;
+        }
+    }
+    result
+}
+
+/// Resolve a `ParameterExpansionOp` given an env snapshot. If the variable is in
+/// env, apply the operator and return a `Literal`. Otherwise return the original part.
+fn resolve_param_op(
+    name: &str,
+    op: &ParameterOperator,
+    env: &std::collections::HashMap<String, String>,
+) -> WordPart {
+    let val = match env.get(name) {
+        Some(v) => v.as_str(),
+        None => {
+            return WordPart::ParameterExpansionOp {
+                name: name.to_string(),
+                op: op.clone(),
+            };
+        }
+    };
+
+    let result = match op {
+        ParameterOperator::Length => val.len().to_string(),
+        ParameterOperator::StripPrefix { longest, pattern } => {
+            glob_strip_prefix(pattern, val, *longest).to_string()
+        }
+        ParameterOperator::StripSuffix { longest, pattern } => {
+            glob_strip_suffix(pattern, val, *longest).to_string()
+        }
+        ParameterOperator::Replace { all, pattern, replacement } => {
+            glob_replace(pattern, val, replacement, *all)
+        }
+        ParameterOperator::Default { colon, value } => {
+            if *colon {
+                // ${VAR:-val}: use default if unset or empty
+                if val.is_empty() { value.clone() } else { val.to_string() }
+            } else {
+                // ${VAR-val}: use default if unset (var is set, so use val)
+                val.to_string()
+            }
+        }
+        ParameterOperator::Alternative { colon, value } => {
+            if *colon {
+                // ${VAR:+val}: use alternative if set and non-empty
+                if val.is_empty() { String::new() } else { value.clone() }
+            } else {
+                // ${VAR+val}: use alternative if set (var is set)
+                value.clone()
+            }
+        }
+        ParameterOperator::Error { .. } => {
+            // Variable is set, so no error; resolve to the value
+            val.to_string()
+        }
+        ParameterOperator::Assign { .. } => {
+            // Variable is set, so no assignment; resolve to the value
+            val.to_string()
+        }
+        ParameterOperator::Substring { offset, length } => {
+            let off: isize = offset.trim().parse().unwrap_or(0);
+            let chars: Vec<char> = val.chars().collect();
+            let start = if off < 0 {
+                (chars.len() as isize + off).max(0) as usize
+            } else {
+                (off as usize).min(chars.len())
+            };
+            match length {
+                Some(len_str) => {
+                    let len: usize = len_str.trim().parse().unwrap_or(chars.len());
+                    let end = (start + len).min(chars.len());
+                    chars[start..end].iter().collect()
+                }
+                None => chars[start..].iter().collect(),
+            }
+        }
+        ParameterOperator::Uppercase { all } => {
+            if *all {
+                val.to_uppercase()
+            } else {
+                let mut chars = val.chars();
+                match chars.next() {
+                    Some(c) => c.to_uppercase().to_string() + chars.as_str(),
+                    None => String::new(),
+                }
+            }
+        }
+        ParameterOperator::Lowercase { all } => {
+            if *all {
+                val.to_lowercase()
+            } else {
+                let mut chars = val.chars();
+                match chars.next() {
+                    Some(c) => c.to_lowercase().to_string() + chars.as_str(),
+                    None => String::new(),
+                }
+            }
+        }
+    };
+    WordPart::Literal(result)
+}
+
+/// Format a parameter expansion operator back to shell syntax (without `${` and `}`).
+fn format_param_op(name: &str, op: &ParameterOperator) -> String {
+    match op {
+        ParameterOperator::Length => format!("#{name}"),
+        ParameterOperator::StripPrefix { longest, pattern } => {
+            if *longest { format!("{name}##{pattern}") } else { format!("{name}#{pattern}") }
+        }
+        ParameterOperator::StripSuffix { longest, pattern } => {
+            if *longest { format!("{name}%%{pattern}") } else { format!("{name}%{pattern}") }
+        }
+        ParameterOperator::Replace { all, pattern, replacement } => {
+            if *all {
+                format!("{name}//{pattern}/{replacement}")
+            } else {
+                format!("{name}/{pattern}/{replacement}")
+            }
+        }
+        ParameterOperator::Default { colon, value } => {
+            if *colon { format!("{name}:-{value}") } else { format!("{name}-{value}") }
+        }
+        ParameterOperator::Alternative { colon, value } => {
+            if *colon { format!("{name}:+{value}") } else { format!("{name}+{value}") }
+        }
+        ParameterOperator::Error { colon, message } => {
+            if *colon { format!("{name}:?{message}") } else { format!("{name}?{message}") }
+        }
+        ParameterOperator::Assign { colon, value } => {
+            if *colon { format!("{name}:={value}") } else { format!("{name}={value}") }
+        }
+        ParameterOperator::Substring { offset, length } => {
+            match length {
+                Some(len) => format!("{name}:{offset}:{len}"),
+                None => format!("{name}:{offset}"),
+            }
+        }
+        ParameterOperator::Uppercase { all } => {
+            if *all { format!("{name}^^") } else { format!("{name}^") }
+        }
+        ParameterOperator::Lowercase { all } => {
+            if *all { format!("{name},,") } else { format!("{name},") }
+        }
+    }
+}
+
 impl Word {
     pub fn literal(s: &str) -> Self {
         Word {
@@ -230,6 +579,7 @@ impl Word {
             | WordPart::Backtick(_)
             | WordPart::Parameter(_)
             | WordPart::ParameterExpansion(_)
+            | WordPart::ParameterExpansionOp { .. }
             | WordPart::Arithmetic(_)
             | WordPart::ProcessSubstitution { .. } => true,
             WordPart::DoubleQuoted(inner) => {
@@ -269,6 +619,9 @@ impl Word {
                     };
                     out.push(format!("{sigil}({})", abbreviate(command)));
                 }
+                WordPart::ParameterExpansionOp { name, op } => {
+                    out.push(format!("${{{}}}", format_param_op(name, op)));
+                }
                 WordPart::DoubleQuoted(inner) => {
                     Word { parts: inner.clone() }.collect_dynamic_parts(out);
                 }
@@ -279,6 +632,7 @@ impl Word {
 
     /// Resolve known environment variables, replacing `Parameter` and
     /// `ParameterExpansion` parts with `Literal` when the variable name is in `env`.
+    /// Also resolves `ParameterExpansionOp` by applying the operator to the value.
     /// Other dynamic parts (command substitution, backticks, etc.) are left as-is.
     pub fn resolve(&self, env: &std::collections::HashMap<String, String>) -> Word {
         Word {
@@ -289,6 +643,9 @@ impl Word {
                     } else {
                         part.clone()
                     }
+                }
+                WordPart::ParameterExpansionOp { name, op } => {
+                    resolve_param_op(name, op, env)
                 }
                 WordPart::DoubleQuoted(inner) => {
                     let resolved = Word { parts: inner.clone() }.resolve(env);
@@ -313,6 +670,9 @@ impl Word {
                 | WordPart::Backtick(s)
                 | WordPart::Arithmetic(s)
                 | WordPart::Glob(s) => out.push_str(s),
+                WordPart::ParameterExpansionOp { name, op } => {
+                    out.push_str(&format_param_op(name, op));
+                }
                 WordPart::DoubleQuoted(parts) => {
                     let w = Word { parts: parts.clone() };
                     out.push_str(&w.to_str());
@@ -1127,9 +1487,7 @@ impl Lexer {
             }
             Some('{') => {
                 self.advance(); // skip {
-                let s = self.read_until_char('}');
-                self.advance(); // skip }
-                Some(WordPart::ParameterExpansion(s))
+                self.read_parameter_expansion()
             }
             Some('\'') => {
                 // ANSI-C quoting $'...'
@@ -1163,6 +1521,254 @@ impl Lexer {
                 Some(WordPart::Literal("$".to_string()))
             }
         }
+    }
+
+    /// Parse the content of `${...}` after the opening `{` has been consumed.
+    /// Produces either a simple `ParameterExpansion(name)` for `${VAR}` or a
+    /// structured `ParameterExpansionOp { name, op }` for operator forms.
+    fn read_parameter_expansion(&mut self) -> Option<WordPart> {
+        // Special case: ${#VAR} (length operator)
+        if self.peek() == Some('#') {
+            // Look ahead: if what follows '#' is a valid identifier and then '}',
+            // this is the length operator.
+            let saved_pos = self.pos;
+            self.advance(); // skip #
+            let name = self.read_identifier();
+            if !name.is_empty() && self.peek() == Some('}') {
+                self.advance(); // skip }
+                return Some(WordPart::ParameterExpansionOp {
+                    name,
+                    op: ParameterOperator::Length,
+                });
+            }
+            // Not a length operator; restore and fall through to flat parsing
+            self.pos = saved_pos;
+        }
+
+        // Read the variable name
+        let name = self.read_identifier();
+        if name.is_empty() {
+            // Not a valid identifier; fall back to flat string
+            let s = self.read_until_char('}');
+            self.advance(); // skip }
+            return Some(WordPart::ParameterExpansion(s));
+        }
+
+        // Check what follows the name
+        match self.peek() {
+            Some('}') => {
+                self.advance(); // skip }
+                Some(WordPart::ParameterExpansion(name))
+            }
+            Some('#') => {
+                self.advance(); // skip #
+                let longest = if self.peek() == Some('#') {
+                    self.advance();
+                    true
+                } else {
+                    false
+                };
+                let pattern = self.read_until_char('}');
+                self.advance(); // skip }
+                Some(WordPart::ParameterExpansionOp {
+                    name,
+                    op: ParameterOperator::StripPrefix { longest, pattern },
+                })
+            }
+            Some('%') => {
+                self.advance(); // skip %
+                let longest = if self.peek() == Some('%') {
+                    self.advance();
+                    true
+                } else {
+                    false
+                };
+                let pattern = self.read_until_char('}');
+                self.advance(); // skip }
+                Some(WordPart::ParameterExpansionOp {
+                    name,
+                    op: ParameterOperator::StripSuffix { longest, pattern },
+                })
+            }
+            Some('/') => {
+                self.advance(); // skip /
+                let all = if self.peek() == Some('/') {
+                    self.advance();
+                    true
+                } else {
+                    false
+                };
+                let pattern = self.read_until_either('/', '}');
+                let replacement = if self.peek() == Some('/') {
+                    self.advance(); // skip separator /
+                    self.read_until_char('}')
+                } else {
+                    String::new()
+                };
+                self.advance(); // skip }
+                Some(WordPart::ParameterExpansionOp {
+                    name,
+                    op: ParameterOperator::Replace { all, pattern, replacement },
+                })
+            }
+            Some(':') => {
+                self.advance(); // skip :
+                match self.peek() {
+                    Some('-') => {
+                        self.advance();
+                        let value = self.read_until_char('}');
+                        self.advance();
+                        Some(WordPart::ParameterExpansionOp {
+                            name,
+                            op: ParameterOperator::Default { colon: true, value },
+                        })
+                    }
+                    Some('+') => {
+                        self.advance();
+                        let value = self.read_until_char('}');
+                        self.advance();
+                        Some(WordPart::ParameterExpansionOp {
+                            name,
+                            op: ParameterOperator::Alternative { colon: true, value },
+                        })
+                    }
+                    Some('?') => {
+                        self.advance();
+                        let message = self.read_until_char('}');
+                        self.advance();
+                        Some(WordPart::ParameterExpansionOp {
+                            name,
+                            op: ParameterOperator::Error { colon: true, message },
+                        })
+                    }
+                    Some('=') => {
+                        self.advance();
+                        let value = self.read_until_char('}');
+                        self.advance();
+                        Some(WordPart::ParameterExpansionOp {
+                            name,
+                            op: ParameterOperator::Assign { colon: true, value },
+                        })
+                    }
+                    _ => {
+                        // Substring: ${VAR:offset} or ${VAR:offset:length}
+                        let offset = self.read_until_either(':', '}');
+                        let length = if self.peek() == Some(':') {
+                            self.advance();
+                            Some(self.read_until_char('}'))
+                        } else {
+                            None
+                        };
+                        self.advance(); // skip }
+                        Some(WordPart::ParameterExpansionOp {
+                            name,
+                            op: ParameterOperator::Substring { offset, length },
+                        })
+                    }
+                }
+            }
+            Some('-') => {
+                self.advance();
+                let value = self.read_until_char('}');
+                self.advance();
+                Some(WordPart::ParameterExpansionOp {
+                    name,
+                    op: ParameterOperator::Default { colon: false, value },
+                })
+            }
+            Some('+') => {
+                self.advance();
+                let value = self.read_until_char('}');
+                self.advance();
+                Some(WordPart::ParameterExpansionOp {
+                    name,
+                    op: ParameterOperator::Alternative { colon: false, value },
+                })
+            }
+            Some('?') => {
+                self.advance();
+                let message = self.read_until_char('}');
+                self.advance();
+                Some(WordPart::ParameterExpansionOp {
+                    name,
+                    op: ParameterOperator::Error { colon: false, message },
+                })
+            }
+            Some('=') => {
+                self.advance();
+                let value = self.read_until_char('}');
+                self.advance();
+                Some(WordPart::ParameterExpansionOp {
+                    name,
+                    op: ParameterOperator::Assign { colon: false, value },
+                })
+            }
+            Some('^') => {
+                self.advance();
+                let all = if self.peek() == Some('^') {
+                    self.advance();
+                    true
+                } else {
+                    false
+                };
+                // Skip to closing }
+                self.read_until_char('}');
+                self.advance();
+                Some(WordPart::ParameterExpansionOp {
+                    name,
+                    op: ParameterOperator::Uppercase { all },
+                })
+            }
+            Some(',') => {
+                self.advance();
+                let all = if self.peek() == Some(',') {
+                    self.advance();
+                    true
+                } else {
+                    false
+                };
+                // Skip to closing }
+                self.read_until_char('}');
+                self.advance();
+                Some(WordPart::ParameterExpansionOp {
+                    name,
+                    op: ParameterOperator::Lowercase { all },
+                })
+            }
+            _ => {
+                // Unknown operator; fall back to flat string
+                let rest = self.read_until_char('}');
+                self.advance(); // skip }
+                Some(WordPart::ParameterExpansion(format!("{name}{rest}")))
+            }
+        }
+    }
+
+    /// Read a shell identifier (alphanumeric + underscore).
+    fn read_identifier(&mut self) -> String {
+        let mut name = String::new();
+        while let Some(ch) = self.peek() {
+            if ch.is_ascii_alphanumeric() || ch == '_' {
+                name.push(ch);
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        name
+    }
+
+    /// Read until either `a` or `b` is found (or EOF). Does not consume the delimiter.
+    fn read_until_either(&mut self, a: char, b: char) -> String {
+        let mut s = String::new();
+        while let Some(ch) = self.peek() {
+            if ch == a || ch == b {
+                break;
+            }
+            s.push(ch);
+            self.advance();
+        }
+        s
     }
 
     fn read_until_char(&mut self, end: char) -> String {
@@ -4487,5 +5093,707 @@ mod tests {
             }
             _ => panic!("Expected simple command"),
         }
+    }
+
+    // ── Parameter expansion operator parsing ─────────────────────────
+
+    #[test]
+    fn parse_param_length() {
+        let cmd = parse("echo ${#VAR}");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.words[1].parts, vec![
+                    WordPart::ParameterExpansionOp {
+                        name: "VAR".into(),
+                        op: ParameterOperator::Length,
+                    },
+                ]);
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn parse_param_strip_prefix_short() {
+        let cmd = parse("echo ${VAR#*/}");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.words[1].parts, vec![
+                    WordPart::ParameterExpansionOp {
+                        name: "VAR".into(),
+                        op: ParameterOperator::StripPrefix {
+                            longest: false,
+                            pattern: "*/".into(),
+                        },
+                    },
+                ]);
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn parse_param_strip_prefix_long() {
+        let cmd = parse("echo ${VAR##*/}");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.words[1].parts, vec![
+                    WordPart::ParameterExpansionOp {
+                        name: "VAR".into(),
+                        op: ParameterOperator::StripPrefix {
+                            longest: true,
+                            pattern: "*/".into(),
+                        },
+                    },
+                ]);
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn parse_param_strip_suffix_short() {
+        let cmd = parse("echo ${VAR%.*}");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.words[1].parts, vec![
+                    WordPart::ParameterExpansionOp {
+                        name: "VAR".into(),
+                        op: ParameterOperator::StripSuffix {
+                            longest: false,
+                            pattern: ".*".into(),
+                        },
+                    },
+                ]);
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn parse_param_strip_suffix_long() {
+        let cmd = parse("echo ${VAR%%.*}");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.words[1].parts, vec![
+                    WordPart::ParameterExpansionOp {
+                        name: "VAR".into(),
+                        op: ParameterOperator::StripSuffix {
+                            longest: true,
+                            pattern: ".*".into(),
+                        },
+                    },
+                ]);
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn parse_param_replace_first() {
+        let cmd = parse("echo ${VAR/foo/bar}");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.words[1].parts, vec![
+                    WordPart::ParameterExpansionOp {
+                        name: "VAR".into(),
+                        op: ParameterOperator::Replace {
+                            all: false,
+                            pattern: "foo".into(),
+                            replacement: "bar".into(),
+                        },
+                    },
+                ]);
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn parse_param_replace_all() {
+        let cmd = parse("echo ${VAR//foo/bar}");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.words[1].parts, vec![
+                    WordPart::ParameterExpansionOp {
+                        name: "VAR".into(),
+                        op: ParameterOperator::Replace {
+                            all: true,
+                            pattern: "foo".into(),
+                            replacement: "bar".into(),
+                        },
+                    },
+                ]);
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn parse_param_replace_empty_replacement() {
+        let cmd = parse("echo ${VAR/foo}");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.words[1].parts, vec![
+                    WordPart::ParameterExpansionOp {
+                        name: "VAR".into(),
+                        op: ParameterOperator::Replace {
+                            all: false,
+                            pattern: "foo".into(),
+                            replacement: String::new(),
+                        },
+                    },
+                ]);
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn parse_param_default_colon() {
+        let cmd = parse("echo ${VAR:-fallback}");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.words[1].parts, vec![
+                    WordPart::ParameterExpansionOp {
+                        name: "VAR".into(),
+                        op: ParameterOperator::Default {
+                            colon: true,
+                            value: "fallback".into(),
+                        },
+                    },
+                ]);
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn parse_param_default_no_colon() {
+        let cmd = parse("echo ${VAR-fallback}");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.words[1].parts, vec![
+                    WordPart::ParameterExpansionOp {
+                        name: "VAR".into(),
+                        op: ParameterOperator::Default {
+                            colon: false,
+                            value: "fallback".into(),
+                        },
+                    },
+                ]);
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn parse_param_alternative_colon() {
+        let cmd = parse("echo ${VAR:+set}");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.words[1].parts, vec![
+                    WordPart::ParameterExpansionOp {
+                        name: "VAR".into(),
+                        op: ParameterOperator::Alternative {
+                            colon: true,
+                            value: "set".into(),
+                        },
+                    },
+                ]);
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn parse_param_error_colon() {
+        let cmd = parse("echo ${VAR:?not set}");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.words[1].parts, vec![
+                    WordPart::ParameterExpansionOp {
+                        name: "VAR".into(),
+                        op: ParameterOperator::Error {
+                            colon: true,
+                            message: "not set".into(),
+                        },
+                    },
+                ]);
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn parse_param_assign_colon() {
+        let cmd = parse("echo ${VAR:=default}");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.words[1].parts, vec![
+                    WordPart::ParameterExpansionOp {
+                        name: "VAR".into(),
+                        op: ParameterOperator::Assign {
+                            colon: true,
+                            value: "default".into(),
+                        },
+                    },
+                ]);
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn parse_param_substring() {
+        let cmd = parse("echo ${VAR:2:5}");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.words[1].parts, vec![
+                    WordPart::ParameterExpansionOp {
+                        name: "VAR".into(),
+                        op: ParameterOperator::Substring {
+                            offset: "2".into(),
+                            length: Some("5".into()),
+                        },
+                    },
+                ]);
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn parse_param_substring_no_length() {
+        let cmd = parse("echo ${VAR:3}");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.words[1].parts, vec![
+                    WordPart::ParameterExpansionOp {
+                        name: "VAR".into(),
+                        op: ParameterOperator::Substring {
+                            offset: "3".into(),
+                            length: None,
+                        },
+                    },
+                ]);
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn parse_param_uppercase_first() {
+        let cmd = parse("echo ${VAR^}");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.words[1].parts, vec![
+                    WordPart::ParameterExpansionOp {
+                        name: "VAR".into(),
+                        op: ParameterOperator::Uppercase { all: false },
+                    },
+                ]);
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn parse_param_uppercase_all() {
+        let cmd = parse("echo ${VAR^^}");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.words[1].parts, vec![
+                    WordPart::ParameterExpansionOp {
+                        name: "VAR".into(),
+                        op: ParameterOperator::Uppercase { all: true },
+                    },
+                ]);
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn parse_param_lowercase_first() {
+        let cmd = parse("echo ${VAR,}");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.words[1].parts, vec![
+                    WordPart::ParameterExpansionOp {
+                        name: "VAR".into(),
+                        op: ParameterOperator::Lowercase { all: false },
+                    },
+                ]);
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn parse_param_lowercase_all() {
+        let cmd = parse("echo ${VAR,,}");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.words[1].parts, vec![
+                    WordPart::ParameterExpansionOp {
+                        name: "VAR".into(),
+                        op: ParameterOperator::Lowercase { all: true },
+                    },
+                ]);
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn parse_param_simple_braced_unchanged() {
+        // ${VAR} should still parse as simple ParameterExpansion
+        let cmd = parse("echo ${VAR}");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.words[1].parts, vec![
+                    WordPart::ParameterExpansion("VAR".into()),
+                ]);
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn parse_param_op_in_double_quotes() {
+        let cmd = parse(r#"echo "${HOME##*/}""#);
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.words[1].parts, vec![
+                    WordPart::DoubleQuoted(vec![
+                        WordPart::ParameterExpansionOp {
+                            name: "HOME".into(),
+                            op: ParameterOperator::StripPrefix {
+                                longest: true,
+                                pattern: "*/".into(),
+                            },
+                        },
+                    ]),
+                ]);
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    // ── Glob matching ────────────────────────────────────────────────
+
+    #[test]
+    fn glob_match_literal() {
+        assert!(glob_match("hello", "hello"));
+        assert!(!glob_match("hello", "world"));
+    }
+
+    #[test]
+    fn glob_match_star() {
+        assert!(glob_match("*", "anything"));
+        assert!(glob_match("*.txt", "file.txt"));
+        assert!(!glob_match("*.txt", "file.rs"));
+        assert!(glob_match("*/", "foo/"));
+        assert!(glob_match("*/", "bar/baz/"));
+    }
+
+    #[test]
+    fn glob_match_question() {
+        assert!(glob_match("?", "a"));
+        assert!(!glob_match("?", ""));
+        assert!(!glob_match("?", "ab"));
+        assert!(glob_match("a?c", "abc"));
+    }
+
+    #[test]
+    fn glob_match_bracket() {
+        assert!(glob_match("[abc]", "a"));
+        assert!(glob_match("[abc]", "b"));
+        assert!(!glob_match("[abc]", "d"));
+        assert!(glob_match("[a-z]", "m"));
+        assert!(!glob_match("[a-z]", "M"));
+    }
+
+    #[test]
+    fn glob_match_bracket_negate() {
+        assert!(!glob_match("[!abc]", "a"));
+        assert!(glob_match("[!abc]", "d"));
+        assert!(glob_match("[^abc]", "d"));
+    }
+
+    #[test]
+    fn glob_match_empty() {
+        assert!(glob_match("", ""));
+        assert!(!glob_match("", "x"));
+        assert!(glob_match("*", ""));
+    }
+
+    // ── Glob strip prefix ────────────────────────────────────────────
+
+    #[test]
+    fn glob_strip_prefix_shortest() {
+        assert_eq!(glob_strip_prefix("*/", "/usr/local/bin", false), "usr/local/bin");
+    }
+
+    #[test]
+    fn glob_strip_prefix_longest() {
+        assert_eq!(glob_strip_prefix("*/", "/usr/local/bin", true), "bin");
+    }
+
+    #[test]
+    fn glob_strip_prefix_no_match() {
+        assert_eq!(glob_strip_prefix("xyz", "hello", false), "hello");
+    }
+
+    // ── Glob strip suffix ────────────────────────────────────────────
+
+    #[test]
+    fn glob_strip_suffix_shortest() {
+        assert_eq!(glob_strip_suffix(".*", "file.tar.gz", false), "file.tar");
+    }
+
+    #[test]
+    fn glob_strip_suffix_longest() {
+        assert_eq!(glob_strip_suffix(".*", "file.tar.gz", true), "file");
+    }
+
+    #[test]
+    fn glob_strip_suffix_no_match() {
+        assert_eq!(glob_strip_suffix("xyz", "hello", false), "hello");
+    }
+
+    // ── Glob replace ─────────────────────────────────────────────────
+
+    #[test]
+    fn glob_replace_first_only() {
+        assert_eq!(glob_replace("o", "foobar", "0", false), "f0obar");
+    }
+
+    #[test]
+    fn glob_replace_all_occurrences() {
+        assert_eq!(glob_replace("o", "foobar", "0", true), "f00bar");
+    }
+
+    #[test]
+    fn glob_replace_with_wildcard() {
+        assert_eq!(glob_replace("*.txt", "hello.txt", "goodbye", false), "goodbye");
+    }
+
+    // ── Resolution of parameter expansion operators ──────────────────
+
+    #[test]
+    fn resolve_param_length() {
+        let env = [("VAR".into(), "hello".into())].into();
+        let w = Word { parts: vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Length,
+        }] };
+        let resolved = w.resolve(&env);
+        assert_eq!(resolved.to_str(), "5");
+        assert!(!resolved.has_dynamic_parts());
+    }
+
+    #[test]
+    fn resolve_param_strip_prefix() {
+        let env = [("PATH".into(), "/usr/local/bin".into())].into();
+        let w = Word { parts: vec![WordPart::ParameterExpansionOp {
+            name: "PATH".into(),
+            op: ParameterOperator::StripPrefix {
+                longest: true,
+                pattern: "*/".into(),
+            },
+        }] };
+        let resolved = w.resolve(&env);
+        assert_eq!(resolved.to_str(), "bin");
+        assert!(!resolved.has_dynamic_parts());
+    }
+
+    #[test]
+    fn resolve_param_strip_suffix() {
+        let env = [("FILE".into(), "archive.tar.gz".into())].into();
+        let w = Word { parts: vec![WordPart::ParameterExpansionOp {
+            name: "FILE".into(),
+            op: ParameterOperator::StripSuffix {
+                longest: false,
+                pattern: ".*".into(),
+            },
+        }] };
+        let resolved = w.resolve(&env);
+        assert_eq!(resolved.to_str(), "archive.tar");
+    }
+
+    #[test]
+    fn resolve_param_replace() {
+        let env = [("VAR".into(), "hello world".into())].into();
+        let w = Word { parts: vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Replace {
+                all: false,
+                pattern: "world".into(),
+                replacement: "rust".into(),
+            },
+        }] };
+        let resolved = w.resolve(&env);
+        assert_eq!(resolved.to_str(), "hello rust");
+    }
+
+    #[test]
+    fn resolve_param_default_colon_empty() {
+        let env = [("VAR".into(), String::new())].into();
+        let w = Word { parts: vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Default { colon: true, value: "fallback".into() },
+        }] };
+        let resolved = w.resolve(&env);
+        assert_eq!(resolved.to_str(), "fallback");
+    }
+
+    #[test]
+    fn resolve_param_default_colon_set() {
+        let env = [("VAR".into(), "value".into())].into();
+        let w = Word { parts: vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Default { colon: true, value: "fallback".into() },
+        }] };
+        let resolved = w.resolve(&env);
+        assert_eq!(resolved.to_str(), "value");
+    }
+
+    #[test]
+    fn resolve_param_alternative_colon_set() {
+        let env = [("VAR".into(), "value".into())].into();
+        let w = Word { parts: vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Alternative { colon: true, value: "alt".into() },
+        }] };
+        let resolved = w.resolve(&env);
+        assert_eq!(resolved.to_str(), "alt");
+    }
+
+    #[test]
+    fn resolve_param_alternative_colon_empty() {
+        let env = [("VAR".into(), String::new())].into();
+        let w = Word { parts: vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Alternative { colon: true, value: "alt".into() },
+        }] };
+        let resolved = w.resolve(&env);
+        assert_eq!(resolved.to_str(), "");
+    }
+
+    #[test]
+    fn resolve_param_substring() {
+        let env = [("VAR".into(), "hello world".into())].into();
+        let w = Word { parts: vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Substring {
+                offset: "6".into(),
+                length: Some("5".into()),
+            },
+        }] };
+        let resolved = w.resolve(&env);
+        assert_eq!(resolved.to_str(), "world");
+    }
+
+    #[test]
+    fn resolve_param_substring_no_length() {
+        let env = [("VAR".into(), "hello world".into())].into();
+        let w = Word { parts: vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Substring {
+                offset: "6".into(),
+                length: None,
+            },
+        }] };
+        let resolved = w.resolve(&env);
+        assert_eq!(resolved.to_str(), "world");
+    }
+
+    #[test]
+    fn resolve_param_uppercase_all() {
+        let env = [("VAR".into(), "hello".into())].into();
+        let w = Word { parts: vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Uppercase { all: true },
+        }] };
+        let resolved = w.resolve(&env);
+        assert_eq!(resolved.to_str(), "HELLO");
+    }
+
+    #[test]
+    fn resolve_param_uppercase_first() {
+        let env = [("VAR".into(), "hello".into())].into();
+        let w = Word { parts: vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Uppercase { all: false },
+        }] };
+        let resolved = w.resolve(&env);
+        assert_eq!(resolved.to_str(), "Hello");
+    }
+
+    #[test]
+    fn resolve_param_lowercase_all() {
+        let env = [("VAR".into(), "HELLO".into())].into();
+        let w = Word { parts: vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Lowercase { all: true },
+        }] };
+        let resolved = w.resolve(&env);
+        assert_eq!(resolved.to_str(), "hello");
+    }
+
+    #[test]
+    fn resolve_param_error_set() {
+        let env = [("VAR".into(), "value".into())].into();
+        let w = Word { parts: vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Error { colon: true, message: "oops".into() },
+        }] };
+        let resolved = w.resolve(&env);
+        assert_eq!(resolved.to_str(), "value");
+    }
+
+    #[test]
+    fn resolve_param_assign_set() {
+        let env = [("VAR".into(), "value".into())].into();
+        let w = Word { parts: vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Assign { colon: true, value: "default".into() },
+        }] };
+        let resolved = w.resolve(&env);
+        assert_eq!(resolved.to_str(), "value");
+    }
+
+    #[test]
+    fn resolve_param_unresolved_stays_dynamic() {
+        let env = std::collections::HashMap::new();
+        let w = Word { parts: vec![WordPart::ParameterExpansionOp {
+            name: "UNKNOWN".into(),
+            op: ParameterOperator::StripPrefix {
+                longest: true,
+                pattern: "*/".into(),
+            },
+        }] };
+        let resolved = w.resolve(&env);
+        assert!(resolved.has_dynamic_parts());
+        assert_eq!(resolved.dynamic_parts(), vec!["${UNKNOWN##*/}"]);
+    }
+
+    #[test]
+    fn resolve_param_op_in_double_quotes() {
+        let env = [("HOME".into(), "/home/user".into())].into();
+        let w = Word { parts: vec![WordPart::DoubleQuoted(vec![
+            WordPart::ParameterExpansionOp {
+                name: "HOME".into(),
+                op: ParameterOperator::StripPrefix {
+                    longest: true,
+                    pattern: "*/".into(),
+                },
+            },
+        ])] };
+        let resolved = w.resolve(&env);
+        assert_eq!(resolved.to_str(), "user");
+        assert!(!resolved.has_dynamic_parts());
     }
 }
