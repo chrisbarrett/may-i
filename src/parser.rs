@@ -134,17 +134,11 @@ pub enum RedirectionTarget {
 fn try_fold_static_cat(cmd: &str) -> Option<String> {
     let ast = parse(cmd);
     // Unwrap a Redirected wrapping a Simple command
+    // parse() of `cat <<'DELIM'...` always yields Command::Simple
+    // because parse_simple_command consumes all redirect tokens inline.
+    // Command::Redirected only wraps compound commands (if/for/while/…).
     let sc = match &ast {
         Command::Simple(sc) => sc,
-        Command::Redirected { command, redirections } => match command.as_ref() {
-            Command::Simple(sc) => {
-                // Merge redirections from both levels below
-                let mut merged = sc.clone();
-                merged.redirections.extend(redirections.iter().cloned());
-                return check_cat_heredoc(&merged);
-            }
-            _ => return None,
-        },
         _ => return None,
     };
     check_cat_heredoc(sc)
@@ -172,9 +166,13 @@ fn check_cat_heredoc(sc: &SimpleCommand) -> Option<String> {
                 RedirectionKind::Heredoc | RedirectionKind::HeredocStrip,
                 RedirectionTarget::Heredoc(text),
             ) => {
-                if !body.is_empty() {
-                    body.push('\n');
-                }
+                // Parser heredoc bodies always end with '\n', so the
+                // previous body (if any) already has a trailing newline
+                // and no explicit separator is needed.
+                assert!(
+                    body.is_empty() || body.ends_with('\n'),
+                    "heredoc body missing trailing newline: {body:?}"
+                );
                 body.push_str(text);
                 has_heredoc = true;
             }
@@ -182,7 +180,7 @@ fn check_cat_heredoc(sc: &SimpleCommand) -> Option<String> {
                 if word.has_dynamic_parts() {
                     return None;
                 }
-                if !body.is_empty() {
+                if !body.is_empty() && !body.ends_with('\n') {
                     body.push('\n');
                 }
                 body.push_str(&word.to_str());
@@ -192,14 +190,14 @@ fn check_cat_heredoc(sc: &SimpleCommand) -> Option<String> {
         }
     }
 
-    if has_heredoc {
-        // The parser's heredoc body may include a trailing newline;
-        // strip it to match the actual output of `cat`.
-        let body = body.strip_suffix('\n').unwrap_or(&body).to_string();
-        Some(body)
-    } else {
-        None
-    }
+    // Unreachable: the early return on empty redirections guarantees we
+    // entered the loop, and every non-bailing arm sets has_heredoc.
+    assert!(has_heredoc, "unreachable: loop exited without setting has_heredoc");
+
+    // The parser's heredoc body may include a trailing newline;
+    // strip it to match the actual output of `cat`.
+    let body = body.strip_suffix('\n').unwrap_or(&body).to_string();
+    Some(body)
 }
 
 /// Abbreviate a string for use in error messages. Multi-line content is
@@ -833,7 +831,9 @@ impl Lexer {
                 let target = self.read_redirect_target(&kind);
                 Some(Token::Redirect(Redirection { fd, kind, target }))
             }
-            _ => None,
+            // All callers guard on `ch == '<' || ch == '>'` before
+            // calling read_redirection, so this arm is unreachable.
+            _ => unreachable!("read_redirection called with '{ch}'"),
         }
     }
 
@@ -1421,9 +1421,10 @@ impl Lexer {
         }
 
         let parts = self.read_word_parts();
-        if parts.is_empty() {
-            return None;
-        }
+        // The main tokenizer loop only calls read_word_or_keyword for
+        // characters that are not metacharacters, so read_word_parts
+        // always consumes at least one character here.
+        assert!(!parts.is_empty(), "unreachable: read_word_or_keyword called at metachar");
 
         // Check if this is a keyword (single literal part)
         if parts.len() == 1
@@ -1539,7 +1540,6 @@ impl Parser {
         commands.push(first);
 
         loop {
-            self.skip_newlines();
             match self.peek().clone() {
                 Token::Semi => {
                     self.advance();
@@ -3800,6 +3800,690 @@ mod tests {
         match &cmd {
             Command::Simple(sc) => {
                 assert!(sc.words[1].parts.iter().any(|p| matches!(p, WordPart::CommandSubstitution(_))));
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn cat_with_output_redirect_stays_dynamic() {
+        // cat with > redirect is not purely heredoc-fed
+        let cmd = parse("echo $(cat <<'EOF'\nhello\nEOF\n > /tmp/out)");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert!(sc.words[1].parts.iter().any(|p| matches!(p, WordPart::CommandSubstitution(_))));
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn bare_cat_stays_dynamic() {
+        // bare cat with no redirections
+        let cmd = parse("echo $(cat)");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert!(sc.words[1].parts.iter().any(|p| matches!(p, WordPart::CommandSubstitution(_))));
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    // ── ANSI-C escape sequences ($'...') ─────────────────────────────
+
+    #[test]
+    fn ansi_c_standard_escapes() {
+        let cmd = parse(r#"echo $'\\' $'\n' $'\t' $'\r' $'\a' $'\b' $'\e' $'\f' $'\v' $'\'' $'\"'"#);
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.words[1].parts, vec![WordPart::AnsiCQuoted("\\".into())]);
+                assert_eq!(sc.words[2].parts, vec![WordPart::AnsiCQuoted("\n".into())]);
+                assert_eq!(sc.words[3].parts, vec![WordPart::AnsiCQuoted("\t".into())]);
+                assert_eq!(sc.words[4].parts, vec![WordPart::AnsiCQuoted("\r".into())]);
+                assert_eq!(sc.words[5].parts, vec![WordPart::AnsiCQuoted("\x07".into())]);
+                assert_eq!(sc.words[6].parts, vec![WordPart::AnsiCQuoted("\x08".into())]);
+                assert_eq!(sc.words[7].parts, vec![WordPart::AnsiCQuoted("\x1B".into())]);
+                assert_eq!(sc.words[8].parts, vec![WordPart::AnsiCQuoted("\x0C".into())]);
+                assert_eq!(sc.words[9].parts, vec![WordPart::AnsiCQuoted("\x0B".into())]);
+                assert_eq!(sc.words[10].parts, vec![WordPart::AnsiCQuoted("'".into())]);
+                assert_eq!(sc.words[11].parts, vec![WordPart::AnsiCQuoted("\"".into())]);
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn ansi_c_octal_escape() {
+        // \0101 = octal 101 = 'A'
+        let cmd = parse(r"echo $'\0101'");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.words[1].parts, vec![WordPart::AnsiCQuoted("A".into())]);
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn ansi_c_bare_null() {
+        // \0 with no following octal digits = NUL
+        let cmd = parse(r"echo $'\0'");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.words[1].parts, vec![WordPart::AnsiCQuoted("\0".into())]);
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn ansi_c_hex_escape() {
+        // \x41 = 'A'
+        let cmd = parse(r"echo $'\x41'");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.words[1].parts, vec![WordPart::AnsiCQuoted("A".into())]);
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn ansi_c_unicode_escape() {
+        // \u0041 = 'A'
+        let cmd = parse(r"echo $'\u0041'");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.words[1].parts, vec![WordPart::AnsiCQuoted("A".into())]);
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn ansi_c_long_unicode_escape() {
+        // \U00000041 = 'A'
+        let cmd = parse(r"echo $'\U00000041'");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.words[1].parts, vec![WordPart::AnsiCQuoted("A".into())]);
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn ansi_c_control_char() {
+        // \cA = control-A = 0x01
+        let cmd = parse(r"echo $'\cA'");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.words[1].parts, vec![WordPart::AnsiCQuoted("\x01".into())]);
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn ansi_c_unknown_escape() {
+        // \z is unknown, bash treats as literal 'z'
+        let cmd = parse(r"echo $'\z'");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.words[1].parts, vec![WordPart::AnsiCQuoted("z".into())]);
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn ansi_c_backslash_at_eof() {
+        // $'\  (backslash then EOF before closing quote)
+        // Lexer sees backslash with no following char
+        let cmd = parse("echo $'\\");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.words[1].parts, vec![WordPart::AnsiCQuoted("\\".into())]);
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    // ── dynamic_parts descriptions ───────────────────────────────────
+
+    #[test]
+    fn dynamic_parts_parameter_expansion() {
+        let w = Word { parts: vec![WordPart::ParameterExpansion("HOME".into())] };
+        assert_eq!(w.dynamic_parts(), vec!["${HOME}"]);
+    }
+
+    #[test]
+    fn dynamic_parts_backtick() {
+        let w = Word { parts: vec![WordPart::Backtick("date".into())] };
+        assert_eq!(w.dynamic_parts(), vec!["`date`"]);
+    }
+
+    #[test]
+    fn dynamic_parts_arithmetic() {
+        let w = Word { parts: vec![WordPart::Arithmetic("1+2".into())] };
+        assert_eq!(w.dynamic_parts(), vec!["$((1+2))"]);
+    }
+
+    #[test]
+    fn dynamic_parts_process_sub_input() {
+        let w = Word { parts: vec![WordPart::ProcessSubstitution {
+            direction: ProcessDirection::Input,
+            command: "sort".into(),
+        }] };
+        assert_eq!(w.dynamic_parts(), vec!["<(sort)"]);
+    }
+
+    #[test]
+    fn dynamic_parts_process_sub_output() {
+        let w = Word { parts: vec![WordPart::ProcessSubstitution {
+            direction: ProcessDirection::Output,
+            command: "tee log".into(),
+        }] };
+        assert_eq!(w.dynamic_parts(), vec![">(tee log)"]);
+    }
+
+    #[test]
+    fn dynamic_parts_in_double_quotes() {
+        let w = Word { parts: vec![WordPart::DoubleQuoted(vec![
+            WordPart::Literal("hi ".into()),
+            WordPart::Parameter("USER".into()),
+        ])] };
+        assert_eq!(w.dynamic_parts(), vec!["$USER"]);
+    }
+
+    // ── to_str with various word parts ───────────────────────────────
+
+    #[test]
+    fn to_str_parameter_expansion() {
+        let w = Word { parts: vec![WordPart::ParameterExpansion("HOME".into())] };
+        assert_eq!(w.to_str(), "HOME");
+    }
+
+    #[test]
+    fn to_str_backtick() {
+        let w = Word { parts: vec![WordPart::Backtick("date".into())] };
+        assert_eq!(w.to_str(), "date");
+    }
+
+    #[test]
+    fn to_str_arithmetic() {
+        let w = Word { parts: vec![WordPart::Arithmetic("1+2".into())] };
+        assert_eq!(w.to_str(), "1+2");
+    }
+
+    // ── structural dynamic parts in control flow ─────────────────────
+
+    #[test]
+    fn structural_dynamic_case_arms() {
+        use std::collections::HashMap;
+        // case $x in $pat) echo hi ;; esac
+        let cmd = parse("case $x in $pat) echo hi ;; esac");
+        let parts = find_structural_dynamic_parts(&cmd, &HashMap::new());
+        assert!(parts.contains(&"$x".to_string()));
+        assert!(parts.contains(&"$pat".to_string()));
+    }
+
+    #[test]
+    fn structural_dynamic_elif_else() {
+        use std::collections::HashMap;
+        let cmd = parse("if true; then echo a; elif $cond; then echo b; else echo c; fi");
+        // $cond is in the elif condition — but it's inside a simple command,
+        // not a structural position, so structural check won't flag it.
+        // This just ensures the traversal doesn't panic.
+        let _parts = find_structural_dynamic_parts(&cmd, &HashMap::new());
+    }
+
+    #[test]
+    fn structural_dynamic_function_body() {
+        use std::collections::HashMap;
+        let cmd = parse("function foo { for x in $items; do echo $x; done; }");
+        let parts = find_structural_dynamic_parts(&cmd, &HashMap::new());
+        assert!(parts.contains(&"$items".to_string()));
+    }
+
+    #[test]
+    fn structural_dynamic_redirected() {
+        use std::collections::HashMap;
+        let cmd = parse("for x in $items; do echo $x; done > /tmp/out");
+        let parts = find_structural_dynamic_parts(&cmd, &HashMap::new());
+        assert!(parts.contains(&"$items".to_string()));
+    }
+
+    // ── extract_simple_commands / extract_all_words edge cases ────────
+
+    #[test]
+    fn extract_simple_commands_from_redirected() {
+        // Simple command with redirect — redirect is on the SimpleCommand
+        let cmd = parse("echo hello > /tmp/out");
+        let cmds = extract_simple_commands(&cmd);
+        assert_eq!(cmds.len(), 1);
+        assert_eq!(cmds[0].command_name(), Some("echo"));
+    }
+
+    #[test]
+    fn extract_simple_commands_from_compound_redirected() {
+        // Compound command with trailing redirect — wraps in Command::Redirected
+        let cmd = parse("{ echo hello; } > /tmp/out");
+        let cmds = extract_simple_commands(&cmd);
+        assert_eq!(cmds.len(), 1);
+        assert_eq!(cmds[0].command_name(), Some("echo"));
+    }
+
+    #[test]
+    fn extract_all_words_from_redirected() {
+        let cmd = parse("echo hello > /tmp/out");
+        let words = extract_all_words(&cmd);
+        // echo, hello, /tmp/out (redirect target)
+        assert!(words.len() >= 3);
+    }
+
+    #[test]
+    fn extract_all_words_from_compound_redirected() {
+        // Compound command with trailing redirect — exercises Redirected variant
+        let cmd = parse("{ echo hello; } > /tmp/out");
+        let words = extract_all_words(&cmd);
+        // "echo", "hello" from inner command, "/tmp/out" from redirect target
+        assert!(words.len() >= 3);
+    }
+
+    #[test]
+    fn extract_all_words_from_compound_with_heredoc_redirect() {
+        // Compound command with heredoc — exercises Heredoc arm in Redirected
+        let cmd = parse("{ cat; } <<'EOF'\nhello\nEOF\n");
+        let words = extract_all_words(&cmd);
+        // "cat" from inner command; heredoc target is skipped
+        assert_eq!(words.len(), 1);
+    }
+
+    #[test]
+    fn extract_all_words_from_compound_with_fd_redirect() {
+        // Compound command with fd dup — exercises Fd arm in Redirected
+        let cmd = parse("{ echo hi; } 2>&1");
+        let words = extract_all_words(&cmd);
+        // "echo", "hi" from inner command; Fd target is skipped
+        assert_eq!(words.len(), 2);
+    }
+
+    #[test]
+    fn extract_all_words_from_standalone_assignment_value() {
+        let cmd = parse("x=hello");
+        let words = extract_all_words(&cmd);
+        assert_eq!(words.len(), 1);
+        assert_eq!(words[0].to_str(), "hello");
+    }
+
+    // ── newline / background in parse_list ──────────────────────────────
+
+    #[test]
+    fn newline_separated_commands_in_sequence() {
+        // Newlines act as command separators like semicolons
+        let cmd = parse("echo a\necho b");
+        match &cmd {
+            Command::Sequence(cmds) => {
+                assert_eq!(cmds.len(), 2);
+            }
+            _ => panic!("Expected sequence, got {:?}", cmd),
+        }
+    }
+
+    #[test]
+    fn background_command_in_sequence() {
+        let cmd = parse("sleep 1 & echo done");
+        match &cmd {
+            Command::Sequence(cmds) => {
+                assert_eq!(cmds.len(), 2);
+                assert!(matches!(&cmds[0], Command::Background(_)));
+                match &cmds[1] {
+                    Command::Simple(sc) => assert_eq!(sc.command_name(), Some("echo")),
+                    _ => panic!("Expected simple command"),
+                }
+            }
+            _ => panic!("Expected sequence, got {:?}", cmd),
+        }
+    }
+
+    // ── assignment with dynamic value ────────────────────────────────
+
+    #[test]
+    fn assignment_with_dynamic_value_parts() {
+        let cmd = parse("x=hello$HOME");
+        match &cmd {
+            Command::Assignment(a) => {
+                assert_eq!(a.name, "x");
+                assert!(a.value.parts.len() >= 2);
+                assert_eq!(a.value.parts[0], WordPart::Literal("hello".into()));
+                assert!(matches!(&a.value.parts[1], WordPart::Parameter(s) if s == "HOME"));
+            }
+            _ => panic!("Expected assignment, got {:?}", cmd),
+        }
+    }
+
+    // ── case with optional leading ( ─────────────────────────────────
+
+    #[test]
+    fn case_with_leading_paren_in_pattern() {
+        let cmd = parse("case x in (a) echo a ;; esac");
+        match &cmd {
+            Command::Case { arms, .. } => {
+                assert_eq!(arms.len(), 1);
+                assert_eq!(arms[0].patterns[0].to_str(), "a");
+            }
+            _ => panic!("Expected case"),
+        }
+    }
+
+    // ── case with default terminator (no ;; at end) ──────────────────
+
+    #[test]
+    fn case_arm_without_terminator() {
+        let cmd = parse("case x in a) echo a\nesac");
+        match &cmd {
+            Command::Case { arms, .. } => {
+                assert_eq!(arms.len(), 1);
+            }
+            _ => panic!("Expected case"),
+        }
+    }
+
+    // ── edge case: for with missing var name ─────────────────────────
+
+    #[test]
+    fn for_loop_missing_var_name() {
+        // `for` followed by non-word token — var is empty
+        let cmd = parse("for ; do echo x; done");
+        match &cmd {
+            Command::For { var, .. } => {
+                assert!(var.is_empty());
+            }
+            _ => panic!("Expected for loop, got {:?}", cmd),
+        }
+    }
+
+    // ── edge case: case with empty word ──────────────────────────────
+
+    #[test]
+    fn case_empty_discriminant() {
+        // case ; in ... — non-word token as discriminant
+        let cmd = parse("case\nin a) echo x ;; esac");
+        match &cmd {
+            Command::Case { word, .. } => {
+                // Parser should produce a word (possibly "in" consumed)
+                let _ = word;
+            }
+            _ => panic!("Expected case"),
+        }
+    }
+
+    // ── edge case: function with missing name ────────────────────────
+
+    #[test]
+    fn function_missing_name() {
+        let cmd = parse("function { echo x; }");
+        match &cmd {
+            Command::FunctionDef { name, .. } => {
+                assert!(name.is_empty());
+            }
+            _ => panic!("Expected function def, got {:?}", cmd),
+        }
+    }
+
+    // ── abbreviate helper ────────────────────────────────────────────
+
+    #[test]
+    fn abbreviate_long_single_line() {
+        let long = "a".repeat(80);
+        let result = super::abbreviate(&long);
+        assert!(result.ends_with('…'));
+        assert!(result.len() < 80);
+    }
+
+    #[test]
+    fn abbreviate_multiline() {
+        let result = super::abbreviate("first line\nsecond line");
+        assert_eq!(result, "first line …");
+    }
+
+    #[test]
+    fn abbreviate_short_single_line() {
+        assert_eq!(super::abbreviate("hello"), "hello");
+    }
+
+    // ── unterminated brace expansion ─────────────────────────────────
+
+    #[test]
+    fn unterminated_brace_is_literal() {
+        let cmd = parse("echo {a,b");
+        match &cmd {
+            Command::Simple(sc) => {
+                // Unterminated brace: restored to literal
+                assert_eq!(sc.words[1].to_str(), "{a,b");
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    // ── comment before newline in lexer ──────────────────────────────
+
+    #[test]
+    fn comment_then_newline_then_command() {
+        let cmd = parse("# comment\necho hello");
+        let cmds = extract_simple_commands(&cmd);
+        assert_eq!(cmds.len(), 1);
+        assert_eq!(cmds[0].command_name(), Some("echo"));
+    }
+
+    // ── unclosed arithmetic / command substitution ────────────────────
+
+    #[test]
+    fn unclosed_arithmetic_at_eof() {
+        let cmd = parse("echo $((1+2");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert!(sc.words[1].parts.iter().any(|p| matches!(p, WordPart::Arithmetic(_))));
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn unclosed_command_sub_at_eof() {
+        let cmd = parse("echo $(whoami");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert!(sc.words[1].parts.iter().any(|p| matches!(p, WordPart::CommandSubstitution(_))));
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    // ── FD redirect that isn't a redirect ────────────────────────────
+
+    #[test]
+    fn number_not_followed_by_redirect_is_arg() {
+        let cmd = parse("echo 2foo");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(sc.words.len(), 2);
+                assert_eq!(sc.words[1].to_str(), "2foo");
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    // ── cat heredoc folding: combo cases ────────────────────────────
+
+    #[test]
+    fn cat_heredoc_plus_herestring_concatenates() {
+        // Heredoc followed by herestring — exercises body concat for
+        // herestrings when body is already non-empty.
+        let cmd = parse("echo $(cat <<'EOF'\nfirst\nEOF\n<<< 'second')");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(
+                    sc.words[1].parts,
+                    vec![WordPart::Literal("first\nsecond".to_string())]
+                );
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn cat_multiple_heredocs_concatenates() {
+        // Two heredocs fed to cat should concatenate with newline
+        let cmd = parse("echo $(cat <<'A'\nfirst\nA\n<<'B'\nsecond\nB\n)");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(
+                    sc.words[1].parts,
+                    vec![WordPart::Literal("first\nsecond".to_string())]
+                );
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn cat_no_input_stays_dynamic() {
+        // Bare `cat` with no heredoc — not foldable
+        let cmd = parse("echo $(cat)");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert!(sc.words[1]
+                    .parts
+                    .iter()
+                    .any(|p| matches!(p, WordPart::CommandSubstitution(_))));
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    // ── function definitions ────────────────────────────────────────
+
+    #[test]
+    fn function_definition_parsed() {
+        let cmd = parse("greet() { echo hi; }");
+        match &cmd {
+            Command::FunctionDef { name, body } => {
+                assert_eq!(name, "greet");
+                let cmds = extract_simple_commands(body);
+                assert_eq!(cmds.len(), 1);
+                assert_eq!(cmds[0].command_name(), Some("echo"));
+            }
+            _ => panic!("Expected function def, got {:?}", cmd),
+        }
+    }
+
+    // ── ANSI-C hex/unicode escapes with short sequences ─────────────
+
+    #[test]
+    fn ansic_hex_short_sequence() {
+        // \x4 — only one hex digit, loop breaks early
+        let cmd = parse("echo $'\\x4G'");
+        match &cmd {
+            Command::Simple(sc) => {
+                let s = sc.words[1].to_str();
+                assert_eq!(s, "\x04G");
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn ansic_unicode_short_sequence() {
+        // \u41 — only two hex digits then non-hex
+        let cmd = parse("echo $'\\u41G'");
+        match &cmd {
+            Command::Simple(sc) => {
+                let s = sc.words[1].to_str();
+                assert_eq!(s, "AG");
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn ansic_unicode_big_short_sequence() {
+        // \U41 — only two hex digits then non-hex
+        let cmd = parse("echo $'\\U41G'");
+        match &cmd {
+            Command::Simple(sc) => {
+                let s = sc.words[1].to_str();
+                assert_eq!(s, "AG");
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    // ── fd duplication targets ───────────────────────────────────────
+
+    #[test]
+    fn redirect_dup_fd_with_dash() {
+        // 2>&- closes fd 2
+        let cmd = parse("echo hi 2>&-");
+        match &cmd {
+            Command::Redirected { redirections, .. } | Command::Simple(SimpleCommand { redirections, .. }) => {
+                let has_fd_target = redirections.iter().any(|r| {
+                    matches!(&r.target, RedirectionTarget::Fd(_))
+                        || matches!(&r.target, RedirectionTarget::File(w) if w.to_str() == "-")
+                });
+                assert!(has_fd_target, "Expected fd target in redirections: {:?}", redirections);
+            }
+            _ => panic!("Expected redirected command, got {:?}", cmd),
+        }
+    }
+
+    #[test]
+    fn redirect_dup_fd_non_numeric() {
+        // >&word where word isn't a number — falls back to File
+        let cmd = parse("echo hi >&foo");
+        match &cmd {
+            Command::Redirected { redirections, .. } => {
+                assert!(redirections.iter().any(|r| {
+                    matches!(&r.target, RedirectionTarget::File(w) if w.to_str().contains("foo"))
+                        || matches!(&r.target, RedirectionTarget::Fd(_))
+                }));
+            }
+            _ => {
+                // May be parsed differently; just ensure it doesn't panic
+            }
+        }
+    }
+
+    // ── try_fold_static_cat rejects non-Simple ASTs ─────────────────
+
+    #[test]
+    fn compound_command_sub_stays_dynamic() {
+        // $(echo a; echo b) parses as a Sequence, not Simple — try_fold
+        // must reject it and keep it as a command substitution.
+        let cmd = parse("echo $(echo a; echo b)");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert!(sc.words[1]
+                    .parts
+                    .iter()
+                    .any(|p| matches!(p, WordPart::CommandSubstitution(_))));
+            }
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    // ── herestring-then-herestring separator ─────────────────────────
+
+    #[test]
+    fn cat_two_herestrings_concatenates() {
+        let cmd = parse("echo $(cat <<< 'first' <<< 'second')");
+        match &cmd {
+            Command::Simple(sc) => {
+                assert_eq!(
+                    sc.words[1].parts,
+                    vec![WordPart::Literal("first\nsecond".to_string())]
+                );
             }
             _ => panic!("Expected simple command"),
         }

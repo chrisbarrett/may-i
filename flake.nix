@@ -21,6 +21,7 @@
         devShells.default = pkgs.mkShell {
           buildInputs = [
             rustToolchain
+            pkgs.cargo-tarpaulin
             pkgs.prek
           ];
 
