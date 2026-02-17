@@ -3127,3 +3127,421 @@ fn resolve_param_op_in_double_quotes() {
     assert_eq!(resolved.to_str(), "user");
     assert!(!resolved.has_dynamic_parts());
 }
+
+// -- Resolution: non-colon Default (variable is set) --
+
+#[test]
+fn resolve_param_default_no_colon_set() {
+    let env = [("VAR".into(), "hello".into())].into();
+    let w = Word { parts: vec![WordPart::ParameterExpansionOp {
+        name: "VAR".into(),
+        op: ParameterOperator::Default { colon: false, value: "fallback".into() },
+    }] };
+    let resolved = w.resolve(&env);
+    assert_eq!(resolved.to_str(), "hello");
+}
+
+// -- Resolution: Alternative with colon:false --
+
+#[test]
+fn resolve_param_alternative_no_colon_set() {
+    let env = [("VAR".into(), "hello".into())].into();
+    let w = Word { parts: vec![WordPart::ParameterExpansionOp {
+        name: "VAR".into(),
+        op: ParameterOperator::Alternative { colon: false, value: "alt".into() },
+    }] };
+    let resolved = w.resolve(&env);
+    // ${VAR+alt}: variable is set, so use alternative
+    assert_eq!(resolved.to_str(), "alt");
+}
+
+// -- Resolution: Substring with negative offset --
+
+#[test]
+fn resolve_param_substring_negative_offset() {
+    let env = [("VAR".into(), "hello world".into())].into();
+    let w = Word { parts: vec![WordPart::ParameterExpansionOp {
+        name: "VAR".into(),
+        op: ParameterOperator::Substring { offset: "-5".into(), length: None },
+    }] };
+    let resolved = w.resolve(&env);
+    assert_eq!(resolved.to_str(), "world");
+}
+
+// -- Resolution: Uppercase first character only --
+
+#[test]
+fn resolve_param_uppercase_first_char() {
+    let env = [("VAR".into(), "hello".into())].into();
+    let w = Word { parts: vec![WordPart::ParameterExpansionOp {
+        name: "VAR".into(),
+        op: ParameterOperator::Uppercase { all: false },
+    }] };
+    let resolved = w.resolve(&env);
+    assert_eq!(resolved.to_str(), "Hello");
+}
+
+#[test]
+fn resolve_param_uppercase_first_empty() {
+    let env = [("VAR".into(), "".into())].into();
+    let w = Word { parts: vec![WordPart::ParameterExpansionOp {
+        name: "VAR".into(),
+        op: ParameterOperator::Uppercase { all: false },
+    }] };
+    let resolved = w.resolve(&env);
+    assert_eq!(resolved.to_str(), "");
+}
+
+// -- Resolution: Lowercase first character only --
+
+#[test]
+fn resolve_param_lowercase_first() {
+    let env = [("VAR".into(), "HELLO".into())].into();
+    let w = Word { parts: vec![WordPart::ParameterExpansionOp {
+        name: "VAR".into(),
+        op: ParameterOperator::Lowercase { all: false },
+    }] };
+    let resolved = w.resolve(&env);
+    assert_eq!(resolved.to_str(), "hELLO");
+}
+
+#[test]
+fn resolve_param_lowercase_first_empty() {
+    let env = [("VAR".into(), "".into())].into();
+    let w = Word { parts: vec![WordPart::ParameterExpansionOp {
+        name: "VAR".into(),
+        op: ParameterOperator::Lowercase { all: false },
+    }] };
+    let resolved = w.resolve(&env);
+    assert_eq!(resolved.to_str(), "");
+}
+
+// -- format_param_op coverage for uncovered arms --
+
+#[test]
+fn format_param_op_replace() {
+    use super::ast::format_param_op;
+    assert_eq!(
+        format_param_op("VAR", &ParameterOperator::Replace { all: false, pattern: "a".into(), replacement: "b".into() }),
+        "VAR/a/b"
+    );
+    assert_eq!(
+        format_param_op("VAR", &ParameterOperator::Replace { all: true, pattern: "a".into(), replacement: "b".into() }),
+        "VAR//a/b"
+    );
+}
+
+#[test]
+fn format_param_op_alternative() {
+    use super::ast::format_param_op;
+    assert_eq!(
+        format_param_op("VAR", &ParameterOperator::Alternative { colon: true, value: "alt".into() }),
+        "VAR:+alt"
+    );
+    assert_eq!(
+        format_param_op("VAR", &ParameterOperator::Alternative { colon: false, value: "alt".into() }),
+        "VAR+alt"
+    );
+}
+
+#[test]
+fn format_param_op_error() {
+    use super::ast::format_param_op;
+    assert_eq!(
+        format_param_op("VAR", &ParameterOperator::Error { colon: true, message: "msg".into() }),
+        "VAR:?msg"
+    );
+    assert_eq!(
+        format_param_op("VAR", &ParameterOperator::Error { colon: false, message: "msg".into() }),
+        "VAR?msg"
+    );
+}
+
+#[test]
+fn format_param_op_assign() {
+    use super::ast::format_param_op;
+    assert_eq!(
+        format_param_op("VAR", &ParameterOperator::Assign { colon: true, value: "val".into() }),
+        "VAR:=val"
+    );
+    assert_eq!(
+        format_param_op("VAR", &ParameterOperator::Assign { colon: false, value: "val".into() }),
+        "VAR=val"
+    );
+}
+
+#[test]
+fn format_param_op_substring() {
+    use super::ast::format_param_op;
+    assert_eq!(
+        format_param_op("VAR", &ParameterOperator::Substring { offset: "2".into(), length: Some("3".into()) }),
+        "VAR:2:3"
+    );
+    assert_eq!(
+        format_param_op("VAR", &ParameterOperator::Substring { offset: "2".into(), length: None }),
+        "VAR:2"
+    );
+}
+
+#[test]
+fn format_param_op_uppercase() {
+    use super::ast::format_param_op;
+    assert_eq!(
+        format_param_op("VAR", &ParameterOperator::Uppercase { all: true }),
+        "VAR^^"
+    );
+    assert_eq!(
+        format_param_op("VAR", &ParameterOperator::Uppercase { all: false }),
+        "VAR^"
+    );
+}
+
+#[test]
+fn format_param_op_lowercase() {
+    use super::ast::format_param_op;
+    assert_eq!(
+        format_param_op("VAR", &ParameterOperator::Lowercase { all: true }),
+        "VAR,,"
+    );
+    assert_eq!(
+        format_param_op("VAR", &ParameterOperator::Lowercase { all: false }),
+        "VAR,"
+    );
+}
+
+// -- Glob: bracket with star backtrack --
+
+#[test]
+fn glob_bracket_no_match_backtracks_over_star() {
+    // Pattern: *[0-9] should match "abc3" (star eats "abc", bracket matches "3")
+    assert!(glob_match("*[0-9]", "abc3"));
+    // But not "abcx"
+    assert!(!glob_match("*[0-9]", "abcx"));
+}
+
+#[test]
+fn glob_bracket_no_match_no_star_fails() {
+    // [0-9] alone should not match "a"
+    assert!(!glob_match("[0-9]", "a"));
+}
+
+#[test]
+fn glob_malformed_bracket_treated_as_literal() {
+    // "[abc" has no closing ] — treated as literal '['
+    assert!(glob_match("[abc", "[abc"));
+    assert!(!glob_match("[abc", "a"));
+}
+
+#[test]
+fn glob_malformed_bracket_with_star_backtracks() {
+    // "*[abc" — malformed bracket after star; '[' treated as literal
+    assert!(glob_match("*[abc", "xyz[abc"));
+}
+
+#[test]
+fn glob_malformed_bracket_no_star_mismatch() {
+    // "[xyz" treated as literal '[' — doesn't match 'a'
+    assert!(!glob_match("[xyz", "a"));
+}
+
+#[test]
+fn glob_bracket_literal_close() {
+    // []] matches ']'
+    assert!(glob_match("[]]", "]"));
+}
+
+#[test]
+fn glob_bracket_negate_close() {
+    // [!]] matches anything except ']'
+    assert!(glob_match("[!]]", "a"));
+    assert!(!glob_match("[!]]", "]"));
+}
+
+// -- Lexer: non-colon parameter expansion operators --
+
+#[test]
+fn parse_param_expansion_no_colon_default() {
+    let cmd = parse("echo ${VAR-fallback}");
+    if let Command::Simple(sc) = &cmd {
+        assert_eq!(sc.words.len(), 2);
+        assert_eq!(sc.words[1].parts, vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Default { colon: false, value: "fallback".into() },
+        }]);
+    } else {
+        panic!("Expected simple command");
+    }
+}
+
+#[test]
+fn parse_param_expansion_no_colon_alternative() {
+    let cmd = parse("echo ${VAR+alt}");
+    if let Command::Simple(sc) = &cmd {
+        assert_eq!(sc.words[1].parts, vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Alternative { colon: false, value: "alt".into() },
+        }]);
+    } else {
+        panic!("Expected simple command");
+    }
+}
+
+#[test]
+fn parse_param_expansion_no_colon_error() {
+    let cmd = parse("echo ${VAR?msg}");
+    if let Command::Simple(sc) = &cmd {
+        assert_eq!(sc.words[1].parts, vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Error { colon: false, message: "msg".into() },
+        }]);
+    } else {
+        panic!("Expected simple command");
+    }
+}
+
+#[test]
+fn parse_param_expansion_no_colon_assign() {
+    let cmd = parse("echo ${VAR=val}");
+    if let Command::Simple(sc) = &cmd {
+        assert_eq!(sc.words[1].parts, vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Assign { colon: false, value: "val".into() },
+        }]);
+    } else {
+        panic!("Expected simple command");
+    }
+}
+
+#[test]
+fn parse_param_expansion_uppercase_single() {
+    let cmd = parse("echo ${VAR^}");
+    if let Command::Simple(sc) = &cmd {
+        assert_eq!(sc.words[1].parts, vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Uppercase { all: false },
+        }]);
+    } else {
+        panic!("Expected simple command");
+    }
+}
+
+#[test]
+fn parse_param_expansion_uppercase_all() {
+    let cmd = parse("echo ${VAR^^}");
+    if let Command::Simple(sc) = &cmd {
+        assert_eq!(sc.words[1].parts, vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Uppercase { all: true },
+        }]);
+    } else {
+        panic!("Expected simple command");
+    }
+}
+
+#[test]
+fn parse_param_expansion_lowercase_single() {
+    let cmd = parse("echo ${VAR,}");
+    if let Command::Simple(sc) = &cmd {
+        assert_eq!(sc.words[1].parts, vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Lowercase { all: false },
+        }]);
+    } else {
+        panic!("Expected simple command");
+    }
+}
+
+#[test]
+fn parse_param_expansion_lowercase_all() {
+    let cmd = parse("echo ${VAR,,}");
+    if let Command::Simple(sc) = &cmd {
+        assert_eq!(sc.words[1].parts, vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Lowercase { all: true },
+        }]);
+    } else {
+        panic!("Expected simple command");
+    }
+}
+
+#[test]
+fn parse_param_expansion_unknown_operator_fallback() {
+    // An operator the lexer doesn't recognise falls back to flat ParameterExpansion
+    let cmd = parse("echo ${VAR@Q}");
+    if let Command::Simple(sc) = &cmd {
+        assert_eq!(sc.words[1].parts, vec![WordPart::ParameterExpansion("VAR@Q".into())]);
+    } else {
+        panic!("Expected simple command");
+    }
+}
+
+#[test]
+fn parse_param_expansion_non_identifier_fallback() {
+    // ${!VAR} — '!' is not a valid identifier start, falls back to flat
+    let cmd = parse("echo ${!VAR}");
+    if let Command::Simple(sc) = &cmd {
+        assert_eq!(sc.words[1].parts, vec![WordPart::ParameterExpansion("!VAR".into())]);
+    } else {
+        panic!("Expected simple command");
+    }
+}
+
+// -- Lexer: empty redirect target produces empty word --
+
+#[test]
+fn parse_herestring_redirect_target() {
+    // <<< with a word target
+    let cmd = parse("cat <<< hello");
+    if let Command::Simple(sc) = &cmd {
+        assert_eq!(sc.command_name(), Some("cat"));
+        assert_eq!(sc.redirections.len(), 1);
+        assert_eq!(sc.redirections[0].kind, RedirectionKind::Herestring);
+    } else {
+        panic!("Expected simple command");
+    }
+}
+
+// -- format_param_op: Length arm --
+
+#[test]
+fn format_param_op_length() {
+    use super::ast::format_param_op;
+    assert_eq!(format_param_op("VAR", &ParameterOperator::Length), "#VAR");
+}
+
+// -- dynamic_parts rendering for unresolved Length op --
+
+#[test]
+fn dynamic_parts_unresolved_length() {
+    let w = Word { parts: vec![WordPart::ParameterExpansionOp {
+        name: "UNSET".into(),
+        op: ParameterOperator::Length,
+    }] };
+    assert!(w.has_dynamic_parts());
+    assert_eq!(w.dynamic_parts(), vec!["${#UNSET}"]);
+}
+
+// -- Lexer: ${#@} where # is not followed by identifier+} --
+
+#[test]
+fn parse_param_expansion_hash_not_length() {
+    // ${#} — '#' with no identifier is not length op, falls back to flat
+    let cmd = parse("echo ${#}");
+    if let Command::Simple(sc) = &cmd {
+        assert_eq!(sc.words[1].parts, vec![WordPart::ParameterExpansion("#".into())]);
+    } else {
+        panic!("Expected simple command");
+    }
+}
+
+#[test]
+fn parse_param_expansion_hash_special() {
+    // ${#*} — '#' followed by '*' (not a valid identifier), falls through
+    let cmd = parse("echo ${#*}");
+    if let Command::Simple(sc) = &cmd {
+        // '#' not followed by ident+'}', so it restores pos and reads '#*' as flat
+        assert_eq!(sc.words[1].parts, vec![WordPart::ParameterExpansion("#*".into())]);
+    } else {
+        panic!("Expected simple command");
+    }
+}

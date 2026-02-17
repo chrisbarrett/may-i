@@ -30,3 +30,89 @@ pub fn check_examples(config: &Config) -> Vec<ExampleResult> {
 
     results
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{CommandMatcher, Example, Rule};
+
+    #[test]
+    fn check_examples_passing() {
+        let config = Config {
+            rules: vec![Rule {
+                command: CommandMatcher::Exact("ls".into()),
+                matcher: None,
+                decision: Decision::Allow,
+                reason: Some("allowed".into()),
+                examples: vec![Example {
+                    command: "ls".into(),
+                    expected: Decision::Allow,
+                }],
+            }],
+            ..Config::default()
+        };
+        let results = check_examples(&config);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].passed);
+        assert_eq!(results[0].expected, Decision::Allow);
+        assert_eq!(results[0].actual, Decision::Allow);
+    }
+
+    #[test]
+    fn check_examples_failing() {
+        let config = Config {
+            rules: vec![Rule {
+                command: CommandMatcher::Exact("ls".into()),
+                matcher: None,
+                decision: Decision::Allow,
+                reason: Some("allowed".into()),
+                examples: vec![Example {
+                    command: "ls".into(),
+                    expected: Decision::Deny, // wrong expectation
+                }],
+            }],
+            ..Config::default()
+        };
+        let results = check_examples(&config);
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].passed);
+    }
+
+    #[test]
+    fn check_examples_empty() {
+        let config = Config::default();
+        let results = check_examples(&config);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn check_examples_multiple_rules() {
+        let config = Config {
+            rules: vec![
+                Rule {
+                    command: CommandMatcher::Exact("ls".into()),
+                    matcher: None,
+                    decision: Decision::Allow,
+                    reason: None,
+                    examples: vec![
+                        Example { command: "ls".into(), expected: Decision::Allow },
+                    ],
+                },
+                Rule {
+                    command: CommandMatcher::Exact("rm".into()),
+                    matcher: None,
+                    decision: Decision::Deny,
+                    reason: None,
+                    examples: vec![
+                        Example { command: "rm foo".into(), expected: Decision::Deny },
+                    ],
+                },
+            ],
+            ..Config::default()
+        };
+        let results = check_examples(&config);
+        assert_eq!(results.len(), 2);
+        assert!(results[0].passed);
+        assert!(results[1].passed);
+    }
+}

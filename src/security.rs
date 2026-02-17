@@ -370,4 +370,30 @@ mod tests {
         let c = test_config();
         assert!(check("cd /tmp; cat .env", &c).is_some());
     }
+
+    // ── check_simple_command_paths: redirect targets ─────────────────
+
+    #[test]
+    fn blocks_sensitive_file_in_redirect_output() {
+        let c = test_config();
+        assert!(check("echo secret > .env", &c).is_some());
+    }
+
+    #[test]
+    fn blocks_sensitive_file_in_redirect_input() {
+        let c = test_config();
+        assert!(check("cmd < .ssh/id_rsa", &c).is_some());
+    }
+
+    #[test]
+    fn blocks_sensitive_file_in_redirect_append() {
+        let c = test_config();
+        assert!(check("echo data >> .aws/credentials", &c).is_some());
+    }
+
+    #[test]
+    fn allows_safe_redirect_target() {
+        let c = test_config();
+        assert!(check("echo hello > output.txt", &c).is_none());
+    }
 }
