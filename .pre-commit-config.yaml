@@ -17,7 +17,7 @@ repos:
 
       - id: cargo-test
         name: cargo test
-        entry: cargo test
+        entry: cargo tarpaulin --lib --fail-under 90
         language: system
         types: [rust]
         pass_filenames: false

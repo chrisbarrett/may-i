@@ -1,0 +1,5 @@
+[default]
+command = "Test"
+run-types = ["Lib"]
+fail-under = 90
+exclude-files = ["src/main.rs", "src/config.rs"]
