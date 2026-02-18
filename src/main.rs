@@ -24,7 +24,7 @@ struct Cli {
 enum Command {
     /// Evaluate a shell command against the loaded config
     Eval { command: String },
-    /// Validate config and run all embedded examples
+    /// Validate config and run all embedded checks
     Check,
     /// Parse a shell command and print the AST
     Parse {
@@ -131,10 +131,10 @@ fn cmd_eval(command: &str, json_mode: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// Check subcommand — validate config and run examples.
+/// Check subcommand — validate config and run checks.
 fn cmd_check(json_mode: bool) -> Result<(), String> {
     let config = config::load()?;
-    let results = check::check_examples(&config);
+    let results = check::run_checks(&config);
 
     let mut passed = 0;
     let mut failed = 0;
@@ -178,7 +178,7 @@ fn cmd_check(json_mode: bool) -> Result<(), String> {
     }
 
     if failed > 0 {
-        Err(format!("{failed} example(s) failed"))
+        Err(format!("{failed} check(s) failed"))
     } else {
         Ok(())
     }

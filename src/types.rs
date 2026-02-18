@@ -150,7 +150,7 @@ pub struct Rule {
     pub command: CommandMatcher,
     pub matcher: Option<ArgMatcher>,
     pub effect: Option<Effect>,
-    pub examples: Vec<Example>,
+    pub checks: Vec<Check>,
 }
 
 /// A single branch inside a matcher-level `cond` form.
@@ -220,9 +220,9 @@ impl std::fmt::Debug for CommandMatcher {
     }
 }
 
-/// An embedded example for config validation.
+/// An embedded check for config validation.
 #[derive(Debug, Clone)]
-pub struct Example {
+pub struct Check {
     pub command: String,
     pub expected: Decision,
 }

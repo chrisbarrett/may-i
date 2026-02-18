@@ -401,7 +401,7 @@ mod tests {
             command: CommandMatcher::Exact(cmd.to_string()),
             matcher: None,
             effect: Some(Effect { decision: Decision::Allow, reason: Some("allowed".into()) }),
-            examples: vec![],
+            checks: vec![],
         }
     }
 
@@ -410,7 +410,7 @@ mod tests {
             command: CommandMatcher::Exact(cmd.to_string()),
             matcher: None,
             effect: Some(Effect { decision: Decision::Deny, reason: Some("denied".into()) }),
-            examples: vec![],
+            checks: vec![],
         }
     }
 
@@ -419,7 +419,7 @@ mod tests {
             command: CommandMatcher::Exact(cmd.to_string()),
             matcher: None,
             effect: Some(Effect { decision: Decision::Ask, reason: Some("ask".into()) }),
-            examples: vec![],
+            checks: vec![],
         }
     }
 
@@ -816,7 +816,7 @@ mod tests {
                 Expr::Literal("status".into()),
             ])),
             effect: Some(Effect { decision: Decision::Allow, reason: None }),
-            examples: vec![],
+            checks: vec![],
         };
         let config = config_with_rules(vec![rule]);
         let result = evaluate("git status", &config);
@@ -831,7 +831,7 @@ mod tests {
                 Expr::Literal("status".into()),
             ])),
             effect: Some(Effect { decision: Decision::Allow, reason: None }),
-            examples: vec![],
+            checks: vec![],
         };
         let config = config_with_rules(vec![rule]);
         let result = evaluate("git push", &config);
@@ -849,7 +849,7 @@ mod tests {
                     Expr::Literal("-r".into()),
                 ])),
                 effect: Some(Effect { decision: Decision::Deny, reason: Some("dangerous".into()) }),
-                examples: vec![],
+                checks: vec![],
             },
         ];
         let config = config_with_rules(rules);
@@ -866,13 +866,13 @@ mod tests {
                 command: CommandMatcher::Exact("git".into()),
                 matcher: None,
                 effect: Some(Effect { decision: Decision::Ask, reason: Some("first".into()) }),
-                examples: vec![],
+                checks: vec![],
             },
             Rule {
                 command: CommandMatcher::Exact("git".into()),
                 matcher: None,
                 effect: Some(Effect { decision: Decision::Allow, reason: Some("second".into()) }),
-                examples: vec![],
+                checks: vec![],
             },
         ];
         let config = config_with_rules(rules);
@@ -887,7 +887,7 @@ mod tests {
             command: CommandMatcher::Regex(regex::Regex::new("^(cat|bat|less)$").unwrap()),
             matcher: None,
             effect: Some(Effect { decision: Decision::Allow, reason: None }),
-            examples: vec![],
+            checks: vec![],
         };
         let config = config_with_rules(vec![rule]);
         assert_eq!(evaluate("cat file", &config).decision, Decision::Allow);
@@ -902,7 +902,7 @@ mod tests {
             command: CommandMatcher::List(vec!["cat".into(), "bat".into()]),
             matcher: None,
             effect: Some(Effect { decision: Decision::Allow, reason: None }),
-            examples: vec![],
+            checks: vec![],
         };
         let config = config_with_rules(vec![rule]);
         assert_eq!(evaluate("cat file", &config).decision, Decision::Allow);
@@ -1086,7 +1086,7 @@ mod tests {
                 ]))),
             ])),
             effect: Some(Effect { decision: Decision::Allow, reason: Some("safe push".into()) }),
-            examples: vec![],
+            checks: vec![],
         };
         let config = config_with_rules(vec![rule]);
 
@@ -1112,7 +1112,7 @@ mod tests {
                 Expr::Regex(regex::Regex::new("^-r$").unwrap()),
             ])),
             effect: Some(Effect { decision: Decision::Allow, reason: None }),
-            examples: vec![],
+            checks: vec![],
         };
         let config = config_with_rules(vec![rule]);
         assert_eq!(
@@ -1402,7 +1402,7 @@ mod tests {
                 },
             ])),
             effect: None,
-            examples: vec![],
+            checks: vec![],
         };
         let config = config_with_rules(vec![rule]);
         let result = evaluate("tmux source-file foo.conf", &config);
@@ -1427,7 +1427,7 @@ mod tests {
                 },
             ])),
             effect: None,
-            examples: vec![],
+            checks: vec![],
         };
         let config = config_with_rules(vec![rule]);
         let result = evaluate("tmux kill-session", &config);
@@ -1446,7 +1446,7 @@ mod tests {
                 effect: Effect { decision: Decision::Allow, reason: None },
             }])),
             effect: None,
-            examples: vec![],
+            checks: vec![],
         };
         let config = config_with_rules(vec![rule]);
         let result = evaluate("tmux kill-session", &config);
@@ -1472,7 +1472,7 @@ mod tests {
                     },
                 ])),
                 effect: None,
-                examples: vec![],
+                checks: vec![],
             },
             allow_rule("tmux"), // would allow everything, but deny from cond wins
         ];
@@ -1494,8 +1494,8 @@ mod tests {
                      (effect :allow "Reloading config is safe"))
                     (else
                      (effect :deny "Unknown tmux source-file"))))
-                  (example :allow "tmux source-file ~/.config/tmux/custom.conf")
-                  (example :deny "tmux source-file /tmp/evil.conf"))
+                  (check :allow "tmux source-file ~/.config/tmux/custom.conf"
+                         :deny "tmux source-file /tmp/evil.conf"))
             "#,
         )
         .unwrap();
@@ -1517,8 +1517,8 @@ mod tests {
             Decision::Deny
         );
 
-        // Verify examples pass
-        let results = crate::check::check_examples(&config);
-        assert!(results.iter().all(|r| r.passed), "examples should pass: {results:?}");
+        // Verify checks pass
+        let results = crate::check::run_checks(&config);
+        assert!(results.iter().all(|r| r.passed), "checks should pass: {results:?}");
     }
 }

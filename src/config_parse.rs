@@ -3,7 +3,7 @@
 
 use crate::sexpr::Sexpr;
 use crate::types::{
-    ArgMatcher, CommandMatcher, CondBranch, Config, Decision, Effect, Example, Expr, ExprBranch,
+    ArgMatcher, Check, CommandMatcher, CondBranch, Config, Decision, Effect, Expr, ExprBranch,
     Rule, SecurityConfig, Wrapper, WrapperKind,
 };
 
@@ -120,7 +120,7 @@ fn parse_rule(parts: &[Sexpr]) -> Result<Rule, String> {
     let mut command = None;
     let mut matcher = None;
     let mut effect = None;
-    let mut examples = Vec::new();
+    let mut checks = Vec::new();
 
     for part in parts {
         let list = part.as_list().ok_or("rule element must be a list")?;
@@ -144,23 +144,26 @@ fn parse_rule(parts: &[Sexpr]) -> Result<Rule, String> {
             "effect" => {
                 effect = Some(parse_effect(list)?);
             }
-            "example" => {
-                if list.len() < 3 {
-                    return Err("example must have decision keyword and command".into());
+            "check" => {
+                let pairs = &list[1..];
+                if pairs.len() < 2 || pairs.len() % 2 != 0 {
+                    return Err("check must have 1+ paired :decision \"command\" entries".into());
                 }
-                let expected = match list[1].as_atom().ok_or("example decision must be an atom")? {
-                    ":allow" => Decision::Allow,
-                    ":deny" => Decision::Deny,
-                    ":ask" => Decision::Ask,
-                    other => return Err(format!("unknown expected decision: {other}")),
-                };
-                let cmd = list[2]
-                    .as_atom()
-                    .ok_or("example command must be a string")?;
-                examples.push(Example {
-                    command: cmd.to_string(),
-                    expected,
-                });
+                for pair in pairs.chunks(2) {
+                    let expected = match pair[0].as_atom().ok_or("check decision must be an atom")? {
+                        ":allow" => Decision::Allow,
+                        ":deny" => Decision::Deny,
+                        ":ask" => Decision::Ask,
+                        other => return Err(format!("unknown expected decision: {other}")),
+                    };
+                    let cmd = pair[1]
+                        .as_atom()
+                        .ok_or("check command must be a string")?;
+                    checks.push(Check {
+                        command: cmd.to_string(),
+                        expected,
+                    });
+                }
             }
             other => return Err(format!("unknown rule element: {other}")),
         }
@@ -179,7 +182,7 @@ fn parse_rule(parts: &[Sexpr]) -> Result<Rule, String> {
         command: command.ok_or("rule must have a command")?,
         matcher,
         effect,
-        examples,
+        checks,
     })
 }
 
@@ -702,22 +705,22 @@ mod tests {
     }
 
     #[test]
-    fn examples_in_rule() {
+    fn checks_in_rule() {
         let config = parse(
             r#"(rule (command "curl")
                    (args (anywhere "-I"))
                    (effect :allow "HEAD request")
-                   (example :allow "curl -I https://example.com")
-                   (example :allow "curl --head https://example.com"))"#,
+                   (check :allow "curl -I https://example.com"
+                          :allow "curl --head https://example.com"))"#,
         )
         .unwrap();
-        assert_eq!(config.rules[0].examples.len(), 2);
+        assert_eq!(config.rules[0].checks.len(), 2);
         assert_eq!(
-            config.rules[0].examples[0].command,
+            config.rules[0].checks[0].command,
             "curl -I https://example.com"
         );
-        assert_eq!(config.rules[0].examples[0].expected, Decision::Allow);
-        assert_eq!(config.rules[0].examples[1].expected, Decision::Allow);
+        assert_eq!(config.rules[0].checks[0].expected, Decision::Allow);
+        assert_eq!(config.rules[0].checks[1].expected, Decision::Allow);
     }
 
     #[test]
@@ -870,9 +873,9 @@ mod tests {
     }
 
     #[test]
-    fn error_unknown_expected_in_example() {
+    fn error_unknown_expected_in_check() {
         assert!(parse(
-            r#"(rule (command "cat") (effect :allow) (example :maybe "cat foo"))"#
+            r#"(rule (command "cat") (effect :allow) (check :maybe "cat foo"))"#
         )
         .is_err());
     }
@@ -924,8 +927,8 @@ mod tests {
     }
 
     #[test]
-    fn error_example_too_few_parts() {
-        assert!(parse(r#"(rule (command "cat") (effect :allow) (example :allow))"#).is_err());
+    fn error_check_too_few_parts() {
+        assert!(parse(r#"(rule (command "cat") (effect :allow) (check :allow))"#).is_err());
     }
 
     #[test]
@@ -1121,7 +1124,7 @@ mod tests {
     }
 
     #[test]
-    fn cond_with_examples() {
+    fn cond_with_checks() {
         let config = parse(
             r#"(rule (command "tmux")
                   (args (cond
@@ -1129,13 +1132,61 @@ mod tests {
                      (effect :allow "Reloading config"))
                     (else
                      (effect :deny "Unknown tmux command"))))
-                  (example :allow "tmux source-file ~/.config/tmux/tmux.conf")
-                  (example :deny "tmux source-file /tmp/evil.conf"))"#,
+                  (check :allow "tmux source-file ~/.config/tmux/tmux.conf"
+                         :deny "tmux source-file /tmp/evil.conf"))"#,
         )
         .unwrap();
-        assert_eq!(config.rules[0].examples.len(), 2);
-        assert_eq!(config.rules[0].examples[0].expected, Decision::Allow);
-        assert_eq!(config.rules[0].examples[1].expected, Decision::Deny);
+        assert_eq!(config.rules[0].checks.len(), 2);
+        assert_eq!(config.rules[0].checks[0].expected, Decision::Allow);
+        assert_eq!(config.rules[0].checks[1].expected, Decision::Deny);
+    }
+
+    #[test]
+    fn check_multiple_pairs() {
+        let config = parse(
+            r#"(rule (command "ls")
+                  (effect :allow)
+                  (check :allow "ls" :allow "ls -la" :deny "ls /secret"))"#,
+        )
+        .unwrap();
+        assert_eq!(config.rules[0].checks.len(), 3);
+        assert_eq!(config.rules[0].checks[0].expected, Decision::Allow);
+        assert_eq!(config.rules[0].checks[0].command, "ls");
+        assert_eq!(config.rules[0].checks[1].expected, Decision::Allow);
+        assert_eq!(config.rules[0].checks[1].command, "ls -la");
+        assert_eq!(config.rules[0].checks[2].expected, Decision::Deny);
+        assert_eq!(config.rules[0].checks[2].command, "ls /secret");
+    }
+
+    #[test]
+    fn check_multiple_forms() {
+        let config = parse(
+            r#"(rule (command "ls")
+                  (effect :allow)
+                  (check :allow "ls -la")
+                  (check :deny "ls /secret" :ask "ls /tmp"))"#,
+        )
+        .unwrap();
+        assert_eq!(config.rules[0].checks.len(), 3);
+        assert_eq!(config.rules[0].checks[0].expected, Decision::Allow);
+        assert_eq!(config.rules[0].checks[1].expected, Decision::Deny);
+        assert_eq!(config.rules[0].checks[2].expected, Decision::Ask);
+    }
+
+    #[test]
+    fn check_odd_count_is_error() {
+        assert!(parse(
+            r#"(rule (command "ls") (effect :allow) (check :allow))"#
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn check_bad_decision_is_error() {
+        assert!(parse(
+            r#"(rule (command "ls") (effect :allow) (check :bogus "ls"))"#
+        )
+        .is_err());
     }
 
     #[test]

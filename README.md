@@ -58,7 +58,7 @@ may-i eval --json 'git push'
 ## Validation & Testing
 
 Use `may-i check` to test whether your config is valid. Any inline
-examples+expectations you wrote will also be checked.
+checks you wrote will also be validated.
 
 ```bash
 may-i check
@@ -130,8 +130,8 @@ always wins across rules.
                (effect :allow "Reloading config is safe"))
               (else
                (effect :deny "Unknown tmux command"))))
-      (example :allow "tmux source-file ~/.tmux.conf")
-      (example :deny "tmux kill-server"))
+      (check :allow "tmux source-file ~/.tmux.conf"
+             :deny "tmux kill-server"))
 ```
 
 Each branch is `(matcher effect)` where the matcher is a regular arg matcher
@@ -143,16 +143,16 @@ must not have a separate `(effect ...)`. When nested inside combinators
 (`and`/`or`/`not`), it acts as a boolean matcher and the rule's own effect
 applies.
 
-### Examples
+### Inline Checks
 
-Rules can embed examples for validation via `may-i check`.
+Rules can embed checks for validation via `may-i check`.
 
 ```scheme
 (rule (command "curl")
       (args (anywhere "-I" "--head"))
-      (allow "HEAD request is read-only")
-      (example "curl -I https://example.com" allow)
-      (example "curl --head https://example.com" allow))
+      (effect :allow "HEAD request is read-only")
+      (check :allow "curl -I https://example.com"
+             :allow "curl --head https://example.com"))
 ```
 
 ### Wrappers

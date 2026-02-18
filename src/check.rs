@@ -1,29 +1,29 @@
-// Config validation — run embedded examples against the engine.
+// Config validation — run embedded checks against the engine.
 
 use crate::engine;
 use crate::types::{Config, Decision};
 
-/// Result of evaluating a single embedded example.
+/// Result of evaluating a single embedded check.
 #[derive(Debug)]
-pub struct ExampleResult {
+pub struct CheckResult {
     pub command: String,
     pub expected: Decision,
     pub actual: Decision,
     pub passed: bool,
 }
 
-/// Run all embedded examples from config rules and compare against expected decisions.
-pub fn check_examples(config: &Config) -> Vec<ExampleResult> {
+/// Run all embedded checks from config rules and compare against expected decisions.
+pub fn run_checks(config: &Config) -> Vec<CheckResult> {
     let mut results = Vec::new();
 
     for rule in &config.rules {
-        for example in &rule.examples {
-            let eval = engine::evaluate(&example.command, config);
-            results.push(ExampleResult {
-                command: example.command.clone(),
-                expected: example.expected,
+        for check in &rule.checks {
+            let eval = engine::evaluate(&check.command, config);
+            results.push(CheckResult {
+                command: check.command.clone(),
+                expected: check.expected,
                 actual: eval.decision,
-                passed: eval.decision == example.expected,
+                passed: eval.decision == check.expected,
             });
         }
     }
@@ -34,23 +34,23 @@ pub fn check_examples(config: &Config) -> Vec<ExampleResult> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{CommandMatcher, Effect, Example, Rule};
+    use crate::types::{Check, CommandMatcher, Effect, Rule};
 
     #[test]
-    fn check_examples_passing() {
+    fn run_checks_passing() {
         let config = Config {
             rules: vec![Rule {
                 command: CommandMatcher::Exact("ls".into()),
                 matcher: None,
                 effect: Some(Effect { decision: Decision::Allow, reason: Some("allowed".into()) }),
-                examples: vec![Example {
+                checks: vec![Check {
                     command: "ls".into(),
                     expected: Decision::Allow,
                 }],
             }],
             ..Config::default()
         };
-        let results = check_examples(&config);
+        let results = run_checks(&config);
         assert_eq!(results.len(), 1);
         assert!(results[0].passed);
         assert_eq!(results[0].expected, Decision::Allow);
@@ -58,55 +58,55 @@ mod tests {
     }
 
     #[test]
-    fn check_examples_failing() {
+    fn run_checks_failing() {
         let config = Config {
             rules: vec![Rule {
                 command: CommandMatcher::Exact("ls".into()),
                 matcher: None,
                 effect: Some(Effect { decision: Decision::Allow, reason: Some("allowed".into()) }),
-                examples: vec![Example {
+                checks: vec![Check {
                     command: "ls".into(),
                     expected: Decision::Deny, // wrong expectation
                 }],
             }],
             ..Config::default()
         };
-        let results = check_examples(&config);
+        let results = run_checks(&config);
         assert_eq!(results.len(), 1);
         assert!(!results[0].passed);
     }
 
     #[test]
-    fn check_examples_empty() {
+    fn run_checks_empty() {
         let config = Config::default();
-        let results = check_examples(&config);
+        let results = run_checks(&config);
         assert!(results.is_empty());
     }
 
     #[test]
-    fn check_examples_multiple_rules() {
+    fn run_checks_multiple_rules() {
         let config = Config {
             rules: vec![
                 Rule {
                     command: CommandMatcher::Exact("ls".into()),
                     matcher: None,
                     effect: Some(Effect { decision: Decision::Allow, reason: None }),
-                    examples: vec![
-                        Example { command: "ls".into(), expected: Decision::Allow },
+                    checks: vec![
+                        Check { command: "ls".into(), expected: Decision::Allow },
                     ],
                 },
                 Rule {
                     command: CommandMatcher::Exact("rm".into()),
                     matcher: None,
                     effect: Some(Effect { decision: Decision::Deny, reason: None }),
-                    examples: vec![
-                        Example { command: "rm foo".into(), expected: Decision::Deny },
+                    checks: vec![
+                        Check { command: "rm foo".into(), expected: Decision::Deny },
                     ],
                 },
             ],
             ..Config::default()
         };
-        let results = check_examples(&config);
+        let results = run_checks(&config);
         assert_eq!(results.len(), 2);
         assert!(results[0].passed);
         assert!(results[1].passed);

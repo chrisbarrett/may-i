@@ -22,7 +22,7 @@ No config file → built-in defaults only.
 file      = form*
 form      = rule | wrapper | security
 
-rule      = "(" "rule" command args? decision? example* ")"
+rule      = "(" "rule" command args? decision? check* ")"
 command   = "(" "command" cmd-val ")"
 cmd-val   = STRING | "(" "or" STRING+ ")" | "(" "regex" STRING ")"
 args      = "(" "args" matcher ")"
@@ -42,7 +42,7 @@ cond      = "(" "cond" branch+ ")"
 branch    = "(" condition decision ")"
 condition = "else" | matcher
 
-example   = "(" "example" decision-kw STRING ")"
+check     = "(" "check" (decision-kw STRING)+ ")"
 
 wrapper   = "(" "wrapper" STRING kind ")"
           | "(" "wrapper" STRING "(" "positional" pat+ ")" kind ")"
@@ -85,8 +85,8 @@ Comments: `;` to end of line.
 (rule (command "curl")
       (args (anywhere "-I" "--head"))
       (effect :allow "HEAD request is read-only")
-      (example :allow "curl -I https://example.com")
-      (example :allow "curl --head https://example.com"))
+      (check :allow "curl -I https://example.com"
+             :allow "curl --head https://example.com"))
 
 ;; Deny: dangerous gh operations (unions of positional patterns)
 (rule (command "gh")
@@ -110,8 +110,8 @@ Comments: `;` to end of line.
                (effect :allow "Reloading config is safe"))
               (else
                (effect :deny "Unknown tmux command"))))
-      (example :allow "tmux source-file ~/.tmux.conf")
-      (example :deny "tmux kill-server"))
+      (check :allow "tmux source-file ~/.tmux.conf"
+             :deny "tmux kill-server"))
 
 ;; Wrappers
 (wrapper "nohup" after-flags)
@@ -162,19 +162,19 @@ always wins across rules.
 
 **Verify:** `cargo test -- config::matchers`
 
-## R10d: Examples in rules
+## R10d: Inline checks
 
-Rules may contain inline `(example ...)` forms for self-testing:
+Rules may contain inline `(check ...)` forms for self-testing:
 
 ```scheme
 (rule (command "curl")
       (args (anywhere "-I" "--head"))
       (effect :allow "HEAD request")
-      (example :allow "curl -I https://example.com")
-      (example :allow "curl --head https://example.com"))
+      (check :allow "curl -I https://example.com"
+             :allow "curl --head https://example.com"))
 ```
 
-`may-i check` evaluates all examples (built-in and user) and reports failures.
+`may-i check` evaluates all inline checks (built-in and user) and reports failures.
 
 **Verify:** `may-i check`
 
@@ -191,7 +191,7 @@ The binary ships with defaults matching the [reference implementation][ref]:
 
 [ref]: /Users/chris/src/chrisbarrett/claude-plugins/plugins/core-hooks/hooks/pre-tool-use/bash-authorizer/rules.ts
 
-**Verify:** `cargo test -- defaults`; `may-i check` exercises built-in examples
+**Verify:** `cargo test -- defaults`; `may-i check` exercises built-in checks
 
 ## R10f: S-expression parser
 

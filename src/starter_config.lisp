@@ -45,10 +45,10 @@
 ;                 (else
 ;                  (effect :deny "Unknown tmux command")))))
 ;
-; INLINE EXAMPLES (validated by `may-i check`)
+; INLINE CHECKS (validated by `may-i check`)
 ;
-;   (example :allow "curl -I https://x.com")
-;   (example :ask "curl -d data https://x.com")
+;   (check :allow "curl -I https://x.com"
+;          :ask "curl -d data https://x.com")
 ;
 ; WRAPPERS (unwrap to evaluate the inner command)
 ;
