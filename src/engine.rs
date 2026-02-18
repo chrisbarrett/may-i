@@ -5,7 +5,9 @@ use std::collections::HashMap;
 
 use crate::parser::{self, SimpleCommand, Word};
 use crate::security;
-use crate::types::{ArgMatcher, CommandMatcher, Config, Decision, EvalResult, Pattern, WrapperKind};
+use crate::types::{
+    ArgMatcher, CommandMatcher, Config, Decision, EvalResult, Pattern, RuleBody, WrapperKind,
+};
 
 /// Deduplicate a list of dynamic part descriptions while preserving order.
 fn dedup_parts(parts: &[String]) -> Vec<&str> {
@@ -69,22 +71,26 @@ pub fn evaluate(input: &str, config: &Config) -> EvalResult {
     }
 
     // Evaluate each simple command and aggregate (most restrictive wins)
-    let mut overall = EvalResult {
-        decision: Decision::Allow,
-        reason: None,
-    };
+    let mut overall: Option<EvalResult> = None;
 
     for sc in &simple_commands {
         let result = evaluate_simple_command(sc, config, 0, &env);
         if result.decision == Decision::Deny {
             return result;
         }
-        if result.decision.most_restrictive(overall.decision) != overall.decision {
-            overall = result;
+        match &overall {
+            None => overall = Some(result),
+            Some(prev) if result.decision.most_restrictive(prev.decision) != prev.decision => {
+                overall = Some(result);
+            }
+            _ => {}
         }
     }
 
-    overall
+    overall.unwrap_or(EvalResult {
+        decision: Decision::Allow,
+        reason: None,
+    })
 }
 
 /// Evaluate a single simple command against rules.
@@ -163,22 +169,15 @@ fn evaluate_simple_command(
             continue;
         }
 
-        let args_match = match &rule.matcher {
-            None => true,
-            Some(m) => matcher_matches(m, &expanded_args),
-        };
-        if !args_match {
+        let matched = match_rule_body(&rule.body, &expanded_args);
+        let Some((decision, reason)) = matched else {
             continue;
-        }
-
-        // Rule matches
-        let result = EvalResult {
-            decision: rule.decision,
-            reason: rule.reason.clone(),
         };
+
+        let result = EvalResult { decision, reason };
 
         // Deny rules always win
-        if rule.decision == Decision::Deny {
+        if decision == Decision::Deny {
             return result;
         }
 
@@ -192,6 +191,39 @@ fn evaluate_simple_command(
         decision: Decision::Ask,
         reason: Some(format!("No matching rule for command `{cmd_name}`")),
     })
+}
+
+/// Try to match a rule body against args. Returns `Some((decision, reason))` if matched.
+fn match_rule_body(body: &RuleBody, args: &[String]) -> Option<(Decision, Option<String>)> {
+    match body {
+        RuleBody::Simple {
+            matcher,
+            decision,
+            reason,
+        } => {
+            let args_match = match matcher {
+                None => true,
+                Some(m) => matcher_matches(m, args),
+            };
+            if args_match {
+                Some((*decision, reason.clone()))
+            } else {
+                None
+            }
+        }
+        RuleBody::Cond(branches) => {
+            for branch in branches {
+                let branch_match = match &branch.matcher {
+                    None => true, // wildcard
+                    Some(m) => matcher_matches(m, args),
+                };
+                if branch_match {
+                    return Some((branch.decision, branch.reason.clone()));
+                }
+            }
+            None
+        }
+    }
 }
 
 /// Check if a command name matches a command matcher.
@@ -337,7 +369,9 @@ fn unwrap_wrapper(sc: &SimpleCommand, config: &Config) -> Option<SimpleCommand> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{Config, Pattern, Rule, SecurityConfig, Wrapper, WrapperKind};
+    use crate::types::{
+        CondBranch, Config, Pattern, Rule, RuleBody, SecurityConfig, Wrapper, WrapperKind,
+    };
 
     // ── Helpers ──────────────────────────────────────────────────────
 
@@ -355,9 +389,11 @@ mod tests {
     fn allow_rule(cmd: &str) -> Rule {
         Rule {
             command: CommandMatcher::Exact(cmd.to_string()),
-            matcher: None,
-            decision: Decision::Allow,
-            reason: Some("allowed".into()),
+            body: RuleBody::Simple {
+                matcher: None,
+                decision: Decision::Allow,
+                reason: Some("allowed".into()),
+            },
             examples: vec![],
         }
     }
@@ -365,9 +401,11 @@ mod tests {
     fn deny_rule(cmd: &str) -> Rule {
         Rule {
             command: CommandMatcher::Exact(cmd.to_string()),
-            matcher: None,
-            decision: Decision::Deny,
-            reason: Some("denied".into()),
+            body: RuleBody::Simple {
+                matcher: None,
+                decision: Decision::Deny,
+                reason: Some("denied".into()),
+            },
             examples: vec![],
         }
     }
@@ -375,9 +413,11 @@ mod tests {
     fn ask_rule(cmd: &str) -> Rule {
         Rule {
             command: CommandMatcher::Exact(cmd.to_string()),
-            matcher: None,
-            decision: Decision::Ask,
-            reason: Some("ask".into()),
+            body: RuleBody::Simple {
+                matcher: None,
+                decision: Decision::Ask,
+                reason: Some("ask".into()),
+            },
             examples: vec![],
         }
     }
@@ -749,11 +789,13 @@ mod tests {
     fn rule_with_positional_matcher() {
         let rule = Rule {
             command: CommandMatcher::Exact("git".into()),
-            matcher: Some(ArgMatcher::Positional(vec![
-                Pattern::new("status").unwrap(),
-            ])),
-            decision: Decision::Allow,
-            reason: None,
+            body: RuleBody::Simple {
+                matcher: Some(ArgMatcher::Positional(vec![
+                    Pattern::new("status").unwrap(),
+                ])),
+                decision: Decision::Allow,
+                reason: None,
+            },
             examples: vec![],
         };
         let config = config_with_rules(vec![rule]);
@@ -765,11 +807,13 @@ mod tests {
     fn rule_with_positional_no_match() {
         let rule = Rule {
             command: CommandMatcher::Exact("git".into()),
-            matcher: Some(ArgMatcher::Positional(vec![
-                Pattern::new("status").unwrap(),
-            ])),
-            decision: Decision::Allow,
-            reason: None,
+            body: RuleBody::Simple {
+                matcher: Some(ArgMatcher::Positional(vec![
+                    Pattern::new("status").unwrap(),
+                ])),
+                decision: Decision::Allow,
+                reason: None,
+            },
             examples: vec![],
         };
         let config = config_with_rules(vec![rule]);
@@ -784,11 +828,13 @@ mod tests {
             allow_rule("rm"),
             Rule {
                 command: CommandMatcher::Exact("rm".into()),
-                matcher: Some(ArgMatcher::Anywhere(vec![
-                    Pattern::new("-r").unwrap(),
-                ])),
-                decision: Decision::Deny,
-                reason: Some("dangerous".into()),
+                body: RuleBody::Simple {
+                    matcher: Some(ArgMatcher::Anywhere(vec![
+                        Pattern::new("-r").unwrap(),
+                    ])),
+                    decision: Decision::Deny,
+                    reason: Some("dangerous".into()),
+                },
                 examples: vec![],
             },
         ];
@@ -804,16 +850,20 @@ mod tests {
         let rules = vec![
             Rule {
                 command: CommandMatcher::Exact("git".into()),
-                matcher: None,
-                decision: Decision::Ask,
-                reason: Some("first".into()),
+                body: RuleBody::Simple {
+                    matcher: None,
+                    decision: Decision::Ask,
+                    reason: Some("first".into()),
+                },
                 examples: vec![],
             },
             Rule {
                 command: CommandMatcher::Exact("git".into()),
-                matcher: None,
-                decision: Decision::Allow,
-                reason: Some("second".into()),
+                body: RuleBody::Simple {
+                    matcher: None,
+                    decision: Decision::Allow,
+                    reason: Some("second".into()),
+                },
                 examples: vec![],
             },
         ];
@@ -827,9 +877,11 @@ mod tests {
     fn regex_command_matcher_in_rule() {
         let rule = Rule {
             command: CommandMatcher::Regex(regex::Regex::new("^(cat|bat|less)$").unwrap()),
-            matcher: None,
-            decision: Decision::Allow,
-            reason: None,
+            body: RuleBody::Simple {
+                matcher: None,
+                decision: Decision::Allow,
+                reason: None,
+            },
             examples: vec![],
         };
         let config = config_with_rules(vec![rule]);
@@ -843,9 +895,11 @@ mod tests {
     fn list_command_matcher_in_rule() {
         let rule = Rule {
             command: CommandMatcher::List(vec!["cat".into(), "bat".into()]),
-            matcher: None,
-            decision: Decision::Allow,
-            reason: None,
+            body: RuleBody::Simple {
+                matcher: None,
+                decision: Decision::Allow,
+                reason: None,
+            },
             examples: vec![],
         };
         let config = config_with_rules(vec![rule]);
@@ -1022,15 +1076,17 @@ mod tests {
     fn not_anywhere_denies_with_forbidden_flag() {
         let rule = Rule {
             command: CommandMatcher::Exact("git".into()),
-            matcher: Some(ArgMatcher::And(vec![
-                ArgMatcher::Positional(vec![Pattern::new("push").unwrap()]),
-                ArgMatcher::Not(Box::new(ArgMatcher::Anywhere(vec![
-                    Pattern::new("--force").unwrap(),
-                    Pattern::new("-f").unwrap(),
-                ]))),
-            ])),
-            decision: Decision::Allow,
-            reason: Some("safe push".into()),
+            body: RuleBody::Simple {
+                matcher: Some(ArgMatcher::And(vec![
+                    ArgMatcher::Positional(vec![Pattern::new("push").unwrap()]),
+                    ArgMatcher::Not(Box::new(ArgMatcher::Anywhere(vec![
+                        Pattern::new("--force").unwrap(),
+                        Pattern::new("-f").unwrap(),
+                    ]))),
+                ])),
+                decision: Decision::Allow,
+                reason: Some("safe push".into()),
+            },
             examples: vec![],
         };
         let config = config_with_rules(vec![rule]);
@@ -1053,11 +1109,13 @@ mod tests {
     fn anywhere_matcher_regex_pattern() {
         let rule = Rule {
             command: CommandMatcher::Exact("grep".into()),
-            matcher: Some(ArgMatcher::Anywhere(vec![
-                Pattern::new("^-r$").unwrap(),
-            ])),
-            decision: Decision::Allow,
-            reason: None,
+            body: RuleBody::Simple {
+                matcher: Some(ArgMatcher::Anywhere(vec![
+                    Pattern::new("^-r$").unwrap(),
+                ])),
+                decision: Decision::Allow,
+                reason: None,
+            },
             examples: vec![],
         };
         let config = config_with_rules(vec![rule]);
@@ -1327,5 +1385,150 @@ mod tests {
         let result = evaluate("cat $TEST_MAYI_FILE2", &config);
         assert_eq!(result.decision, Decision::Deny);
         unsafe { std::env::remove_var("TEST_MAYI_FILE2") };
+    }
+
+    // ── Cond rule body ───────────────────────────────────────────────
+
+    #[test]
+    fn cond_first_branch_matches() {
+
+        let rule = Rule {
+            command: CommandMatcher::Exact("tmux".into()),
+            body: RuleBody::Cond(vec![
+                CondBranch {
+                    matcher: Some(ArgMatcher::Positional(vec![
+                        Pattern::new("source-file").unwrap(),
+                    ])),
+                    decision: Decision::Allow,
+                    reason: Some("config reload".into()),
+                },
+                CondBranch {
+                    matcher: None,
+                    decision: Decision::Deny,
+                    reason: Some("unknown".into()),
+                },
+            ]),
+            examples: vec![],
+        };
+        let config = config_with_rules(vec![rule]);
+        let result = evaluate("tmux source-file foo.conf", &config);
+        assert_eq!(result.decision, Decision::Allow);
+        assert_eq!(result.reason.as_deref(), Some("config reload"));
+    }
+
+    #[test]
+    fn cond_fallthrough_to_wildcard() {
+
+        let rule = Rule {
+            command: CommandMatcher::Exact("tmux".into()),
+            body: RuleBody::Cond(vec![
+                CondBranch {
+                    matcher: Some(ArgMatcher::Positional(vec![
+                        Pattern::new("source-file").unwrap(),
+                    ])),
+                    decision: Decision::Allow,
+                    reason: None,
+                },
+                CondBranch {
+                    matcher: None, // wildcard
+                    decision: Decision::Deny,
+                    reason: Some("fallback deny".into()),
+                },
+            ]),
+            examples: vec![],
+        };
+        let config = config_with_rules(vec![rule]);
+        let result = evaluate("tmux kill-session", &config);
+        assert_eq!(result.decision, Decision::Deny);
+        assert_eq!(result.reason.as_deref(), Some("fallback deny"));
+    }
+
+    #[test]
+    fn cond_no_wildcard_no_match_skips_rule() {
+
+        let rule = Rule {
+            command: CommandMatcher::Exact("tmux".into()),
+            body: RuleBody::Cond(vec![CondBranch {
+                matcher: Some(ArgMatcher::Positional(vec![
+                    Pattern::new("source-file").unwrap(),
+                ])),
+                decision: Decision::Allow,
+                reason: None,
+            }]),
+            examples: vec![],
+        };
+        let config = config_with_rules(vec![rule]);
+        let result = evaluate("tmux kill-session", &config);
+        // No branch matches, rule is skipped → Ask (no matching rule)
+        assert_eq!(result.decision, Decision::Ask);
+    }
+
+    #[test]
+    fn cond_deny_branch_wins_across_rules() {
+
+        let rules = vec![
+            Rule {
+                command: CommandMatcher::Exact("tmux".into()),
+                body: RuleBody::Cond(vec![
+                    CondBranch {
+                        matcher: Some(ArgMatcher::Positional(vec![
+                            Pattern::new("source-file").unwrap(),
+                        ])),
+                        decision: Decision::Allow,
+                        reason: None,
+                    },
+                    CondBranch {
+                        matcher: None,
+                        decision: Decision::Deny,
+                        reason: Some("blocked".into()),
+                    },
+                ]),
+                examples: vec![],
+            },
+            allow_rule("tmux"), // would allow everything, but deny from cond wins
+        ];
+        let config = config_with_rules(rules);
+        let result = evaluate("tmux kill-session", &config);
+        assert_eq!(result.decision, Decision::Deny);
+    }
+
+    #[test]
+    fn cond_integration_tmux_use_case() {
+        use crate::config_parse;
+
+        let config = config_parse::parse(
+            r#"
+            (rule (command "tmux")
+                  (cond
+                    ((args (positional "source-file" (or "~/.config/tmux/custom.conf"
+                                                         "~/.config/tmux/tmux.conf")))
+                     (effect :allow "Reloading config is safe"))
+                    (_ (effect :deny "Unknown tmux source-file")))
+                  (example :allow "tmux source-file ~/.config/tmux/custom.conf")
+                  (example :deny "tmux source-file /tmp/evil.conf"))
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            evaluate("tmux source-file ~/.config/tmux/custom.conf", &config).decision,
+            Decision::Allow
+        );
+        assert_eq!(
+            evaluate("tmux source-file ~/.config/tmux/tmux.conf", &config).decision,
+            Decision::Allow
+        );
+        assert_eq!(
+            evaluate("tmux source-file /tmp/evil.conf", &config).decision,
+            Decision::Deny
+        );
+        assert_eq!(
+            evaluate("tmux kill-session", &config).decision,
+            Decision::Deny
+        );
+
+        // Verify examples pass
+        let results = crate::check::check_examples(&config);
+        assert!(results.iter().all(|r| r.passed), "examples should pass: {results:?}");
     }
 }

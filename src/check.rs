@@ -34,16 +34,18 @@ pub fn check_examples(config: &Config) -> Vec<ExampleResult> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{CommandMatcher, Example, Rule};
+    use crate::types::{CommandMatcher, Example, Rule, RuleBody};
 
     #[test]
     fn check_examples_passing() {
         let config = Config {
             rules: vec![Rule {
                 command: CommandMatcher::Exact("ls".into()),
-                matcher: None,
-                decision: Decision::Allow,
-                reason: Some("allowed".into()),
+                body: RuleBody::Simple {
+                    matcher: None,
+                    decision: Decision::Allow,
+                    reason: Some("allowed".into()),
+                },
                 examples: vec![Example {
                     command: "ls".into(),
                     expected: Decision::Allow,
@@ -63,9 +65,11 @@ mod tests {
         let config = Config {
             rules: vec![Rule {
                 command: CommandMatcher::Exact("ls".into()),
-                matcher: None,
-                decision: Decision::Allow,
-                reason: Some("allowed".into()),
+                body: RuleBody::Simple {
+                    matcher: None,
+                    decision: Decision::Allow,
+                    reason: Some("allowed".into()),
+                },
                 examples: vec![Example {
                     command: "ls".into(),
                     expected: Decision::Deny, // wrong expectation
@@ -91,18 +95,22 @@ mod tests {
             rules: vec![
                 Rule {
                     command: CommandMatcher::Exact("ls".into()),
-                    matcher: None,
-                    decision: Decision::Allow,
-                    reason: None,
+                    body: RuleBody::Simple {
+                        matcher: None,
+                        decision: Decision::Allow,
+                        reason: None,
+                    },
                     examples: vec![
                         Example { command: "ls".into(), expected: Decision::Allow },
                     ],
                 },
                 Rule {
                     command: CommandMatcher::Exact("rm".into()),
-                    matcher: None,
-                    decision: Decision::Deny,
-                    reason: None,
+                    body: RuleBody::Simple {
+                        matcher: None,
+                        decision: Decision::Deny,
+                        reason: None,
+                    },
                     examples: vec![
                         Example { command: "rm foo".into(), expected: Decision::Deny },
                     ],

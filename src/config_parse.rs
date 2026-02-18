@@ -3,8 +3,8 @@
 
 use crate::sexpr::Sexpr;
 use crate::types::{
-    ArgMatcher, CommandMatcher, Config, Decision, Example, Pattern, Rule, SecurityConfig, Wrapper,
-    WrapperKind,
+    ArgMatcher, CommandMatcher, CondBranch, Config, Decision, Example, Pattern, Rule, RuleBody,
+    SecurityConfig, Wrapper, WrapperKind,
 };
 
 /// Parse an s-expression config string into Config.
@@ -54,11 +54,91 @@ pub fn parse(input: &str) -> Result<Config, String> {
     })
 }
 
+fn parse_effect(list: &[Sexpr]) -> Result<(Decision, Option<String>), String> {
+    if list.len() < 2 {
+        return Err("effect must have a keyword (:allow, :deny, or :ask)".into());
+    }
+    let kw = list[1].as_atom().ok_or("effect keyword must be an atom")?;
+    let decision = match kw {
+        ":allow" => Decision::Allow,
+        ":deny" => Decision::Deny,
+        ":ask" => Decision::Ask,
+        other => return Err(format!("unknown effect keyword: {other}")),
+    };
+    let reason = if list.len() > 2 {
+        Some(
+            list[2]
+                .as_atom()
+                .ok_or("reason must be a string")?
+                .to_string(),
+        )
+    } else {
+        None
+    };
+    Ok((decision, reason))
+}
+
+fn parse_cond_branches(list: &[Sexpr]) -> Result<Vec<CondBranch>, String> {
+    let branches = &list[1..];
+    if branches.is_empty() {
+        return Err("cond must have at least one branch".into());
+    }
+    let mut result = Vec::new();
+    for branch in branches {
+        let items = branch.as_list().ok_or("cond branch must be a list")?;
+        if items.is_empty() {
+            return Err("empty cond branch".into());
+        }
+        // First element: matcher or wildcard
+        let matcher = match &items[0] {
+            Sexpr::Atom(s) if s == "_" || s == "t" => None,
+            other => {
+                let m_list = other.as_list().ok_or("cond branch condition must be a list or wildcard (_ / t)")?;
+                if m_list.is_empty() {
+                    return Err("empty cond branch condition".into());
+                }
+                let tag = m_list[0].as_atom().ok_or("cond branch condition tag must be an atom")?;
+                if tag != "args" {
+                    return Err(format!("cond branch condition must be (args ...), got: {tag}"));
+                }
+                if m_list.len() != 2 {
+                    return Err("args must have exactly one matcher".into());
+                }
+                Some(parse_matcher(&m_list[1])?)
+            }
+        };
+        // Remaining elements: find (effect ...)
+        let mut decision = None;
+        let mut reason = None;
+        for item in &items[1..] {
+            let il = item.as_list().ok_or("cond branch element must be a list")?;
+            if il.is_empty() {
+                return Err("empty cond branch element".into());
+            }
+            let tag = il[0].as_atom().ok_or("cond branch element tag must be an atom")?;
+            if tag == "effect" {
+                let (d, r) = parse_effect(il)?;
+                decision = Some(d);
+                reason = r;
+            } else {
+                return Err(format!("unknown cond branch element: {tag}"));
+            }
+        }
+        result.push(CondBranch {
+            matcher,
+            decision: decision.ok_or("cond branch must have an effect")?,
+            reason,
+        });
+    }
+    Ok(result)
+}
+
 fn parse_rule(parts: &[Sexpr]) -> Result<Rule, String> {
     let mut command = None;
     let mut matcher = None;
     let mut decision = None;
     let mut reason = None;
+    let mut cond_branches = None;
     let mut examples = Vec::new();
 
     for part in parts {
@@ -81,24 +161,12 @@ fn parse_rule(parts: &[Sexpr]) -> Result<Rule, String> {
                 matcher = Some(parse_matcher(&list[1])?);
             }
             "effect" => {
-                if list.len() < 2 {
-                    return Err("effect must have a keyword (:allow, :deny, or :ask)".into());
-                }
-                let kw = list[1].as_atom().ok_or("effect keyword must be an atom")?;
-                decision = Some(match kw {
-                    ":allow" => Decision::Allow,
-                    ":deny" => Decision::Deny,
-                    ":ask" => Decision::Ask,
-                    other => return Err(format!("unknown effect keyword: {other}")),
-                });
-                if list.len() > 2 {
-                    reason = Some(
-                        list[2]
-                            .as_atom()
-                            .ok_or("reason must be a string")?
-                            .to_string(),
-                    );
-                }
+                let (d, r) = parse_effect(list)?;
+                decision = Some(d);
+                reason = r;
+            }
+            "cond" => {
+                cond_branches = Some(parse_cond_branches(list)?);
             }
             "example" => {
                 if list.len() < 3 {
@@ -122,11 +190,27 @@ fn parse_rule(parts: &[Sexpr]) -> Result<Rule, String> {
         }
     }
 
+    // Validate: cond is mutually exclusive with args/effect
+    if cond_branches.is_some() && matcher.is_some() {
+        return Err("cond and args are mutually exclusive".into());
+    }
+    if cond_branches.is_some() && decision.is_some() {
+        return Err("cond and effect are mutually exclusive".into());
+    }
+
+    let body = if let Some(branches) = cond_branches {
+        RuleBody::Cond(branches)
+    } else {
+        RuleBody::Simple {
+            matcher,
+            decision: decision.ok_or("rule must have a decision")?,
+            reason,
+        }
+    };
+
     Ok(Rule {
         command: command.ok_or("rule must have a command")?,
-        matcher,
-        decision: decision.ok_or("rule must have a decision")?,
-        reason,
+        body,
         examples,
     })
 }
@@ -325,23 +409,38 @@ mod tests {
     fn simple_allow_rule() {
         let config = parse(r#"(rule (command "cat") (effect :allow))"#).unwrap();
         assert_eq!(config.rules.len(), 1);
-        assert_eq!(config.rules[0].decision, Decision::Allow);
-        assert!(config.rules[0].matcher.is_none());
-        assert!(config.rules[0].reason.is_none());
+        match &config.rules[0].body {
+            RuleBody::Simple { matcher, decision, reason } => {
+                assert_eq!(*decision, Decision::Allow);
+                assert!(matcher.is_none());
+                assert!(reason.is_none());
+            }
+            _ => panic!("expected Simple"),
+        }
     }
 
     #[test]
     fn deny_with_reason() {
         let config = parse(r#"(rule (command "rm") (effect :deny "dangerous"))"#).unwrap();
-        assert_eq!(config.rules[0].decision, Decision::Deny);
-        assert_eq!(config.rules[0].reason.as_deref(), Some("dangerous"));
+        match &config.rules[0].body {
+            RuleBody::Simple { decision, reason, .. } => {
+                assert_eq!(*decision, Decision::Deny);
+                assert_eq!(reason.as_deref(), Some("dangerous"));
+            }
+            _ => panic!("expected Simple"),
+        }
     }
 
     #[test]
     fn ask_with_reason() {
         let config = parse(r#"(rule (command "curl") (effect :ask "network op"))"#).unwrap();
-        assert_eq!(config.rules[0].decision, Decision::Ask);
-        assert_eq!(config.rules[0].reason.as_deref(), Some("network op"));
+        match &config.rules[0].body {
+            RuleBody::Simple { decision, reason, .. } => {
+                assert_eq!(*decision, Decision::Ask);
+                assert_eq!(reason.as_deref(), Some("network op"));
+            }
+            _ => panic!("expected Simple"),
+        }
     }
 
     #[test]
@@ -364,13 +463,21 @@ mod tests {
         }
     }
 
+    /// Helper to extract the matcher from a Simple rule body.
+    fn get_simple_matcher(rule: &Rule) -> Option<&ArgMatcher> {
+        match &rule.body {
+            RuleBody::Simple { matcher, .. } => matcher.as_ref(),
+            _ => panic!("expected Simple"),
+        }
+    }
+
     #[test]
     fn positional_matcher() {
         let config = parse(
             r#"(rule (command "git") (args (positional "status")) (effect :allow))"#,
         )
         .unwrap();
-        match config.rules[0].matcher.as_ref().unwrap() {
+        match get_simple_matcher(&config.rules[0]).unwrap() {
             ArgMatcher::Positional(pats) => {
                 assert_eq!(pats.len(), 1);
                 assert!(pats[0].is_match("status"));
@@ -385,7 +492,7 @@ mod tests {
             r#"(rule (command "aws") (args (positional * (regex "^get.*"))) (effect :allow))"#,
         )
         .unwrap();
-        match config.rules[0].matcher.as_ref().unwrap() {
+        match get_simple_matcher(&config.rules[0]).unwrap() {
             ArgMatcher::Positional(pats) => {
                 assert!(pats[0].is_wildcard());
                 assert!(pats[1].is_match("get-instances"));
@@ -401,7 +508,7 @@ mod tests {
             r#"(rule (command "git") (args (exact "remote")) (effect :allow))"#,
         )
         .unwrap();
-        match config.rules[0].matcher.as_ref().unwrap() {
+        match get_simple_matcher(&config.rules[0]).unwrap() {
             ArgMatcher::ExactPositional(pats) => {
                 assert_eq!(pats.len(), 1);
                 assert!(pats[0].is_match("remote"));
@@ -416,7 +523,7 @@ mod tests {
             r#"(rule (command "git") (args (exact * "show")) (effect :allow))"#,
         )
         .unwrap();
-        match config.rules[0].matcher.as_ref().unwrap() {
+        match get_simple_matcher(&config.rules[0]).unwrap() {
             ArgMatcher::ExactPositional(pats) => {
                 assert_eq!(pats.len(), 2);
                 assert!(pats[0].is_wildcard());
@@ -432,7 +539,7 @@ mod tests {
             r#"(rule (command "curl") (args (anywhere "-I" "--head")) (effect :allow))"#,
         )
         .unwrap();
-        match config.rules[0].matcher.as_ref().unwrap() {
+        match get_simple_matcher(&config.rules[0]).unwrap() {
             ArgMatcher::Anywhere(pats) => {
                 assert!(pats[0].is_match("-I"));
                 assert!(pats[1].is_match("--head"));
@@ -447,7 +554,7 @@ mod tests {
             r#"(rule (command "curl") (args (forbidden "-d" "--data")) (effect :allow))"#,
         )
         .unwrap();
-        match config.rules[0].matcher.as_ref().unwrap() {
+        match get_simple_matcher(&config.rules[0]).unwrap() {
             ArgMatcher::Not(inner) => match inner.as_ref() {
                 ArgMatcher::Anywhere(pats) => {
                     assert_eq!(pats.len(), 2);
@@ -469,7 +576,7 @@ mod tests {
                    (effect :deny "dangerous"))"#,
         )
         .unwrap();
-        match config.rules[0].matcher.as_ref().unwrap() {
+        match get_simple_matcher(&config.rules[0]).unwrap() {
             ArgMatcher::And(matchers) => {
                 assert_eq!(matchers.len(), 2);
                 assert!(matches!(&matchers[0], ArgMatcher::Anywhere(_)));
@@ -488,7 +595,7 @@ mod tests {
                    (effect :deny))"#,
         )
         .unwrap();
-        match config.rules[0].matcher.as_ref().unwrap() {
+        match get_simple_matcher(&config.rules[0]).unwrap() {
             ArgMatcher::Or(matchers) => {
                 assert_eq!(matchers.len(), 2);
                 assert!(matches!(&matchers[0], ArgMatcher::Positional(_)));
@@ -504,7 +611,7 @@ mod tests {
             r#"(rule (command "curl") (args (not (anywhere "--force"))) (effect :allow))"#,
         )
         .unwrap();
-        match config.rules[0].matcher.as_ref().unwrap() {
+        match get_simple_matcher(&config.rules[0]).unwrap() {
             ArgMatcher::Not(inner) => {
                 assert!(matches!(inner.as_ref(), ArgMatcher::Anywhere(_)));
             }
@@ -520,7 +627,7 @@ mod tests {
                    (effect :deny))"#,
         )
         .unwrap();
-        match config.rules[0].matcher.as_ref().unwrap() {
+        match get_simple_matcher(&config.rules[0]).unwrap() {
             ArgMatcher::Positional(pats) => {
                 assert!(pats[0].is_match("repo"));
                 assert!(pats[1].is_match("create"));
@@ -540,7 +647,7 @@ mod tests {
                    (effect :allow))"#,
         )
         .unwrap();
-        match config.rules[0].matcher.as_ref().unwrap() {
+        match get_simple_matcher(&config.rules[0]).unwrap() {
             ArgMatcher::Positional(pats) => {
                 assert!(pats[0].is_wildcard());
                 assert!(pats[1].is_match("get-object"));
@@ -923,6 +1030,97 @@ mod tests {
         assert!(config.security.safe_env_vars.contains("EDITOR"));
         assert_eq!(config.rules.len(), 1);
         assert!(config.security.blocked_paths.len() > 10); // defaults + custom
+    }
+
+    // ── cond parsing ──────────────────────────────────────────────────
+
+    #[test]
+    fn cond_basic() {
+        let config = parse(
+            r#"(rule (command "tmux")
+                  (cond
+                    ((args (positional "source-file" (or "~/.config/tmux/custom.conf"
+                                                         "~/.config/tmux/tmux.conf")))
+                     (effect :allow "Reloading config is safe"))
+                    (_ (effect :deny "Unknown tmux source-file"))))"#,
+        )
+        .unwrap();
+        assert_eq!(config.rules.len(), 1);
+        match &config.rules[0].body {
+            RuleBody::Cond(branches) => {
+                assert_eq!(branches.len(), 2);
+                assert!(branches[0].matcher.is_some());
+                assert_eq!(branches[0].decision, Decision::Allow);
+                assert_eq!(branches[0].reason.as_deref(), Some("Reloading config is safe"));
+                assert!(branches[1].matcher.is_none()); // wildcard
+                assert_eq!(branches[1].decision, Decision::Deny);
+            }
+            _ => panic!("expected Cond"),
+        }
+    }
+
+    #[test]
+    fn cond_t_wildcard() {
+        let config = parse(
+            r#"(rule (command "foo")
+                  (cond
+                    ((args (positional "bar")) (effect :allow))
+                    (t (effect :deny))))"#,
+        )
+        .unwrap();
+        match &config.rules[0].body {
+            RuleBody::Cond(branches) => {
+                assert_eq!(branches.len(), 2);
+                assert!(branches[1].matcher.is_none()); // t is wildcard
+            }
+            _ => panic!("expected Cond"),
+        }
+    }
+
+    #[test]
+    fn cond_with_examples() {
+        let config = parse(
+            r#"(rule (command "tmux")
+                  (cond
+                    ((args (positional "source-file" "~/.config/tmux/tmux.conf"))
+                     (effect :allow "Reloading config"))
+                    (_ (effect :deny "Unknown tmux command")))
+                  (example :allow "tmux source-file ~/.config/tmux/tmux.conf")
+                  (example :deny "tmux source-file /tmp/evil.conf"))"#,
+        )
+        .unwrap();
+        assert_eq!(config.rules[0].examples.len(), 2);
+        assert_eq!(config.rules[0].examples[0].expected, Decision::Allow);
+        assert_eq!(config.rules[0].examples[1].expected, Decision::Deny);
+    }
+
+    #[test]
+    fn error_cond_plus_args() {
+        assert!(parse(
+            r#"(rule (command "x") (args (positional "y")) (cond (_ (effect :allow))))"#
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn error_cond_plus_effect() {
+        assert!(parse(
+            r#"(rule (command "x") (effect :allow) (cond (_ (effect :deny))))"#
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn error_cond_empty() {
+        assert!(parse(r#"(rule (command "x") (cond))"#).is_err());
+    }
+
+    #[test]
+    fn error_cond_branch_missing_effect() {
+        assert!(parse(
+            r#"(rule (command "x") (cond ((args (positional "y")))))"#
+        )
+        .is_err());
     }
 
     #[test]
