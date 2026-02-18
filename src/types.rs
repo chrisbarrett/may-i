@@ -56,6 +56,31 @@ pub enum Expr {
 }
 
 impl Expr {
+    /// True if this expression (or any sub-expression) is a Cond with effects.
+    pub fn has_effect(&self) -> bool {
+        match self {
+            Expr::Cond(_) => true,
+            Expr::And(exprs) | Expr::Or(exprs) => exprs.iter().any(|e| e.has_effect()),
+            Expr::Not(expr) => expr.has_effect(),
+            Expr::Literal(_) | Expr::Regex(_) | Expr::Wildcard => false,
+        }
+    }
+
+    /// Find the effect from the first matching Cond branch for the given text.
+    pub fn find_effect(&self, text: &str) -> Option<&Effect> {
+        match self {
+            Expr::Cond(branches) => branches
+                .iter()
+                .find(|b| b.test.is_match(text))
+                .map(|b| &b.effect),
+            Expr::And(exprs) | Expr::Or(exprs) => {
+                exprs.iter().find_map(|e| e.find_effect(text))
+            }
+            Expr::Not(expr) => expr.find_effect(text),
+            Expr::Literal(_) | Expr::Regex(_) | Expr::Wildcard => None,
+        }
+    }
+
     /// Check if the expression matches the given text (ignoring effects).
     pub fn is_match(&self, text: &str) -> bool {
         match self {
@@ -178,6 +203,93 @@ pub enum ArgMatcher {
     Not(Box<ArgMatcher>),
     /// Branch on args; first matching branch wins.
     Cond(Vec<CondBranch>),
+}
+
+impl ArgMatcher {
+    /// True if any expression in this matcher tree contains a Cond with effects.
+    pub fn has_effect(&self) -> bool {
+        match self {
+            ArgMatcher::Positional(exprs)
+            | ArgMatcher::ExactPositional(exprs)
+            | ArgMatcher::Anywhere(exprs) => exprs.iter().any(|e| e.has_effect()),
+            ArgMatcher::And(matchers) | ArgMatcher::Or(matchers) => {
+                matchers.iter().any(|m| m.has_effect())
+            }
+            ArgMatcher::Not(inner) => inner.has_effect(),
+            ArgMatcher::Cond(branches) => branches.iter().any(|b| {
+                b.matcher.as_ref().is_some_and(|m| m.has_effect())
+            }),
+        }
+    }
+
+    /// Walk the matcher tree and extract the effect from the first Expr::Cond
+    /// whose branch matches. `args` are the expanded argument list.
+    pub fn find_expr_effect(&self, args: &[String]) -> Option<Effect> {
+        match self {
+            ArgMatcher::Positional(exprs) => {
+                let positional = extract_positional_args(args);
+                exprs.iter().enumerate().find_map(|(i, expr)| {
+                    positional.get(i).and_then(|arg| expr.find_effect(arg)).cloned()
+                })
+            }
+            ArgMatcher::ExactPositional(exprs) => {
+                let positional = extract_positional_args(args);
+                if exprs.len() != positional.len() {
+                    return None;
+                }
+                exprs.iter().enumerate().find_map(|(i, expr)| {
+                    positional.get(i).and_then(|arg| expr.find_effect(arg)).cloned()
+                })
+            }
+            ArgMatcher::Anywhere(exprs) => {
+                exprs.iter().find_map(|expr| {
+                    args.iter().find_map(|arg| expr.find_effect(arg)).cloned()
+                })
+            }
+            ArgMatcher::And(matchers) | ArgMatcher::Or(matchers) => {
+                matchers.iter().find_map(|m| m.find_expr_effect(args))
+            }
+            ArgMatcher::Not(inner) => inner.find_expr_effect(args),
+            ArgMatcher::Cond(branches) => {
+                branches.iter().find_map(|b| {
+                    b.matcher.as_ref().and_then(|m| m.find_expr_effect(args))
+                })
+            }
+        }
+    }
+}
+
+/// Extract positional args from an argument list, skipping flags and their values.
+fn extract_positional_args(args: &[String]) -> Vec<String> {
+    let mut positional = Vec::new();
+    let mut skip_next = false;
+    let mut flags_done = false;
+    for arg in args {
+        if flags_done {
+            positional.push(arg.clone());
+            continue;
+        }
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        if arg == "--" {
+            positional.push(arg.clone());
+            flags_done = true;
+            continue;
+        }
+        if arg.starts_with("--") {
+            if !arg.contains('=') {
+                skip_next = true;
+            }
+            continue;
+        }
+        if arg.starts_with('-') && arg.len() > 1 {
+            continue;
+        }
+        positional.push(arg.clone());
+    }
+    positional
 }
 
 /// Wrapper configuration for command unwrapping.

@@ -178,7 +178,8 @@ fn evaluate_simple_command(
             continue;
         }
 
-        // Determine decision+reason: from rule-level effect, or from top-level cond branches
+        // Determine decision+reason: from rule-level effect, top-level cond branches,
+        // or embedded Expr::Cond effects
         let effect = if let Some(ref eff) = rule.effect {
             eff.clone()
         } else if let Some(ArgMatcher::Cond(branches)) = &rule.matcher {
@@ -195,6 +196,10 @@ fn evaluate_simple_command(
                 }
             }
             let Some(eff) = found else { continue };
+            eff
+        } else if let Some(ref m) = rule.matcher {
+            // Walk matcher tree for Expr::Cond effects
+            let Some(eff) = m.find_expr_effect(&expanded_args) else { continue };
             eff
         } else {
             continue;
@@ -1520,5 +1525,86 @@ mod tests {
         // Verify checks pass
         let results = crate::check::run_checks(&config);
         assert!(results.iter().all(|r| r.passed), "checks should pass: {results:?}");
+    }
+
+    // ── Expr::Cond as implicit rule effect ──────────────────────────
+
+    #[test]
+    fn expr_cond_in_positional_matching_branch() {
+        use crate::config_parse;
+
+        let config = config_parse::parse(
+            r#"(rule (command "tmux")
+                   (args (positional "source-file"
+                                     (if (or "~/.config/tmux/custom.conf"
+                                             "~/.config/tmux/tmux.conf")
+                                         (effect :allow "safe config")
+                                         (effect :deny "unknown file")))))"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            evaluate("tmux source-file ~/.config/tmux/custom.conf", &config).decision,
+            Decision::Allow
+        );
+        assert_eq!(
+            evaluate("tmux source-file ~/.config/tmux/tmux.conf", &config).decision,
+            Decision::Allow
+        );
+        assert_eq!(
+            evaluate("tmux source-file /tmp/evil.conf", &config).decision,
+            Decision::Deny
+        );
+    }
+
+    #[test]
+    fn expr_cond_in_positional_no_match_skips_rule() {
+        use crate::config_parse;
+
+        let config = config_parse::parse(
+            r#"(rule (command "tmux")
+                   (args (positional "source-file"
+                                     (when "safe.conf"
+                                           (effect :allow "safe")))))"#,
+        )
+        .unwrap();
+
+        // "source-file safe.conf" matches
+        assert_eq!(
+            evaluate("tmux source-file safe.conf", &config).decision,
+            Decision::Allow
+        );
+        // "source-file other.conf" — when branch doesn't match, no effect, rule skipped → Ask
+        assert_eq!(
+            evaluate("tmux source-file other.conf", &config).decision,
+            Decision::Ask
+        );
+        // Different positional arg entirely — matcher won't match → Ask
+        assert_eq!(
+            evaluate("tmux kill-session", &config).decision,
+            Decision::Ask
+        );
+    }
+
+    #[test]
+    fn expr_cond_in_anywhere() {
+        use crate::config_parse;
+
+        let config = config_parse::parse(
+            r#"(rule (command "foo")
+                   (args (anywhere (if "--safe"
+                                       (effect :allow "safe flag")
+                                       (effect :deny "unsafe")))))"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            evaluate("foo --safe", &config).decision,
+            Decision::Allow
+        );
+        assert_eq!(
+            evaluate("foo --other", &config).decision,
+            Decision::Deny
+        );
     }
 }

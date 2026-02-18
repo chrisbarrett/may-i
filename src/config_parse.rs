@@ -116,6 +116,57 @@ fn parse_cond_branches(list: &[Sexpr]) -> Result<Vec<CondBranch>, String> {
     Ok(result)
 }
 
+fn parse_matcher_if_form(args: &[Sexpr]) -> Result<ArgMatcher, String> {
+    if args.len() < 2 || args.len() > 3 {
+        return Err("if must have 2 or 3 arguments: (if MATCHER EFFECT EFFECT?)".into());
+    }
+    let test = parse_matcher(&args[0])?;
+    let then_list = args[1].as_list().ok_or("if then-branch must be an effect list")?;
+    let then_effect = parse_effect(then_list)?;
+
+    let mut branches = vec![CondBranch {
+        matcher: Some(test),
+        effect: then_effect,
+    }];
+
+    if args.len() == 3 {
+        let else_list = args[2].as_list().ok_or("if else-branch must be an effect list")?;
+        let else_effect = parse_effect(else_list)?;
+        branches.push(CondBranch {
+            matcher: None,
+            effect: else_effect,
+        });
+    }
+
+    Ok(ArgMatcher::Cond(branches))
+}
+
+fn parse_matcher_when_form(args: &[Sexpr]) -> Result<ArgMatcher, String> {
+    if args.len() != 2 {
+        return Err("when must have exactly 2 arguments: (when MATCHER EFFECT)".into());
+    }
+    let test = parse_matcher(&args[0])?;
+    let effect_list = args[1].as_list().ok_or("when effect must be an effect list")?;
+    let effect = parse_effect(effect_list)?;
+    Ok(ArgMatcher::Cond(vec![CondBranch {
+        matcher: Some(test),
+        effect,
+    }]))
+}
+
+fn parse_matcher_unless_form(args: &[Sexpr]) -> Result<ArgMatcher, String> {
+    if args.len() != 2 {
+        return Err("unless must have exactly 2 arguments: (unless MATCHER EFFECT)".into());
+    }
+    let test = parse_matcher(&args[0])?;
+    let effect_list = args[1].as_list().ok_or("unless effect must be an effect list")?;
+    let effect = parse_effect(effect_list)?;
+    Ok(ArgMatcher::Cond(vec![CondBranch {
+        matcher: Some(ArgMatcher::Not(Box::new(test))),
+        effect,
+    }]))
+}
+
 fn parse_rule(parts: &[Sexpr]) -> Result<Rule, String> {
     let mut command = None;
     let mut matcher = None;
@@ -169,12 +220,14 @@ fn parse_rule(parts: &[Sexpr]) -> Result<Rule, String> {
         }
     }
 
-    // Validate: top-level cond matcher is mutually exclusive with effect
-    let is_top_cond = matches!(&matcher, Some(ArgMatcher::Cond(_)));
-    if is_top_cond && effect.is_some() {
+    // Validate: embedded effects (top-level cond or Expr::Cond) are mutually exclusive with effect
+    let has_embedded_effect = matcher.as_ref().is_some_and(|m| {
+        matches!(m, ArgMatcher::Cond(_)) || m.has_effect()
+    });
+    if has_embedded_effect && effect.is_some() {
         return Err("cond and effect are mutually exclusive in a rule".into());
     }
-    if !is_top_cond && effect.is_none() {
+    if !has_embedded_effect && effect.is_none() {
         return Err("rule must have an effect (or a top-level cond matcher)".into());
     }
 
@@ -267,6 +320,9 @@ fn parse_matcher(sexpr: &Sexpr) -> Result<ArgMatcher, String> {
             Ok(ArgMatcher::Not(Box::new(parse_matcher(&list[1])?)))
         }
         "cond" => Ok(ArgMatcher::Cond(parse_cond_branches(list)?)),
+        "if" => parse_matcher_if_form(&list[1..]),
+        "when" => parse_matcher_when_form(&list[1..]),
+        "unless" => parse_matcher_unless_form(&list[1..]),
         other => Err(format!("unknown matcher: {other}")),
     }
 }
@@ -1284,6 +1340,104 @@ mod tests {
         }
     }
 
+    // ── if/when/unless matcher forms ─────────────────────────────────
+
+    #[test]
+    fn matcher_if_with_else() {
+        let config = parse(
+            r#"(rule (command "emacsclient")
+                  (args (if (anywhere "--eval" "-e")
+                            (effect :ask "Lisp evaluation is dangerous")
+                            (effect :allow "Opening files"))))"#,
+        )
+        .unwrap();
+        match &config.rules[0].matcher {
+            Some(ArgMatcher::Cond(branches)) => {
+                assert_eq!(branches.len(), 2);
+                assert!(branches[0].matcher.is_some());
+                assert_eq!(branches[0].effect.decision, Decision::Ask);
+                assert!(branches[1].matcher.is_none()); // else
+                assert_eq!(branches[1].effect.decision, Decision::Allow);
+            }
+            _ => panic!("expected Cond from if"),
+        }
+    }
+
+    #[test]
+    fn matcher_if_without_else() {
+        let config = parse(
+            r#"(rule (command "nix")
+                  (args (if (positional "flake" "update")
+                            (effect :ask "Flake update"))))"#,
+        )
+        .unwrap();
+        match &config.rules[0].matcher {
+            Some(ArgMatcher::Cond(branches)) => {
+                assert_eq!(branches.len(), 1);
+                assert!(branches[0].matcher.is_some());
+                assert_eq!(branches[0].effect.decision, Decision::Ask);
+            }
+            _ => panic!("expected Cond from if"),
+        }
+    }
+
+    #[test]
+    fn matcher_when() {
+        let config = parse(
+            r#"(rule (command "foo")
+                  (args (when (positional "bar")
+                              (effect :allow))))"#,
+        )
+        .unwrap();
+        match &config.rules[0].matcher {
+            Some(ArgMatcher::Cond(branches)) => {
+                assert_eq!(branches.len(), 1);
+                assert!(branches[0].matcher.is_some());
+                assert_eq!(branches[0].effect.decision, Decision::Allow);
+            }
+            _ => panic!("expected Cond from when"),
+        }
+    }
+
+    #[test]
+    fn matcher_unless() {
+        let config = parse(
+            r#"(rule (command "foo")
+                  (args (unless (anywhere "--force")
+                                (effect :allow))))"#,
+        )
+        .unwrap();
+        match &config.rules[0].matcher {
+            Some(ArgMatcher::Cond(branches)) => {
+                assert_eq!(branches.len(), 1);
+                assert!(matches!(&branches[0].matcher, Some(ArgMatcher::Not(_))));
+                assert_eq!(branches[0].effect.decision, Decision::Allow);
+            }
+            _ => panic!("expected Cond from unless"),
+        }
+    }
+
+    #[test]
+    fn error_matcher_if_too_many_args() {
+        assert!(parse(
+            r#"(rule (command "x") (args (if (positional "a") (effect :allow) (effect :deny) (effect :ask))))"#
+        ).is_err());
+    }
+
+    #[test]
+    fn error_matcher_when_wrong_arity() {
+        assert!(parse(
+            r#"(rule (command "x") (args (when (positional "a"))))"#
+        ).is_err());
+    }
+
+    #[test]
+    fn error_matcher_unless_wrong_arity() {
+        assert!(parse(
+            r#"(rule (command "x") (args (unless (positional "a"))))"#
+        ).is_err());
+    }
+
     #[test]
     fn or_matcher_evaluates_correctly() {
         use crate::engine;
@@ -1356,8 +1510,7 @@ mod tests {
     fn expr_if_desugars_to_cond() {
         let config = parse(
             r#"(rule (command "x")
-                   (args (positional (if "a" (effect :allow) (effect :deny))))
-                   (effect :ask))"#,
+                   (args (positional (if "a" (effect :allow) (effect :deny)))))"#,
         )
         .unwrap();
         match get_matcher(&config.rules[0]).unwrap() {
@@ -1372,8 +1525,7 @@ mod tests {
     fn expr_if_without_else() {
         let config = parse(
             r#"(rule (command "x")
-                   (args (positional (if "a" (effect :allow))))
-                   (effect :ask))"#,
+                   (args (positional (if "a" (effect :allow)))))"#,
         )
         .unwrap();
         match get_matcher(&config.rules[0]).unwrap() {
@@ -1388,8 +1540,7 @@ mod tests {
     fn expr_when_desugars_to_cond() {
         let config = parse(
             r#"(rule (command "x")
-                   (args (positional (when "a" (effect :deny))))
-                   (effect :allow))"#,
+                   (args (positional (when "a" (effect :deny)))))"#,
         )
         .unwrap();
         match get_matcher(&config.rules[0]).unwrap() {
@@ -1404,8 +1555,7 @@ mod tests {
     fn expr_unless_desugars_to_not_cond() {
         let config = parse(
             r#"(rule (command "x")
-                   (args (positional (unless "bad" (effect :allow))))
-                   (effect :ask))"#,
+                   (args (positional (unless "bad" (effect :allow)))))"#,
         )
         .unwrap();
         match get_matcher(&config.rules[0]).unwrap() {
@@ -1427,8 +1577,7 @@ mod tests {
         let config = parse(
             r#"(rule (command "x")
                    (args (positional (cond ("a" (effect :allow))
-                                         (else (effect :deny)))))
-                   (effect :ask))"#,
+                                         (else (effect :deny))))))"#,
         )
         .unwrap();
         match get_matcher(&config.rules[0]).unwrap() {
@@ -1484,6 +1633,35 @@ mod tests {
     fn error_expr_cond_empty() {
         assert!(parse(
             r#"(rule (command "x") (args (positional (cond))) (effect :allow))"#
+        )
+        .is_err());
+    }
+
+    // ── Expr::Cond as implicit rule effect ──────────────────────────
+
+    #[test]
+    fn expr_cond_in_positional_no_top_effect_parses() {
+        let config = parse(
+            r#"(rule (command "tmux")
+                   (args (positional "source-file"
+                                     (if (or "a" "b")
+                                         (effect :allow "safe")
+                                         (effect :deny "bad")))))"#,
+        )
+        .unwrap();
+        assert_eq!(config.rules.len(), 1);
+        assert!(config.rules[0].effect.is_none());
+    }
+
+    #[test]
+    fn expr_cond_in_positional_with_top_effect_is_error() {
+        assert!(parse(
+            r#"(rule (command "tmux")
+                   (args (positional "source-file"
+                                     (if (or "a" "b")
+                                         (effect :allow "safe")
+                                         (effect :deny "bad"))))
+                   (effect :ask))"#
         )
         .is_err());
     }
