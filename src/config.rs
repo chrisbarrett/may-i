@@ -1,6 +1,6 @@
 // Configuration IO — file discovery, loading, and starter config creation.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::types::Config;
 
@@ -19,20 +19,31 @@ pub fn config_path() -> Option<PathBuf> {
 }
 
 /// Load config, creating a starter config file if none exists.
-pub fn load() -> Result<Config, String> {
-    let path = match config_path() {
-        Some(path) => path,
-        None => {
-            let path = default_config_path().ok_or("cannot determine config directory")?;
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|e| format!("Failed to create {}: {e}", parent.display()))?;
+///
+/// If `override_path` is provided, it takes precedence over `$MAYI_CONFIG`
+/// and the default config location.
+pub fn load(override_path: Option<&Path>) -> Result<Config, String> {
+    let path = match override_path {
+        Some(p) => {
+            if !p.exists() {
+                return Err(format!("Config file not found: {}", p.display()));
             }
-            std::fs::write(&path, include_str!("starter_config.lisp"))
-                .map_err(|e| format!("Failed to write {}: {e}", path.display()))?;
-            eprintln!("Created starter config at {}", path.display());
-            path
+            p.to_path_buf()
         }
+        None => match config_path() {
+            Some(path) => path,
+            None => {
+                let path = default_config_path().ok_or("cannot determine config directory")?;
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent)
+                        .map_err(|e| format!("Failed to create {}: {e}", parent.display()))?;
+                }
+                std::fs::write(&path, include_str!("starter_config.lisp"))
+                    .map_err(|e| format!("Failed to write {}: {e}", path.display()))?;
+                eprintln!("Created starter config at {}", path.display());
+                path
+            }
+        },
     };
 
     let content =

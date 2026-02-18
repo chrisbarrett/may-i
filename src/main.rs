@@ -16,6 +16,10 @@ struct Cli {
     #[arg(long, global = true)]
     json: bool,
 
+    /// Path to config file (overrides $MAYI_CONFIG and default location)
+    #[arg(long, global = true, value_name = "FILE")]
+    config: Option<std::path::PathBuf>,
+
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -49,8 +53,8 @@ fn run() -> Result<(), String> {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Command::Eval { command }) => cmd_eval(&command, cli.json),
-        Some(Command::Check) => cmd_check(cli.json),
+        Some(Command::Eval { command }) => cmd_eval(&command, cli.json, cli.config.as_deref()),
+        Some(Command::Check) => cmd_check(cli.json, cli.config.as_deref()),
         Some(Command::Parse { command, file }) => cmd_parse(command, file),
         None => {
             if std::io::stdin().is_terminal() {
@@ -60,14 +64,14 @@ fn run() -> Result<(), String> {
                 println!();
                 Ok(())
             } else {
-                cmd_hook()
+                cmd_hook(cli.config.as_deref())
             }
         }
     }
 }
 
 /// Hook mode — read Claude Code hook payload from stdin, evaluate, respond.
-fn cmd_hook() -> Result<(), String> {
+fn cmd_hook(config_path: Option<&std::path::Path>) -> Result<(), String> {
     let mut input = String::new();
     std::io::stdin()
         .take(65536)
@@ -93,7 +97,7 @@ fn cmd_hook() -> Result<(), String> {
         .and_then(|v| v.as_str())
         .ok_or("Missing tool_input.command")?;
 
-    let config = config::load()?;
+    let config = config::load(config_path)?;
     let result = engine::evaluate(command, &config);
 
     let response = serde_json::json!({
@@ -109,8 +113,8 @@ fn cmd_hook() -> Result<(), String> {
 }
 
 /// Eval subcommand — evaluate a command and print result.
-fn cmd_eval(command: &str, json_mode: bool) -> Result<(), String> {
-    let config = config::load()?;
+fn cmd_eval(command: &str, json_mode: bool, config_path: Option<&std::path::Path>) -> Result<(), String> {
+    let config = config::load(config_path)?;
     let result = engine::evaluate(command, &config);
 
     if json_mode {
@@ -132,8 +136,8 @@ fn cmd_eval(command: &str, json_mode: bool) -> Result<(), String> {
 }
 
 /// Check subcommand — validate config and run checks.
-fn cmd_check(json_mode: bool) -> Result<(), String> {
-    let config = config::load()?;
+fn cmd_check(json_mode: bool, config_path: Option<&std::path::Path>) -> Result<(), String> {
+    let config = config::load(config_path)?;
     let results = check::run_checks(&config);
 
     let mut passed = 0;
