@@ -1652,6 +1652,30 @@ mod tests {
         .is_err());
     }
 
+    #[test]
+    fn error_expr_cond_empty_branch() {
+        assert!(parse(
+            r#"(rule (command "x") (args (positional (cond ()))) (effect :allow))"#
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn error_expr_cond_empty_branch_element() {
+        assert!(parse(
+            r#"(rule (command "x") (args (positional (cond ("a" ())))) (effect :allow))"#
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn error_expr_cond_unknown_branch_element() {
+        assert!(parse(
+            r#"(rule (command "x") (args (positional (cond ("a" (bogus :allow))))) (effect :allow))"#
+        )
+        .is_err());
+    }
+
     // ── Expr::Cond as implicit rule effect ──────────────────────────
 
     #[test]

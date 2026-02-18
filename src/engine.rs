@@ -1638,4 +1638,26 @@ mod tests {
             Decision::Deny
         );
     }
+
+    // ── OneOrMore break path in match_positional ─────────────────────
+
+    #[test]
+    fn one_or_more_stops_on_mismatch() {
+        // (+ "file") consumes matching args then stops; next fixed pattern matches
+        use crate::config_parse;
+
+        let config = config_parse::parse(
+            r#"(rule (command "cmd")
+                  (args (exact (+ "a") "b"))
+                  (effect :allow))"#,
+        )
+        .unwrap();
+
+        assert_eq!(evaluate("cmd a a b", &config).decision, Decision::Allow);
+        assert_eq!(evaluate("cmd a b", &config).decision, Decision::Allow);
+        // "b" alone — OneOrMore requires at least one "a"
+        assert_eq!(evaluate("cmd b", &config).decision, Decision::Ask);
+        // Extra trailing — exact rejects
+        assert_eq!(evaluate("cmd a b extra", &config).decision, Decision::Ask);
+    }
 }
