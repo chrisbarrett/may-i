@@ -22,11 +22,11 @@ No config file → built-in defaults only.
 file      = form*
 form      = rule | wrapper | security
 
-rule      = "(" "rule" command args? decision example* ")"
+rule      = "(" "rule" command args? decision? example* ")"
 command   = "(" "command" cmd-val ")"
 cmd-val   = STRING | "(" "or" STRING+ ")" | "(" "regex" STRING ")"
 args      = "(" "args" matcher ")"
-matcher   = pos | exact | any | forb | and | or | not
+matcher   = pos | exact | any | forb | and | or | not | cond
 pos       = "(" "positional" pat+ ")"
 exact     = "(" "exact" pat+ ")"
 any       = "(" "anywhere" pat+ ")"
@@ -38,6 +38,9 @@ pat       = STRING | "*" | "(" "regex" STRING ")" | "(" "or" STRING+ ")"
 decision  = "(" "effect" decision-kw reason? ")"
 decision-kw = ":allow" | ":deny" | ":ask"
 reason    = STRING
+cond      = "(" "cond" branch+ ")"
+branch    = "(" condition decision ")"
+condition = "_" | "t" | matcher
 
 example   = "(" "example" decision-kw STRING ")"
 
@@ -99,6 +102,16 @@ Comments: `;` to end of line.
                  (forbidden "-X" "--method" "-f" "--field" "-F" "--raw-field")))
       (effect :allow "Read-only API call"))
 
+;; Cond: branch within a single rule (first matching branch wins)
+(rule (command "tmux")
+      (args (cond
+              ((positional "source-file" (or "~/.tmux.conf"
+                                             "~/.config/tmux/tmux.conf"))
+               (effect :allow "Reloading config is safe"))
+              (_ (effect :deny "Unknown tmux command"))))
+      (example :allow "tmux source-file ~/.tmux.conf")
+      (example :deny "tmux kill-server"))
+
 ;; Wrappers
 (wrapper "nohup" after-flags)
 (wrapper "mise" (positional "exec") (after "--"))
@@ -127,6 +140,24 @@ Comments: `;` to end of line.
 
 Pattern values: `"literal"` (exact match), `(regex "^pat")` (regex match),
 `(or "a" "b")` (any of), `*` (wildcard, unquoted).
+
+### Cond branching
+
+`cond` is an arg matcher used inside `(args ...)` to express multiple branches
+within a single rule. Each branch is a list whose first element is either a
+matcher (e.g. `(positional ...)`, `(anywhere ...)`) or a wildcard (`_` or `t`),
+followed by `(effect ...)`. Branches are tried in order; the first matching
+branch wins. If no branch matches, the rule is skipped entirely.
+
+When `cond` is used as the top-level matcher in `(args ...)`, the rule must
+**not** have a separate `(effect ...)` — effects come from branches. When `cond`
+is nested inside combinators (`and`/`or`/`not`), it acts as a boolean matcher
+(true if any branch matches); effects are ignored and the rule's own `(effect
+...)` applies.
+
+This makes it possible to express "allow these specific args, deny everything
+else" for the same command — something that separate rules cannot do because deny
+always wins across rules.
 
 **Verify:** `cargo test -- config::matchers`
 

@@ -36,6 +36,14 @@
 ;   (regex "^(get|list).*")           ; regex match
 ;   (or "create" "delete" "fork")  ; match any of these strings
 ;
+; COND (branch on args within a single rule; first matching branch wins)
+;
+;   (rule (command "tmux")
+;         (args (cond
+;                 ((positional "source-file" "~/.tmux.conf")
+;                  (effect :allow "Reloading config"))
+;                 (_ (effect :deny "Unknown tmux command")))))
+;
 ; INLINE EXAMPLES (validated by `may-i check`)
 ;
 ;   (example :allow "curl -I https://x.com")

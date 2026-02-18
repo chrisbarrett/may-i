@@ -115,6 +115,33 @@ Pattern values: `"literal"` (exact match), `(regex "^pat")` (regex match),
 **Deny rules always win** regardless of position. For other rules, first match
 wins. Commands with no matching rule default to `ask`.
 
+### Cond branching
+
+Use `cond` inside `(args ...)` to express multiple branches within a single
+rule. This is useful when you want to allow specific args but deny everything
+else for the same command -- something separate rules can't do because deny
+always wins across rules.
+
+```scheme
+(rule (command "tmux")
+      (args (cond
+              ((positional "source-file" (or "~/.tmux.conf"
+                                             "~/.config/tmux/tmux.conf"))
+               (effect :allow "Reloading config is safe"))
+              (_ (effect :deny "Unknown tmux command"))))
+      (example :allow "tmux source-file ~/.tmux.conf")
+      (example :deny "tmux kill-server"))
+```
+
+Each branch is `(matcher effect)` where the matcher is a regular arg matcher
+(e.g. `(positional ...)`, `(anywhere ...)`) or a wildcard (`_` or `t`). Branches
+are tried in order; first match wins. If no branch matches, the rule is skipped.
+
+When `cond` is the top-level matcher, effects come from branches and the rule
+must not have a separate `(effect ...)`. When nested inside combinators
+(`and`/`or`/`not`), it acts as a boolean matcher and the rule's own effect
+applies.
+
 ### Examples
 
 Rules can embed examples for validation via `may-i check`.

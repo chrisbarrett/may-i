@@ -121,19 +121,10 @@ impl Default for SecurityConfig {
 #[derive(Debug, Clone)]
 pub struct Rule {
     pub command: CommandMatcher,
-    pub body: RuleBody,
+    pub matcher: Option<ArgMatcher>,
+    pub decision: Option<Decision>,
+    pub reason: Option<String>,
     pub examples: Vec<Example>,
-}
-
-/// The body of a rule: either a simple matcher+effect or a `cond` with branches.
-#[derive(Debug, Clone)]
-pub enum RuleBody {
-    Simple {
-        matcher: Option<ArgMatcher>,
-        decision: Decision,
-        reason: Option<String>,
-    },
-    Cond(Vec<CondBranch>),
 }
 
 /// A single branch inside a `cond` form.
@@ -160,6 +151,8 @@ pub enum ArgMatcher {
     Or(Vec<ArgMatcher>),
     /// Inverts a sub-matcher.
     Not(Box<ArgMatcher>),
+    /// Branch on args; first matching branch wins.
+    Cond(Vec<CondBranch>),
 }
 
 /// Wrapper configuration for command unwrapping.
