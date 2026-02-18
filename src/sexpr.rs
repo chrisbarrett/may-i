@@ -66,7 +66,7 @@ enum Token {
 }
 
 fn is_atom_char(c: char) -> bool {
-    c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '*' | '.' | '/' | '^' | ':')
+    c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '*' | '.' | '/' | '^' | ':' | '+' | '?')
 }
 
 fn tokenize(input: &str) -> Result<Vec<Token>, String> {

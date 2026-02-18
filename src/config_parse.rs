@@ -4,7 +4,7 @@
 use crate::sexpr::Sexpr;
 use crate::types::{
     ArgMatcher, Check, CommandMatcher, CondBranch, Config, Decision, Effect, Expr, ExprBranch,
-    Rule, SecurityConfig, Wrapper, WrapperKind,
+    PosExpr, Rule, SecurityConfig, Wrapper, WrapperKind,
 };
 
 /// Parse an s-expression config string into Config.
@@ -284,14 +284,14 @@ fn parse_matcher(sexpr: &Sexpr) -> Result<ArgMatcher, String> {
     let tag = list[0].as_atom().ok_or("matcher tag must be an atom")?;
     match tag {
         "positional" => {
-            let exprs: Result<Vec<Expr>, _> =
-                list[1..].iter().map(parse_expr).collect();
-            Ok(ArgMatcher::Positional(exprs?))
+            let pexprs: Result<Vec<PosExpr>, _> =
+                list[1..].iter().map(parse_pos_expr).collect();
+            Ok(ArgMatcher::Positional(pexprs?))
         }
         "exact" => {
-            let exprs: Result<Vec<Expr>, _> =
-                list[1..].iter().map(parse_expr).collect();
-            Ok(ArgMatcher::ExactPositional(exprs?))
+            let pexprs: Result<Vec<PosExpr>, _> =
+                list[1..].iter().map(parse_pos_expr).collect();
+            Ok(ArgMatcher::ExactPositional(pexprs?))
         }
         "anywhere" => {
             let exprs: Result<Vec<Expr>, _> =
@@ -325,6 +325,21 @@ fn parse_matcher(sexpr: &Sexpr) -> Result<ArgMatcher, String> {
         "unless" => parse_matcher_unless_form(&list[1..]),
         other => Err(format!("unknown matcher: {other}")),
     }
+}
+
+fn parse_pos_expr(sexpr: &Sexpr) -> Result<PosExpr, String> {
+    if let Sexpr::List(list) = sexpr
+        && list.len() == 2
+        && let Some(tag) = list[0].as_atom()
+    {
+        match tag {
+            "?" => return Ok(PosExpr::Optional(parse_expr(&list[1])?)),
+            "+" => return Ok(PosExpr::OneOrMore(parse_expr(&list[1])?)),
+            "*" => return Ok(PosExpr::ZeroOrMore(parse_expr(&list[1])?)),
+            _ => {}
+        }
+    }
+    Ok(PosExpr::One(parse_expr(sexpr)?))
 }
 
 fn parse_expr(sexpr: &Sexpr) -> Result<Expr, String> {
@@ -1514,8 +1529,8 @@ mod tests {
         )
         .unwrap();
         match get_matcher(&config.rules[0]).unwrap() {
-            ArgMatcher::Positional(exprs) => {
-                assert!(matches!(&exprs[0], Expr::Cond(branches) if branches.len() == 2));
+            ArgMatcher::Positional(pexprs) => {
+                assert!(matches!(pexprs[0].expr(), Expr::Cond(branches) if branches.len() == 2));
             }
             _ => panic!("expected Positional"),
         }
@@ -1529,8 +1544,8 @@ mod tests {
         )
         .unwrap();
         match get_matcher(&config.rules[0]).unwrap() {
-            ArgMatcher::Positional(exprs) => {
-                assert!(matches!(&exprs[0], Expr::Cond(branches) if branches.len() == 1));
+            ArgMatcher::Positional(pexprs) => {
+                assert!(matches!(pexprs[0].expr(), Expr::Cond(branches) if branches.len() == 1));
             }
             _ => panic!("expected Positional"),
         }
@@ -1544,8 +1559,8 @@ mod tests {
         )
         .unwrap();
         match get_matcher(&config.rules[0]).unwrap() {
-            ArgMatcher::Positional(exprs) => {
-                assert!(matches!(&exprs[0], Expr::Cond(branches) if branches.len() == 1));
+            ArgMatcher::Positional(pexprs) => {
+                assert!(matches!(pexprs[0].expr(), Expr::Cond(branches) if branches.len() == 1));
             }
             _ => panic!("expected Positional"),
         }
@@ -1559,8 +1574,8 @@ mod tests {
         )
         .unwrap();
         match get_matcher(&config.rules[0]).unwrap() {
-            ArgMatcher::Positional(exprs) => {
-                match &exprs[0] {
+            ArgMatcher::Positional(pexprs) => {
+                match pexprs[0].expr() {
                     Expr::Cond(branches) => {
                         assert_eq!(branches.len(), 1);
                         assert!(matches!(&branches[0].test, Expr::Not(_)));
@@ -1581,8 +1596,8 @@ mod tests {
         )
         .unwrap();
         match get_matcher(&config.rules[0]).unwrap() {
-            ArgMatcher::Positional(exprs) => {
-                match &exprs[0] {
+            ArgMatcher::Positional(pexprs) => {
+                match pexprs[0].expr() {
                     Expr::Cond(branches) => {
                         assert_eq!(branches.len(), 2);
                         assert_eq!(branches[0].effect.decision, Decision::Allow);
@@ -1664,5 +1679,216 @@ mod tests {
                    (effect :ask))"#
         )
         .is_err());
+    }
+
+    // ── PosExpr quantifier parsing ──────────────────────────────────
+
+    #[test]
+    fn positional_optional_quantifier() {
+        let config = parse(
+            r#"(rule (command "git")
+                   (args (positional "stash" (? "pop")))
+                   (effect :allow))"#,
+        )
+        .unwrap();
+        match get_matcher(&config.rules[0]).unwrap() {
+            ArgMatcher::Positional(pexprs) => {
+                assert_eq!(pexprs.len(), 2);
+                assert!(matches!(&pexprs[0], PosExpr::One(_)));
+                assert!(matches!(&pexprs[1], PosExpr::Optional(_)));
+                assert!(pexprs[1].is_match("pop"));
+            }
+            _ => panic!("expected Positional"),
+        }
+    }
+
+    #[test]
+    fn positional_one_or_more_quantifier() {
+        let config = parse(
+            r#"(rule (command "cat")
+                   (args (positional (+ (regex "^[^-]"))))
+                   (effect :allow))"#,
+        )
+        .unwrap();
+        match get_matcher(&config.rules[0]).unwrap() {
+            ArgMatcher::Positional(pexprs) => {
+                assert_eq!(pexprs.len(), 1);
+                assert!(matches!(&pexprs[0], PosExpr::OneOrMore(_)));
+                assert!(pexprs[0].is_match("file.txt"));
+            }
+            _ => panic!("expected Positional"),
+        }
+    }
+
+    #[test]
+    fn positional_zero_or_more_quantifier() {
+        let config = parse(
+            r#"(rule (command "ls")
+                   (args (positional (* *)))
+                   (effect :allow))"#,
+        )
+        .unwrap();
+        match get_matcher(&config.rules[0]).unwrap() {
+            ArgMatcher::Positional(pexprs) => {
+                assert_eq!(pexprs.len(), 1);
+                assert!(matches!(&pexprs[0], PosExpr::ZeroOrMore(_)));
+                assert!(pexprs[0].is_wildcard());
+            }
+            _ => panic!("expected Positional"),
+        }
+    }
+
+    #[test]
+    fn exact_with_quantifiers() {
+        let config = parse(
+            r#"(rule (command "cmd")
+                   (args (exact "sub" (? "opt") (+ *)))
+                   (effect :allow))"#,
+        )
+        .unwrap();
+        match get_matcher(&config.rules[0]).unwrap() {
+            ArgMatcher::ExactPositional(pexprs) => {
+                assert_eq!(pexprs.len(), 3);
+                assert!(matches!(&pexprs[0], PosExpr::One(_)));
+                assert!(matches!(&pexprs[1], PosExpr::Optional(_)));
+                assert!(matches!(&pexprs[2], PosExpr::OneOrMore(_)));
+            }
+            _ => panic!("expected ExactPositional"),
+        }
+    }
+
+    #[test]
+    fn quantifier_with_complex_expr() {
+        let config = parse(
+            r#"(rule (command "cmd")
+                   (args (positional (+ (or "a" "b" "c"))))
+                   (effect :allow))"#,
+        )
+        .unwrap();
+        match get_matcher(&config.rules[0]).unwrap() {
+            ArgMatcher::Positional(pexprs) => {
+                assert_eq!(pexprs.len(), 1);
+                assert!(matches!(&pexprs[0], PosExpr::OneOrMore(_)));
+                assert!(pexprs[0].is_match("a"));
+                assert!(pexprs[0].is_match("b"));
+                assert!(!pexprs[0].is_match("d"));
+            }
+            _ => panic!("expected Positional"),
+        }
+    }
+
+    // ── Quantifier integration with engine ──────────────────────────
+
+    #[test]
+    fn quantifier_optional_evaluates() {
+        use crate::engine;
+
+        let config = parse(
+            r#"
+            (rule (command "git")
+                  (args (positional "stash" (? "pop")))
+                  (effect :allow))
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(engine::evaluate("git stash", &config).decision, Decision::Allow);
+        assert_eq!(engine::evaluate("git stash pop", &config).decision, Decision::Allow);
+        // Non-exact positional allows extra args, so "drop" is ignored
+        assert_eq!(engine::evaluate("git stash drop", &config).decision, Decision::Allow);
+    }
+
+    #[test]
+    fn quantifier_one_or_more_evaluates() {
+        use crate::engine;
+
+        let config = parse(
+            r#"
+            (rule (command "cat")
+                  (args (positional (+ *)))
+                  (effect :allow))
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(engine::evaluate("cat file1", &config).decision, Decision::Allow);
+        assert_eq!(engine::evaluate("cat file1 file2 file3", &config).decision, Decision::Allow);
+        // No positional args (just flags) — one-or-more requires at least one
+        assert_eq!(engine::evaluate("cat", &config).decision, Decision::Ask);
+    }
+
+    #[test]
+    fn quantifier_zero_or_more_evaluates() {
+        use crate::engine;
+
+        let config = parse(
+            r#"
+            (rule (command "ls")
+                  (args (positional (* *)))
+                  (effect :allow))
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(engine::evaluate("ls", &config).decision, Decision::Allow);
+        assert_eq!(engine::evaluate("ls dir1", &config).decision, Decision::Allow);
+        assert_eq!(engine::evaluate("ls dir1 dir2", &config).decision, Decision::Allow);
+    }
+
+    #[test]
+    fn quantifier_exact_with_optional() {
+        use crate::engine;
+
+        let config = parse(
+            r#"
+            (rule (command "git")
+                  (args (exact "stash" (? "pop")))
+                  (effect :allow))
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(engine::evaluate("git stash", &config).decision, Decision::Allow);
+        assert_eq!(engine::evaluate("git stash pop", &config).decision, Decision::Allow);
+        // Extra positional arg — exact rejects
+        assert_eq!(engine::evaluate("git stash pop extra", &config).decision, Decision::Ask);
+        // Mismatched optional — still only "stash" consumed, but "drop" is extra for exact
+        assert_eq!(engine::evaluate("git stash drop", &config).decision, Decision::Ask);
+    }
+
+    #[test]
+    fn quantifier_subcommand_plus_files() {
+        use crate::engine;
+
+        let config = parse(
+            r#"
+            (rule (command "git")
+                  (args (positional "add" (+ *)))
+                  (effect :allow))
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(engine::evaluate("git add file.txt", &config).decision, Decision::Allow);
+        assert_eq!(engine::evaluate("git add file1 file2", &config).decision, Decision::Allow);
+        assert_eq!(engine::evaluate("git add", &config).decision, Decision::Ask);
+    }
+
+    #[test]
+    fn quantifier_mixed_fixed_and_variable() {
+        use crate::engine;
+
+        let config = parse(
+            r#"
+            (rule (command "kubectl")
+                  (args (positional "get" (* (or "pods" "services" "deployments")) (? *)))
+                  (effect :allow))
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(engine::evaluate("kubectl get pods", &config).decision, Decision::Allow);
+        assert_eq!(engine::evaluate("kubectl get pods services", &config).decision, Decision::Allow);
+        assert_eq!(engine::evaluate("kubectl get pods mypod", &config).decision, Decision::Allow);
     }
 }

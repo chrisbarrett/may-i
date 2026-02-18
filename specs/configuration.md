@@ -27,13 +27,14 @@ command   = "(" "command" cmd-val ")"
 cmd-val   = STRING | "(" "or" STRING+ ")" | "(" "regex" STRING ")"
 args      = "(" "args" matcher ")"
 matcher   = pos | exact | any | forb | and | or | not | cond
-pos       = "(" "positional" pat+ ")"
-exact     = "(" "exact" pat+ ")"
+pos       = "(" "positional" pos-pat+ ")"
+exact     = "(" "exact" pos-pat+ ")"
 any       = "(" "anywhere" pat+ ")"
 forb      = "(" "forbidden" pat+ ")"
 and       = "(" "and" matcher matcher+ ")"
 or        = "(" "or" matcher matcher+ ")"
 not       = "(" "not" matcher ")"
+pos-pat   = pat | "(" "?" pat ")" | "(" "+" pat ")" | "(" "*" pat ")"
 pat       = STRING | "*" | "(" "regex" STRING ")" | "(" "or" STRING+ ")"
 decision  = "(" "effect" decision-kw reason? ")"
 decision-kw = ":allow" | ":deny" | ":ask"
@@ -141,6 +142,20 @@ Comments: `;` to end of line.
 
 Pattern values: `"literal"` (exact match), `(regex "^pat")` (regex match),
 `(or "a" "b")` (any of), `*` (wildcard, unquoted).
+
+### Positional quantifiers
+
+Inside `positional` and `exact`, each element may be wrapped with a quantifier:
+
+| Form     | Semantics                                         |
+| :------- | :------------------------------------------------ |
+| `pat`    | Match exactly one positional arg                  |
+| `(? e)`  | Match zero or one arg (optional)                  |
+| `(+ e)`  | Match one or more args (greedy, no backtracking)  |
+| `(* e)`  | Match zero or more args (greedy, no backtracking) |
+
+Quantifiers consume matching args left-to-right. With `positional`, unmatched
+trailing args are allowed; with `exact`, all positional args must be consumed.
 
 ### Cond branching
 

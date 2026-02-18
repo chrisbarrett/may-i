@@ -186,13 +186,56 @@ pub struct CondBranch {
     pub effect: Effect,
 }
 
+/// A positional expression with optional quantifier.
+#[derive(Clone)]
+pub enum PosExpr {
+    /// Match exactly one arg.
+    One(Expr),
+    /// Match zero or one arg: `(? e)`
+    Optional(Expr),
+    /// Match one or more args: `(+ e)`
+    OneOrMore(Expr),
+    /// Match zero or more args: `(* e)`
+    ZeroOrMore(Expr),
+}
+
+impl PosExpr {
+    /// Access the inner expression.
+    pub fn expr(&self) -> &Expr {
+        match self {
+            PosExpr::One(e) | PosExpr::Optional(e) | PosExpr::OneOrMore(e) | PosExpr::ZeroOrMore(e) => e,
+        }
+    }
+
+    /// Delegate to the inner expression's `is_match`.
+    pub fn is_match(&self, text: &str) -> bool {
+        self.expr().is_match(text)
+    }
+
+    /// Delegate to the inner expression's `is_wildcard`.
+    pub fn is_wildcard(&self) -> bool {
+        self.expr().is_wildcard()
+    }
+}
+
+impl std::fmt::Debug for PosExpr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PosExpr::One(e) => write!(f, "{:?}", e),
+            PosExpr::Optional(e) => f.debug_tuple("Optional").field(e).finish(),
+            PosExpr::OneOrMore(e) => f.debug_tuple("OneOrMore").field(e).finish(),
+            PosExpr::ZeroOrMore(e) => f.debug_tuple("ZeroOrMore").field(e).finish(),
+        }
+    }
+}
+
 /// Argument matching strategies.
 #[derive(Debug, Clone)]
 pub enum ArgMatcher {
     /// Match positional args by position (skip flags). Wildcard = any value.
-    Positional(Vec<Expr>),
+    Positional(Vec<PosExpr>),
     /// Like `Positional`, but requires exactly as many positional args as patterns.
-    ExactPositional(Vec<Expr>),
+    ExactPositional(Vec<PosExpr>),
     /// Token appears anywhere in argv.
     Anywhere(Vec<Expr>),
     /// All sub-matchers must match.
@@ -209,9 +252,10 @@ impl ArgMatcher {
     /// True if any expression in this matcher tree contains a Cond with effects.
     pub fn has_effect(&self) -> bool {
         match self {
-            ArgMatcher::Positional(exprs)
-            | ArgMatcher::ExactPositional(exprs)
-            | ArgMatcher::Anywhere(exprs) => exprs.iter().any(|e| e.has_effect()),
+            ArgMatcher::Positional(pexprs) | ArgMatcher::ExactPositional(pexprs) => {
+                pexprs.iter().any(|pe| pe.expr().has_effect())
+            }
+            ArgMatcher::Anywhere(exprs) => exprs.iter().any(|e| e.has_effect()),
             ArgMatcher::And(matchers) | ArgMatcher::Or(matchers) => {
                 matchers.iter().any(|m| m.has_effect())
             }
@@ -226,20 +270,11 @@ impl ArgMatcher {
     /// whose branch matches. `args` are the expanded argument list.
     pub fn find_expr_effect(&self, args: &[String]) -> Option<Effect> {
         match self {
-            ArgMatcher::Positional(exprs) => {
-                let positional = extract_positional_args(args);
-                exprs.iter().enumerate().find_map(|(i, expr)| {
-                    positional.get(i).and_then(|arg| expr.find_effect(arg)).cloned()
-                })
+            ArgMatcher::Positional(pexprs) => {
+                find_pos_expr_effect(pexprs, args, false)
             }
-            ArgMatcher::ExactPositional(exprs) => {
-                let positional = extract_positional_args(args);
-                if exprs.len() != positional.len() {
-                    return None;
-                }
-                exprs.iter().enumerate().find_map(|(i, expr)| {
-                    positional.get(i).and_then(|arg| expr.find_effect(arg)).cloned()
-                })
+            ArgMatcher::ExactPositional(pexprs) => {
+                find_pos_expr_effect(pexprs, args, true)
             }
             ArgMatcher::Anywhere(exprs) => {
                 exprs.iter().find_map(|expr| {
@@ -290,6 +325,68 @@ fn extract_positional_args(args: &[String]) -> Vec<String> {
         positional.push(arg.clone());
     }
     positional
+}
+
+/// Walk PosExpr patterns with two-cursor logic and find the first Expr::Cond effect.
+fn find_pos_expr_effect(pexprs: &[PosExpr], args: &[String], exact: bool) -> Option<Effect> {
+    let positional = extract_positional_args(args);
+    let mut pos = 0;
+
+    for pexpr in pexprs {
+        match pexpr {
+            PosExpr::One(e) => {
+                if let Some(arg) = positional.get(pos) {
+                    if let Some(eff) = e.find_effect(arg) {
+                        return Some(eff.clone());
+                    }
+                    pos += 1;
+                } else {
+                    return None;
+                }
+            }
+            PosExpr::Optional(e) => {
+                if let Some(arg) = positional.get(pos)
+                    && e.is_match(arg)
+                {
+                    if let Some(eff) = e.find_effect(arg) {
+                        return Some(eff.clone());
+                    }
+                    pos += 1;
+                }
+            }
+            PosExpr::OneOrMore(e) => {
+                if positional.get(pos).is_none_or(|arg| !e.is_match(arg)) {
+                    return None;
+                }
+                while let Some(arg) = positional.get(pos) {
+                    if !e.is_match(arg) {
+                        break;
+                    }
+                    if let Some(eff) = e.find_effect(arg) {
+                        return Some(eff.clone());
+                    }
+                    pos += 1;
+                }
+            }
+            PosExpr::ZeroOrMore(e) => {
+                while let Some(arg) = positional.get(pos) {
+                    if !e.is_match(arg) {
+                        break;
+                    }
+                    if let Some(eff) = e.find_effect(arg) {
+                        return Some(eff.clone());
+                    }
+                    pos += 1;
+                }
+            }
+        }
+    }
+
+    if exact && pos != positional.len() {
+        return None;
+    }
+
+    None
 }
 
 /// Wrapper configuration for command unwrapping.

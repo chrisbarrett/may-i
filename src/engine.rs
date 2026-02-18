@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use crate::parser::{self, SimpleCommand, Word};
 use crate::security;
 use crate::types::{
-    ArgMatcher, CommandMatcher, Config, Decision, Effect, EvalResult, Expr, WrapperKind,
+    ArgMatcher, CommandMatcher, Config, Decision, Effect, EvalResult, PosExpr, WrapperKind,
 };
 
 /// Deduplicate a list of dynamic part descriptions while preserving order.
@@ -234,18 +234,53 @@ fn command_matches(name: &str, matcher: &CommandMatcher) -> bool {
     }
 }
 
-fn match_positional(patterns: &[Expr], args: &[String], exact: bool) -> bool {
+fn match_positional(patterns: &[PosExpr], args: &[String], exact: bool) -> bool {
     let positional = extract_positional_args(args);
-    if exact {
-        if patterns.len() != positional.len() {
-            return false;
+    let mut pos = 0;
+
+    for pexpr in patterns {
+        match pexpr {
+            PosExpr::One(e) => {
+                if positional.get(pos).is_none_or(|arg| !(e.is_wildcard() || e.is_match(arg))) {
+                    return false;
+                }
+                pos += 1;
+            }
+            PosExpr::Optional(e) => {
+                if let Some(arg) = positional.get(pos)
+                    && (e.is_wildcard() || e.is_match(arg))
+                {
+                    pos += 1;
+                }
+            }
+            PosExpr::OneOrMore(e) => {
+                if positional.get(pos).is_none_or(|arg| !(e.is_wildcard() || e.is_match(arg))) {
+                    return false;
+                }
+                pos += 1;
+                while let Some(arg) = positional.get(pos) {
+                    if !(e.is_wildcard() || e.is_match(arg)) {
+                        break;
+                    }
+                    pos += 1;
+                }
+            }
+            PosExpr::ZeroOrMore(e) => {
+                while let Some(arg) = positional.get(pos) {
+                    if !(e.is_wildcard() || e.is_match(arg)) {
+                        break;
+                    }
+                    pos += 1;
+                }
+            }
         }
-    } else if patterns.len() > positional.len() {
-        return false;
     }
-    patterns.iter().enumerate().all(|(i, pat)| {
-        pat.is_wildcard() || positional.get(i).is_some_and(|arg| pat.is_match(arg))
-    })
+
+    if exact {
+        pos == positional.len()
+    } else {
+        pos <= positional.len()
+    }
 }
 
 fn matcher_matches(matcher: &ArgMatcher, args: &[String]) -> bool {
@@ -385,8 +420,13 @@ fn unwrap_wrapper(sc: &SimpleCommand, config: &Config) -> Option<SimpleCommand> 
 mod tests {
     use super::*;
     use crate::types::{
-        CondBranch, Config, Effect, Expr, Rule, SecurityConfig, Wrapper, WrapperKind,
+        CondBranch, Config, Effect, Expr, PosExpr, Rule, SecurityConfig, Wrapper, WrapperKind,
     };
+
+    /// Helper to wrap Expr values in PosExpr::One for tests.
+    fn pos(exprs: Vec<Expr>) -> Vec<PosExpr> {
+        exprs.into_iter().map(PosExpr::One).collect()
+    }
 
     // ── Helpers ──────────────────────────────────────────────────────
 
@@ -615,24 +655,21 @@ mod tests {
 
     #[test]
     fn positional_matcher_literal() {
-        let patterns = vec![Expr::Literal("status".into())];
-        let matcher = ArgMatcher::Positional(patterns);
+        let matcher = ArgMatcher::Positional(pos(vec![Expr::Literal("status".into())]));
         let args = vec!["status".to_string()];
         assert!(matcher_matches(&matcher, &args));
     }
 
     #[test]
     fn positional_matcher_wildcard() {
-        let patterns = vec![Expr::Wildcard];
-        let matcher = ArgMatcher::Positional(patterns);
+        let matcher = ArgMatcher::Positional(pos(vec![Expr::Wildcard]));
         let args = vec!["anything".to_string()];
         assert!(matcher_matches(&matcher, &args));
     }
 
     #[test]
     fn positional_matcher_regex() {
-        let patterns = vec![Expr::Regex(regex::Regex::new("^(status|log)$").unwrap())];
-        let matcher = ArgMatcher::Positional(patterns);
+        let matcher = ArgMatcher::Positional(pos(vec![Expr::Regex(regex::Regex::new("^(status|log)$").unwrap())]));
         assert!(matcher_matches(&matcher, &["status".into()]));
         assert!(matcher_matches(&matcher, &["log".into()]));
         assert!(!matcher_matches(&matcher, &["push".into()]));
@@ -640,18 +677,16 @@ mod tests {
 
     #[test]
     fn positional_matcher_too_few_args() {
-        let patterns = vec![
+        let matcher = ArgMatcher::Positional(pos(vec![
             Expr::Literal("a".into()),
             Expr::Literal("b".into()),
-        ];
-        let matcher = ArgMatcher::Positional(patterns);
+        ]));
         assert!(!matcher_matches(&matcher, &["a".into()]));
     }
 
     #[test]
     fn positional_matcher_skips_flags() {
-        let patterns = vec![Expr::Literal("status".into())];
-        let matcher = ArgMatcher::Positional(patterns);
+        let matcher = ArgMatcher::Positional(pos(vec![Expr::Literal("status".into())]));
         // Flags are skipped by extract_positional_args, leaving "status"
         let args = vec!["-v".to_string(), "status".to_string()];
         assert!(matcher_matches(&matcher, &args));
@@ -661,32 +696,28 @@ mod tests {
 
     #[test]
     fn exact_positional_matches_exact_count() {
-        let patterns = vec![Expr::Literal("status".into())];
-        let matcher = ArgMatcher::ExactPositional(patterns);
+        let matcher = ArgMatcher::ExactPositional(pos(vec![Expr::Literal("status".into())]));
         assert!(matcher_matches(&matcher, &["status".into()]));
     }
 
     #[test]
     fn exact_positional_rejects_extra_args() {
-        let patterns = vec![Expr::Literal("remote".into())];
-        let matcher = ArgMatcher::ExactPositional(patterns);
+        let matcher = ArgMatcher::ExactPositional(pos(vec![Expr::Literal("remote".into())]));
         assert!(!matcher_matches(&matcher, &["remote".into(), "add".into()]));
     }
 
     #[test]
     fn exact_positional_rejects_too_few() {
-        let patterns = vec![
+        let matcher = ArgMatcher::ExactPositional(pos(vec![
             Expr::Literal("a".into()),
             Expr::Literal("b".into()),
-        ];
-        let matcher = ArgMatcher::ExactPositional(patterns);
+        ]));
         assert!(!matcher_matches(&matcher, &["a".into()]));
     }
 
     #[test]
     fn exact_positional_skips_flags() {
-        let patterns = vec![Expr::Literal("status".into())];
-        let matcher = ArgMatcher::ExactPositional(patterns);
+        let matcher = ArgMatcher::ExactPositional(pos(vec![Expr::Literal("status".into())]));
         let args = vec!["-v".to_string(), "status".to_string()];
         assert!(matcher_matches(&matcher, &args));
     }
@@ -727,7 +758,7 @@ mod tests {
     #[test]
     fn and_matcher_all_must_pass() {
         let m = ArgMatcher::And(vec![
-            ArgMatcher::Positional(vec![Expr::Literal("push".into())]),
+            ArgMatcher::Positional(pos(vec![Expr::Literal("push".into())])),
             ArgMatcher::Not(Box::new(ArgMatcher::Anywhere(vec![
                 Expr::Literal("--force".into()),
             ]))),
@@ -817,9 +848,9 @@ mod tests {
     fn rule_with_positional_matcher() {
         let rule = Rule {
             command: CommandMatcher::Exact("git".into()),
-            matcher: Some(ArgMatcher::Positional(vec![
+            matcher: Some(ArgMatcher::Positional(pos(vec![
                 Expr::Literal("status".into()),
-            ])),
+            ]))),
             effect: Some(Effect { decision: Decision::Allow, reason: None }),
             checks: vec![],
         };
@@ -832,9 +863,9 @@ mod tests {
     fn rule_with_positional_no_match() {
         let rule = Rule {
             command: CommandMatcher::Exact("git".into()),
-            matcher: Some(ArgMatcher::Positional(vec![
+            matcher: Some(ArgMatcher::Positional(pos(vec![
                 Expr::Literal("status".into()),
-            ])),
+            ]))),
             effect: Some(Effect { decision: Decision::Allow, reason: None }),
             checks: vec![],
         };
@@ -1084,7 +1115,7 @@ mod tests {
         let rule = Rule {
             command: CommandMatcher::Exact("git".into()),
             matcher: Some(ArgMatcher::And(vec![
-                ArgMatcher::Positional(vec![Expr::Literal("push".into())]),
+                ArgMatcher::Positional(pos(vec![Expr::Literal("push".into())])),
                 ArgMatcher::Not(Box::new(ArgMatcher::Anywhere(vec![
                     Expr::Literal("--force".into()),
                     Expr::Literal("-f".into()),
@@ -1396,9 +1427,9 @@ mod tests {
             command: CommandMatcher::Exact("tmux".into()),
             matcher: Some(ArgMatcher::Cond(vec![
                 CondBranch {
-                    matcher: Some(ArgMatcher::Positional(vec![
+                    matcher: Some(ArgMatcher::Positional(pos(vec![
                         Expr::Literal("source-file".into()),
-                    ])),
+                    ]))),
                     effect: Effect { decision: Decision::Allow, reason: Some("config reload".into()) },
                 },
                 CondBranch {
@@ -1421,9 +1452,9 @@ mod tests {
             command: CommandMatcher::Exact("tmux".into()),
             matcher: Some(ArgMatcher::Cond(vec![
                 CondBranch {
-                    matcher: Some(ArgMatcher::Positional(vec![
+                    matcher: Some(ArgMatcher::Positional(pos(vec![
                         Expr::Literal("source-file".into()),
-                    ])),
+                    ]))),
                     effect: Effect { decision: Decision::Allow, reason: None },
                 },
                 CondBranch {
@@ -1445,9 +1476,9 @@ mod tests {
         let rule = Rule {
             command: CommandMatcher::Exact("tmux".into()),
             matcher: Some(ArgMatcher::Cond(vec![CondBranch {
-                matcher: Some(ArgMatcher::Positional(vec![
+                matcher: Some(ArgMatcher::Positional(pos(vec![
                     Expr::Literal("source-file".into()),
-                ])),
+                ]))),
                 effect: Effect { decision: Decision::Allow, reason: None },
             }])),
             effect: None,
@@ -1466,9 +1497,9 @@ mod tests {
                 command: CommandMatcher::Exact("tmux".into()),
                 matcher: Some(ArgMatcher::Cond(vec![
                     CondBranch {
-                        matcher: Some(ArgMatcher::Positional(vec![
+                        matcher: Some(ArgMatcher::Positional(pos(vec![
                             Expr::Literal("source-file".into()),
-                        ])),
+                        ]))),
                         effect: Effect { decision: Decision::Allow, reason: None },
                     },
                     CondBranch {
