@@ -29,44 +29,71 @@ impl std::fmt::Display for Decision {
     }
 }
 
-/// A pattern that can be either a literal string or a compiled regex.
-#[derive(Clone)]
-pub enum Pattern {
-    Literal(String),
-    Regex(regex::Regex),
+/// An authorization effect: a decision with an optional reason.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Effect {
+    pub decision: Decision,
+    pub reason: Option<String>,
 }
 
-impl Pattern {
-    /// Create a pattern from a string. Strings starting with '^' are compiled as regex.
-    pub fn new(s: &str) -> Result<Self, regex::Error> {
-        if s.starts_with('^') {
-            Ok(Pattern::Regex(regex::Regex::new(s)?))
-        } else {
-            Ok(Pattern::Literal(s.to_string()))
-        }
-    }
+/// An expression that matches a single string, optionally carrying effects.
+#[derive(Clone)]
+pub enum Expr {
+    /// Exact string match.
+    Literal(String),
+    /// Regex match.
+    Regex(regex::Regex),
+    /// Matches any string.
+    Wildcard,
+    /// All sub-expressions must match.
+    And(Vec<Expr>),
+    /// Any sub-expression must match.
+    Or(Vec<Expr>),
+    /// Inverts the match result.
+    Not(Box<Expr>),
+    /// Branches with effects; first matching branch wins.
+    Cond(Vec<ExprBranch>),
+}
 
-    /// Check if the pattern matches the given text.
+impl Expr {
+    /// Check if the expression matches the given text (ignoring effects).
     pub fn is_match(&self, text: &str) -> bool {
         match self {
-            Pattern::Literal(s) => text == s,
-            Pattern::Regex(re) => re.is_match(text),
+            Expr::Literal(s) => text == s,
+            Expr::Regex(re) => re.is_match(text),
+            Expr::Wildcard => true,
+            Expr::And(exprs) => exprs.iter().all(|e| e.is_match(text)),
+            Expr::Or(exprs) => exprs.iter().any(|e| e.is_match(text)),
+            Expr::Not(expr) => !expr.is_match(text),
+            Expr::Cond(branches) => branches.iter().any(|b| b.test.is_match(text)),
         }
     }
 
-    /// Returns true if this is the wildcard pattern "*".
+    /// Returns true if this is the wildcard expression.
     pub fn is_wildcard(&self) -> bool {
-        matches!(self, Pattern::Literal(s) if s == "*")
+        matches!(self, Expr::Wildcard)
     }
 }
 
-impl std::fmt::Debug for Pattern {
+impl std::fmt::Debug for Expr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Pattern::Literal(s) => f.debug_tuple("Literal").field(s).finish(),
-            Pattern::Regex(re) => f.debug_tuple("Regex").field(&re.as_str()).finish(),
+            Expr::Literal(s) => f.debug_tuple("Literal").field(s).finish(),
+            Expr::Regex(re) => f.debug_tuple("Regex").field(&re.as_str()).finish(),
+            Expr::Wildcard => write!(f, "Wildcard"),
+            Expr::And(exprs) => f.debug_tuple("And").field(exprs).finish(),
+            Expr::Or(exprs) => f.debug_tuple("Or").field(exprs).finish(),
+            Expr::Not(expr) => f.debug_tuple("Not").field(expr).finish(),
+            Expr::Cond(branches) => f.debug_tuple("Cond").field(branches).finish(),
         }
     }
+}
+
+/// A branch in an expression-level cond.
+#[derive(Debug, Clone)]
+pub struct ExprBranch {
+    pub test: Expr,
+    pub effect: Effect,
 }
 
 /// Top-level configuration.
@@ -122,29 +149,27 @@ impl Default for SecurityConfig {
 pub struct Rule {
     pub command: CommandMatcher,
     pub matcher: Option<ArgMatcher>,
-    pub decision: Option<Decision>,
-    pub reason: Option<String>,
+    pub effect: Option<Effect>,
     pub examples: Vec<Example>,
 }
 
-/// A single branch inside a `cond` form.
+/// A single branch inside a matcher-level `cond` form.
 #[derive(Debug, Clone)]
 pub struct CondBranch {
-    /// None means wildcard (`_` or `t`).
+    /// None means catch-all (`else`).
     pub matcher: Option<ArgMatcher>,
-    pub decision: Decision,
-    pub reason: Option<String>,
+    pub effect: Effect,
 }
 
 /// Argument matching strategies.
 #[derive(Debug, Clone)]
 pub enum ArgMatcher {
-    /// Match positional args by position (skip flags). "*" = any value.
-    Positional(Vec<Pattern>),
+    /// Match positional args by position (skip flags). Wildcard = any value.
+    Positional(Vec<Expr>),
     /// Like `Positional`, but requires exactly as many positional args as patterns.
-    ExactPositional(Vec<Pattern>),
+    ExactPositional(Vec<Expr>),
     /// Token appears anywhere in argv.
-    Anywhere(Vec<Pattern>),
+    Anywhere(Vec<Expr>),
     /// All sub-matchers must match.
     And(Vec<ArgMatcher>),
     /// Any sub-matcher must match.
@@ -159,7 +184,7 @@ pub enum ArgMatcher {
 #[derive(Debug, Clone)]
 pub struct Wrapper {
     pub command: String,
-    pub positional_args: Vec<Pattern>,
+    pub positional_args: Vec<Expr>,
     pub kind: WrapperKind,
 }
 
@@ -270,90 +295,124 @@ mod tests {
         assert_eq!(format!("{}", Decision::Deny), "deny");
     }
 
-    // --- Pattern::new ---
+    // --- Expr::is_match ---
 
     #[test]
-    fn pattern_new_literal() {
-        let p = Pattern::new("hello").unwrap();
-        assert!(matches!(p, Pattern::Literal(s) if s == "hello"));
+    fn expr_literal_exact_match() {
+        let e = Expr::Literal("hello".into());
+        assert!(e.is_match("hello"));
     }
 
     #[test]
-    fn pattern_new_regex() {
-        let p = Pattern::new("^foo.*bar$").unwrap();
-        assert!(matches!(p, Pattern::Regex(_)));
+    fn expr_literal_no_match() {
+        let e = Expr::Literal("hello".into());
+        assert!(!e.is_match("world"));
     }
 
     #[test]
-    fn pattern_new_invalid_regex() {
-        let result = Pattern::new("^[invalid");
-        assert!(result.is_err());
-    }
-
-    // --- Pattern::is_match ---
-
-    #[test]
-    fn pattern_literal_exact_match() {
-        let p = Pattern::new("hello").unwrap();
-        assert!(p.is_match("hello"));
+    fn expr_literal_no_partial_match() {
+        let e = Expr::Literal("hello".into());
+        assert!(!e.is_match("hello world"));
     }
 
     #[test]
-    fn pattern_literal_no_match() {
-        let p = Pattern::new("hello").unwrap();
-        assert!(!p.is_match("world"));
+    fn expr_regex_match() {
+        let e = Expr::Regex(regex::Regex::new("^foo.*bar$").unwrap());
+        assert!(e.is_match("fooXbar"));
     }
 
     #[test]
-    fn pattern_literal_no_partial_match() {
-        let p = Pattern::new("hello").unwrap();
-        assert!(!p.is_match("hello world"));
+    fn expr_regex_no_match() {
+        let e = Expr::Regex(regex::Regex::new("^foo.*bar$").unwrap());
+        assert!(!e.is_match("baz"));
     }
 
     #[test]
-    fn pattern_regex_match() {
-        let p = Pattern::new("^foo.*bar$").unwrap();
-        assert!(p.is_match("fooXbar"));
+    fn expr_wildcard_matches_anything() {
+        assert!(Expr::Wildcard.is_match("anything"));
+        assert!(Expr::Wildcard.is_match(""));
     }
 
     #[test]
-    fn pattern_regex_no_match() {
-        let p = Pattern::new("^foo.*bar$").unwrap();
-        assert!(!p.is_match("baz"));
-    }
-
-    // --- Pattern::is_wildcard ---
-
-    #[test]
-    fn pattern_is_wildcard_star() {
-        let p = Pattern::new("*").unwrap();
-        assert!(p.is_wildcard());
+    fn expr_and_all_match() {
+        let e = Expr::And(vec![
+            Expr::Regex(regex::Regex::new("^f").unwrap()),
+            Expr::Regex(regex::Regex::new("o$").unwrap()),
+        ]);
+        assert!(e.is_match("foo"));
     }
 
     #[test]
-    fn pattern_is_wildcard_not_star() {
-        let p = Pattern::new("hello").unwrap();
-        assert!(!p.is_wildcard());
+    fn expr_and_one_fails() {
+        let e = Expr::And(vec![
+            Expr::Regex(regex::Regex::new("^f").unwrap()),
+            Expr::Regex(regex::Regex::new("z$").unwrap()),
+        ]);
+        assert!(!e.is_match("foo"));
     }
 
     #[test]
-    fn pattern_is_wildcard_regex_not_wildcard() {
-        let p = Pattern::new("^.*$").unwrap();
-        assert!(!p.is_wildcard());
-    }
-
-    // --- Pattern::Debug ---
-
-    #[test]
-    fn pattern_debug_literal() {
-        let p = Pattern::new("hello").unwrap();
-        assert_eq!(format!("{:?}", p), r#"Literal("hello")"#);
+    fn expr_or_any_match() {
+        let e = Expr::Or(vec![
+            Expr::Literal("a".into()),
+            Expr::Literal("b".into()),
+        ]);
+        assert!(e.is_match("a"));
+        assert!(e.is_match("b"));
+        assert!(!e.is_match("c"));
     }
 
     #[test]
-    fn pattern_debug_regex() {
-        let p = Pattern::new("^foo$").unwrap();
-        assert_eq!(format!("{:?}", p), r#"Regex("^foo$")"#);
+    fn expr_not_inverts() {
+        let e = Expr::Not(Box::new(Expr::Literal("bad".into())));
+        assert!(e.is_match("good"));
+        assert!(!e.is_match("bad"));
+    }
+
+    #[test]
+    fn expr_cond_matches_branch() {
+        let e = Expr::Cond(vec![ExprBranch {
+            test: Expr::Literal("a".into()),
+            effect: Effect { decision: Decision::Allow, reason: None },
+        }]);
+        assert!(e.is_match("a"));
+        assert!(!e.is_match("b"));
+    }
+
+    // --- Expr::is_wildcard ---
+
+    #[test]
+    fn expr_is_wildcard() {
+        assert!(Expr::Wildcard.is_wildcard());
+    }
+
+    #[test]
+    fn expr_literal_not_wildcard() {
+        assert!(!Expr::Literal("hello".into()).is_wildcard());
+    }
+
+    #[test]
+    fn expr_regex_not_wildcard() {
+        assert!(!Expr::Regex(regex::Regex::new("^.*$").unwrap()).is_wildcard());
+    }
+
+    // --- Expr::Debug ---
+
+    #[test]
+    fn expr_debug_literal() {
+        let e = Expr::Literal("hello".into());
+        assert_eq!(format!("{:?}", e), r#"Literal("hello")"#);
+    }
+
+    #[test]
+    fn expr_debug_regex() {
+        let e = Expr::Regex(regex::Regex::new("^foo$").unwrap());
+        assert_eq!(format!("{:?}", e), r#"Regex("^foo$")"#);
+    }
+
+    #[test]
+    fn expr_debug_wildcard() {
+        assert_eq!(format!("{:?}", Expr::Wildcard), "Wildcard");
     }
 
     // --- CommandMatcher::Debug ---

@@ -40,7 +40,7 @@ decision-kw = ":allow" | ":deny" | ":ask"
 reason    = STRING
 cond      = "(" "cond" branch+ ")"
 branch    = "(" condition decision ")"
-condition = "_" | "t" | matcher
+condition = "else" | matcher
 
 example   = "(" "example" decision-kw STRING ")"
 
@@ -108,7 +108,8 @@ Comments: `;` to end of line.
               ((positional "source-file" (or "~/.tmux.conf"
                                              "~/.config/tmux/tmux.conf"))
                (effect :allow "Reloading config is safe"))
-              (_ (effect :deny "Unknown tmux command"))))
+              (else
+               (effect :deny "Unknown tmux command"))))
       (example :allow "tmux source-file ~/.tmux.conf")
       (example :deny "tmux kill-server"))
 

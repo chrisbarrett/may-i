@@ -34,7 +34,7 @@ pub fn check_examples(config: &Config) -> Vec<ExampleResult> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{CommandMatcher, Example, Rule};
+    use crate::types::{CommandMatcher, Effect, Example, Rule};
 
     #[test]
     fn check_examples_passing() {
@@ -42,8 +42,7 @@ mod tests {
             rules: vec![Rule {
                 command: CommandMatcher::Exact("ls".into()),
                 matcher: None,
-                decision: Some(Decision::Allow),
-                reason: Some("allowed".into()),
+                effect: Some(Effect { decision: Decision::Allow, reason: Some("allowed".into()) }),
                 examples: vec![Example {
                     command: "ls".into(),
                     expected: Decision::Allow,
@@ -64,8 +63,7 @@ mod tests {
             rules: vec![Rule {
                 command: CommandMatcher::Exact("ls".into()),
                 matcher: None,
-                decision: Some(Decision::Allow),
-                reason: Some("allowed".into()),
+                effect: Some(Effect { decision: Decision::Allow, reason: Some("allowed".into()) }),
                 examples: vec![Example {
                     command: "ls".into(),
                     expected: Decision::Deny, // wrong expectation
@@ -92,8 +90,7 @@ mod tests {
                 Rule {
                     command: CommandMatcher::Exact("ls".into()),
                     matcher: None,
-                    decision: Some(Decision::Allow),
-                    reason: None,
+                    effect: Some(Effect { decision: Decision::Allow, reason: None }),
                     examples: vec![
                         Example { command: "ls".into(), expected: Decision::Allow },
                     ],
@@ -101,8 +98,7 @@ mod tests {
                 Rule {
                     command: CommandMatcher::Exact("rm".into()),
                     matcher: None,
-                    decision: Some(Decision::Deny),
-                    reason: None,
+                    effect: Some(Effect { decision: Decision::Deny, reason: None }),
                     examples: vec![
                         Example { command: "rm foo".into(), expected: Decision::Deny },
                     ],

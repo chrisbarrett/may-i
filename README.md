@@ -128,13 +128,14 @@ always wins across rules.
               ((positional "source-file" (or "~/.tmux.conf"
                                              "~/.config/tmux/tmux.conf"))
                (effect :allow "Reloading config is safe"))
-              (_ (effect :deny "Unknown tmux command"))))
+              (else
+               (effect :deny "Unknown tmux command"))))
       (example :allow "tmux source-file ~/.tmux.conf")
       (example :deny "tmux kill-server"))
 ```
 
 Each branch is `(matcher effect)` where the matcher is a regular arg matcher
-(e.g. `(positional ...)`, `(anywhere ...)`) or a wildcard (`_` or `t`). Branches
+(e.g. `(positional ...)`, `(anywhere ...)`) or a wildcard (`else`). Branches
 are tried in order; first match wins. If no branch matches, the rule is skipped.
 
 When `cond` is the top-level matcher, effects come from branches and the rule

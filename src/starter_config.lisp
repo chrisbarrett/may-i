@@ -42,7 +42,8 @@
 ;         (args (cond
 ;                 ((positional "source-file" "~/.tmux.conf")
 ;                  (effect :allow "Reloading config"))
-;                 (_ (effect :deny "Unknown tmux command")))))
+;                 (else
+;                  (effect :deny "Unknown tmux command")))))
 ;
 ; INLINE EXAMPLES (validated by `may-i check`)
 ;
