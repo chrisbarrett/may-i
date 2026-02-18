@@ -52,7 +52,7 @@ may-i eval 'rm -rf /'
 # Output: deny: Recursive deletion from root
 
 may-i eval --json 'git push'
-# Output: {"decision":"ask","reason":"No matching rule"}
+# Output: {"decision":"ask","reason":"No matching rule for command `git`"}
 ```
 
 ## Validation & Testing

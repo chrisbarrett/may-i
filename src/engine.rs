@@ -190,7 +190,7 @@ fn evaluate_simple_command(
 
     first_match.unwrap_or(EvalResult {
         decision: Decision::Ask,
-        reason: Some("No matching rule".into()),
+        reason: Some(format!("No matching rule for command `{cmd_name}`")),
     })
 }
 
@@ -449,7 +449,10 @@ mod tests {
         let config = config_with_rules(vec![allow_rule("ls")]);
         let result = evaluate("whoami", &config);
         assert_eq!(result.decision, Decision::Ask);
-        assert_eq!(result.reason.as_deref(), Some("No matching rule"));
+        assert_eq!(
+            result.reason.as_deref(),
+            Some("No matching rule for command `whoami`")
+        );
     }
 
     #[test]
