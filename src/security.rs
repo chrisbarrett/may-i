@@ -1,5 +1,5 @@
 // Security filters — R11
-// Hard-coded credential file blocking that runs before rule evaluation.
+// Credential file blocking that runs before rule evaluation.
 
 use crate::parser::{self, Command, RedirectionTarget};
 use crate::types::Config;
@@ -92,7 +92,13 @@ mod tests {
     use super::*;
 
     fn test_config() -> Config {
-        Config::default()
+        Config {
+            security: crate::types::SecurityConfig {
+                blocked_paths: crate::types::default_blocked_path_patterns(),
+                ..Default::default()
+            },
+            ..Config::default()
+        }
     }
 
     /// Helper: parse input and call check_blocked_paths with the AST.

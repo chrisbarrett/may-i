@@ -441,6 +441,13 @@ mod tests {
         }
     }
 
+    fn default_blocked_paths() -> SecurityConfig {
+        SecurityConfig {
+            blocked_paths: crate::types::default_blocked_path_patterns(),
+            ..Default::default()
+        }
+    }
+
     fn allow_rule(cmd: &str) -> Rule {
         Rule {
             command: CommandMatcher::Exact(cmd.to_string()),
@@ -1055,6 +1062,7 @@ mod tests {
     fn security_blocked_path_denies() {
         let config = Config {
             rules: vec![allow_rule("cat")],
+            security: default_blocked_paths(),
             ..Config::default()
         };
         let result = evaluate("cat .env", &config);
@@ -1076,6 +1084,7 @@ mod tests {
     fn security_ssh_path_blocked() {
         let config = Config {
             rules: vec![allow_rule("cat")],
+            security: default_blocked_paths(),
             ..Config::default()
         };
         let result = evaluate("cat .ssh/id_rsa", &config);
@@ -1220,12 +1229,11 @@ mod tests {
     #[test]
     fn resolved_env_var_blocked_path_denies() {
         unsafe { std::env::set_var("TEST_MAYI_HOME2", "/home/user") };
+        let mut sec = default_blocked_paths();
+        sec.safe_env_vars = ["TEST_MAYI_HOME2".to_string()].into();
         let config = Config {
             rules: vec![allow_rule("cat")],
-            security: SecurityConfig {
-                safe_env_vars: ["TEST_MAYI_HOME2".to_string()].into(),
-                ..SecurityConfig::default()
-            },
+            security: sec,
             ..Config::default()
         };
         let result = evaluate("cat $TEST_MAYI_HOME2/.ssh/id_rsa", &config);
@@ -1377,6 +1385,7 @@ mod tests {
     fn blocked_path_in_redirect_target_denies() {
         let config = Config {
             rules: vec![allow_rule("echo")],
+            security: default_blocked_paths(),
             ..Config::default()
         };
         let result = evaluate("echo secret > .env", &config);
@@ -1388,12 +1397,11 @@ mod tests {
     #[test]
     fn resolved_blocked_path_in_redirect_denies() {
         unsafe { std::env::set_var("TEST_MAYI_REDIR", ".ssh/id_rsa") };
+        let mut sec = default_blocked_paths();
+        sec.safe_env_vars = ["TEST_MAYI_REDIR".to_string()].into();
         let config = Config {
             rules: vec![allow_rule("echo")],
-            security: SecurityConfig {
-                safe_env_vars: ["TEST_MAYI_REDIR".to_string()].into(),
-                ..SecurityConfig::default()
-            },
+            security: sec,
             ..Config::default()
         };
         let result = evaluate("echo hello > $TEST_MAYI_REDIR", &config);
@@ -1406,12 +1414,11 @@ mod tests {
     #[test]
     fn resolved_blocked_path_in_word_denies() {
         unsafe { std::env::set_var("TEST_MAYI_FILE2", ".env") };
+        let mut sec = default_blocked_paths();
+        sec.safe_env_vars = ["TEST_MAYI_FILE2".to_string()].into();
         let config = Config {
             rules: vec![allow_rule("cat")],
-            security: SecurityConfig {
-                safe_env_vars: ["TEST_MAYI_FILE2".to_string()].into(),
-                ..SecurityConfig::default()
-            },
+            security: sec,
             ..Config::default()
         };
         let result = evaluate("cat $TEST_MAYI_FILE2", &config);

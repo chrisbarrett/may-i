@@ -1,7 +1,7 @@
 # Security Filters
 
-Hard-coded security checks that run before rule evaluation. These cannot be
-overridden by user configuration.
+Security checks that run before rule evaluation. These cannot be overridden by
+user rules. Default patterns ship with the starter config.
 
 ---
 

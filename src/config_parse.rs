@@ -533,7 +533,7 @@ mod tests {
         let config = parse("").unwrap();
         assert!(config.rules.is_empty());
         assert!(config.wrappers.is_empty());
-        assert!(!config.security.blocked_paths.is_empty());
+        assert!(config.security.blocked_paths.is_empty());
     }
 
     #[test]
@@ -832,16 +832,15 @@ mod tests {
             .collect();
         assert!(patterns.contains(&"\\.secret/"));
         assert!(patterns.contains(&"^/private/"));
-        assert!(patterns.iter().any(|p| p.contains(".env")));
     }
 
     #[test]
     fn blocked_paths_no_duplicates() {
         let config = parse(
-            r#"(blocked-paths "(^|/)\\.env($|[./])")"#,
+            r#"(blocked-paths "(^|/)\\.env($|[./])" "(^|/)\\.env($|[./])")"#,
         )
         .unwrap();
-        assert_eq!(config.security.blocked_paths.len(), 10);
+        assert_eq!(config.security.blocked_paths.len(), 1);
     }
 
     #[test]
@@ -867,7 +866,7 @@ mod tests {
         let config = parse(input).unwrap();
         assert_eq!(config.rules.len(), 3);
         assert_eq!(config.wrappers.len(), 2);
-        assert!(config.security.blocked_paths.len() >= 10);
+        assert_eq!(config.security.blocked_paths.len(), 2);
     }
 
     // ── Error cases ────────────────────────────────────────────────────
@@ -1143,7 +1142,7 @@ mod tests {
         assert!(config.security.safe_env_vars.contains("HOME"));
         assert!(config.security.safe_env_vars.contains("EDITOR"));
         assert_eq!(config.rules.len(), 1);
-        assert!(config.security.blocked_paths.len() > 10); // defaults + custom
+        assert_eq!(config.security.blocked_paths.len(), 1);
     }
 
     // ── cond parsing ──────────────────────────────────────────────────

@@ -119,7 +119,7 @@ Comments: `;` to end of line.
 (wrapper "mise" (positional "exec") (after "--"))
 (wrapper "nix" (positional "shell") (after "--command"))
 
-;; Security: blocked path patterns (regexes, appended to built-in defaults)
+;; Security: blocked path patterns (regexes)
 (blocked-paths
   "\\.env"
   "\\.ssh/"

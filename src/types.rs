@@ -130,7 +130,7 @@ pub struct Config {
 }
 
 /// Security section of config.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct SecurityConfig {
     pub blocked_paths: Vec<regex::Regex>,
     pub safe_env_vars: std::collections::HashSet<String>,
@@ -146,27 +146,26 @@ impl std::fmt::Debug for SecurityConfig {
     }
 }
 
-impl Default for SecurityConfig {
-    fn default() -> Self {
-        SecurityConfig {
-            safe_env_vars: std::collections::HashSet::new(),
-            blocked_paths: [
-                r"(^|/)\.env($|[./])",
-                r"(^|/)\.ssh/",
-                r"(^|/)\.aws/",
-                r"(^|/)\.gnupg/",
-                r"(^|/)\.docker/",
-                r"(^|/)\.kube/",
-                r"(^|/)credentials\.json($|[./])",
-                r"(^|/)\.netrc($|[./])",
-                r"(^|/)\.npmrc($|[./])",
-                r"(^|/)\.pypirc($|[./])",
-            ]
-            .iter()
-            .map(|p| regex::Regex::new(p).expect("invalid default blocked path regex"))
-            .collect(),
-        }
-    }
+/// The blocked-path patterns that ship with the example/starter config.
+/// Exposed for tests that need to exercise security filtering without
+/// loading a config file.
+#[cfg(test)]
+pub fn default_blocked_path_patterns() -> Vec<regex::Regex> {
+    [
+        r"(^|/)\.env($|[./])",
+        r"(^|/)\.ssh/",
+        r"(^|/)\.aws/",
+        r"(^|/)\.gnupg/",
+        r"(^|/)\.docker/",
+        r"(^|/)\.kube/",
+        r"(^|/)credentials\.json($|[./])",
+        r"(^|/)\.netrc($|[./])",
+        r"(^|/)\.npmrc($|[./])",
+        r"(^|/)\.pypirc($|[./])",
+    ]
+    .iter()
+    .map(|p| regex::Regex::new(p).expect("invalid blocked path regex"))
+    .collect()
 }
 
 /// A configured authorization rule.
@@ -647,29 +646,27 @@ mod tests {
     // --- SecurityConfig::default ---
 
     #[test]
-    fn security_config_default_has_expected_paths() {
+    fn security_config_default_is_empty() {
         let sc = SecurityConfig::default();
-        let patterns: Vec<&str> = sc.blocked_paths.iter().map(|r| r.as_str()).collect();
-        assert!(patterns.iter().any(|p| p.contains(".env")));
-        assert!(patterns.iter().any(|p| p.contains(".ssh")));
-        assert!(patterns.iter().any(|p| p.contains(".aws")));
-        assert!(patterns.iter().any(|p| p.contains(".gnupg")));
-        assert!(patterns.iter().any(|p| p.contains(".docker")));
-        assert!(patterns.iter().any(|p| p.contains(".kube")));
-        assert!(patterns.iter().any(|p| p.contains("credentials")));
-        assert!(patterns.iter().any(|p| p.contains(".netrc")));
-        assert!(patterns.iter().any(|p| p.contains(".npmrc")));
-        assert!(patterns.iter().any(|p| p.contains(".pypirc")));
-        assert_eq!(sc.blocked_paths.len(), 10);
+        assert!(sc.blocked_paths.is_empty());
+        assert!(sc.safe_env_vars.is_empty());
     }
 
     #[test]
-    fn security_config_default_blocks_dotenv() {
-        let sc = SecurityConfig::default();
-        let env_re = sc.blocked_paths.iter().find(|r| r.as_str().contains(".env")).unwrap();
-        assert!(env_re.is_match(".env"));
-        assert!(env_re.is_match("path/.env"));
-        assert!(env_re.is_match(".env.local"));
+    fn default_blocked_path_patterns_has_expected_paths() {
+        let patterns = default_blocked_path_patterns();
+        let strs: Vec<&str> = patterns.iter().map(|r| r.as_str()).collect();
+        assert!(strs.iter().any(|p| p.contains(".env")));
+        assert!(strs.iter().any(|p| p.contains(".ssh")));
+        assert!(strs.iter().any(|p| p.contains(".aws")));
+        assert!(strs.iter().any(|p| p.contains(".gnupg")));
+        assert!(strs.iter().any(|p| p.contains(".docker")));
+        assert!(strs.iter().any(|p| p.contains(".kube")));
+        assert!(strs.iter().any(|p| p.contains("credentials")));
+        assert!(strs.iter().any(|p| p.contains(".netrc")));
+        assert!(strs.iter().any(|p| p.contains(".npmrc")));
+        assert!(strs.iter().any(|p| p.contains(".pypirc")));
+        assert_eq!(patterns.len(), 10);
     }
 
     // --- SecurityConfig::Debug ---
@@ -679,7 +676,6 @@ mod tests {
         let sc = SecurityConfig::default();
         let dbg = format!("{:?}", sc);
         assert!(dbg.contains("SecurityConfig"));
-        assert!(dbg.contains(".env"));
     }
 
     // --- Expr::Debug (And, Or, Not, Cond) ---

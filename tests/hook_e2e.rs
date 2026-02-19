@@ -26,6 +26,11 @@ const TEST_CONFIG: &str = r#"
 
 (rule (command "echo")
       (effect :allow "Shell builtin"))
+
+(blocked-paths
+  "(^|/)\\.env($|[./])"
+  "(^|/)\\.ssh/"
+  "(^|/)\\.aws/")
 "#;
 
 fn write_config() -> NamedTempFile {
