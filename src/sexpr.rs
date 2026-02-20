@@ -271,7 +271,12 @@ fn parse_one(input: &str, tokens: &[Token], pos: usize, errors: &mut Vec<RawErro
                 match tokens.get(p) {
                     None => {
                         // Case A: unclosed '(' at EOF — fatal, nothing left to parse
+                        let label = match items.first().and_then(|s| s.as_atom()) {
+                            Some(name) => format!("the {name} starting here"),
+                            None => "starting here".to_string(),
+                        };
                         let mut err = RawError::new("unclosed '('", *open_span)
+                            .with_label(label)
                             .with_help("add a closing ')'");
                         if let Some(last_item) = items.last() {
                             let last_span = last_item.span();
@@ -301,7 +306,12 @@ fn parse_one(input: &str, tokens: &[Token], pos: usize, errors: &mut Vec<RawErro
                         {
                             // Recover: implicitly close this list
                             let insert_point = items.last().unwrap().span().end;
+                            let label = match items.first().and_then(|s| s.as_atom()) {
+                                Some(name) => format!("the {name} starting here"),
+                                None => "starting here".to_string(),
+                            };
                             let mut err = RawError::new("unclosed '('", *open_span)
+                                .with_label(label)
                                 .with_help("add a closing ')'");
                             err = err.with_secondary(
                                 Span::new(insert_point, insert_point),
@@ -779,6 +789,7 @@ mod tests {
         let err = parse_result(input).unwrap_err();
         assert_eq!(err.message, "unclosed '('");
         assert_eq!(err.span, Span::new(0, 1));
+        assert_eq!(err.label.as_deref(), Some("the rule starting here"));
         assert!(err.help.as_deref() == Some("add a closing ')'"));
         let (sec_span, sec_label) = err.secondary.as_deref().unwrap();
         assert_eq!(sec_label, "last item ends here");
@@ -788,10 +799,11 @@ mod tests {
 
     #[test]
     fn unclosed_paren_at_eof_empty_list() {
-        // Case A with no items: no secondary
+        // Case A with no items: no secondary, generic label
         let input = "(";
         let err = parse_result(input).unwrap_err();
         assert_eq!(err.message, "unclosed '('");
+        assert_eq!(err.label.as_deref(), Some("starting here"));
         assert!(err.secondary.is_none());
     }
 
@@ -833,6 +845,7 @@ mod tests {
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].message, "unclosed '('");
         assert_eq!(errors[0].span, Span::new(0, 1)); // opener
+        assert_eq!(errors[0].label.as_deref(), Some("the rule starting here"));
         let (sec_span, sec_label) = errors[0].secondary.as_deref().unwrap();
         assert_eq!(sec_label, "insert ')' here");
         // "foo" ends at offset 9, that's where ')' should be inserted
