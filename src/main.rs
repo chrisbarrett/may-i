@@ -7,6 +7,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 use may_i::check;
 use may_i::config;
 use may_i::engine;
+use may_i::errors::LoadError;
 use may_i::parser;
 
 #[derive(Parser)]
@@ -40,8 +41,17 @@ enum Command {
 }
 
 fn main() {
+    miette::set_hook(Box::new(|_| {
+        Box::new(
+            miette::MietteHandlerOpts::new()
+                .terminal_links(false)
+                .build(),
+        )
+    }))
+    .ok();
+
     if let Err(e) = run() {
-        eprintln!("error: {e}");
+        eprintln!("{e:?}");
         // Exit code 2 signals a blocking error to Claude Code hooks.
         // stderr is fed back to Claude so it can adjust its plan.
         std::process::exit(2);
@@ -49,37 +59,38 @@ fn main() {
 }
 
 /// Main entry point for the CLI.
-fn run() -> Result<(), String> {
+fn run() -> miette::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Command::Eval { command }) => cmd_eval(&command, cli.json, cli.config.as_deref()),
-        Some(Command::Check) => cmd_check(cli.json, cli.config.as_deref()),
-        Some(Command::Parse { command, file }) => cmd_parse(command, file),
+        Some(Command::Eval { command }) => cmd_eval(&command, cli.json, cli.config.as_deref())?,
+        Some(Command::Check) => cmd_check(cli.json, cli.config.as_deref())?,
+        Some(Command::Parse { command, file }) => cmd_parse(command, file)?,
         None => {
             if std::io::stdin().is_terminal() {
                 Cli::command()
                     .print_help()
-                    .map_err(|e| format!("Failed to print help: {e}"))?;
+                    .map_err(|e| miette::miette!("Failed to print help: {e}"))?;
                 println!();
-                Ok(())
             } else {
-                cmd_hook(cli.config.as_deref())
+                cmd_hook(cli.config.as_deref())?;
             }
         }
     }
+
+    Ok(())
 }
 
 /// Hook mode — read Claude Code hook payload from stdin, evaluate, respond.
-fn cmd_hook(config_path: Option<&std::path::Path>) -> Result<(), String> {
+fn cmd_hook(config_path: Option<&std::path::Path>) -> Result<(), LoadError> {
     let mut input = String::new();
     std::io::stdin()
         .take(65536)
         .read_to_string(&mut input)
-        .map_err(|e| format!("Failed to read stdin: {e}"))?;
+        .map_err(|e| LoadError::Io(format!("Failed to read stdin: {e}")))?;
 
-    let payload: serde_json::Value =
-        serde_json::from_str(&input).map_err(|e| format!("Invalid JSON: {e}"))?;
+    let payload: serde_json::Value = serde_json::from_str(&input)
+        .map_err(|e| LoadError::Io(format!("Invalid JSON: {e}")))?;
 
     // If tool is not "Bash", exit silently (allow the call)
     let tool_name = payload
@@ -95,7 +106,7 @@ fn cmd_hook(config_path: Option<&std::path::Path>) -> Result<(), String> {
         .get("tool_input")
         .and_then(|v| v.get("command"))
         .and_then(|v| v.as_str())
-        .ok_or("Missing tool_input.command")?;
+        .ok_or_else(|| LoadError::Io("Missing tool_input.command".into()))?;
 
     let config = config::load(config_path)?;
     let result = engine::evaluate(command, &config);
@@ -113,7 +124,11 @@ fn cmd_hook(config_path: Option<&std::path::Path>) -> Result<(), String> {
 }
 
 /// Eval subcommand — evaluate a command and print result.
-fn cmd_eval(command: &str, json_mode: bool, config_path: Option<&std::path::Path>) -> Result<(), String> {
+fn cmd_eval(
+    command: &str,
+    json_mode: bool,
+    config_path: Option<&std::path::Path>,
+) -> Result<(), LoadError> {
     let config = config::load(config_path)?;
     let result = engine::evaluate(command, &config);
 
@@ -136,7 +151,7 @@ fn cmd_eval(command: &str, json_mode: bool, config_path: Option<&std::path::Path
 }
 
 /// Check subcommand — validate config and run checks.
-fn cmd_check(json_mode: bool, config_path: Option<&std::path::Path>) -> Result<(), String> {
+fn cmd_check(json_mode: bool, config_path: Option<&std::path::Path>) -> Result<(), LoadError> {
     let config = config::load(config_path)?;
     let results = check::run_checks(&config);
 
@@ -182,33 +197,34 @@ fn cmd_check(json_mode: bool, config_path: Option<&std::path::Path>) -> Result<(
     }
 
     if failed > 0 {
-        Err(format!("{failed} check(s) failed"))
+        Err(LoadError::Io(format!("{failed} check(s) failed")))
     } else {
         Ok(())
     }
 }
 
 /// Parse subcommand — parse a shell command and print the AST.
-fn cmd_parse(command: Option<String>, file: Option<String>) -> Result<(), String> {
+fn cmd_parse(command: Option<String>, file: Option<String>) -> miette::Result<()> {
     let input = if let Some(path) = file {
         if path == "-" {
             let mut buf = String::new();
             std::io::stdin()
                 .read_to_string(&mut buf)
-                .map_err(|e| format!("Failed to read stdin: {e}"))?;
+                .map_err(|e| miette::miette!("Failed to read stdin: {e}"))?;
             buf
         } else {
             std::fs::read_to_string(&path)
-                .map_err(|e| format!("Failed to read {path}: {e}"))?
+                .map_err(|e| miette::miette!("Failed to read {path}: {e}"))?
         }
     } else if let Some(cmd) = command {
         cmd
     } else {
-        return Err("Usage: may-i parse '<command>' or may-i parse -f <file>".to_string());
+        return Err(miette::miette!(
+            "Usage: may-i parse '<command>' or may-i parse -f <file>"
+        ));
     };
 
     let ast = parser::parse(&input);
     println!("{ast:#?}");
     Ok(())
 }
-

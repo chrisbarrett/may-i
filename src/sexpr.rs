@@ -6,27 +6,47 @@
 // Comments: ; to end of line
 // Parentheses delimit lists.
 
-/// S-expression AST node.
-#[derive(Debug, Clone, PartialEq, Eq)]
+use crate::errors::{RawError, Span};
+
+/// S-expression AST node with source spans.
+#[derive(Debug, Clone, Eq)]
 pub enum Sexpr {
-    Atom(String),
-    List(Vec<Sexpr>),
+    Atom(String, Span),
+    List(Vec<Sexpr>, Span),
+}
+
+/// PartialEq ignores spans so existing test assertions are preserved.
+impl PartialEq for Sexpr {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Sexpr::Atom(a, _), Sexpr::Atom(b, _)) => a == b,
+            (Sexpr::List(a, _), Sexpr::List(b, _)) => a == b,
+            _ => false,
+        }
+    }
 }
 
 impl Sexpr {
     /// Return the atom string, or `None` if this is a list.
     pub fn as_atom(&self) -> Option<&str> {
         match self {
-            Sexpr::Atom(s) => Some(s),
-            Sexpr::List(_) => None,
+            Sexpr::Atom(s, _) => Some(s),
+            Sexpr::List(..) => None,
         }
     }
 
     /// Return the list contents, or `None` if this is an atom.
     pub fn as_list(&self) -> Option<&[Sexpr]> {
         match self {
-            Sexpr::Atom(_) => None,
-            Sexpr::List(v) => Some(v),
+            Sexpr::Atom(..) => None,
+            Sexpr::List(v, _) => Some(v),
+        }
+    }
+
+    /// Return the byte-offset span of this node.
+    pub fn span(&self) -> Span {
+        match self {
+            Sexpr::Atom(_, s) | Sexpr::List(_, s) => *s,
         }
     }
 }
@@ -34,14 +54,14 @@ impl Sexpr {
 impl std::fmt::Display for Sexpr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Sexpr::Atom(s) => {
+            Sexpr::Atom(s, _) => {
                 if s.is_empty() || s.contains(|c: char| c.is_whitespace() || c == '(' || c == ')' || c == '"' || c == ';' || c == '\\') {
                     write!(f, "\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
                 } else {
                     write!(f, "{s}")
                 }
             }
-            Sexpr::List(items) => {
+            Sexpr::List(items, _) => {
                 write!(f, "(")?;
                 for (i, item) in items.iter().enumerate() {
                     if i > 0 {
@@ -57,8 +77,14 @@ impl std::fmt::Display for Sexpr {
 
 // --- Tokenizer ---
 
+#[derive(Debug)]
+struct Token {
+    kind: TokenKind,
+    span: Span,
+}
+
 #[derive(Debug, PartialEq)]
-enum Token {
+enum TokenKind {
     Open,
     Close,
     Atom(String),
@@ -69,18 +95,18 @@ fn is_atom_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '*' | '.' | '/' | '^' | ':' | '+' | '?')
 }
 
-fn tokenize(input: &str) -> Result<Vec<Token>, String> {
+fn tokenize(input: &str) -> Result<Vec<Token>, RawError> {
     let mut tokens = Vec::new();
-    let mut chars = input.chars().peekable();
+    let mut chars = input.char_indices().peekable();
 
-    while let Some(&ch) = chars.peek() {
+    while let Some(&(pos, ch)) = chars.peek() {
         match ch {
             ' ' | '\t' | '\n' | '\r' => {
                 chars.next();
             }
             ';' => {
                 // Comment: skip to end of line
-                while let Some(&c) = chars.peek() {
+                while let Some(&(_, c)) = chars.peek() {
                     chars.next();
                     if c == '\n' {
                         break;
@@ -88,46 +114,82 @@ fn tokenize(input: &str) -> Result<Vec<Token>, String> {
                 }
             }
             '(' => {
-                tokens.push(Token::Open);
+                tokens.push(Token { kind: TokenKind::Open, span: Span::new(pos, pos + 1) });
                 chars.next();
             }
             ')' => {
-                tokens.push(Token::Close);
+                tokens.push(Token { kind: TokenKind::Close, span: Span::new(pos, pos + 1) });
                 chars.next();
             }
             '"' => {
+                let start = pos;
                 chars.next();
                 let mut s = String::new();
                 loop {
                     match chars.next() {
-                        None => return Err("unterminated string".into()),
-                        Some('"') => break,
-                        Some('\\') => match chars.next() {
-                            Some('\\') => s.push('\\'),
-                            Some('"') => s.push('"'),
-                            Some('n') => s.push('\n'),
-                            Some('t') => s.push('\t'),
-                            Some(c) => return Err(format!("unknown escape: \\{c}")),
-                            None => return Err("unterminated escape in string".into()),
+                        None => {
+                            return Err(RawError::new(
+                                "unterminated string",
+                                Span::new(start, input.len()),
+                            ));
+                        }
+                        Some((end_pos, '"')) => {
+                            tokens.push(Token {
+                                kind: TokenKind::Str(s),
+                                span: Span::new(start, end_pos + 1),
+                            });
+                            break;
+                        }
+                        Some((esc_pos, '\\')) => match chars.next() {
+                            Some((_, '\\')) => s.push('\\'),
+                            Some((_, '"')) => s.push('"'),
+                            Some((_, 'n')) => s.push('\n'),
+                            Some((_, 't')) => s.push('\t'),
+                            Some((end_pos, c)) => {
+                                return Err(RawError::new(
+                                    format!("unknown escape: \\{c}"),
+                                    Span::new(esc_pos, end_pos + c.len_utf8()),
+                                ));
+                            }
+                            None => {
+                                return Err(RawError::new(
+                                    "unterminated escape in string",
+                                    Span::new(esc_pos, input.len()),
+                                ));
+                            }
                         },
-                        Some(c) => s.push(c),
+                        Some((_, c)) => s.push(c),
                     }
                 }
-                tokens.push(Token::Str(s));
             }
             c if is_atom_char(c) => {
+                let start = pos;
                 let mut s = String::new();
-                while let Some(&c) = chars.peek() {
-                    if is_atom_char(c) {
-                        s.push(c);
-                        chars.next();
-                    } else {
-                        break;
+                let mut end = input.len();
+                loop {
+                    match chars.peek() {
+                        Some(&(end_pos, c)) if is_atom_char(c) => {
+                            s.push(c);
+                            chars.next();
+                        }
+                        Some(&(end_pos, _)) => {
+                            end = end_pos;
+                            break;
+                        }
+                        None => break,
                     }
                 }
-                tokens.push(Token::Atom(s));
+                tokens.push(Token {
+                    kind: TokenKind::Atom(s),
+                    span: Span::new(start, end),
+                });
             }
-            _ => return Err(format!("unexpected character: {ch:?}")),
+            _ => {
+                return Err(RawError::new(
+                    format!("unexpected character: {ch:?}"),
+                    Span::new(pos, pos + ch.len_utf8()),
+                ));
+            }
         }
     }
 
@@ -137,7 +199,7 @@ fn tokenize(input: &str) -> Result<Vec<Token>, String> {
 // --- Parser ---
 
 /// Parse a string containing zero or more s-expressions into a list of top-level forms.
-pub fn parse(input: &str) -> Result<Vec<Sexpr>, String> {
+pub fn parse(input: &str) -> Result<Vec<Sexpr>, RawError> {
     let tokens = tokenize(input)?;
     let mut pos = 0;
     let mut results = Vec::new();
@@ -149,18 +211,31 @@ pub fn parse(input: &str) -> Result<Vec<Sexpr>, String> {
     Ok(results)
 }
 
-fn parse_one(tokens: &[Token], pos: usize) -> Result<(Sexpr, usize), String> {
+fn parse_one(tokens: &[Token], pos: usize) -> Result<(Sexpr, usize), RawError> {
     match tokens.get(pos) {
-        None => Err("unexpected end of input".into()),
-        Some(Token::Close) => Err("unexpected ')'".into()),
-        Some(Token::Atom(s) | Token::Str(s)) => Ok((Sexpr::Atom(s.clone()), pos + 1)),
-        Some(Token::Open) => {
+        None => Err(RawError::new(
+            "unexpected end of input",
+            Span::new(0, 0),
+        )),
+        Some(Token { kind: TokenKind::Close, span }) => Err(RawError::new(
+            "unexpected ')'",
+            *span,
+        )),
+        Some(Token { kind: TokenKind::Atom(s) | TokenKind::Str(s), span }) => {
+            Ok((Sexpr::Atom(s.clone(), *span), pos + 1))
+        }
+        Some(Token { kind: TokenKind::Open, span: open_span }) => {
             let mut items = Vec::new();
             let mut p = pos + 1;
             loop {
                 match tokens.get(p) {
-                    None => return Err("unclosed '('".into()),
-                    Some(Token::Close) => return Ok((Sexpr::List(items), p + 1)),
+                    None => {
+                        return Err(RawError::new("unclosed '('", *open_span));
+                    }
+                    Some(Token { kind: TokenKind::Close, span: close_span }) => {
+                        let list_span = Span::new(open_span.start, close_span.end);
+                        return Ok((Sexpr::List(items, list_span), p + 1));
+                    }
                     _ => {
                         let (item, next) = parse_one(tokens, p)?;
                         items.push(item);
@@ -177,11 +252,11 @@ mod tests {
     use super::*;
 
     fn atom(s: &str) -> Sexpr {
-        Sexpr::Atom(s.to_string())
+        Sexpr::Atom(s.to_string(), Span::new(0, 0))
     }
 
     fn list(items: Vec<Sexpr>) -> Sexpr {
-        Sexpr::List(items)
+        Sexpr::List(items, Span::new(0, 0))
     }
 
     // --- Empty input ---

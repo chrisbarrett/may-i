@@ -1,6 +1,7 @@
 // Configuration parsing — R10, R10a–R10f
 // S-expression configuration for authorization rules, wrappers, and security.
 
+use crate::errors::{ConfigError, RawError, Span};
 use crate::sexpr::Sexpr;
 use crate::types::{
     ArgMatcher, Check, CommandMatcher, CondBranch, Config, Decision, Effect, Expr, ExprBranch,
@@ -8,26 +9,43 @@ use crate::types::{
 };
 
 /// Parse an s-expression config string into Config.
-pub fn parse(input: &str) -> Result<Config, String> {
+///
+/// `filename` is used in diagnostic messages to identify the source file.
+pub fn parse(input: &str, filename: &str) -> Result<Config, Box<ConfigError>> {
+    parse_raw(input).map_err(|raw| Box::new(ConfigError::from_raw(raw, input, filename)))
+}
+
+fn parse_raw(input: &str) -> Result<Config, RawError> {
     let forms = crate::sexpr::parse(input)?;
     let mut rules = Vec::new();
     let mut wrappers = Vec::new();
     let mut security = SecurityConfig::default();
 
     for form in &forms {
-        let list = form.as_list().ok_or("top-level form must be a list")?;
+        let list = form.as_list().ok_or_else(|| {
+            RawError::new("top-level form must be a list", form.span())
+                .with_label("expected a parenthesised form")
+        })?;
         if list.is_empty() {
-            return Err("empty top-level form".into());
+            return Err(RawError::new("empty top-level form", form.span()));
         }
-        let tag = list[0].as_atom().ok_or("form tag must be an atom")?;
+        let tag = list[0].as_atom().ok_or_else(|| {
+            RawError::new("form tag must be an atom", list[0].span())
+        })?;
         match tag {
-            "rule" => rules.push(parse_rule(&list[1..])?),
-            "wrapper" => wrappers.push(parse_wrapper(&list[1..])?),
+            "rule" => rules.push(parse_rule(&list[1..], form.span())?),
+            "wrapper" => wrappers.push(parse_wrapper(&list[1..], form.span())?),
             "blocked-paths" => {
                 for item in &list[1..] {
-                    let s = item.as_atom().ok_or("blocked-paths entry must be a string")?;
-                    let re = regex::Regex::new(s)
-                        .map_err(|e| format!("invalid blocked-path regex '{s}': {e}"))?;
+                    let s = item.as_atom().ok_or_else(|| {
+                        RawError::new("blocked-paths entry must be a string", item.span())
+                    })?;
+                    let re = regex::Regex::new(s).map_err(|e| {
+                        RawError::new(
+                            format!("invalid blocked-path regex '{s}': {e}"),
+                            item.span(),
+                        )
+                    })?;
                     if !security
                         .blocked_paths
                         .iter()
@@ -39,11 +57,20 @@ pub fn parse(input: &str) -> Result<Config, String> {
             }
             "safe-env-vars" => {
                 for item in &list[1..] {
-                    let s = item.as_atom().ok_or("safe-env-vars entry must be a string")?;
+                    let s = item.as_atom().ok_or_else(|| {
+                        RawError::new("safe-env-vars entry must be a string", item.span())
+                    })?;
                     security.safe_env_vars.insert(s.to_string());
                 }
             }
-            other => return Err(format!("unknown top-level form: {other}")),
+            other => {
+                return Err(RawError::new(
+                    format!("unknown top-level form: {other}"),
+                    list[0].span(),
+                )
+                .with_label("not a recognised form")
+                .with_help("valid top-level forms: rule, wrapper, blocked-paths, safe-env-vars"));
+            }
         }
     }
 
@@ -54,22 +81,37 @@ pub fn parse(input: &str) -> Result<Config, String> {
     })
 }
 
-fn parse_effect(list: &[Sexpr]) -> Result<Effect, String> {
+fn parse_effect(list: &[Sexpr]) -> Result<Effect, RawError> {
     if list.len() < 2 {
-        return Err("effect must have a keyword (:allow, :deny, or :ask)".into());
+        let span = list.first().map_or(Span::new(0, 0), |s| s.span());
+        return Err(RawError::new(
+            "effect must have a keyword (:allow, :deny, or :ask)",
+            span,
+        ));
     }
-    let kw = list[1].as_atom().ok_or("effect keyword must be an atom")?;
+    let kw = list[1].as_atom().ok_or_else(|| {
+        RawError::new("effect keyword must be an atom", list[1].span())
+    })?;
     let decision = match kw {
         ":allow" => Decision::Allow,
         ":deny" => Decision::Deny,
         ":ask" => Decision::Ask,
-        other => return Err(format!("unknown effect keyword: {other}")),
+        other => {
+            return Err(RawError::new(
+                format!("unknown effect keyword: {other}"),
+                list[1].span(),
+            )
+            .with_label("not a valid effect keyword")
+            .with_help("valid effect keywords: :allow, :deny, :ask"));
+        }
     };
     let reason = if list.len() > 2 {
         Some(
             list[2]
                 .as_atom()
-                .ok_or("reason must be a string")?
+                .ok_or_else(|| {
+                    RawError::new("reason must be a string", list[2].span())
+                })?
                 .to_string(),
         )
     } else {
@@ -78,50 +120,67 @@ fn parse_effect(list: &[Sexpr]) -> Result<Effect, String> {
     Ok(Effect { decision, reason })
 }
 
-fn parse_cond_branches(list: &[Sexpr]) -> Result<Vec<CondBranch>, String> {
+fn parse_cond_branches(list: &[Sexpr]) -> Result<Vec<CondBranch>, RawError> {
     let branches = &list[1..];
     if branches.is_empty() {
-        return Err("cond must have at least one branch".into());
+        let span = list[0].span();
+        return Err(RawError::new("cond must have at least one branch", span));
     }
     let mut result = Vec::new();
     for branch in branches {
-        let items = branch.as_list().ok_or("cond branch must be a list")?;
+        let items = branch.as_list().ok_or_else(|| {
+            RawError::new("cond branch must be a list", branch.span())
+        })?;
         if items.is_empty() {
-            return Err("empty cond branch".into());
+            return Err(RawError::new("empty cond branch", branch.span()));
         }
         // First element: matcher or catch-all
         let matcher = match &items[0] {
-            Sexpr::Atom(s) if s == "else" => None,
+            Sexpr::Atom(s, _) if s == "else" => None,
             other => Some(parse_matcher(other)?),
         };
         // Remaining elements: find (effect ...)
         let mut effect = None;
         for item in &items[1..] {
-            let il = item.as_list().ok_or("cond branch element must be a list")?;
+            let il = item.as_list().ok_or_else(|| {
+                RawError::new("cond branch element must be a list", item.span())
+            })?;
             if il.is_empty() {
-                return Err("empty cond branch element".into());
+                return Err(RawError::new("empty cond branch element", item.span()));
             }
-            let tag = il[0].as_atom().ok_or("cond branch element tag must be an atom")?;
+            let tag = il[0].as_atom().ok_or_else(|| {
+                RawError::new("cond branch element tag must be an atom", il[0].span())
+            })?;
             if tag == "effect" {
                 effect = Some(parse_effect(il)?);
             } else {
-                return Err(format!("unknown cond branch element: {tag}"));
+                return Err(RawError::new(
+                    format!("unknown cond branch element: {tag}"),
+                    il[0].span(),
+                ));
             }
         }
         result.push(CondBranch {
             matcher,
-            effect: effect.ok_or("cond branch must have an effect")?,
+            effect: effect.ok_or_else(|| {
+                RawError::new("cond branch must have an effect", branch.span())
+            })?,
         });
     }
     Ok(result)
 }
 
-fn parse_matcher_if_form(args: &[Sexpr]) -> Result<ArgMatcher, String> {
+fn parse_matcher_if_form(args: &[Sexpr], form_span: Span) -> Result<ArgMatcher, RawError> {
     if args.len() < 2 || args.len() > 3 {
-        return Err("if must have 2 or 3 arguments: (if MATCHER EFFECT EFFECT?)".into());
+        return Err(RawError::new(
+            "if must have 2 or 3 arguments: (if MATCHER EFFECT EFFECT?)",
+            form_span,
+        ));
     }
     let test = parse_matcher(&args[0])?;
-    let then_list = args[1].as_list().ok_or("if then-branch must be an effect list")?;
+    let then_list = args[1].as_list().ok_or_else(|| {
+        RawError::new("if then-branch must be an effect list", args[1].span())
+    })?;
     let then_effect = parse_effect(then_list)?;
 
     let mut branches = vec![CondBranch {
@@ -130,7 +189,9 @@ fn parse_matcher_if_form(args: &[Sexpr]) -> Result<ArgMatcher, String> {
     }];
 
     if args.len() == 3 {
-        let else_list = args[2].as_list().ok_or("if else-branch must be an effect list")?;
+        let else_list = args[2].as_list().ok_or_else(|| {
+            RawError::new("if else-branch must be an effect list", args[2].span())
+        })?;
         let else_effect = parse_effect(else_list)?;
         branches.push(CondBranch {
             matcher: None,
@@ -141,12 +202,17 @@ fn parse_matcher_if_form(args: &[Sexpr]) -> Result<ArgMatcher, String> {
     Ok(ArgMatcher::Cond(branches))
 }
 
-fn parse_matcher_when_form(args: &[Sexpr]) -> Result<ArgMatcher, String> {
+fn parse_matcher_when_form(args: &[Sexpr], form_span: Span) -> Result<ArgMatcher, RawError> {
     if args.len() != 2 {
-        return Err("when must have exactly 2 arguments: (when MATCHER EFFECT)".into());
+        return Err(RawError::new(
+            "when must have exactly 2 arguments: (when MATCHER EFFECT)",
+            form_span,
+        ));
     }
     let test = parse_matcher(&args[0])?;
-    let effect_list = args[1].as_list().ok_or("when effect must be an effect list")?;
+    let effect_list = args[1].as_list().ok_or_else(|| {
+        RawError::new("when effect must be an effect list", args[1].span())
+    })?;
     let effect = parse_effect(effect_list)?;
     Ok(ArgMatcher::Cond(vec![CondBranch {
         matcher: Some(test),
@@ -154,12 +220,17 @@ fn parse_matcher_when_form(args: &[Sexpr]) -> Result<ArgMatcher, String> {
     }]))
 }
 
-fn parse_matcher_unless_form(args: &[Sexpr]) -> Result<ArgMatcher, String> {
+fn parse_matcher_unless_form(args: &[Sexpr], form_span: Span) -> Result<ArgMatcher, RawError> {
     if args.len() != 2 {
-        return Err("unless must have exactly 2 arguments: (unless MATCHER EFFECT)".into());
+        return Err(RawError::new(
+            "unless must have exactly 2 arguments: (unless MATCHER EFFECT)",
+            form_span,
+        ));
     }
     let test = parse_matcher(&args[0])?;
-    let effect_list = args[1].as_list().ok_or("unless effect must be an effect list")?;
+    let effect_list = args[1].as_list().ok_or_else(|| {
+        RawError::new("unless effect must be an effect list", args[1].span())
+    })?;
     let effect = parse_effect(effect_list)?;
     Ok(ArgMatcher::Cond(vec![CondBranch {
         matcher: Some(ArgMatcher::Not(Box::new(test))),
@@ -167,28 +238,38 @@ fn parse_matcher_unless_form(args: &[Sexpr]) -> Result<ArgMatcher, String> {
     }]))
 }
 
-fn parse_rule(parts: &[Sexpr]) -> Result<Rule, String> {
+fn parse_rule(parts: &[Sexpr], rule_span: Span) -> Result<Rule, RawError> {
     let mut command = None;
     let mut matcher = None;
     let mut effect = None;
     let mut checks = Vec::new();
 
     for part in parts {
-        let list = part.as_list().ok_or("rule element must be a list")?;
+        let list = part.as_list().ok_or_else(|| {
+            RawError::new("rule element must be a list", part.span())
+        })?;
         if list.is_empty() {
-            return Err("empty rule element".into());
+            return Err(RawError::new("empty rule element", part.span()));
         }
-        let tag = list[0].as_atom().ok_or("rule element tag must be an atom")?;
+        let tag = list[0].as_atom().ok_or_else(|| {
+            RawError::new("rule element tag must be an atom", list[0].span())
+        })?;
         match tag {
             "command" => {
                 if list.len() != 2 {
-                    return Err("command must have exactly one value".into());
+                    return Err(RawError::new(
+                        "command must have exactly one value",
+                        part.span(),
+                    ));
                 }
                 command = Some(parse_command(&list[1])?);
             }
             "args" => {
                 if list.len() != 2 {
-                    return Err("args must have exactly one matcher".into());
+                    return Err(RawError::new(
+                        "args must have exactly one matcher",
+                        part.span(),
+                    ));
                 }
                 matcher = Some(parse_matcher(&list[1])?);
             }
@@ -198,25 +279,48 @@ fn parse_rule(parts: &[Sexpr]) -> Result<Rule, String> {
             "check" => {
                 let pairs = &list[1..];
                 if pairs.len() < 2 || pairs.len() % 2 != 0 {
-                    return Err("check must have 1+ paired :decision \"command\" entries".into());
+                    return Err(RawError::new(
+                        "check must have 1+ paired :decision \"command\" entries",
+                        part.span(),
+                    ));
                 }
                 for pair in pairs.chunks(2) {
-                    let expected = match pair[0].as_atom().ok_or("check decision must be an atom")? {
+                    let expected = match pair[0]
+                        .as_atom()
+                        .ok_or_else(|| {
+                            RawError::new("check decision must be an atom", pair[0].span())
+                        })? {
                         ":allow" => Decision::Allow,
                         ":deny" => Decision::Deny,
                         ":ask" => Decision::Ask,
-                        other => return Err(format!("unknown expected decision: {other}")),
+                        other => {
+                            return Err(RawError::new(
+                                format!("unknown expected decision: {other}"),
+                                pair[0].span(),
+                            )
+                            .with_label("not a valid decision")
+                            .with_help("valid decisions: :allow, :deny, :ask"));
+                        }
                     };
                     let cmd = pair[1]
                         .as_atom()
-                        .ok_or("check command must be a string")?;
+                        .ok_or_else(|| {
+                            RawError::new("check command must be a string", pair[1].span())
+                        })?;
                     checks.push(Check {
                         command: cmd.to_string(),
                         expected,
                     });
                 }
             }
-            other => return Err(format!("unknown rule element: {other}")),
+            other => {
+                return Err(RawError::new(
+                    format!("unknown rule element: {other}"),
+                    list[0].span(),
+                )
+                .with_label("not a recognised rule element")
+                .with_help("valid rule elements: command, args, effect, check"));
+            }
         }
     }
 
@@ -225,28 +329,38 @@ fn parse_rule(parts: &[Sexpr]) -> Result<Rule, String> {
         matches!(m, ArgMatcher::Cond(_)) || m.has_effect()
     });
     if has_embedded_effect && effect.is_some() {
-        return Err("cond and effect are mutually exclusive in a rule".into());
+        return Err(RawError::new(
+            "cond and effect are mutually exclusive in a rule",
+            rule_span,
+        ));
     }
     if !has_embedded_effect && effect.is_none() {
-        return Err("rule must have an effect (or a top-level cond matcher)".into());
+        return Err(RawError::new(
+            "rule must have an effect (or a top-level cond matcher)",
+            rule_span,
+        ));
     }
 
     Ok(Rule {
-        command: command.ok_or("rule must have a command")?,
+        command: command.ok_or_else(|| {
+            RawError::new("rule must have a command", rule_span)
+        })?,
         matcher,
         effect,
         checks,
     })
 }
 
-fn parse_command(sexpr: &Sexpr) -> Result<CommandMatcher, String> {
+fn parse_command(sexpr: &Sexpr) -> Result<CommandMatcher, RawError> {
     match sexpr {
-        Sexpr::Atom(s) => Ok(CommandMatcher::Exact(s.clone())),
-        Sexpr::List(list) => {
+        Sexpr::Atom(s, _) => Ok(CommandMatcher::Exact(s.clone())),
+        Sexpr::List(list, span) => {
             if list.is_empty() {
-                return Err("empty command form".into());
+                return Err(RawError::new("empty command form", *span));
             }
-            let tag = list[0].as_atom().ok_or("command form tag must be an atom")?;
+            let tag = list[0].as_atom().ok_or_else(|| {
+                RawError::new("command form tag must be an atom", list[0].span())
+            })?;
             match tag {
                 "or" => {
                     let names: Result<Vec<String>, _> = list[1..]
@@ -254,34 +368,54 @@ fn parse_command(sexpr: &Sexpr) -> Result<CommandMatcher, String> {
                         .map(|s| {
                             s.as_atom()
                                 .map(|s| s.to_string())
-                                .ok_or("or values must be strings".to_string())
+                                .ok_or_else(|| {
+                                    RawError::new("or values must be strings", s.span())
+                                })
                         })
                         .collect();
                     Ok(CommandMatcher::List(names?))
                 }
                 "regex" => {
                     if list.len() != 2 {
-                        return Err("regex must have exactly one pattern".into());
+                        return Err(RawError::new(
+                            "regex must have exactly one pattern",
+                            *span,
+                        ));
                     }
                     let pat = list[1]
                         .as_atom()
-                        .ok_or("regex pattern must be a string")?;
-                    let re = regex::Regex::new(pat)
-                        .map_err(|e| format!("invalid command regex: {e}"))?;
+                        .ok_or_else(|| {
+                            RawError::new("regex pattern must be a string", list[1].span())
+                        })?;
+                    let re = regex::Regex::new(pat).map_err(|e| {
+                        RawError::new(
+                            format!("invalid command regex: {e}"),
+                            list[1].span(),
+                        )
+                    })?;
                     Ok(CommandMatcher::Regex(re))
                 }
-                other => Err(format!("unknown command form: {other}")),
+                other => Err(RawError::new(
+                    format!("unknown command form: {other}"),
+                    list[0].span(),
+                )
+                .with_label("not a recognised command form")
+                .with_help("valid command forms: or, regex")),
             }
         }
     }
 }
 
-fn parse_matcher(sexpr: &Sexpr) -> Result<ArgMatcher, String> {
-    let list = sexpr.as_list().ok_or("matcher must be a list")?;
+fn parse_matcher(sexpr: &Sexpr) -> Result<ArgMatcher, RawError> {
+    let list = sexpr.as_list().ok_or_else(|| {
+        RawError::new("matcher must be a list", sexpr.span())
+    })?;
     if list.is_empty() {
-        return Err("empty matcher".into());
+        return Err(RawError::new("empty matcher", sexpr.span()));
     }
-    let tag = list[0].as_atom().ok_or("matcher tag must be an atom")?;
+    let tag = list[0].as_atom().ok_or_else(|| {
+        RawError::new("matcher tag must be an atom", list[0].span())
+    })?;
     match tag {
         "positional" => {
             let pexprs: Result<Vec<PosExpr>, _> =
@@ -315,20 +449,30 @@ fn parse_matcher(sexpr: &Sexpr) -> Result<ArgMatcher, String> {
         }
         "not" => {
             if list.len() != 2 {
-                return Err("not must have exactly one matcher".into());
+                return Err(RawError::new(
+                    "not must have exactly one matcher",
+                    sexpr.span(),
+                ));
             }
             Ok(ArgMatcher::Not(Box::new(parse_matcher(&list[1])?)))
         }
         "cond" => Ok(ArgMatcher::Cond(parse_cond_branches(list)?)),
-        "if" => parse_matcher_if_form(&list[1..]),
-        "when" => parse_matcher_when_form(&list[1..]),
-        "unless" => parse_matcher_unless_form(&list[1..]),
-        other => Err(format!("unknown matcher: {other}")),
+        "if" => parse_matcher_if_form(&list[1..], sexpr.span()),
+        "when" => parse_matcher_when_form(&list[1..], sexpr.span()),
+        "unless" => parse_matcher_unless_form(&list[1..], sexpr.span()),
+        other => Err(RawError::new(
+            format!("unknown matcher: {other}"),
+            list[0].span(),
+        )
+        .with_label("not a recognised matcher type")
+        .with_help(
+            "valid matchers: positional, exact, anywhere, forbidden, and, or, not, cond, if, when, unless",
+        )),
     }
 }
 
-fn parse_pos_expr(sexpr: &Sexpr) -> Result<PosExpr, String> {
-    if let Sexpr::List(list) = sexpr
+fn parse_pos_expr(sexpr: &Sexpr) -> Result<PosExpr, RawError> {
+    if let Sexpr::List(list, _) = sexpr
         && list.len() == 2
         && let Some(tag) = list[0].as_atom()
     {
@@ -342,25 +486,36 @@ fn parse_pos_expr(sexpr: &Sexpr) -> Result<PosExpr, String> {
     Ok(PosExpr::One(parse_expr(sexpr)?))
 }
 
-fn parse_expr(sexpr: &Sexpr) -> Result<Expr, String> {
+fn parse_expr(sexpr: &Sexpr) -> Result<Expr, RawError> {
     match sexpr {
-        Sexpr::Atom(s) if s == "*" => Ok(Expr::Wildcard),
-        Sexpr::Atom(s) => Ok(Expr::Literal(s.clone())),
-        Sexpr::List(list) => {
+        Sexpr::Atom(s, _) if s == "*" => Ok(Expr::Wildcard),
+        Sexpr::Atom(s, _) => Ok(Expr::Literal(s.clone())),
+        Sexpr::List(list, span) => {
             if list.is_empty() {
-                return Err("empty expression form".into());
+                return Err(RawError::new("empty expression form", *span));
             }
-            let tag = list[0].as_atom().ok_or("expression form tag must be an atom")?;
+            let tag = list[0].as_atom().ok_or_else(|| {
+                RawError::new("expression form tag must be an atom", list[0].span())
+            })?;
             match tag {
                 "regex" => {
                     if list.len() != 2 {
-                        return Err("regex must have exactly one pattern".into());
+                        return Err(RawError::new(
+                            "regex must have exactly one pattern",
+                            *span,
+                        ));
                     }
                     let pat = list[1]
                         .as_atom()
-                        .ok_or("regex pattern must be a string")?;
-                    let re = regex::Regex::new(pat)
-                        .map_err(|e| format!("invalid regex '{pat}': {e}"))?;
+                        .ok_or_else(|| {
+                            RawError::new("regex pattern must be a string", list[1].span())
+                        })?;
+                    let re = regex::Regex::new(pat).map_err(|e| {
+                        RawError::new(
+                            format!("invalid regex '{pat}': {e}"),
+                            list[1].span(),
+                        )
+                    })?;
                     Ok(Expr::Regex(re))
                 }
                 "or" => {
@@ -375,7 +530,10 @@ fn parse_expr(sexpr: &Sexpr) -> Result<Expr, String> {
                 }
                 "not" => {
                     if list.len() != 2 {
-                        return Err("not must have exactly one expression".into());
+                        return Err(RawError::new(
+                            "not must have exactly one expression",
+                            *span,
+                        ));
                     }
                     Ok(Expr::Not(Box::new(parse_expr(&list[1])?)))
                 }
@@ -383,62 +541,88 @@ fn parse_expr(sexpr: &Sexpr) -> Result<Expr, String> {
                     let branches = parse_expr_cond_branches(&list[1..])?;
                     Ok(Expr::Cond(branches))
                 }
-                "if" => parse_if_form(&list[1..]),
-                "when" => parse_when_form(&list[1..]),
-                "unless" => parse_unless_form(&list[1..]),
-                other => Err(format!("unknown expression form: {other}")),
+                "if" => parse_if_form(&list[1..], *span),
+                "when" => parse_when_form(&list[1..], *span),
+                "unless" => parse_unless_form(&list[1..], *span),
+                other => Err(RawError::new(
+                    format!("unknown expression form: {other}"),
+                    list[0].span(),
+                )
+                .with_label("not a recognised expression form")
+                .with_help("valid expression forms: regex, or, and, not, cond, if, when, unless")),
             }
         }
     }
 }
 
-fn parse_expr_cond_branches(branches: &[Sexpr]) -> Result<Vec<ExprBranch>, String> {
+fn parse_expr_cond_branches(branches: &[Sexpr]) -> Result<Vec<ExprBranch>, RawError> {
     if branches.is_empty() {
-        return Err("cond must have at least one branch".into());
+        return Err(RawError::new(
+            "cond must have at least one branch",
+            Span::new(0, 0),
+        ));
     }
     let mut result = Vec::new();
     for branch in branches {
-        let items = branch.as_list().ok_or("cond branch must be a list")?;
+        let items = branch.as_list().ok_or_else(|| {
+            RawError::new("cond branch must be a list", branch.span())
+        })?;
         if items.is_empty() {
-            return Err("empty cond branch".into());
+            return Err(RawError::new("empty cond branch", branch.span()));
         }
         let test = match &items[0] {
-            Sexpr::Atom(s) if s == "else" => Expr::Wildcard,
+            Sexpr::Atom(s, _) if s == "else" => Expr::Wildcard,
             other => parse_expr(other)?,
         };
         let mut effect = None;
         for item in &items[1..] {
-            let il = item.as_list().ok_or("cond branch element must be a list")?;
+            let il = item.as_list().ok_or_else(|| {
+                RawError::new("cond branch element must be a list", item.span())
+            })?;
             if il.is_empty() {
-                return Err("empty cond branch element".into());
+                return Err(RawError::new("empty cond branch element", item.span()));
             }
-            let tag = il[0].as_atom().ok_or("cond branch element tag must be an atom")?;
+            let tag = il[0].as_atom().ok_or_else(|| {
+                RawError::new("cond branch element tag must be an atom", il[0].span())
+            })?;
             if tag == "effect" {
                 effect = Some(parse_effect(il)?);
             } else {
-                return Err(format!("unknown cond branch element: {tag}"));
+                return Err(RawError::new(
+                    format!("unknown cond branch element: {tag}"),
+                    il[0].span(),
+                ));
             }
         }
         result.push(ExprBranch {
             test,
-            effect: effect.ok_or("cond branch must have an effect")?,
+            effect: effect.ok_or_else(|| {
+                RawError::new("cond branch must have an effect", branch.span())
+            })?,
         });
     }
     Ok(result)
 }
 
-fn parse_if_form(args: &[Sexpr]) -> Result<Expr, String> {
+fn parse_if_form(args: &[Sexpr], form_span: Span) -> Result<Expr, RawError> {
     if args.len() < 2 || args.len() > 3 {
-        return Err("if must have 2 or 3 arguments: (if EXPR EFFECT EFFECT?)".into());
+        return Err(RawError::new(
+            "if must have 2 or 3 arguments: (if EXPR EFFECT EFFECT?)",
+            form_span,
+        ));
     }
     let test = parse_expr(&args[0])?;
-    let then_list = args[1].as_list().ok_or("if then-branch must be an effect list")?;
+    let then_list = args[1].as_list().ok_or_else(|| {
+        RawError::new("if then-branch must be an effect list", args[1].span())
+    })?;
     let then_effect = parse_effect(then_list)?;
 
     let mut branches = vec![ExprBranch { test, effect: then_effect }];
 
     if args.len() == 3 {
-        let else_list = args[2].as_list().ok_or("if else-branch must be an effect list")?;
+        let else_list = args[2].as_list().ok_or_else(|| {
+            RawError::new("if else-branch must be an effect list", args[2].span())
+        })?;
         let else_effect = parse_effect(else_list)?;
         branches.push(ExprBranch {
             test: Expr::Wildcard,
@@ -449,22 +633,32 @@ fn parse_if_form(args: &[Sexpr]) -> Result<Expr, String> {
     Ok(Expr::Cond(branches))
 }
 
-fn parse_when_form(args: &[Sexpr]) -> Result<Expr, String> {
+fn parse_when_form(args: &[Sexpr], form_span: Span) -> Result<Expr, RawError> {
     if args.len() != 2 {
-        return Err("when must have exactly 2 arguments: (when EXPR EFFECT)".into());
+        return Err(RawError::new(
+            "when must have exactly 2 arguments: (when EXPR EFFECT)",
+            form_span,
+        ));
     }
     let test = parse_expr(&args[0])?;
-    let effect_list = args[1].as_list().ok_or("when effect must be an effect list")?;
+    let effect_list = args[1].as_list().ok_or_else(|| {
+        RawError::new("when effect must be an effect list", args[1].span())
+    })?;
     let effect = parse_effect(effect_list)?;
     Ok(Expr::Cond(vec![ExprBranch { test, effect }]))
 }
 
-fn parse_unless_form(args: &[Sexpr]) -> Result<Expr, String> {
+fn parse_unless_form(args: &[Sexpr], form_span: Span) -> Result<Expr, RawError> {
     if args.len() != 2 {
-        return Err("unless must have exactly 2 arguments: (unless EXPR EFFECT)".into());
+        return Err(RawError::new(
+            "unless must have exactly 2 arguments: (unless EXPR EFFECT)",
+            form_span,
+        ));
     }
     let test = parse_expr(&args[0])?;
-    let effect_list = args[1].as_list().ok_or("unless effect must be an effect list")?;
+    let effect_list = args[1].as_list().ok_or_else(|| {
+        RawError::new("unless effect must be an effect list", args[1].span())
+    })?;
     let effect = parse_effect(effect_list)?;
     Ok(Expr::Cond(vec![ExprBranch {
         test: Expr::Not(Box::new(test)),
@@ -472,16 +666,21 @@ fn parse_unless_form(args: &[Sexpr]) -> Result<Expr, String> {
     }]))
 }
 
-fn parse_wrapper(parts: &[Sexpr]) -> Result<Wrapper, String> {
+fn parse_wrapper(parts: &[Sexpr], wrapper_span: Span) -> Result<Wrapper, RawError> {
     // (wrapper "nohup" after-flags)
     // (wrapper "mise" (positional "exec") (after "--"))
     if parts.is_empty() {
-        return Err("wrapper must have a command name".into());
+        return Err(RawError::new(
+            "wrapper must have a command name",
+            wrapper_span,
+        ));
     }
 
     let command = parts[0]
         .as_atom()
-        .ok_or("wrapper command must be a string")?
+        .ok_or_else(|| {
+            RawError::new("wrapper command must be a string", parts[0].span())
+        })?
         .to_string();
 
     let mut positional_args = Vec::new();
@@ -489,11 +688,13 @@ fn parse_wrapper(parts: &[Sexpr]) -> Result<Wrapper, String> {
 
     for part in &parts[1..] {
         match part {
-            Sexpr::Atom(s) if s == "after-flags" => {
+            Sexpr::Atom(s, _) if s == "after-flags" => {
                 kind = Some(WrapperKind::AfterFlags);
             }
-            Sexpr::List(list) if !list.is_empty() => {
-                let tag = list[0].as_atom().ok_or("wrapper element tag must be an atom")?;
+            Sexpr::List(list, span) if !list.is_empty() => {
+                let tag = list[0].as_atom().ok_or_else(|| {
+                    RawError::new("wrapper element tag must be an atom", list[0].span())
+                })?;
                 match tag {
                     "positional" => {
                         for item in &list[1..] {
@@ -502,31 +703,61 @@ fn parse_wrapper(parts: &[Sexpr]) -> Result<Wrapper, String> {
                     }
                     "after" => {
                         if list.len() != 2 {
-                            return Err("after must have exactly one delimiter".into());
+                            return Err(RawError::new(
+                                "after must have exactly one delimiter",
+                                *span,
+                            ));
                         }
                         let delim = list[1]
                             .as_atom()
-                            .ok_or("after delimiter must be a string")?
+                            .ok_or_else(|| {
+                                RawError::new(
+                                    "after delimiter must be a string",
+                                    list[1].span(),
+                                )
+                            })?
                             .to_string();
                         kind = Some(WrapperKind::AfterDelimiter(delim));
                     }
-                    other => return Err(format!("unknown wrapper element: {other}")),
+                    other => {
+                        return Err(RawError::new(
+                            format!("unknown wrapper element: {other}"),
+                            list[0].span(),
+                        )
+                        .with_label("not a recognised wrapper element")
+                        .with_help("valid wrapper elements: positional, after"));
+                    }
                 }
             }
-            _ => return Err("unexpected wrapper element".into()),
+            _ => {
+                return Err(RawError::new(
+                    "unexpected wrapper element",
+                    part.span(),
+                ));
+            }
         }
     }
 
     Ok(Wrapper {
         command,
         positional_args,
-        kind: kind.ok_or("wrapper must specify after-flags or (after ...)")?,
+        kind: kind.ok_or_else(|| {
+            RawError::new(
+                "wrapper must specify after-flags or (after ...)",
+                wrapper_span,
+            )
+        })?,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Test helper that passes a placeholder filename.
+    fn parse(input: &str) -> Result<Config, Box<ConfigError>> {
+        super::parse(input, "<test>")
+    }
 
     #[test]
     fn empty_config() {

@@ -1540,6 +1540,7 @@ mod tests {
                   (check :allow "tmux source-file ~/.config/tmux/custom.conf"
                          :deny "tmux source-file /tmp/evil.conf"))
             "#,
+            "<test>",
         )
         .unwrap();
 
@@ -1578,6 +1579,7 @@ mod tests {
                                              "~/.config/tmux/tmux.conf")
                                          (effect :allow "safe config")
                                          (effect :deny "unknown file")))))"#,
+            "<test>",
         )
         .unwrap();
 
@@ -1604,6 +1606,7 @@ mod tests {
                    (args (positional "source-file"
                                      (when "safe.conf"
                                            (effect :allow "safe")))))"#,
+            "<test>",
         )
         .unwrap();
 
@@ -1633,6 +1636,7 @@ mod tests {
                    (args (anywhere (if "--safe"
                                        (effect :allow "safe flag")
                                        (effect :deny "unsafe")))))"#,
+            "<test>",
         )
         .unwrap();
 
@@ -1657,6 +1661,7 @@ mod tests {
             r#"(rule (command "cmd")
                   (args (exact (+ "a") "b"))
                   (effect :allow))"#,
+            "<test>",
         )
         .unwrap();
 

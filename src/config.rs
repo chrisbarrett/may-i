@@ -2,6 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::errors::LoadError;
 use crate::types::Config;
 
 /// Find the config file path per R10.
@@ -22,33 +23,41 @@ pub fn config_path() -> Option<PathBuf> {
 ///
 /// If `override_path` is provided, it takes precedence over `$MAYI_CONFIG`
 /// and the default config location.
-pub fn load(override_path: Option<&Path>) -> Result<Config, String> {
+pub fn load(override_path: Option<&Path>) -> Result<Config, LoadError> {
     let path = match override_path {
         Some(p) => {
             if !p.exists() {
-                return Err(format!("Config file not found: {}", p.display()));
+                return Err(LoadError::Io(format!(
+                    "Config file not found: {}",
+                    p.display()
+                )));
             }
             p.to_path_buf()
         }
         None => match config_path() {
             Some(path) => path,
             None => {
-                let path = default_config_path().ok_or("cannot determine config directory")?;
+                let path =
+                    default_config_path().ok_or(LoadError::Io("cannot determine config directory".into()))?;
                 if let Some(parent) = path.parent() {
-                    std::fs::create_dir_all(parent)
-                        .map_err(|e| format!("Failed to create {}: {e}", parent.display()))?;
+                    std::fs::create_dir_all(parent).map_err(|e| {
+                        LoadError::Io(format!("Failed to create {}: {e}", parent.display()))
+                    })?;
                 }
-                std::fs::write(&path, include_str!("starter_config.lisp"))
-                    .map_err(|e| format!("Failed to write {}: {e}", path.display()))?;
+                std::fs::write(&path, include_str!("starter_config.lisp")).map_err(|e| {
+                    LoadError::Io(format!("Failed to write {}: {e}", path.display()))
+                })?;
                 eprintln!("Created starter config at {}", path.display());
                 path
             }
         },
     };
 
-    let content =
-        std::fs::read_to_string(&path).map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
-    crate::config_parse::parse(&content)
+    let content = std::fs::read_to_string(&path)
+        .map_err(|e| LoadError::Io(format!("Failed to read {}: {e}", path.display())))?;
+
+    let filename = path.display().to_string();
+    crate::config_parse::parse(&content, &filename).map_err(LoadError::from)
 }
 
 /// The preferred config path (XDG or ~/.config fallback).
