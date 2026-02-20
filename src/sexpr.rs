@@ -227,13 +227,14 @@ pub fn parse(input: &str) -> (Vec<Sexpr>, Vec<RawError>) {
     while pos < tokens.len() {
         // Case C: extra ')' at top level — recover by skipping
         if let Some(Token { kind: TokenKind::Close, span }) = tokens.get(pos) {
-            let mut err = RawError::new("unexpected ')'", *span);
+            let mut err = RawError::new("unexpected ')'", *span)
+                .with_label("no matching '('")
+                .with_help("remove this ')'");
             if let Some(prev) = results.last() {
                 let prev_span = prev.span();
-                let close_offset = prev_span.end - 1;
                 err = err.with_secondary(
-                    Span::new(close_offset, close_offset + 1),
-                    "previous form closed here",
+                    Span::new(prev_span.start, prev_span.start + 1),
+                    "nearest form starts here",
                 );
             }
             errors.push(err);
@@ -817,10 +818,12 @@ mod tests {
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].message, "unexpected ')'");
         assert_eq!(errors[0].span, Span::new(5, 6));
+        assert_eq!(errors[0].label.as_deref(), Some("no matching '('"));
+        assert_eq!(errors[0].help.as_deref(), Some("remove this ')'"));
         let (sec_span, sec_label) = errors[0].secondary.as_deref().unwrap();
-        assert_eq!(sec_label, "previous form closed here");
-        assert_eq!(sec_span.start, 4);
-        assert_eq!(sec_span.end, 5);
+        assert_eq!(sec_label, "nearest form starts here");
+        assert_eq!(sec_span.start, 0);
+        assert_eq!(sec_span.end, 1);
     }
 
     #[test]

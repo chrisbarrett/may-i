@@ -3,9 +3,10 @@ source: tests/config_error_snapshots.rs
 expression: "render_error(\"(a b))\")"
 ---
   × unexpected ')'
-   ╭─[<test>:1:5]
+   ╭─[<test>:1:1]
  1 │ (a b))
-   ·     ┬┬
-   ·     │╰── here
-   ·     ╰── previous form closed here
+   · ┬    ┬
+   · │    ╰── no matching '('
+   · ╰── nearest form starts here
    ╰────
+  help: remove this ')'
