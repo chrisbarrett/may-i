@@ -1,0 +1,11 @@
+---
+source: tests/config_error_snapshots.rs
+expression: "render_error(\"(rule (command \\\"x\\\") (effect :yolo))\")"
+---
+  × unknown effect keyword: :yolo
+   ╭─[<test>:1:29]
+ 1 │ (rule (command "x") (effect :yolo))
+   ·                             ──┬──
+   ·                               ╰── not a valid effect keyword
+   ╰────
+  help: valid effect keywords: :allow, :deny, :ask

@@ -1,0 +1,13 @@
+---
+source: tests/config_error_snapshots.rs
+expression: "render_error(\"(rule foo\\n(other bar)\")"
+---
+  × unclosed '('
+   ╭─[<test>:1:1]
+ 1 │ (rule foo
+   · ┬        ▲
+   · │        ╰── insert ')' here
+   · ╰── the rule starting here
+ 2 │ (other bar)
+   ╰────
+  help: add a closing ')'

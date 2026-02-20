@@ -1,0 +1,11 @@
+---
+source: tests/config_error_snapshots.rs
+expression: "render_error(\"(rule foo\")"
+---
+  × unclosed '('
+   ╭─[<test>:1:1]
+ 1 │ (rule foo
+   · ┬
+   · ╰── the rule starting here
+   ╰────
+  help: add a closing ')'

@@ -1,0 +1,10 @@
+---
+source: tests/config_error_snapshots.rs
+expression: "render_error(\"(rule \\\"hello\")"
+---
+  × unterminated string
+   ╭─[<test>:1:7]
+ 1 │ (rule "hello
+   ·       ───┬──
+   ·          ╰── here
+   ╰────

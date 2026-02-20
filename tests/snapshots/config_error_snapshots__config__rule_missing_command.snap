@@ -1,0 +1,10 @@
+---
+source: tests/config_error_snapshots.rs
+expression: "render_error(\"(rule (effect :allow))\")"
+---
+  × rule must have a command
+   ╭─[<test>:1:1]
+ 1 │ (rule (effect :allow))
+   · ───────────┬──────────
+   ·            ╰── here
+   ╰────

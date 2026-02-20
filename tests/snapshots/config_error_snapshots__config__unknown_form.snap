@@ -1,0 +1,11 @@
+---
+source: tests/config_error_snapshots.rs
+expression: "render_error(\"(bogus \\\"x\\\")\")"
+---
+  × unknown top-level form: bogus
+   ╭─[<test>:1:2]
+ 1 │ (bogus "x")
+   ·  ──┬──
+   ·    ╰── not a recognised form
+   ╰────
+  help: valid top-level forms: rule, wrapper, blocked-paths, safe-env-vars

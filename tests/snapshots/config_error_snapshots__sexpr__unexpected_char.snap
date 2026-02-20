@@ -1,0 +1,10 @@
+---
+source: tests/config_error_snapshots.rs
+expression: "render_error(\"[rule]\")"
+---
+  × unexpected character: '['
+   ╭─[<test>:1:1]
+ 1 │ [rule]
+   · ┬
+   · ╰── here
+   ╰────
