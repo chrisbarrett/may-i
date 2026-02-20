@@ -3,7 +3,7 @@
 // false positives on struct fields.
 #![allow(unused_assignments)]
 
-use miette::{Diagnostic, NamedSource, SourceSpan};
+use miette::{Diagnostic, LabeledSpan, NamedSource, SourceSpan};
 use thiserror::Error;
 
 /// Byte-offset span within source text.
@@ -34,6 +34,7 @@ pub struct RawError {
     pub span: Span,
     pub label: Option<String>,
     pub help: Option<String>,
+    pub secondary: Option<Box<(Span, String)>>,
 }
 
 impl RawError {
@@ -43,6 +44,7 @@ impl RawError {
             span,
             label: None,
             help: None,
+            secondary: None,
         }
     }
 
@@ -53,6 +55,11 @@ impl RawError {
 
     pub fn with_help(mut self, help: impl Into<String>) -> Self {
         self.help = Some(help.into());
+        self
+    }
+
+    pub fn with_secondary(mut self, span: Span, label: impl Into<String>) -> Self {
+        self.secondary = Some(Box::new((span, label.into())));
         self
     }
 }
@@ -70,9 +77,8 @@ pub struct ConfigError {
     message: String,
     #[source_code]
     src: NamedSource<String>,
-    #[label("{}", label.as_deref().unwrap_or("here"))]
-    span: SourceSpan,
-    label: Option<String>,
+    #[label(collection)]
+    labels: Vec<LabeledSpan>,
     #[help]
     help: Option<String>,
 }
@@ -80,11 +86,16 @@ pub struct ConfigError {
 impl ConfigError {
     /// Build from a `RawError` plus the original source text and filename.
     pub fn from_raw(raw: RawError, source: &str, filename: &str) -> Self {
+        let primary_label = raw.label.unwrap_or_else(|| "here".to_string());
+        let mut labels = vec![LabeledSpan::at(raw.span, primary_label)];
+        if let Some(secondary) = raw.secondary {
+            let (span, label) = *secondary;
+            labels.push(LabeledSpan::at(span, label));
+        }
         Self {
             message: raw.message,
             src: NamedSource::new(filename, source.to_string()),
-            span: raw.span.into(),
-            label: raw.label,
+            labels,
             help: raw.help,
         }
     }

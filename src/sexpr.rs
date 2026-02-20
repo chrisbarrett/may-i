@@ -198,20 +198,47 @@ fn tokenize(input: &str) -> Result<Vec<Token>, RawError> {
 
 // --- Parser ---
 
+/// Return the 0-based column (byte offset from start of line) for an offset.
+fn column_of(input: &str, offset: usize) -> usize {
+    let before = &input[..offset];
+    match before.rfind('\n') {
+        Some(nl) => offset - nl - 1,
+        None => offset,
+    }
+}
+
+/// Return the 0-based line number for an offset.
+fn line_of(input: &str, offset: usize) -> usize {
+    input[..offset].bytes().filter(|&b| b == b'\n').count()
+}
+
 /// Parse a string containing zero or more s-expressions into a list of top-level forms.
 pub fn parse(input: &str) -> Result<Vec<Sexpr>, RawError> {
     let tokens = tokenize(input)?;
     let mut pos = 0;
-    let mut results = Vec::new();
+    let mut results: Vec<Sexpr> = Vec::new();
     while pos < tokens.len() {
-        let (sexpr, next) = parse_one(&tokens, pos)?;
+        // Case C: extra ')' at top level
+        if let Some(Token { kind: TokenKind::Close, span }) = tokens.get(pos) {
+            let mut err = RawError::new("unexpected ')'", *span);
+            if let Some(prev) = results.last() {
+                let prev_span = prev.span();
+                let close_offset = prev_span.end - 1;
+                err = err.with_secondary(
+                    Span::new(close_offset, close_offset + 1),
+                    "previous form closed here",
+                );
+            }
+            return Err(err);
+        }
+        let (sexpr, next) = parse_one(input, &tokens, pos)?;
         results.push(sexpr);
         pos = next;
     }
     Ok(results)
 }
 
-fn parse_one(tokens: &[Token], pos: usize) -> Result<(Sexpr, usize), RawError> {
+fn parse_one(input: &str, tokens: &[Token], pos: usize) -> Result<(Sexpr, usize), RawError> {
     match tokens.get(pos) {
         None => Err(RawError::new(
             "unexpected end of input",
@@ -225,19 +252,48 @@ fn parse_one(tokens: &[Token], pos: usize) -> Result<(Sexpr, usize), RawError> {
             Ok((Sexpr::Atom(s.clone(), *span), pos + 1))
         }
         Some(Token { kind: TokenKind::Open, span: open_span }) => {
-            let mut items = Vec::new();
+            let opener_col = column_of(input, open_span.start);
+            let opener_line = line_of(input, open_span.start);
+            let mut items: Vec<Sexpr> = Vec::new();
             let mut p = pos + 1;
             loop {
                 match tokens.get(p) {
                     None => {
-                        return Err(RawError::new("unclosed '('", *open_span));
+                        // Case A: unclosed '(' at EOF
+                        let mut err = RawError::new("unclosed '('", *open_span)
+                            .with_help("add a closing ')'");
+                        if let Some(last_item) = items.last() {
+                            let last_span = last_item.span();
+                            err = err.with_secondary(
+                                Span::new(last_span.end, last_span.end),
+                                "last item ends here",
+                            );
+                        }
+                        return Err(err);
                     }
                     Some(Token { kind: TokenKind::Close, span: close_span }) => {
                         let list_span = Span::new(open_span.start, close_span.end);
                         return Ok((Sexpr::List(items, list_span), p + 1));
                     }
+                    Some(Token { kind: TokenKind::Open, span: next_span }) => {
+                        // Case B: indentation heuristic for sibling absorbed
+                        let next_col = column_of(input, next_span.start);
+                        let next_line = line_of(input, next_span.start);
+                        if !items.is_empty()
+                            && next_line > opener_line
+                            && next_col == opener_col
+                        {
+                            let mut err = RawError::new("unclosed '('", *open_span)
+                                .with_help("add a closing ')'");
+                            err = err.with_secondary(*next_span, "this looks like a new form");
+                            return Err(err);
+                        }
+                        let (item, next) = parse_one(input, tokens, p)?;
+                        items.push(item);
+                        p = next;
+                    }
                     _ => {
-                        let (item, next) = parse_one(tokens, p)?;
+                        let (item, next) = parse_one(input, tokens, p)?;
                         items.push(item);
                         p = next;
                     }
@@ -679,5 +735,110 @@ mod tests {
             .map(|f| f.as_list().unwrap()[0].as_atom().unwrap())
             .collect();
         assert_eq!(tags, vec!["rule", "rule", "rule", "wrapper", "wrapper", "blocked-paths"]);
+    }
+
+    // --- Paren mismatch diagnostics ---
+
+    #[test]
+    fn unclosed_paren_at_eof_with_secondary() {
+        // Case A: unclosed '(' at EOF shows last item
+        let input = "(rule foo";
+        let err = parse(input).unwrap_err();
+        assert_eq!(err.message, "unclosed '('");
+        assert_eq!(err.span, Span::new(0, 1));
+        assert!(err.help.as_deref() == Some("add a closing ')'"));
+        let (sec_span, sec_label) = err.secondary.as_deref().unwrap();
+        assert_eq!(sec_label, "last item ends here");
+        // "foo" ends at offset 9
+        assert_eq!(sec_span.start, 9);
+    }
+
+    #[test]
+    fn unclosed_paren_at_eof_empty_list() {
+        // Case A with no items: no secondary
+        let input = "(";
+        let err = parse(input).unwrap_err();
+        assert_eq!(err.message, "unclosed '('");
+        assert!(err.secondary.is_none());
+    }
+
+    #[test]
+    fn extra_close_with_previous_form() {
+        // Case C: extra ')' shows previous form's close
+        let input = "(a b))";
+        let err = parse(input).unwrap_err();
+        assert_eq!(err.message, "unexpected ')'");
+        assert_eq!(err.span, Span::new(5, 6));
+        let (sec_span, sec_label) = err.secondary.as_deref().unwrap();
+        assert_eq!(sec_label, "previous form closed here");
+        // The ')' at offset 4 closed the form (a b)
+        assert_eq!(sec_span.start, 4);
+        assert_eq!(sec_span.end, 5);
+    }
+
+    #[test]
+    fn extra_close_no_previous_form() {
+        // Case C: bare ')' at top level with no previous form
+        let input = ")";
+        let err = parse(input).unwrap_err();
+        assert_eq!(err.message, "unexpected ')'");
+        assert!(err.secondary.is_none());
+    }
+
+    #[test]
+    fn sibling_absorbed_by_indentation() {
+        // Case B: second form at same column as opener triggers heuristic
+        let input = "(rule foo\n(other bar)";
+        let err = parse(input).unwrap_err();
+        assert_eq!(err.message, "unclosed '('");
+        assert_eq!(err.span, Span::new(0, 1)); // opener
+        let (sec_span, sec_label) = err.secondary.as_deref().unwrap();
+        assert_eq!(sec_label, "this looks like a new form");
+        // The '(' of (other bar) is at offset 10
+        assert_eq!(sec_span.start, 10);
+    }
+
+    #[test]
+    fn indented_sublist_no_false_positive() {
+        // Indented sublists should NOT trigger Case B
+        let input = "(rule\n  (command foo)\n  (effect bar))";
+        let forms = parse(input).unwrap();
+        assert_eq!(forms.len(), 1);
+        let items = forms[0].as_list().unwrap();
+        assert_eq!(items.len(), 3);
+    }
+
+    #[test]
+    fn atom_at_column_zero_no_heuristic() {
+        // Atoms at column 0 should NOT trigger Case B (only '(' does)
+        let input = "(blocked-paths\n\"foo\")";
+        let forms = parse(input).unwrap();
+        assert_eq!(forms.len(), 1);
+        let items = forms[0].as_list().unwrap();
+        assert_eq!(items[0].as_atom(), Some("blocked-paths"));
+        assert_eq!(items[1].as_atom(), Some("foo"));
+    }
+
+    #[test]
+    fn same_line_opens_no_heuristic() {
+        // Multiple opens on the same line should NOT trigger Case B
+        let input = "((a) (b))";
+        let forms = parse(input).unwrap();
+        assert_eq!(forms.len(), 1);
+    }
+
+    #[test]
+    fn column_of_basic() {
+        assert_eq!(column_of("hello", 3), 3);
+        assert_eq!(column_of("ab\ncd", 3), 0); // 'c' is at col 0
+        assert_eq!(column_of("ab\ncd", 4), 1); // 'd' is at col 1
+        assert_eq!(column_of("ab\n\ncd", 4), 0); // 'c' after blank line
+    }
+
+    #[test]
+    fn line_of_basic() {
+        assert_eq!(line_of("hello", 3), 0);
+        assert_eq!(line_of("ab\ncd", 3), 1);
+        assert_eq!(line_of("ab\ncd\nef", 6), 2);
     }
 }
