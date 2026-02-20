@@ -16,7 +16,10 @@ pub fn parse(input: &str, filename: &str) -> Result<Config, Box<ConfigError>> {
 }
 
 fn parse_raw(input: &str) -> Result<Config, RawError> {
-    let forms = crate::sexpr::parse(input)?;
+    let (forms, errors) = crate::sexpr::parse(input);
+    if let Some(err) = errors.into_iter().next() {
+        return Err(err);
+    }
     let mut rules = Vec::new();
     let mut wrappers = Vec::new();
     let mut security = SecurityConfig::default();

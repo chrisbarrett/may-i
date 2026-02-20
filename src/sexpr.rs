@@ -213,12 +213,19 @@ fn line_of(input: &str, offset: usize) -> usize {
 }
 
 /// Parse a string containing zero or more s-expressions into a list of top-level forms.
-pub fn parse(input: &str) -> Result<Vec<Sexpr>, RawError> {
-    let tokens = tokenize(input)?;
+///
+/// Returns all successfully parsed forms plus any accumulated errors.
+/// An empty errors vec means the input was fully valid.
+pub fn parse(input: &str) -> (Vec<Sexpr>, Vec<RawError>) {
+    let tokens = match tokenize(input) {
+        Ok(t) => t,
+        Err(e) => return (vec![], vec![e]),
+    };
     let mut pos = 0;
     let mut results: Vec<Sexpr> = Vec::new();
+    let mut errors: Vec<RawError> = Vec::new();
     while pos < tokens.len() {
-        // Case C: extra ')' at top level
+        // Case C: extra ')' at top level — recover by skipping
         if let Some(Token { kind: TokenKind::Close, span }) = tokens.get(pos) {
             let mut err = RawError::new("unexpected ')'", *span);
             if let Some(prev) = results.last() {
@@ -229,27 +236,31 @@ pub fn parse(input: &str) -> Result<Vec<Sexpr>, RawError> {
                     "previous form closed here",
                 );
             }
-            return Err(err);
+            errors.push(err);
+            pos += 1;
+            continue;
         }
-        let (sexpr, next) = parse_one(input, &tokens, pos)?;
+        let (sexpr, next) = parse_one(input, &tokens, pos, &mut errors);
         results.push(sexpr);
         pos = next;
     }
-    Ok(results)
+    (results, errors)
 }
 
-fn parse_one(input: &str, tokens: &[Token], pos: usize) -> Result<(Sexpr, usize), RawError> {
+fn parse_one(input: &str, tokens: &[Token], pos: usize, errors: &mut Vec<RawError>) -> (Sexpr, usize) {
     match tokens.get(pos) {
-        None => Err(RawError::new(
-            "unexpected end of input",
-            Span::new(0, 0),
-        )),
-        Some(Token { kind: TokenKind::Close, span }) => Err(RawError::new(
-            "unexpected ')'",
-            *span,
-        )),
+        None => {
+            // Should not happen — caller checks pos < tokens.len()
+            errors.push(RawError::new("unexpected end of input", Span::new(0, 0)));
+            (Sexpr::List(vec![], Span::new(0, 0)), pos)
+        }
+        Some(Token { kind: TokenKind::Close, span }) => {
+            // Should not happen — caller handles Case C
+            errors.push(RawError::new("unexpected ')'", *span));
+            (Sexpr::List(vec![], *span), pos + 1)
+        }
         Some(Token { kind: TokenKind::Atom(s) | TokenKind::Str(s), span }) => {
-            Ok((Sexpr::Atom(s.clone(), *span), pos + 1))
+            (Sexpr::Atom(s.clone(), *span), pos + 1)
         }
         Some(Token { kind: TokenKind::Open, span: open_span }) => {
             let opener_col = column_of(input, open_span.start);
@@ -259,7 +270,7 @@ fn parse_one(input: &str, tokens: &[Token], pos: usize) -> Result<(Sexpr, usize)
             loop {
                 match tokens.get(p) {
                     None => {
-                        // Case A: unclosed '(' at EOF
+                        // Case A: unclosed '(' at EOF — fatal, nothing left to parse
                         let mut err = RawError::new("unclosed '('", *open_span)
                             .with_help("add a closing ')'");
                         if let Some(last_item) = items.last() {
@@ -269,11 +280,16 @@ fn parse_one(input: &str, tokens: &[Token], pos: usize) -> Result<(Sexpr, usize)
                                 "last item ends here",
                             );
                         }
-                        return Err(err);
+                        errors.push(err);
+                        let list_span = Span::new(
+                            open_span.start,
+                            items.last().map_or(open_span.end, |i| i.span().end),
+                        );
+                        return (Sexpr::List(items, list_span), p);
                     }
                     Some(Token { kind: TokenKind::Close, span: close_span }) => {
                         let list_span = Span::new(open_span.start, close_span.end);
-                        return Ok((Sexpr::List(items, list_span), p + 1));
+                        return (Sexpr::List(items, list_span), p + 1);
                     }
                     Some(Token { kind: TokenKind::Open, span: next_span }) => {
                         // Case B: indentation heuristic for sibling absorbed
@@ -283,17 +299,24 @@ fn parse_one(input: &str, tokens: &[Token], pos: usize) -> Result<(Sexpr, usize)
                             && next_line > opener_line
                             && next_col == opener_col
                         {
+                            // Recover: implicitly close this list
+                            let insert_point = items.last().unwrap().span().end;
                             let mut err = RawError::new("unclosed '('", *open_span)
                                 .with_help("add a closing ')'");
-                            err = err.with_secondary(*next_span, "this looks like a new form");
-                            return Err(err);
+                            err = err.with_secondary(
+                                Span::new(insert_point, insert_point),
+                                "insert ')' here",
+                            );
+                            errors.push(err);
+                            let list_span = Span::new(open_span.start, insert_point);
+                            return (Sexpr::List(items, list_span), p);
                         }
-                        let (item, next) = parse_one(input, tokens, p)?;
+                        let (item, next) = parse_one(input, tokens, p, errors);
                         items.push(item);
                         p = next;
                     }
                     _ => {
-                        let (item, next) = parse_one(input, tokens, p)?;
+                        let (item, next) = parse_one(input, tokens, p, errors);
                         items.push(item);
                         p = next;
                     }
@@ -315,37 +338,47 @@ mod tests {
         Sexpr::List(items, Span::new(0, 0))
     }
 
+    /// Adapter: treat parse as Result for happy-path and error tests.
+    fn parse_result(input: &str) -> Result<Vec<Sexpr>, RawError> {
+        let (forms, errors) = parse(input);
+        if let Some(err) = errors.into_iter().next() {
+            Err(err)
+        } else {
+            Ok(forms)
+        }
+    }
+
     // --- Empty input ---
 
     #[test]
     fn parse_empty() {
-        assert_eq!(parse("").unwrap(), vec![]);
+        assert_eq!(parse_result("").unwrap(), vec![]);
     }
 
     #[test]
     fn parse_whitespace_only() {
-        assert_eq!(parse("   \n\t  ").unwrap(), vec![]);
+        assert_eq!(parse_result("   \n\t  ").unwrap(), vec![]);
     }
 
     #[test]
     fn parse_comment_only() {
-        assert_eq!(parse("; this is a comment\n").unwrap(), vec![]);
+        assert_eq!(parse_result("; this is a comment\n").unwrap(), vec![]);
     }
 
     // --- Atoms ---
 
     #[test]
     fn parse_bare_atom() {
-        assert_eq!(parse("hello").unwrap(), vec![atom("hello")]);
+        assert_eq!(parse_result("hello").unwrap(), vec![atom("hello")]);
     }
 
     #[test]
     fn parse_bare_atom_with_special_chars() {
-        assert_eq!(parse("after-flags").unwrap(), vec![atom("after-flags")]);
-        assert_eq!(parse("foo_bar").unwrap(), vec![atom("foo_bar")]);
-        assert_eq!(parse("*").unwrap(), vec![atom("*")]);
+        assert_eq!(parse_result("after-flags").unwrap(), vec![atom("after-flags")]);
+        assert_eq!(parse_result("foo_bar").unwrap(), vec![atom("foo_bar")]);
+        assert_eq!(parse_result("*").unwrap(), vec![atom("*")]);
         assert_eq!(
-            parse("^foo.*bar").unwrap(),
+            parse_result("^foo.*bar").unwrap(),
             vec![atom("^foo.*bar")]
         );
     }
@@ -353,7 +386,7 @@ mod tests {
     #[test]
     fn parse_multiple_atoms() {
         assert_eq!(
-            parse("foo bar baz").unwrap(),
+            parse_result("foo bar baz").unwrap(),
             vec![atom("foo"), atom("bar"), atom("baz")]
         );
     }
@@ -362,13 +395,13 @@ mod tests {
 
     #[test]
     fn parse_quoted_string() {
-        assert_eq!(parse(r#""hello""#).unwrap(), vec![atom("hello")]);
+        assert_eq!(parse_result(r#""hello""#).unwrap(), vec![atom("hello")]);
     }
 
     #[test]
     fn parse_quoted_string_with_spaces() {
         assert_eq!(
-            parse(r#""hello world""#).unwrap(),
+            parse_result(r#""hello world""#).unwrap(),
             vec![atom("hello world")]
         );
     }
@@ -376,42 +409,42 @@ mod tests {
     #[test]
     fn parse_quoted_string_escapes() {
         assert_eq!(
-            parse(r#""a\"b\\c\nd\te""#).unwrap(),
+            parse_result(r#""a\"b\\c\nd\te""#).unwrap(),
             vec![atom("a\"b\\c\nd\te")]
         );
     }
 
     #[test]
     fn parse_empty_string() {
-        assert_eq!(parse(r#""""#).unwrap(), vec![atom("")]);
+        assert_eq!(parse_result(r#""""#).unwrap(), vec![atom("")]);
     }
 
     #[test]
     fn parse_unterminated_string() {
-        assert!(parse(r#""hello"#).is_err());
+        assert!(parse_result(r#""hello"#).is_err());
     }
 
     #[test]
     fn parse_unknown_escape() {
-        assert!(parse(r#""\q""#).is_err());
+        assert!(parse_result(r#""\q""#).is_err());
     }
 
     #[test]
     fn parse_unterminated_escape() {
-        assert!(parse(r#""hello\"#).is_err());
+        assert!(parse_result(r#""hello\"#).is_err());
     }
 
     // --- Lists ---
 
     #[test]
     fn parse_empty_list() {
-        assert_eq!(parse("()").unwrap(), vec![list(vec![])]);
+        assert_eq!(parse_result("()").unwrap(), vec![list(vec![])]);
     }
 
     #[test]
     fn parse_simple_list() {
         assert_eq!(
-            parse("(a b c)").unwrap(),
+            parse_result("(a b c)").unwrap(),
             vec![list(vec![atom("a"), atom("b"), atom("c")])]
         );
     }
@@ -419,7 +452,7 @@ mod tests {
     #[test]
     fn parse_nested_list() {
         assert_eq!(
-            parse("(a (b c) d)").unwrap(),
+            parse_result("(a (b c) d)").unwrap(),
             vec![list(vec![
                 atom("a"),
                 list(vec![atom("b"), atom("c")]),
@@ -431,24 +464,24 @@ mod tests {
     #[test]
     fn parse_deeply_nested() {
         assert_eq!(
-            parse("(((a)))").unwrap(),
+            parse_result("(((a)))").unwrap(),
             vec![list(vec![list(vec![list(vec![atom("a")])])])]
         );
     }
 
     #[test]
     fn parse_unclosed_paren() {
-        assert!(parse("(a b").is_err());
+        assert!(parse_result("(a b").is_err());
     }
 
     #[test]
     fn parse_unexpected_close() {
-        assert!(parse(")").is_err());
+        assert!(parse_result(")").is_err());
     }
 
     #[test]
     fn parse_extra_close() {
-        assert!(parse("(a))").is_err());
+        assert!(parse_result("(a))").is_err());
     }
 
     // --- Mixed ---
@@ -456,7 +489,7 @@ mod tests {
     #[test]
     fn parse_strings_in_list() {
         assert_eq!(
-            parse(r#"(command "rm")"#).unwrap(),
+            parse_result(r#"(command "rm")"#).unwrap(),
             vec![list(vec![atom("command"), atom("rm")])]
         );
     }
@@ -464,7 +497,7 @@ mod tests {
     #[test]
     fn parse_multiple_top_level_forms() {
         assert_eq!(
-            parse("(a) (b) (c)").unwrap(),
+            parse_result("(a) (b) (c)").unwrap(),
             vec![
                 list(vec![atom("a")]),
                 list(vec![atom("b")]),
@@ -478,7 +511,7 @@ mod tests {
     #[test]
     fn parse_comment_before_form() {
         assert_eq!(
-            parse("; comment\n(a)").unwrap(),
+            parse_result("; comment\n(a)").unwrap(),
             vec![list(vec![atom("a")])]
         );
     }
@@ -486,7 +519,7 @@ mod tests {
     #[test]
     fn parse_comment_after_form() {
         assert_eq!(
-            parse("(a) ; comment").unwrap(),
+            parse_result("(a) ; comment").unwrap(),
             vec![list(vec![atom("a")])]
         );
     }
@@ -494,7 +527,7 @@ mod tests {
     #[test]
     fn parse_comment_between_forms() {
         assert_eq!(
-            parse("(a)\n; comment\n(b)").unwrap(),
+            parse_result("(a)\n; comment\n(b)").unwrap(),
             vec![list(vec![atom("a")]), list(vec![atom("b")])]
         );
     }
@@ -502,7 +535,7 @@ mod tests {
     #[test]
     fn parse_inline_comment_in_list() {
         assert_eq!(
-            parse("(a ; comment\n b)").unwrap(),
+            parse_result("(a ; comment\n b)").unwrap(),
             vec![list(vec![atom("a"), atom("b")])]
         );
     }
@@ -511,7 +544,7 @@ mod tests {
 
     #[test]
     fn parse_unexpected_char() {
-        assert!(parse("[").is_err());
+        assert!(parse_result("[").is_err());
     }
 
     // --- Display round-trip ---
@@ -600,13 +633,13 @@ mod tests {
 
     #[test]
     fn parse_comment_at_eof_no_newline() {
-        assert_eq!(parse("; comment").unwrap(), vec![]);
+        assert_eq!(parse_result("; comment").unwrap(), vec![]);
     }
 
     #[test]
     fn parse_string_adjacent_to_parens() {
         assert_eq!(
-            parse(r#"("foo")"#).unwrap(),
+            parse_result(r#"("foo")"#).unwrap(),
             vec![list(vec![atom("foo")])]
         );
     }
@@ -614,7 +647,7 @@ mod tests {
     #[test]
     fn parse_consecutive_strings() {
         assert_eq!(
-            parse(r#""a""b""#).unwrap(),
+            parse_result(r#""a""b""#).unwrap(),
             vec![atom("a"), atom("b")]
         );
     }
@@ -622,7 +655,7 @@ mod tests {
     #[test]
     fn parse_atom_immediately_before_close() {
         assert_eq!(
-            parse("(a)").unwrap(),
+            parse_result("(a)").unwrap(),
             vec![list(vec![atom("a")])]
         );
     }
@@ -632,9 +665,9 @@ mod tests {
     #[test]
     fn display_round_trip() {
         let input = r#"(rule (command "rm") (args (and (anywhere "-r") (anywhere "/"))) (effect :deny "bad"))"#;
-        let parsed = parse(input).unwrap();
+        let parsed = parse_result(input).unwrap();
         let displayed = format!("{}", parsed[0]);
-        let reparsed = parse(&displayed).unwrap();
+        let reparsed = parse_result(&displayed).unwrap();
         assert_eq!(parsed, reparsed);
     }
 
@@ -648,7 +681,7 @@ mod tests {
             atom("c\\d"),
         ]);
         let displayed = format!("{original}");
-        let reparsed = parse(&displayed).unwrap();
+        let reparsed = parse_result(&displayed).unwrap();
         assert_eq!(reparsed, vec![original]);
     }
 
@@ -662,7 +695,7 @@ mod tests {
                              (anywhere "/")))
                   (effect :deny "Recursive deletion from root"))
         "#;
-        let forms = parse(input).unwrap();
+        let forms = parse_result(input).unwrap();
         assert_eq!(forms.len(), 1);
         let rule = forms[0].as_list().unwrap();
         assert_eq!(rule[0].as_atom(), Some("rule"));
@@ -685,7 +718,7 @@ mod tests {
     #[test]
     fn parse_wrapper_form() {
         let input = r#"(wrapper "nohup" after-flags)"#;
-        let forms = parse(input).unwrap();
+        let forms = parse_result(input).unwrap();
         let w = forms[0].as_list().unwrap();
         assert_eq!(w[0].as_atom(), Some("wrapper"));
         assert_eq!(w[1].as_atom(), Some("nohup"));
@@ -695,7 +728,7 @@ mod tests {
     #[test]
     fn parse_blocked_paths_form() {
         let input = r#"(blocked-paths "\\.env" "\\.ssh/")"#;
-        let forms = parse(input).unwrap();
+        let forms = parse_result(input).unwrap();
         let bp = forms[0].as_list().unwrap();
         assert_eq!(bp[0].as_atom(), Some("blocked-paths"));
         assert_eq!(bp[1].as_atom(), Some("\\.env"));
@@ -726,7 +759,7 @@ mod tests {
             ;; Security
             (blocked-paths "\\.env" "\\.ssh/")
         "#;
-        let forms = parse(input).unwrap();
+        let forms = parse_result(input).unwrap();
         assert_eq!(forms.len(), 6);
 
         // Verify form types by first atom
@@ -743,7 +776,7 @@ mod tests {
     fn unclosed_paren_at_eof_with_secondary() {
         // Case A: unclosed '(' at EOF shows last item
         let input = "(rule foo";
-        let err = parse(input).unwrap_err();
+        let err = parse_result(input).unwrap_err();
         assert_eq!(err.message, "unclosed '('");
         assert_eq!(err.span, Span::new(0, 1));
         assert!(err.help.as_deref() == Some("add a closing ')'"));
@@ -757,52 +790,61 @@ mod tests {
     fn unclosed_paren_at_eof_empty_list() {
         // Case A with no items: no secondary
         let input = "(";
-        let err = parse(input).unwrap_err();
+        let err = parse_result(input).unwrap_err();
         assert_eq!(err.message, "unclosed '('");
         assert!(err.secondary.is_none());
     }
 
     #[test]
     fn extra_close_with_previous_form() {
-        // Case C: extra ')' shows previous form's close
+        // Case C: extra ')' recovers — skips the token and collects error
         let input = "(a b))";
-        let err = parse(input).unwrap_err();
-        assert_eq!(err.message, "unexpected ')'");
-        assert_eq!(err.span, Span::new(5, 6));
-        let (sec_span, sec_label) = err.secondary.as_deref().unwrap();
+        let (forms, errors) = parse(input);
+        assert_eq!(forms.len(), 1);
+        assert_eq!(forms, vec![list(vec![atom("a"), atom("b")])]);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].message, "unexpected ')'");
+        assert_eq!(errors[0].span, Span::new(5, 6));
+        let (sec_span, sec_label) = errors[0].secondary.as_deref().unwrap();
         assert_eq!(sec_label, "previous form closed here");
-        // The ')' at offset 4 closed the form (a b)
         assert_eq!(sec_span.start, 4);
         assert_eq!(sec_span.end, 5);
     }
 
     #[test]
     fn extra_close_no_previous_form() {
-        // Case C: bare ')' at top level with no previous form
+        // Case C: bare ')' at top level with no previous form — recovers
         let input = ")";
-        let err = parse(input).unwrap_err();
-        assert_eq!(err.message, "unexpected ')'");
-        assert!(err.secondary.is_none());
+        let (forms, errors) = parse(input);
+        assert!(forms.is_empty());
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].message, "unexpected ')'");
+        assert!(errors[0].secondary.is_none());
     }
 
     #[test]
     fn sibling_absorbed_by_indentation() {
-        // Case B: second form at same column as opener triggers heuristic
+        // Case B: recovers — implicitly closes list, continues parsing
         let input = "(rule foo\n(other bar)";
-        let err = parse(input).unwrap_err();
-        assert_eq!(err.message, "unclosed '('");
-        assert_eq!(err.span, Span::new(0, 1)); // opener
-        let (sec_span, sec_label) = err.secondary.as_deref().unwrap();
-        assert_eq!(sec_label, "this looks like a new form");
-        // The '(' of (other bar) is at offset 10
-        assert_eq!(sec_span.start, 10);
+        let (forms, errors) = parse(input);
+        assert_eq!(forms.len(), 2);
+        assert_eq!(forms[0], list(vec![atom("rule"), atom("foo")]));
+        assert_eq!(forms[1], list(vec![atom("other"), atom("bar")]));
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].message, "unclosed '('");
+        assert_eq!(errors[0].span, Span::new(0, 1)); // opener
+        let (sec_span, sec_label) = errors[0].secondary.as_deref().unwrap();
+        assert_eq!(sec_label, "insert ')' here");
+        // "foo" ends at offset 9, that's where ')' should be inserted
+        assert_eq!(sec_span.start, 9);
+        assert_eq!(sec_span.end, 9); // zero-width span
     }
 
     #[test]
     fn indented_sublist_no_false_positive() {
         // Indented sublists should NOT trigger Case B
         let input = "(rule\n  (command foo)\n  (effect bar))";
-        let forms = parse(input).unwrap();
+        let forms = parse_result(input).unwrap();
         assert_eq!(forms.len(), 1);
         let items = forms[0].as_list().unwrap();
         assert_eq!(items.len(), 3);
@@ -812,7 +854,7 @@ mod tests {
     fn atom_at_column_zero_no_heuristic() {
         // Atoms at column 0 should NOT trigger Case B (only '(' does)
         let input = "(blocked-paths\n\"foo\")";
-        let forms = parse(input).unwrap();
+        let forms = parse_result(input).unwrap();
         assert_eq!(forms.len(), 1);
         let items = forms[0].as_list().unwrap();
         assert_eq!(items[0].as_atom(), Some("blocked-paths"));
@@ -823,7 +865,7 @@ mod tests {
     fn same_line_opens_no_heuristic() {
         // Multiple opens on the same line should NOT trigger Case B
         let input = "((a) (b))";
-        let forms = parse(input).unwrap();
+        let forms = parse_result(input).unwrap();
         assert_eq!(forms.len(), 1);
     }
 
@@ -840,5 +882,32 @@ mod tests {
         assert_eq!(line_of("hello", 3), 0);
         assert_eq!(line_of("ab\ncd", 3), 1);
         assert_eq!(line_of("ab\ncd\nef", 6), 2);
+    }
+
+    // --- Recovery tests ---
+
+    #[test]
+    fn case_b_recovery_multi_form() {
+        // Three forms, first missing ')' — all three returned plus one error
+        let input = "(a b\n(c d)\n(e f)";
+        let (forms, errors) = parse(input);
+        assert_eq!(forms.len(), 3);
+        assert_eq!(forms[0], list(vec![atom("a"), atom("b")]));
+        assert_eq!(forms[1], list(vec![atom("c"), atom("d")]));
+        assert_eq!(forms[2], list(vec![atom("e"), atom("f")]));
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].message, "unclosed '('");
+    }
+
+    #[test]
+    fn case_c_recovery_continues_parsing() {
+        // Extra ')' followed by another form — recovery continues
+        let input = "(a)) (b)";
+        let (forms, errors) = parse(input);
+        assert_eq!(forms.len(), 2);
+        assert_eq!(forms[0], list(vec![atom("a")]));
+        assert_eq!(forms[1], list(vec![atom("b")]));
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].message, "unexpected ')'");
     }
 }
