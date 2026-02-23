@@ -39,24 +39,11 @@ fn parse_raw(input: &str) -> Result<Config, RawError> {
             "rule" => rules.push(parse_rule(&list[1..], form.span())?),
             "wrapper" => wrappers.push(parse_wrapper(&list[1..], form.span())?),
             "blocked-paths" => {
-                for item in &list[1..] {
-                    let s = item.as_atom().ok_or_else(|| {
-                        RawError::new("blocked-paths entry must be a string", item.span())
-                    })?;
-                    let re = regex::Regex::new(s).map_err(|e| {
-                        RawError::new(
-                            format!("invalid blocked-path regex '{s}': {e}"),
-                            item.span(),
-                        )
-                    })?;
-                    if !security
-                        .blocked_paths
-                        .iter()
-                        .any(|existing| existing.as_str() == re.as_str())
-                    {
-                        security.blocked_paths.push(re);
-                    }
-                }
+                return Err(RawError::new(
+                    "blocked-paths is no longer supported; file access control is handled by syscall sandboxing",
+                    form.span(),
+                )
+                .with_help("remove the (blocked-paths ...) form from your config"));
             }
             "safe-env-vars" => {
                 for item in &list[1..] {
@@ -72,7 +59,7 @@ fn parse_raw(input: &str) -> Result<Config, RawError> {
                     list[0].span(),
                 )
                 .with_label("not a recognised form")
-                .with_help("valid top-level forms: rule, wrapper, blocked-paths, safe-env-vars"));
+                .with_help("valid top-level forms: rule, wrapper, safe-env-vars"));
             }
         }
     }
@@ -767,7 +754,7 @@ mod tests {
         let config = parse("").unwrap();
         assert!(config.rules.is_empty());
         assert!(config.wrappers.is_empty());
-        assert!(config.security.blocked_paths.is_empty());
+        assert!(config.security.safe_env_vars.is_empty());
     }
 
     #[test]
@@ -1053,28 +1040,10 @@ mod tests {
     }
 
     #[test]
-    fn blocked_paths() {
-        let config = parse(
-            r#"(blocked-paths "\\.secret/" "^/private/")"#,
-        )
-        .unwrap();
-        let patterns: Vec<&str> = config
-            .security
-            .blocked_paths
-            .iter()
-            .map(|r| r.as_str())
-            .collect();
-        assert!(patterns.contains(&"\\.secret/"));
-        assert!(patterns.contains(&"^/private/"));
-    }
-
-    #[test]
-    fn blocked_paths_no_duplicates() {
-        let config = parse(
-            r#"(blocked-paths "(^|/)\\.env($|[./])" "(^|/)\\.env($|[./])")"#,
-        )
-        .unwrap();
-        assert_eq!(config.security.blocked_paths.len(), 1);
+    fn blocked_paths_rejected() {
+        let err = parse(r#"(blocked-paths "\\.secret/")"#).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("no longer supported"), "got: {msg}");
     }
 
     #[test]
@@ -1094,13 +1063,10 @@ mod tests {
 
             (wrapper "nohup" after-flags)
             (wrapper "mise" (positional "exec") (after "--"))
-
-            (blocked-paths "\\.env" "\\.ssh/")
         "#;
         let config = parse(input).unwrap();
         assert_eq!(config.rules.len(), 3);
         assert_eq!(config.wrappers.len(), 2);
-        assert_eq!(config.security.blocked_paths.len(), 2);
     }
 
     // ── Error cases ────────────────────────────────────────────────────
@@ -1172,7 +1138,7 @@ mod tests {
     }
 
     #[test]
-    fn error_blocked_paths_invalid_regex() {
+    fn error_blocked_paths_rejected() {
         assert!(parse(r#"(blocked-paths "^[invalid")"#).is_err());
     }
 
@@ -1369,14 +1335,12 @@ mod tests {
         let input = r#"
             (safe-env-vars "HOME" "EDITOR")
             (rule (command "ls") (effect :allow))
-            (blocked-paths "\\.secret/")
         "#;
         let config = parse(input).unwrap();
         assert_eq!(config.security.safe_env_vars.len(), 2);
         assert!(config.security.safe_env_vars.contains("HOME"));
         assert!(config.security.safe_env_vars.contains("EDITOR"));
         assert_eq!(config.rules.len(), 1);
-        assert_eq!(config.security.blocked_paths.len(), 1);
     }
 
     // ── cond parsing ──────────────────────────────────────────────────

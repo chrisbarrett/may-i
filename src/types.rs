@@ -130,42 +130,126 @@ pub struct Config {
 }
 
 /// Security section of config.
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct SecurityConfig {
-    pub blocked_paths: Vec<regex::Regex>,
     pub safe_env_vars: std::collections::HashSet<String>,
 }
 
-impl std::fmt::Debug for SecurityConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let patterns: Vec<&str> = self.blocked_paths.iter().map(|r| r.as_str()).collect();
-        f.debug_struct("SecurityConfig")
-            .field("blocked_paths", &patterns)
-            .field("safe_env_vars", &self.safe_env_vars)
-            .finish()
-    }
+// ── Variable safety tracking ────────────────────────────────────────
+
+/// The safety state of a shell variable during AST analysis.
+#[derive(Debug, Clone, PartialEq)]
+pub enum VarState {
+    /// Safe variable: `Some(value)` = resolvable to a known literal,
+    /// `None` = safe but value unknown at analysis time (opaque).
+    Safe(Option<String>),
+    /// Unsafe variable: assigned from an unknown or untrusted source.
+    Unsafe,
 }
 
-/// The blocked-path patterns that ship with the example/starter config.
-/// Exposed for tests that need to exercise security filtering without
-/// loading a config file.
-#[cfg(test)]
-pub fn default_blocked_path_patterns() -> Vec<regex::Regex> {
-    [
-        r"(^|/)\.env($|[./])",
-        r"(^|/)\.ssh/",
-        r"(^|/)\.aws/",
-        r"(^|/)\.gnupg/",
-        r"(^|/)\.docker/",
-        r"(^|/)\.kube/",
-        r"(^|/)credentials\.json($|[./])",
-        r"(^|/)\.netrc($|[./])",
-        r"(^|/)\.npmrc($|[./])",
-        r"(^|/)\.pypirc($|[./])",
-    ]
-    .iter()
-    .map(|p| regex::Regex::new(p).expect("invalid blocked path regex"))
-    .collect()
+/// Tracks variable safety state through AST evaluation.
+#[derive(Debug, Clone)]
+pub struct VarEnv {
+    vars: std::collections::HashMap<String, VarState>,
+}
+
+impl VarEnv {
+    /// Seed from all process environment variables.
+    /// Every env var is `Safe(Some(value))` at startup.
+    pub fn from_process_env() -> Self {
+        let mut vars = std::collections::HashMap::new();
+        for (key, val) in std::env::vars() {
+            vars.insert(key, VarState::Safe(Some(val)));
+        }
+        VarEnv { vars }
+    }
+
+    #[cfg(test)]
+    pub fn empty() -> Self {
+        VarEnv {
+            vars: std::collections::HashMap::new(),
+        }
+    }
+
+    pub fn get(&self, name: &str) -> Option<&VarState> {
+        self.vars.get(name)
+    }
+
+    pub fn set(&mut self, name: String, state: VarState) {
+        self.vars.insert(name, state);
+    }
+
+    /// Merge a list of branch environments that all forked from `pre`.
+    /// For each variable across all branches:
+    /// - Same `Safe(Some(v))` in all → keep `Safe(Some(v))`
+    /// - `Safe` in all but different values → `Safe(None)` (opaque)
+    /// - `Unsafe` in any branch → `Unsafe`
+    /// - Absent in some branches → use `pre`'s value for those branches
+    pub fn merge_branches(pre: &VarEnv, branches: &[VarEnv]) -> VarEnv {
+        if branches.is_empty() {
+            return pre.clone();
+        }
+
+        let mut all_keys: std::collections::HashSet<&String> = std::collections::HashSet::new();
+        for branch in branches {
+            all_keys.extend(branch.vars.keys());
+        }
+        all_keys.extend(pre.vars.keys());
+
+        let mut result = std::collections::HashMap::new();
+
+        for key in all_keys {
+            // Get state from each branch (or from pre if absent in that branch).
+            // If a branch doesn't have the key and pre doesn't either, the
+            // variable is absent in that branch — treat as Unsafe since it
+            // might not be assigned at all.
+            let mut any_absent = false;
+            let mut states: Vec<&VarState> = Vec::new();
+            for branch in branches {
+                if let Some(s) = branch.vars.get(key).or_else(|| pre.vars.get(key)) {
+                    states.push(s);
+                } else {
+                    any_absent = true;
+                }
+            }
+
+            if states.is_empty() && !any_absent {
+                continue;
+            }
+
+            // If any branch has the variable absent (never assigned), it's Unsafe
+            if any_absent || states.iter().any(|s| matches!(s, VarState::Unsafe)) {
+                result.insert(key.clone(), VarState::Unsafe);
+                continue;
+            }
+
+            // All are Safe; check if they all have the same value
+            let first = &states[0];
+            if states.iter().all(|s| *s == *first) {
+                result.insert(key.clone(), (*first).clone());
+            } else {
+                result.insert(key.clone(), VarState::Safe(None));
+            }
+        }
+
+        VarEnv { vars: result }
+    }
+
+    /// Build a resolution map: only resolvable variables (Safe with known value).
+    pub fn to_resolution_map(&self) -> std::collections::HashMap<String, String> {
+        let mut map = std::collections::HashMap::new();
+        for (name, state) in &self.vars {
+            if let VarState::Safe(Some(val)) = state {
+                map.insert(name.clone(), val.clone());
+            }
+        }
+        map
+    }
+
+    /// Check if a variable is safe (regardless of whether its value is known).
+    pub fn is_safe(&self, name: &str) -> bool {
+        matches!(self.get(name), Some(VarState::Safe(_)))
+    }
 }
 
 /// A configured authorization rule.
@@ -648,25 +732,7 @@ mod tests {
     #[test]
     fn security_config_default_is_empty() {
         let sc = SecurityConfig::default();
-        assert!(sc.blocked_paths.is_empty());
         assert!(sc.safe_env_vars.is_empty());
-    }
-
-    #[test]
-    fn default_blocked_path_patterns_has_expected_paths() {
-        let patterns = default_blocked_path_patterns();
-        let strs: Vec<&str> = patterns.iter().map(|r| r.as_str()).collect();
-        assert!(strs.iter().any(|p| p.contains(".env")));
-        assert!(strs.iter().any(|p| p.contains(".ssh")));
-        assert!(strs.iter().any(|p| p.contains(".aws")));
-        assert!(strs.iter().any(|p| p.contains(".gnupg")));
-        assert!(strs.iter().any(|p| p.contains(".docker")));
-        assert!(strs.iter().any(|p| p.contains(".kube")));
-        assert!(strs.iter().any(|p| p.contains("credentials")));
-        assert!(strs.iter().any(|p| p.contains(".netrc")));
-        assert!(strs.iter().any(|p| p.contains(".npmrc")));
-        assert!(strs.iter().any(|p| p.contains(".pypirc")));
-        assert_eq!(patterns.len(), 10);
     }
 
     // --- SecurityConfig::Debug ---

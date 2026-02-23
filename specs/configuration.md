@@ -49,8 +49,6 @@ wrapper   = "(" "wrapper" STRING kind ")"
           | "(" "wrapper" STRING "(" "positional" pat+ ")" kind ")"
 kind      = "after-flags" | "(" "after" STRING ")"
 
-security  = "(" "blocked-paths" STRING+ ")"
-
 STRING    = quoted string (double-quote, backslash escapes)
 ```
 
@@ -119,11 +117,6 @@ Comments: `;` to end of line.
 (wrapper "mise" (positional "exec") (after "--"))
 (wrapper "nix" (positional "shell") (after "--command"))
 
-;; Security: blocked path patterns (regexes)
-(blocked-paths
-  "\\.env"
-  "\\.ssh/"
-  "\\.aws/")
 ```
 
 **Verify:** `cargo test -- config::parse`; `may-i check`
