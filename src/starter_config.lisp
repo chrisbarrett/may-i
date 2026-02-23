@@ -29,12 +29,20 @@
 ;   (or (positional "a") (positional "b")) ; any sub-matcher must match
 ;   (not (anywhere "--force"))             ; inverts a sub-matcher
 ;
+; POSITIONAL QUANTIFIERS
+;
+;   (positional "cmd" *)              ; bare expr = exactly one
+;   (positional "cmd" (? *))          ; zero or one
+;   (positional "cmd" (+ *))          ; one or more
+;   (positional "cmd" (* *))          ; zero or more
+;
 ; PATTERNS (inside positional/anywhere)
 ;
 ;   "literal"                         ; exact string match
 ;   *                                 ; wildcard (matches anything)
 ;   (regex "^(get|list).*")           ; regex match
 ;   (or "create" "delete" "fork")  ; match any of these strings
+;   (and (regex "^/") (not "/tmp"))   ; combine with and/not
 ;
 ; COND (branch on args within a single rule; first matching branch wins)
 ;
@@ -44,6 +52,13 @@
 ;                  (effect :allow "Reloading config"))
 ;                 (else
 ;                  (effect :deny "Unknown tmux command")))))
+;
+; SUGAR FORMS (desugar to cond; also work at expression level)
+;
+;   (if MATCHER THEN-EFFECT)           ; one-branch conditional
+;   (if MATCHER THEN-EFFECT ELSE-EFFECT) ; two-branch conditional
+;   (when MATCHER EFFECT)              ; same as (if MATCHER EFFECT)
+;   (unless MATCHER EFFECT)            ; same as (if (not MATCHER) EFFECT)
 ;
 ; INLINE CHECKS (validated by `may-i check`)
 ;

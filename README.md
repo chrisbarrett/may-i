@@ -169,10 +169,10 @@ applies.
 
 Sugar forms for common patterns:
 
-- `(if MATCHER THEN-EFFECT ELSE-EFFECT?)` — Two-branch conditional
-- `(when MATCHER EFFECT)` — Single branch; rule skipped if matcher doesn't match
-- `(unless MATCHER EFFECT)` — Inverted `when`; effect applies when matcher
-  does _not_ match
+- `(if MATCHER THEN-EFFECT ELSE-EFFECT)` — Two-branch conditional; the else
+  branch is optional
+- `(when MATCHER EFFECT)` — Same as `(if MATCHER EFFECT)`
+- `(unless MATCHER EFFECT)` — Same as `(if (not MATCHER) EFFECT)`
 
 These desugar to `cond` internally. `cond`, `if`, `when`, and `unless` also
 work at the expression level inside `positional` and `anywhere` patterns, where
