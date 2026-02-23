@@ -222,7 +222,7 @@ fn check_cat_heredoc(sc: &SimpleCommand) -> Option<String> {
 /// Abbreviate a string for use in error messages. Multi-line content is
 /// reduced to the first line with "…" appended; long single lines are
 /// truncated at 60 chars.
-pub(super) fn abbreviate(s: &str) -> String {
+pub fn abbreviate(s: &str) -> String {
     let first_line = s.lines().next().unwrap_or(s);
     let is_multiline = s.contains('\n');
     if first_line.len() > 60 {

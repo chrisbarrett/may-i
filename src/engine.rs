@@ -66,12 +66,17 @@ fn evaluate_with_env(input: &str, config: &Config, env: &VarEnv) -> EvalResult {
 
 /// Walk an AST node, threading VarEnv through and evaluating commands.
 fn walk_command(cmd: &Command, config: &Config, env: &VarEnv) -> WalkResult {
+    walk_command_with_depth(cmd, config, env, 0)
+}
+
+/// Walk an AST node with a depth counter for recursion limiting.
+fn walk_command_with_depth(cmd: &Command, config: &Config, env: &VarEnv, depth: usize) -> WalkResult {
     match cmd {
-        Command::Simple(sc) => walk_simple_command(sc, config, env),
+        Command::Simple(sc) => walk_simple_command(sc, config, env, depth),
 
         Command::Assignment(a) => {
             let mut new_env = env.clone();
-            let state = evaluate_assignment_value(&a.value, env);
+            let state = evaluate_assignment_value(&a.value, env, config, depth);
             new_env.set(a.name.clone(), state);
             WalkResult {
                 result: EvalResult {
@@ -86,7 +91,7 @@ fn walk_command(cmd: &Command, config: &Config, env: &VarEnv) -> WalkResult {
             let mut current_env = env.clone();
             let mut results = Vec::new();
             for c in cmds {
-                let walk = walk_command(c, config, &current_env);
+                let walk = walk_command_with_depth(c, config, &current_env, depth);
                 if walk.result.decision == Decision::Deny {
                     return WalkResult {
                         result: walk.result,
@@ -103,14 +108,11 @@ fn walk_command(cmd: &Command, config: &Config, env: &VarEnv) -> WalkResult {
         }
 
         Command::And(a, b) => {
-            // a always runs; b runs only if a succeeds. Env flows a→b.
-            let walk_a = walk_command(a, config, env);
+            let walk_a = walk_command_with_depth(a, config, env, depth);
             if walk_a.result.decision == Decision::Deny {
                 return walk_a;
             }
-            let walk_b = walk_command(b, config, &walk_a.env);
-            // After &&, env could be either env_after_a (b didn't run) or
-            // env_after_b (both ran). Merge conservatively.
+            let walk_b = walk_command_with_depth(b, config, &walk_a.env, depth);
             let merged = VarEnv::merge_branches(env, &[walk_a.env, walk_b.env.clone()]);
             WalkResult {
                 result: aggregate_results(vec![walk_a.result, walk_b.result]),
@@ -119,12 +121,11 @@ fn walk_command(cmd: &Command, config: &Config, env: &VarEnv) -> WalkResult {
         }
 
         Command::Or(a, b) => {
-            // a always runs; b runs only if a fails. Env flows a→b.
-            let walk_a = walk_command(a, config, env);
+            let walk_a = walk_command_with_depth(a, config, env, depth);
             if walk_a.result.decision == Decision::Deny {
                 return walk_a;
             }
-            let walk_b = walk_command(b, config, &walk_a.env);
+            let walk_b = walk_command_with_depth(b, config, &walk_a.env, depth);
             let merged = VarEnv::merge_branches(env, &[walk_a.env, walk_b.env.clone()]);
             WalkResult {
                 result: aggregate_results(vec![walk_a.result, walk_b.result]),
@@ -133,10 +134,9 @@ fn walk_command(cmd: &Command, config: &Config, env: &VarEnv) -> WalkResult {
         }
 
         Command::Pipeline(cmds) => {
-            // Pipeline commands run concurrently; VarEnv doesn't flow between them.
             let mut results = Vec::new();
             for c in cmds {
-                let walk = walk_command(c, config, env);
+                let walk = walk_command_with_depth(c, config, env, depth);
                 if walk.result.decision == Decision::Deny {
                     return WalkResult {
                         result: walk.result,
@@ -157,29 +157,27 @@ fn walk_command(cmd: &Command, config: &Config, env: &VarEnv) -> WalkResult {
             elif_branches,
             else_branch,
         } => {
-            let walk_cond = walk_command(condition, config, env);
+            let walk_cond = walk_command_with_depth(condition, config, env, depth);
             let mut results = vec![walk_cond.result];
             let env_after_cond = &walk_cond.env;
 
-            // Fork for each branch
-            let walk_then = walk_command(then_branch, config, env_after_cond);
+            let walk_then = walk_command_with_depth(then_branch, config, env_after_cond, depth);
             results.push(walk_then.result);
             let mut branch_envs = vec![walk_then.env];
 
             for (elif_cond, elif_body) in elif_branches {
-                let wc = walk_command(elif_cond, config, env_after_cond);
-                let wb = walk_command(elif_body, config, &wc.env);
+                let wc = walk_command_with_depth(elif_cond, config, env_after_cond, depth);
+                let wb = walk_command_with_depth(elif_body, config, &wc.env, depth);
                 results.push(wc.result);
                 results.push(wb.result);
                 branch_envs.push(wb.env);
             }
 
             if let Some(else_b) = else_branch {
-                let we = walk_command(else_b, config, env_after_cond);
+                let we = walk_command_with_depth(else_b, config, env_after_cond, depth);
                 results.push(we.result);
                 branch_envs.push(we.env);
             } else {
-                // No else: the if might not execute any branch
                 branch_envs.push(env_after_cond.clone());
             }
 
@@ -190,13 +188,11 @@ fn walk_command(cmd: &Command, config: &Config, env: &VarEnv) -> WalkResult {
             }
         }
 
-        Command::For { var, words, body } => walk_for_loop(var, words, body, config, env),
+        Command::For { var, words, body } => walk_for_loop(var, words, body, config, env, depth),
 
         Command::While { condition, body } | Command::Until { condition, body } => {
-            // Walk condition and body. Merge body's env back conservatively
-            // since the loop may execute zero or more times.
-            let walk_cond = walk_command(condition, config, env);
-            let walk_body = walk_command(body, config, &walk_cond.env);
+            let walk_cond = walk_command_with_depth(condition, config, env, depth);
+            let walk_body = walk_command_with_depth(body, config, &walk_cond.env, depth);
             let merged = VarEnv::merge_branches(env, &[env.clone(), walk_body.env]);
             WalkResult {
                 result: aggregate_results(vec![walk_cond.result, walk_body.result]),
@@ -205,21 +201,19 @@ fn walk_command(cmd: &Command, config: &Config, env: &VarEnv) -> WalkResult {
         }
 
         Command::Subshell(c) => {
-            // Subshell doesn't affect outer scope
-            let walk = walk_command(c, config, env);
+            let walk = walk_command_with_depth(c, config, env, depth);
             WalkResult {
                 result: walk.result,
-                env: env.clone(), // discard inner env changes
+                env: env.clone(),
             }
         }
 
         Command::BraceGroup(c) => {
-            // Brace group shares scope with outer
-            walk_command(c, config, env)
+            walk_command_with_depth(c, config, env, depth)
         }
 
         Command::Background(c) => {
-            let walk = walk_command(c, config, env);
+            let walk = walk_command_with_depth(c, config, env, depth);
             WalkResult {
                 result: walk.result,
                 env: env.clone(),
@@ -227,7 +221,6 @@ fn walk_command(cmd: &Command, config: &Config, env: &VarEnv) -> WalkResult {
         }
 
         Command::Case { word, arms, .. } => {
-            // Resolve the discriminant word
             let resolved_word = word.resolve_with_var_env(env);
             if resolved_word.has_dynamic_parts() {
                 let dynamic = resolved_word.dynamic_parts();
@@ -249,12 +242,11 @@ fn walk_command(cmd: &Command, config: &Config, env: &VarEnv) -> WalkResult {
             let mut branch_envs = Vec::new();
             for arm in arms {
                 if let Some(body) = &arm.body {
-                    let walk = walk_command(body, config, env);
+                    let walk = walk_command_with_depth(body, config, env, depth);
                     results.push(walk.result);
                     branch_envs.push(walk.env);
                 }
             }
-            // Case might not match any arm
             branch_envs.push(env.clone());
             let merged = VarEnv::merge_branches(env, &branch_envs);
             WalkResult {
@@ -264,7 +256,6 @@ fn walk_command(cmd: &Command, config: &Config, env: &VarEnv) -> WalkResult {
         }
 
         Command::FunctionDef { .. } => {
-            // Function definitions don't execute; just record them (Phase 3)
             WalkResult {
                 result: EvalResult {
                     decision: Decision::Allow,
@@ -275,9 +266,7 @@ fn walk_command(cmd: &Command, config: &Config, env: &VarEnv) -> WalkResult {
         }
 
         Command::Redirected { command, .. } => {
-            // Evaluate the inner command; redirections are checked at the
-            // simple-command level when the inner command is a Simple.
-            walk_command(command, config, env)
+            walk_command_with_depth(command, config, env, depth)
         }
     }
 }
@@ -289,6 +278,7 @@ fn walk_for_loop(
     body: &Command,
     config: &Config,
     env: &VarEnv,
+    depth: usize,
 ) -> WalkResult {
     // Resolve for-loop words using current VarEnv
     let resolved_words: Vec<Word> = words.iter().map(|w| w.resolve_with_var_env(env)).collect();
@@ -297,7 +287,6 @@ fn walk_for_loop(
     if resolved_words.iter().all(|w| w.is_literal()) {
         let literals: Vec<String> = resolved_words.iter().map(|w| w.to_str()).collect();
         if literals.is_empty() {
-            // Empty word list: loop body never executes
             return WalkResult {
                 result: EvalResult {
                     decision: Decision::Allow,
@@ -307,13 +296,12 @@ fn walk_for_loop(
             };
         }
 
-        // Enumerate: evaluate body once per literal value
         let mut results = Vec::new();
         let mut body_envs = Vec::new();
         for val in &literals {
             let mut loop_env = env.clone();
             loop_env.set(var.to_string(), VarState::Safe(Some(val.clone())));
-            let walk = walk_command(body, config, &loop_env);
+            let walk = walk_command_with_depth(body, config, &loop_env, depth);
             if walk.result.decision == Decision::Deny {
                 return WalkResult {
                     result: walk.result,
@@ -324,8 +312,6 @@ fn walk_for_loop(
             body_envs.push(walk.env);
         }
 
-        // After loop: merge all body envs. Loop var becomes opaque
-        // (could be any of the values).
         let mut merged = VarEnv::merge_branches(env, &body_envs);
         merged.set(var.to_string(), VarState::Safe(None));
         return WalkResult {
@@ -336,11 +322,9 @@ fn walk_for_loop(
 
     // Check if words are safe but opaque (e.g., globs, safe-but-unresolvable vars)
     if !resolved_words.iter().any(|w| w.has_dynamic_parts()) {
-        // Words are safe (no unsafe dynamic parts), but not all literal
-        // Loop variable is safe+opaque
         let mut loop_env = env.clone();
         loop_env.set(var.to_string(), VarState::Safe(None));
-        let walk = walk_command(body, config, &loop_env);
+        let walk = walk_command_with_depth(body, config, &loop_env, depth);
         let merged = VarEnv::merge_branches(env, &[env.clone(), walk.env]);
         return WalkResult {
             result: walk.result,
@@ -368,8 +352,8 @@ fn walk_for_loop(
 }
 
 /// Determine the VarState for an assignment value.
-fn evaluate_assignment_value(value: &Word, env: &VarEnv) -> VarState {
-    let resolved = value.resolve_with_var_env(env);
+fn evaluate_assignment_value(value: &Word, env: &VarEnv, config: &Config, depth: usize) -> VarState {
+    let resolved = resolve_command_substitutions(value, config, env, depth).resolve_with_var_env(env);
     if resolved.has_dynamic_parts() {
         // Contains unsafe/unknown parts
         VarState::Unsafe
@@ -381,13 +365,54 @@ fn evaluate_assignment_value(value: &Word, env: &VarEnv) -> VarState {
     }
 }
 
+/// Maximum recursion depth for command substitution / eval / bash -c evaluation.
+const MAX_EVAL_DEPTH: usize = 10;
+
+/// Walk word parts and replace `CommandSubstitution`/`Backtick` with `Opaque`
+/// if the inner command evaluates to Allow, or leave as-is if not.
+fn resolve_command_substitutions(word: &Word, config: &Config, env: &VarEnv, depth: usize) -> Word {
+    Word {
+        parts: resolve_cmd_sub_parts(&word.parts, config, env, depth),
+    }
+}
+
+fn resolve_cmd_sub_parts(
+    parts: &[parser::WordPart],
+    config: &Config,
+    env: &VarEnv,
+    depth: usize,
+) -> Vec<parser::WordPart> {
+    if depth >= MAX_EVAL_DEPTH {
+        return parts.to_vec();
+    }
+    parts
+        .iter()
+        .map(|part| match part {
+            parser::WordPart::CommandSubstitution(cmd_str)
+            | parser::WordPart::Backtick(cmd_str) => {
+                let inner_ast = parser::parse(cmd_str);
+                let inner_result = walk_command_with_depth(&inner_ast, config, env, depth + 1);
+                if inner_result.result.decision == Decision::Allow {
+                    parser::WordPart::Opaque(format!("$({})", parser::abbreviate(cmd_str)))
+                } else {
+                    part.clone()
+                }
+            }
+            parser::WordPart::DoubleQuoted(inner) => {
+                parser::WordPart::DoubleQuoted(resolve_cmd_sub_parts(inner, config, env, depth))
+            }
+            _ => part.clone(),
+        })
+        .collect()
+}
+
 /// Walk a simple command: process assignments, resolve variables, evaluate.
-fn walk_simple_command(sc: &SimpleCommand, config: &Config, env: &VarEnv) -> WalkResult {
+fn walk_simple_command(sc: &SimpleCommand, config: &Config, env: &VarEnv, depth: usize) -> WalkResult {
     let mut new_env = env.clone();
 
     // Process inline assignments (FOO=bar cmd args)
     for a in &sc.assignments {
-        let state = evaluate_assignment_value(&a.value, &new_env);
+        let state = evaluate_assignment_value(&a.value, &new_env, config, depth);
         new_env.set(a.name.clone(), state);
     }
 
@@ -402,8 +427,32 @@ fn walk_simple_command(sc: &SimpleCommand, config: &Config, env: &VarEnv) -> Wal
         };
     }
 
-    // Resolve variables in the command using VarEnv
-    let resolved = sc.resolve_with_var_env(&new_env);
+    // Resolve command substitutions first, then resolve variables
+    let with_cmd_subs: SimpleCommand = SimpleCommand {
+        assignments: sc.assignments.iter().map(|a| parser::Assignment {
+            name: a.name.clone(),
+            value: resolve_command_substitutions(&a.value, config, &new_env, depth),
+        }).collect(),
+        words: sc.words.iter().map(|w| resolve_command_substitutions(w, config, &new_env, depth)).collect(),
+        redirections: sc.redirections.iter().map(|r| parser::Redirection {
+            fd: r.fd,
+            kind: r.kind.clone(),
+            target: match &r.target {
+                parser::RedirectionTarget::File(w) => {
+                    parser::RedirectionTarget::File(resolve_command_substitutions(w, config, &new_env, depth))
+                }
+                other => other.clone(),
+            },
+        }).collect(),
+    };
+    let resolved = with_cmd_subs.resolve_with_var_env(&new_env);
+
+    // Detect `read`/`readarray`/`mapfile` builtins
+    if let Some(cmd_name) = resolved.command_name()
+        && matches!(cmd_name, "read" | "readarray" | "mapfile")
+    {
+        return walk_read_builtin(cmd_name, &resolved, &mut new_env);
+    }
 
     // Check for remaining dynamic parts (unsafe variables, command substitutions, etc.)
     let mut dynamic = Vec::new();
@@ -434,12 +483,248 @@ fn walk_simple_command(sc: &SimpleCommand, config: &Config, env: &VarEnv) -> Wal
         };
     }
 
+    // Code-execution position detection
+    if let Some(cmd_name) = resolved.command_name() {
+        // Case D: `source` / `.` — always Ask
+        if cmd_name == "source" || cmd_name == "." {
+            return WalkResult {
+                result: EvalResult {
+                    decision: Decision::Ask,
+                    reason: Some(format!(
+                        "Cannot statically analyse `{cmd_name}`: sourced file contents are unknown"
+                    )),
+                },
+                env: new_env,
+            };
+        }
+
+        // Case A: opaque variable as command name
+        if resolved.words.first().is_some_and(|w| w.has_opaque_parts()) {
+            return WalkResult {
+                result: EvalResult {
+                    decision: Decision::Ask,
+                    reason: Some(
+                        "Variable used as command name: cannot determine what runs".into()
+                    ),
+                },
+                env: new_env,
+            };
+        }
+
+        // Case B: `eval` command
+        if cmd_name == "eval" && depth < MAX_EVAL_DEPTH {
+            return walk_eval_command(&resolved, config, &new_env, depth);
+        }
+
+        // Case C: `bash -c` / `sh -c` / `zsh -c`
+        if matches!(cmd_name, "bash" | "sh" | "zsh")
+            && depth < MAX_EVAL_DEPTH
+            && let Some(result) = walk_shell_dash_c(&resolved, config, &new_env, depth)
+        {
+            return result;
+        }
+    }
+
     // Evaluate the resolved command against rules
     let result = evaluate_resolved_command(&resolved, config, 0, &new_env);
     WalkResult {
         result,
         env: new_env,
     }
+}
+
+/// Handle `read`/`readarray`/`mapfile` builtins by extracting variable names
+/// and updating the environment.
+fn walk_read_builtin(
+    cmd_name: &str,
+    resolved: &SimpleCommand,
+    env: &mut VarEnv,
+) -> WalkResult {
+    // Flags that take an argument (the next token is consumed)
+    let flags_with_arg: &[&str] = match cmd_name {
+        "read" => &["-d", "-n", "-N", "-p", "-t", "-u"],
+        "readarray" | "mapfile" => &["-d", "-n", "-O", "-t", "-u", "-C", "-c"],
+        _ => &[],
+    };
+
+    // Extract variable names from args (skip flags and their values)
+    let args = resolved.args();
+    let mut var_names = Vec::new();
+    let mut skip_next = false;
+    for arg in args {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        let s = arg.to_str();
+        if s.starts_with('-') && s.len() > 1 {
+            if flags_with_arg.iter().any(|f| *f == s) {
+                skip_next = true;
+            }
+            continue;
+        }
+        var_names.push(s);
+    }
+
+    // Check for herestring with literal value
+    let herestring_val = resolved.redirections.iter().find_map(|r| {
+        if matches!(r.kind, parser::RedirectionKind::Herestring)
+            && let parser::RedirectionTarget::File(w) = &r.target
+            && w.is_literal()
+        {
+            return Some(w.to_str());
+        }
+        None
+    });
+
+    // Default variable name for `read` is REPLY
+    if var_names.is_empty() && cmd_name == "read" {
+        var_names.push("REPLY".to_string());
+    }
+
+    // Set variables: if herestring with known value and single var, use it;
+    // otherwise Safe(None) (user-controlled input is safe but unknown)
+    for (i, name) in var_names.iter().enumerate() {
+        let state = if var_names.len() == 1 && i == 0 {
+            match &herestring_val {
+                Some(val) => VarState::Safe(Some(val.clone())),
+                None => VarState::Safe(None),
+            }
+        } else {
+            VarState::Safe(None)
+        };
+        env.set(name.clone(), state);
+    }
+
+    WalkResult {
+        result: EvalResult {
+            decision: Decision::Allow,
+            reason: None,
+        },
+        env: env.clone(),
+    }
+}
+
+/// Handle `eval` command: concatenate args and recursively evaluate if fully literal.
+fn walk_eval_command(
+    resolved: &SimpleCommand,
+    config: &Config,
+    env: &VarEnv,
+    depth: usize,
+) -> WalkResult {
+    let args = resolved.args();
+    if args.is_empty() {
+        return WalkResult {
+            result: EvalResult {
+                decision: Decision::Allow,
+                reason: None,
+            },
+            env: env.clone(),
+        };
+    }
+
+    // Check if any args are opaque or dynamic
+    let has_opaque = args.iter().any(|a| a.has_opaque_parts());
+    let has_dynamic = args.iter().any(|a| a.has_dynamic_parts());
+
+    if has_dynamic {
+        // Already caught by the dynamic parts check in the caller,
+        // but handle explicitly for clarity
+        let mut dynamic = Vec::new();
+        for a in args {
+            dynamic.extend(a.dynamic_parts());
+        }
+        let parts = dedup_parts(&dynamic);
+        return WalkResult {
+            result: EvalResult {
+                decision: Decision::Ask,
+                reason: Some(format!(
+                    "Command `eval` contains dynamic value{} that cannot be statically analysed: {}",
+                    if parts.len() == 1 { "" } else { "s" },
+                    parts.join(", "),
+                )),
+            },
+            env: env.clone(),
+        };
+    }
+
+    if has_opaque {
+        return WalkResult {
+            result: EvalResult {
+                decision: Decision::Ask,
+                reason: Some(
+                    "Cannot determine eval'd command: argument value is unknown".into(),
+                ),
+            },
+            env: env.clone(),
+        };
+    }
+
+    // All args are literal — concatenate and recursively evaluate
+    let eval_str: String = args.iter().map(|a| a.to_str()).collect::<Vec<_>>().join(" ");
+    let inner_ast = parser::parse(&eval_str);
+    let inner_result = walk_command_with_depth(&inner_ast, config, env, depth + 1);
+    WalkResult {
+        result: inner_result.result,
+        env: inner_result.env,
+    }
+}
+
+/// Handle `bash -c` / `sh -c` / `zsh -c`: find `-c` flag and recursively evaluate.
+fn walk_shell_dash_c(
+    resolved: &SimpleCommand,
+    config: &Config,
+    env: &VarEnv,
+    depth: usize,
+) -> Option<WalkResult> {
+    let args = resolved.args();
+
+    // Find the `-c` flag and get the command string after it
+    let mut found_c = false;
+    let mut cmd_arg = None;
+    for arg in args {
+        let s = arg.to_str();
+        if found_c {
+            cmd_arg = Some(arg);
+            break;
+        }
+        if s == "-c" {
+            found_c = true;
+        }
+    }
+
+    if !found_c {
+        return None; // No -c flag; not a code-execution pattern
+    }
+
+    let cmd_arg = cmd_arg?;
+
+    if cmd_arg.has_dynamic_parts() {
+        // Already caught by dynamic parts check
+        return None;
+    }
+
+    if cmd_arg.has_opaque_parts() {
+        return Some(WalkResult {
+            result: EvalResult {
+                decision: Decision::Ask,
+                reason: Some(format!(
+                    "Cannot determine `{} -c` command: argument value is unknown",
+                    resolved.command_name().unwrap_or("sh"),
+                )),
+            },
+            env: env.clone(),
+        });
+    }
+
+    // Literal command string — recursively evaluate
+    let cmd_str = cmd_arg.to_str();
+    let inner_ast = parser::parse(&cmd_str);
+    let inner_result = walk_command_with_depth(&inner_ast, config, env, depth + 1);
+    Some(WalkResult {
+        result: inner_result.result,
+        env: env.clone(), // Shell -c runs in a subprocess; don't propagate env changes
+    })
 }
 
 /// Evaluate a resolved simple command against rules (no more variable resolution needed).
@@ -2264,5 +2549,252 @@ mod tests {
         let result2 = evaluate("()", &config);
         assert!(result.decision == Decision::Allow || result.decision == Decision::Ask);
         assert!(result2.decision == Decision::Ask || result2.decision == Decision::Allow);
+    }
+
+    // ── Command substitution safety ─────────────────────────────────
+
+    #[test]
+    fn cmd_sub_allowed_inner_makes_var_safe_opaque() {
+        // x=$(echo hello); echo $x → Allow (echo is allowed, x is safe+opaque)
+        let env = VarEnv::empty();
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        let result = evaluate_with_env(r#"x=$(echo hello); echo $x"#, &config, &env);
+        assert_eq!(result.decision, Decision::Allow);
+    }
+
+    #[test]
+    fn cmd_sub_ask_inner_makes_var_unsafe() {
+        // x=$(dangerous_cmd); echo $x → Ask (inner is Ask → x unsafe)
+        let env = VarEnv::empty();
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        let result = evaluate_with_env("x=$(dangerous_cmd); echo $x", &config, &env);
+        assert_eq!(result.decision, Decision::Ask);
+    }
+
+    #[test]
+    fn cmd_sub_opaque_used_as_command_name_asks() {
+        // x=$(echo hello); $x → Ask (x opaque, used as command name)
+        let env = VarEnv::empty();
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        let result = evaluate_with_env("x=$(echo hello); $x", &config, &env);
+        assert_eq!(result.decision, Decision::Ask);
+    }
+
+    #[test]
+    fn cmd_sub_in_inline_assignment_allowed() {
+        // FOO=$(echo hello) echo $FOO → Allow (echo allowed → FOO safe+opaque)
+        let env = VarEnv::empty();
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        let result = evaluate_with_env("FOO=$(echo hello) echo $FOO", &config, &env);
+        assert_eq!(result.decision, Decision::Allow);
+    }
+
+    #[test]
+    fn cmd_sub_in_double_quotes_resolved() {
+        // x="$(echo hello)"; echo $x → Allow
+        let env = VarEnv::empty();
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        let result = evaluate_with_env(r#"x="$(echo hello)"; echo $x"#, &config, &env);
+        assert_eq!(result.decision, Decision::Allow);
+    }
+
+    #[test]
+    fn backtick_sub_allowed_inner_makes_var_safe() {
+        let env = VarEnv::empty();
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        let result = evaluate_with_env("x=`echo hello`; echo $x", &config, &env);
+        assert_eq!(result.decision, Decision::Allow);
+    }
+
+    // ── While/until loop variable tainting ───────────────────────────
+
+    #[test]
+    fn while_safe_body_preserves_safety() {
+        let env = VarEnv::empty();
+        let config = config_with_rules(vec![allow_rule("true"), allow_rule("echo")]);
+        let result = evaluate_with_env(
+            r#"x="safe"; while true; do x="still safe"; done; echo $x"#,
+            &config,
+            &env,
+        );
+        assert_eq!(result.decision, Decision::Allow);
+    }
+
+    #[test]
+    fn while_tainting_body_makes_unsafe() {
+        let env = VarEnv::empty();
+        let config = config_with_rules(vec![allow_rule("true"), allow_rule("echo")]);
+        let result = evaluate_with_env(
+            "x=\"safe\"; while true; do x=$UNKNOWN; done; echo $x",
+            &config,
+            &env,
+        );
+        assert_eq!(result.decision, Decision::Ask);
+    }
+
+    #[test]
+    fn while_assigns_new_var_is_unsafe_after() {
+        // while true; do x="a"; done; echo $x → Ask (x may not be assigned)
+        let env = VarEnv::empty();
+        let config = config_with_rules(vec![allow_rule("true"), allow_rule("echo")]);
+        let result = evaluate_with_env(
+            r#"while true; do x="a"; done; echo $x"#,
+            &config,
+            &env,
+        );
+        assert_eq!(result.decision, Decision::Ask);
+    }
+
+    // ── read/readarray builtins ─────────────────────────────────────
+
+    #[test]
+    fn read_herestring_literal_allows() {
+        // read x <<< "hello"; echo $x → Allow
+        let env = VarEnv::empty();
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        let result = evaluate_with_env(r#"read x <<< "hello"; echo $x"#, &config, &env);
+        assert_eq!(result.decision, Decision::Allow);
+    }
+
+    #[test]
+    fn read_no_herestring_safe_opaque() {
+        // read x; echo $x → Allow (safe+opaque)
+        let env = VarEnv::empty();
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        let result = evaluate_with_env("read x; echo $x", &config, &env);
+        assert_eq!(result.decision, Decision::Allow);
+    }
+
+    #[test]
+    fn read_with_flags_skipped() {
+        // read -r x <<< "hello"; echo $x → Allow (flags skipped)
+        let env = VarEnv::empty();
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        let result = evaluate_with_env(r#"read -r x <<< "hello"; echo $x"#, &config, &env);
+        assert_eq!(result.decision, Decision::Allow);
+    }
+
+    #[test]
+    fn read_default_reply_var() {
+        // read <<< "hello"; echo $REPLY → Allow
+        let env = VarEnv::empty();
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        let result = evaluate_with_env(r#"read <<< "hello"; echo $REPLY"#, &config, &env);
+        assert_eq!(result.decision, Decision::Allow);
+    }
+
+    // ── Code-execution position detection ───────────────────────────
+
+    #[test]
+    fn eval_literal_allowed_cmd() {
+        // x="ls"; eval $x → Allow (x resolves to "ls", eval'd "ls" checked against rules)
+        let env = VarEnv::empty();
+        let config = config_with_rules(vec![allow_rule("ls")]);
+        let result = evaluate_with_env(r#"x="ls"; eval $x"#, &config, &env);
+        assert_eq!(result.decision, Decision::Allow);
+    }
+
+    #[test]
+    fn eval_unsafe_var_asks() {
+        // eval $UNKNOWN → Ask
+        let env = VarEnv::empty();
+        let config = config_with_rules(vec![allow_rule("ls")]);
+        let result = evaluate_with_env("eval $UNKNOWN", &config, &env);
+        assert_eq!(result.decision, Decision::Ask);
+    }
+
+    #[test]
+    fn eval_literal_with_args() {
+        // x="ls"; eval "$x -la" → Allow (resolves to "ls -la")
+        let env = VarEnv::empty();
+        let config = config_with_rules(vec![allow_rule("ls")]);
+        let result = evaluate_with_env(r#"x="ls"; eval "$x -la""#, &config, &env);
+        assert_eq!(result.decision, Decision::Allow);
+    }
+
+    #[test]
+    fn opaque_var_as_command_name_asks() {
+        // $x where x is safe but opaque → Ask (can't determine what runs)
+        let env = env_with(&[("x", VarState::Safe(None))]);
+        let config = config_with_rules(vec![allow_rule("ls")]);
+        let result = evaluate_with_env("$x", &config, &env);
+        assert_eq!(result.decision, Decision::Ask);
+        let reason = result.reason.unwrap();
+        assert!(reason.contains("command name"), "should mention command name: {reason}");
+    }
+
+    #[test]
+    fn bash_dash_c_literal_evaluates() {
+        // x="ls"; bash -c "$x" → Allow (x resolves, inner "ls" evaluated)
+        let env = VarEnv::empty();
+        let config = config_with_rules(vec![allow_rule("ls"), allow_rule("bash")]);
+        let result = evaluate_with_env(r#"x="ls"; bash -c "$x""#, &config, &env);
+        assert_eq!(result.decision, Decision::Allow);
+    }
+
+    #[test]
+    fn bash_dash_c_unsafe_asks() {
+        // bash -c "$UNKNOWN" → Ask
+        let env = VarEnv::empty();
+        let config = config_with_rules(vec![allow_rule("bash")]);
+        let result = evaluate_with_env(r#"bash -c "$UNKNOWN""#, &config, &env);
+        assert_eq!(result.decision, Decision::Ask);
+    }
+
+    #[test]
+    fn source_always_asks() {
+        let config = config_with_rules(vec![allow_rule("source")]);
+        let result = evaluate("source ./script.sh", &config);
+        assert_eq!(result.decision, Decision::Ask);
+        let reason = result.reason.unwrap();
+        assert!(reason.contains("source"), "should mention source: {reason}");
+    }
+
+    #[test]
+    fn dot_source_always_asks() {
+        let config = config_with_rules(vec![allow_rule(".")]);
+        let result = evaluate(". ./script.sh", &config);
+        assert_eq!(result.decision, Decision::Ask);
+    }
+
+    #[test]
+    fn eval_opaque_var_asks() {
+        // eval with opaque arg asks
+        let env = env_with(&[("cmd", VarState::Safe(None))]);
+        let config = config_with_rules(vec![allow_rule("eval"), allow_rule("ls")]);
+        let result = evaluate_with_env("eval $cmd", &config, &env);
+        assert_eq!(result.decision, Decision::Ask);
+        let reason = result.reason.unwrap();
+        assert!(reason.contains("eval"), "should mention eval: {reason}");
+    }
+
+    #[test]
+    fn sh_dash_c_opaque_asks() {
+        let env = env_with(&[("cmd", VarState::Safe(None))]);
+        let config = config_with_rules(vec![allow_rule("sh")]);
+        let result = evaluate_with_env("sh -c $cmd", &config, &env);
+        assert_eq!(result.decision, Decision::Ask);
+    }
+
+    #[test]
+    fn bash_no_dash_c_evaluates_normally() {
+        // bash without -c is not a code-execution pattern
+        let config = config_with_rules(vec![allow_rule("bash")]);
+        let result = evaluate("bash script.sh", &config);
+        assert_eq!(result.decision, Decision::Allow);
+    }
+
+    #[test]
+    fn eval_empty_allows() {
+        let config = config_with_rules(vec![allow_rule("eval")]);
+        let result = evaluate("eval", &config);
+        assert_eq!(result.decision, Decision::Allow);
+    }
+
+    #[test]
+    fn eval_denied_inner_denies() {
+        let config = config_with_rules(vec![deny_rule("rm")]);
+        let result = evaluate("eval rm -rf /", &config);
+        assert_eq!(result.decision, Decision::Deny);
     }
 }
