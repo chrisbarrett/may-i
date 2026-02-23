@@ -40,9 +40,11 @@ Then, tell Claude Code to use `may-i` as a bash tool pre-authorizer in your
 `may-i` will create a starter config for you at
 `~/.config/may-i/config.lisp`--customise it to your heart's content.
 
-## Direct Evaluation
+## Usage
 
-You can use `may-i eval "${command}"` to test out the authorizer.
+### Direct Evaluation
+
+Use `may-i eval "${command}"` to test the authorizer against a command.
 
 ```bash
 may-i eval 'cat README.md'
@@ -55,7 +57,7 @@ may-i eval --json 'git push'
 # Output: {"decision":"ask","reason":"No matching rule for command `git`"}
 ```
 
-## Validation & Testing
+### Validation & Testing
 
 Use `may-i check` to test whether your config is valid. Any inline
 checks you wrote will also be validated.
@@ -69,12 +71,26 @@ may-i check
 # 2 passed, 0 failed
 ```
 
+### Shell Parsing
+
+Use `may-i parse` to inspect how a command is parsed:
+
+```bash
+may-i parse 'echo hello | cat'
+may-i parse -f script.sh
+```
+
+### Global Flags
+
+- `--json` — Output as JSON (works with `eval` and `check`)
+- `--config <FILE>` — Use a specific config file (overrides `$MAYI_CONFIG`)
+
 ## Configuration
 
 ### Rules
 
 Rules match commands by exact name, list of names, or regex. Each rule specifies
-a decision (`allow`, `deny`, or `ask`) and optional matchers for arguments.
+an effect (`allow`, `deny`, or `ask`) and optional matchers for arguments.
 Matchers can be composed with `and`, `or`, and `not`.
 
 ```scheme
@@ -82,40 +98,48 @@ Matchers can be composed with `and`, `or`, and `not`.
 (rule (command "rm")
       (args (and (anywhere "-r" "--recursive")
                  (anywhere "/")))
-      (deny "Recursive deletion from root"))
+      (effect :deny "Recursive deletion from root"))
 
 ;; Allow simple read-only commands
-(rule (command (oneof "cat" "head" "tail"))
-      (allow "Read-only file operations"))
+(rule (command (or "cat" "head" "tail"))
+      (effect :allow "Read-only file operations"))
 
 ;; Allow curl without mutating flags
 (rule (command "curl")
       (args (forbidden "-d" "--data" "-F" "--form" "-X" "--request"))
-      (allow "GET request (no mutating flags)"))
+      (effect :allow "GET request (no mutating flags)"))
 
 ;; Deny dangerous gh operations
 (rule (command "gh")
-      (args (or (positional "repo" (oneof "create" "delete" "fork"))
-                (positional "secret" (oneof "set" "delete"))))
-      (deny "Supply chain attack vector"))
+      (args (or (positional "repo" (or "create" "delete" "fork"))
+                (positional "secret" (or "set" "delete"))))
+      (effect :deny "Supply chain attack vector"))
 ```
 
 Available argument matchers:
 
 - `positional` — Match arguments at specific positions (skip flags); `*` = any
+- `exact` — Like `positional`, but requires exactly as many positional args as
+  patterns (no extra args allowed)
 - `anywhere` — Match if any of these tokens appear anywhere (OR semantics)
-- `forbidden` — Rule matches only if none of these flags are present
+- `forbidden` — Sugar for `(not (anywhere ...))` — rule matches only if none of
+  these flags are present
 - `and` — All sub-matchers must match
 - `or` — Any sub-matcher must match
 - `not` — Inverts a sub-matcher
 
 Pattern values: `"literal"` (exact match), `(regex "^pat")` (regex match),
-`(oneof "a" "b")` (any of), `*` (wildcard, unquoted).
+`(or "a" "b")` (any of), `*` (wildcard, unquoted).
+
+Patterns also support `(and ...)` and `(not ...)` for composition.
+
+Positional patterns support quantifiers: `(? expr)` (zero or one), `(+ expr)`
+(one or more), `(* expr)` (zero or more). Bare patterns match exactly one arg.
 
 **Deny rules always win** regardless of position. For other rules, first match
 wins. Commands with no matching rule default to `ask`.
 
-### Cond branching
+### Conditional branching
 
 Use `cond` inside `(args ...)` to express multiple branches within a single
 rule. This is useful when you want to allow specific args but deny everything
@@ -143,6 +167,17 @@ must not have a separate `(effect ...)`. When nested inside combinators
 (`and`/`or`/`not`), it acts as a boolean matcher and the rule's own effect
 applies.
 
+Sugar forms for common patterns:
+
+- `(if MATCHER THEN-EFFECT ELSE-EFFECT?)` — Two-branch conditional
+- `(when MATCHER EFFECT)` — Single branch; rule skipped if matcher doesn't match
+- `(unless MATCHER EFFECT)` — Inverted `when`; effect applies when matcher
+  does _not_ match
+
+These desugar to `cond` internally. `cond`, `if`, `when`, and `unless` also
+work at the expression level inside `positional` and `anywhere` patterns, where
+each branch carries its own effect.
+
 ### Inline Checks
 
 Rules can embed checks for validation via `may-i check`.
@@ -165,4 +200,26 @@ performed against the inner command.
 (wrapper "nohup" after-flags)
 (wrapper "mise" (positional "exec") (after "--"))
 (wrapper "nix" (positional "shell") (after "--command"))
+```
+
+### Blocked Paths
+
+Block commands that reference sensitive file paths. Patterns are regexes matched
+against file arguments.
+
+```scheme
+(blocked-paths
+  "(^|/)\\.env($|[./])"
+  "(^|/)\\.ssh/"
+  "(^|/)\\.aws/")
+```
+
+### Safe Environment Variables
+
+Declare environment variables that `may-i` can resolve during static analysis of
+shell commands. This improves accuracy when commands reference variables like
+`$HOME` or `$PWD`.
+
+```scheme
+(safe-env-vars "HOME" "PWD" "USER" "SHELL" "EDITOR" "TERM")
 ```
