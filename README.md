@@ -30,7 +30,12 @@ Then, tell Claude Code to use `may-i` as a bash tool pre-authorizer in your
     "PreToolUse": [
       {
         "matcher": "Bash",
-        "hooks": ["may-i"]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "may-i"
+          }
+        ]
       }
     ]
   }
