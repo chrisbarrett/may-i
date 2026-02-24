@@ -40,7 +40,7 @@ fn parse_raw(input: &str) -> Result<Config, RawError> {
             "wrapper" => wrappers.push(parse_wrapper(&list[1..], form.span())?),
             "blocked-paths" => {
                 return Err(RawError::new(
-                    "blocked-paths is no longer supported; file access control is handled by syscall sandboxing",
+                    "blocked-paths is no longer supported; use the filesystem sandbox system provided by your OS",
                     form.span(),
                 )
                 .with_help("remove the (blocked-paths ...) form from your config"));
