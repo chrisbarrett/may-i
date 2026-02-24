@@ -93,6 +93,9 @@ pub enum WordPart {
     BraceExpansion(Vec<String>),
     Glob(String),
     ProcessSubstitution { direction: ProcessDirection, command: String },
+    /// A safe but opaque value: the variable is trusted but its runtime value
+    /// is unknown. The string is a label for diagnostics (e.g. "$f").
+    Opaque(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -219,7 +222,7 @@ fn check_cat_heredoc(sc: &SimpleCommand) -> Option<String> {
 /// Abbreviate a string for use in error messages. Multi-line content is
 /// reduced to the first line with "…" appended; long single lines are
 /// truncated at 60 chars.
-pub(super) fn abbreviate(s: &str) -> String {
+pub fn abbreviate(s: &str) -> String {
     let first_line = s.lines().next().unwrap_or(s);
     let is_multiline = s.contains('\n');
     if first_line.len() > 60 {
@@ -276,6 +279,7 @@ pub(super) fn format_param_op(name: &str, op: &ParameterOperator) -> String {
 }
 
 /// Returns true if any part in the slice is a dynamic shell construct.
+/// Opaque parts are safe (trusted) and do NOT count as dynamic.
 fn has_dynamic_in(parts: &[WordPart]) -> bool {
     parts.iter().any(|part| match part {
         WordPart::CommandSubstitution(_)
@@ -286,6 +290,7 @@ fn has_dynamic_in(parts: &[WordPart]) -> bool {
         | WordPart::Arithmetic(_)
         | WordPart::ProcessSubstitution { .. } => true,
         WordPart::DoubleQuoted(inner) => has_dynamic_in(inner),
+        WordPart::Opaque(_) => false,
         _ => false,
     })
 }
@@ -318,6 +323,7 @@ fn collect_dynamic_from(parts: &[WordPart], out: &mut Vec<String>) {
             WordPart::DoubleQuoted(inner) => {
                 collect_dynamic_from(inner, out);
             }
+            WordPart::Opaque(_) => {} // safe, not dynamic
             _ => {}
         }
     }
@@ -347,6 +353,9 @@ fn parts_to_str(parts: &[WordPart], out: &mut String) {
             }
             WordPart::ProcessSubstitution { command, .. } => {
                 out.push_str(command);
+            }
+            WordPart::Opaque(label) => {
+                out.push_str(label);
             }
         }
     }
@@ -389,6 +398,69 @@ impl Word {
         parts_to_str(&self.parts, &mut out);
         out
     }
+
+    /// Returns true if this word contains any opaque parts.
+    pub fn has_opaque_parts(&self) -> bool {
+        has_opaque_in(&self.parts)
+    }
+
+    /// Returns true if all parts are static (Literal/SingleQuoted/AnsiCQuoted).
+    pub fn is_literal(&self) -> bool {
+        !has_dynamic_in(&self.parts) && !has_opaque_in(&self.parts)
+    }
+
+    /// Resolve variables using a VarEnv. Safe+resolvable variables become Literal,
+    /// safe+opaque variables become Opaque, unsafe/unknown variables stay as Parameter.
+    pub fn resolve_with_var_env(
+        &self,
+        env: &crate::types::VarEnv,
+    ) -> Word {
+        Word {
+            parts: resolve_parts_with_var_env(&self.parts, env),
+        }
+    }
+}
+
+/// Returns true if any part in the slice is an Opaque value.
+fn has_opaque_in(parts: &[WordPart]) -> bool {
+    parts.iter().any(|part| match part {
+        WordPart::Opaque(_) => true,
+        WordPart::DoubleQuoted(inner) => has_opaque_in(inner),
+        _ => false,
+    })
+}
+
+/// Resolve variables using VarEnv: Safe(Some) → Literal, Safe(None) → Opaque, absent → keep.
+fn resolve_parts_with_var_env(
+    parts: &[WordPart],
+    env: &crate::types::VarEnv,
+) -> Vec<WordPart> {
+    use crate::types::VarState;
+    parts.iter().map(|part| match part {
+        WordPart::Parameter(name) | WordPart::ParameterExpansion(name) => {
+            match env.get(name) {
+                Some(VarState::Safe(Some(val))) => WordPart::Literal(val.clone()),
+                Some(VarState::Safe(None)) => WordPart::Opaque(format!("${name}")),
+                Some(VarState::Unsafe) | None => part.clone(),
+            }
+        }
+        WordPart::ParameterExpansionOp { name, op } => {
+            match env.get(name) {
+                Some(VarState::Safe(Some(val))) => {
+                    // Build a temporary HashMap for the operator resolution
+                    let mut map = std::collections::HashMap::new();
+                    map.insert(name.clone(), val.clone());
+                    super::resolve::resolve_param_op(name, op, &map)
+                }
+                Some(VarState::Safe(None)) => WordPart::Opaque(format!("${{{name}...}}")),
+                Some(VarState::Unsafe) | None => part.clone(),
+            }
+        }
+        WordPart::DoubleQuoted(inner) => {
+            WordPart::DoubleQuoted(resolve_parts_with_var_env(inner, env))
+        }
+        _ => part.clone(),
+    }).collect()
 }
 
 /// Resolve environment variables in a slice of word parts.
@@ -485,6 +557,29 @@ impl SimpleCommand {
             &self.words[1..]
         } else {
             &[]
+        }
+    }
+
+    /// Resolve variables using VarEnv in all words, assignment values,
+    /// and redirect file targets.
+    pub fn resolve_with_var_env(
+        &self,
+        env: &crate::types::VarEnv,
+    ) -> SimpleCommand {
+        SimpleCommand {
+            assignments: self.assignments.iter().map(|a| Assignment {
+                name: a.name.clone(),
+                value: a.value.resolve_with_var_env(env),
+            }).collect(),
+            words: self.words.iter().map(|w| w.resolve_with_var_env(env)).collect(),
+            redirections: self.redirections.iter().map(|r| Redirection {
+                fd: r.fd,
+                kind: r.kind.clone(),
+                target: match &r.target {
+                    RedirectionTarget::File(w) => RedirectionTarget::File(w.resolve_with_var_env(env)),
+                    other => other.clone(),
+                },
+            }).collect(),
         }
     }
 }

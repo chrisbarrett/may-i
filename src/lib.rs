@@ -4,6 +4,5 @@ pub mod config_parse;
 pub mod engine;
 pub mod errors;
 pub mod parser;
-pub mod security;
 pub mod sexpr;
 pub mod types;

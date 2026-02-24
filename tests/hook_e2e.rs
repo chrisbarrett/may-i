@@ -26,11 +26,6 @@ const TEST_CONFIG: &str = r#"
 
 (rule (command "echo")
       (effect :allow "Shell builtin"))
-
-(blocked-paths
-  "(^|/)\\.env($|[./])"
-  "(^|/)\\.ssh/"
-  "(^|/)\\.aws/")
 "#;
 
 fn write_config() -> NamedTempFile {
@@ -365,11 +360,13 @@ fn hook_handles_payload_with_extra_fields() {
 }
 
 // ---------------------------------------------------------------------------
-// Hook protocol: security filter integration
+// Hook protocol: unmatched commands get Ask (blocked-paths removed)
 // ---------------------------------------------------------------------------
 
 #[test]
-fn hook_denies_credential_access() {
+fn hook_asks_for_credential_access() {
+    // With blocked-paths removed, cat against sensitive paths is just an
+    // unmatched command (no cat rule) → Ask.
     let cfg = write_config();
     let output = may_i(&cfg)
         .write_stdin(bash_payload("cat /home/user/.ssh/id_rsa"))
@@ -382,12 +379,12 @@ fn hook_denies_credential_access() {
         serde_json::from_slice(&output.stdout).expect("valid JSON");
     assert_eq!(
         resp["hookSpecificOutput"]["permissionDecision"],
-        "deny"
+        "ask"
     );
 }
 
 #[test]
-fn hook_denies_env_file_access() {
+fn hook_asks_for_env_file_access() {
     let cfg = write_config();
     let output = may_i(&cfg)
         .write_stdin(bash_payload("cat .env.production"))
@@ -400,7 +397,7 @@ fn hook_denies_env_file_access() {
         serde_json::from_slice(&output.stdout).expect("valid JSON");
     assert_eq!(
         resp["hookSpecificOutput"]["permissionDecision"],
-        "deny"
+        "ask"
     );
 }
 

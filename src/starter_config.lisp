@@ -70,10 +70,6 @@
 ;   (wrapper "nohup" after-flags)
 ;   (wrapper "mise" (positional "exec") (after "--"))
 ;
-; SECURITY (regex patterns for blocked credential paths)
-;
-;   (blocked-paths "\\.secret/" "^/private/")
-;
 ; ENV VAR RESOLUTION (allow static analysis to resolve these env vars)
 ;
 ;   (safe-env-vars "HOME" "PWD" "USER" "SHELL" "EDITOR" "TERM")
@@ -120,16 +116,3 @@
 (rule (command (or "basename" "dirname" "realpath" "readlink" "pwd"))
       (effect :allow "Path utilities"))
 
-; -- Security: blocked credential paths ----------------------------------------
-
-(blocked-paths
-  "(^|/)\\.env($|[./])"
-  "(^|/)\\.ssh/"
-  "(^|/)\\.aws/"
-  "(^|/)\\.gnupg/"
-  "(^|/)\\.docker/"
-  "(^|/)\\.kube/"
-  "(^|/)credentials\\.json($|[./])"
-  "(^|/)\\.netrc($|[./])"
-  "(^|/)\\.npmrc($|[./])"
-  "(^|/)\\.pypirc($|[./])")

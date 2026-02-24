@@ -207,18 +207,6 @@ performed against the inner command.
 (wrapper "nix" (positional "shell") (after "--command"))
 ```
 
-### Blocked Paths
-
-Block commands that reference sensitive file paths. Patterns are regexes matched
-against file arguments.
-
-```scheme
-(blocked-paths
-  "(^|/)\\.env($|[./])"
-  "(^|/)\\.ssh/"
-  "(^|/)\\.aws/")
-```
-
 ### Safe Environment Variables
 
 Declare environment variables that `may-i` can resolve during static analysis of
