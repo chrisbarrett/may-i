@@ -151,6 +151,7 @@ pub enum VarState {
 #[derive(Debug, Clone)]
 pub struct VarEnv {
     vars: std::collections::HashMap<String, VarState>,
+    fns: std::collections::HashMap<String, crate::parser::Command>,
 }
 
 impl VarEnv {
@@ -161,13 +162,17 @@ impl VarEnv {
         for (key, val) in std::env::vars() {
             vars.insert(key, VarState::Safe(Some(val)));
         }
-        VarEnv { vars }
+        VarEnv {
+            vars,
+            fns: std::collections::HashMap::new(),
+        }
     }
 
     #[cfg(test)]
     pub fn empty() -> Self {
         VarEnv {
             vars: std::collections::HashMap::new(),
+            fns: std::collections::HashMap::new(),
         }
     }
 
@@ -232,7 +237,16 @@ impl VarEnv {
             }
         }
 
-        VarEnv { vars: result }
+        // Merge function definitions: collect all fns from all branches.
+        // If a function is defined in any branch, keep it.
+        let mut fns = pre.fns.clone();
+        for branch in branches {
+            for (name, body) in &branch.fns {
+                fns.insert(name.clone(), body.clone());
+            }
+        }
+
+        VarEnv { vars: result, fns }
     }
 
     /// Build a resolution map: only resolvable variables (Safe with known value).
@@ -249,6 +263,16 @@ impl VarEnv {
     /// Check if a variable is safe (regardless of whether its value is known).
     pub fn is_safe(&self, name: &str) -> bool {
         matches!(self.get(name), Some(VarState::Safe(_)))
+    }
+
+    /// Store a function definition.
+    pub fn set_fn(&mut self, name: String, body: crate::parser::Command) {
+        self.fns.insert(name, body);
+    }
+
+    /// Retrieve a function definition.
+    pub fn get_fn(&self, name: &str) -> Option<&crate::parser::Command> {
+        self.fns.get(name)
     }
 }
 

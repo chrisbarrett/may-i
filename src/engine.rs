@@ -255,13 +255,15 @@ fn walk_command_with_depth(cmd: &Command, config: &Config, env: &VarEnv, depth: 
             }
         }
 
-        Command::FunctionDef { .. } => {
+        Command::FunctionDef { name, body } => {
+            let mut new_env = env.clone();
+            new_env.set_fn(name.clone(), *body.clone());
             WalkResult {
                 result: EvalResult {
                     decision: Decision::Allow,
                     reason: None,
                 },
-                env: env.clone(),
+                env: new_env,
             }
         }
 
@@ -398,12 +400,88 @@ fn resolve_cmd_sub_parts(
                     part.clone()
                 }
             }
+            parser::WordPart::ProcessSubstitution { direction, command } => {
+                let inner_ast = parser::parse(command);
+                let inner_result = walk_command_with_depth(&inner_ast, config, env, depth + 1);
+                if inner_result.result.decision == Decision::Allow {
+                    let sigil = match direction {
+                        parser::ProcessDirection::Input => '<',
+                        parser::ProcessDirection::Output => '>',
+                    };
+                    parser::WordPart::Opaque(format!("{}({})", sigil, parser::abbreviate(command)))
+                } else {
+                    part.clone()
+                }
+            }
+            parser::WordPart::Arithmetic(expr) => {
+                if is_arithmetic_safe(expr, env) {
+                    parser::WordPart::Opaque(format!("$(({})", parser::abbreviate(expr)))
+                } else {
+                    part.clone()
+                }
+            }
             parser::WordPart::DoubleQuoted(inner) => {
                 parser::WordPart::DoubleQuoted(resolve_cmd_sub_parts(inner, config, env, depth))
             }
             _ => part.clone(),
         })
         .collect()
+}
+
+/// Check if an arithmetic expression is safe: all variable references resolve to safe vars.
+fn is_arithmetic_safe(expr: &str, env: &VarEnv) -> bool {
+    // Extract identifiers from the expression. In bash arithmetic, variables can
+    // appear as bare names (x), $name, or ${name}. We extract all identifier-like
+    // tokens and check them against the VarEnv.
+    let mut i = 0;
+    let bytes = expr.as_bytes();
+    while i < bytes.len() {
+        if bytes[i] == b'$' {
+            i += 1;
+            if i < bytes.len() && bytes[i] == b'{' {
+                // ${name} form
+                i += 1;
+                let start = i;
+                while i < bytes.len() && bytes[i] != b'}' {
+                    i += 1;
+                }
+                let name = &expr[start..i];
+                if !name.is_empty() && !env.is_safe(name) {
+                    return false;
+                }
+                if i < bytes.len() {
+                    i += 1; // skip '}'
+                }
+            } else {
+                // $name form
+                let start = i;
+                while i < bytes.len()
+                    && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_')
+                {
+                    i += 1;
+                }
+                let name = &expr[start..i];
+                if !name.is_empty() && !env.is_safe(name) {
+                    return false;
+                }
+            }
+        } else if bytes[i].is_ascii_alphabetic() || bytes[i] == b'_' {
+            // Bare identifier
+            let start = i;
+            while i < bytes.len()
+                && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_')
+            {
+                i += 1;
+            }
+            let name = &expr[start..i];
+            if !env.is_safe(name) {
+                return false;
+            }
+        } else {
+            i += 1;
+        }
+    }
+    true
 }
 
 /// Walk a simple command: process assignments, resolve variables, evaluate.
@@ -522,6 +600,30 @@ fn walk_simple_command(sc: &SimpleCommand, config: &Config, env: &VarEnv, depth:
             && let Some(result) = walk_shell_dash_c(&resolved, config, &new_env, depth)
         {
             return result;
+        }
+
+        // Case E: function call — inline the function body
+        if depth < MAX_EVAL_DEPTH
+            && let Some(body) = new_env.get_fn(cmd_name).cloned()
+        {
+            let mut fn_env = new_env.clone();
+            // Set positional parameters ($1, $2, ...) from the call arguments
+            for (i, arg) in resolved.args().iter().enumerate() {
+                let state = if arg.is_literal() {
+                    VarState::Safe(Some(arg.to_str()))
+                } else if arg.has_opaque_parts() {
+                    VarState::Safe(None)
+                } else {
+                    VarState::Unsafe
+                };
+                fn_env.set(format!("{}", i + 1), state);
+            }
+            let fn_result = walk_command_with_depth(&body, config, &fn_env, depth + 1);
+            // Function bodies execute in caller's scope — propagate env changes
+            return WalkResult {
+                result: fn_result.result,
+                env: fn_result.env,
+            };
         }
     }
 
@@ -2796,5 +2898,188 @@ mod tests {
         let config = config_with_rules(vec![deny_rule("rm")]);
         let result = evaluate("eval rm -rf /", &config);
         assert_eq!(result.decision, Decision::Deny);
+    }
+
+    // ── Process substitution safety ──────────────────────────────────
+
+    #[test]
+    fn process_sub_safe_inner_allows() {
+        let config = config_with_rules(vec![allow_rule("diff"), allow_rule("echo")]);
+        let result = evaluate("diff <(echo a) <(echo b)", &config);
+        assert_eq!(result.decision, Decision::Allow);
+    }
+
+    #[test]
+    fn process_sub_unsafe_inner_asks() {
+        let config = config_with_rules(vec![allow_rule("diff")]);
+        // dangerous_cmd has no rule → Ask
+        let result = evaluate("diff <(dangerous_cmd) file", &config);
+        assert_eq!(result.decision, Decision::Ask);
+    }
+
+    #[test]
+    fn process_sub_cat_echo_allows() {
+        let config = config_with_rules(vec![allow_rule("cat"), allow_rule("echo")]);
+        let result = evaluate("cat <(echo safe)", &config);
+        assert_eq!(result.decision, Decision::Allow);
+    }
+
+    #[test]
+    fn process_sub_output_direction_allows() {
+        let config = config_with_rules(vec![allow_rule("tee"), allow_rule("echo")]);
+        let result = evaluate("echo hello | tee >(cat)", &config);
+        assert_eq!(result.decision, Decision::Ask); // cat has no rule
+    }
+
+    #[test]
+    fn process_sub_output_all_allowed() {
+        let config = config_with_rules(vec![allow_rule("tee"), allow_rule("echo"), allow_rule("cat")]);
+        let result = evaluate("echo hello | tee >(cat)", &config);
+        assert_eq!(result.decision, Decision::Allow);
+    }
+
+    // ── Arithmetic expression safety ─────────────────────────────────
+
+    #[test]
+    fn arithmetic_pure_numeric_allows() {
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        let result = evaluate("echo $((1 + 2))", &config);
+        assert_eq!(result.decision, Decision::Allow);
+    }
+
+    #[test]
+    fn arithmetic_safe_var_allows() {
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        let env = env_with(&[("x", VarState::Safe(Some("5".into())))]);
+        let result = evaluate_with_env("x=5; echo $((x + 1))", &config, &env);
+        assert_eq!(result.decision, Decision::Allow);
+    }
+
+    #[test]
+    fn arithmetic_unknown_var_asks() {
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        let env = VarEnv::empty();
+        let result = evaluate_with_env("echo $((UNKNOWN + 1))", &config, &env);
+        assert_eq!(result.decision, Decision::Ask);
+    }
+
+    #[test]
+    fn arithmetic_safe_var_complex_allows() {
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        let env = env_with(&[("x", VarState::Safe(Some("5".into())))]);
+        let result = evaluate_with_env("x=5; echo $((x * 2 + 1))", &config, &env);
+        assert_eq!(result.decision, Decision::Allow);
+    }
+
+    #[test]
+    fn arithmetic_dollar_var_safe() {
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        let env = env_with(&[("y", VarState::Safe(Some("3".into())))]);
+        let result = evaluate_with_env("echo $(($y + 1))", &config, &env);
+        assert_eq!(result.decision, Decision::Allow);
+    }
+
+    #[test]
+    fn arithmetic_dollar_brace_var_safe() {
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        let env = env_with(&[("z", VarState::Safe(Some("7".into())))]);
+        let result = evaluate_with_env("echo $((${z} + 1))", &config, &env);
+        assert_eq!(result.decision, Decision::Allow);
+    }
+
+    // ── is_arithmetic_safe unit tests ────────────────────────────────
+
+    #[test]
+    fn arith_safe_pure_numbers() {
+        let env = VarEnv::empty();
+        assert!(is_arithmetic_safe("1 + 2 * 3", &env));
+    }
+
+    #[test]
+    fn arith_safe_known_var() {
+        let env = env_with(&[("x", VarState::Safe(Some("5".into())))]);
+        assert!(is_arithmetic_safe("x + 1", &env));
+    }
+
+    #[test]
+    fn arith_unsafe_unknown_var() {
+        let env = VarEnv::empty();
+        assert!(!is_arithmetic_safe("x + 1", &env));
+    }
+
+    #[test]
+    fn arith_safe_dollar_var() {
+        let env = env_with(&[("y", VarState::Safe(None))]);
+        assert!(is_arithmetic_safe("$y + 1", &env));
+    }
+
+    #[test]
+    fn arith_safe_dollar_brace_var() {
+        let env = env_with(&[("z", VarState::Safe(None))]);
+        assert!(is_arithmetic_safe("${z} * 2", &env));
+    }
+
+    #[test]
+    fn arith_unsafe_dollar_var() {
+        let env = VarEnv::empty();
+        assert!(!is_arithmetic_safe("$UNKNOWN + 1", &env));
+    }
+
+    // ── Function tracking ────────────────────────────────────────────
+
+    #[test]
+    fn function_def_then_call_allows() {
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        let result = evaluate("f() { echo hello; }; f", &config);
+        assert_eq!(result.decision, Decision::Allow);
+    }
+
+    #[test]
+    fn function_def_then_call_denies() {
+        let config = config_with_rules(vec![deny_rule("rm")]);
+        let result = evaluate("f() { rm -rf /; }; f", &config);
+        assert_eq!(result.decision, Decision::Deny);
+    }
+
+    #[test]
+    fn function_def_then_call_with_safe_arg() {
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        let result = evaluate("f() { echo $1; }; f safe", &config);
+        assert_eq!(result.decision, Decision::Allow);
+    }
+
+    #[test]
+    fn function_def_then_call_unknown_inner() {
+        // Inner command has no matching rule → Ask
+        let config = config_with_rules(vec![]);
+        let result = evaluate("f() { dangerous; }; f", &config);
+        assert_eq!(result.decision, Decision::Ask);
+    }
+
+    #[test]
+    fn function_def_never_called_allows() {
+        let config = config_with_rules(vec![deny_rule("rm")]);
+        // Function is defined but never called — definition is safe
+        let result = evaluate("f() { rm -rf /; }", &config);
+        assert_eq!(result.decision, Decision::Allow);
+    }
+
+    #[test]
+    fn function_recursive_depth_guard() {
+        // Recursive function should hit depth guard and not loop infinitely
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        let result = evaluate("f() { f; }; f", &config);
+        // At max depth, the recursive call to `f` won't find it as a function
+        // (depth >= MAX_EVAL_DEPTH), so it falls through to rule matching,
+        // which yields Ask (no rule for `f`)
+        assert_eq!(result.decision, Decision::Ask);
+    }
+
+    #[test]
+    fn function_propagates_env() {
+        // Function body sets a variable that's used after the call
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        let result = evaluate("f() { x=hello; }; f; echo $x", &config);
+        assert_eq!(result.decision, Decision::Allow);
     }
 }
