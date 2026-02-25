@@ -39,10 +39,7 @@ fn aggregate_results(results: Vec<EvalResult>) -> EvalResult {
             _ => {}
         }
     }
-    overall.unwrap_or(EvalResult {
-        decision: Decision::Allow,
-        reason: None,
-    })
+    overall.unwrap_or(EvalResult::new(Decision::Allow, None))
 }
 
 /// Evaluate a shell command string against the config.
@@ -79,10 +76,7 @@ fn walk_command_with_depth(cmd: &Command, config: &Config, env: &VarEnv, depth: 
             let state = evaluate_assignment_value(&a.value, env, config, depth);
             new_env.set(a.name.clone(), state);
             WalkResult {
-                result: EvalResult {
-                    decision: Decision::Allow,
-                    reason: None,
-                },
+                result: EvalResult::new(Decision::Allow, None),
                 env: new_env,
             }
         }
@@ -226,14 +220,14 @@ fn walk_command_with_depth(cmd: &Command, config: &Config, env: &VarEnv, depth: 
                 let dynamic = resolved_word.dynamic_parts();
                 let parts = dedup_parts(&dynamic);
                 return WalkResult {
-                    result: EvalResult {
-                        decision: Decision::Ask,
-                        reason: Some(format!(
+                    result: EvalResult::new(
+                        Decision::Ask,
+                        Some(format!(
                             "Cannot statically analyse dynamic value{}: {}",
                             if parts.len() == 1 { "" } else { "s" },
                             parts.join(", "),
                         )),
-                    },
+                    ),
                     env: env.clone(),
                 };
             }
@@ -259,10 +253,7 @@ fn walk_command_with_depth(cmd: &Command, config: &Config, env: &VarEnv, depth: 
             let mut new_env = env.clone();
             new_env.set_fn(name.clone(), *body.clone());
             WalkResult {
-                result: EvalResult {
-                    decision: Decision::Allow,
-                    reason: None,
-                },
+                result: EvalResult::new(Decision::Allow, None),
                 env: new_env,
             }
         }
@@ -290,10 +281,7 @@ fn walk_for_loop(
         let literals: Vec<String> = resolved_words.iter().map(|w| w.to_str()).collect();
         if literals.is_empty() {
             return WalkResult {
-                result: EvalResult {
-                    decision: Decision::Allow,
-                    reason: None,
-                },
+                result: EvalResult::new(Decision::Allow, None),
                 env: env.clone(),
             };
         }
@@ -341,14 +329,14 @@ fn walk_for_loop(
     }
     let parts = dedup_parts(&dynamic);
     WalkResult {
-        result: EvalResult {
-            decision: Decision::Ask,
-            reason: Some(format!(
+        result: EvalResult::new(
+            Decision::Ask,
+            Some(format!(
                 "Cannot statically analyse dynamic value{}: {}",
                 if parts.len() == 1 { "" } else { "s" },
                 parts.join(", "),
             )),
-        },
+        ),
         env: env.clone(),
     }
 }
@@ -497,10 +485,7 @@ fn walk_simple_command(sc: &SimpleCommand, config: &Config, env: &VarEnv, depth:
     // If no command words, this is an assignment-only command
     if sc.words.is_empty() {
         return WalkResult {
-            result: EvalResult {
-                decision: Decision::Allow,
-                reason: None,
-            },
+            result: EvalResult::new(Decision::Allow, None),
             env: new_env,
         };
     }
@@ -549,14 +534,14 @@ fn walk_simple_command(sc: &SimpleCommand, config: &Config, env: &VarEnv, depth:
         let cmd_label = resolved.command_name().unwrap_or("<unknown>");
         let parts = dedup_parts(&dynamic);
         return WalkResult {
-            result: EvalResult {
-                decision: Decision::Ask,
-                reason: Some(format!(
+            result: EvalResult::new(
+                Decision::Ask,
+                Some(format!(
                     "Command `{cmd_label}` contains dynamic value{} that cannot be statically analysed: {}",
                     if parts.len() == 1 { "" } else { "s" },
                     parts.join(", "),
                 )),
-            },
+            ),
             env: new_env,
         };
     }
@@ -566,12 +551,12 @@ fn walk_simple_command(sc: &SimpleCommand, config: &Config, env: &VarEnv, depth:
         // Case D: `source` / `.` — always Ask
         if cmd_name == "source" || cmd_name == "." {
             return WalkResult {
-                result: EvalResult {
-                    decision: Decision::Ask,
-                    reason: Some(format!(
+                result: EvalResult::new(
+                    Decision::Ask,
+                    Some(format!(
                         "Cannot statically analyse `{cmd_name}`: sourced file contents are unknown"
                     )),
-                },
+                ),
                 env: new_env,
             };
         }
@@ -579,12 +564,10 @@ fn walk_simple_command(sc: &SimpleCommand, config: &Config, env: &VarEnv, depth:
         // Case A: opaque variable as command name
         if resolved.words.first().is_some_and(|w| w.has_opaque_parts()) {
             return WalkResult {
-                result: EvalResult {
-                    decision: Decision::Ask,
-                    reason: Some(
-                        "Variable used as command name: cannot determine what runs".into()
-                    ),
-                },
+                result: EvalResult::new(
+                    Decision::Ask,
+                    Some("Variable used as command name: cannot determine what runs".into()),
+                ),
                 env: new_env,
             };
         }
@@ -699,10 +682,7 @@ fn walk_read_builtin(
     }
 
     WalkResult {
-        result: EvalResult {
-            decision: Decision::Allow,
-            reason: None,
-        },
+        result: EvalResult::new(Decision::Allow, None),
         env: env.clone(),
     }
 }
@@ -717,10 +697,7 @@ fn walk_eval_command(
     let args = resolved.args();
     if args.is_empty() {
         return WalkResult {
-            result: EvalResult {
-                decision: Decision::Allow,
-                reason: None,
-            },
+            result: EvalResult::new(Decision::Allow, None),
             env: env.clone(),
         };
     }
@@ -738,26 +715,24 @@ fn walk_eval_command(
         }
         let parts = dedup_parts(&dynamic);
         return WalkResult {
-            result: EvalResult {
-                decision: Decision::Ask,
-                reason: Some(format!(
+            result: EvalResult::new(
+                Decision::Ask,
+                Some(format!(
                     "Command `eval` contains dynamic value{} that cannot be statically analysed: {}",
                     if parts.len() == 1 { "" } else { "s" },
                     parts.join(", "),
                 )),
-            },
+            ),
             env: env.clone(),
         };
     }
 
     if has_opaque {
         return WalkResult {
-            result: EvalResult {
-                decision: Decision::Ask,
-                reason: Some(
-                    "Cannot determine eval'd command: argument value is unknown".into(),
-                ),
-            },
+            result: EvalResult::new(
+                Decision::Ask,
+                Some("Cannot determine eval'd command: argument value is unknown".into()),
+            ),
             env: env.clone(),
         };
     }
@@ -808,13 +783,13 @@ fn walk_shell_dash_c(
 
     if cmd_arg.has_opaque_parts() {
         return Some(WalkResult {
-            result: EvalResult {
-                decision: Decision::Ask,
-                reason: Some(format!(
+            result: EvalResult::new(
+                Decision::Ask,
+                Some(format!(
                     "Cannot determine `{} -c` command: argument value is unknown",
                     resolved.command_name().unwrap_or("sh"),
                 )),
-            },
+            ),
             env: env.clone(),
         });
     }
@@ -840,10 +815,7 @@ fn evaluate_resolved_command(
     let cmd_name = match resolved.command_name() {
         Some(name) if !name.is_empty() => name,
         _ => {
-            return EvalResult {
-                decision: Decision::Ask,
-                reason: Some("Unknown command".into()),
-            };
+            return EvalResult::new(Decision::Ask, Some("Unknown command".into()));
         }
     };
 
@@ -859,11 +831,16 @@ fn evaluate_resolved_command(
 
     // Evaluate against rules: deny rules first, then first match
     let mut first_match: Option<EvalResult> = None;
+    let mut trace = Vec::new();
 
     for rule in &config.rules {
+        let rule_label = format_command_matcher(&rule.command);
+
         if !command_matches(cmd_name, &rule.command) {
             continue;
         }
+
+        trace.push(format!("matched command: {rule_label}"));
 
         // Determine if args match
         let args_match = match &rule.matcher {
@@ -871,22 +848,35 @@ fn evaluate_resolved_command(
             Some(m) => matcher_matches(m, &expanded_args),
         };
         if !args_match {
+            trace.push("  args did not match".into());
             continue;
+        }
+        if rule.matcher.is_some() {
+            trace.push("  args matched".into());
         }
 
         // Determine decision+reason: from rule-level effect, top-level cond branches,
         // or embedded Expr::Cond effects
         let effect = if let Some(ref eff) = rule.effect {
+            trace.push(format!("  effect: {} — {}", eff.decision, eff.reason.as_deref().unwrap_or("(no reason)")));
             eff.clone()
         } else if let Some(ArgMatcher::Cond(branches)) = &rule.matcher {
             // Top-level cond: find first matching branch for its effect
             let mut found = None;
-            for branch in branches {
+            for (i, branch) in branches.iter().enumerate() {
                 let branch_match = match &branch.matcher {
-                    None => true,
-                    Some(m) => matcher_matches(m, &expanded_args),
+                    None => {
+                        trace.push(format!("  cond branch {}: else (catch-all)", i + 1));
+                        true
+                    }
+                    Some(m) => {
+                        let matched = matcher_matches(m, &expanded_args);
+                        trace.push(format!("  cond branch {}: {}", i + 1, if matched { "matched" } else { "no match" }));
+                        matched
+                    }
                 };
                 if branch_match {
+                    trace.push(format!("  effect: {} — {}", branch.effect.decision, branch.effect.reason.as_deref().unwrap_or("(no reason)")));
                     found = Some(branch.effect.clone());
                     break;
                 }
@@ -895,7 +885,6 @@ fn evaluate_resolved_command(
             eff
         } else if let Some(ref m) = rule.matcher {
             // Walk matcher tree for Expr::Cond effects.
-            // find_expr_effect works on string slices; convert literals, skip opaque.
             let string_args: Vec<String> = expanded_args
                 .iter()
                 .filter_map(|a| match a {
@@ -903,30 +892,53 @@ fn evaluate_resolved_command(
                     ResolvedArg::Opaque => None,
                 })
                 .collect();
-            let Some(eff) = m.find_expr_effect(&string_args) else { continue };
+            let Some(eff) = m.find_expr_effect(&string_args) else {
+                trace.push("  no matching expr cond branch".into());
+                continue;
+            };
+            trace.push(format!("  expr effect: {} — {}", eff.decision, eff.reason.as_deref().unwrap_or("(no reason)")));
             eff
         } else {
             continue;
         };
 
         let Effect { decision, reason } = effect;
-        let result = EvalResult { decision, reason };
+        let mut result = EvalResult::new(decision, reason);
 
         // Deny rules always win
         if decision == Decision::Deny {
+            result.trace = trace;
             return result;
         }
 
         // Otherwise, first match wins
         if first_match.is_none() {
+            result.trace = trace.clone();
             first_match = Some(result);
         }
     }
 
-    first_match.unwrap_or(EvalResult {
-        decision: Decision::Ask,
-        reason: Some(format!("No matching rule for command `{cmd_name}`")),
+    first_match.unwrap_or_else(|| {
+        trace.push("no matching rule".into());
+        let mut result = EvalResult::new(
+            Decision::Ask,
+            Some(format!("No matching rule for command `{cmd_name}`")),
+        );
+        result.trace = trace;
+        result
     })
+}
+
+/// Format a CommandMatcher for display in traces.
+fn format_command_matcher(m: &CommandMatcher) -> String {
+    match m {
+        CommandMatcher::Exact(s) => format!("(command \"{s}\")"),
+        CommandMatcher::Regex(re) => format!("(command #\"{}\")", re.as_str()),
+        CommandMatcher::List(names) => {
+            let quoted: Vec<String> = names.iter().map(|n| format!("\"{n}\"")).collect();
+            format!("(command (or {}))", quoted.join(" "))
+        }
+    }
 }
 
 /// A resolved argument that may be a known literal or an opaque (safe but unknown) value.

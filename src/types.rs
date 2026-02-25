@@ -121,12 +121,20 @@ pub struct ExprBranch {
     pub effect: Effect,
 }
 
+/// Source file information for diagnostics.
+#[derive(Debug, Clone)]
+pub struct SourceInfo {
+    pub filename: String,
+    pub content: String,
+}
+
 /// Top-level configuration.
 #[derive(Debug, Clone, Default)]
 pub struct Config {
     pub rules: Vec<Rule>,
     pub wrappers: Vec<Wrapper>,
     pub security: SecurityConfig,
+    pub source_info: Option<SourceInfo>,
 }
 
 /// Security section of config.
@@ -517,6 +525,17 @@ pub enum WrapperKind {
 pub struct EvalResult {
     pub decision: Decision,
     pub reason: Option<String>,
+    pub trace: Vec<String>,
+}
+
+impl EvalResult {
+    pub fn new(decision: Decision, reason: Option<String>) -> Self {
+        Self {
+            decision,
+            reason,
+            trace: vec![],
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -541,6 +560,7 @@ impl std::fmt::Debug for CommandMatcher {
 pub struct Check {
     pub command: String,
     pub expected: Decision,
+    pub source_span: crate::errors::Span,
 }
 
 #[cfg(test)]

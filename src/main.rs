@@ -30,7 +30,11 @@ enum Command {
     /// Evaluate a shell command against the loaded config
     Eval { command: String },
     /// Validate config and run all embedded checks
-    Check,
+    Check {
+        /// Show passing checks (not just failures)
+        #[arg(short, long)]
+        verbose: bool,
+    },
     /// Parse a shell command and print the AST
     Parse {
         command: Option<String>,
@@ -64,7 +68,7 @@ fn run() -> miette::Result<()> {
 
     match cli.command {
         Some(Command::Eval { command }) => cmd_eval(&command, cli.json, cli.config.as_deref())?,
-        Some(Command::Check) => cmd_check(cli.json, cli.config.as_deref())?,
+        Some(Command::Check { verbose }) => cmd_check(cli.json, verbose, cli.config.as_deref())?,
         Some(Command::Parse { command, file }) => cmd_parse(command, file)?,
         None => {
             if std::io::stdin().is_terminal() {
@@ -151,7 +155,7 @@ fn cmd_eval(
 }
 
 /// Check subcommand — validate config and run checks.
-fn cmd_check(json_mode: bool, config_path: Option<&std::path::Path>) -> Result<(), LoadError> {
+fn cmd_check(json_mode: bool, verbose: bool, config_path: Option<&std::path::Path>) -> Result<(), LoadError> {
     let config = config::load(config_path)?;
     let results = check::run_checks(&config);
 
@@ -171,7 +175,10 @@ fn cmd_check(json_mode: bool, config_path: Option<&std::path::Path>) -> Result<(
                     "command": r.command,
                     "expected": r.expected.to_string(),
                     "actual": r.actual.to_string(),
-                    "passed": r.passed
+                    "passed": r.passed,
+                    "location": r.location,
+                    "reason": r.reason,
+                    "trace": r.trace,
                 })
             })
             .collect();
@@ -186,10 +193,24 @@ fn cmd_check(json_mode: bool, config_path: Option<&std::path::Path>) -> Result<(
         for r in &results {
             if r.passed {
                 passed += 1;
-                println!("  PASS: {} → {}", r.command, r.actual);
+                if verbose {
+                    println!("  PASS: {} → {}", r.command, r.actual);
+                }
             } else {
                 failed += 1;
-                println!("  FAIL: {} → {} (expected {})", r.command, r.actual, r.expected);
+                let loc = r.location.as_deref().unwrap_or("<unknown>");
+                println!("  FAIL: {loc}: {}", r.command);
+                println!("        expected: {}", r.expected);
+                println!("        actual:   {}", r.actual);
+                if let Some(reason) = &r.reason {
+                    println!("        reason:   {reason}");
+                }
+                if !r.trace.is_empty() {
+                    println!("        trace:");
+                    for step in &r.trace {
+                        println!("          {step}");
+                    }
+                }
             }
         }
 

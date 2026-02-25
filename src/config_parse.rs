@@ -12,7 +12,13 @@ use crate::types::{
 ///
 /// `filename` is used in diagnostic messages to identify the source file.
 pub fn parse(input: &str, filename: &str) -> Result<Config, Box<ConfigError>> {
-    parse_raw(input).map_err(|raw| Box::new(ConfigError::from_raw(raw, input, filename)))
+    let mut config =
+        parse_raw(input).map_err(|raw| Box::new(ConfigError::from_raw(raw, input, filename)))?;
+    config.source_info = Some(crate::types::SourceInfo {
+        filename: filename.to_string(),
+        content: input.to_string(),
+    });
+    Ok(config)
 }
 
 fn parse_raw(input: &str) -> Result<Config, RawError> {
@@ -68,6 +74,7 @@ fn parse_raw(input: &str) -> Result<Config, RawError> {
         rules,
         wrappers,
         security,
+        source_info: None,
     })
 }
 
@@ -300,6 +307,7 @@ fn parse_rule(parts: &[Sexpr], rule_span: Span) -> Result<Rule, RawError> {
                     checks.push(Check {
                         command: cmd.to_string(),
                         expected,
+                        source_span: pair[1].span(),
                     });
                 }
             }

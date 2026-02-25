@@ -19,6 +19,17 @@ impl Span {
     }
 }
 
+/// Convert a byte offset in source text to a 1-based (line, column) pair.
+pub fn offset_to_line_col(source: &str, offset: usize) -> (usize, usize) {
+    let before = &source[..offset.min(source.len())];
+    let line = before.bytes().filter(|&b| b == b'\n').count() + 1;
+    let col = before
+        .rfind('\n')
+        .map_or(before.len(), |p| before.len() - p - 1)
+        + 1;
+    (line, col)
+}
+
 impl From<Span> for SourceSpan {
     fn from(s: Span) -> Self {
         SourceSpan::new(s.start.into(), s.end - s.start)

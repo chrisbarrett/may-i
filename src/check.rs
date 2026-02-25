@@ -1,6 +1,7 @@
 // Config validation — run embedded checks against the engine.
 
 use crate::engine;
+use crate::errors::{offset_to_line_col, Span};
 use crate::types::{Config, Decision};
 
 /// Result of evaluating a single embedded check.
@@ -10,6 +11,15 @@ pub struct CheckResult {
     pub expected: Decision,
     pub actual: Decision,
     pub passed: bool,
+    pub reason: Option<String>,
+    pub trace: Vec<String>,
+    pub location: Option<String>,
+}
+
+/// Format a source location as `file:line:col` from a span and source info.
+fn format_location(source_info: &crate::types::SourceInfo, span: Span) -> String {
+    let (line, col) = offset_to_line_col(&source_info.content, span.start);
+    format!("{}:{}:{}", source_info.filename, line, col)
 }
 
 /// Run all embedded checks from config rules and compare against expected decisions.
@@ -19,11 +29,18 @@ pub fn run_checks(config: &Config) -> Vec<CheckResult> {
     for rule in &config.rules {
         for check in &rule.checks {
             let eval = engine::evaluate(&check.command, config);
+            let location = config
+                .source_info
+                .as_ref()
+                .map(|si| format_location(si, check.source_span));
             results.push(CheckResult {
                 command: check.command.clone(),
                 expected: check.expected,
                 actual: eval.decision,
                 passed: eval.decision == check.expected,
+                reason: eval.reason,
+                trace: eval.trace,
+                location,
             });
         }
     }
@@ -34,6 +51,7 @@ pub fn run_checks(config: &Config) -> Vec<CheckResult> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::errors::Span;
     use crate::types::{Check, CommandMatcher, Effect, Rule};
 
     #[test]
@@ -46,6 +64,7 @@ mod tests {
                 checks: vec![Check {
                     command: "ls".into(),
                     expected: Decision::Allow,
+                    source_span: Span::new(0, 0),
                 }],
             }],
             ..Config::default()
@@ -67,6 +86,7 @@ mod tests {
                 checks: vec![Check {
                     command: "ls".into(),
                     expected: Decision::Deny, // wrong expectation
+                    source_span: Span::new(0, 0),
                 }],
             }],
             ..Config::default()
@@ -92,7 +112,7 @@ mod tests {
                     matcher: None,
                     effect: Some(Effect { decision: Decision::Allow, reason: None }),
                     checks: vec![
-                        Check { command: "ls".into(), expected: Decision::Allow },
+                        Check { command: "ls".into(), expected: Decision::Allow, source_span: Span::new(0, 0) },
                     ],
                 },
                 Rule {
@@ -100,7 +120,7 @@ mod tests {
                     matcher: None,
                     effect: Some(Effect { decision: Decision::Deny, reason: None }),
                     checks: vec![
-                        Check { command: "rm foo".into(), expected: Decision::Deny },
+                        Check { command: "rm foo".into(), expected: Decision::Deny, source_span: Span::new(0, 0) },
                     ],
                 },
             ],
