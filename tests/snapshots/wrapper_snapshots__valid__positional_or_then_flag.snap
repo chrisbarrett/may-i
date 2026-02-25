@@ -1,0 +1,30 @@
+---
+source: tests/wrapper_snapshots.rs
+expression: "parse_wrappers(r#\"(wrapper \"nix\" (positional (or \"shell\" \"develop\")) (flag \"--command\" :command+args))\"#)"
+---
+[
+    Wrapper {
+        command: "nix",
+        steps: [
+            Positional {
+                patterns: [
+                    Or(
+                        [
+                            Literal(
+                                "shell",
+                            ),
+                            Literal(
+                                "develop",
+                            ),
+                        ],
+                    ),
+                ],
+                capture: None,
+            },
+            Flag {
+                name: "--command",
+                capture: CommandArgs,
+            },
+        ],
+    },
+]

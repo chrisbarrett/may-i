@@ -1,0 +1,21 @@
+---
+source: tests/wrapper_snapshots.rs
+expression: "parse_wrappers(r#\"(wrapper \"docker\" (positional \"exec\" :command+args))\"#)"
+---
+[
+    Wrapper {
+        command: "docker",
+        steps: [
+            Positional {
+                patterns: [
+                    Literal(
+                        "exec",
+                    ),
+                ],
+                capture: Some(
+                    CommandArgs,
+                ),
+            },
+        ],
+    },
+]

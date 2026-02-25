@@ -1,0 +1,10 @@
+---
+source: tests/wrapper_snapshots.rs
+expression: "render_error(r#\"(wrapper \"nohup\")\"#)"
+---
+  × wrapper must have at least one step with a capture keyword (:command+args, :command, or :args)
+   ╭─[<test>:1:1]
+ 1 │ (wrapper "nohup")
+   · ────────┬────────
+   ·         ╰── here
+   ╰────

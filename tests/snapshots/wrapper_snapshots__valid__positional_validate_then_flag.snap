@@ -1,0 +1,23 @@
+---
+source: tests/wrapper_snapshots.rs
+expression: "parse_wrappers(r#\"(wrapper \"mise\" (positional \"exec\") (flag \"--\" :command+args))\"#)"
+---
+[
+    Wrapper {
+        command: "mise",
+        steps: [
+            Positional {
+                patterns: [
+                    Literal(
+                        "exec",
+                    ),
+                ],
+                capture: None,
+            },
+            Flag {
+                name: "--",
+                capture: CommandArgs,
+            },
+        ],
+    },
+]

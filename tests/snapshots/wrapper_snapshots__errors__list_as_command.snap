@@ -1,0 +1,10 @@
+---
+source: tests/wrapper_snapshots.rs
+expression: "render_error(r#\"(wrapper (foo \"bar\") :command+args)\"#)"
+---
+  × wrapper command must be a string
+   ╭─[<test>:1:10]
+ 1 │ (wrapper (foo "bar") :command+args)
+   ·          ─────┬─────
+   ·               ╰── here
+   ╰────

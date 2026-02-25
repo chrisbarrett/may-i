@@ -1,0 +1,15 @@
+---
+source: tests/wrapper_snapshots.rs
+expression: "parse_wrappers(r#\"(wrapper \"nix-shell\" (flag \"--run\" :command+args))\"#)"
+---
+[
+    Wrapper {
+        command: "nix-shell",
+        steps: [
+            Flag {
+                name: "--run",
+                capture: CommandArgs,
+            },
+        ],
+    },
+]

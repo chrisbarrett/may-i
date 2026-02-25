@@ -1,0 +1,11 @@
+---
+source: tests/wrapper_snapshots.rs
+expression: "render_error(r#\"(wrapper \"x\" (flag \"--\"))\"#)"
+---
+  × (flag ...) must have exactly a name and a capture keyword
+   ╭─[<test>:1:14]
+ 1 │ (wrapper "x" (flag "--"))
+   ·              ─────┬─────
+   ·                   ╰── here
+   ╰────
+  help: example: (flag "--" :command+args)

@@ -1,0 +1,10 @@
+---
+source: tests/wrapper_snapshots.rs
+expression: "render_error(\"(wrapper)\")"
+---
+  × wrapper must have a command name
+   ╭─[<test>:1:1]
+ 1 │ (wrapper)
+   · ────┬────
+   ·     ╰── here
+   ╰────

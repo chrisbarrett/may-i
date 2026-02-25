@@ -1,0 +1,10 @@
+---
+source: tests/wrapper_snapshots.rs
+expression: "render_error(r#\"(wrapper \"x\" :command+args :command+args)\"#)"
+---
+  × wrapper has more than one capture keyword
+   ╭─[<test>:1:28]
+ 1 │ (wrapper "x" :command+args :command+args)
+   ·                            ──────┬──────
+   ·                                  ╰── here
+   ╰────

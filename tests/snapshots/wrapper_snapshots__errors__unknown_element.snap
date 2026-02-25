@@ -1,0 +1,11 @@
+---
+source: tests/wrapper_snapshots.rs
+expression: "render_error(r#\"(wrapper \"x\" (bogus \"y\"))\"#)"
+---
+  × unknown wrapper element: bogus
+   ╭─[<test>:1:15]
+ 1 │ (wrapper "x" (bogus "y"))
+   ·               ──┬──
+   ·                 ╰── not a recognised wrapper element
+   ╰────
+  help: valid wrapper elements: positional, flag

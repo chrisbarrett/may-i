@@ -1,0 +1,24 @@
+---
+source: tests/wrapper_snapshots.rs
+expression: "parse_wrappers(r#\"(wrapper \"x\" (positional \"a\" \"b\" :command+args))\"#)"
+---
+[
+    Wrapper {
+        command: "x",
+        steps: [
+            Positional {
+                patterns: [
+                    Literal(
+                        "a",
+                    ),
+                    Literal(
+                        "b",
+                    ),
+                ],
+                capture: Some(
+                    CommandArgs,
+                ),
+            },
+        ],
+    },
+]

@@ -67,8 +67,10 @@
 ;
 ; WRAPPERS (unwrap to evaluate the inner command)
 ;
-;   (wrapper "nohup" after-flags)
-;   (wrapper "mise" (positional "exec") (after "--"))
+;   (wrapper "nohup"      :command+args)              ; inner cmd after flags
+;   (wrapper "mise"       (positional "exec") (flag "--" :command+args))
+;   (wrapper "ssh"        (positional * :command+args))
+;   (wrapper "nix"        (positional (or "shell" "develop")) (flag "--command" :command+args))
 ;
 ; ENV VAR RESOLUTION (allow static analysis to resolve these env vars)
 ;

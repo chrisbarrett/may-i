@@ -1,0 +1,11 @@
+---
+source: tests/wrapper_snapshots.rs
+expression: "render_error(r#\"(wrapper \"x\" (flag \"--\" :bogus))\"#)"
+---
+  × unknown capture keyword: :bogus
+   ╭─[<test>:1:25]
+ 1 │ (wrapper "x" (flag "--" :bogus))
+   ·                         ───┬──
+   ·                            ╰── here
+   ╰────
+  help: valid capture keywords: :command+args, :command, :args

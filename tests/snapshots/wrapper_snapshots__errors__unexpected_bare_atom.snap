@@ -1,0 +1,11 @@
+---
+source: tests/wrapper_snapshots.rs
+expression: "render_error(r#\"(wrapper \"x\" something-else)\"#)"
+---
+  × unexpected atom in wrapper: something-else
+   ╭─[<test>:1:14]
+ 1 │ (wrapper "x" something-else)
+   ·              ───────┬──────
+   ·                     ╰── not a recognised wrapper element
+   ╰────
+  help: valid wrapper elements: (positional ...), (flag ...), :command+args, :command, :args

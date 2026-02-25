@@ -5,7 +5,7 @@
 use crate::parser::{self, Command, SimpleCommand, Word};
 use crate::types::{
     ArgMatcher, CommandMatcher, Config, Decision, Effect, EvalResult, PosExpr, VarEnv, VarState,
-    WrapperKind,
+    WrapperStep,
 };
 
 /// Deduplicate a list of dynamic part descriptions while preserving order.
@@ -1129,54 +1129,59 @@ fn expand_flags(args: &[Word]) -> Vec<ResolvedArg> {
 fn unwrap_wrapper(sc: &SimpleCommand, config: &Config) -> Option<SimpleCommand> {
     let cmd_name = sc.command_name()?;
 
-    for wrapper in &config.wrappers {
+    'wrapper: for wrapper in &config.wrappers {
         if wrapper.command != cmd_name {
             continue;
         }
 
-        let args: Vec<String> = sc.args().iter().map(|w| w.to_str()).collect();
+        // Positional args (non-flag words) paired with their index in sc.words[1..].
+        let positionals: Vec<(usize, String)> = sc.words[1..]
+            .iter()
+            .enumerate()
+            .filter(|(_, w)| !w.to_str().starts_with('-'))
+            .map(|(i, w)| (i, w.to_str()))
+            .collect();
 
-        // Check positional arg match (if wrapper has positional requirements)
-        if !wrapper.positional_args.is_empty() {
-            let positional: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
-            let matches = wrapper
-                .positional_args
-                .iter()
-                .enumerate()
-                .all(|(i, pat)| positional.get(i).is_some_and(|a| pat.is_match(a)));
-            if !matches {
-                continue;
+        let mut pos_cursor = 0; // index into `positionals`
+        let mut inner_start: Option<usize> = None; // index into sc.words[1..]
+
+        for step in &wrapper.steps {
+            match step {
+                WrapperStep::Positional { patterns, capture } => {
+                    for pat in patterns {
+                        match positionals.get(pos_cursor) {
+                            Some((_, arg)) if pat.is_match(arg) => pos_cursor += 1,
+                            _ => continue 'wrapper, // pattern mismatch
+                        }
+                    }
+                    if let Some(_kind) = capture {
+                        inner_start = if pos_cursor == 0 {
+                            // No patterns consumed — start from first positional.
+                            positionals.first().map(|(idx, _)| *idx)
+                        } else {
+                            // Start from the arg immediately after the last matched positional.
+                            Some(positionals[pos_cursor - 1].0 + 1)
+                        };
+                    }
+                }
+                WrapperStep::Flag { name, capture: _ } => {
+                    match sc.words[1..].iter().position(|w| w.to_str() == *name) {
+                        Some(flag_idx) => inner_start = Some(flag_idx + 1),
+                        None => continue 'wrapper, // delimiter/flag not found
+                    }
+                }
             }
         }
 
-        match &wrapper.kind {
-            WrapperKind::AfterFlags => {
-                let inner_start = sc.words[1..]
-                    .iter()
-                    .position(|w| !w.to_str().starts_with('-'))
-                    .map(|i| i + 1)?;
-
-                if inner_start < sc.words.len() {
-                    return Some(SimpleCommand {
-                        assignments: vec![],
-                        words: sc.words[inner_start..].to_vec(),
-                        redirections: sc.redirections.clone(),
-                    });
-                }
-            }
-            WrapperKind::AfterDelimiter(delim) => {
-                let delim_pos = sc.words[1..]
-                    .iter()
-                    .position(|w| w.to_str() == *delim)
-                    .map(|i| i + 2)?;
-
-                if delim_pos < sc.words.len() {
-                    return Some(SimpleCommand {
-                        assignments: vec![],
-                        words: sc.words[delim_pos..].to_vec(),
-                        redirections: sc.redirections.clone(),
-                    });
-                }
+        if let Some(start) = inner_start {
+            // `start` is an index into sc.words[1..]; add 1 to get index into sc.words.
+            let words_start = start + 1;
+            if words_start < sc.words.len() {
+                return Some(SimpleCommand {
+                    assignments: vec![],
+                    words: sc.words[words_start..].to_vec(),
+                    redirections: sc.redirections.clone(),
+                });
             }
         }
     }
@@ -1188,7 +1193,7 @@ fn unwrap_wrapper(sc: &SimpleCommand, config: &Config) -> Option<SimpleCommand> 
 mod tests {
     use super::*;
     use crate::types::{
-        CondBranch, Config, Effect, Expr, PosExpr, Rule, Wrapper, WrapperKind,
+        CaptureKind, CondBranch, Config, Effect, Expr, PosExpr, Rule, Wrapper, WrapperStep,
     };
 
     /// Helper to wrap Expr values in PosExpr::One for tests.
@@ -1761,15 +1766,31 @@ mod tests {
 
     // ── Wrapper unwrapping ──────────────────────────────────────────
 
+    fn after_flags_wrapper(command: &str) -> Wrapper {
+        Wrapper {
+            command: command.into(),
+            steps: vec![WrapperStep::Positional {
+                patterns: vec![],
+                capture: Some(CaptureKind::CommandArgs),
+            }],
+        }
+    }
+
+    fn after_delimiter_wrapper(command: &str, delim: &str) -> Wrapper {
+        Wrapper {
+            command: command.into(),
+            steps: vec![WrapperStep::Flag {
+                name: delim.into(),
+                capture: CaptureKind::CommandArgs,
+            }],
+        }
+    }
+
     #[test]
     fn wrapper_after_flags_unwraps() {
         let config = Config {
             rules: vec![allow_rule("ls")],
-            wrappers: vec![Wrapper {
-                command: "sudo".into(),
-                positional_args: vec![],
-                kind: WrapperKind::AfterFlags,
-            }],
+            wrappers: vec![after_flags_wrapper("sudo")],
             ..Config::default()
         };
         let result = evaluate("sudo ls", &config);
@@ -1780,11 +1801,7 @@ mod tests {
     fn wrapper_after_flags_with_flags() {
         let config = Config {
             rules: vec![allow_rule("ls")],
-            wrappers: vec![Wrapper {
-                command: "sudo".into(),
-                positional_args: vec![],
-                kind: WrapperKind::AfterFlags,
-            }],
+            wrappers: vec![after_flags_wrapper("sudo")],
             ..Config::default()
         };
         let result = evaluate("sudo -u ls", &config);
@@ -1795,11 +1812,7 @@ mod tests {
     fn wrapper_after_delimiter_unwraps() {
         let config = Config {
             rules: vec![allow_rule("ls")],
-            wrappers: vec![Wrapper {
-                command: "env".into(),
-                positional_args: vec![],
-                kind: WrapperKind::AfterDelimiter("--".into()),
-            }],
+            wrappers: vec![after_delimiter_wrapper("env", "--")],
             ..Config::default()
         };
         let result = evaluate("env FOO=bar -- ls -la", &config);
@@ -1808,12 +1821,15 @@ mod tests {
 
     #[test]
     fn wrapper_with_positional_args() {
+        // (wrapper "docker" (positional "exec" :command+args))
         let config = Config {
             rules: vec![allow_rule("ls")],
             wrappers: vec![Wrapper {
                 command: "docker".into(),
-                positional_args: vec![Expr::Literal("exec".into())],
-                kind: WrapperKind::AfterFlags,
+                steps: vec![WrapperStep::Positional {
+                    patterns: vec![Expr::Literal("exec".into())],
+                    capture: Some(CaptureKind::CommandArgs),
+                }],
             }],
             ..Config::default()
         };
@@ -1827,8 +1843,10 @@ mod tests {
             rules: vec![allow_rule("docker")],
             wrappers: vec![Wrapper {
                 command: "docker".into(),
-                positional_args: vec![Expr::Literal("exec".into())],
-                kind: WrapperKind::AfterFlags,
+                steps: vec![WrapperStep::Positional {
+                    patterns: vec![Expr::Literal("exec".into())],
+                    capture: Some(CaptureKind::CommandArgs),
+                }],
             }],
             ..Config::default()
         };
@@ -1840,15 +1858,116 @@ mod tests {
     fn wrapper_not_matching_command() {
         let config = Config {
             rules: vec![allow_rule("nohup")],
-            wrappers: vec![Wrapper {
-                command: "sudo".into(),
-                positional_args: vec![],
-                kind: WrapperKind::AfterFlags,
-            }],
+            wrappers: vec![after_flags_wrapper("sudo")],
             ..Config::default()
         };
         let result = evaluate("nohup sleep 10", &config);
         assert_eq!(result.decision, Decision::Allow);
+    }
+
+    #[test]
+    fn wrapper_ssh_skips_hostname() {
+        // (wrapper "ssh" (positional * :command+args))
+        let config = Config {
+            rules: vec![allow_rule("ls")],
+            wrappers: vec![Wrapper {
+                command: "ssh".into(),
+                steps: vec![WrapperStep::Positional {
+                    patterns: vec![Expr::Wildcard],
+                    capture: Some(CaptureKind::CommandArgs),
+                }],
+            }],
+            ..Config::default()
+        };
+        assert_eq!(evaluate("ssh host ls", &config).decision, Decision::Allow);
+        assert_eq!(evaluate("ssh -v host ls", &config).decision, Decision::Allow);
+    }
+
+    #[test]
+    fn wrapper_ssh_no_inner_command() {
+        // ssh without a trailing command should not unwrap
+        let config = Config {
+            rules: vec![allow_rule("ls")],
+            wrappers: vec![Wrapper {
+                command: "ssh".into(),
+                steps: vec![WrapperStep::Positional {
+                    patterns: vec![Expr::Wildcard],
+                    capture: Some(CaptureKind::CommandArgs),
+                }],
+            }],
+            ..Config::default()
+        };
+        // Falls back to evaluating "ssh" itself (not allowed → ask)
+        assert_eq!(evaluate("ssh host", &config).decision, Decision::Ask);
+    }
+
+    #[test]
+    fn wrapper_nix_shell_flag_command() {
+        // (wrapper "nix" (positional (or "shell" "develop")) (flag "--command" :command+args))
+        let config = Config {
+            rules: vec![allow_rule("ls")],
+            wrappers: vec![Wrapper {
+                command: "nix".into(),
+                steps: vec![
+                    WrapperStep::Positional {
+                        patterns: vec![Expr::Or(vec![
+                            Expr::Literal("shell".into()),
+                            Expr::Literal("develop".into()),
+                        ])],
+                        capture: None,
+                    },
+                    WrapperStep::Flag {
+                        name: "--command".into(),
+                        capture: CaptureKind::CommandArgs,
+                    },
+                ],
+            }],
+            ..Config::default()
+        };
+        assert_eq!(
+            evaluate("nix shell --command ls", &config).decision,
+            Decision::Allow
+        );
+        assert_eq!(
+            evaluate("nix develop --command ls", &config).decision,
+            Decision::Allow
+        );
+        // Wrong subcommand — wrapper doesn't apply, falls through to rule eval
+        assert_eq!(
+            evaluate("nix run --command ls", &config).decision,
+            Decision::Ask
+        );
+    }
+
+    #[test]
+    fn wrapper_mise_validate_then_delimiter() {
+        // (wrapper "mise" (positional "exec") (flag "--" :command+args))
+        let config = Config {
+            rules: vec![allow_rule("ls")],
+            wrappers: vec![Wrapper {
+                command: "mise".into(),
+                steps: vec![
+                    WrapperStep::Positional {
+                        patterns: vec![Expr::Literal("exec".into())],
+                        capture: None,
+                    },
+                    WrapperStep::Flag {
+                        name: "--".into(),
+                        capture: CaptureKind::CommandArgs,
+                    },
+                ],
+            }],
+            ..Config::default()
+        };
+        assert_eq!(
+            evaluate("mise exec -- ls -la", &config).decision,
+            Decision::Allow
+        );
+        // Wrong subcommand — wrapper doesn't apply
+        assert_eq!(
+            evaluate("mise run -- ls", &config).decision,
+            Decision::Ask
+        );
     }
 
     // ── Dynamic parts ────────────────────────────────────────────────

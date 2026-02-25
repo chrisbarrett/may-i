@@ -202,9 +202,10 @@ particularly useful for commands like `time`, `mise`, etc. Validation is
 performed against the inner command.
 
 ```scheme
-(wrapper "nohup" after-flags)
-(wrapper "mise" (positional "exec") (after "--"))
-(wrapper "nix" (positional "shell") (after "--command"))
+(wrapper "nohup"      :command+args)
+(wrapper "mise"       (positional "exec") (flag "--" :command+args))
+(wrapper "ssh"        (positional * :command+args))
+(wrapper "nix"        (positional (or "shell" "develop")) (flag "--command" :command+args))
 ```
 
 ### Safe Environment Variables

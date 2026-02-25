@@ -48,9 +48,10 @@ Evaluation order:
 Wrappers are recognized and their inner command extracted for evaluation.
 Recursion depth capped at 5.
 
-Built-in wrappers: `nohup`, `env`, `nice`, `time`, `strace` (after-flags);
-`mise exec --`, `terragrunt exec --` (after delimiter);
-`nix shell/develop --command`, `nix-shell --run` (after keyword).
+Built-in wrappers: `nohup`, `env`, `nice`, `time`, `strace` (`:command+args`);
+`mise exec --`, `terragrunt exec --` (`(positional ...) (flag "--" ...)`);
+`nix shell/develop --command` (`(positional ...) (flag "--command" ...)`);
+`ssh` (`(positional * :command+args)`).
 
 User-configurable via `(wrapper ...)` in config (see R10).
 

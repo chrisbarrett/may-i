@@ -508,16 +508,32 @@ fn find_pos_expr_effect(pexprs: &[PosExpr], args: &[String], exact: bool) -> Opt
 #[derive(Debug, Clone)]
 pub struct Wrapper {
     pub command: String,
-    pub positional_args: Vec<Expr>,
-    pub kind: WrapperKind,
+    pub steps: Vec<WrapperStep>,
 }
 
+/// A single step in a wrapper definition.
 #[derive(Debug, Clone)]
-pub enum WrapperKind {
-    /// Inner command starts after all flags (e.g., nohup, env).
-    AfterFlags,
-    /// Inner command starts after a specific delimiter (e.g., mise exec --).
-    AfterDelimiter(String),
+pub enum WrapperStep {
+    /// Validate positional (non-flag) args match patterns in order.
+    /// If `capture` is `Some`, the inner command starts immediately after
+    /// the last matched positional in the original arg list.
+    Positional {
+        patterns: Vec<Expr>,
+        capture: Option<CaptureKind>,
+    },
+    /// Find a named flag or delimiter; the inner command starts after it.
+    Flag { name: String, capture: CaptureKind },
+}
+
+/// Which part of the remaining args becomes the inner command.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CaptureKind {
+    /// Everything remaining is the command followed by its arguments.
+    CommandArgs,
+    /// The first remaining token is the command (no arguments).
+    Command,
+    /// All remaining tokens are arguments to an implicit command.
+    Args,
 }
 
 /// Result of evaluating a command.

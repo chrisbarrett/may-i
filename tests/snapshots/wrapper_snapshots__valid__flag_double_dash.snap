@@ -1,0 +1,15 @@
+---
+source: tests/wrapper_snapshots.rs
+expression: "parse_wrappers(r#\"(wrapper \"terragrunt\" (flag \"--\" :command+args))\"#)"
+---
+[
+    Wrapper {
+        command: "terragrunt",
+        steps: [
+            Flag {
+                name: "--",
+                capture: CommandArgs,
+            },
+        ],
+    },
+]

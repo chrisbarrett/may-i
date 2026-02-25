@@ -4,8 +4,8 @@
 use crate::errors::{ConfigError, RawError, Span};
 use crate::sexpr::Sexpr;
 use crate::types::{
-    ArgMatcher, Check, CommandMatcher, CondBranch, Config, Decision, Effect, Expr, ExprBranch,
-    PosExpr, Rule, SecurityConfig, Wrapper, WrapperKind,
+    ArgMatcher, CaptureKind, Check, CommandMatcher, CondBranch, Config, Decision, Effect, Expr,
+    ExprBranch, PosExpr, Rule, SecurityConfig, Wrapper, WrapperStep,
 };
 
 /// Parse an s-expression config string into Config.
@@ -664,9 +664,21 @@ fn parse_unless_form(args: &[Sexpr], form_span: Span) -> Result<Expr, RawError> 
     }]))
 }
 
+fn parse_capture_kind(s: &str) -> Option<CaptureKind> {
+    match s {
+        ":command+args" => Some(CaptureKind::CommandArgs),
+        ":command" => Some(CaptureKind::Command),
+        ":args" => Some(CaptureKind::Args),
+        _ => None,
+    }
+}
+
 fn parse_wrapper(parts: &[Sexpr], wrapper_span: Span) -> Result<Wrapper, RawError> {
-    // (wrapper "nohup" after-flags)
-    // (wrapper "mise" (positional "exec") (after "--"))
+    // (wrapper "ssh"        (positional * :command+args))
+    // (wrapper "nix"        (positional (or "shell" "develop")) (flag "--command" :command+args))
+    // (wrapper "terragrunt" (flag "--" :command+args))
+    // (wrapper "mise"       (positional "exec") (flag "--" :command+args))
+    // (wrapper "nohup"      :command+args)                     ; shorthand
     if parts.is_empty() {
         return Err(RawError::new(
             "wrapper must have a command name",
@@ -676,46 +688,113 @@ fn parse_wrapper(parts: &[Sexpr], wrapper_span: Span) -> Result<Wrapper, RawErro
 
     let command = parts[0]
         .as_atom()
-        .ok_or_else(|| {
-            RawError::new("wrapper command must be a string", parts[0].span())
-        })?
+        .ok_or_else(|| RawError::new("wrapper command must be a string", parts[0].span()))?
         .to_string();
 
-    let mut positional_args = Vec::new();
-    let mut kind = None;
+    if parts[1..].is_empty() {
+        return Err(RawError::new(
+            "wrapper must have at least one step with a capture keyword (:command+args, :command, or :args)",
+            wrapper_span,
+        ));
+    }
+
+    let mut steps = Vec::new();
+    let mut has_capture = false;
 
     for part in &parts[1..] {
         match part {
-            Sexpr::Atom(s, _) if s == "after-flags" => {
-                kind = Some(WrapperKind::AfterFlags);
+            // Bare capture keyword: (wrapper "nohup" :command+args)
+            Sexpr::Atom(s, span) => {
+                match parse_capture_kind(s) {
+                    Some(kind) => {
+                        if has_capture {
+                            return Err(RawError::new(
+                                "wrapper has more than one capture keyword",
+                                *span,
+                            ));
+                        }
+                        steps.push(WrapperStep::Positional {
+                            patterns: vec![],
+                            capture: Some(kind),
+                        });
+                        has_capture = true;
+                    }
+                    None => {
+                        return Err(RawError::new(
+                            format!("unexpected atom in wrapper: {s}"),
+                            *span,
+                        )
+                        .with_label("not a recognised wrapper element")
+                        .with_help(
+                            "valid wrapper elements: (positional ...), (flag ...), :command+args, :command, :args",
+                        ));
+                    }
+                }
             }
+
             Sexpr::List(list, span) if !list.is_empty() => {
                 let tag = list[0].as_atom().ok_or_else(|| {
                     RawError::new("wrapper element tag must be an atom", list[0].span())
                 })?;
                 match tag {
                     "positional" => {
-                        for item in &list[1..] {
-                            positional_args.push(parse_expr(item)?);
+                        // Last element may be a capture keyword.
+                        let (pattern_items, capture) =
+                            match list[1..].last().and_then(|s| s.as_atom()).and_then(parse_capture_kind) {
+                                Some(kind) => (&list[1..list.len() - 1], Some(kind)),
+                                None => (&list[1..], None),
+                            };
+                        if capture.is_some() {
+                            if has_capture {
+                                return Err(RawError::new(
+                                    "wrapper has more than one capture keyword",
+                                    *span,
+                                ));
+                            }
+                            has_capture = true;
                         }
+                        let mut patterns = Vec::new();
+                        for item in pattern_items {
+                            patterns.push(parse_expr(item)?);
+                        }
+                        steps.push(WrapperStep::Positional { patterns, capture });
                     }
-                    "after" => {
-                        if list.len() != 2 {
+                    "flag" => {
+                        if list.len() != 3 {
                             return Err(RawError::new(
-                                "after must have exactly one delimiter",
+                                "(flag ...) must have exactly a name and a capture keyword",
+                                *span,
+                            )
+                            .with_help("example: (flag \"--\" :command+args)"));
+                        }
+                        let name = list[1]
+                            .as_atom()
+                            .ok_or_else(|| {
+                                RawError::new("flag name must be a string", list[1].span())
+                            })?
+                            .to_string();
+                        let capture_str = list[2].as_atom().ok_or_else(|| {
+                            RawError::new(
+                                "second element of (flag ...) must be a capture keyword",
+                                list[2].span(),
+                            )
+                        })?;
+                        let capture =
+                            parse_capture_kind(capture_str).ok_or_else(|| {
+                                RawError::new(
+                                    format!("unknown capture keyword: {capture_str}"),
+                                    list[2].span(),
+                                )
+                                .with_help("valid capture keywords: :command+args, :command, :args")
+                            })?;
+                        if has_capture {
+                            return Err(RawError::new(
+                                "wrapper has more than one capture keyword",
                                 *span,
                             ));
                         }
-                        let delim = list[1]
-                            .as_atom()
-                            .ok_or_else(|| {
-                                RawError::new(
-                                    "after delimiter must be a string",
-                                    list[1].span(),
-                                )
-                            })?
-                            .to_string();
-                        kind = Some(WrapperKind::AfterDelimiter(delim));
+                        has_capture = true;
+                        steps.push(WrapperStep::Flag { name, capture });
                     }
                     other => {
                         return Err(RawError::new(
@@ -723,29 +802,24 @@ fn parse_wrapper(parts: &[Sexpr], wrapper_span: Span) -> Result<Wrapper, RawErro
                             list[0].span(),
                         )
                         .with_label("not a recognised wrapper element")
-                        .with_help("valid wrapper elements: positional, after"));
+                        .with_help("valid wrapper elements: positional, flag"));
                     }
                 }
             }
             _ => {
-                return Err(RawError::new(
-                    "unexpected wrapper element",
-                    part.span(),
-                ));
+                return Err(RawError::new("unexpected wrapper element", part.span()));
             }
         }
     }
 
-    Ok(Wrapper {
-        command,
-        positional_args,
-        kind: kind.ok_or_else(|| {
-            RawError::new(
-                "wrapper must specify after-flags or (after ...)",
-                wrapper_span,
-            )
-        })?,
-    })
+    if !has_capture {
+        return Err(RawError::new(
+            "wrapper has no capture keyword; add :command+args, :command, or :args to indicate the inner command",
+            wrapper_span,
+        ));
+    }
+
+    Ok(Wrapper { command, steps })
 }
 
 #[cfg(test)]
@@ -1024,27 +1098,115 @@ mod tests {
     }
 
     #[test]
-    fn wrapper_after_flags() {
-        let config = parse(r#"(wrapper "nohup" after-flags)"#).unwrap();
+    fn wrapper_bare_capture_keyword() {
+        // (wrapper "nohup" :command+args) — shorthand for after-flags style
+        let config = parse(r#"(wrapper "nohup" :command+args)"#).unwrap();
         assert_eq!(config.wrappers.len(), 1);
         assert_eq!(config.wrappers[0].command, "nohup");
-        assert!(matches!(config.wrappers[0].kind, WrapperKind::AfterFlags));
-        assert!(config.wrappers[0].positional_args.is_empty());
+        assert_eq!(config.wrappers[0].steps.len(), 1);
+        match &config.wrappers[0].steps[0] {
+            WrapperStep::Positional { patterns, capture } => {
+                assert!(patterns.is_empty());
+                assert!(matches!(capture, Some(CaptureKind::CommandArgs)));
+            }
+            other => panic!("expected Positional step, got {other:?}"),
+        }
     }
 
     #[test]
-    fn wrapper_after_delimiter() {
+    fn wrapper_positional_capture() {
+        // (wrapper "nohup" (positional :command+args)) — explicit form
+        let config = parse(r#"(wrapper "nohup" (positional :command+args))"#).unwrap();
+        assert_eq!(config.wrappers[0].steps.len(), 1);
+        match &config.wrappers[0].steps[0] {
+            WrapperStep::Positional { patterns, capture } => {
+                assert!(patterns.is_empty());
+                assert!(matches!(capture, Some(CaptureKind::CommandArgs)));
+            }
+            other => panic!("expected Positional step, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn wrapper_ssh_style() {
+        // (wrapper "ssh" (positional * :command+args))
+        let config = parse(r#"(wrapper "ssh" (positional * :command+args))"#).unwrap();
+        assert_eq!(config.wrappers[0].command, "ssh");
+        match &config.wrappers[0].steps[0] {
+            WrapperStep::Positional { patterns, capture } => {
+                assert_eq!(patterns.len(), 1);
+                assert!(patterns[0].is_wildcard());
+                assert!(matches!(capture, Some(CaptureKind::CommandArgs)));
+            }
+            other => panic!("expected Positional step, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn wrapper_flag_delimiter() {
+        // (wrapper "terragrunt" (flag "--" :command+args))
+        let config = parse(r#"(wrapper "terragrunt" (flag "--" :command+args))"#).unwrap();
+        assert_eq!(config.wrappers[0].command, "terragrunt");
+        match &config.wrappers[0].steps[0] {
+            WrapperStep::Flag { name, capture } => {
+                assert_eq!(name, "--");
+                assert!(matches!(capture, CaptureKind::CommandArgs));
+            }
+            other => panic!("expected Flag step, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn wrapper_validate_positional_then_flag() {
+        // (wrapper "mise" (positional "exec") (flag "--" :command+args))
         let config = parse(
-            r#"(wrapper "mise" (positional "exec") (after "--"))"#,
+            r#"(wrapper "mise" (positional "exec") (flag "--" :command+args))"#,
         )
         .unwrap();
         assert_eq!(config.wrappers[0].command, "mise");
-        match &config.wrappers[0].kind {
-            WrapperKind::AfterDelimiter(d) => assert_eq!(d, "--"),
-            _ => panic!("expected AfterDelimiter"),
+        assert_eq!(config.wrappers[0].steps.len(), 2);
+        match &config.wrappers[0].steps[0] {
+            WrapperStep::Positional { patterns, capture } => {
+                assert_eq!(patterns.len(), 1);
+                assert!(patterns[0].is_match("exec"));
+                assert!(capture.is_none());
+            }
+            other => panic!("expected Positional step, got {other:?}"),
         }
-        assert_eq!(config.wrappers[0].positional_args.len(), 1);
-        assert!(config.wrappers[0].positional_args[0].is_match("exec"));
+        match &config.wrappers[0].steps[1] {
+            WrapperStep::Flag { name, capture } => {
+                assert_eq!(name, "--");
+                assert!(matches!(capture, CaptureKind::CommandArgs));
+            }
+            other => panic!("expected Flag step, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn wrapper_nix_style() {
+        // (wrapper "nix" (positional (or "shell" "develop")) (flag "--command" :command+args))
+        let config = parse(
+            r#"(wrapper "nix" (positional (or "shell" "develop")) (flag "--command" :command+args))"#,
+        )
+        .unwrap();
+        assert_eq!(config.wrappers[0].command, "nix");
+        match &config.wrappers[0].steps[0] {
+            WrapperStep::Positional { patterns, capture } => {
+                assert_eq!(patterns.len(), 1);
+                assert!(patterns[0].is_match("shell"));
+                assert!(patterns[0].is_match("develop"));
+                assert!(!patterns[0].is_match("run"));
+                assert!(capture.is_none());
+            }
+            other => panic!("expected Positional step, got {other:?}"),
+        }
+        match &config.wrappers[0].steps[1] {
+            WrapperStep::Flag { name, capture } => {
+                assert_eq!(name, "--command");
+                assert!(matches!(capture, CaptureKind::CommandArgs));
+            }
+            other => panic!("expected Flag step, got {other:?}"),
+        }
     }
 
     #[test]
@@ -1069,8 +1231,8 @@ mod tests {
                   (args (positional * (regex "^(get|describe|list).*")))
                   (effect :allow))
 
-            (wrapper "nohup" after-flags)
-            (wrapper "mise" (positional "exec") (after "--"))
+            (wrapper "nohup" :command+args)
+            (wrapper "mise" (positional "exec") (flag "--" :command+args))
         "#;
         let config = parse(input).unwrap();
         assert_eq!(config.rules.len(), 3);
@@ -1241,8 +1403,25 @@ mod tests {
     }
 
     #[test]
-    fn error_after_wrong_arity() {
-        assert!(parse(r#"(wrapper "x" (after "--" "extra"))"#).is_err());
+    fn error_wrapper_no_capture() {
+        // Wrapper with a positional step but no capture keyword
+        assert!(parse(r#"(wrapper "x" (positional "sub"))"#).is_err());
+    }
+
+    #[test]
+    fn error_wrapper_duplicate_capture() {
+        assert!(parse(r#"(wrapper "x" (positional "a" :command+args) (flag "--" :command+args))"#).is_err());
+    }
+
+    #[test]
+    fn error_flag_wrong_arity() {
+        assert!(parse(r#"(wrapper "x" (flag "--"))"#).is_err());
+        assert!(parse(r#"(wrapper "x" (flag "--" :command+args "extra"))"#).is_err());
+    }
+
+    #[test]
+    fn error_flag_bad_capture_keyword() {
+        assert!(parse(r#"(wrapper "x" (flag "--" :bogus))"#).is_err());
     }
 
     #[test]
@@ -1251,8 +1430,8 @@ mod tests {
     }
 
     #[test]
-    fn error_unexpected_wrapper_element() {
-        // bare atom that isn't "after-flags"
+    fn error_unexpected_wrapper_atom() {
+        // bare atom that isn't a capture keyword
         assert!(parse(r#"(wrapper "x" something-else)"#).is_err());
     }
 

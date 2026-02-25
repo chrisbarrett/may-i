@@ -1,0 +1,10 @@
+---
+source: tests/wrapper_snapshots.rs
+expression: "render_error(r#\"(wrapper \"x\" (positional \"sub\"))\"#)"
+---
+  × wrapper has no capture keyword; add :command+args, :command, or :args to indicate the inner command
+   ╭─[<test>:1:1]
+ 1 │ (wrapper "x" (positional "sub"))
+   · ────────────────┬───────────────
+   ·                 ╰── here
+   ╰────

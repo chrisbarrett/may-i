@@ -45,9 +45,12 @@ condition = "else" | matcher
 
 check     = "(" "check" (decision-kw STRING)+ ")"
 
-wrapper   = "(" "wrapper" STRING kind ")"
-          | "(" "wrapper" STRING "(" "positional" pat+ ")" kind ")"
-kind      = "after-flags" | "(" "after" STRING ")"
+wrapper      = "(" "wrapper" STRING wrapper-body ")"
+wrapper-body = capture-kw
+             | wrapper-step+
+wrapper-step = "(" "positional" pat* capture-kw? ")"
+             | "(" "flag" STRING capture-kw ")"
+capture-kw   = ":command+args" | ":command" | ":args"
 
 STRING    = quoted string (double-quote, backslash escapes)
 ```
