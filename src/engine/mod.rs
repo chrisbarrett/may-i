@@ -820,6 +820,7 @@ fn evaluate_resolved_command(
     // Evaluate against rules: deny rules first, then first match
     let mut first_match: Option<EvalResult> = None;
     let mut trace = Vec::new();
+    let mut had_command_match = false;
 
     for rule in &config.rules {
         let rule_label = format_command_matcher(&rule.command);
@@ -828,43 +829,40 @@ fn evaluate_resolved_command(
             continue;
         }
 
-        trace.push(format!("matched command: {rule_label}"));
+        had_command_match = true;
+        trace.push(format!("rule {rule_label}"));
 
-        // Determine if args match
+        // Determine if args match (with tracing)
         let args_match = match &rule.matcher {
             None => true,
-            Some(m) => matcher_matches(m, &expanded_args),
+            Some(m) => {
+                let mt = matcher_matches_traced(m, &expanded_args);
+                for step in &mt.steps {
+                    trace.push(format!("  {step}"));
+                }
+                mt.matched
+            }
         };
         if !args_match {
-            trace.push("  args did not match".into());
             continue;
-        }
-        if rule.matcher.is_some() {
-            trace.push("  args matched".into());
         }
 
         // Determine decision+reason: from rule-level effect, top-level cond branches,
         // or embedded Expr::Cond effects
         let effect = if let Some(ref eff) = rule.effect {
-            trace.push(format!("  effect: {} — {}", eff.decision, eff.reason.as_deref().unwrap_or("(no reason)")));
+            trace.push(format!("  => {}{}", eff.decision, eff.reason.as_deref().map(|r| format!(" — {r}")).unwrap_or_default()));
             eff.clone()
         } else if let Some(ArgMatcher::Cond(branches)) = &rule.matcher {
             // Top-level cond: find first matching branch for its effect
             let mut found = None;
-            for (i, branch) in branches.iter().enumerate() {
+            for branch in branches {
                 let branch_match = match &branch.matcher {
-                    None => {
-                        trace.push(format!("  cond branch {}: else (catch-all)", i + 1));
-                        true
-                    }
-                    Some(m) => {
-                        let matched = matcher_matches(m, &expanded_args);
-                        trace.push(format!("  cond branch {}: {}", i + 1, if matched { "matched" } else { "no match" }));
-                        matched
-                    }
+                    None => true,
+                    Some(m) => matcher_matches(m, &expanded_args),
                 };
                 if branch_match {
-                    trace.push(format!("  effect: {} — {}", branch.effect.decision, branch.effect.reason.as_deref().unwrap_or("(no reason)")));
+                    let eff = &branch.effect;
+                    trace.push(format!("  => {}{}", eff.decision, eff.reason.as_deref().map(|r| format!(" — {r}")).unwrap_or_default()));
                     found = Some(branch.effect.clone());
                     break;
                 }
@@ -881,10 +879,9 @@ fn evaluate_resolved_command(
                 })
                 .collect();
             let Some(eff) = m.find_expr_effect(&string_args) else {
-                trace.push("  no matching expr cond branch".into());
                 continue;
             };
-            trace.push(format!("  expr effect: {} — {}", eff.decision, eff.reason.as_deref().unwrap_or("(no reason)")));
+            trace.push(format!("  => {}{}", eff.decision, eff.reason.as_deref().map(|r| format!(" — {r}")).unwrap_or_default()));
             eff
         } else {
             continue;
@@ -907,11 +904,13 @@ fn evaluate_resolved_command(
     }
 
     first_match.unwrap_or_else(|| {
-        trace.push("no matching rule".into());
-        let mut result = EvalResult::new(
-            Decision::Ask,
-            Some(format!("No matching rule for command `{cmd_name}`")),
-        );
+        let reason = if had_command_match {
+            format!("Rules for `{cmd_name}` exist but arguments did not match any patterns")
+        } else {
+            format!("No rule for command `{cmd_name}`")
+        };
+        trace.push("  => ask (default)".into());
+        let mut result = EvalResult::new(Decision::Ask, Some(reason));
         result.trace = trace;
         result
     })
@@ -1063,7 +1062,7 @@ mod tests {
         assert_eq!(result.decision, Decision::Ask);
         assert_eq!(
             result.reason.as_deref(),
-            Some("No matching rule for command `whoami`")
+            Some("No rule for command `whoami`")
         );
     }
 

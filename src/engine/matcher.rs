@@ -23,6 +23,207 @@ pub(super) fn format_command_matcher(m: &CommandMatcher) -> String {
     }
 }
 
+/// Format an Expr for display in traces.
+fn format_expr(e: &crate::types::Expr) -> String {
+    use crate::types::Expr;
+    match e {
+        Expr::Literal(s) => format!("\"{s}\""),
+        Expr::Regex(re) => format!("#\"{}\"", re.as_str()),
+        Expr::Wildcard => "_".into(),
+        Expr::And(exprs) => {
+            let inner: Vec<String> = exprs.iter().map(format_expr).collect();
+            format!("(and {})", inner.join(" "))
+        }
+        Expr::Or(exprs) => {
+            let inner: Vec<String> = exprs.iter().map(format_expr).collect();
+            format!("(or {})", inner.join(" "))
+        }
+        Expr::Not(expr) => format!("(not {})", format_expr(expr)),
+        Expr::Cond(branches) => {
+            let inner: Vec<String> = branches
+                .iter()
+                .map(|b| format!("({} => {})", format_expr(&b.test), b.effect.decision))
+                .collect();
+            format!("(cond {})", inner.join(" "))
+        }
+    }
+}
+
+/// Format a PosExpr for display in traces.
+fn format_pos_expr(pe: &PosExpr) -> String {
+    match pe {
+        PosExpr::One(e) => format_expr(e),
+        PosExpr::Optional(e) => format!("(? {})", format_expr(e)),
+        PosExpr::OneOrMore(e) => format!("(+ {})", format_expr(e)),
+        PosExpr::ZeroOrMore(e) => format!("(* {})", format_expr(e)),
+    }
+}
+
+/// Result of a traced match: did it match, and what was evaluated.
+pub(super) struct MatchTrace {
+    pub matched: bool,
+    pub steps: Vec<String>,
+}
+
+/// Like `matcher_matches`, but also produces trace entries showing what was evaluated.
+pub(super) fn matcher_matches_traced(matcher: &ArgMatcher, args: &[ResolvedArg]) -> MatchTrace {
+    match matcher {
+        ArgMatcher::Positional(patterns) | ArgMatcher::ExactPositional(patterns) => {
+            let exact = matches!(matcher, ArgMatcher::ExactPositional(_));
+            let positional = extract_positional_args(args);
+            trace_positional(patterns, &positional, exact)
+        }
+        ArgMatcher::Anywhere(tokens) => {
+            let mut steps = Vec::new();
+            let matched = tokens.iter().any(|token| {
+                let found = args.iter().any(|a| match a {
+                    ResolvedArg::Literal(s) => token.is_match(s),
+                    ResolvedArg::Opaque => token.is_wildcard(),
+                });
+                steps.push(format!(
+                    "(anywhere {}) => {}",
+                    format_expr(token),
+                    if found { "yes" } else { "no" }
+                ));
+                found
+            });
+            MatchTrace { matched, steps }
+        }
+        ArgMatcher::And(matchers) => {
+            let mut steps = Vec::new();
+            let mut all_matched = true;
+            for m in matchers {
+                let sub = matcher_matches_traced(m, args);
+                steps.extend(sub.steps);
+                if !sub.matched {
+                    all_matched = false;
+                    break;
+                }
+            }
+            MatchTrace { matched: all_matched, steps }
+        }
+        ArgMatcher::Or(matchers) => {
+            let mut steps = Vec::new();
+            let mut any_matched = false;
+            for m in matchers {
+                let sub = matcher_matches_traced(m, args);
+                steps.extend(sub.steps);
+                if sub.matched {
+                    any_matched = true;
+                    break;
+                }
+            }
+            MatchTrace { matched: any_matched, steps }
+        }
+        ArgMatcher::Not(inner) => {
+            let sub = matcher_matches_traced(inner, args);
+            MatchTrace { matched: !sub.matched, steps: sub.steps }
+        }
+        ArgMatcher::Cond(branches) => {
+            let mut steps = Vec::new();
+            let mut any_matched = false;
+            for b in branches {
+                match &b.matcher {
+                    None => {
+                        steps.push(format!("(else => {}) => yes", b.effect.decision));
+                        any_matched = true;
+                        break;
+                    }
+                    Some(m) => {
+                        let sub = matcher_matches_traced(m, args);
+                        let matched = sub.matched;
+                        steps.extend(sub.steps);
+                        if matched {
+                            any_matched = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            MatchTrace { matched: any_matched, steps }
+        }
+    }
+}
+
+/// Trace positional matching, showing each pattern and whether it matched.
+fn trace_positional(patterns: &[PosExpr], positional: &[ResolvedArg], exact: bool) -> MatchTrace {
+    let mut steps = Vec::new();
+    let mut pos = 0;
+
+    for pexpr in patterns {
+        let label = format_pos_expr(pexpr);
+        match pexpr {
+            PosExpr::One(e) => {
+                match positional.get(pos) {
+                    Some(ResolvedArg::Literal(s)) => {
+                        let matched = e.is_wildcard() || e.is_match(s);
+                        steps.push(format!("{label} vs \"{s}\" => {}", if matched { "yes" } else { "no" }));
+                        if !matched {
+                            return MatchTrace { matched: false, steps };
+                        }
+                    }
+                    Some(ResolvedArg::Opaque) => {
+                        let matched = e.is_wildcard();
+                        steps.push(format!("{label} vs <opaque> => {}", if matched { "yes" } else { "no" }));
+                        if !matched {
+                            return MatchTrace { matched: false, steps };
+                        }
+                    }
+                    None => {
+                        steps.push(format!("{label} vs <missing> => no"));
+                        return MatchTrace { matched: false, steps };
+                    }
+                }
+                pos += 1;
+            }
+            PosExpr::Optional(e) => {
+                if let Some(arg) = positional.get(pos) {
+                    let m = match arg {
+                        ResolvedArg::Literal(s) => e.is_wildcard() || e.is_match(s),
+                        ResolvedArg::Opaque => e.is_wildcard(),
+                    };
+                    let arg_str = match arg {
+                        ResolvedArg::Literal(s) => format!("\"{s}\""),
+                        ResolvedArg::Opaque => "<opaque>".into(),
+                    };
+                    steps.push(format!("{label} vs {arg_str} => {}", if m { "yes" } else { "skip" }));
+                    if m {
+                        pos += 1;
+                    }
+                } else {
+                    steps.push(format!("{label} => skip (no more args)"));
+                }
+            }
+            PosExpr::OneOrMore(e) | PosExpr::ZeroOrMore(e) => {
+                let required = matches!(pexpr, PosExpr::OneOrMore(_));
+                let mut count = 0;
+                while let Some(arg) = positional.get(pos) {
+                    let m = match arg {
+                        ResolvedArg::Literal(s) => e.is_wildcard() || e.is_match(s),
+                        ResolvedArg::Opaque => e.is_wildcard(),
+                    };
+                    if !m {
+                        break;
+                    }
+                    count += 1;
+                    pos += 1;
+                }
+                if required && count == 0 {
+                    steps.push(format!("{label} => no (matched 0, need 1+)"));
+                    return MatchTrace { matched: false, steps };
+                }
+                steps.push(format!("{label} => yes (matched {count})"));
+            }
+        }
+    }
+
+    let matched = if exact { pos == positional.len() } else { true };
+    if exact && !matched {
+        steps.push(format!("exact: {} positional args remaining", positional.len() - pos));
+    }
+    MatchTrace { matched, steps }
+}
+
 /// Check if a command name matches a command matcher.
 pub(super) fn command_matches(name: &str, matcher: &CommandMatcher) -> bool {
     match matcher {
