@@ -3,6 +3,7 @@
 use std::io::{IsTerminal, Read};
 
 use clap::{CommandFactory, Parser, Subcommand};
+use colored::Colorize;
 
 use may_i::check;
 use may_i::config;
@@ -190,31 +191,45 @@ fn cmd_check(json_mode: bool, verbose: bool, config_path: Option<&std::path::Pat
         });
         println!("{}", serde_json::to_string(&output).unwrap());
     } else {
+        let mut failures = Vec::new();
+
         for r in &results {
             if r.passed {
                 passed += 1;
                 if verbose {
-                    println!("  PASS: {} → {}", r.command, r.actual);
+                    println!("  {} {}", "PASS".green().bold(), format!("{} → {}", r.command, r.actual).dimmed());
                 }
             } else {
                 failed += 1;
-                let loc = r.location.as_deref().unwrap_or("<unknown>");
-                println!("  FAIL: {loc}: {}", r.command);
-                println!("        expected: {}", r.expected);
-                println!("        actual:   {}", r.actual);
-                if let Some(reason) = &r.reason {
-                    println!("        reason:   {reason}");
+                if verbose {
+                    println!("  {} {}", "FAIL".red().bold(), format!("{} → {} (expected {})", r.command, r.actual, r.expected).truecolor(255, 165, 0));
                 }
-                if !r.trace.is_empty() {
-                    println!("        trace:");
-                    for step in &r.trace {
-                        println!("          {step}");
-                    }
-                }
+                failures.push(r);
             }
         }
 
-        println!("\n{passed} passed, {failed} failed");
+        if !failures.is_empty() {
+            println!("\n{}\n", "Failures".bold());
+            for r in &failures {
+                let loc = r.location.as_deref().unwrap_or("<unknown>");
+                println!("  {loc}: {}", r.command);
+                println!("    expected: {}", r.expected);
+                println!("    actual:   {}", r.actual);
+                if let Some(reason) = &r.reason {
+                    println!("    reason:   {reason}");
+                }
+                if !r.trace.is_empty() {
+                    println!("    trace:");
+                    for step in &r.trace {
+                        println!("      {step}");
+                    }
+                }
+                println!();
+            }
+        }
+
+        println!("{}\n", "Summary".bold());
+        println!("  {passed} passed, {failed} failed");
     }
 
     if failed > 0 {
