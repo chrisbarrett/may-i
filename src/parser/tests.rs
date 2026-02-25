@@ -3545,3 +3545,67 @@ fn parse_param_expansion_hash_special() {
         panic!("Expected simple command");
     }
 }
+
+// --- [ as a command (test builtin) ---
+
+#[test]
+fn test_bracket_command() {
+    // `[` is a shell builtin command, not a glob bracket expression.
+    let cmd = parse("[ -f foo ]");
+    match &cmd {
+        Command::Simple(sc) => {
+            assert_eq!(sc.command_name(), Some("["));
+            assert_eq!(sc.args().iter().map(|w| w.to_str()).collect::<Vec<_>>(), vec!["-f", "foo", "]"]);
+        }
+        _ => panic!("Expected simple command, got: {cmd:?}"),
+    }
+}
+
+#[test]
+fn test_bracket_command_in_if() {
+    // `[ -f foo ]` used as a condition in an if statement.
+    let cmd = parse("if [ -f foo ]; then echo yes; fi");
+    match &cmd {
+        Command::If { condition, .. } => {
+            // The condition should contain the `[` command
+            match condition.as_ref() {
+                Command::Simple(sc) => {
+                    assert_eq!(sc.command_name(), Some("["));
+                    assert_eq!(sc.args().iter().map(|w| w.to_str()).collect::<Vec<_>>(), vec!["-f", "foo", "]"]);
+                }
+                other => panic!("Expected simple command as condition, got: {other:?}"),
+            }
+        }
+        _ => panic!("Expected if command, got: {cmd:?}"),
+    }
+}
+
+#[test]
+fn test_double_bracket_command() {
+    // `[[` is a bash keyword, not a glob expression.
+    let cmd = parse("[[ -f foo ]]");
+    match &cmd {
+        Command::Simple(sc) => {
+            assert_eq!(sc.command_name(), Some("[["));
+            assert_eq!(sc.args().iter().map(|w| w.to_str()).collect::<Vec<_>>(), vec!["-f", "foo", "]]"]);
+        }
+        _ => panic!("Expected simple command, got: {cmd:?}"),
+    }
+}
+
+#[test]
+fn test_double_bracket_in_if() {
+    let cmd = parse("if [[ -f foo ]]; then echo yes; fi");
+    match &cmd {
+        Command::If { condition, .. } => {
+            match condition.as_ref() {
+                Command::Simple(sc) => {
+                    assert_eq!(sc.command_name(), Some("[["));
+                    assert_eq!(sc.args().iter().map(|w| w.to_str()).collect::<Vec<_>>(), vec!["-f", "foo", "]]"]);
+                }
+                other => panic!("Expected simple command as condition, got: {other:?}"),
+            }
+        }
+        _ => panic!("Expected if command, got: {cmd:?}"),
+    }
+}

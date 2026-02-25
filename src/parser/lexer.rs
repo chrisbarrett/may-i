@@ -409,17 +409,36 @@ impl Lexer {
                     parts.push(WordPart::Glob(glob));
                 }
                 Some('[') => {
-                    // Glob bracket expression
-                    let mut glob = String::new();
-                    glob.push(self.advance().unwrap()); // [
-                    while let Some(ch) = self.peek() {
-                        glob.push(ch);
-                        self.advance();
-                        if ch == ']' {
-                            break;
+                    self.advance(); // consume '['
+                    match self.peek() {
+                        // `[` followed by space, metachar, EOF, or `[` → literal, not glob
+                        None | Some('[') | Some(']') => {
+                            if let Some(WordPart::Literal(s)) = parts.last_mut() {
+                                s.push('[');
+                            } else {
+                                parts.push(WordPart::Literal("[".to_string()));
+                            }
+                        }
+                        Some(ch) if is_metachar(ch) => {
+                            if let Some(WordPart::Literal(s)) = parts.last_mut() {
+                                s.push('[');
+                            } else {
+                                parts.push(WordPart::Literal("[".to_string()));
+                            }
+                        }
+                        Some(_) => {
+                            // Glob bracket expression: [abc], [a-z], etc.
+                            let mut glob = String::from("[");
+                            while let Some(ch) = self.peek() {
+                                glob.push(ch);
+                                self.advance();
+                                if ch == ']' {
+                                    break;
+                                }
+                            }
+                            parts.push(WordPart::Glob(glob));
                         }
                     }
-                    parts.push(WordPart::Glob(glob));
                 }
                 Some('\\') => {
                     self.advance();
