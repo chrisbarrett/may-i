@@ -823,6 +823,27 @@ fn evaluate_resolved_command(
     if depth < 5
         && let Some(inner) = unwrap_wrapper(resolved, config)
     {
+        // If the inner "command" is a single literal word that contains spaces
+        // (e.g. ssh host "curl -sv http://..."), the wrapper was invoked with a
+        // quoted shell string rather than bare words.  Re-parse it the same way
+        // walk_shell_dash_c handles sh -c "...".
+        if inner.words.len() == 1 {
+            let word = &inner.words[0];
+            if word.has_opaque_parts() {
+                return EvalResult::new(
+                    Decision::Ask,
+                    Some(format!(
+                        "Cannot determine inner command for `{cmd_name}`: \
+                         argument value is unknown"
+                    )),
+                );
+            }
+            let s = word.to_str();
+            if s.contains(' ') {
+                let inner_ast = parser::parse(&s);
+                return walk_command_with_depth(&inner_ast, config, env, 1).result;
+            }
+        }
         return evaluate_resolved_command(&inner, config, depth + 1, env);
     }
 
