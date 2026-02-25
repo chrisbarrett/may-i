@@ -12,57 +12,196 @@ pub(super) enum ResolvedArg {
 }
 
 /// Format a CommandMatcher for display in traces.
-pub(super) fn format_command_matcher(m: &CommandMatcher) -> String {
-    match m {
-        CommandMatcher::Exact(s) => format!("(command \"{s}\")"),
-        CommandMatcher::Regex(re) => format!("(command #\"{}\")", re.as_str()),
+/// `indent` is the column where the expression starts (e.g. after "rule ").
+pub(super) fn format_command_matcher(m: &CommandMatcher, indent: usize) -> String {
+    let pp = match m {
+        CommandMatcher::Exact(s) => PP::List(vec![PP::Atom("command".into()), PP::Atom(format!("\"{s}\""))]),
+        CommandMatcher::Regex(re) => PP::List(vec![PP::Atom("command".into()), PP::Atom(format!("#\"{}\"", re.as_str()))]),
         CommandMatcher::List(names) => {
-            let quoted: Vec<String> = names.iter().map(|n| format!("\"{n}\"")).collect();
-            format!("(command (or {}))", quoted.join(" "))
+            let mut or_children = vec![PP::Atom("or".into())];
+            or_children.extend(names.iter().map(|n| PP::Atom(format!("\"{n}\""))));
+            PP::List(vec![PP::Atom("command".into()), PP::List(or_children)])
+        }
+    };
+    pp.pretty(indent, PP_WIDTH)
+}
+
+// --- S-expression pretty-printer ---
+
+/// S-expression tree for pretty-printing.
+enum PP {
+    Atom(String),
+    List(Vec<PP>),
+}
+
+impl PP {
+    /// Render as a compact single-line string.
+    fn flat(&self) -> String {
+        match self {
+            PP::Atom(s) => s.clone(),
+            PP::List(children) => {
+                let inner: Vec<String> = children.iter().map(|c| c.flat()).collect();
+                format!("({})", inner.join(" "))
+            }
+        }
+    }
+
+    /// Pretty-print with wrapping. Returns a multi-line string.
+    /// `indent` is the column at which this form starts.
+    fn pretty(&self, indent: usize, max_width: usize) -> String {
+        match self {
+            PP::Atom(s) => s.clone(),
+            PP::List(children) if children.is_empty() => "()".into(),
+            PP::List(children) => {
+                // Try compact first.
+                let compact = self.flat();
+                if indent + compact.len() <= max_width {
+                    return compact;
+                }
+                // Break: (head first\n<align>rest...)
+                // Align subsequent args under the first arg.
+                let head = children[0].flat();
+                let align = indent + head.len() + 2; // "(" + head + " "
+                let mut parts = vec![format!("({head}")];
+                for (i, child) in children[1..].iter().enumerate() {
+                    let child_str = child.pretty(align, max_width);
+                    if i == 0 {
+                        parts[0].push(' ');
+                        parts[0].push_str(&child_str);
+                    } else {
+                        parts.push(format!("{:indent$}{child_str}", "", indent = align));
+                    }
+                }
+                parts.last_mut().unwrap().push(')');
+                parts.join("\n")
+            }
         }
     }
 }
 
-/// Format an Expr for display in traces.
-fn format_expr(e: &crate::types::Expr) -> String {
+/// Build a PP tree from an Expr.
+fn expr_to_pp(e: &crate::types::Expr) -> PP {
     use crate::types::Expr;
     match e {
-        Expr::Literal(s) => format!("\"{s}\""),
-        Expr::Regex(re) => format!("#\"{}\"", re.as_str()),
-        Expr::Wildcard => "_".into(),
+        Expr::Literal(s) => PP::Atom(format!("\"{s}\"")),
+        Expr::Regex(re) => PP::Atom(format!("#\"{}\"", re.as_str())),
+        Expr::Wildcard => PP::Atom("_".into()),
         Expr::And(exprs) => {
-            let inner: Vec<String> = exprs.iter().map(format_expr).collect();
-            format!("(and {})", inner.join(" "))
+            let mut children = vec![PP::Atom("and".into())];
+            children.extend(exprs.iter().map(expr_to_pp));
+            PP::List(children)
         }
         Expr::Or(exprs) => {
-            let inner: Vec<String> = exprs.iter().map(format_expr).collect();
-            format!("(or {})", inner.join(" "))
+            let mut children = vec![PP::Atom("or".into())];
+            children.extend(exprs.iter().map(expr_to_pp));
+            PP::List(children)
         }
-        Expr::Not(expr) => format!("(not {})", format_expr(expr)),
+        Expr::Not(expr) => PP::List(vec![PP::Atom("not".into()), expr_to_pp(expr)]),
         Expr::Cond(branches) => {
-            let inner: Vec<String> = branches
-                .iter()
-                .map(|b| format!("({} => {})", format_expr(&b.test), b.effect.decision))
-                .collect();
-            format!("(cond {})", inner.join(" "))
+            let mut children = vec![PP::Atom("cond".into())];
+            for b in branches {
+                children.push(PP::List(vec![
+                    expr_to_pp(&b.test),
+                    PP::Atom("=>".into()),
+                    PP::Atom(b.effect.decision.to_string()),
+                ]));
+            }
+            PP::List(children)
         }
     }
+}
+
+const PP_WIDTH: usize = 72;
+
+/// Format an Expr for display in traces, with pretty-printing.
+/// `indent` is the column at which the expression will be displayed.
+fn format_expr_at(e: &crate::types::Expr, indent: usize) -> String {
+    expr_to_pp(e).pretty(indent, PP_WIDTH)
+}
+
+fn format_expr(e: &crate::types::Expr) -> String {
+    format_expr_at(e, 0)
 }
 
 /// Format a PosExpr for display in traces.
 fn format_pos_expr(pe: &PosExpr) -> String {
-    match pe {
-        PosExpr::One(e) => format_expr(e),
-        PosExpr::Optional(e) => format!("(? {})", format_expr(e)),
-        PosExpr::OneOrMore(e) => format!("(+ {})", format_expr(e)),
-        PosExpr::ZeroOrMore(e) => format!("(* {})", format_expr(e)),
-    }
+    let pp = match pe {
+        PosExpr::One(e) => expr_to_pp(e),
+        PosExpr::Optional(e) => PP::List(vec![PP::Atom("?".into()), expr_to_pp(e)]),
+        PosExpr::OneOrMore(e) => PP::List(vec![PP::Atom("+".into()), expr_to_pp(e)]),
+        PosExpr::ZeroOrMore(e) => PP::List(vec![PP::Atom("*".into()), expr_to_pp(e)]),
+    };
+    pp.pretty(0, PP_WIDTH)
 }
 
 /// Result of a traced match: did it match, and what was evaluated.
 pub(super) struct MatchTrace {
     pub matched: bool,
     pub steps: Vec<String>,
+}
+
+/// Format a resolved arg for display in traces.
+fn format_resolved_arg(arg: &ResolvedArg) -> String {
+    match arg {
+        ResolvedArg::Literal(s) => format!("\"{s}\""),
+        ResolvedArg::Opaque => "<opaque>".into(),
+    }
+}
+
+/// Build a trace step from a potentially multi-line pretty-printed body.
+/// The prefix is prepended to the first line; continuation lines use the
+/// pretty-printer's own indentation. The suffix is appended to the last line.
+/// Multi-line results are joined with "\n" and stored as a single step.
+fn push_multiline(steps: &mut Vec<String>, prefix: &str, body: &str, suffix: &str) {
+    let lines: Vec<&str> = body.lines().collect();
+    let mut result = Vec::new();
+    for (i, line) in lines.iter().enumerate() {
+        let pfx = if i == 0 { prefix } else { "" };
+        let sfx = if i == lines.len() - 1 { suffix } else { "" };
+        result.push(format!("{pfx}{line}{sfx}"));
+    }
+    steps.push(result.join("\n"));
+}
+
+/// Trace matching an Expr against a resolved arg.
+/// For Cond exprs, expands branches into nested trace lines.
+fn trace_expr_vs_arg(
+    e: &crate::types::Expr,
+    arg: &ResolvedArg,
+    steps: &mut Vec<String>,
+) -> bool {
+    use crate::types::Expr;
+    let arg_str = format_resolved_arg(arg);
+
+    match e {
+        Expr::Cond(branches) => {
+            steps.push(format!("cond vs {arg_str}"));
+            for b in branches {
+                // "  " prefix = 2 columns indent
+                let test_label = format_expr_at(&b.test, 2);
+                let matched = match arg {
+                    ResolvedArg::Literal(s) => b.test.is_match(s),
+                    ResolvedArg::Opaque => b.test.is_wildcard(),
+                };
+                if matched {
+                    push_multiline(steps, "  ", &test_label, &format!(" => yes [{}]", b.effect.decision));
+                    return true;
+                }
+                push_multiline(steps, "  ", &test_label, " => no");
+            }
+            false
+        }
+        _ => {
+            let label = format_expr(e);
+            let matched = match arg {
+                ResolvedArg::Literal(s) => e.is_wildcard() || e.is_match(s),
+                ResolvedArg::Opaque => e.is_wildcard(),
+            };
+            let judgement = if matched { "yes" } else { "no" };
+            push_multiline(steps, "", &label, &format!(" vs {arg_str} => {judgement}"));
+            matched
+        }
+    }
 }
 
 /// Like `matcher_matches`, but also produces trace entries showing what was evaluated.
@@ -80,11 +219,9 @@ pub(super) fn matcher_matches_traced(matcher: &ArgMatcher, args: &[ResolvedArg])
                     ResolvedArg::Literal(s) => token.is_match(s),
                     ResolvedArg::Opaque => token.is_wildcard(),
                 });
-                steps.push(format!(
-                    "(anywhere {}) => {}",
-                    format_expr(token),
-                    if found { "yes" } else { "no" }
-                ));
+                let label = format_expr(token);
+                let judgement = if found { "yes" } else { "no" };
+                push_multiline(&mut steps, "(anywhere ", &label, &format!(") => {judgement}"));
                 found
             });
             MatchTrace { matched, steps }
@@ -122,18 +259,22 @@ pub(super) fn matcher_matches_traced(matcher: &ArgMatcher, args: &[ResolvedArg])
         ArgMatcher::Cond(branches) => {
             let mut steps = Vec::new();
             let mut any_matched = false;
+            steps.push("cond".into());
             for b in branches {
                 match &b.matcher {
                     None => {
-                        steps.push(format!("(else => {}) => yes", b.effect.decision));
+                        steps.push(format!("  else => yes [{}]", b.effect.decision));
                         any_matched = true;
                         break;
                     }
                     Some(m) => {
                         let sub = matcher_matches_traced(m, args);
                         let matched = sub.matched;
-                        steps.extend(sub.steps);
+                        for step in &sub.steps {
+                            steps.push(format!("  {step}"));
+                        }
                         if matched {
+                            steps.push(format!("  => yes [{}]", b.effect.decision));
                             any_matched = true;
                             break;
                         }
@@ -151,25 +292,17 @@ fn trace_positional(patterns: &[PosExpr], positional: &[ResolvedArg], exact: boo
     let mut pos = 0;
 
     for pexpr in patterns {
-        let label = format_pos_expr(pexpr);
         match pexpr {
             PosExpr::One(e) => {
                 match positional.get(pos) {
-                    Some(ResolvedArg::Literal(s)) => {
-                        let matched = e.is_wildcard() || e.is_match(s);
-                        steps.push(format!("{label} vs \"{s}\" => {}", if matched { "yes" } else { "no" }));
-                        if !matched {
-                            return MatchTrace { matched: false, steps };
-                        }
-                    }
-                    Some(ResolvedArg::Opaque) => {
-                        let matched = e.is_wildcard();
-                        steps.push(format!("{label} vs <opaque> => {}", if matched { "yes" } else { "no" }));
+                    Some(arg) => {
+                        let matched = trace_expr_vs_arg(e, arg, &mut steps);
                         if !matched {
                             return MatchTrace { matched: false, steps };
                         }
                     }
                     None => {
+                        let label = format_pos_expr(pexpr);
                         steps.push(format!("{label} vs <missing> => no"));
                         return MatchTrace { matched: false, steps };
                     }
@@ -178,23 +311,28 @@ fn trace_positional(patterns: &[PosExpr], positional: &[ResolvedArg], exact: boo
             }
             PosExpr::Optional(e) => {
                 if let Some(arg) = positional.get(pos) {
-                    let m = match arg {
-                        ResolvedArg::Literal(s) => e.is_wildcard() || e.is_match(s),
-                        ResolvedArg::Opaque => e.is_wildcard(),
-                    };
-                    let arg_str = match arg {
-                        ResolvedArg::Literal(s) => format!("\"{s}\""),
-                        ResolvedArg::Opaque => "<opaque>".into(),
-                    };
-                    steps.push(format!("{label} vs {arg_str} => {}", if m { "yes" } else { "skip" }));
-                    if m {
+                    let before = steps.len();
+                    let matched = trace_expr_vs_arg(e, arg, &mut steps);
+                    if matched {
                         pos += 1;
+                    } else {
+                        // Rewrite the last judgement: for Optional, a non-match
+                        // just means skip, not failure. Wrap the label.
+                        if let Some(last) = steps.last_mut() {
+                            *last = format!("(? …) {last}");
+                        }
+                        // If trace_expr_vs_arg produced a cond group, prefix header
+                        if steps.len() - before > 1 {
+                            steps[before] = format!("(? …) {}", steps[before]);
+                        }
                     }
                 } else {
-                    steps.push(format!("{label} => skip (no more args)"));
+                    let label = format_pos_expr(pexpr);
+                    steps.push(format!("{label} => no (no more args)"));
                 }
             }
             PosExpr::OneOrMore(e) | PosExpr::ZeroOrMore(e) => {
+                let label = format_pos_expr(pexpr);
                 let required = matches!(pexpr, PosExpr::OneOrMore(_));
                 let mut count = 0;
                 while let Some(arg) = positional.get(pos) {

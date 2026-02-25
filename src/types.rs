@@ -291,6 +291,7 @@ pub struct Rule {
     pub matcher: Option<ArgMatcher>,
     pub effect: Option<Effect>,
     pub checks: Vec<Check>,
+    pub source_span: crate::errors::Span,
 }
 
 /// A single branch inside a matcher-level `cond` form.

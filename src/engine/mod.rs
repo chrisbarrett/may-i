@@ -823,14 +823,28 @@ fn evaluate_resolved_command(
     let mut had_command_match = false;
 
     for rule in &config.rules {
-        let rule_label = format_command_matcher(&rule.command);
-
         if !command_matches(cmd_name, &rule.command) {
             continue;
         }
 
         had_command_match = true;
-        trace.push(format!("rule {rule_label}"));
+        // Rule header with config line number.
+        let line_num = config.source_info.as_ref().map(|si| {
+            crate::errors::offset_to_line_col(&si.content, rule.source_span.start).0
+        });
+        let line_prefix = line_num.map(|n| format!("{n}: ")).unwrap_or_default();
+        let rule_label = format_command_matcher(
+            &rule.command,
+            line_prefix.len() + "rule ".len(),
+        );
+        // Rule header may be multi-line from pretty-printing.
+        for (i, line) in rule_label.lines().enumerate() {
+            if i == 0 {
+                trace.push(format!("{line_prefix}rule {line}"));
+            } else {
+                trace.push(line.to_string());
+            }
+        }
 
         // Determine if args match (with tracing)
         let args_match = match &rule.matcher {
@@ -838,7 +852,10 @@ fn evaluate_resolved_command(
             Some(m) => {
                 let mt = matcher_matches_traced(m, &expanded_args);
                 for step in &mt.steps {
-                    trace.push(format!("  {step}"));
+                    // Indent each line of a potentially multi-line step.
+                    for line in step.lines() {
+                        trace.push(format!("  {line}"));
+                    }
                 }
                 mt.matched
             }
@@ -943,12 +960,19 @@ mod tests {
         }
     }
 
+    use crate::errors::Span;
+
+    fn test_span() -> Span {
+        Span { start: 0, end: 0 }
+    }
+
     fn allow_rule(cmd: &str) -> Rule {
         Rule {
             command: CommandMatcher::Exact(cmd.to_string()),
             matcher: None,
             effect: Some(Effect { decision: Decision::Allow, reason: Some("allowed".into()) }),
             checks: vec![],
+            source_span: test_span(),
         }
     }
 
@@ -958,6 +982,7 @@ mod tests {
             matcher: None,
             effect: Some(Effect { decision: Decision::Deny, reason: Some("denied".into()) }),
             checks: vec![],
+            source_span: test_span(),
         }
     }
 
@@ -967,6 +992,7 @@ mod tests {
             matcher: None,
             effect: Some(Effect { decision: Decision::Ask, reason: Some("ask".into()) }),
             checks: vec![],
+            source_span: test_span(),
         }
     }
 
@@ -1403,6 +1429,7 @@ mod tests {
             ]))),
             effect: Some(Effect { decision: Decision::Allow, reason: None }),
             checks: vec![],
+            source_span: test_span(),
         };
         let config = config_with_rules(vec![rule]);
         let result = evaluate("git status", &config);
@@ -1418,6 +1445,7 @@ mod tests {
             ]))),
             effect: Some(Effect { decision: Decision::Allow, reason: None }),
             checks: vec![],
+            source_span: test_span(),
         };
         let config = config_with_rules(vec![rule]);
         let result = evaluate("git push", &config);
@@ -1435,6 +1463,7 @@ mod tests {
                 ])),
                 effect: Some(Effect { decision: Decision::Deny, reason: Some("dangerous".into()) }),
                 checks: vec![],
+                source_span: test_span(),
             },
         ];
         let config = config_with_rules(rules);
@@ -1450,12 +1479,14 @@ mod tests {
                 matcher: None,
                 effect: Some(Effect { decision: Decision::Ask, reason: Some("first".into()) }),
                 checks: vec![],
+                source_span: test_span(),
             },
             Rule {
                 command: CommandMatcher::Exact("git".into()),
                 matcher: None,
                 effect: Some(Effect { decision: Decision::Allow, reason: Some("second".into()) }),
                 checks: vec![],
+                source_span: test_span(),
             },
         ];
         let config = config_with_rules(rules);
@@ -1471,6 +1502,7 @@ mod tests {
             matcher: None,
             effect: Some(Effect { decision: Decision::Allow, reason: None }),
             checks: vec![],
+            source_span: test_span(),
         };
         let config = config_with_rules(vec![rule]);
         assert_eq!(evaluate("cat file", &config).decision, Decision::Allow);
@@ -1486,6 +1518,7 @@ mod tests {
             matcher: None,
             effect: Some(Effect { decision: Decision::Allow, reason: None }),
             checks: vec![],
+            source_span: test_span(),
         };
         let config = config_with_rules(vec![rule]);
         assert_eq!(evaluate("cat file", &config).decision, Decision::Allow);
@@ -1748,6 +1781,7 @@ mod tests {
             ])),
             effect: Some(Effect { decision: Decision::Allow, reason: Some("safe push".into()) }),
             checks: vec![],
+            source_span: test_span(),
         };
         let config = config_with_rules(vec![rule]);
 
@@ -1772,6 +1806,7 @@ mod tests {
             ])),
             effect: Some(Effect { decision: Decision::Allow, reason: None }),
             checks: vec![],
+            source_span: test_span(),
         };
         let config = config_with_rules(vec![rule]);
         assert_eq!(
@@ -2172,6 +2207,7 @@ mod tests {
             ])),
             effect: Some(Effect { decision: Decision::Allow, reason: None }),
             checks: vec![],
+            source_span: test_span(),
         };
         let config = config_with_rules(vec![rule]);
         let result = evaluate_with_env("git $safe_opaque", &config, &env);
@@ -2190,6 +2226,7 @@ mod tests {
             ])),
             effect: Some(Effect { decision: Decision::Allow, reason: None }),
             checks: vec![],
+            source_span: test_span(),
         };
         let config = config_with_rules(vec![rule]);
         let result = evaluate_with_env("git push $safe_opaque", &config, &env);
@@ -2208,6 +2245,7 @@ mod tests {
             ])),
             effect: Some(Effect { decision: Decision::Allow, reason: None }),
             checks: vec![],
+            source_span: test_span(),
         };
         let config = config_with_rules(vec![rule]);
         let result = evaluate_with_env("git push $safe_opaque", &config, &env);
@@ -2223,6 +2261,7 @@ mod tests {
             matcher: Some(ArgMatcher::Anywhere(vec![Expr::Literal("--force".into())])),
             effect: Some(Effect { decision: Decision::Allow, reason: None }),
             checks: vec![],
+            source_span: test_span(),
         };
         let config = config_with_rules(vec![rule]);
         let result = evaluate_with_env("cmd $safe_opaque", &config, &env);
@@ -2267,6 +2306,7 @@ mod tests {
             ])),
             effect: None,
             checks: vec![],
+            source_span: test_span(),
         };
         let config = config_with_rules(vec![rule]);
         let result = evaluate("tmux source-file foo.conf", &config);
@@ -2292,6 +2332,7 @@ mod tests {
             ])),
             effect: None,
             checks: vec![],
+            source_span: test_span(),
         };
         let config = config_with_rules(vec![rule]);
         let result = evaluate("tmux kill-session", &config);
@@ -2311,6 +2352,7 @@ mod tests {
             }])),
             effect: None,
             checks: vec![],
+            source_span: test_span(),
         };
         let config = config_with_rules(vec![rule]);
         let result = evaluate("tmux kill-session", &config);
@@ -2336,6 +2378,7 @@ mod tests {
                 ])),
                 effect: None,
                 checks: vec![],
+                source_span: test_span(),
             },
             allow_rule("tmux"),
         ];

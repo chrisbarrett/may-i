@@ -349,6 +349,7 @@ fn parse_rule(parts: &[Sexpr], rule_span: Span) -> Result<Rule, RawError> {
         matcher,
         effect,
         checks,
+        source_span: rule_span,
     })
 }
 

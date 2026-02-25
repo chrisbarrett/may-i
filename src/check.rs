@@ -66,6 +66,7 @@ mod tests {
                     expected: Decision::Allow,
                     source_span: Span::new(0, 0),
                 }],
+                source_span: Span::new(0, 0),
             }],
             ..Config::default()
         };
@@ -88,6 +89,7 @@ mod tests {
                     expected: Decision::Deny, // wrong expectation
                     source_span: Span::new(0, 0),
                 }],
+                source_span: Span::new(0, 0),
             }],
             ..Config::default()
         };
@@ -114,6 +116,7 @@ mod tests {
                     checks: vec![
                         Check { command: "ls".into(), expected: Decision::Allow, source_span: Span::new(0, 0) },
                     ],
+                    source_span: Span::new(0, 0),
                 },
                 Rule {
                     command: CommandMatcher::Exact("rm".into()),
@@ -122,6 +125,7 @@ mod tests {
                     checks: vec![
                         Check { command: "rm foo".into(), expected: Decision::Deny, source_span: Span::new(0, 0) },
                     ],
+                    source_span: Span::new(0, 0),
                 },
             ],
             ..Config::default()
