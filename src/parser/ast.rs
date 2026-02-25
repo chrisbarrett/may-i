@@ -551,6 +551,26 @@ impl SimpleCommand {
         }
     }
 
+    /// Apply a transform to every Word in assignments, command words, and
+    /// file-redirect targets, returning a new SimpleCommand.
+    pub fn map_words(&self, f: impl Fn(&Word) -> Word) -> SimpleCommand {
+        SimpleCommand {
+            assignments: self.assignments.iter().map(|a| Assignment {
+                name: a.name.clone(),
+                value: f(&a.value),
+            }).collect(),
+            words: self.words.iter().map(&f).collect(),
+            redirections: self.redirections.iter().map(|r| Redirection {
+                fd: r.fd,
+                kind: r.kind.clone(),
+                target: match &r.target {
+                    RedirectionTarget::File(w) => RedirectionTarget::File(f(w)),
+                    other => other.clone(),
+                },
+            }).collect(),
+        }
+    }
+
     /// The arguments (all words after the first).
     pub fn args(&self) -> &[Word] {
         if self.words.len() > 1 {
