@@ -212,16 +212,21 @@ fn cmd_check(json_mode: bool, verbose: bool, config_path: Option<&std::path::Pat
             println!("\n{}\n", "Failures".bold());
             for r in &failures {
                 let loc = r.location.as_deref().unwrap_or("<unknown>");
-                println!("  {loc}: {}", r.command);
-                println!("    expected: {}", r.expected);
-                println!("    actual:   {}", r.actual);
+                let (file, line_col) = loc.split_once(':').unwrap_or((loc, ""));
+                print!("{}", file.red());
+                if !line_col.is_empty() {
+                    print!("{}", format!(":{line_col}").dimmed());
+                }
+                println!(": {}", r.command.bold());
+                println!("  expected: {}", r.expected.to_string().green());
+                println!("  actual:   {}", r.actual.to_string().red());
                 if let Some(reason) = &r.reason {
-                    println!("    reason:   {reason}");
+                    println!("  reason:   {}", reason.italic());
                 }
                 if !r.trace.is_empty() {
-                    println!("    trace:");
+                    println!("  trace:");
                     for step in &r.trace {
-                        println!("      {step}");
+                        println!("    {step}");
                     }
                 }
                 println!();
