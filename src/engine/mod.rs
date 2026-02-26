@@ -776,22 +776,27 @@ fn walk_shell_dash_c(
 /// Collects MatchEvents into human-readable trace strings.
 struct TraceCollector {
     steps: Vec<String>,
+    /// Column at which trace expressions start (for pp wrapping).
+    indent: usize,
 }
 
 impl TraceCollector {
-    fn new() -> Self {
-        Self { steps: Vec::new() }
+    fn new(indent: usize) -> Self {
+        Self { steps: Vec::new(), indent }
+    }
+
+    /// Pretty-print a Doc at the current indent.
+    fn pp(&self, doc: &crate::pp::Doc) -> String {
+        crate::pp::pretty(doc, self.indent, &crate::pp::Format { width: PP_WIDTH, ..Default::default() })
     }
 
     fn on_event(&mut self, ev: MatchEvent<'_>) {
         match ev {
             MatchEvent::ExprVsArg { expr, arg, matched } => {
                 let result = if matched { "yes" } else { "no" };
-                self.steps.push(format!(
-                    "{} vs {} => {result}",
-                    format_expr(expr),
-                    format_resolved_arg(arg),
-                ));
+                let lhs = self.pp(&expr_to_doc(expr));
+                let rhs = self.pp(&resolved_arg_to_doc(arg));
+                self.steps.push(format!("{lhs} vs {rhs} => {result}"));
             }
             MatchEvent::EnterOptional { .. } => {}
             MatchEvent::LeaveOptional { .. } => {}
@@ -801,19 +806,18 @@ impl TraceCollector {
                 } else {
                     "no".into()
                 };
-                self.steps.push(format!("{} => {result}", format_pos_expr(pexpr)));
+                let label = self.pp(&pos_expr_to_doc(pexpr));
+                self.steps.push(format!("{label} => {result}"));
             }
             MatchEvent::Missing { pexpr } => {
-                self.steps.push(format!("{} vs <missing> => no", format_pos_expr(pexpr)));
+                let label = self.pp(&pos_expr_to_doc(pexpr));
+                self.steps.push(format!("{label} vs <missing> => no"));
             }
             MatchEvent::EnterCond { .. } => {}
             MatchEvent::ExprCondBranch { test, matched, effect } => {
                 if matched {
-                    self.steps.push(format!(
-                        "{} => yes [{}]",
-                        format_expr(test),
-                        effect.decision,
-                    ));
+                    let label = self.pp(&expr_to_doc(test));
+                    self.steps.push(format!("{label} => yes [{}]", effect.decision));
                 }
             }
             MatchEvent::MatcherCondBranch { matched, effect } => {
@@ -827,7 +831,12 @@ impl TraceCollector {
             MatchEvent::LeaveCond => {}
             MatchEvent::Anywhere { expr, matched } => {
                 let result = if matched { "yes" } else { "no" };
-                self.steps.push(format!("(anywhere {}) => {result}", format_expr(expr)));
+                let doc = crate::pp::Doc::list(vec![
+                    crate::pp::Doc::atom("anywhere"),
+                    expr_to_doc(expr),
+                ]);
+                let label = self.pp(&doc);
+                self.steps.push(format!("{label} => {result}"));
             }
             MatchEvent::ExactRemainder { count } => {
                 self.steps.push(format!("exact: {count} positional args remaining"));
@@ -919,7 +928,7 @@ fn evaluate_resolved_command(
         let outcome = match &rule.matcher {
             None => MatchOutcome::MatchedNoEffect,
             Some(m) => {
-                let mut collector = TraceCollector::new();
+                let mut collector = TraceCollector::new(2);
                 let outcome = match_args(m, &expanded_args, &mut |ev| collector.on_event(ev));
                 for step in collector.into_steps() {
                     for line in step.lines() {

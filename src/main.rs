@@ -146,9 +146,17 @@ fn cmd_eval(
         println!("{}", serde_json::to_string(&json).unwrap());
     } else {
         println!("\n{}\n", "Result".bold());
-        match &result.reason {
-            Some(reason) => println!("  (:{} \"{}\")", result.decision, reason),
-            None => println!("  (:{})", result.decision),
+        {
+            use may_i::pp::{Doc, Format, pretty};
+            let mut children = vec![Doc::atom(format!(":{}", result.decision))];
+            if let Some(reason) = &result.reason {
+                children.push(Doc::atom(format!("\"{reason}\"")));
+            }
+            let doc = Doc::list(children);
+            let formatted = pretty(&doc, 2, &Format::colored());
+            for line in formatted.lines() {
+                println!("  {line}");
+            }
         }
         if !result.trace.is_empty() {
             println!("\n{}\n", "Trace".bold());

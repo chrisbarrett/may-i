@@ -50,115 +50,71 @@ pub(super) enum MatchEvent<'a> {
 
 // ── Formatting helpers ─────────────────────────────────────────────
 
+use crate::pp::Doc;
+
+pub(super) const PP_WIDTH: usize = 72;
+
 /// Format a CommandMatcher for display in traces.
 /// `indent` is the column where the expression starts (e.g. after "rule ").
 pub(super) fn format_command_matcher(m: &CommandMatcher, indent: usize) -> String {
-    let pp = match m {
-        CommandMatcher::Exact(s) => PP::List(vec![PP::Atom("command".into()), PP::Atom(format!("\"{s}\""))]),
-        CommandMatcher::Regex(re) => PP::List(vec![PP::Atom("command".into()), PP::Atom(format!("#\"{}\"", re.as_str()))]),
+    let doc = match m {
+        CommandMatcher::Exact(s) => Doc::list(vec![Doc::atom("command"), Doc::atom(format!("\"{s}\""))]),
+        CommandMatcher::Regex(re) => Doc::list(vec![Doc::atom("command"), Doc::atom(format!("#\"{}\"", re.as_str()))]),
         CommandMatcher::List(names) => {
-            let mut or_children = vec![PP::Atom("or".into())];
-            or_children.extend(names.iter().map(|n| PP::Atom(format!("\"{n}\""))));
-            PP::List(vec![PP::Atom("command".into()), PP::List(or_children)])
+            let mut or_children = vec![Doc::atom("or")];
+            or_children.extend(names.iter().map(|n| Doc::atom(format!("\"{n}\""))));
+            Doc::list(vec![Doc::atom("command"), Doc::list(or_children)])
         }
     };
-    pp.pretty(indent, PP_WIDTH)
+    crate::pp::pretty(&doc, indent, &crate::pp::Format { width: PP_WIDTH, ..Default::default() })
 }
 
-// --- S-expression pretty-printer ---
-
-/// S-expression tree for pretty-printing.
-enum PP {
-    Atom(String),
-    List(Vec<PP>),
-}
-
-impl PP {
-    /// Render as a compact single-line string.
-    fn flat(&self) -> String {
-        match self {
-            PP::Atom(s) => s.clone(),
-            PP::List(children) => {
-                let inner: Vec<String> = children.iter().map(|c| c.flat()).collect();
-                format!("({})", inner.join(" "))
-            }
-        }
-    }
-
-    /// Pretty-print with wrapping. Returns a multi-line string.
-    /// `indent` is the column at which this form starts.
-    fn pretty(&self, indent: usize, max_width: usize) -> String {
-        match self {
-            PP::Atom(s) => s.clone(),
-            PP::List(children) if children.is_empty() => "()".into(),
-            PP::List(children) => {
-                // Try compact first.
-                let compact = self.flat();
-                if indent + compact.len() <= max_width {
-                    return compact;
-                }
-                // Break: (head first\n<align>rest...)
-                // Align subsequent args under the first arg.
-                let head = children[0].flat();
-                let align = indent + head.len() + 2; // "(" + head + " "
-                let mut parts = vec![format!("({head}")];
-                for (i, child) in children[1..].iter().enumerate() {
-                    let child_str = child.pretty(align, max_width);
-                    if i == 0 {
-                        parts[0].push(' ');
-                        parts[0].push_str(&child_str);
-                    } else {
-                        parts.push(format!("{:indent$}{child_str}", "", indent = align));
-                    }
-                }
-                parts.last_mut().unwrap().push(')');
-                parts.join("\n")
-            }
-        }
-    }
-}
-
-const PP_WIDTH: usize = 72;
-
-/// Format an Expr for display in traces.
-pub(super) fn format_expr(e: &Expr) -> String {
+/// Build a Doc tree from an Expr.
+pub(super) fn expr_to_doc(e: &Expr) -> Doc {
     match e {
-        Expr::Literal(s) => format!("\"{s}\""),
-        Expr::Regex(re) => format!("#\"{}\"", re.as_str()),
-        Expr::Wildcard => "*".into(),
+        Expr::Literal(s) => Doc::atom(format!("\"{s}\"")),
+        Expr::Regex(re) => Doc::atom(format!("#\"{}\"", re.as_str())),
+        Expr::Wildcard => Doc::atom("*"),
         Expr::And(exprs) => {
-            let parts: Vec<String> = exprs.iter().map(format_expr).collect();
-            format!("(and {})", parts.join(" "))
+            let mut children = vec![Doc::atom("and")];
+            children.extend(exprs.iter().map(expr_to_doc));
+            Doc::list(children)
         }
         Expr::Or(exprs) => {
-            let parts: Vec<String> = exprs.iter().map(format_expr).collect();
-            format!("(or {})", parts.join(" "))
+            let mut children = vec![Doc::atom("or")];
+            children.extend(exprs.iter().map(expr_to_doc));
+            Doc::list(children)
         }
-        Expr::Not(inner) => format!("(not {})", format_expr(inner)),
+        Expr::Not(inner) => Doc::list(vec![Doc::atom("not"), expr_to_doc(inner)]),
         Expr::Cond(branches) => {
-            let parts: Vec<String> = branches.iter().map(|b| {
-                format!("({} => {})", format_expr(&b.test), b.effect.decision)
-            }).collect();
-            format!("(cond {})", parts.join(" "))
+            let mut children = vec![Doc::atom("cond")];
+            for b in branches {
+                children.push(Doc::list(vec![
+                    expr_to_doc(&b.test),
+                    Doc::atom("=>"),
+                    Doc::atom(b.effect.decision.to_string()),
+                ]));
+            }
+            Doc::list(children)
         }
     }
 }
 
-/// Format a PosExpr for display in traces.
-pub(super) fn format_pos_expr(pe: &PosExpr) -> String {
+/// Build a Doc tree from a PosExpr.
+pub(super) fn pos_expr_to_doc(pe: &PosExpr) -> Doc {
     match pe {
-        PosExpr::One(e) => format_expr(e),
-        PosExpr::Optional(e) => format!("(? {})", format_expr(e)),
-        PosExpr::OneOrMore(e) => format!("(+ {})", format_expr(e)),
-        PosExpr::ZeroOrMore(e) => format!("(* {})", format_expr(e)),
+        PosExpr::One(e) => expr_to_doc(e),
+        PosExpr::Optional(e) => Doc::list(vec![Doc::atom("?"), expr_to_doc(e)]),
+        PosExpr::OneOrMore(e) => Doc::list(vec![Doc::atom("+"), expr_to_doc(e)]),
+        PosExpr::ZeroOrMore(e) => Doc::list(vec![Doc::atom("*"), expr_to_doc(e)]),
     }
 }
 
-/// Format a ResolvedArg for display in traces.
-pub(super) fn format_resolved_arg(a: &ResolvedArg) -> String {
+/// Build a Doc atom from a ResolvedArg.
+pub(super) fn resolved_arg_to_doc(a: &ResolvedArg) -> Doc {
     match a {
-        ResolvedArg::Literal(s) => format!("\"{s}\""),
-        ResolvedArg::Opaque => "<opaque>".into(),
+        ResolvedArg::Literal(s) => Doc::atom(format!("\"{s}\"")),
+        ResolvedArg::Opaque => Doc::atom("<opaque>"),
     }
 }
 
