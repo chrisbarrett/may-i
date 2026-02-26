@@ -3,8 +3,8 @@
 
 use may_i_core::{Config, Decision, Effect, EvalResult};
 use may_i_shell_parser::SimpleCommand;
-use super::matcher::*;
-use super::visitor::{CommandVisitor, VisitOutcome, VisitorContext};
+use super::super::matcher::*;
+use super::traits::{CommandVisitor, VisitOutcome, VisitorContext};
 
 /// Terminal visitor: matches the resolved command against config rules.
 /// Always returns Terminal (never Continue).

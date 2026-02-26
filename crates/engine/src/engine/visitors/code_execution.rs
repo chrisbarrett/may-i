@@ -3,8 +3,8 @@
 
 use may_i_core::{Decision, EvalResult};
 use may_i_shell_parser::{self as parser, SimpleCommand};
-use super::visitor::{CommandVisitor, VisitOutcome, VisitorContext};
-use super::MAX_EVAL_DEPTH;
+use super::traits::{CommandVisitor, VisitOutcome, VisitorContext};
+use super::super::MAX_EVAL_DEPTH;
 
 /// Detects `source`/`.`, opaque command names, `eval`, and `bash/sh/zsh -c`.
 ///
@@ -12,7 +12,7 @@ use super::MAX_EVAL_DEPTH;
 /// - Opaque command name: Ask (can't determine what runs).
 /// - `eval`: concatenate literal args and Recurse, or Ask if opaque.
 /// - `bash -c` / `sh -c` / `zsh -c`: Recurse into the `-c` argument.
-pub(super) struct CodeExecutionVisitor;
+pub(in crate::engine) struct CodeExecutionVisitor;
 
 impl CommandVisitor for CodeExecutionVisitor {
     fn visit_simple_command(

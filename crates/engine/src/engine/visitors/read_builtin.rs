@@ -4,12 +4,12 @@
 use may_i_core::{Decision, EvalResult};
 use may_i_shell_parser::{self as parser, SimpleCommand};
 use crate::var_env::VarState;
-use super::visitor::{CommandVisitor, VisitOutcome, VisitorContext};
+use super::traits::{CommandVisitor, VisitOutcome, VisitorContext};
 
 /// Detects `read`/`readarray`/`mapfile` and updates the variable
 /// environment to mark target variables as safe (value unknown at
 /// analysis time, but user-controlled input is considered safe).
-pub(super) struct ReadBuiltinVisitor;
+pub(in crate::engine) struct ReadBuiltinVisitor;
 
 impl CommandVisitor for ReadBuiltinVisitor {
     fn visit_simple_command(

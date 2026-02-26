@@ -1,12 +1,12 @@
 // Visitor that detects unresolvable dynamic parts in a resolved command.
 
 use may_i_shell_parser::SimpleCommand;
-use super::dynamic_ask;
-use super::visitor::{CommandVisitor, VisitOutcome, VisitorContext};
+use super::super::dynamic_ask;
+use super::traits::{CommandVisitor, VisitOutcome, VisitorContext};
 
 /// Returns `Ask` when a resolved command still contains dynamic parts
 /// (unsafe variables, command substitutions, etc.) that prevent static analysis.
-pub(super) struct DynamicPartsVisitor;
+pub(in crate::engine) struct DynamicPartsVisitor;
 
 impl CommandVisitor for DynamicPartsVisitor {
     fn visit_simple_command(
