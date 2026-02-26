@@ -33,21 +33,14 @@ impl MatchOutcome {
 /// Events emitted during matching for tracing/debugging.
 ///
 /// Some variants carry payloads used only for `Debug` output in tests.
-/// The trace collector in `mod.rs` ignores `EnterOptional`, `LeaveOptional`,
-/// `EnterCond`, and `LeaveCond` — they exist as structured hooks for richer
-/// tracing if needed later.
 #[derive(Debug)]
 pub(in crate::engine) enum MatchEvent<'a> {
     ExprVsArg { expr: &'a Expr, arg: &'a ResolvedArg, matched: bool },
-    EnterOptional,
-    LeaveOptional,
     Quantifier { pexpr: &'a PosExpr, count: usize, matched: bool },
     Missing { pexpr: &'a PosExpr },
-    EnterCond,
     ExprCondBranch { test: &'a Expr, matched: bool, effect: &'a Effect },
     MatcherCondBranch { matched: bool, effect: &'a Effect },
     MatcherCondElse { effect: &'a Effect },
-    LeaveCond,
     Anywhere { expr: &'a Expr, matched: bool },
     ExactRemainder { count: usize },
 }
@@ -77,6 +70,7 @@ pub(in crate::engine) fn format_command_matcher(m: &CommandMatcher, indent: usiz
 pub(in crate::engine) fn expr_to_doc(e: &Expr) -> Doc {
     match e {
         Expr::Literal(s) => Doc::atom(format!("\"{s}\"")),
+        // Convention: `#"..."` prefix signals regex to pp's colorizer.
         Expr::Regex(re) => Doc::atom(format!("#\"{}\"", re.as_str())),
         Expr::Wildcard => Doc::atom("*"),
         Expr::And(exprs) => {
@@ -149,7 +143,6 @@ fn match_expr_arg(
     emit: &mut dyn for<'e> FnMut(MatchEvent<'e>),
 ) -> MatchOutcome {
     if let Expr::Cond(branches) = expr {
-        emit(MatchEvent::EnterCond);
         let outcome = match arg {
             ResolvedArg::Literal(s) => {
                 match_expr_cond_branches(branches, s, emit)
@@ -166,7 +159,6 @@ fn match_expr_arg(
                 MatchOutcome::NoMatch
             }
         };
-        emit(MatchEvent::LeaveCond);
         return outcome;
     }
 
@@ -289,13 +281,11 @@ pub(in crate::engine) fn match_args(
         }
 
         ArgMatcher::Cond(branches) => {
-            emit(MatchEvent::EnterCond);
             for branch in branches {
                 match &branch.matcher {
                     None => {
                         // Catch-all (else) branch
                         emit(MatchEvent::MatcherCondElse { effect: &branch.effect });
-                        emit(MatchEvent::LeaveCond);
                         return MatchOutcome::Matched(branch.effect.clone());
                     }
                     Some(m) => {
@@ -305,13 +295,11 @@ pub(in crate::engine) fn match_args(
                             effect: &branch.effect,
                         });
                         if matched {
-                            emit(MatchEvent::LeaveCond);
                             return MatchOutcome::Matched(branch.effect.clone());
                         }
                     }
                 }
             }
-            emit(MatchEvent::LeaveCond);
             MatchOutcome::NoMatch
         }
     }
@@ -350,7 +338,6 @@ fn match_positional(
                 }
             }
             PosExpr::Optional(e) => {
-                emit(MatchEvent::EnterOptional);
                 if let Some(arg) = positional.get(pos) {
                     let outcome = match_expr_arg(e, arg, emit);
                     if outcome.is_match() {
@@ -360,12 +347,7 @@ fn match_positional(
                             first_effect = Some(eff);
                         }
                         pos += 1;
-                        emit(MatchEvent::LeaveOptional);
-                    } else {
-                        emit(MatchEvent::LeaveOptional);
                     }
-                } else {
-                    emit(MatchEvent::LeaveOptional);
                 }
             }
             PosExpr::OneOrMore(e) => {
@@ -959,10 +941,7 @@ mod tests {
             PosExpr::Optional(Expr::Literal("opt".into())),
         ]);
         let (_, events) = match_with_events(&matcher, &[lit("opt")]);
-        // Should see: EnterOptional, ExprVsArg, LeaveOptional
-        assert!(events.iter().any(|e| e.contains("EnterOptional")));
         assert!(events.iter().any(|e| e.contains("ExprVsArg")));
-        assert!(events.iter().any(|e| e.contains("LeaveOptional")));
     }
 
     #[test]
@@ -973,9 +952,7 @@ mod tests {
         ]);
         let matcher = ArgMatcher::Positional(vec![PosExpr::One(cond)]);
         let (_, events) = match_with_events(&matcher, &[lit("a")]);
-        assert!(events.iter().any(|e| e.contains("EnterCond")));
         assert!(events.iter().any(|e| e.contains("ExprCondBranch")));
-        assert!(events.iter().any(|e| e.contains("LeaveCond")));
     }
 
     #[test]
@@ -991,12 +968,10 @@ mod tests {
             },
         ]);
         let (_, events) = match_with_events(&matcher, &[lit("z")]);
-        assert!(events.iter().any(|e| e.contains("EnterCond")));
         // First branch: inner events + MatcherCondBranch
         assert!(events.iter().any(|e| e.contains("MatcherCondBranch")));
         // Second branch: else
         assert!(events.iter().any(|e| e.contains("MatcherCondElse")));
-        assert!(events.iter().any(|e| e.contains("LeaveCond")));
     }
 
     #[test]

@@ -120,6 +120,19 @@ pub struct SourceInfo {
     pub content: String,
 }
 
+impl SourceInfo {
+    /// Format a source location as `file:line:col` from a span.
+    pub fn location_of(&self, span: Span) -> String {
+        let (line, col) = may_i_sexpr::offset_to_line_col(&self.content, span.start);
+        format!("{}:{}:{}", self.filename, line, col)
+    }
+
+    /// Return the 1-based line number for a span.
+    pub fn line_of(&self, span: Span) -> usize {
+        may_i_sexpr::offset_to_line_col(&self.content, span.start).0
+    }
+}
+
 /// Top-level configuration.
 #[derive(Debug, Clone, Default)]
 pub struct Config {
@@ -266,6 +279,9 @@ pub enum WrapperStep {
 }
 
 /// Which part of the remaining args becomes the inner command.
+///
+/// Note: the engine currently treats all variants identically (extracts from
+/// the capture point onward). The distinction is preserved for future use.
 #[derive(Debug, Clone, PartialEq)]
 pub enum CaptureKind {
     /// Everything remaining is the command followed by its arguments.

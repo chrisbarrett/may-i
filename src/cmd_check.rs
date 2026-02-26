@@ -6,7 +6,7 @@ use may_i_core::LoadError;
 use may_i_config as config;
 use may_i_engine as engine;
 
-use crate::cmd_eval::print_trace;
+use crate::output::print_trace;
 
 pub fn cmd_check(json_mode: bool, verbose: bool, config_path: Option<&std::path::Path>) -> Result<(), LoadError> {
     let config = config::load(config_path)?;

@@ -1,7 +1,6 @@
 // Config validation — run embedded checks against the engine.
 
 use crate::engine;
-use may_i_sexpr::{offset_to_line_col, Span};
 use may_i_core::{Config, Decision};
 
 /// Result of evaluating a single embedded check.
@@ -16,12 +15,6 @@ pub struct CheckResult {
     pub location: Option<String>,
 }
 
-/// Format a source location as `file:line:col` from a span and source info.
-fn format_location(source_info: &may_i_core::SourceInfo, span: Span) -> String {
-    let (line, col) = offset_to_line_col(&source_info.content, span.start);
-    format!("{}:{}:{}", source_info.filename, line, col)
-}
-
 /// Run all embedded checks from config rules and compare against expected decisions.
 pub fn run_checks(config: &Config) -> Vec<CheckResult> {
     let mut results = Vec::new();
@@ -32,7 +25,7 @@ pub fn run_checks(config: &Config) -> Vec<CheckResult> {
             let location = config
                 .source_info
                 .as_ref()
-                .map(|si| format_location(si, check.source_span));
+                .map(|si| si.location_of(check.source_span));
             results.push(CheckResult {
                 command: check.command.clone(),
                 expected: check.expected,

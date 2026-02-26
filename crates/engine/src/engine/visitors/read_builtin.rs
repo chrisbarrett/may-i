@@ -4,7 +4,7 @@
 use may_i_core::{Decision, EvalResult};
 use may_i_shell_parser::{self as parser, SimpleCommand};
 use crate::var_env::VarState;
-use super::traits::{CommandVisitor, VisitOutcome, VisitorContext};
+use super::{CommandVisitor, VisitOutcome, VisitorContext};
 
 /// Detects `read`/`readarray`/`mapfile` and updates the variable
 /// environment to mark target variables as safe (value unknown at

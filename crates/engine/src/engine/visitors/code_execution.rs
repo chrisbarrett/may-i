@@ -3,7 +3,7 @@
 
 use may_i_core::{Decision, EvalResult};
 use may_i_shell_parser::{self as parser, SimpleCommand};
-use super::traits::{CommandVisitor, VisitOutcome, VisitorContext};
+use super::{CommandVisitor, VisitOutcome, VisitorContext};
 use super::super::MAX_EVAL_DEPTH;
 
 /// Detects `source`/`.`, opaque command names, `eval`, and `bash/sh/zsh -c`.

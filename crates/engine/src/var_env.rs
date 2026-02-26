@@ -106,17 +106,6 @@ impl VarEnv {
         VarEnv { vars: result, fns }
     }
 
-    /// Build a resolution map: only resolvable variables (Safe with known value).
-    pub fn to_resolution_map(&self) -> std::collections::HashMap<String, String> {
-        let mut map = std::collections::HashMap::new();
-        for (name, state) in &self.vars {
-            if let VarState::Safe(Some(val)) = state {
-                map.insert(name.clone(), val.clone());
-            }
-        }
-        map
-    }
-
     /// Check if a variable is safe (regardless of whether its value is known).
     pub fn is_safe(&self, name: &str) -> bool {
         matches!(self.get(name), Some(VarState::Safe(_)))

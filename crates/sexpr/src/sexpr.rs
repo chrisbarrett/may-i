@@ -216,16 +216,12 @@ fn tokenize(input: &str) -> Result<Vec<Token>, RawError> {
 
 /// Return the 0-based column (byte offset from start of line) for an offset.
 fn column_of(input: &str, offset: usize) -> usize {
-    let before = &input[..offset];
-    match before.rfind('\n') {
-        Some(nl) => offset - nl - 1,
-        None => offset,
-    }
+    crate::span::offset_to_line_col(input, offset).1 - 1
 }
 
 /// Return the 0-based line number for an offset.
 fn line_of(input: &str, offset: usize) -> usize {
-    input[..offset].bytes().filter(|&b| b == b'\n').count()
+    crate::span::offset_to_line_col(input, offset).0 - 1
 }
 
 /// Parse a string containing zero or more s-expressions into a list of top-level forms.

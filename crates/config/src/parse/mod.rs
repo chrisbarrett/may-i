@@ -170,72 +170,95 @@ fn parse_cond_branches(list: &[Sexpr]) -> Result<Vec<CondBranch>, RawError> {
     Ok(result)
 }
 
-fn parse_matcher_if_form(args: &[Sexpr], form_span: Span) -> Result<ArgMatcher, RawError> {
+/// Shared helper: parse `(if TEST EFFECT EFFECT?)` sugar.
+/// `parse_test` parses the test expression from an s-expression.
+/// Returns pairs of (test, effect) where the else branch has `None` for its test.
+fn parse_if_sugar<T>(
+    args: &[Sexpr],
+    form_span: Span,
+    parse_test: impl Fn(&Sexpr) -> Result<T, RawError>,
+) -> Result<(T, Effect, Option<Effect>), RawError> {
     if args.len() < 2 || args.len() > 3 {
         return Err(RawError::new(
-            "if must have 2 or 3 arguments: (if MATCHER EFFECT EFFECT?)",
+            "if must have 2 or 3 arguments: (if TEST EFFECT EFFECT?)",
             form_span,
         ));
     }
-    let test = parse_matcher(&args[0])?;
+    let test = parse_test(&args[0])?;
     let then_list = args[1].as_list().ok_or_else(|| {
         RawError::new("if then-branch must be an effect list", args[1].span())
     })?;
     let then_effect = parse_effect(then_list)?;
 
-    let mut branches = vec![CondBranch {
-        matcher: Some(test),
-        effect: then_effect,
-    }];
-
-    if args.len() == 3 {
+    let else_effect = if args.len() == 3 {
         let else_list = args[2].as_list().ok_or_else(|| {
             RawError::new("if else-branch must be an effect list", args[2].span())
         })?;
-        let else_effect = parse_effect(else_list)?;
-        branches.push(CondBranch {
-            matcher: None,
-            effect: else_effect,
-        });
-    }
+        Some(parse_effect(else_list)?)
+    } else {
+        None
+    };
 
-    Ok(ArgMatcher::Cond(branches))
+    Ok((test, then_effect, else_effect))
 }
 
-fn parse_matcher_when_form(args: &[Sexpr], form_span: Span) -> Result<ArgMatcher, RawError> {
+/// Shared helper: parse `(when TEST EFFECT)` sugar.
+fn parse_when_sugar<T>(
+    args: &[Sexpr],
+    form_span: Span,
+    parse_test: impl Fn(&Sexpr) -> Result<T, RawError>,
+) -> Result<(T, Effect), RawError> {
     if args.len() != 2 {
         return Err(RawError::new(
-            "when must have exactly 2 arguments: (when MATCHER EFFECT)",
+            "when must have exactly 2 arguments: (when TEST EFFECT)",
             form_span,
         ));
     }
-    let test = parse_matcher(&args[0])?;
+    let test = parse_test(&args[0])?;
     let effect_list = args[1].as_list().ok_or_else(|| {
         RawError::new("when effect must be an effect list", args[1].span())
     })?;
     let effect = parse_effect(effect_list)?;
-    Ok(ArgMatcher::Cond(vec![CondBranch {
-        matcher: Some(test),
-        effect,
-    }]))
+    Ok((test, effect))
 }
 
-fn parse_matcher_unless_form(args: &[Sexpr], form_span: Span) -> Result<ArgMatcher, RawError> {
+/// Shared helper: parse `(unless TEST EFFECT)` sugar.
+fn parse_unless_sugar<T>(
+    args: &[Sexpr],
+    form_span: Span,
+    parse_test: impl Fn(&Sexpr) -> Result<T, RawError>,
+) -> Result<(T, Effect), RawError> {
     if args.len() != 2 {
         return Err(RawError::new(
-            "unless must have exactly 2 arguments: (unless MATCHER EFFECT)",
+            "unless must have exactly 2 arguments: (unless TEST EFFECT)",
             form_span,
         ));
     }
-    let test = parse_matcher(&args[0])?;
+    let test = parse_test(&args[0])?;
     let effect_list = args[1].as_list().ok_or_else(|| {
         RawError::new("unless effect must be an effect list", args[1].span())
     })?;
     let effect = parse_effect(effect_list)?;
-    Ok(ArgMatcher::Cond(vec![CondBranch {
-        matcher: Some(ArgMatcher::Not(Box::new(test))),
-        effect,
-    }]))
+    Ok((test, effect))
+}
+
+fn parse_matcher_if_form(args: &[Sexpr], form_span: Span) -> Result<ArgMatcher, RawError> {
+    let (test, then_effect, else_effect) = parse_if_sugar(args, form_span, parse_matcher)?;
+    let mut branches = vec![CondBranch { matcher: Some(test), effect: then_effect }];
+    if let Some(else_eff) = else_effect {
+        branches.push(CondBranch { matcher: None, effect: else_eff });
+    }
+    Ok(ArgMatcher::Cond(branches))
+}
+
+fn parse_matcher_when_form(args: &[Sexpr], form_span: Span) -> Result<ArgMatcher, RawError> {
+    let (test, effect) = parse_when_sugar(args, form_span, parse_matcher)?;
+    Ok(ArgMatcher::Cond(vec![CondBranch { matcher: Some(test), effect }]))
+}
+
+fn parse_matcher_unless_form(args: &[Sexpr], form_span: Span) -> Result<ArgMatcher, RawError> {
+    let (test, effect) = parse_unless_sugar(args, form_span, parse_matcher)?;
+    Ok(ArgMatcher::Cond(vec![CondBranch { matcher: Some(ArgMatcher::Not(Box::new(test))), effect }]))
 }
 
 fn parse_rule(parts: &[Sexpr], rule_span: Span) -> Result<Rule, RawError> {

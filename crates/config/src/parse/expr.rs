@@ -137,63 +137,20 @@ pub(super) fn parse_expr_cond_branches(branches: &[Sexpr]) -> Result<Vec<ExprBra
 }
 
 fn parse_if_form(args: &[Sexpr], form_span: Span) -> Result<Expr, RawError> {
-    if args.len() < 2 || args.len() > 3 {
-        return Err(RawError::new(
-            "if must have 2 or 3 arguments: (if EXPR EFFECT EFFECT?)",
-            form_span,
-        ));
-    }
-    let test = parse_expr(&args[0])?;
-    let then_list = args[1].as_list().ok_or_else(|| {
-        RawError::new("if then-branch must be an effect list", args[1].span())
-    })?;
-    let then_effect = super::parse_effect(then_list)?;
-
+    let (test, then_effect, else_effect) = super::parse_if_sugar(args, form_span, parse_expr)?;
     let mut branches = vec![ExprBranch { test, effect: then_effect }];
-
-    if args.len() == 3 {
-        let else_list = args[2].as_list().ok_or_else(|| {
-            RawError::new("if else-branch must be an effect list", args[2].span())
-        })?;
-        let else_effect = super::parse_effect(else_list)?;
-        branches.push(ExprBranch {
-            test: Expr::Wildcard,
-            effect: else_effect,
-        });
+    if let Some(else_eff) = else_effect {
+        branches.push(ExprBranch { test: Expr::Wildcard, effect: else_eff });
     }
-
     Ok(Expr::Cond(branches))
 }
 
 fn parse_when_form(args: &[Sexpr], form_span: Span) -> Result<Expr, RawError> {
-    if args.len() != 2 {
-        return Err(RawError::new(
-            "when must have exactly 2 arguments: (when EXPR EFFECT)",
-            form_span,
-        ));
-    }
-    let test = parse_expr(&args[0])?;
-    let effect_list = args[1].as_list().ok_or_else(|| {
-        RawError::new("when effect must be an effect list", args[1].span())
-    })?;
-    let effect = super::parse_effect(effect_list)?;
+    let (test, effect) = super::parse_when_sugar(args, form_span, parse_expr)?;
     Ok(Expr::Cond(vec![ExprBranch { test, effect }]))
 }
 
 fn parse_unless_form(args: &[Sexpr], form_span: Span) -> Result<Expr, RawError> {
-    if args.len() != 2 {
-        return Err(RawError::new(
-            "unless must have exactly 2 arguments: (unless EXPR EFFECT)",
-            form_span,
-        ));
-    }
-    let test = parse_expr(&args[0])?;
-    let effect_list = args[1].as_list().ok_or_else(|| {
-        RawError::new("unless effect must be an effect list", args[1].span())
-    })?;
-    let effect = super::parse_effect(effect_list)?;
-    Ok(Expr::Cond(vec![ExprBranch {
-        test: Expr::Not(Box::new(test)),
-        effect,
-    }]))
+    let (test, effect) = super::parse_unless_sugar(args, form_span, parse_expr)?;
+    Ok(Expr::Cond(vec![ExprBranch { test: Expr::Not(Box::new(test)), effect }]))
 }

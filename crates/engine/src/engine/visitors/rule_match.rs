@@ -4,7 +4,7 @@
 use may_i_core::{Config, Decision, Effect, EvalResult};
 use may_i_shell_parser::SimpleCommand;
 use super::super::matcher::*;
-use super::traits::{CommandVisitor, VisitOutcome, VisitorContext};
+use super::{CommandVisitor, VisitOutcome, VisitorContext};
 
 /// Terminal visitor: matches the resolved command against config rules.
 /// Always returns Terminal (never Continue).
@@ -50,9 +50,7 @@ pub(in crate::engine) fn match_against_rules(
         }
 
         had_command_match = true;
-        let line_num = config.source_info.as_ref().map(|si| {
-            may_i_sexpr::offset_to_line_col(&si.content, rule.source_span.start).0
-        });
+        let line_num = config.source_info.as_ref().map(|si| si.line_of(rule.source_span));
         let line_prefix = line_num.map(|n| format!("{n}: ")).unwrap_or_default();
         let rule_label = format_command_matcher(
             &rule.command,
@@ -170,8 +168,6 @@ impl TraceCollector {
                 let rhs = self.pp(&resolved_arg_to_doc(arg));
                 self.steps.push(format!("{lhs} vs {rhs} => {result}"));
             }
-            MatchEvent::EnterOptional => {}
-            MatchEvent::LeaveOptional => {}
             MatchEvent::Quantifier { pexpr, count, matched } => {
                 let result = if matched {
                     format!("yes (matched {count})")
@@ -185,7 +181,6 @@ impl TraceCollector {
                 let label = self.pp(&pos_expr_to_doc(pexpr));
                 self.steps.push(format!("{label} vs <missing> => no"));
             }
-            MatchEvent::EnterCond => {}
             MatchEvent::ExprCondBranch { test, matched, effect } => {
                 if matched {
                     let label = self.pp(&expr_to_doc(test));
@@ -200,7 +195,6 @@ impl TraceCollector {
             MatchEvent::MatcherCondElse { effect } => {
                 self.steps.push(format!("else => [{}]", effect.decision));
             }
-            MatchEvent::LeaveCond => {}
             MatchEvent::Anywhere { expr, matched } => {
                 let result = if matched { "yes" } else { "no" };
                 let doc = may_i_pp::Doc::list(vec![

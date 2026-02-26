@@ -25,6 +25,7 @@ impl Doc {
 
     /// Build a Doc from an [`may_i_sexpr::Sexpr`] node, re-quoting atoms
     /// that need it (contain spaces, parens, etc).
+    #[cfg(test)]
     pub fn from_sexpr(sexpr: &may_i_sexpr::Sexpr) -> Self {
         match sexpr {
             may_i_sexpr::Sexpr::Atom(s, _) => {
@@ -56,6 +57,8 @@ fn is_string(s: &str) -> bool {
     s.starts_with('"')
 }
 
+/// Convention: the engine formats regex patterns as `#"pattern"` atoms
+/// so that the pretty-printer can colorize them distinctly from strings.
 fn is_regex(s: &str) -> bool {
     s.starts_with("#\"")
 }

@@ -2,7 +2,7 @@
 
 use may_i_shell_parser::SimpleCommand;
 use super::super::dynamic_ask;
-use super::traits::{CommandVisitor, VisitOutcome, VisitorContext};
+use super::{CommandVisitor, VisitOutcome, VisitorContext};
 
 /// Returns `Ask` when a resolved command still contains dynamic parts
 /// (unsafe variables, command substitutions, etc.) that prevent static analysis.

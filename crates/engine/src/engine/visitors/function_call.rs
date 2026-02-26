@@ -2,7 +2,7 @@
 
 use may_i_shell_parser::SimpleCommand;
 use crate::var_env::VarState;
-use super::traits::{CommandVisitor, VisitOutcome, VisitorContext};
+use super::{CommandVisitor, VisitOutcome, VisitorContext};
 use super::super::MAX_EVAL_DEPTH;
 
 /// When the command name matches a previously defined function, set up
