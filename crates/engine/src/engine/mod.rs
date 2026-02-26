@@ -108,6 +108,26 @@ impl<'a> AstWalker<'a> {
         }
     }
 
+    /// Run the visitor chain on a resolved command. First non-Continue outcome wins.
+    fn run_visitors(
+        &self,
+        ctx: &VisitorContext,
+        resolved: &SimpleCommand,
+    ) -> Option<WalkResult> {
+        let visitors: &[&dyn CommandVisitor] = &[
+            &read_builtin::ReadBuiltinVisitor,
+            &dynamic_parts::DynamicPartsVisitor,
+            &code_execution::CodeExecutionVisitor,
+            &function_call::FunctionCallVisitor,
+        ];
+        for visitor in visitors {
+            if let Some(walk) = self.run_visitor(*visitor, ctx, resolved) {
+                return Some(walk);
+            }
+        }
+        None
+    }
+
     fn walk_with_depth(&self, cmd: &Command, env: &VarEnv, depth: usize) -> WalkResult {
         match cmd {
             Command::Simple(sc) => self.walk_simple_command(sc, env, depth),
@@ -420,30 +440,13 @@ impl<'a> AstWalker<'a> {
         let with_cmd_subs = sc.map_words(|w| self.resolve_command_substitutions(w, &new_env, depth));
         let resolved = resolve_simple_command_with_var_env(&with_cmd_subs, &new_env);
 
-        // Run visitors: read builtin, dynamic parts, code execution, function calls
+        // Run visitor chain: read builtin → dynamic parts → code execution → function calls
         let ctx = VisitorContext { config: self.config, env: &new_env, depth };
-
-        // Detect `read`/`readarray`/`mapfile` builtins (must run before dynamic check)
-        if let Some(walk) = self.run_visitor(&read_builtin::ReadBuiltinVisitor, &ctx, &resolved) {
+        if let Some(walk) = self.run_visitors(&ctx, &resolved) {
             return walk;
         }
 
-        // Check for remaining dynamic parts (unsafe variables, command substitutions, etc.)
-        if let Some(walk) = self.run_visitor(&dynamic_parts::DynamicPartsVisitor, &ctx, &resolved) {
-            return walk;
-        }
-
-        // Code-execution constructs (source, opaque cmd, eval, bash -c)
-        if let Some(walk) = self.run_visitor(&code_execution::CodeExecutionVisitor, &ctx, &resolved) {
-            return walk;
-        }
-
-        // Function call — inline the function body
-        if let Some(walk) = self.run_visitor(&function_call::FunctionCallVisitor, &ctx, &resolved) {
-            return walk;
-        }
-
-        // Evaluate the resolved command against rules
+        // No visitor handled it — evaluate against rules
         let result = self.evaluate_resolved_command(&resolved, 0, &new_env);
         WalkResult {
             result,
