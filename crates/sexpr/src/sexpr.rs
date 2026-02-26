@@ -55,8 +55,8 @@ impl std::fmt::Display for Sexpr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Sexpr::Atom(s, _) => {
-                if s.is_empty() || s.contains(|c: char| c.is_whitespace() || c == '(' || c == ')' || c == '"' || c == ';' || c == '\\') {
-                    write!(f, "\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+                if needs_quoting(s) {
+                    write!(f, "{}", quote_atom(s))
                 } else {
                     write!(f, "{s}")
                 }
@@ -73,6 +73,22 @@ impl std::fmt::Display for Sexpr {
             }
         }
     }
+}
+
+/// Returns true if a raw atom value needs quoting when displayed as an s-expression.
+pub fn needs_quoting(s: &str) -> bool {
+    s.is_empty()
+        || s.contains(|c: char| {
+            c.is_whitespace() || c == '(' || c == ')' || c == '"' || c == ';' || c == '\\'
+        })
+}
+
+/// Quote an atom string for s-expression display, escaping backslashes and double quotes.
+pub fn quote_atom(s: &str) -> String {
+    format!(
+        "\"{}\"",
+        s.replace('\\', "\\\\").replace('"', "\\\"")
+    )
 }
 
 // --- Tokenizer ---

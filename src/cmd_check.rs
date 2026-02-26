@@ -88,7 +88,7 @@ pub fn cmd_check(json_mode: bool, verbose: bool, config_path: Option<&std::path:
     }
 
     if failed > 0 {
-        Err(LoadError::Io(format!("{failed} check(s) failed")))
+        Err(LoadError::CheckFailure(format!("{failed} check(s) failed")))
     } else {
         Ok(())
     }

@@ -28,11 +28,8 @@ impl Doc {
     pub fn from_sexpr(sexpr: &may_i_sexpr::Sexpr) -> Self {
         match sexpr {
             may_i_sexpr::Sexpr::Atom(s, _) => {
-                if needs_quoting(s) {
-                    Doc::Atom(format!(
-                        "\"{}\"",
-                        s.replace('\\', "\\\\").replace('"', "\\\"")
-                    ))
+                if may_i_sexpr::needs_quoting(s) {
+                    Doc::Atom(may_i_sexpr::quote_atom(s))
                 } else {
                     Doc::Atom(s.clone())
                 }
@@ -42,14 +39,6 @@ impl Doc {
             }
         }
     }
-}
-
-/// Does this raw atom value need quoting when displayed?
-fn needs_quoting(s: &str) -> bool {
-    s.is_empty()
-        || s.contains(|c: char| {
-            c.is_whitespace() || c == '(' || c == ')' || c == '"' || c == ';' || c == '\\'
-        })
 }
 
 // ── Atom classification ─────────────────────────────────────────────

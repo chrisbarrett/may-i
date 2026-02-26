@@ -41,7 +41,7 @@ impl ConfigError {
     }
 }
 
-/// Top-level error from loading a config file.
+/// Top-level error from loading a config file or running checks.
 #[derive(Debug, Error, Diagnostic)]
 pub enum LoadError {
     #[error("{0}")]
@@ -49,4 +49,6 @@ pub enum LoadError {
     #[error(transparent)]
     #[diagnostic(transparent)]
     Config(#[from] Box<ConfigError>),
+    #[error("{0}")]
+    CheckFailure(String),
 }

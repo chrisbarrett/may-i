@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use may_i_core::{LoadError, Config};
 
 /// Find the config file path per R10.
-pub fn config_path() -> Option<PathBuf> {
+fn config_path() -> Option<PathBuf> {
     // 1. $MAYI_CONFIG
     if let Ok(p) = std::env::var("MAYI_CONFIG") {
         let path = PathBuf::from(p);

@@ -53,7 +53,6 @@ pub fn cmd_eval(
 
 /// Print trace steps with aligned `=>` columns and horizontal rules under headings.
 pub fn print_trace(steps: &[String], indent: &str) {
-    use colored::Colorize;
     use std::collections::HashMap;
 
     // Compute arrow alignment per indentation depth, using median to avoid outliers.
@@ -126,7 +125,6 @@ pub fn print_trace(steps: &[String], indent: &str) {
 /// Colorize a trace step: dim `=>` arrows, green `yes`, yellow `no`, italic `vs`.
 /// Pads the left side of `=>` to align at `arrow_col`.
 fn colorize_trace_step(step: &str, arrow_col: usize) -> String {
-    use colored::Colorize;
     // Italicize " vs " separators
     let step = step.replace(" vs ", &format!(" {} ", "vs".italic()));
     if let Some(pos) = step.rfind(" => ") {
@@ -150,8 +148,6 @@ fn colorize_trace_step(step: &str, arrow_col: usize) -> String {
 }
 
 fn print_colored_command(command: &str, config: &may_i_core::Config) {
-    use colored::Colorize;
-
     let segments = parser::segment(command);
 
     if segments.is_empty() {
