@@ -1,0 +1,136 @@
+---
+source: tests/parser_snapshots.rs
+expression: "parse(\"if test -f a; then echo a; elif test -f b; then echo b; else echo c; fi\")"
+---
+If {
+    condition: Simple(
+        SimpleCommand {
+            assignments: [],
+            words: [
+                Word {
+                    parts: [
+                        Literal(
+                            "test",
+                        ),
+                    ],
+                },
+                Word {
+                    parts: [
+                        Literal(
+                            "-f",
+                        ),
+                    ],
+                },
+                Word {
+                    parts: [
+                        Literal(
+                            "a",
+                        ),
+                    ],
+                },
+            ],
+            redirections: [],
+        },
+    ),
+    then_branch: Simple(
+        SimpleCommand {
+            assignments: [],
+            words: [
+                Word {
+                    parts: [
+                        Literal(
+                            "echo",
+                        ),
+                    ],
+                },
+                Word {
+                    parts: [
+                        Literal(
+                            "a",
+                        ),
+                    ],
+                },
+            ],
+            redirections: [],
+        },
+    ),
+    elif_branches: [
+        (
+            Simple(
+                SimpleCommand {
+                    assignments: [],
+                    words: [
+                        Word {
+                            parts: [
+                                Literal(
+                                    "test",
+                                ),
+                            ],
+                        },
+                        Word {
+                            parts: [
+                                Literal(
+                                    "-f",
+                                ),
+                            ],
+                        },
+                        Word {
+                            parts: [
+                                Literal(
+                                    "b",
+                                ),
+                            ],
+                        },
+                    ],
+                    redirections: [],
+                },
+            ),
+            Simple(
+                SimpleCommand {
+                    assignments: [],
+                    words: [
+                        Word {
+                            parts: [
+                                Literal(
+                                    "echo",
+                                ),
+                            ],
+                        },
+                        Word {
+                            parts: [
+                                Literal(
+                                    "b",
+                                ),
+                            ],
+                        },
+                    ],
+                    redirections: [],
+                },
+            ),
+        ),
+    ],
+    else_branch: Some(
+        Simple(
+            SimpleCommand {
+                assignments: [],
+                words: [
+                    Word {
+                        parts: [
+                            Literal(
+                                "echo",
+                            ),
+                        ],
+                    },
+                    Word {
+                        parts: [
+                            Literal(
+                                "c",
+                            ),
+                        ],
+                    },
+                ],
+                redirections: [],
+            },
+        ),
+    ),
+}

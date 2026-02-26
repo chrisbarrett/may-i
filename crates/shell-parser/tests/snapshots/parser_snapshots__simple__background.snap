@@ -1,0 +1,28 @@
+---
+source: tests/parser_snapshots.rs
+expression: "parse(\"sleep 10 &\")"
+---
+Background(
+    Simple(
+        SimpleCommand {
+            assignments: [],
+            words: [
+                Word {
+                    parts: [
+                        Literal(
+                            "sleep",
+                        ),
+                    ],
+                },
+                Word {
+                    parts: [
+                        Literal(
+                            "10",
+                        ),
+                    ],
+                },
+            ],
+            redirections: [],
+        },
+    ),
+)

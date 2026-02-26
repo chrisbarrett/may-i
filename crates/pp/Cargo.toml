@@ -1,0 +1,8 @@
+[package]
+name = "may-i-pp"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+may-i-sexpr = { path = "../sexpr" }
+colored = "3.1.1"

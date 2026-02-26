@@ -1,0 +1,57 @@
+---
+source: tests/parser_snapshots.rs
+expression: "parse(\"cmd1 & cmd2; cmd3 &\")"
+---
+Sequence(
+    [
+        Background(
+            Simple(
+                SimpleCommand {
+                    assignments: [],
+                    words: [
+                        Word {
+                            parts: [
+                                Literal(
+                                    "cmd1",
+                                ),
+                            ],
+                        },
+                    ],
+                    redirections: [],
+                },
+            ),
+        ),
+        Simple(
+            SimpleCommand {
+                assignments: [],
+                words: [
+                    Word {
+                        parts: [
+                            Literal(
+                                "cmd2",
+                            ),
+                        ],
+                    },
+                ],
+                redirections: [],
+            },
+        ),
+        Background(
+            Simple(
+                SimpleCommand {
+                    assignments: [],
+                    words: [
+                        Word {
+                            parts: [
+                                Literal(
+                                    "cmd3",
+                                ),
+                            ],
+                        },
+                    ],
+                    redirections: [],
+                },
+            ),
+        ),
+    ],
+)

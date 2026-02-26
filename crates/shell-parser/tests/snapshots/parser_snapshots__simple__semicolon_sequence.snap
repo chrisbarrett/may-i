@@ -1,0 +1,74 @@
+---
+source: tests/parser_snapshots.rs
+expression: "parse(\"echo a; echo b; echo c\")"
+---
+Sequence(
+    [
+        Simple(
+            SimpleCommand {
+                assignments: [],
+                words: [
+                    Word {
+                        parts: [
+                            Literal(
+                                "echo",
+                            ),
+                        ],
+                    },
+                    Word {
+                        parts: [
+                            Literal(
+                                "a",
+                            ),
+                        ],
+                    },
+                ],
+                redirections: [],
+            },
+        ),
+        Simple(
+            SimpleCommand {
+                assignments: [],
+                words: [
+                    Word {
+                        parts: [
+                            Literal(
+                                "echo",
+                            ),
+                        ],
+                    },
+                    Word {
+                        parts: [
+                            Literal(
+                                "b",
+                            ),
+                        ],
+                    },
+                ],
+                redirections: [],
+            },
+        ),
+        Simple(
+            SimpleCommand {
+                assignments: [],
+                words: [
+                    Word {
+                        parts: [
+                            Literal(
+                                "echo",
+                            ),
+                        ],
+                    },
+                    Word {
+                        parts: [
+                            Literal(
+                                "c",
+                            ),
+                        ],
+                    },
+                ],
+                redirections: [],
+            },
+        ),
+    ],
+)

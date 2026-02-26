@@ -427,15 +427,73 @@ dependencies = [
  "assert_cmd",
  "clap",
  "colored",
- "dirs",
  "insta",
+ "may-i-config",
+ "may-i-core",
+ "may-i-engine",
+ "may-i-pp",
+ "may-i-sexpr",
+ "may-i-shell-parser",
  "miette",
  "predicates",
- "regex",
  "serde",
  "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "may-i-config"
+version = "0.1.0"
+dependencies = [
+ "dirs",
+ "may-i-core",
+ "may-i-engine",
+ "may-i-sexpr",
+ "regex",
+]
+
+[[package]]
+name = "may-i-core"
+version = "0.1.0"
+dependencies = [
+ "may-i-sexpr",
+ "miette",
+ "regex",
  "thiserror",
+]
+
+[[package]]
+name = "may-i-engine"
+version = "0.1.0"
+dependencies = [
+ "may-i-config",
+ "may-i-core",
+ "may-i-pp",
+ "may-i-sexpr",
+ "may-i-shell-parser",
+ "regex",
+]
+
+[[package]]
+name = "may-i-pp"
+version = "0.1.0"
+dependencies = [
+ "colored",
+ "may-i-sexpr",
+]
+
+[[package]]
+name = "may-i-sexpr"
+version = "0.1.0"
+dependencies = [
+ "miette",
+]
+
+[[package]]
+name = "may-i-shell-parser"
+version = "0.1.0"
+dependencies = [
+ "insta",
 ]
 
 [[package]]

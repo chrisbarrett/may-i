@@ -1,0 +1,36 @@
+---
+source: tests/parser_snapshots.rs
+expression: "parse(\"echo 'hello '\\\"$USER\\\"' world'\")"
+---
+Simple(
+    SimpleCommand {
+        assignments: [],
+        words: [
+            Word {
+                parts: [
+                    Literal(
+                        "echo",
+                    ),
+                ],
+            },
+            Word {
+                parts: [
+                    SingleQuoted(
+                        "hello ",
+                    ),
+                    DoubleQuoted(
+                        [
+                            Parameter(
+                                "USER",
+                            ),
+                        ],
+                    ),
+                    SingleQuoted(
+                        " world",
+                    ),
+                ],
+            },
+        ],
+        redirections: [],
+    },
+)
