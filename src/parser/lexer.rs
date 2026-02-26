@@ -37,6 +37,7 @@ pub(super) enum Token {
 pub(super) struct Lexer {
     input: Vec<char>,
     pos: usize,
+    byte_pos: usize,
 }
 
 impl Lexer {
@@ -44,6 +45,7 @@ impl Lexer {
         Lexer {
             input: input.chars().collect(),
             pos: 0,
+            byte_pos: 0,
         }
     }
 
@@ -53,14 +55,24 @@ impl Lexer {
 
     fn advance(&mut self) -> Option<char> {
         let ch = self.input.get(self.pos).copied();
-        if ch.is_some() {
+        if let Some(c) = ch {
             self.pos += 1;
+            self.byte_pos += c.len_utf8();
         }
         ch
     }
 
     fn peek_at(&self, offset: usize) -> Option<char> {
         self.input.get(self.pos + offset).copied()
+    }
+
+    fn save_state(&self) -> (usize, usize) {
+        (self.pos, self.byte_pos)
+    }
+
+    fn restore_state(&mut self, state: (usize, usize)) {
+        self.pos = state.0;
+        self.byte_pos = state.1;
     }
 
     fn skip_whitespace(&mut self) {
@@ -82,17 +94,22 @@ impl Lexer {
     }
 
     pub(super) fn tokenize(&mut self) -> Vec<Token> {
+        self.tokenize_with_offsets().into_iter().map(|(tok, _)| tok).collect()
+    }
+
+    pub(super) fn tokenize_with_offsets(&mut self) -> Vec<(Token, usize)> {
         let mut tokens = Vec::new();
         loop {
             self.skip_whitespace();
+            let start = self.byte_pos;
             match self.peek() {
                 None => {
-                    tokens.push(Token::Eof);
+                    tokens.push((Token::Eof, start));
                     break;
                 }
                 Some('\n') => {
                     self.advance();
-                    tokens.push(Token::Newline);
+                    tokens.push((Token::Newline, start));
                 }
                 Some(';') => {
                     self.advance();
@@ -100,52 +117,52 @@ impl Lexer {
                         self.advance();
                         if self.peek() == Some('&') {
                             self.advance();
-                            tokens.push(Token::DoubleSemiAmp);
+                            tokens.push((Token::DoubleSemiAmp, start));
                         } else {
-                            tokens.push(Token::DoubleSemi);
+                            tokens.push((Token::DoubleSemi, start));
                         }
                     } else if self.peek() == Some('&') {
                         self.advance();
-                        tokens.push(Token::SemiAmp);
+                        tokens.push((Token::SemiAmp, start));
                     } else {
-                        tokens.push(Token::Semi);
+                        tokens.push((Token::Semi, start));
                     }
                 }
                 Some('&') => {
                     self.advance();
                     if self.peek() == Some('&') {
                         self.advance();
-                        tokens.push(Token::And);
+                        tokens.push((Token::And, start));
                     } else {
-                        tokens.push(Token::Amp);
+                        tokens.push((Token::Amp, start));
                     }
                 }
                 Some('|') => {
                     self.advance();
                     if self.peek() == Some('|') {
                         self.advance();
-                        tokens.push(Token::Or);
+                        tokens.push((Token::Or, start));
                     } else {
-                        tokens.push(Token::Pipe);
+                        tokens.push((Token::Pipe, start));
                     }
                 }
                 Some('(') => {
                     self.advance();
-                    tokens.push(Token::LParen);
+                    tokens.push((Token::LParen, start));
                 }
                 Some(')') => {
                     self.advance();
-                    tokens.push(Token::RParen);
+                    tokens.push((Token::RParen, start));
                 }
                 Some(ch) if is_redirect_start(ch) => {
                     if let Some(tok) = self.try_read_redirect_or_process_sub() {
-                        tokens.push(tok);
+                        tokens.push((tok, start));
                     }
                 }
                 _ => {
                     // Try to read a word (may include fd prefix for redirect)
                     if let Some(tok) = self.read_word_or_keyword() {
-                        tokens.push(tok);
+                        tokens.push((tok, start));
                     }
                 }
             }
@@ -589,7 +606,7 @@ impl Lexer {
         if self.peek() == Some('#') {
             // Look ahead: if what follows '#' is a valid identifier and then '}',
             // this is the length operator.
-            let saved_pos = self.pos;
+            let saved = self.save_state();
             self.advance(); // skip #
             let name = self.read_identifier();
             if !name.is_empty() && self.peek() == Some('}') {
@@ -600,7 +617,7 @@ impl Lexer {
                 });
             }
             // Not a length operator; restore and fall through to flat parsing
-            self.pos = saved_pos;
+            self.restore_state(saved);
         }
 
         // Read the variable name
@@ -1013,7 +1030,7 @@ impl Lexer {
 
     fn try_read_brace_expansion(&mut self) -> Option<Vec<String>> {
         // Lookahead to check if this is a brace expansion {a,b,...}
-        let start = self.pos;
+        let saved = self.save_state();
         self.advance(); // skip {
         let mut items = Vec::new();
         let mut current = String::new();
@@ -1022,7 +1039,7 @@ impl Lexer {
             match self.peek() {
                 None => {
                     // Unterminated, restore position
-                    self.pos = start;
+                    self.restore_state(saved);
                     return None;
                 }
                 Some('}') => {
@@ -1032,7 +1049,7 @@ impl Lexer {
                         return Some(items);
                     } else {
                         // No comma means not a brace expansion
-                        self.pos = start;
+                        self.restore_state(saved);
                         return None;
                     }
                 }
@@ -1044,7 +1061,7 @@ impl Lexer {
                 }
                 Some(ch) if is_metachar(ch) => {
                     // Not a simple brace expansion
-                    self.pos = start;
+                    self.restore_state(saved);
                     return None;
                 }
                 Some(ch) => {
@@ -1057,7 +1074,7 @@ impl Lexer {
 
     pub(super) fn read_word_or_keyword(&mut self) -> Option<Token> {
         // Check for fd number prefix before redirect
-        let start = self.pos;
+        let saved = self.save_state();
         let mut fd_str = String::new();
         while let Some(ch) = self.peek() {
             if ch.is_ascii_digit() {
@@ -1081,7 +1098,7 @@ impl Lexer {
                 }
             }
             // Not a redirect prefix, restore and read as word
-            self.pos = start;
+            self.restore_state(saved);
         }
 
         let parts = self.read_word_parts();

@@ -145,6 +145,10 @@ fn cmd_eval(
         });
         println!("{}", serde_json::to_string(&json).unwrap());
     } else {
+        println!("\n{}\n", "Command".bold());
+        print!("  ");
+        print_colored_command(command, &config);
+        println!();
         println!("\n{}\n", "Result".bold());
         {
             use may_i::pp::{Doc, Format, pretty};
@@ -166,6 +170,36 @@ fn cmd_eval(
     }
 
     Ok(())
+}
+
+/// Print the command with background colors indicating decision levels.
+fn print_colored_command(command: &str, config: &may_i::types::Config) {
+    use colored::Colorize;
+    use may_i::types::Decision;
+
+    let segments = parser::segment(command);
+
+    if segments.is_empty() {
+        // No segments (e.g., empty command) — just print as-is
+        println!("{command}");
+        return;
+    }
+
+    for seg in &segments {
+        let text = &command[seg.start..seg.end];
+        if seg.is_operator {
+            print!(" {text} ");
+        } else {
+            let seg_result = engine::evaluate(text, config);
+            let colored = match seg_result.decision {
+                Decision::Allow => text.on_truecolor(0, 80, 0).to_string(),
+                Decision::Ask => text.on_truecolor(120, 100, 0).to_string(),
+                Decision::Deny => text.on_truecolor(120, 0, 0).to_string(),
+            };
+            print!("{colored}");
+        }
+    }
+    println!();
 }
 
 /// Check subcommand — validate config and run checks.
