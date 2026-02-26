@@ -2,7 +2,9 @@ mod ast;
 mod glob;
 mod lexer;
 mod parse;
-pub mod resolve;
+pub(crate) mod resolve;
+
+pub use resolve::resolve_param_op;
 
 #[cfg(test)]
 mod tests;

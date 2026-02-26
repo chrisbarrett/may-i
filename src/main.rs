@@ -9,7 +9,6 @@ mod cmd_check;
 mod cmd_parse;
 mod cmd_hook;
 
-
 #[derive(Parser)]
 #[command(name = "may-i", version, about = "Shell command authorization evaluator")]
 struct Cli {

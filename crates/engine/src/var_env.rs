@@ -158,7 +158,7 @@ pub fn resolve_parts_with_var_env(
                 Some(VarState::Safe(Some(val))) => {
                     let mut map = std::collections::HashMap::new();
                     map.insert(name.clone(), val.clone());
-                    may_i_shell_parser::resolve::resolve_param_op(name, op, &map)
+                    may_i_shell_parser::resolve_param_op(name, op, &map)
                 }
                 Some(VarState::Safe(None)) => WordPart::Opaque(format!("${{{name}...}}")),
                 Some(VarState::Unsafe) | None => part.clone(),
