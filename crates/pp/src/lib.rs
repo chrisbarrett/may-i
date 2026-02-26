@@ -191,7 +191,7 @@ fn colorize_atom(s: &str, color: bool) -> String {
 }
 
 /// Visible length of a string, ignoring ANSI escape sequences.
-fn visible_len(s: &str) -> usize {
+pub fn visible_len(s: &str) -> usize {
     let mut len = 0;
     let mut in_escape = false;
     for ch in s.chars() {

@@ -133,7 +133,7 @@ fn colorize_trace_step(step: &str, arrow_col: usize) -> String {
         let (before, rest) = step.split_at(pos);
         let after = &rest[4..]; // skip " => "
         // Pad before to align the arrow at arrow_col
-        let visible_len = strip_ansi_len(before);
+        let visible_len = may_i_pp::visible_len(before);
         let padding = arrow_col.saturating_sub(visible_len);
         let arrow = " => ".dimmed();
         let colored_after = if let Some(rest) = after.strip_prefix("yes") {
@@ -176,20 +176,3 @@ fn print_colored_command(command: &str, config: &may_i_core::Config) {
     println!();
 }
 
-/// Get the visible (non-ANSI) length of a string.
-fn strip_ansi_len(s: &str) -> usize {
-    let mut len = 0;
-    let mut in_escape = false;
-    for ch in s.chars() {
-        if in_escape {
-            if ch == 'm' {
-                in_escape = false;
-            }
-        } else if ch == '\x1b' {
-            in_escape = true;
-        } else {
-            len += 1;
-        }
-    }
-    len
-}

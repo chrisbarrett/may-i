@@ -31,15 +31,19 @@ impl MatchOutcome {
 }
 
 /// Events emitted during matching for tracing/debugging.
+///
+/// Some variants carry payloads used only for `Debug` output in tests.
+/// The trace collector in `mod.rs` ignores `EnterOptional`, `LeaveOptional`,
+/// `EnterCond`, and `LeaveCond` — they exist as structured hooks for richer
+/// tracing if needed later.
 #[derive(Debug)]
-#[allow(dead_code)]
 pub(super) enum MatchEvent<'a> {
     ExprVsArg { expr: &'a Expr, arg: &'a ResolvedArg, matched: bool },
-    EnterOptional { pexpr: &'a PosExpr },
-    LeaveOptional { matched: bool },
+    EnterOptional,
+    LeaveOptional,
     Quantifier { pexpr: &'a PosExpr, count: usize, matched: bool },
     Missing { pexpr: &'a PosExpr },
-    EnterCond { arg: Option<&'a ResolvedArg> },
+    EnterCond,
     ExprCondBranch { test: &'a Expr, matched: bool, effect: &'a Effect },
     MatcherCondBranch { matched: bool, effect: &'a Effect },
     MatcherCondElse { effect: &'a Effect },
@@ -145,7 +149,7 @@ fn match_expr_arg(
     emit: &mut dyn for<'e> FnMut(MatchEvent<'e>),
 ) -> MatchOutcome {
     if let Expr::Cond(branches) = expr {
-        emit(MatchEvent::EnterCond { arg: Some(arg) });
+        emit(MatchEvent::EnterCond);
         let outcome = match arg {
             ResolvedArg::Literal(s) => {
                 match_expr_cond_branches(branches, s, emit)
@@ -285,7 +289,7 @@ pub(super) fn match_args(
         }
 
         ArgMatcher::Cond(branches) => {
-            emit(MatchEvent::EnterCond { arg: None });
+            emit(MatchEvent::EnterCond);
             for branch in branches {
                 match &branch.matcher {
                     None => {
@@ -346,7 +350,7 @@ fn match_positional(
                 }
             }
             PosExpr::Optional(e) => {
-                emit(MatchEvent::EnterOptional { pexpr });
+                emit(MatchEvent::EnterOptional);
                 if let Some(arg) = positional.get(pos) {
                     let outcome = match_expr_arg(e, arg, emit);
                     if outcome.is_match() {
@@ -356,12 +360,12 @@ fn match_positional(
                             first_effect = Some(eff);
                         }
                         pos += 1;
-                        emit(MatchEvent::LeaveOptional { matched: true });
+                        emit(MatchEvent::LeaveOptional);
                     } else {
-                        emit(MatchEvent::LeaveOptional { matched: false });
+                        emit(MatchEvent::LeaveOptional);
                     }
                 } else {
-                    emit(MatchEvent::LeaveOptional { matched: false });
+                    emit(MatchEvent::LeaveOptional);
                 }
             }
             PosExpr::OneOrMore(e) => {

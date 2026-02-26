@@ -801,8 +801,8 @@ impl TraceCollector {
                 let rhs = self.pp(&resolved_arg_to_doc(arg));
                 self.steps.push(format!("{lhs} vs {rhs} => {result}"));
             }
-            MatchEvent::EnterOptional { .. } => {}
-            MatchEvent::LeaveOptional { .. } => {}
+            MatchEvent::EnterOptional => {}
+            MatchEvent::LeaveOptional => {}
             MatchEvent::Quantifier { pexpr, count, matched } => {
                 let result = if matched {
                     format!("yes (matched {count})")
@@ -816,7 +816,7 @@ impl TraceCollector {
                 let label = self.pp(&pos_expr_to_doc(pexpr));
                 self.steps.push(format!("{label} vs <missing> => no"));
             }
-            MatchEvent::EnterCond { .. } => {}
+            MatchEvent::EnterCond => {}
             MatchEvent::ExprCondBranch { test, matched, effect } => {
                 if matched {
                     let label = self.pp(&expr_to_doc(test));
