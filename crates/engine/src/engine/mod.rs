@@ -6,6 +6,7 @@ mod matcher;
 mod visitor;
 mod dynamic_parts;
 mod code_execution;
+mod function_call;
 use matcher::*;
 use visitor::{CommandVisitor, VisitOutcome, VisitorContext};
 
@@ -437,26 +438,8 @@ impl<'a> AstWalker<'a> {
         }
 
         // Function call — inline the function body
-        if let Some(cmd_name) = resolved.command_name()
-            && depth < MAX_EVAL_DEPTH
-            && let Some(body) = new_env.get_fn(cmd_name).cloned()
-        {
-            let mut fn_env = new_env.clone();
-            for (i, arg) in resolved.args().iter().enumerate() {
-                let state = if arg.is_literal() {
-                    VarState::Safe(Some(arg.to_str()))
-                } else if arg.has_opaque_parts() {
-                    VarState::Safe(None)
-                } else {
-                    VarState::Unsafe
-                };
-                fn_env.set(format!("{}", i + 1), state);
-            }
-            let fn_result = self.walk_with_depth(&body, &fn_env, depth + 1);
-            return WalkResult {
-                result: fn_result.result,
-                env: fn_result.env,
-            };
+        if let Some(walk) = self.run_visitor(&function_call::FunctionCallVisitor, &ctx, &resolved) {
+            return walk;
         }
 
         // Evaluate the resolved command against rules
