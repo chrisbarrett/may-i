@@ -45,15 +45,14 @@ pub fn run_checks(config: &Config) -> Vec<CheckResult> {
 mod tests {
     use super::*;
     use may_i_sexpr::Span;
-    use may_i_core::{Check, CommandMatcher, Effect, Rule};
+    use may_i_core::{Check, CommandMatcher, Effect, Rule, RuleBody};
 
     #[test]
     fn run_checks_passing() {
         let config = Config {
             rules: vec![Rule {
                 command: CommandMatcher::Exact("ls".into()),
-                matcher: None,
-                effect: Some(Effect { decision: Decision::Allow, reason: Some("allowed".into()) }),
+                body: RuleBody::Effect { matcher: None, effect: Effect { decision: Decision::Allow, reason: Some("allowed".into()) } },
                 checks: vec![Check {
                     command: "ls".into(),
                     expected: Decision::Allow,
@@ -75,8 +74,7 @@ mod tests {
         let config = Config {
             rules: vec![Rule {
                 command: CommandMatcher::Exact("ls".into()),
-                matcher: None,
-                effect: Some(Effect { decision: Decision::Allow, reason: Some("allowed".into()) }),
+                body: RuleBody::Effect { matcher: None, effect: Effect { decision: Decision::Allow, reason: Some("allowed".into()) } },
                 checks: vec![Check {
                     command: "ls".into(),
                     expected: Decision::Deny, // wrong expectation
@@ -104,8 +102,7 @@ mod tests {
             rules: vec![
                 Rule {
                     command: CommandMatcher::Exact("ls".into()),
-                    matcher: None,
-                    effect: Some(Effect { decision: Decision::Allow, reason: None }),
+                    body: RuleBody::Effect { matcher: None, effect: Effect { decision: Decision::Allow, reason: None } },
                     checks: vec![
                         Check { command: "ls".into(), expected: Decision::Allow, source_span: Span::new(0, 0) },
                     ],
@@ -113,8 +110,7 @@ mod tests {
                 },
                 Rule {
                     command: CommandMatcher::Exact("rm".into()),
-                    matcher: None,
-                    effect: Some(Effect { decision: Decision::Deny, reason: None }),
+                    body: RuleBody::Effect { matcher: None, effect: Effect { decision: Decision::Deny, reason: None } },
                     checks: vec![
                         Check { command: "rm foo".into(), expected: Decision::Deny, source_span: Span::new(0, 0) },
                     ],

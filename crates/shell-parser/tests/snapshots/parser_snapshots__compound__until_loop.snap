@@ -1,8 +1,10 @@
 ---
-source: tests/parser_snapshots.rs
+source: crates/shell-parser/tests/parser_snapshots.rs
+assertion_line: 142
 expression: "parse(\"until false; do echo wait; done\")"
 ---
-Until {
+Loop {
+    kind: Until,
     condition: Simple(
         SimpleCommand {
             assignments: [],

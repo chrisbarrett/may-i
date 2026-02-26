@@ -3,7 +3,8 @@
 use may_i_sexpr::Span;
 
 /// The three possible authorization decisions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Ordered from least to most restrictive: Allow < Ask < Deny.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Decision {
     Allow,
     Ask,
@@ -13,11 +14,7 @@ pub enum Decision {
 impl Decision {
     /// Returns the more restrictive of two decisions.
     pub fn most_restrictive(self, other: Self) -> Self {
-        match (self, other) {
-            (Decision::Deny, _) | (_, Decision::Deny) => Decision::Deny,
-            (Decision::Ask, _) | (_, Decision::Ask) => Decision::Ask,
-            _ => Decision::Allow,
-        }
+        self.max(other)
     }
 }
 
@@ -152,18 +149,32 @@ pub struct SecurityConfig {
 #[derive(Debug, Clone)]
 pub struct Rule {
     pub command: CommandMatcher,
-    pub matcher: Option<ArgMatcher>,
-    pub effect: Option<Effect>,
+    pub body: RuleBody,
     pub checks: Vec<Check>,
     pub source_span: Span,
 }
 
-/// A single branch inside a matcher-level `cond` form.
+/// What a rule does when the command name matches.
+#[derive(Debug, Clone)]
+pub enum RuleBody {
+    /// Apply a fixed effect, optionally requiring an arg matcher to succeed first.
+    Effect { matcher: Option<ArgMatcher>, effect: Effect },
+    /// The matcher tree itself determines the effect (via embedded Cond branches).
+    Branching(ArgMatcher),
+}
+
+/// A single guarded branch inside a matcher-level `cond` form.
 #[derive(Debug, Clone)]
 pub struct CondBranch {
-    /// None means catch-all (`else`).
-    pub matcher: Option<ArgMatcher>,
+    pub matcher: ArgMatcher,
     pub effect: Effect,
+}
+
+/// The branches and optional fallback of a matcher-level `cond`.
+#[derive(Debug, Clone)]
+pub struct CondArm {
+    pub branches: Vec<CondBranch>,
+    pub fallback: Option<Effect>,
 }
 
 /// A positional expression with optional quantifier.
@@ -224,8 +235,8 @@ pub enum ArgMatcher {
     Or(Vec<ArgMatcher>),
     /// Inverts a sub-matcher.
     Not(Box<ArgMatcher>),
-    /// Branch on args; first matching branch wins.
-    Cond(Vec<CondBranch>),
+    /// Branch on args; first matching branch wins, with optional else fallback.
+    Cond(CondArm),
 }
 
 impl ArgMatcher {
@@ -240,9 +251,7 @@ impl ArgMatcher {
                 matchers.iter().any(|m| m.has_effect())
             }
             ArgMatcher::Not(inner) => inner.has_effect(),
-            ArgMatcher::Cond(branches) => branches.iter().any(|b| {
-                b.matcher.as_ref().is_some_and(|m| m.has_effect())
-            }),
+            ArgMatcher::Cond(arm) => arm.branches.iter().any(|b| b.matcher.has_effect()),
         }
     }
 }

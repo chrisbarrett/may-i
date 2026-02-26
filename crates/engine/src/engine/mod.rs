@@ -26,23 +26,13 @@ impl WalkResult {
     }
 }
 
-/// Aggregate multiple results: most restrictive wins. Deny short-circuits.
+/// Aggregate multiple results: most restrictive decision wins.
 fn aggregate_results(results: Vec<EvalResult>) -> EvalResult {
     debug_assert!(!results.is_empty(), "aggregate_results called with empty vec");
-    let mut overall: Option<EvalResult> = None;
-    for result in results {
-        if result.decision == Decision::Deny {
-            return result;
-        }
-        match &overall {
-            None => overall = Some(result),
-            Some(prev) if result.decision.most_restrictive(prev.decision) != prev.decision => {
-                overall = Some(result);
-            }
-            _ => {}
-        }
-    }
-    overall.unwrap_or(EvalResult::new(Decision::Allow, None))
+    results
+        .into_iter()
+        .max_by_key(|r| r.decision)
+        .unwrap_or_else(|| EvalResult::new(Decision::Allow, None))
 }
 
 // ── AstWalker ──────────────────────────────────────────────────────
@@ -200,7 +190,7 @@ impl<'a> AstWalker<'a> {
 
             Command::For { var, words, body } => self.walk_for_loop(var, words, body, env, depth),
 
-            Command::While { condition, body } | Command::Until { condition, body } => {
+            Command::Loop { condition, body, .. } => {
                 let walk_cond = self.walk_with_depth(condition, env, depth);
                 let walk_body = self.walk_with_depth(body, &walk_cond.env, depth);
                 let merged = VarEnv::merge_branches(env, &[env.clone(), walk_body.env]);
@@ -288,7 +278,7 @@ impl<'a> AstWalker<'a> {
             let mut body_envs = Vec::new();
             for val in &literals {
                 let mut loop_env = env.clone();
-                loop_env.set(var.to_string(), VarState::Safe(Some(val.clone())));
+                loop_env.set(var.to_string(), VarState::Known(val.clone()));
                 let walk = self.walk_with_depth(body, &loop_env, depth);
                 if walk.result.decision == Decision::Deny {
                     return WalkResult {
@@ -301,7 +291,7 @@ impl<'a> AstWalker<'a> {
             }
 
             let mut merged = VarEnv::merge_branches(env, &body_envs);
-            merged.set(var.to_string(), VarState::Safe(None));
+            merged.set(var.to_string(), VarState::Opaque);
             return WalkResult {
                 result: aggregate_results(results),
                 env: merged,
@@ -310,7 +300,7 @@ impl<'a> AstWalker<'a> {
 
         if !resolved_words.iter().any(|w| w.has_dynamic_parts()) {
             let mut loop_env = env.clone();
-            loop_env.set(var.to_string(), VarState::Safe(None));
+            loop_env.set(var.to_string(), VarState::Opaque);
             let walk = self.walk_with_depth(body, &loop_env, depth);
             let merged = VarEnv::merge_branches(env, &[env.clone(), walk.env]);
             return WalkResult {
@@ -331,9 +321,9 @@ impl<'a> AstWalker<'a> {
         if resolved.has_dynamic_parts() {
             VarState::Unsafe
         } else if resolved.is_literal() {
-            VarState::Safe(Some(resolved.to_str()))
+            VarState::Known(resolved.to_str())
         } else {
-            VarState::Safe(None)
+            VarState::Opaque
         }
     }
 

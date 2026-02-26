@@ -1,7 +1,7 @@
 // Visitor that matches resolved commands against config rules.
 // Terminal visitor: always returns Terminal (never Continue).
 
-use may_i_core::{Config, Decision, Effect, EvalResult};
+use may_i_core::{Config, Decision, Effect, EvalResult, RuleBody};
 use may_i_shell_parser::SimpleCommand;
 use super::super::matcher::*;
 use super::{CommandVisitor, VisitOutcome, VisitorContext};
@@ -64,9 +64,11 @@ pub(in crate::engine) fn match_against_rules(
             }
         }
 
-        let outcome = match &rule.matcher {
-            None => MatchOutcome::MatchedNoEffect,
-            Some(m) => {
+        let effect = match &rule.body {
+            RuleBody::Effect { matcher: None, effect } => {
+                effect.clone()
+            }
+            RuleBody::Effect { matcher: Some(m), effect } => {
                 let mut collector = TraceCollector::new(2);
                 let outcome = match_args(m, &expanded_args, &mut |ev| collector.on_event(ev));
                 for step in collector.into_steps() {
@@ -74,45 +76,45 @@ pub(in crate::engine) fn match_against_rules(
                         trace.push(format!("  {line}"));
                     }
                 }
-                outcome
+                if matches!(outcome, MatchOutcome::NoMatch) {
+                    trace.push("  args did not match".into());
+                    continue;
+                }
+                trace.push("  args matched".into());
+                // Prefer the embedded effect if the matcher produced one,
+                // otherwise fall back to the rule-level effect.
+                if let MatchOutcome::Matched(eff) = outcome {
+                    eff
+                } else {
+                    effect.clone()
+                }
+            }
+            RuleBody::Branching(m) => {
+                let mut collector = TraceCollector::new(2);
+                let outcome = match_args(m, &expanded_args, &mut |ev| collector.on_event(ev));
+                for step in collector.into_steps() {
+                    for line in step.lines() {
+                        trace.push(format!("  {line}"));
+                    }
+                }
+                match outcome {
+                    MatchOutcome::Matched(eff) => {
+                        trace.push("  args matched".into());
+                        eff
+                    }
+                    _ => {
+                        trace.push("  args did not match".into());
+                        continue;
+                    }
+                }
             }
         };
 
-        let effect = match outcome {
-            MatchOutcome::NoMatch => {
-                if rule.matcher.is_some() {
-                    trace.push("  args did not match".into());
-                }
-                continue;
-            }
-            MatchOutcome::Matched(eff) => {
-                if rule.matcher.is_some() {
-                    trace.push("  args matched".into());
-                }
-                trace.push(format!(
-                    "  effect: {} — {}",
-                    eff.decision,
-                    eff.reason.as_deref().unwrap_or("(no reason)")
-                ));
-                eff
-            }
-            MatchOutcome::MatchedNoEffect => {
-                if rule.matcher.is_some() {
-                    trace.push("  args matched".into());
-                }
-                match &rule.effect {
-                    Some(eff) => {
-                        trace.push(format!(
-                            "  effect: {} — {}",
-                            eff.decision,
-                            eff.reason.as_deref().unwrap_or("(no reason)")
-                        ));
-                        eff.clone()
-                    }
-                    None => continue,
-                }
-            }
-        };
+        trace.push(format!(
+            "  effect: {} — {}",
+            effect.decision,
+            effect.reason.as_deref().unwrap_or("(no reason)")
+        ));
 
         let Effect { decision, reason } = effect;
         let mut result = EvalResult::new(decision, reason);

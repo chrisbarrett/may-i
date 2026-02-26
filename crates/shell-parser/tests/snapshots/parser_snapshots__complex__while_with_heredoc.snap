@@ -1,9 +1,11 @@
 ---
-source: tests/parser_snapshots.rs
+source: crates/shell-parser/tests/parser_snapshots.rs
+assertion_line: 454
 expression: "parse(\"while read line; do echo $line; done <<EOF\\na\\nb\\nEOF\")"
 ---
 Redirected {
-    command: While {
+    command: Loop {
+        kind: While,
         condition: Simple(
             SimpleCommand {
                 assignments: [],

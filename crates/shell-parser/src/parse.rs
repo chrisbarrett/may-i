@@ -391,7 +391,8 @@ impl Parser {
         self.skip_newlines();
         self.expect(&Token::Done);
 
-        Command::While {
+        Command::Loop {
+            kind: LoopKind::While,
             condition: Box::new(condition),
             body: Box::new(body),
         }
@@ -408,7 +409,8 @@ impl Parser {
         self.skip_newlines();
         self.expect(&Token::Done);
 
-        Command::Until {
+        Command::Loop {
+            kind: LoopKind::Until,
             condition: Box::new(condition),
             body: Box::new(body),
         }

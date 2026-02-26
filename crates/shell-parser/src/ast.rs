@@ -20,11 +20,8 @@ pub enum Command {
         words: Vec<Word>,
         body: Box<Command>,
     },
-    While {
-        condition: Box<Command>,
-        body: Box<Command>,
-    },
-    Until {
+    Loop {
+        kind: LoopKind,
         condition: Box<Command>,
         body: Box<Command>,
     },
@@ -41,6 +38,12 @@ pub enum Command {
         redirections: Vec<Redirection>,
     },
     Assignment(Assignment),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoopKind {
+    While,
+    Until,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -465,7 +468,7 @@ impl Command {
                 children
             }
             Command::For { body, .. } => vec![body],
-            Command::While { condition, body } | Command::Until { condition, body } => {
+            Command::Loop { condition, body, .. } => {
                 vec![condition, body]
             }
             Command::Case { arms, .. } => {

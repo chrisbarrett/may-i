@@ -1,8 +1,10 @@
 ---
-source: tests/parser_snapshots.rs
+source: crates/shell-parser/tests/parser_snapshots.rs
+assertion_line: 137
 expression: "parse(\"while read line; do echo $line; done\")"
 ---
-While {
+Loop {
+    kind: While,
     condition: Simple(
         SimpleCommand {
             assignments: [],

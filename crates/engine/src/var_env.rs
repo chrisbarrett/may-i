@@ -5,10 +5,11 @@ use may_i_shell_parser::{Command, SimpleCommand, Word, WordPart};
 /// The safety state of a shell variable during AST analysis.
 #[derive(Debug, Clone, PartialEq)]
 pub enum VarState {
-    /// Safe variable: `Some(value)` = resolvable to a known literal,
-    /// `None` = safe but value unknown at analysis time (opaque).
-    Safe(Option<String>),
-    /// Unsafe variable: assigned from an unknown or untrusted source.
+    /// Resolvable to a known literal value.
+    Known(String),
+    /// Safe but value unknown at analysis time (e.g. loop variable, read input).
+    Opaque,
+    /// Assigned from an unknown or untrusted source.
     Unsafe,
 }
 
@@ -25,7 +26,7 @@ impl VarEnv {
     pub fn from_process_env() -> Self {
         let mut vars = std::collections::HashMap::new();
         for (key, val) in std::env::vars() {
-            vars.insert(key, VarState::Safe(Some(val)));
+            vars.insert(key, VarState::Known(val));
         }
         VarEnv {
             vars,
@@ -92,7 +93,7 @@ impl VarEnv {
             if states.iter().all(|s| *s == *first) {
                 result.insert(key.clone(), (*first).clone());
             } else {
-                result.insert(key.clone(), VarState::Safe(None));
+                result.insert(key.clone(), VarState::Opaque);
             }
         }
 
@@ -108,7 +109,7 @@ impl VarEnv {
 
     /// Check if a variable is safe (regardless of whether its value is known).
     pub fn is_safe(&self, name: &str) -> bool {
-        matches!(self.get(name), Some(VarState::Safe(_)))
+        matches!(self.get(name), Some(VarState::Known(_) | VarState::Opaque))
     }
 
     /// Store a function definition.
@@ -134,19 +135,19 @@ pub fn resolve_parts_with_var_env(
     parts.iter().map(|part| match part {
         WordPart::Parameter(name) | WordPart::ParameterExpansion(name) => {
             match env.get(name) {
-                Some(VarState::Safe(Some(val))) => WordPart::Literal(val.clone()),
-                Some(VarState::Safe(None)) => WordPart::Opaque(format!("${name}")),
+                Some(VarState::Known(val)) => WordPart::Literal(val.clone()),
+                Some(VarState::Opaque) => WordPart::Opaque(format!("${name}")),
                 Some(VarState::Unsafe) | None => part.clone(),
             }
         }
         WordPart::ParameterExpansionOp { name, op } => {
             match env.get(name) {
-                Some(VarState::Safe(Some(val))) => {
+                Some(VarState::Known(val)) => {
                     let mut map = std::collections::HashMap::new();
                     map.insert(name.clone(), val.clone());
                     may_i_shell_parser::resolve_param_op(name, op, &map)
                 }
-                Some(VarState::Safe(None)) => WordPart::Opaque(format!("${{{name}...}}")),
+                Some(VarState::Opaque) => WordPart::Opaque(format!("${{{name}...}}")),
                 Some(VarState::Unsafe) | None => part.clone(),
             }
         }

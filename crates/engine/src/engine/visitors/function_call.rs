@@ -32,9 +32,9 @@ impl CommandVisitor for FunctionCallVisitor {
         let mut fn_env = ctx.env.clone();
         for (i, arg) in resolved.args().iter().enumerate() {
             let state = if arg.is_literal() {
-                VarState::Safe(Some(arg.to_str()))
+                VarState::Known(arg.to_str())
             } else if arg.has_opaque_parts() {
-                VarState::Safe(None)
+                VarState::Opaque
             } else {
                 VarState::Unsafe
             };

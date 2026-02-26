@@ -32,17 +32,15 @@ impl CommandVisitor for ReadBuiltinVisitor {
         // Extract variable names from args (skip flags and their values)
         let args = resolved.args();
         let mut var_names = Vec::new();
-        let mut skip_next = false;
+        let mut skip_value = false;
         for arg in args {
-            if skip_next {
-                skip_next = false;
+            let s = arg.to_str();
+            if skip_value {
+                skip_value = false;
                 continue;
             }
-            let s = arg.to_str();
             if s.starts_with('-') && s.len() > 1 {
-                if flags_with_arg.iter().any(|f| *f == s) {
-                    skip_next = true;
-                }
+                skip_value = flags_with_arg.iter().any(|f| *f == s);
                 continue;
             }
             var_names.push(s);
@@ -70,11 +68,11 @@ impl CommandVisitor for ReadBuiltinVisitor {
         for (i, name) in var_names.iter().enumerate() {
             let state = if var_names.len() == 1 && i == 0 {
                 match &herestring_val {
-                    Some(val) => VarState::Safe(Some(val.clone())),
-                    None => VarState::Safe(None),
+                    Some(val) => VarState::Known(val.clone()),
+                    None => VarState::Opaque,
                 }
             } else {
-                VarState::Safe(None)
+                VarState::Opaque
             };
             new_env.set(name.clone(), state);
         }

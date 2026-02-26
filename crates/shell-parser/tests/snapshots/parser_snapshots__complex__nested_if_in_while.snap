@@ -1,8 +1,10 @@
 ---
-source: tests/parser_snapshots.rs
+source: crates/shell-parser/tests/parser_snapshots.rs
+assertion_line: 466
 expression: "parse(\"while true; do if test -f marker; then break; fi; done\")"
 ---
-While {
+Loop {
+    kind: While,
     condition: Simple(
         SimpleCommand {
             assignments: [],

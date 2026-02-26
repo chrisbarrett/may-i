@@ -290,7 +290,7 @@ fn test_for_loop() {
 fn test_while_loop() {
     let cmd = parse("while true; do echo loop; done");
     match &cmd {
-        Command::While { condition, body } => {
+        Command::Loop { kind: LoopKind::While, condition, body } => {
             match condition.as_ref() {
                 Command::Simple(sc) => assert_eq!(sc.command_name(), Some("true")),
                 _ => panic!("Expected simple condition"),
@@ -310,7 +310,7 @@ fn test_while_loop() {
 fn test_until_loop() {
     let cmd = parse("until false; do echo loop; done");
     match &cmd {
-        Command::Until { condition, body } => {
+        Command::Loop { kind: LoopKind::Until, condition, body } => {
             match condition.as_ref() {
                 Command::Simple(sc) => assert_eq!(sc.command_name(), Some("false")),
                 _ => panic!("Expected simple condition"),

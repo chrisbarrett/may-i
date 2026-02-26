@@ -280,36 +280,40 @@ pub(in crate::engine) fn match_args(
             }
         }
 
-        ArgMatcher::Cond(branches) => {
-            for branch in branches {
-                match &branch.matcher {
-                    None => {
-                        // Catch-all (else) branch
-                        emit(MatchEvent::MatcherCondElse { effect: &branch.effect });
-                        return MatchOutcome::Matched(branch.effect.clone());
-                    }
-                    Some(m) => {
-                        let matched = match_args(m, args, emit).is_match();
-                        emit(MatchEvent::MatcherCondBranch {
-                            matched,
-                            effect: &branch.effect,
-                        });
-                        if matched {
-                            return MatchOutcome::Matched(branch.effect.clone());
-                        }
-                    }
+        ArgMatcher::Cond(arm) => {
+            for branch in &arm.branches {
+                let matched = match_args(&branch.matcher, args, emit).is_match();
+                emit(MatchEvent::MatcherCondBranch {
+                    matched,
+                    effect: &branch.effect,
+                });
+                if matched {
+                    return MatchOutcome::Matched(branch.effect.clone());
                 }
+            }
+            if let Some(fallback) = &arm.fallback {
+                emit(MatchEvent::MatcherCondElse { effect: fallback });
+                return MatchOutcome::Matched(fallback.clone());
             }
             MatchOutcome::NoMatch
         }
     }
 }
 
+/// State machine for parsing flags vs positional args.
+enum FlagParseState {
+    /// Scanning flags and positional args.
+    Scanning,
+    /// The previous token was a long flag without `=`; skip this token (its value).
+    SkipFlagValue,
+    /// `--` was seen; all remaining tokens are positional.
+    AllPositional,
+}
+
 /// Extract positional args from a resolved argument list, skipping flags and their values.
 pub(in crate::engine) fn extract_positional_args(args: &[ResolvedArg]) -> Vec<ResolvedArg> {
     let mut positional = Vec::new();
-    let mut skip_next = false;
-    let mut flags_done = false;
+    let mut state = FlagParseState::Scanning;
     for arg in args {
         let s = match arg {
             ResolvedArg::Literal(s) => s.as_str(),
@@ -319,29 +323,28 @@ pub(in crate::engine) fn extract_positional_args(args: &[ResolvedArg]) -> Vec<Re
                 continue;
             }
         };
-        if flags_done {
-            positional.push(arg.clone());
-            continue;
-        }
-        if skip_next {
-            skip_next = false;
-            continue;
-        }
-        if s == "--" {
-            positional.push(arg.clone());
-            flags_done = true;
-            continue;
-        }
-        if s.starts_with("--") {
-            if !s.contains('=') {
-                skip_next = true;
+        match state {
+            FlagParseState::AllPositional => {
+                positional.push(arg.clone());
             }
-            continue;
+            FlagParseState::SkipFlagValue => {
+                state = FlagParseState::Scanning;
+            }
+            FlagParseState::Scanning => {
+                if s == "--" {
+                    positional.push(arg.clone());
+                    state = FlagParseState::AllPositional;
+                } else if s.starts_with("--") {
+                    if !s.contains('=') {
+                        state = FlagParseState::SkipFlagValue;
+                    }
+                } else if s.starts_with('-') && s.len() > 1 {
+                    // short flag, skip
+                } else {
+                    positional.push(arg.clone());
+                }
+            }
         }
-        if s.starts_with('-') && s.len() > 1 {
-            continue;
-        }
-        positional.push(arg.clone());
     }
     positional
 }
@@ -463,7 +466,7 @@ pub(in crate::engine) fn matcher_matches(matcher: &ArgMatcher, args: &[ResolvedA
 #[cfg(test)]
 mod tests {
     use super::*;
-    use may_i_core::{CondBranch, Decision};
+    use may_i_core::{CondArm, CondBranch, Decision};
 
     fn lit(s: &str) -> ResolvedArg {
         ResolvedArg::Literal(s.into())
@@ -868,16 +871,13 @@ mod tests {
 
     #[test]
     fn matcher_cond_first_branch() {
-        let matcher = ArgMatcher::Cond(vec![
-            CondBranch {
-                matcher: Some(ArgMatcher::Positional(vec![PosExpr::One(Expr::Literal("a".into()))])),
+        let matcher = ArgMatcher::Cond(CondArm {
+            branches: vec![CondBranch {
+                matcher: ArgMatcher::Positional(vec![PosExpr::One(Expr::Literal("a".into()))]),
                 effect: allow_effect("branch a"),
-            },
-            CondBranch {
-                matcher: None,
-                effect: deny_effect("else"),
-            },
-        ]);
+            }],
+            fallback: Some(deny_effect("else")),
+        });
         match match_args(&matcher, &[lit("a")], &mut |_| {}) {
             MatchOutcome::Matched(eff) => assert_eq!(eff.reason.as_deref(), Some("branch a")),
             other => panic!("expected Matched, got {other:?}"),
@@ -886,16 +886,13 @@ mod tests {
 
     #[test]
     fn matcher_cond_else_branch() {
-        let matcher = ArgMatcher::Cond(vec![
-            CondBranch {
-                matcher: Some(ArgMatcher::Positional(vec![PosExpr::One(Expr::Literal("a".into()))])),
+        let matcher = ArgMatcher::Cond(CondArm {
+            branches: vec![CondBranch {
+                matcher: ArgMatcher::Positional(vec![PosExpr::One(Expr::Literal("a".into()))]),
                 effect: allow_effect("branch a"),
-            },
-            CondBranch {
-                matcher: None,
-                effect: deny_effect("else"),
-            },
-        ]);
+            }],
+            fallback: Some(deny_effect("else")),
+        });
         match match_args(&matcher, &[lit("z")], &mut |_| {}) {
             MatchOutcome::Matched(eff) => {
                 assert_eq!(eff.decision, Decision::Deny);
@@ -907,12 +904,13 @@ mod tests {
 
     #[test]
     fn matcher_cond_no_match_no_else() {
-        let matcher = ArgMatcher::Cond(vec![
-            CondBranch {
-                matcher: Some(ArgMatcher::Positional(vec![PosExpr::One(Expr::Literal("a".into()))])),
+        let matcher = ArgMatcher::Cond(CondArm {
+            branches: vec![CondBranch {
+                matcher: ArgMatcher::Positional(vec![PosExpr::One(Expr::Literal("a".into()))]),
                 effect: allow_effect("a"),
-            },
-        ]);
+            }],
+            fallback: None,
+        });
         assert!(!match_args(&matcher, &[lit("z")], &mut |_| {}).is_match());
     }
 
@@ -998,16 +996,13 @@ mod tests {
 
     #[test]
     fn events_emitted_for_matcher_cond() {
-        let matcher = ArgMatcher::Cond(vec![
-            CondBranch {
-                matcher: Some(ArgMatcher::Positional(vec![PosExpr::One(Expr::Literal("a".into()))])),
+        let matcher = ArgMatcher::Cond(CondArm {
+            branches: vec![CondBranch {
+                matcher: ArgMatcher::Positional(vec![PosExpr::One(Expr::Literal("a".into()))]),
                 effect: allow_effect("a"),
-            },
-            CondBranch {
-                matcher: None,
-                effect: deny_effect("else"),
-            },
-        ]);
+            }],
+            fallback: Some(deny_effect("else")),
+        });
         let (_, events) = match_with_events(&matcher, &[lit("z")]);
         // First branch: inner events + MatcherCondBranch
         assert!(events.iter().any(|e| e.contains("MatcherCondBranch")));

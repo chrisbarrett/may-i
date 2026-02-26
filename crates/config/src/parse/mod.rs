@@ -7,8 +7,8 @@ use expr::{parse_expr, parse_pos_expr};
 use may_i_core::ConfigError;
 use may_i_sexpr::{RawError, Span, Sexpr};
 use may_i_core::{
-    ArgMatcher, Check, CommandMatcher, CondBranch, Config, Decision, Effect, Expr,
-    PosExpr, Rule, SecurityConfig, SourceInfo, Wrapper, WrapperStep,
+    ArgMatcher, Check, CommandMatcher, CondArm, CondBranch, Config, Decision, Effect, Expr,
+    PosExpr, Rule, RuleBody, SecurityConfig, SourceInfo, Wrapper, WrapperStep,
 };
 
 /// Parse an s-expression config string into Config.
@@ -173,14 +173,22 @@ fn parse_cond_branches_generic<T>(
     Ok(result)
 }
 
-fn parse_cond_branches(list: &[Sexpr]) -> Result<Vec<CondBranch>, RawError> {
+fn parse_cond_branches(list: &[Sexpr]) -> Result<CondArm, RawError> {
     let pairs = parse_cond_branches_generic(
         &list[1..],
         list[0].span(),
         |s| parse_matcher(s).map(Some),
         || None,
     )?;
-    Ok(pairs.into_iter().map(|(matcher, effect)| CondBranch { matcher, effect }).collect())
+    let mut branches = Vec::new();
+    let mut fallback = None;
+    for (matcher, effect) in pairs {
+        match matcher {
+            Some(m) => branches.push(CondBranch { matcher: m, effect }),
+            None => fallback = Some(effect),
+        }
+    }
+    Ok(CondArm { branches, fallback })
 }
 
 /// Shared helper: parse `(if TEST EFFECT EFFECT?)` sugar.
@@ -238,21 +246,26 @@ fn parse_unary_sugar<T>(
 
 fn parse_matcher_if_form(args: &[Sexpr], form_span: Span) -> Result<ArgMatcher, RawError> {
     let (test, then_effect, else_effect) = parse_if_sugar(args, form_span, parse_matcher)?;
-    let mut branches = vec![CondBranch { matcher: Some(test), effect: then_effect }];
-    if let Some(else_eff) = else_effect {
-        branches.push(CondBranch { matcher: None, effect: else_eff });
-    }
-    Ok(ArgMatcher::Cond(branches))
+    Ok(ArgMatcher::Cond(CondArm {
+        branches: vec![CondBranch { matcher: test, effect: then_effect }],
+        fallback: else_effect,
+    }))
 }
 
 fn parse_matcher_when_form(args: &[Sexpr], form_span: Span) -> Result<ArgMatcher, RawError> {
     let (test, effect) = parse_unary_sugar("when", args, form_span, parse_matcher)?;
-    Ok(ArgMatcher::Cond(vec![CondBranch { matcher: Some(test), effect }]))
+    Ok(ArgMatcher::Cond(CondArm {
+        branches: vec![CondBranch { matcher: test, effect }],
+        fallback: None,
+    }))
 }
 
 fn parse_matcher_unless_form(args: &[Sexpr], form_span: Span) -> Result<ArgMatcher, RawError> {
     let (test, effect) = parse_unary_sugar("unless", args, form_span, parse_matcher)?;
-    Ok(ArgMatcher::Cond(vec![CondBranch { matcher: Some(ArgMatcher::Not(Box::new(test))), effect }]))
+    Ok(ArgMatcher::Cond(CondArm {
+        branches: vec![CondBranch { matcher: ArgMatcher::Not(Box::new(test)), effect }],
+        fallback: None,
+    }))
 }
 
 fn parse_rule(parts: &[Sexpr], rule_span: Span) -> Result<Rule, RawError> {
@@ -342,29 +355,32 @@ fn parse_rule(parts: &[Sexpr], rule_span: Span) -> Result<Rule, RawError> {
         }
     }
 
-    // Validate: embedded effects (top-level cond or Expr::Cond) are mutually exclusive with effect
+    // Build body: embedded effects (top-level cond or Expr::Cond) vs explicit effect
     let has_embedded_effect = matcher.as_ref().is_some_and(|m| {
         matches!(m, ArgMatcher::Cond(_)) || m.has_effect()
     });
-    if has_embedded_effect && effect.is_some() {
-        return Err(RawError::new(
-            "cond and effect are mutually exclusive in a rule",
-            rule_span,
-        ));
-    }
-    if !has_embedded_effect && effect.is_none() {
-        return Err(RawError::new(
-            "rule must have an effect (or a top-level cond matcher)",
-            rule_span,
-        ));
-    }
+    let body = match (has_embedded_effect, matcher, effect) {
+        (true, _, Some(_)) => {
+            return Err(RawError::new(
+                "cond and effect are mutually exclusive in a rule",
+                rule_span,
+            ));
+        }
+        (true, Some(m), None) => RuleBody::Branching(m),
+        (false, matcher, Some(effect)) => RuleBody::Effect { matcher, effect },
+        (_, None, None) | (false, Some(_), None) => {
+            return Err(RawError::new(
+                "rule must have an effect (or a top-level cond matcher)",
+                rule_span,
+            ));
+        }
+    };
 
     Ok(Rule {
         command: command.ok_or_else(|| {
             RawError::new("rule must have a command", rule_span)
         })?,
-        matcher,
-        effect,
+        body,
         checks,
         source_span: rule_span,
     })
@@ -662,25 +678,40 @@ mod tests {
         let config = parse(r#"(rule (command "cat") (effect :allow))"#).unwrap();
         assert_eq!(config.rules.len(), 1);
         let rule = &config.rules[0];
-        assert_eq!(rule.effect.as_ref().unwrap().decision, Decision::Allow);
-        assert!(rule.matcher.is_none());
-        assert!(rule.effect.as_ref().unwrap().reason.is_none());
+        match &rule.body {
+            RuleBody::Effect { matcher, effect } => {
+                assert_eq!(effect.decision, Decision::Allow);
+                assert!(matcher.is_none());
+                assert!(effect.reason.is_none());
+            }
+            _ => panic!("expected Effect"),
+        }
     }
 
     #[test]
     fn deny_with_reason() {
         let config = parse(r#"(rule (command "rm") (effect :deny "dangerous"))"#).unwrap();
         let rule = &config.rules[0];
-        assert_eq!(rule.effect.as_ref().unwrap().decision, Decision::Deny);
-        assert_eq!(rule.effect.as_ref().unwrap().reason.as_deref(), Some("dangerous"));
+        match &rule.body {
+            RuleBody::Effect { effect, .. } => {
+                assert_eq!(effect.decision, Decision::Deny);
+                assert_eq!(effect.reason.as_deref(), Some("dangerous"));
+            }
+            _ => panic!("expected Effect"),
+        }
     }
 
     #[test]
     fn ask_with_reason() {
         let config = parse(r#"(rule (command "curl") (effect :ask "network op"))"#).unwrap();
         let rule = &config.rules[0];
-        assert_eq!(rule.effect.as_ref().unwrap().decision, Decision::Ask);
-        assert_eq!(rule.effect.as_ref().unwrap().reason.as_deref(), Some("network op"));
+        match &rule.body {
+            RuleBody::Effect { effect, .. } => {
+                assert_eq!(effect.decision, Decision::Ask);
+                assert_eq!(effect.reason.as_deref(), Some("network op"));
+            }
+            _ => panic!("expected Effect"),
+        }
     }
 
     #[test]
@@ -705,7 +736,10 @@ mod tests {
 
     /// Helper to extract the matcher from a rule.
     fn get_matcher(rule: &Rule) -> Option<&ArgMatcher> {
-        rule.matcher.as_ref()
+        match &rule.body {
+            RuleBody::Effect { matcher, .. } => matcher.as_ref(),
+            RuleBody::Branching(m) => Some(m),
+        }
     }
 
     #[test]
@@ -1360,18 +1394,16 @@ mod tests {
         )
         .unwrap();
         assert_eq!(config.rules.len(), 1);
-        match &config.rules[0].matcher {
-            Some(ArgMatcher::Cond(branches)) => {
-                assert_eq!(branches.len(), 2);
-                assert!(branches[0].matcher.is_some());
-                assert_eq!(branches[0].effect.decision, Decision::Allow);
-                assert_eq!(branches[0].effect.reason.as_deref(), Some("Reloading config is safe"));
-                assert!(branches[1].matcher.is_none()); // catch-all
-                assert_eq!(branches[1].effect.decision, Decision::Deny);
+        match &config.rules[0].body {
+            RuleBody::Branching(ArgMatcher::Cond(arm)) => {
+                assert_eq!(arm.branches.len(), 1);
+                assert_eq!(arm.branches[0].effect.decision, Decision::Allow);
+                assert_eq!(arm.branches[0].effect.reason.as_deref(), Some("Reloading config is safe"));
+                assert!(arm.fallback.is_some()); // catch-all
+                assert_eq!(arm.fallback.as_ref().unwrap().decision, Decision::Deny);
             }
-            _ => panic!("expected Cond"),
+            _ => panic!("expected Branching(Cond)"),
         }
-        assert!(config.rules[0].effect.is_none());
     }
 
     #[test]
@@ -1384,12 +1416,12 @@ mod tests {
                      (effect :deny)))))"#,
         )
         .unwrap();
-        match &config.rules[0].matcher {
-            Some(ArgMatcher::Cond(branches)) => {
-                assert_eq!(branches.len(), 2);
-                assert!(branches[1].matcher.is_none()); // else is catch-all
+        match &config.rules[0].body {
+            RuleBody::Branching(ArgMatcher::Cond(arm)) => {
+                assert_eq!(arm.branches.len(), 1);
+                assert!(arm.fallback.is_some()); // else is catch-all
             }
-            _ => panic!("expected Cond"),
+            _ => panic!("expected Branching(Cond)"),
         }
     }
 
@@ -1543,14 +1575,14 @@ mod tests {
                   (effect :allow "verbose bar"))"#,
         )
         .unwrap();
-        assert_eq!(config.rules[0].effect.as_ref().unwrap().decision, Decision::Allow);
-        match &config.rules[0].matcher {
-            Some(ArgMatcher::And(matchers)) => {
+        match &config.rules[0].body {
+            RuleBody::Effect { matcher: Some(ArgMatcher::And(matchers)), effect } => {
+                assert_eq!(effect.decision, Decision::Allow);
                 assert_eq!(matchers.len(), 2);
                 assert!(matches!(&matchers[0], ArgMatcher::Cond(_)));
                 assert!(matches!(&matchers[1], ArgMatcher::Anywhere(_)));
             }
-            _ => panic!("expected And"),
+            _ => panic!("expected Effect with And matcher"),
         }
     }
 
@@ -1565,15 +1597,14 @@ mod tests {
                             (effect :allow "Opening files"))))"#,
         )
         .unwrap();
-        match &config.rules[0].matcher {
-            Some(ArgMatcher::Cond(branches)) => {
-                assert_eq!(branches.len(), 2);
-                assert!(branches[0].matcher.is_some());
-                assert_eq!(branches[0].effect.decision, Decision::Ask);
-                assert!(branches[1].matcher.is_none()); // else
-                assert_eq!(branches[1].effect.decision, Decision::Allow);
+        match &config.rules[0].body {
+            RuleBody::Branching(ArgMatcher::Cond(arm)) => {
+                assert_eq!(arm.branches.len(), 1);
+                assert_eq!(arm.branches[0].effect.decision, Decision::Ask);
+                assert!(arm.fallback.is_some()); // else
+                assert_eq!(arm.fallback.as_ref().unwrap().decision, Decision::Allow);
             }
-            _ => panic!("expected Cond from if"),
+            _ => panic!("expected Branching(Cond) from if"),
         }
     }
 
@@ -1585,13 +1616,12 @@ mod tests {
                             (effect :ask "Flake update"))))"#,
         )
         .unwrap();
-        match &config.rules[0].matcher {
-            Some(ArgMatcher::Cond(branches)) => {
-                assert_eq!(branches.len(), 1);
-                assert!(branches[0].matcher.is_some());
-                assert_eq!(branches[0].effect.decision, Decision::Ask);
+        match &config.rules[0].body {
+            RuleBody::Branching(ArgMatcher::Cond(arm)) => {
+                assert_eq!(arm.branches.len(), 1);
+                assert_eq!(arm.branches[0].effect.decision, Decision::Ask);
             }
-            _ => panic!("expected Cond from if"),
+            _ => panic!("expected Branching(Cond) from if"),
         }
     }
 
@@ -1603,13 +1633,12 @@ mod tests {
                               (effect :allow))))"#,
         )
         .unwrap();
-        match &config.rules[0].matcher {
-            Some(ArgMatcher::Cond(branches)) => {
-                assert_eq!(branches.len(), 1);
-                assert!(branches[0].matcher.is_some());
-                assert_eq!(branches[0].effect.decision, Decision::Allow);
+        match &config.rules[0].body {
+            RuleBody::Branching(ArgMatcher::Cond(arm)) => {
+                assert_eq!(arm.branches.len(), 1);
+                assert_eq!(arm.branches[0].effect.decision, Decision::Allow);
             }
-            _ => panic!("expected Cond from when"),
+            _ => panic!("expected Branching(Cond) from when"),
         }
     }
 
@@ -1621,13 +1650,13 @@ mod tests {
                                 (effect :allow))))"#,
         )
         .unwrap();
-        match &config.rules[0].matcher {
-            Some(ArgMatcher::Cond(branches)) => {
-                assert_eq!(branches.len(), 1);
-                assert!(matches!(&branches[0].matcher, Some(ArgMatcher::Not(_))));
-                assert_eq!(branches[0].effect.decision, Decision::Allow);
+        match &config.rules[0].body {
+            RuleBody::Branching(ArgMatcher::Cond(arm)) => {
+                assert_eq!(arm.branches.len(), 1);
+                assert!(matches!(&arm.branches[0].matcher, ArgMatcher::Not(_)));
+                assert_eq!(arm.branches[0].effect.decision, Decision::Allow);
             }
-            _ => panic!("expected Cond from unless"),
+            _ => panic!("expected Branching(Cond) from unless"),
         }
     }
 
@@ -1888,7 +1917,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(config.rules.len(), 1);
-        assert!(config.rules[0].effect.is_none());
+        assert!(matches!(&config.rules[0].body, RuleBody::Branching(_)));
     }
 
     #[test]

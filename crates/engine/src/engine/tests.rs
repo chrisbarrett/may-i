@@ -2,7 +2,7 @@ use super::*;
 use super::matcher::*;
 use super::visitors::rule_match::match_against_rules;
 use may_i_core::{
-    ArgMatcher, CommandMatcher, CondBranch, Config, Effect, Expr, PosExpr, Rule,
+    ArgMatcher, CommandMatcher, CondArm, CondBranch, Config, Effect, Expr, PosExpr, Rule, RuleBody,
     Wrapper, WrapperStep,
 };
 
@@ -33,8 +33,7 @@ fn test_span() -> Span {
 fn allow_rule(cmd: &str) -> Rule {
     Rule {
         command: CommandMatcher::Exact(cmd.to_string()),
-        matcher: None,
-        effect: Some(Effect { decision: Decision::Allow, reason: Some("allowed".into()) }),
+        body: RuleBody::Effect { matcher: None, effect: Effect { decision: Decision::Allow, reason: Some("allowed".into()) } },
         checks: vec![],
         source_span: test_span(),
     }
@@ -43,8 +42,7 @@ fn allow_rule(cmd: &str) -> Rule {
 fn deny_rule(cmd: &str) -> Rule {
     Rule {
         command: CommandMatcher::Exact(cmd.to_string()),
-        matcher: None,
-        effect: Some(Effect { decision: Decision::Deny, reason: Some("denied".into()) }),
+        body: RuleBody::Effect { matcher: None, effect: Effect { decision: Decision::Deny, reason: Some("denied".into()) } },
         checks: vec![],
         source_span: test_span(),
     }
@@ -53,8 +51,7 @@ fn deny_rule(cmd: &str) -> Rule {
 fn ask_rule(cmd: &str) -> Rule {
     Rule {
         command: CommandMatcher::Exact(cmd.to_string()),
-        matcher: None,
-        effect: Some(Effect { decision: Decision::Ask, reason: Some("ask".into()) }),
+        body: RuleBody::Effect { matcher: None, effect: Effect { decision: Decision::Ask, reason: Some("ask".into()) } },
         checks: vec![],
         source_span: test_span(),
     }
@@ -488,10 +485,9 @@ fn extract_positional_flags_before_double_dash_skipped() {
 fn rule_with_positional_matcher() {
     let rule = Rule {
         command: CommandMatcher::Exact("git".into()),
-        matcher: Some(ArgMatcher::Positional(pos(vec![
+        body: RuleBody::Effect { matcher: Some(ArgMatcher::Positional(pos(vec![
             Expr::Literal("status".into()),
-        ]))),
-        effect: Some(Effect { decision: Decision::Allow, reason: None }),
+        ]))), effect: Effect { decision: Decision::Allow, reason: None } },
         checks: vec![],
         source_span: test_span(),
     };
@@ -504,10 +500,9 @@ fn rule_with_positional_matcher() {
 fn rule_with_positional_no_match() {
     let rule = Rule {
         command: CommandMatcher::Exact("git".into()),
-        matcher: Some(ArgMatcher::Positional(pos(vec![
+        body: RuleBody::Effect { matcher: Some(ArgMatcher::Positional(pos(vec![
             Expr::Literal("status".into()),
-        ]))),
-        effect: Some(Effect { decision: Decision::Allow, reason: None }),
+        ]))), effect: Effect { decision: Decision::Allow, reason: None } },
         checks: vec![],
         source_span: test_span(),
     };
@@ -522,10 +517,9 @@ fn deny_rule_wins_over_allow() {
         allow_rule("rm"),
         Rule {
             command: CommandMatcher::Exact("rm".into()),
-            matcher: Some(ArgMatcher::Anywhere(vec![
+            body: RuleBody::Effect { matcher: Some(ArgMatcher::Anywhere(vec![
                 Expr::Literal("-r".into()),
-            ])),
-            effect: Some(Effect { decision: Decision::Deny, reason: Some("dangerous".into()) }),
+            ])), effect: Effect { decision: Decision::Deny, reason: Some("dangerous".into()) } },
             checks: vec![],
             source_span: test_span(),
         },
@@ -540,15 +534,13 @@ fn first_matching_non_deny_rule_wins() {
     let rules = vec![
         Rule {
             command: CommandMatcher::Exact("git".into()),
-            matcher: None,
-            effect: Some(Effect { decision: Decision::Ask, reason: Some("first".into()) }),
+            body: RuleBody::Effect { matcher: None, effect: Effect { decision: Decision::Ask, reason: Some("first".into()) } },
             checks: vec![],
             source_span: test_span(),
         },
         Rule {
             command: CommandMatcher::Exact("git".into()),
-            matcher: None,
-            effect: Some(Effect { decision: Decision::Allow, reason: Some("second".into()) }),
+            body: RuleBody::Effect { matcher: None, effect: Effect { decision: Decision::Allow, reason: Some("second".into()) } },
             checks: vec![],
             source_span: test_span(),
         },
@@ -563,8 +555,7 @@ fn first_matching_non_deny_rule_wins() {
 fn regex_command_matcher_in_rule() {
     let rule = Rule {
         command: CommandMatcher::Regex(regex::Regex::new("^(cat|bat|less)$").unwrap()),
-        matcher: None,
-        effect: Some(Effect { decision: Decision::Allow, reason: None }),
+        body: RuleBody::Effect { matcher: None, effect: Effect { decision: Decision::Allow, reason: None } },
         checks: vec![],
         source_span: test_span(),
     };
@@ -579,8 +570,7 @@ fn regex_command_matcher_in_rule() {
 fn list_command_matcher_in_rule() {
     let rule = Rule {
         command: CommandMatcher::List(vec!["cat".into(), "bat".into()]),
-        matcher: None,
-        effect: Some(Effect { decision: Decision::Allow, reason: None }),
+        body: RuleBody::Effect { matcher: None, effect: Effect { decision: Decision::Allow, reason: None } },
         checks: vec![],
         source_span: test_span(),
     };
@@ -835,14 +825,13 @@ fn evaluate_empty_command_name() {
 fn not_anywhere_denies_with_forbidden_flag() {
     let rule = Rule {
         command: CommandMatcher::Exact("git".into()),
-        matcher: Some(ArgMatcher::And(vec![
+        body: RuleBody::Effect { matcher: Some(ArgMatcher::And(vec![
             ArgMatcher::Positional(pos(vec![Expr::Literal("push".into())])),
             ArgMatcher::Not(Box::new(ArgMatcher::Anywhere(vec![
                 Expr::Literal("--force".into()),
                 Expr::Literal("-f".into()),
             ]))),
-        ])),
-        effect: Some(Effect { decision: Decision::Allow, reason: Some("safe push".into()) }),
+        ])), effect: Effect { decision: Decision::Allow, reason: Some("safe push".into()) } },
         checks: vec![],
         source_span: test_span(),
     };
@@ -864,10 +853,9 @@ fn not_anywhere_denies_with_forbidden_flag() {
 fn anywhere_matcher_regex_pattern() {
     let rule = Rule {
         command: CommandMatcher::Exact("grep".into()),
-        matcher: Some(ArgMatcher::Anywhere(vec![
+        body: RuleBody::Effect { matcher: Some(ArgMatcher::Anywhere(vec![
             Expr::Regex(regex::Regex::new("^-r$").unwrap()),
-        ])),
-        effect: Some(Effect { decision: Decision::Allow, reason: None }),
+        ])), effect: Effect { decision: Decision::Allow, reason: None } },
         checks: vec![],
         source_span: test_span(),
     };
@@ -911,7 +899,7 @@ fn evaluate_brace_group() {
 
 #[test]
 fn env_var_resolved_allows_static_analysis() {
-    let env = env_with(&[("TEST_MAYI_HOME", VarState::Safe(Some("/home/user".into())))]);
+    let env = env_with(&[("TEST_MAYI_HOME", VarState::Known("/home/user".into()))]);
     let config = config_with_rules(vec![allow_rule("echo"), allow_rule("ls")]);
     let result = evaluate_with_env("echo $TEST_MAYI_HOME && ls", &config, &env);
     assert_eq!(result.decision, Decision::Allow);
@@ -941,7 +929,7 @@ fn command_sub_never_resolvable() {
 
 #[test]
 fn deny_wins_with_resolved_env_var() {
-    let env = env_with(&[("TEST_MAYI_HOME3", VarState::Safe(Some("/tmp".into())))]);
+    let env = env_with(&[("TEST_MAYI_HOME3", VarState::Known("/tmp".into()))]);
     let config = config_with_rules(vec![deny_rule("ls"), allow_rule("echo")]);
     let result = evaluate_with_env("ls && echo $TEST_MAYI_HOME3", &config, &env);
     assert_eq!(result.decision, Decision::Deny);
@@ -961,7 +949,7 @@ fn for_loop_dynamic_iteration_words_ask() {
 
 #[test]
 fn param_op_resolved_safe_env_allows() {
-    let env = env_with(&[("TEST_MAYI_PATH", VarState::Safe(Some("/usr/local/bin".into())))]);
+    let env = env_with(&[("TEST_MAYI_PATH", VarState::Known("/usr/local/bin".into()))]);
     let config = config_with_rules(vec![allow_rule("echo")]);
     let result = evaluate_with_env("echo ${TEST_MAYI_PATH##*/}", &config, &env);
     assert_eq!(result.decision, Decision::Allow);
@@ -979,7 +967,7 @@ fn param_op_unresolved_triggers_ask() {
 
 #[test]
 fn param_op_default_value_with_safe_env() {
-    let env = env_with(&[("TEST_MAYI_OPT", VarState::Safe(Some("value".into())))]);
+    let env = env_with(&[("TEST_MAYI_OPT", VarState::Known("value".into()))]);
     let config = config_with_rules(vec![allow_rule("echo")]);
     let result = evaluate_with_env("echo ${TEST_MAYI_OPT:-fallback}", &config, &env);
     assert_eq!(result.decision, Decision::Allow);
@@ -987,7 +975,7 @@ fn param_op_default_value_with_safe_env() {
 
 #[test]
 fn param_op_in_double_quotes_resolved() {
-    let env = env_with(&[("TEST_MAYI_FILE", VarState::Safe(Some("archive.tar.gz".into())))]);
+    let env = env_with(&[("TEST_MAYI_FILE", VarState::Known("archive.tar.gz".into()))]);
     let config = config_with_rules(vec![allow_rule("echo")]);
     let result = evaluate_with_env(r#"echo "${TEST_MAYI_FILE%%.*}""#, &config, &env);
     assert_eq!(result.decision, Decision::Allow);
@@ -1101,7 +1089,7 @@ fn transitive_unsafety() {
 
 #[test]
 fn env_var_resolves() {
-    let env = env_with(&[("HOME", VarState::Safe(Some("/home/user".into())))]);
+    let env = env_with(&[("HOME", VarState::Known("/home/user".into()))]);
     let config = config_with_rules(vec![allow_rule("echo")]);
     let result = evaluate_with_env("echo $HOME", &config, &env);
     assert_eq!(result.decision, Decision::Allow);
@@ -1109,7 +1097,7 @@ fn env_var_resolves() {
 
 #[test]
 fn local_assignment_overrides_env() {
-    let env = env_with(&[("HOME", VarState::Safe(Some("/home/user".into())))]);
+    let env = env_with(&[("HOME", VarState::Known("/home/user".into()))]);
     let config = config_with_rules(vec![allow_rule("echo")]);
     let result = evaluate_with_env("HOME=/override; echo $HOME", &config, &env);
     assert_eq!(result.decision, Decision::Allow);
@@ -1252,7 +1240,7 @@ fn for_loop_unsafe_items_ask() {
 #[test]
 fn opaque_arg_with_no_constraints_allows() {
     // echo with allow rule and no arg constraints → Allow
-    let env = env_with(&[("safe_opaque", VarState::Safe(None))]);
+    let env = env_with(&[("safe_opaque", VarState::Opaque)]);
     let config = config_with_rules(vec![allow_rule("echo")]);
     let result = evaluate_with_env("echo $safe_opaque", &config, &env);
     assert_eq!(result.decision, Decision::Allow);
@@ -1261,14 +1249,13 @@ fn opaque_arg_with_no_constraints_allows() {
 #[test]
 fn opaque_first_positional_no_match() {
     // git $safe_opaque with (positional "push" *) → does not match
-    let env = env_with(&[("safe_opaque", VarState::Safe(None))]);
+    let env = env_with(&[("safe_opaque", VarState::Opaque)]);
     let rule = Rule {
         command: CommandMatcher::Exact("git".into()),
-        matcher: Some(ArgMatcher::Positional(vec![
+        body: RuleBody::Effect { matcher: Some(ArgMatcher::Positional(vec![
             PosExpr::One(Expr::Literal("push".into())),
             PosExpr::One(Expr::Wildcard),
-        ])),
-        effect: Some(Effect { decision: Decision::Allow, reason: None }),
+        ])), effect: Effect { decision: Decision::Allow, reason: None } },
         checks: vec![],
         source_span: test_span(),
     };
@@ -1280,14 +1267,13 @@ fn opaque_first_positional_no_match() {
 #[test]
 fn opaque_second_positional_wildcard_matches() {
     // git push $safe_opaque with (positional "push" *) → Allow
-    let env = env_with(&[("safe_opaque", VarState::Safe(None))]);
+    let env = env_with(&[("safe_opaque", VarState::Opaque)]);
     let rule = Rule {
         command: CommandMatcher::Exact("git".into()),
-        matcher: Some(ArgMatcher::Positional(vec![
+        body: RuleBody::Effect { matcher: Some(ArgMatcher::Positional(vec![
             PosExpr::One(Expr::Literal("push".into())),
             PosExpr::One(Expr::Wildcard),
-        ])),
-        effect: Some(Effect { decision: Decision::Allow, reason: None }),
+        ])), effect: Effect { decision: Decision::Allow, reason: None } },
         checks: vec![],
         source_span: test_span(),
     };
@@ -1299,14 +1285,13 @@ fn opaque_second_positional_wildcard_matches() {
 #[test]
 fn opaque_second_positional_literal_no_match() {
     // git push $safe_opaque with (positional "push" "origin") → Ask
-    let env = env_with(&[("safe_opaque", VarState::Safe(None))]);
+    let env = env_with(&[("safe_opaque", VarState::Opaque)]);
     let rule = Rule {
         command: CommandMatcher::Exact("git".into()),
-        matcher: Some(ArgMatcher::Positional(vec![
+        body: RuleBody::Effect { matcher: Some(ArgMatcher::Positional(vec![
             PosExpr::One(Expr::Literal("push".into())),
             PosExpr::One(Expr::Literal("origin".into())),
-        ])),
-        effect: Some(Effect { decision: Decision::Allow, reason: None }),
+        ])), effect: Effect { decision: Decision::Allow, reason: None } },
         checks: vec![],
         source_span: test_span(),
     };
@@ -1318,11 +1303,10 @@ fn opaque_second_positional_literal_no_match() {
 #[test]
 fn opaque_arg_anywhere_no_match() {
     // cmd $safe_opaque with (anywhere "--force") → opaque doesn't match
-    let env = env_with(&[("safe_opaque", VarState::Safe(None))]);
+    let env = env_with(&[("safe_opaque", VarState::Opaque)]);
     let rule = Rule {
         command: CommandMatcher::Exact("cmd".into()),
-        matcher: Some(ArgMatcher::Anywhere(vec![Expr::Literal("--force".into())])),
-        effect: Some(Effect { decision: Decision::Allow, reason: None }),
+        body: RuleBody::Effect { matcher: Some(ArgMatcher::Anywhere(vec![Expr::Literal("--force".into())])), effect: Effect { decision: Decision::Allow, reason: None } },
         checks: vec![],
         source_span: test_span(),
     };
@@ -1355,19 +1339,15 @@ fn use_before_assignment_asks() {
 fn cond_first_branch_matches() {
     let rule = Rule {
         command: CommandMatcher::Exact("tmux".into()),
-        matcher: Some(ArgMatcher::Cond(vec![
-            CondBranch {
-                matcher: Some(ArgMatcher::Positional(pos(vec![
+        body: RuleBody::Branching(ArgMatcher::Cond(CondArm {
+            branches: vec![CondBranch {
+                matcher: ArgMatcher::Positional(pos(vec![
                     Expr::Literal("source-file".into()),
-                ]))),
+                ])),
                 effect: Effect { decision: Decision::Allow, reason: Some("config reload".into()) },
-            },
-            CondBranch {
-                matcher: None,
-                effect: Effect { decision: Decision::Deny, reason: Some("unknown".into()) },
-            },
-        ])),
-        effect: None,
+            }],
+            fallback: Some(Effect { decision: Decision::Deny, reason: Some("unknown".into()) }),
+        })),
         checks: vec![],
         source_span: test_span(),
     };
@@ -1381,19 +1361,15 @@ fn cond_first_branch_matches() {
 fn cond_fallthrough_to_wildcard() {
     let rule = Rule {
         command: CommandMatcher::Exact("tmux".into()),
-        matcher: Some(ArgMatcher::Cond(vec![
-            CondBranch {
-                matcher: Some(ArgMatcher::Positional(pos(vec![
+        body: RuleBody::Branching(ArgMatcher::Cond(CondArm {
+            branches: vec![CondBranch {
+                matcher: ArgMatcher::Positional(pos(vec![
                     Expr::Literal("source-file".into()),
-                ]))),
+                ])),
                 effect: Effect { decision: Decision::Allow, reason: None },
-            },
-            CondBranch {
-                matcher: None,
-                effect: Effect { decision: Decision::Deny, reason: Some("fallback deny".into()) },
-            },
-        ])),
-        effect: None,
+            }],
+            fallback: Some(Effect { decision: Decision::Deny, reason: Some("fallback deny".into()) }),
+        })),
         checks: vec![],
         source_span: test_span(),
     };
@@ -1407,13 +1383,15 @@ fn cond_fallthrough_to_wildcard() {
 fn cond_no_wildcard_no_match_skips_rule() {
     let rule = Rule {
         command: CommandMatcher::Exact("tmux".into()),
-        matcher: Some(ArgMatcher::Cond(vec![CondBranch {
-            matcher: Some(ArgMatcher::Positional(pos(vec![
-                Expr::Literal("source-file".into()),
-            ]))),
-            effect: Effect { decision: Decision::Allow, reason: None },
-        }])),
-        effect: None,
+        body: RuleBody::Branching(ArgMatcher::Cond(CondArm {
+            branches: vec![CondBranch {
+                matcher: ArgMatcher::Positional(pos(vec![
+                    Expr::Literal("source-file".into()),
+                ])),
+                effect: Effect { decision: Decision::Allow, reason: None },
+            }],
+            fallback: None,
+        })),
         checks: vec![],
         source_span: test_span(),
     };
@@ -1427,19 +1405,15 @@ fn cond_deny_branch_wins_across_rules() {
     let rules = vec![
         Rule {
             command: CommandMatcher::Exact("tmux".into()),
-            matcher: Some(ArgMatcher::Cond(vec![
-                CondBranch {
-                    matcher: Some(ArgMatcher::Positional(pos(vec![
+            body: RuleBody::Branching(ArgMatcher::Cond(CondArm {
+                branches: vec![CondBranch {
+                    matcher: ArgMatcher::Positional(pos(vec![
                         Expr::Literal("source-file".into()),
-                    ]))),
+                    ])),
                     effect: Effect { decision: Decision::Allow, reason: None },
-                },
-                CondBranch {
-                    matcher: None,
-                    effect: Effect { decision: Decision::Deny, reason: Some("blocked".into()) },
-                },
-            ])),
-            effect: None,
+                }],
+                fallback: Some(Effect { decision: Decision::Deny, reason: Some("blocked".into()) }),
+            })),
             checks: vec![],
             source_span: test_span(),
         },
@@ -1783,7 +1757,7 @@ fn eval_literal_with_args() {
 #[test]
 fn opaque_var_as_command_name_asks() {
     // $x where x is safe but opaque → Ask (can't determine what runs)
-    let env = env_with(&[("x", VarState::Safe(None))]);
+    let env = env_with(&[("x", VarState::Opaque)]);
     let config = config_with_rules(vec![allow_rule("ls")]);
     let result = evaluate_with_env("$x", &config, &env);
     assert_eq!(result.decision, Decision::Ask);
@@ -1828,7 +1802,7 @@ fn dot_source_always_asks() {
 #[test]
 fn eval_opaque_var_asks() {
     // eval with opaque arg asks
-    let env = env_with(&[("cmd", VarState::Safe(None))]);
+    let env = env_with(&[("cmd", VarState::Opaque)]);
     let config = config_with_rules(vec![allow_rule("eval"), allow_rule("ls")]);
     let result = evaluate_with_env("eval $cmd", &config, &env);
     assert_eq!(result.decision, Decision::Ask);
@@ -1838,7 +1812,7 @@ fn eval_opaque_var_asks() {
 
 #[test]
 fn sh_dash_c_opaque_asks() {
-    let env = env_with(&[("cmd", VarState::Safe(None))]);
+    let env = env_with(&[("cmd", VarState::Opaque)]);
     let config = config_with_rules(vec![allow_rule("sh")]);
     let result = evaluate_with_env("sh -c $cmd", &config, &env);
     assert_eq!(result.decision, Decision::Ask);
@@ -1916,7 +1890,7 @@ fn arithmetic_pure_numeric_allows() {
 #[test]
 fn arithmetic_safe_var_allows() {
     let config = config_with_rules(vec![allow_rule("echo")]);
-    let env = env_with(&[("x", VarState::Safe(Some("5".into())))]);
+    let env = env_with(&[("x", VarState::Known("5".into()))]);
     let result = evaluate_with_env("x=5; echo $((x + 1))", &config, &env);
     assert_eq!(result.decision, Decision::Allow);
 }
@@ -1932,7 +1906,7 @@ fn arithmetic_unknown_var_asks() {
 #[test]
 fn arithmetic_safe_var_complex_allows() {
     let config = config_with_rules(vec![allow_rule("echo")]);
-    let env = env_with(&[("x", VarState::Safe(Some("5".into())))]);
+    let env = env_with(&[("x", VarState::Known("5".into()))]);
     let result = evaluate_with_env("x=5; echo $((x * 2 + 1))", &config, &env);
     assert_eq!(result.decision, Decision::Allow);
 }
@@ -1940,7 +1914,7 @@ fn arithmetic_safe_var_complex_allows() {
 #[test]
 fn arithmetic_dollar_var_safe() {
     let config = config_with_rules(vec![allow_rule("echo")]);
-    let env = env_with(&[("y", VarState::Safe(Some("3".into())))]);
+    let env = env_with(&[("y", VarState::Known("3".into()))]);
     let result = evaluate_with_env("echo $(($y + 1))", &config, &env);
     assert_eq!(result.decision, Decision::Allow);
 }
@@ -1948,7 +1922,7 @@ fn arithmetic_dollar_var_safe() {
 #[test]
 fn arithmetic_dollar_brace_var_safe() {
     let config = config_with_rules(vec![allow_rule("echo")]);
-    let env = env_with(&[("z", VarState::Safe(Some("7".into())))]);
+    let env = env_with(&[("z", VarState::Known("7".into()))]);
     let result = evaluate_with_env("echo $((${z} + 1))", &config, &env);
     assert_eq!(result.decision, Decision::Allow);
 }
@@ -1963,7 +1937,7 @@ fn arith_safe_pure_numbers() {
 
 #[test]
 fn arith_safe_known_var() {
-    let env = env_with(&[("x", VarState::Safe(Some("5".into())))]);
+    let env = env_with(&[("x", VarState::Known("5".into()))]);
     assert!(is_arithmetic_safe("x + 1", &env));
 }
 
@@ -1975,13 +1949,13 @@ fn arith_unsafe_unknown_var() {
 
 #[test]
 fn arith_safe_dollar_var() {
-    let env = env_with(&[("y", VarState::Safe(None))]);
+    let env = env_with(&[("y", VarState::Opaque)]);
     assert!(is_arithmetic_safe("$y + 1", &env));
 }
 
 #[test]
 fn arith_safe_dollar_brace_var() {
-    let env = env_with(&[("z", VarState::Safe(None))]);
+    let env = env_with(&[("z", VarState::Opaque)]);
     assert!(is_arithmetic_safe("${z} * 2", &env));
 }
 
