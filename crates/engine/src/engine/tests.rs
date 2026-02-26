@@ -6,9 +6,9 @@ use may_i_core::{
     Wrapper, WrapperStep,
 };
 
-/// Helper to wrap Expr values in PosExpr::One for tests.
+/// Helper to wrap Expr values in PosExpr::one for tests.
 fn pos(exprs: Vec<Expr>) -> Vec<PosExpr> {
-    exprs.into_iter().map(PosExpr::One).collect()
+    exprs.into_iter().map(PosExpr::one).collect()
 }
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -1253,8 +1253,8 @@ fn opaque_first_positional_no_match() {
     let rule = Rule {
         command: CommandMatcher::Exact("git".into()),
         body: RuleBody::Effect { matcher: Some(ArgMatcher::Positional(vec![
-            PosExpr::One(Expr::Literal("push".into())),
-            PosExpr::One(Expr::Wildcard),
+            PosExpr::one(Expr::Literal("push".into())),
+            PosExpr::one(Expr::Wildcard),
         ])), effect: Effect { decision: Decision::Allow, reason: None } },
         checks: vec![],
         source_span: test_span(),
@@ -1271,8 +1271,8 @@ fn opaque_second_positional_wildcard_matches() {
     let rule = Rule {
         command: CommandMatcher::Exact("git".into()),
         body: RuleBody::Effect { matcher: Some(ArgMatcher::Positional(vec![
-            PosExpr::One(Expr::Literal("push".into())),
-            PosExpr::One(Expr::Wildcard),
+            PosExpr::one(Expr::Literal("push".into())),
+            PosExpr::one(Expr::Wildcard),
         ])), effect: Effect { decision: Decision::Allow, reason: None } },
         checks: vec![],
         source_span: test_span(),
@@ -1289,8 +1289,8 @@ fn opaque_second_positional_literal_no_match() {
     let rule = Rule {
         command: CommandMatcher::Exact("git".into()),
         body: RuleBody::Effect { matcher: Some(ArgMatcher::Positional(vec![
-            PosExpr::One(Expr::Literal("push".into())),
-            PosExpr::One(Expr::Literal("origin".into())),
+            PosExpr::one(Expr::Literal("push".into())),
+            PosExpr::one(Expr::Literal("origin".into())),
         ])), effect: Effect { decision: Decision::Allow, reason: None } },
         checks: vec![],
         source_span: test_span(),

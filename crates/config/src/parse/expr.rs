@@ -1,21 +1,24 @@
 // Expression-level parsing: Expr, PosExpr, and their conditional sugar forms.
 
 use may_i_sexpr::{RawError, Span, Sexpr};
-use may_i_core::{Expr, ExprBranch, PosExpr};
+use may_i_core::{Expr, ExprBranch, PosExpr, Quantifier};
 
 pub(super) fn parse_pos_expr(sexpr: &Sexpr) -> Result<PosExpr, RawError> {
     if let Sexpr::List(list, _) = sexpr
         && list.len() == 2
         && let Some(tag) = list[0].as_atom()
     {
-        match tag {
-            "?" => return Ok(PosExpr::Optional(parse_expr(&list[1])?)),
-            "+" => return Ok(PosExpr::OneOrMore(parse_expr(&list[1])?)),
-            "*" => return Ok(PosExpr::ZeroOrMore(parse_expr(&list[1])?)),
-            _ => {}
+        let quantifier = match tag {
+            "?" => Some(Quantifier::Optional),
+            "+" => Some(Quantifier::OneOrMore),
+            "*" => Some(Quantifier::ZeroOrMore),
+            _ => None,
+        };
+        if let Some(q) = quantifier {
+            return Ok(PosExpr { quantifier: q, expr: parse_expr(&list[1])? });
         }
     }
-    Ok(PosExpr::One(parse_expr(sexpr)?))
+    Ok(PosExpr { quantifier: Quantifier::One, expr: parse_expr(sexpr)? })
 }
 
 pub(super) fn parse_expr(sexpr: &Sexpr) -> Result<Expr, RawError> {

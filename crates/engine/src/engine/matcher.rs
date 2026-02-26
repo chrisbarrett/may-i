@@ -100,11 +100,13 @@ pub(in crate::engine) fn expr_to_doc(e: &Expr) -> Doc {
 
 /// Build a Doc tree from a PosExpr.
 pub(in crate::engine) fn pos_expr_to_doc(pe: &PosExpr) -> Doc {
-    match pe {
-        PosExpr::One(e) => expr_to_doc(e),
-        PosExpr::Optional(e) => Doc::list(vec![Doc::atom("?"), expr_to_doc(e)]),
-        PosExpr::OneOrMore(e) => Doc::list(vec![Doc::atom("+"), expr_to_doc(e)]),
-        PosExpr::ZeroOrMore(e) => Doc::list(vec![Doc::atom("*"), expr_to_doc(e)]),
+    use may_i_core::Quantifier;
+    let inner = expr_to_doc(&pe.expr);
+    match pe.quantifier {
+        Quantifier::One => inner,
+        Quantifier::Optional => Doc::list(vec![Doc::atom("?"), inner]),
+        Quantifier::OneOrMore => Doc::list(vec![Doc::atom("+"), inner]),
+        Quantifier::ZeroOrMore => Doc::list(vec![Doc::atom("*"), inner]),
     }
 }
 
@@ -361,28 +363,33 @@ fn match_positional(
     let mut first_effect: Option<Effect> = None;
 
     for pexpr in patterns {
-        match pexpr {
-            PosExpr::One(e) => {
-                match positional.get(pos) {
-                    Some(arg) => {
-                        let outcome = match_expr_arg(e, arg, emit);
-                        match outcome {
-                            MatchOutcome::NoMatch => return MatchOutcome::NoMatch,
-                            MatchOutcome::Matched(eff) if first_effect.is_none() => {
-                                first_effect = Some(eff);
-                            }
-                            _ => {}
-                        }
-                        pos += 1;
-                    }
-                    None => {
-                        emit(MatchEvent::Missing { pexpr });
-                        return MatchOutcome::NoMatch;
-                    }
+        let e = &pexpr.expr;
+
+        if pexpr.quantifier.is_repeating() {
+            // Greedy: consume as many matching args as possible
+            let start = pos;
+            while let Some(arg) = positional.get(pos) {
+                if !expr_matches_resolved(e, arg) {
+                    break;
                 }
+                if first_effect.is_none()
+                    && let ResolvedArg::Literal(s) = arg
+                    && let Some(eff) = e.find_effect(s)
+                {
+                    first_effect = Some(eff.clone());
+                }
+                pos += 1;
             }
-            PosExpr::Optional(e) => {
-                if let Some(arg) = positional.get(pos) {
+            let count = pos - start;
+            if count < pexpr.quantifier.min() {
+                emit(MatchEvent::Quantifier { pexpr, count, matched: false });
+                return MatchOutcome::NoMatch;
+            }
+            emit(MatchEvent::Quantifier { pexpr, count, matched: true });
+        } else {
+            // Single: match exactly one arg (One) or optionally one (Optional)
+            match positional.get(pos) {
+                Some(arg) => {
                     let outcome = match_expr_arg(e, arg, emit);
                     if outcome.is_match() {
                         if let MatchOutcome::Matched(eff) = outcome
@@ -391,56 +398,16 @@ fn match_positional(
                             first_effect = Some(eff);
                         }
                         pos += 1;
-                    }
-                }
-            }
-            PosExpr::OneOrMore(e) => {
-                // Must match at least one
-                match positional.get(pos) {
-                    Some(arg) => {
-                        if !expr_matches_resolved(e, arg) {
-                            emit(MatchEvent::Quantifier { pexpr, count: 0, matched: false });
-                            return MatchOutcome::NoMatch;
-                        }
-                    }
-                    None => {
-                        emit(MatchEvent::Quantifier { pexpr, count: 0, matched: false });
+                    } else if pexpr.quantifier.min() > 0 {
                         return MatchOutcome::NoMatch;
                     }
                 }
-                // Consume as many as possible, checking for effects
-                let start = pos;
-                while let Some(arg) = positional.get(pos) {
-                    if !expr_matches_resolved(e, arg) {
-                        break;
+                None => {
+                    if pexpr.quantifier.min() > 0 {
+                        emit(MatchEvent::Missing { pexpr });
+                        return MatchOutcome::NoMatch;
                     }
-                    if first_effect.is_none()
-                        && let ResolvedArg::Literal(s) = arg
-                        && let Some(eff) = e.find_effect(s)
-                    {
-                        first_effect = Some(eff.clone());
-                    }
-                    pos += 1;
                 }
-                let count = pos - start;
-                emit(MatchEvent::Quantifier { pexpr, count, matched: true });
-            }
-            PosExpr::ZeroOrMore(e) => {
-                let start = pos;
-                while let Some(arg) = positional.get(pos) {
-                    if !expr_matches_resolved(e, arg) {
-                        break;
-                    }
-                    if first_effect.is_none()
-                        && let ResolvedArg::Literal(s) = arg
-                        && let Some(eff) = e.find_effect(s)
-                    {
-                        first_effect = Some(eff.clone());
-                    }
-                    pos += 1;
-                }
-                let count = pos - start;
-                emit(MatchEvent::Quantifier { pexpr, count, matched: true });
             }
         }
     }
@@ -466,7 +433,7 @@ pub(in crate::engine) fn matcher_matches(matcher: &ArgMatcher, args: &[ResolvedA
 #[cfg(test)]
 mod tests {
     use super::*;
-    use may_i_core::{CondArm, CondBranch, Decision};
+    use may_i_core::{CondArm, CondBranch, Decision, Quantifier};
 
     fn lit(s: &str) -> ResolvedArg {
         ResolvedArg::Literal(s.into())
@@ -660,8 +627,8 @@ mod tests {
     #[test]
     fn positional_cond_effect_extracted() {
         let matcher = ArgMatcher::Positional(vec![
-            PosExpr::One(Expr::Literal("cmd".into())),
-            PosExpr::One(cond_expr(vec![
+            PosExpr::one(Expr::Literal("cmd".into())),
+            PosExpr::one(cond_expr(vec![
                 (Expr::Literal("safe".into()), allow_effect("safe")),
                 (Expr::Wildcard, deny_effect("bad")),
             ])),
@@ -676,7 +643,7 @@ mod tests {
     #[test]
     fn positional_cond_fallback_effect() {
         let matcher = ArgMatcher::Positional(vec![
-            PosExpr::One(cond_expr(vec![
+            PosExpr::one(cond_expr(vec![
                 (Expr::Literal("a".into()), allow_effect("a")),
                 (Expr::Wildcard, deny_effect("fallback")),
             ])),
@@ -690,7 +657,7 @@ mod tests {
     #[test]
     fn exact_positional_cond_effect() {
         let matcher = ArgMatcher::ExactPositional(vec![
-            PosExpr::One(cond_expr(vec![
+            PosExpr::one(cond_expr(vec![
                 (Expr::Wildcard, allow_effect("any")),
             ])),
         ]);
@@ -703,7 +670,7 @@ mod tests {
     #[test]
     fn exact_positional_rejects_extra_despite_cond() {
         let matcher = ArgMatcher::ExactPositional(vec![
-            PosExpr::One(cond_expr(vec![
+            PosExpr::one(cond_expr(vec![
                 (Expr::Wildcard, allow_effect("any")),
             ])),
         ]);
@@ -716,9 +683,9 @@ mod tests {
     #[test]
     fn optional_cond_effect_when_matched() {
         let matcher = ArgMatcher::Positional(vec![
-            PosExpr::Optional(cond_expr(vec![
+            PosExpr { quantifier: Quantifier::Optional, expr: cond_expr(vec![
                 (Expr::Literal("hit".into()), deny_effect("hit")),
-            ])),
+            ]) },
         ]);
         match match_args(&matcher, &[lit("hit")], &mut |_| {}) {
             MatchOutcome::Matched(eff) => assert_eq!(eff.decision, Decision::Deny),
@@ -729,9 +696,9 @@ mod tests {
     #[test]
     fn optional_no_arg_no_effect() {
         let matcher = ArgMatcher::Positional(vec![
-            PosExpr::Optional(cond_expr(vec![
+            PosExpr { quantifier: Quantifier::Optional, expr: cond_expr(vec![
                 (Expr::Literal("hit".into()), deny_effect("hit")),
-            ])),
+            ]) },
         ]);
         // No args — optional is skipped, no effect
         match match_args(&matcher, &[], &mut |_| {}) {
@@ -743,9 +710,9 @@ mod tests {
     #[test]
     fn one_or_more_cond_effect() {
         let matcher = ArgMatcher::Positional(vec![
-            PosExpr::OneOrMore(cond_expr(vec![
+            PosExpr { quantifier: Quantifier::OneOrMore, expr: cond_expr(vec![
                 (Expr::Wildcard, allow_effect("any")),
-            ])),
+            ]) },
         ]);
         match match_args(&matcher, &[lit("a")], &mut |_| {}) {
             MatchOutcome::Matched(eff) => assert_eq!(eff.decision, Decision::Allow),
@@ -756,7 +723,7 @@ mod tests {
     #[test]
     fn one_or_more_no_args_fails() {
         let matcher = ArgMatcher::Positional(vec![
-            PosExpr::OneOrMore(Expr::Wildcard),
+            PosExpr { quantifier: Quantifier::OneOrMore, expr: Expr::Wildcard },
         ]);
         assert!(!match_args(&matcher, &[], &mut |_| {}).is_match());
     }
@@ -764,9 +731,9 @@ mod tests {
     #[test]
     fn zero_or_more_cond_effect() {
         let matcher = ArgMatcher::Positional(vec![
-            PosExpr::ZeroOrMore(cond_expr(vec![
+            PosExpr { quantifier: Quantifier::ZeroOrMore, expr: cond_expr(vec![
                 (Expr::Literal("match".into()), deny_effect("matched")),
-            ])),
+            ]) },
         ]);
         match match_args(&matcher, &[lit("match")], &mut |_| {}) {
             MatchOutcome::Matched(eff) => assert_eq!(eff.decision, Decision::Deny),
@@ -777,9 +744,9 @@ mod tests {
     #[test]
     fn zero_or_more_no_args_no_effect() {
         let matcher = ArgMatcher::Positional(vec![
-            PosExpr::ZeroOrMore(cond_expr(vec![
+            PosExpr { quantifier: Quantifier::ZeroOrMore, expr: cond_expr(vec![
                 (Expr::Wildcard, allow_effect("any")),
-            ])),
+            ]) },
         ]);
         match match_args(&matcher, &[], &mut |_| {}) {
             MatchOutcome::MatchedNoEffect => {}
@@ -790,7 +757,7 @@ mod tests {
     #[test]
     fn positional_skips_flags_for_effect() {
         let matcher = ArgMatcher::Positional(vec![
-            PosExpr::One(cond_expr(vec![
+            PosExpr::one(cond_expr(vec![
                 (Expr::Literal("val".into()), allow_effect("got it")),
             ])),
         ]);
@@ -808,8 +775,8 @@ mod tests {
     fn and_propagates_first_effect() {
         let cond = cond_expr(vec![(Expr::Wildcard, allow_effect("from cond"))]);
         let matcher = ArgMatcher::And(vec![
-            ArgMatcher::Positional(vec![PosExpr::One(cond)]),
-            ArgMatcher::Positional(vec![PosExpr::One(Expr::Wildcard)]),
+            ArgMatcher::Positional(vec![PosExpr::one(cond)]),
+            ArgMatcher::Positional(vec![PosExpr::one(Expr::Wildcard)]),
         ]);
         match match_args(&matcher, &[lit("x")], &mut |_| {}) {
             MatchOutcome::Matched(eff) => assert_eq!(eff.reason.as_deref(), Some("from cond")),
@@ -820,8 +787,8 @@ mod tests {
     #[test]
     fn and_short_circuits_on_no_match() {
         let matcher = ArgMatcher::And(vec![
-            ArgMatcher::Positional(vec![PosExpr::One(Expr::Literal("a".into()))]),
-            ArgMatcher::Positional(vec![PosExpr::One(Expr::Literal("b".into()))]),
+            ArgMatcher::Positional(vec![PosExpr::one(Expr::Literal("a".into()))]),
+            ArgMatcher::Positional(vec![PosExpr::one(Expr::Literal("b".into()))]),
         ]);
         assert!(!match_args(&matcher, &[lit("x")], &mut |_| {}).is_match());
     }
@@ -830,8 +797,8 @@ mod tests {
     fn or_returns_first_match_with_effect() {
         let cond = cond_expr(vec![(Expr::Wildcard, deny_effect("from second"))]);
         let matcher = ArgMatcher::Or(vec![
-            ArgMatcher::Positional(vec![PosExpr::One(Expr::Literal("nope".into()))]),
-            ArgMatcher::Positional(vec![PosExpr::One(cond)]),
+            ArgMatcher::Positional(vec![PosExpr::one(Expr::Literal("nope".into()))]),
+            ArgMatcher::Positional(vec![PosExpr::one(cond)]),
         ]);
         match match_args(&matcher, &[lit("x")], &mut |_| {}) {
             MatchOutcome::Matched(eff) => assert_eq!(eff.decision, Decision::Deny),
@@ -842,8 +809,8 @@ mod tests {
     #[test]
     fn or_no_match() {
         let matcher = ArgMatcher::Or(vec![
-            ArgMatcher::Positional(vec![PosExpr::One(Expr::Literal("a".into()))]),
-            ArgMatcher::Positional(vec![PosExpr::One(Expr::Literal("b".into()))]),
+            ArgMatcher::Positional(vec![PosExpr::one(Expr::Literal("a".into()))]),
+            ArgMatcher::Positional(vec![PosExpr::one(Expr::Literal("b".into()))]),
         ]);
         assert!(!match_args(&matcher, &[lit("z")], &mut |_| {}).is_match());
     }
@@ -861,7 +828,7 @@ mod tests {
     fn not_does_not_propagate_effects() {
         let cond = cond_expr(vec![(Expr::Wildcard, allow_effect("should not appear"))]);
         let matcher = ArgMatcher::Not(Box::new(
-            ArgMatcher::Positional(vec![PosExpr::One(cond)]),
+            ArgMatcher::Positional(vec![PosExpr::one(cond)]),
         ));
         // Inner matches (with effect), so Not inverts → NoMatch
         assert!(!match_args(&matcher, &[lit("x")], &mut |_| {}).is_match());
@@ -873,7 +840,7 @@ mod tests {
     fn matcher_cond_first_branch() {
         let matcher = ArgMatcher::Cond(CondArm {
             branches: vec![CondBranch {
-                matcher: ArgMatcher::Positional(vec![PosExpr::One(Expr::Literal("a".into()))]),
+                matcher: ArgMatcher::Positional(vec![PosExpr::one(Expr::Literal("a".into()))]),
                 effect: allow_effect("branch a"),
             }],
             fallback: Some(deny_effect("else")),
@@ -888,7 +855,7 @@ mod tests {
     fn matcher_cond_else_branch() {
         let matcher = ArgMatcher::Cond(CondArm {
             branches: vec![CondBranch {
-                matcher: ArgMatcher::Positional(vec![PosExpr::One(Expr::Literal("a".into()))]),
+                matcher: ArgMatcher::Positional(vec![PosExpr::one(Expr::Literal("a".into()))]),
                 effect: allow_effect("branch a"),
             }],
             fallback: Some(deny_effect("else")),
@@ -906,7 +873,7 @@ mod tests {
     fn matcher_cond_no_match_no_else() {
         let matcher = ArgMatcher::Cond(CondArm {
             branches: vec![CondBranch {
-                matcher: ArgMatcher::Positional(vec![PosExpr::One(Expr::Literal("a".into()))]),
+                matcher: ArgMatcher::Positional(vec![PosExpr::one(Expr::Literal("a".into()))]),
                 effect: allow_effect("a"),
             }],
             fallback: None,
@@ -954,7 +921,7 @@ mod tests {
     #[test]
     fn events_emitted_for_positional_match() {
         let matcher = ArgMatcher::Positional(vec![
-            PosExpr::One(Expr::Literal("a".into())),
+            PosExpr::one(Expr::Literal("a".into())),
         ]);
         let (outcome, events) = match_with_events(&matcher, &[lit("a")]);
         assert!(outcome.is_match());
@@ -966,7 +933,7 @@ mod tests {
     #[test]
     fn events_emitted_for_missing_arg() {
         let matcher = ArgMatcher::Positional(vec![
-            PosExpr::One(Expr::Literal("a".into())),
+            PosExpr::one(Expr::Literal("a".into())),
         ]);
         let (outcome, events) = match_with_events(&matcher, &[]);
         assert!(!outcome.is_match());
@@ -977,7 +944,7 @@ mod tests {
     #[test]
     fn events_emitted_for_optional() {
         let matcher = ArgMatcher::Positional(vec![
-            PosExpr::Optional(Expr::Literal("opt".into())),
+            PosExpr { quantifier: Quantifier::Optional, expr: Expr::Literal("opt".into()) },
         ]);
         let (_, events) = match_with_events(&matcher, &[lit("opt")]);
         assert!(events.iter().any(|e| e.contains("ExprVsArg")));
@@ -989,7 +956,7 @@ mod tests {
             (Expr::Literal("a".into()), allow_effect("a")),
             (Expr::Wildcard, deny_effect("else")),
         ]);
-        let matcher = ArgMatcher::Positional(vec![PosExpr::One(cond)]);
+        let matcher = ArgMatcher::Positional(vec![PosExpr::one(cond)]);
         let (_, events) = match_with_events(&matcher, &[lit("a")]);
         assert!(events.iter().any(|e| e.contains("ExprCondBranch")));
     }
@@ -998,7 +965,7 @@ mod tests {
     fn events_emitted_for_matcher_cond() {
         let matcher = ArgMatcher::Cond(CondArm {
             branches: vec![CondBranch {
-                matcher: ArgMatcher::Positional(vec![PosExpr::One(Expr::Literal("a".into()))]),
+                matcher: ArgMatcher::Positional(vec![PosExpr::one(Expr::Literal("a".into()))]),
                 effect: allow_effect("a"),
             }],
             fallback: Some(deny_effect("else")),
@@ -1021,7 +988,7 @@ mod tests {
     #[test]
     fn events_emitted_for_exact_remainder() {
         let matcher = ArgMatcher::ExactPositional(vec![
-            PosExpr::One(Expr::Literal("a".into())),
+            PosExpr::one(Expr::Literal("a".into())),
         ]);
         let (_, events) = match_with_events(&matcher, &[lit("a"), lit("extra")]);
         assert!(events.iter().any(|e| e.contains("ExactRemainder")));
@@ -1030,7 +997,7 @@ mod tests {
     #[test]
     fn events_emitted_for_quantifier() {
         let matcher = ArgMatcher::Positional(vec![
-            PosExpr::ZeroOrMore(Expr::Literal("x".into())),
+            PosExpr { quantifier: Quantifier::ZeroOrMore, expr: Expr::Literal("x".into()) },
         ]);
         let (_, events) = match_with_events(&matcher, &[lit("x"), lit("x")]);
         assert!(events.iter().any(|e| e.contains("Quantifier")));
@@ -1044,7 +1011,7 @@ mod tests {
             (Expr::Literal("safe".into()), allow_effect("safe")),
             (Expr::Wildcard, deny_effect("fallback")),
         ]);
-        let matcher = ArgMatcher::Positional(vec![PosExpr::One(cond)]);
+        let matcher = ArgMatcher::Positional(vec![PosExpr::one(cond)]);
 
         let outcome = match_args(&matcher, &[lit("safe")], &mut |_| {});
         match outcome {

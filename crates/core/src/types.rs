@@ -177,45 +177,65 @@ pub struct CondArm {
     pub fallback: Option<Effect>,
 }
 
-/// A positional expression with optional quantifier.
-#[derive(Clone)]
-pub enum PosExpr {
+/// How many arguments a positional expression consumes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Quantifier {
     /// Match exactly one arg.
-    One(Expr),
+    One,
     /// Match zero or one arg: `(? e)`
-    Optional(Expr),
+    Optional,
     /// Match one or more args: `(+ e)`
-    OneOrMore(Expr),
+    OneOrMore,
     /// Match zero or more args: `(* e)`
-    ZeroOrMore(Expr),
+    ZeroOrMore,
+}
+
+impl Quantifier {
+    /// Minimum number of args this quantifier requires.
+    pub fn min(self) -> usize {
+        match self {
+            Quantifier::One | Quantifier::OneOrMore => 1,
+            Quantifier::Optional | Quantifier::ZeroOrMore => 0,
+        }
+    }
+
+    /// Whether this quantifier consumes multiple args.
+    pub fn is_repeating(self) -> bool {
+        matches!(self, Quantifier::OneOrMore | Quantifier::ZeroOrMore)
+    }
+}
+
+/// A positional expression with a quantifier.
+#[derive(Clone)]
+pub struct PosExpr {
+    pub quantifier: Quantifier,
+    pub expr: Expr,
 }
 
 impl PosExpr {
-    /// Access the inner expression.
-    pub fn expr(&self) -> &Expr {
-        match self {
-            PosExpr::One(e) | PosExpr::Optional(e) | PosExpr::OneOrMore(e) | PosExpr::ZeroOrMore(e) => e,
-        }
+    /// Shorthand: match exactly one arg.
+    pub fn one(expr: Expr) -> Self {
+        Self { quantifier: Quantifier::One, expr }
     }
 
     /// Delegate to the inner expression's `is_match`.
     pub fn is_match(&self, text: &str) -> bool {
-        self.expr().is_match(text)
+        self.expr.is_match(text)
     }
 
     /// Delegate to the inner expression's `is_wildcard`.
     pub fn is_wildcard(&self) -> bool {
-        self.expr().is_wildcard()
+        self.expr.is_wildcard()
     }
 }
 
 impl std::fmt::Debug for PosExpr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PosExpr::One(e) => write!(f, "{:?}", e),
-            PosExpr::Optional(e) => f.debug_tuple("Optional").field(e).finish(),
-            PosExpr::OneOrMore(e) => f.debug_tuple("OneOrMore").field(e).finish(),
-            PosExpr::ZeroOrMore(e) => f.debug_tuple("ZeroOrMore").field(e).finish(),
+        match self.quantifier {
+            Quantifier::One => write!(f, "{:?}", self.expr),
+            Quantifier::Optional => f.debug_tuple("Optional").field(&self.expr).finish(),
+            Quantifier::OneOrMore => f.debug_tuple("OneOrMore").field(&self.expr).finish(),
+            Quantifier::ZeroOrMore => f.debug_tuple("ZeroOrMore").field(&self.expr).finish(),
         }
     }
 }
@@ -244,7 +264,7 @@ impl ArgMatcher {
     pub fn has_effect(&self) -> bool {
         match self {
             ArgMatcher::Positional(pexprs) | ArgMatcher::ExactPositional(pexprs) => {
-                pexprs.iter().any(|pe| has_expr_effect(pe.expr()))
+                pexprs.iter().any(|pe| has_expr_effect(&pe.expr))
             }
             ArgMatcher::Anywhere(exprs) => exprs.iter().any(has_expr_effect),
             ArgMatcher::And(matchers) | ArgMatcher::Or(matchers) => {
@@ -592,27 +612,27 @@ mod tests {
 
     #[test]
     fn pos_expr_debug_one() {
-        let pe = PosExpr::One(Expr::Literal("x".into()));
+        let pe = PosExpr::one(Expr::Literal("x".into()));
         assert_eq!(format!("{:?}", pe), r#"Literal("x")"#);
     }
 
     #[test]
     fn pos_expr_debug_optional() {
-        let pe = PosExpr::Optional(Expr::Wildcard);
+        let pe = PosExpr { quantifier: Quantifier::Optional, expr: Expr::Wildcard };
         let dbg = format!("{:?}", pe);
         assert!(dbg.starts_with("Optional("));
     }
 
     #[test]
     fn pos_expr_debug_one_or_more() {
-        let pe = PosExpr::OneOrMore(Expr::Wildcard);
+        let pe = PosExpr { quantifier: Quantifier::OneOrMore, expr: Expr::Wildcard };
         let dbg = format!("{:?}", pe);
         assert!(dbg.starts_with("OneOrMore("));
     }
 
     #[test]
     fn pos_expr_debug_zero_or_more() {
-        let pe = PosExpr::ZeroOrMore(Expr::Wildcard);
+        let pe = PosExpr { quantifier: Quantifier::ZeroOrMore, expr: Expr::Wildcard };
         let dbg = format!("{:?}", pe);
         assert!(dbg.starts_with("ZeroOrMore("));
     }
@@ -621,15 +641,15 @@ mod tests {
 
     #[test]
     fn pos_expr_is_match_delegates() {
-        let pe = PosExpr::Optional(Expr::Literal("x".into()));
+        let pe = PosExpr { quantifier: Quantifier::Optional, expr: Expr::Literal("x".into()) };
         assert!(pe.is_match("x"));
         assert!(!pe.is_match("y"));
     }
 
     #[test]
     fn pos_expr_is_wildcard_delegates() {
-        assert!(PosExpr::ZeroOrMore(Expr::Wildcard).is_wildcard());
-        assert!(!PosExpr::One(Expr::Literal("x".into())).is_wildcard());
+        assert!(PosExpr { quantifier: Quantifier::ZeroOrMore, expr: Expr::Wildcard }.is_wildcard());
+        assert!(!PosExpr::one(Expr::Literal("x".into())).is_wildcard());
     }
 
     // --- has_effect for PosExpr paths ---
@@ -640,7 +660,7 @@ mod tests {
             test: Expr::Wildcard,
             effect: Effect { decision: Decision::Allow, reason: None },
         }]);
-        let m = ArgMatcher::Positional(vec![PosExpr::One(cond_expr)]);
+        let m = ArgMatcher::Positional(vec![PosExpr::one(cond_expr)]);
         assert!(m.has_effect());
     }
 
@@ -650,13 +670,13 @@ mod tests {
             test: Expr::Wildcard,
             effect: Effect { decision: Decision::Allow, reason: None },
         }]);
-        let m = ArgMatcher::ExactPositional(vec![PosExpr::Optional(cond_expr)]);
+        let m = ArgMatcher::ExactPositional(vec![PosExpr { quantifier: Quantifier::Optional, expr: cond_expr }]);
         assert!(m.has_effect());
     }
 
     #[test]
     fn has_effect_positional_no_cond() {
-        let m = ArgMatcher::Positional(vec![PosExpr::One(Expr::Wildcard)]);
+        let m = ArgMatcher::Positional(vec![PosExpr::one(Expr::Wildcard)]);
         assert!(!m.has_effect());
     }
 

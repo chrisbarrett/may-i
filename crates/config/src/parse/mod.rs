@@ -10,6 +10,8 @@ use may_i_core::{
     ArgMatcher, Check, CommandMatcher, CondArm, CondBranch, Config, Decision, Effect, Expr,
     PosExpr, Rule, RuleBody, SecurityConfig, SourceInfo, Wrapper, WrapperStep,
 };
+#[cfg(test)]
+use may_i_core::Quantifier;
 
 /// Parse an s-expression config string into Config.
 ///
@@ -1758,7 +1760,7 @@ mod tests {
         .unwrap();
         match get_matcher(&config.rules[0]).unwrap() {
             ArgMatcher::Positional(pexprs) => {
-                assert!(matches!(pexprs[0].expr(), Expr::Cond(branches) if branches.len() == 2));
+                assert!(matches!(&pexprs[0].expr, Expr::Cond(branches) if branches.len() == 2));
             }
             _ => panic!("expected Positional"),
         }
@@ -1773,7 +1775,7 @@ mod tests {
         .unwrap();
         match get_matcher(&config.rules[0]).unwrap() {
             ArgMatcher::Positional(pexprs) => {
-                assert!(matches!(pexprs[0].expr(), Expr::Cond(branches) if branches.len() == 1));
+                assert!(matches!(&pexprs[0].expr, Expr::Cond(branches) if branches.len() == 1));
             }
             _ => panic!("expected Positional"),
         }
@@ -1788,7 +1790,7 @@ mod tests {
         .unwrap();
         match get_matcher(&config.rules[0]).unwrap() {
             ArgMatcher::Positional(pexprs) => {
-                assert!(matches!(pexprs[0].expr(), Expr::Cond(branches) if branches.len() == 1));
+                assert!(matches!(&pexprs[0].expr, Expr::Cond(branches) if branches.len() == 1));
             }
             _ => panic!("expected Positional"),
         }
@@ -1803,7 +1805,7 @@ mod tests {
         .unwrap();
         match get_matcher(&config.rules[0]).unwrap() {
             ArgMatcher::Positional(pexprs) => {
-                match pexprs[0].expr() {
+                match &pexprs[0].expr {
                     Expr::Cond(branches) => {
                         assert_eq!(branches.len(), 1);
                         assert!(matches!(&branches[0].test, Expr::Not(_)));
@@ -1825,7 +1827,7 @@ mod tests {
         .unwrap();
         match get_matcher(&config.rules[0]).unwrap() {
             ArgMatcher::Positional(pexprs) => {
-                match pexprs[0].expr() {
+                match &pexprs[0].expr {
                     Expr::Cond(branches) => {
                         assert_eq!(branches.len(), 2);
                         assert_eq!(branches[0].effect.decision, Decision::Allow);
@@ -1946,8 +1948,8 @@ mod tests {
         match get_matcher(&config.rules[0]).unwrap() {
             ArgMatcher::Positional(pexprs) => {
                 assert_eq!(pexprs.len(), 2);
-                assert!(matches!(&pexprs[0], PosExpr::One(_)));
-                assert!(matches!(&pexprs[1], PosExpr::Optional(_)));
+                assert!(matches!(&pexprs[0], PosExpr { quantifier: Quantifier::One, .. }));
+                assert!(matches!(&pexprs[1], PosExpr { quantifier: Quantifier::Optional, .. }));
                 assert!(pexprs[1].is_match("pop"));
             }
             _ => panic!("expected Positional"),
@@ -1965,7 +1967,7 @@ mod tests {
         match get_matcher(&config.rules[0]).unwrap() {
             ArgMatcher::Positional(pexprs) => {
                 assert_eq!(pexprs.len(), 1);
-                assert!(matches!(&pexprs[0], PosExpr::OneOrMore(_)));
+                assert!(matches!(&pexprs[0], PosExpr { quantifier: Quantifier::OneOrMore, .. }));
                 assert!(pexprs[0].is_match("file.txt"));
             }
             _ => panic!("expected Positional"),
@@ -1983,7 +1985,7 @@ mod tests {
         match get_matcher(&config.rules[0]).unwrap() {
             ArgMatcher::Positional(pexprs) => {
                 assert_eq!(pexprs.len(), 1);
-                assert!(matches!(&pexprs[0], PosExpr::ZeroOrMore(_)));
+                assert!(matches!(&pexprs[0], PosExpr { quantifier: Quantifier::ZeroOrMore, .. }));
                 assert!(pexprs[0].is_wildcard());
             }
             _ => panic!("expected Positional"),
@@ -2001,9 +2003,9 @@ mod tests {
         match get_matcher(&config.rules[0]).unwrap() {
             ArgMatcher::ExactPositional(pexprs) => {
                 assert_eq!(pexprs.len(), 3);
-                assert!(matches!(&pexprs[0], PosExpr::One(_)));
-                assert!(matches!(&pexprs[1], PosExpr::Optional(_)));
-                assert!(matches!(&pexprs[2], PosExpr::OneOrMore(_)));
+                assert!(matches!(&pexprs[0], PosExpr { quantifier: Quantifier::One, .. }));
+                assert!(matches!(&pexprs[1], PosExpr { quantifier: Quantifier::Optional, .. }));
+                assert!(matches!(&pexprs[2], PosExpr { quantifier: Quantifier::OneOrMore, .. }));
             }
             _ => panic!("expected ExactPositional"),
         }
@@ -2020,7 +2022,7 @@ mod tests {
         match get_matcher(&config.rules[0]).unwrap() {
             ArgMatcher::Positional(pexprs) => {
                 assert_eq!(pexprs.len(), 1);
-                assert!(matches!(&pexprs[0], PosExpr::OneOrMore(_)));
+                assert!(matches!(&pexprs[0], PosExpr { quantifier: Quantifier::OneOrMore, .. }));
                 assert!(pexprs[0].is_match("a"));
                 assert!(pexprs[0].is_match("b"));
                 assert!(!pexprs[0].is_match("d"));
