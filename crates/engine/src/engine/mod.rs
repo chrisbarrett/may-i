@@ -5,6 +5,7 @@
 mod matcher;
 mod visitor;
 mod dynamic_parts;
+mod code_execution;
 use matcher::*;
 use visitor::{CommandVisitor, VisitOutcome, VisitorContext};
 
@@ -430,66 +431,32 @@ impl<'a> AstWalker<'a> {
             return walk;
         }
 
-        // Code-execution position detection
-        if let Some(cmd_name) = resolved.command_name() {
-            // Case D: `source` / `.` — always Ask
-            if cmd_name == "source" || cmd_name == "." {
-                return WalkResult {
-                    result: EvalResult::new(
-                        Decision::Ask,
-                        Some(format!(
-                            "Cannot statically analyse `{cmd_name}`: sourced file contents are unknown"
-                        )),
-                    ),
-                    env: new_env,
+        // Code-execution constructs (source, opaque cmd, eval, bash -c)
+        if let Some(walk) = self.run_visitor(&code_execution::CodeExecutionVisitor, &ctx, &resolved) {
+            return walk;
+        }
+
+        // Function call — inline the function body
+        if let Some(cmd_name) = resolved.command_name()
+            && depth < MAX_EVAL_DEPTH
+            && let Some(body) = new_env.get_fn(cmd_name).cloned()
+        {
+            let mut fn_env = new_env.clone();
+            for (i, arg) in resolved.args().iter().enumerate() {
+                let state = if arg.is_literal() {
+                    VarState::Safe(Some(arg.to_str()))
+                } else if arg.has_opaque_parts() {
+                    VarState::Safe(None)
+                } else {
+                    VarState::Unsafe
                 };
+                fn_env.set(format!("{}", i + 1), state);
             }
-
-            // Case A: opaque variable as command name
-            if resolved.words.first().is_some_and(|w| w.has_opaque_parts()) {
-                return WalkResult {
-                    result: EvalResult::new(
-                        Decision::Ask,
-                        Some("Variable used as command name: cannot determine what runs".into()),
-                    ),
-                    env: new_env,
-                };
-            }
-
-            // Case B: `eval` command
-            if cmd_name == "eval" && depth < MAX_EVAL_DEPTH {
-                return self.walk_eval_command(&resolved, &new_env, depth);
-            }
-
-            // Case C: `bash -c` / `sh -c` / `zsh -c`
-            if matches!(cmd_name, "bash" | "sh" | "zsh")
-                && depth < MAX_EVAL_DEPTH
-                && let Some(result) = self.walk_shell_dash_c(&resolved, &new_env, depth)
-            {
-                return result;
-            }
-
-            // Case E: function call — inline the function body
-            if depth < MAX_EVAL_DEPTH
-                && let Some(body) = new_env.get_fn(cmd_name).cloned()
-            {
-                let mut fn_env = new_env.clone();
-                for (i, arg) in resolved.args().iter().enumerate() {
-                    let state = if arg.is_literal() {
-                        VarState::Safe(Some(arg.to_str()))
-                    } else if arg.has_opaque_parts() {
-                        VarState::Safe(None)
-                    } else {
-                        VarState::Unsafe
-                    };
-                    fn_env.set(format!("{}", i + 1), state);
-                }
-                let fn_result = self.walk_with_depth(&body, &fn_env, depth + 1);
-                return WalkResult {
-                    result: fn_result.result,
-                    env: fn_result.env,
-                };
-            }
+            let fn_result = self.walk_with_depth(&body, &fn_env, depth + 1);
+            return WalkResult {
+                result: fn_result.result,
+                env: fn_result.env,
+            };
         }
 
         // Evaluate the resolved command against rules
@@ -498,95 +465,6 @@ impl<'a> AstWalker<'a> {
             result,
             env: new_env,
         }
-    }
-
-    fn walk_eval_command(
-        &self,
-        resolved: &SimpleCommand,
-        env: &VarEnv,
-        depth: usize,
-    ) -> WalkResult {
-        let args = resolved.args();
-        if args.is_empty() {
-            return WalkResult {
-                result: EvalResult::new(Decision::Allow, None),
-                env: env.clone(),
-            };
-        }
-
-        // Dynamic args are already caught by the caller's dynamic-parts check;
-        // only opaque (safe but unknown) args need handling here.
-        if args.iter().any(|a| a.has_opaque_parts()) {
-            return WalkResult {
-                result: EvalResult::new(
-                    Decision::Ask,
-                    Some("Cannot determine eval'd command: argument value is unknown".into()),
-                ),
-                env: env.clone(),
-            };
-        }
-
-        // All args are literal — concatenate and recursively evaluate
-        let eval_str: String = args.iter().map(|a| a.to_str()).collect::<Vec<_>>().join(" ");
-        let inner_ast = parser::parse(&eval_str);
-        let inner_result = self.walk_with_depth(&inner_ast, env, depth + 1);
-        WalkResult {
-            result: inner_result.result,
-            env: inner_result.env,
-        }
-    }
-
-    fn walk_shell_dash_c(
-        &self,
-        resolved: &SimpleCommand,
-        env: &VarEnv,
-        depth: usize,
-    ) -> Option<WalkResult> {
-        let args = resolved.args();
-
-        let mut found_c = false;
-        let mut cmd_arg = None;
-        for arg in args {
-            let s = arg.to_str();
-            if found_c {
-                cmd_arg = Some(arg);
-                break;
-            }
-            if s == "-c" {
-                found_c = true;
-            }
-        }
-
-        if !found_c {
-            return None;
-        }
-
-        let cmd_arg = cmd_arg?;
-
-        if cmd_arg.has_dynamic_parts() {
-            return None;
-        }
-
-        if cmd_arg.has_opaque_parts() {
-            return Some(WalkResult {
-                result: EvalResult::new(
-                    Decision::Ask,
-                    Some(format!(
-                        "Cannot determine `{} -c` command: argument value is unknown",
-                        resolved.command_name().unwrap_or("sh"),
-                    )),
-                ),
-                env: env.clone(),
-            });
-        }
-
-        let cmd_str = cmd_arg.to_str();
-        let inner_ast = parser::parse(&cmd_str);
-        let inner_result = self.walk_with_depth(&inner_ast, env, depth + 1);
-        Some(WalkResult {
-            result: inner_result.result,
-            env: env.clone(),
-        })
     }
 
     /// Evaluate a resolved simple command against rules (no more variable resolution needed).
