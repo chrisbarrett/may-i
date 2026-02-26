@@ -68,512 +68,689 @@ fn aggregate_results(results: Vec<EvalResult>) -> EvalResult {
     overall.unwrap_or(EvalResult::new(Decision::Allow, None))
 }
 
-/// Evaluate a shell command string against the config.
-pub fn evaluate(input: &str, config: &Config) -> EvalResult {
-    let ast = parser::parse(input);
+// ── AstWalker ──────────────────────────────────────────────────────
 
-    // Seed VarEnv from all process environment variables
-    let env = VarEnv::from_process_env();
-
-    let walk = walk_command(&ast, config, &env);
-    walk.result
+/// Walks a shell AST, threading VarEnv through control flow and evaluating
+/// commands against rules.
+struct AstWalker<'a> {
+    config: &'a Config,
 }
 
-/// Evaluate with a specific VarEnv (for testing).
-#[cfg(test)]
-fn evaluate_with_env(input: &str, config: &Config, env: &VarEnv) -> EvalResult {
-    let ast = parser::parse(input);
-    let walk = walk_command(&ast, config, env);
-    walk.result
-}
+impl<'a> AstWalker<'a> {
+    fn new(config: &'a Config) -> Self {
+        Self { config }
+    }
 
-/// Walk an AST node, threading VarEnv through and evaluating commands.
-fn walk_command(cmd: &Command, config: &Config, env: &VarEnv) -> WalkResult {
-    walk_command_with_depth(cmd, config, env, 0)
-}
+    fn walk(&self, cmd: &Command, env: &VarEnv) -> WalkResult {
+        self.walk_with_depth(cmd, env, 0)
+    }
 
-/// Walk an AST node with a depth counter for recursion limiting.
-fn walk_command_with_depth(cmd: &Command, config: &Config, env: &VarEnv, depth: usize) -> WalkResult {
-    match cmd {
-        Command::Simple(sc) => walk_simple_command(sc, config, env, depth),
+    fn walk_with_depth(&self, cmd: &Command, env: &VarEnv, depth: usize) -> WalkResult {
+        match cmd {
+            Command::Simple(sc) => self.walk_simple_command(sc, env, depth),
 
-        Command::Assignment(a) => {
-            let mut new_env = env.clone();
-            let state = evaluate_assignment_value(&a.value, env, config, depth);
-            new_env.set(a.name.clone(), state);
-            WalkResult {
-                result: EvalResult::new(Decision::Allow, None),
-                env: new_env,
+            Command::Assignment(a) => {
+                let mut new_env = env.clone();
+                let state = self.evaluate_assignment_value(&a.value, env, depth);
+                new_env.set(a.name.clone(), state);
+                WalkResult {
+                    result: EvalResult::new(Decision::Allow, None),
+                    env: new_env,
+                }
             }
-        }
 
-        Command::Sequence(cmds) => {
-            let mut current_env = env.clone();
-            let mut results = Vec::new();
-            for c in cmds {
-                let walk = walk_command_with_depth(c, config, &current_env, depth);
-                if walk.result.decision == Decision::Deny {
+            Command::Sequence(cmds) => {
+                let mut current_env = env.clone();
+                let mut results = Vec::new();
+                for c in cmds {
+                    let walk = self.walk_with_depth(c, &current_env, depth);
+                    if walk.result.decision == Decision::Deny {
+                        return WalkResult {
+                            result: walk.result,
+                            env: walk.env,
+                        };
+                    }
+                    results.push(walk.result);
+                    current_env = walk.env;
+                }
+                WalkResult {
+                    result: aggregate_results(results),
+                    env: current_env,
+                }
+            }
+
+            Command::And(a, b) | Command::Or(a, b) => {
+                let walk_a = self.walk_with_depth(a, env, depth);
+                if walk_a.result.decision == Decision::Deny {
+                    return walk_a;
+                }
+                let walk_b = self.walk_with_depth(b, &walk_a.env, depth);
+                let merged = VarEnv::merge_branches(env, &[walk_a.env, walk_b.env.clone()]);
+                WalkResult {
+                    result: aggregate_results(vec![walk_a.result, walk_b.result]),
+                    env: merged,
+                }
+            }
+
+            Command::Pipeline(cmds) => {
+                let mut results = Vec::new();
+                for c in cmds {
+                    let walk = self.walk_with_depth(c, env, depth);
+                    if walk.result.decision == Decision::Deny {
+                        return WalkResult::with_parent_env(walk.result, env);
+                    }
+                    results.push(walk.result);
+                }
+                WalkResult::with_parent_env(aggregate_results(results), env)
+            }
+
+            Command::If {
+                condition,
+                then_branch,
+                elif_branches,
+                else_branch,
+            } => {
+                let walk_cond = self.walk_with_depth(condition, env, depth);
+                let mut results = vec![walk_cond.result];
+                let env_after_cond = &walk_cond.env;
+
+                let walk_then = self.walk_with_depth(then_branch, env_after_cond, depth);
+                results.push(walk_then.result);
+                let mut branch_envs = vec![walk_then.env];
+
+                for (elif_cond, elif_body) in elif_branches {
+                    let wc = self.walk_with_depth(elif_cond, env_after_cond, depth);
+                    let wb = self.walk_with_depth(elif_body, &wc.env, depth);
+                    results.push(wc.result);
+                    results.push(wb.result);
+                    branch_envs.push(wb.env);
+                }
+
+                if let Some(else_b) = else_branch {
+                    let we = self.walk_with_depth(else_b, env_after_cond, depth);
+                    results.push(we.result);
+                    branch_envs.push(we.env);
+                } else {
+                    branch_envs.push(env_after_cond.clone());
+                }
+
+                let merged = VarEnv::merge_branches(env_after_cond, &branch_envs);
+                WalkResult {
+                    result: aggregate_results(results),
+                    env: merged,
+                }
+            }
+
+            Command::For { var, words, body } => self.walk_for_loop(var, words, body, env, depth),
+
+            Command::While { condition, body } | Command::Until { condition, body } => {
+                let walk_cond = self.walk_with_depth(condition, env, depth);
+                let walk_body = self.walk_with_depth(body, &walk_cond.env, depth);
+                let merged = VarEnv::merge_branches(env, &[env.clone(), walk_body.env]);
+                WalkResult {
+                    result: aggregate_results(vec![walk_cond.result, walk_body.result]),
+                    env: merged,
+                }
+            }
+
+            Command::Subshell(c) => {
+                let walk = self.walk_with_depth(c, env, depth);
+                WalkResult::with_parent_env(walk.result, env)
+            }
+
+            Command::BraceGroup(c) => {
+                self.walk_with_depth(c, env, depth)
+            }
+
+            Command::Background(c) => {
+                let walk = self.walk_with_depth(c, env, depth);
+                WalkResult::with_parent_env(walk.result, env)
+            }
+
+            Command::Case { word, arms, .. } => {
+                let resolved_word = resolve_word_with_var_env(word, env);
+                if resolved_word.has_dynamic_parts() {
                     return WalkResult {
-                        result: walk.result,
-                        env: walk.env,
+                        result: dynamic_ask(&resolved_word.dynamic_parts(), "Cannot statically analyse"),
+                        env: env.clone(),
                     };
                 }
-                results.push(walk.result);
-                current_env = walk.env;
-            }
-            WalkResult {
-                result: aggregate_results(results),
-                env: current_env,
-            }
-        }
 
-        Command::And(a, b) | Command::Or(a, b) => {
-            let walk_a = walk_command_with_depth(a, config, env, depth);
-            if walk_a.result.decision == Decision::Deny {
-                return walk_a;
-            }
-            let walk_b = walk_command_with_depth(b, config, &walk_a.env, depth);
-            let merged = VarEnv::merge_branches(env, &[walk_a.env, walk_b.env.clone()]);
-            WalkResult {
-                result: aggregate_results(vec![walk_a.result, walk_b.result]),
-                env: merged,
-            }
-        }
-
-        Command::Pipeline(cmds) => {
-            let mut results = Vec::new();
-            for c in cmds {
-                let walk = walk_command_with_depth(c, config, env, depth);
-                if walk.result.decision == Decision::Deny {
-                    return WalkResult::with_parent_env(walk.result, env);
+                let mut results = Vec::new();
+                let mut branch_envs = Vec::new();
+                for arm in arms {
+                    if let Some(body) = &arm.body {
+                        let walk = self.walk_with_depth(body, env, depth);
+                        results.push(walk.result);
+                        branch_envs.push(walk.env);
+                    }
                 }
-                results.push(walk.result);
-            }
-            WalkResult::with_parent_env(aggregate_results(results), env)
-        }
-
-        Command::If {
-            condition,
-            then_branch,
-            elif_branches,
-            else_branch,
-        } => {
-            let walk_cond = walk_command_with_depth(condition, config, env, depth);
-            let mut results = vec![walk_cond.result];
-            let env_after_cond = &walk_cond.env;
-
-            let walk_then = walk_command_with_depth(then_branch, config, env_after_cond, depth);
-            results.push(walk_then.result);
-            let mut branch_envs = vec![walk_then.env];
-
-            for (elif_cond, elif_body) in elif_branches {
-                let wc = walk_command_with_depth(elif_cond, config, env_after_cond, depth);
-                let wb = walk_command_with_depth(elif_body, config, &wc.env, depth);
-                results.push(wc.result);
-                results.push(wb.result);
-                branch_envs.push(wb.env);
+                branch_envs.push(env.clone());
+                let merged = VarEnv::merge_branches(env, &branch_envs);
+                WalkResult {
+                    result: aggregate_results(results),
+                    env: merged,
+                }
             }
 
-            if let Some(else_b) = else_branch {
-                let we = walk_command_with_depth(else_b, config, env_after_cond, depth);
-                results.push(we.result);
-                branch_envs.push(we.env);
-            } else {
-                branch_envs.push(env_after_cond.clone());
+            Command::FunctionDef { name, body } => {
+                let mut new_env = env.clone();
+                new_env.set_fn(name.clone(), *body.clone());
+                WalkResult {
+                    result: EvalResult::new(Decision::Allow, None),
+                    env: new_env,
+                }
             }
 
-            let merged = VarEnv::merge_branches(env_after_cond, &branch_envs);
-            WalkResult {
-                result: aggregate_results(results),
-                env: merged,
+            Command::Redirected { command, .. } => {
+                self.walk_with_depth(command, env, depth)
             }
         }
+    }
 
-        Command::For { var, words, body } => walk_for_loop(var, words, body, config, env, depth),
+    fn walk_for_loop(
+        &self,
+        var: &str,
+        words: &[Word],
+        body: &Command,
+        env: &VarEnv,
+        depth: usize,
+    ) -> WalkResult {
+        let resolved_words: Vec<Word> = words.iter().map(|w| resolve_word_with_var_env(w, env)).collect();
 
-        Command::While { condition, body } | Command::Until { condition, body } => {
-            let walk_cond = walk_command_with_depth(condition, config, env, depth);
-            let walk_body = walk_command_with_depth(body, config, &walk_cond.env, depth);
-            let merged = VarEnv::merge_branches(env, &[env.clone(), walk_body.env]);
-            WalkResult {
-                result: aggregate_results(vec![walk_cond.result, walk_body.result]),
-                env: merged,
-            }
-        }
-
-        Command::Subshell(c) => {
-            let walk = walk_command_with_depth(c, config, env, depth);
-            WalkResult::with_parent_env(walk.result, env)
-        }
-
-        Command::BraceGroup(c) => {
-            walk_command_with_depth(c, config, env, depth)
-        }
-
-        Command::Background(c) => {
-            let walk = walk_command_with_depth(c, config, env, depth);
-            WalkResult::with_parent_env(walk.result, env)
-        }
-
-        Command::Case { word, arms, .. } => {
-            let resolved_word = resolve_word_with_var_env(word, env);
-            if resolved_word.has_dynamic_parts() {
+        if resolved_words.iter().all(|w| w.is_literal()) {
+            let literals: Vec<String> = resolved_words.iter().map(|w| w.to_str()).collect();
+            if literals.is_empty() {
                 return WalkResult {
-                    result: dynamic_ask(&resolved_word.dynamic_parts(), "Cannot statically analyse"),
+                    result: EvalResult::new(Decision::Allow, None),
                     env: env.clone(),
                 };
             }
 
             let mut results = Vec::new();
-            let mut branch_envs = Vec::new();
-            for arm in arms {
-                if let Some(body) = &arm.body {
-                    let walk = walk_command_with_depth(body, config, env, depth);
-                    results.push(walk.result);
-                    branch_envs.push(walk.env);
+            let mut body_envs = Vec::new();
+            for val in &literals {
+                let mut loop_env = env.clone();
+                loop_env.set(var.to_string(), VarState::Safe(Some(val.clone())));
+                let walk = self.walk_with_depth(body, &loop_env, depth);
+                if walk.result.decision == Decision::Deny {
+                    return WalkResult {
+                        result: walk.result,
+                        env: env.clone(),
+                    };
                 }
+                results.push(walk.result);
+                body_envs.push(walk.env);
             }
-            branch_envs.push(env.clone());
-            let merged = VarEnv::merge_branches(env, &branch_envs);
-            WalkResult {
+
+            let mut merged = VarEnv::merge_branches(env, &body_envs);
+            merged.set(var.to_string(), VarState::Safe(None));
+            return WalkResult {
                 result: aggregate_results(results),
                 env: merged,
-            }
+            };
         }
 
-        Command::FunctionDef { name, body } => {
-            let mut new_env = env.clone();
-            new_env.set_fn(name.clone(), *body.clone());
-            WalkResult {
-                result: EvalResult::new(Decision::Allow, None),
-                env: new_env,
-            }
+        if !resolved_words.iter().any(|w| w.has_dynamic_parts()) {
+            let mut loop_env = env.clone();
+            loop_env.set(var.to_string(), VarState::Safe(None));
+            let walk = self.walk_with_depth(body, &loop_env, depth);
+            let merged = VarEnv::merge_branches(env, &[env.clone(), walk.env]);
+            return WalkResult {
+                result: walk.result,
+                env: merged,
+            };
         }
 
-        Command::Redirected { command, .. } => {
-            walk_command_with_depth(command, config, env, depth)
+        let dynamic: Vec<String> = resolved_words.iter().flat_map(|w| w.dynamic_parts()).collect();
+        WalkResult {
+            result: dynamic_ask(&dynamic, "Cannot statically analyse"),
+            env: env.clone(),
         }
     }
-}
 
-/// Walk a for-loop: enumerate literal words or use opaque loop variable.
-fn walk_for_loop(
-    var: &str,
-    words: &[Word],
-    body: &Command,
-    config: &Config,
-    env: &VarEnv,
-    depth: usize,
-) -> WalkResult {
-    // Resolve for-loop words using current VarEnv
-    let resolved_words: Vec<Word> = words.iter().map(|w| resolve_word_with_var_env(w, env)).collect();
+    fn evaluate_assignment_value(&self, value: &Word, env: &VarEnv, depth: usize) -> VarState {
+        let resolved = resolve_word_with_var_env(&self.resolve_command_substitutions(value, env, depth), env);
+        if resolved.has_dynamic_parts() {
+            VarState::Unsafe
+        } else if resolved.is_literal() {
+            VarState::Safe(Some(resolved.to_str()))
+        } else {
+            VarState::Safe(None)
+        }
+    }
 
-    // Check if all words are fully literal (resolvable)
-    if resolved_words.iter().all(|w| w.is_literal()) {
-        let literals: Vec<String> = resolved_words.iter().map(|w| w.to_str()).collect();
-        if literals.is_empty() {
+    fn resolve_command_substitutions(&self, word: &Word, env: &VarEnv, depth: usize) -> Word {
+        Word {
+            parts: self.resolve_cmd_sub_parts(&word.parts, env, depth),
+        }
+    }
+
+    fn resolve_cmd_sub_parts(
+        &self,
+        parts: &[parser::WordPart],
+        env: &VarEnv,
+        depth: usize,
+    ) -> Vec<parser::WordPart> {
+        if depth >= MAX_EVAL_DEPTH {
+            return parts.to_vec();
+        }
+        parts
+            .iter()
+            .map(|part| match part {
+                parser::WordPart::CommandSubstitution(cmd_str)
+                | parser::WordPart::Backtick(cmd_str) => {
+                    let inner_ast = parser::parse(cmd_str);
+                    let inner_result = self.walk_with_depth(&inner_ast, env, depth + 1);
+                    if inner_result.result.decision == Decision::Allow {
+                        parser::WordPart::Opaque(format!("$({})", parser::abbreviate(cmd_str)))
+                    } else {
+                        part.clone()
+                    }
+                }
+                parser::WordPart::ProcessSubstitution { direction, command } => {
+                    let inner_ast = parser::parse(command);
+                    let inner_result = self.walk_with_depth(&inner_ast, env, depth + 1);
+                    if inner_result.result.decision == Decision::Allow {
+                        let sigil = match direction {
+                            parser::ProcessDirection::Input => '<',
+                            parser::ProcessDirection::Output => '>',
+                        };
+                        parser::WordPart::Opaque(format!("{}({})", sigil, parser::abbreviate(command)))
+                    } else {
+                        part.clone()
+                    }
+                }
+                parser::WordPart::Arithmetic(expr) => {
+                    if is_arithmetic_safe(expr, env) {
+                        parser::WordPart::Opaque(format!("$(({})", parser::abbreviate(expr)))
+                    } else {
+                        part.clone()
+                    }
+                }
+                parser::WordPart::DoubleQuoted(inner) => {
+                    parser::WordPart::DoubleQuoted(self.resolve_cmd_sub_parts(inner, env, depth))
+                }
+                _ => part.clone(),
+            })
+            .collect()
+    }
+
+    fn walk_simple_command(&self, sc: &SimpleCommand, env: &VarEnv, depth: usize) -> WalkResult {
+        let mut new_env = env.clone();
+
+        // Process inline assignments (FOO=bar cmd args)
+        for a in &sc.assignments {
+            let state = self.evaluate_assignment_value(&a.value, &new_env, depth);
+            new_env.set(a.name.clone(), state);
+        }
+
+        // If no command words, this is an assignment-only command
+        if sc.words.is_empty() {
+            return WalkResult {
+                result: EvalResult::new(Decision::Allow, None),
+                env: new_env,
+            };
+        }
+
+        // Resolve command substitutions first, then resolve variables
+        let with_cmd_subs = sc.map_words(|w| self.resolve_command_substitutions(w, &new_env, depth));
+        let resolved = resolve_simple_command_with_var_env(&with_cmd_subs, &new_env);
+
+        // Detect `read`/`readarray`/`mapfile` builtins
+        if let Some(cmd_name) = resolved.command_name()
+            && matches!(cmd_name, "read" | "readarray" | "mapfile")
+        {
+            return walk_read_builtin(cmd_name, &resolved, &mut new_env);
+        }
+
+        // Check for remaining dynamic parts (unsafe variables, command substitutions, etc.)
+        let mut dynamic = Vec::new();
+        for word in &resolved.words {
+            dynamic.extend(word.dynamic_parts());
+        }
+        for assignment in &resolved.assignments {
+            dynamic.extend(assignment.value.dynamic_parts());
+        }
+        for redir in &resolved.redirections {
+            if let parser::RedirectionTarget::File(w) = &redir.target {
+                dynamic.extend(w.dynamic_parts());
+            }
+        }
+        if !dynamic.is_empty() {
+            let cmd_label = resolved.command_name().unwrap_or("<unknown>");
+            return WalkResult {
+                result: dynamic_ask(&dynamic, &format!("Command `{cmd_label}` contains")),
+                env: new_env,
+            };
+        }
+
+        // Code-execution position detection
+        if let Some(cmd_name) = resolved.command_name() {
+            // Case D: `source` / `.` — always Ask
+            if cmd_name == "source" || cmd_name == "." {
+                return WalkResult {
+                    result: EvalResult::new(
+                        Decision::Ask,
+                        Some(format!(
+                            "Cannot statically analyse `{cmd_name}`: sourced file contents are unknown"
+                        )),
+                    ),
+                    env: new_env,
+                };
+            }
+
+            // Case A: opaque variable as command name
+            if resolved.words.first().is_some_and(|w| w.has_opaque_parts()) {
+                return WalkResult {
+                    result: EvalResult::new(
+                        Decision::Ask,
+                        Some("Variable used as command name: cannot determine what runs".into()),
+                    ),
+                    env: new_env,
+                };
+            }
+
+            // Case B: `eval` command
+            if cmd_name == "eval" && depth < MAX_EVAL_DEPTH {
+                return self.walk_eval_command(&resolved, &new_env, depth);
+            }
+
+            // Case C: `bash -c` / `sh -c` / `zsh -c`
+            if matches!(cmd_name, "bash" | "sh" | "zsh")
+                && depth < MAX_EVAL_DEPTH
+                && let Some(result) = self.walk_shell_dash_c(&resolved, &new_env, depth)
+            {
+                return result;
+            }
+
+            // Case E: function call — inline the function body
+            if depth < MAX_EVAL_DEPTH
+                && let Some(body) = new_env.get_fn(cmd_name).cloned()
+            {
+                let mut fn_env = new_env.clone();
+                for (i, arg) in resolved.args().iter().enumerate() {
+                    let state = if arg.is_literal() {
+                        VarState::Safe(Some(arg.to_str()))
+                    } else if arg.has_opaque_parts() {
+                        VarState::Safe(None)
+                    } else {
+                        VarState::Unsafe
+                    };
+                    fn_env.set(format!("{}", i + 1), state);
+                }
+                let fn_result = self.walk_with_depth(&body, &fn_env, depth + 1);
+                return WalkResult {
+                    result: fn_result.result,
+                    env: fn_result.env,
+                };
+            }
+        }
+
+        // Evaluate the resolved command against rules
+        let result = self.evaluate_resolved_command(&resolved, 0, &new_env);
+        WalkResult {
+            result,
+            env: new_env,
+        }
+    }
+
+    fn walk_eval_command(
+        &self,
+        resolved: &SimpleCommand,
+        env: &VarEnv,
+        depth: usize,
+    ) -> WalkResult {
+        let args = resolved.args();
+        if args.is_empty() {
             return WalkResult {
                 result: EvalResult::new(Decision::Allow, None),
                 env: env.clone(),
             };
         }
 
-        let mut results = Vec::new();
-        let mut body_envs = Vec::new();
-        for val in &literals {
-            let mut loop_env = env.clone();
-            loop_env.set(var.to_string(), VarState::Safe(Some(val.clone())));
-            let walk = walk_command_with_depth(body, config, &loop_env, depth);
-            if walk.result.decision == Decision::Deny {
-                return WalkResult {
-                    result: walk.result,
-                    env: env.clone(),
-                };
-            }
-            results.push(walk.result);
-            body_envs.push(walk.env);
-        }
-
-        let mut merged = VarEnv::merge_branches(env, &body_envs);
-        merged.set(var.to_string(), VarState::Safe(None));
-        return WalkResult {
-            result: aggregate_results(results),
-            env: merged,
-        };
-    }
-
-    // Check if words are safe but opaque (e.g., globs, safe-but-unresolvable vars)
-    if !resolved_words.iter().any(|w| w.has_dynamic_parts()) {
-        let mut loop_env = env.clone();
-        loop_env.set(var.to_string(), VarState::Safe(None));
-        let walk = walk_command_with_depth(body, config, &loop_env, depth);
-        let merged = VarEnv::merge_branches(env, &[env.clone(), walk.env]);
-        return WalkResult {
-            result: walk.result,
-            env: merged,
-        };
-    }
-
-    // Words contain unsafe dynamic parts
-    let dynamic: Vec<String> = resolved_words.iter().flat_map(|w| w.dynamic_parts()).collect();
-    WalkResult {
-        result: dynamic_ask(&dynamic, "Cannot statically analyse"),
-        env: env.clone(),
-    }
-}
-
-/// Determine the VarState for an assignment value.
-fn evaluate_assignment_value(value: &Word, env: &VarEnv, config: &Config, depth: usize) -> VarState {
-    let resolved = resolve_word_with_var_env(&resolve_command_substitutions(value, config, env, depth), env);
-    if resolved.has_dynamic_parts() {
-        // Contains unsafe/unknown parts
-        VarState::Unsafe
-    } else if resolved.is_literal() {
-        VarState::Safe(Some(resolved.to_str()))
-    } else {
-        // Safe but contains opaque parts
-        VarState::Safe(None)
-    }
-}
-
-/// Maximum recursion depth for command substitution / eval / bash -c evaluation.
-const MAX_EVAL_DEPTH: usize = 10;
-
-/// Walk word parts and replace `CommandSubstitution`/`Backtick` with `Opaque`
-/// if the inner command evaluates to Allow, or leave as-is if not.
-fn resolve_command_substitutions(word: &Word, config: &Config, env: &VarEnv, depth: usize) -> Word {
-    Word {
-        parts: resolve_cmd_sub_parts(&word.parts, config, env, depth),
-    }
-}
-
-fn resolve_cmd_sub_parts(
-    parts: &[parser::WordPart],
-    config: &Config,
-    env: &VarEnv,
-    depth: usize,
-) -> Vec<parser::WordPart> {
-    if depth >= MAX_EVAL_DEPTH {
-        return parts.to_vec();
-    }
-    parts
-        .iter()
-        .map(|part| match part {
-            parser::WordPart::CommandSubstitution(cmd_str)
-            | parser::WordPart::Backtick(cmd_str) => {
-                let inner_ast = parser::parse(cmd_str);
-                let inner_result = walk_command_with_depth(&inner_ast, config, env, depth + 1);
-                if inner_result.result.decision == Decision::Allow {
-                    parser::WordPart::Opaque(format!("$({})", parser::abbreviate(cmd_str)))
-                } else {
-                    part.clone()
-                }
-            }
-            parser::WordPart::ProcessSubstitution { direction, command } => {
-                let inner_ast = parser::parse(command);
-                let inner_result = walk_command_with_depth(&inner_ast, config, env, depth + 1);
-                if inner_result.result.decision == Decision::Allow {
-                    let sigil = match direction {
-                        parser::ProcessDirection::Input => '<',
-                        parser::ProcessDirection::Output => '>',
-                    };
-                    parser::WordPart::Opaque(format!("{}({})", sigil, parser::abbreviate(command)))
-                } else {
-                    part.clone()
-                }
-            }
-            parser::WordPart::Arithmetic(expr) => {
-                if is_arithmetic_safe(expr, env) {
-                    parser::WordPart::Opaque(format!("$(({})", parser::abbreviate(expr)))
-                } else {
-                    part.clone()
-                }
-            }
-            parser::WordPart::DoubleQuoted(inner) => {
-                parser::WordPart::DoubleQuoted(resolve_cmd_sub_parts(inner, config, env, depth))
-            }
-            _ => part.clone(),
-        })
-        .collect()
-}
-
-/// Check if an arithmetic expression is safe: all variable references resolve to safe vars.
-fn is_arithmetic_safe(expr: &str, env: &VarEnv) -> bool {
-    // Extract identifiers from the expression. In bash arithmetic, variables can
-    // appear as bare names (x), $name, or ${name}. We extract all identifier-like
-    // tokens and check them against the VarEnv.
-    let mut i = 0;
-    let bytes = expr.as_bytes();
-    while i < bytes.len() {
-        if bytes[i] == b'$' {
-            i += 1;
-            if i < bytes.len() && bytes[i] == b'{' {
-                // ${name} form
-                i += 1;
-                let start = i;
-                while i < bytes.len() && bytes[i] != b'}' {
-                    i += 1;
-                }
-                let name = &expr[start..i];
-                if !name.is_empty() && !env.is_safe(name) {
-                    return false;
-                }
-                if i < bytes.len() {
-                    i += 1; // skip '}'
-                }
-            } else {
-                // $name form
-                let start = i;
-                while i < bytes.len()
-                    && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_')
-                {
-                    i += 1;
-                }
-                let name = &expr[start..i];
-                if !name.is_empty() && !env.is_safe(name) {
-                    return false;
-                }
-            }
-        } else if bytes[i].is_ascii_alphabetic() || bytes[i] == b'_' {
-            // Bare identifier
-            let start = i;
-            while i < bytes.len()
-                && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_')
-            {
-                i += 1;
-            }
-            let name = &expr[start..i];
-            if !env.is_safe(name) {
-                return false;
-            }
-        } else {
-            i += 1;
-        }
-    }
-    true
-}
-
-/// Walk a simple command: process assignments, resolve variables, evaluate.
-fn walk_simple_command(sc: &SimpleCommand, config: &Config, env: &VarEnv, depth: usize) -> WalkResult {
-    let mut new_env = env.clone();
-
-    // Process inline assignments (FOO=bar cmd args)
-    for a in &sc.assignments {
-        let state = evaluate_assignment_value(&a.value, &new_env, config, depth);
-        new_env.set(a.name.clone(), state);
-    }
-
-    // If no command words, this is an assignment-only command
-    if sc.words.is_empty() {
-        return WalkResult {
-            result: EvalResult::new(Decision::Allow, None),
-            env: new_env,
-        };
-    }
-
-    // Resolve command substitutions first, then resolve variables
-    let with_cmd_subs = sc.map_words(|w| resolve_command_substitutions(w, config, &new_env, depth));
-    let resolved = resolve_simple_command_with_var_env(&with_cmd_subs, &new_env);
-
-    // Detect `read`/`readarray`/`mapfile` builtins
-    if let Some(cmd_name) = resolved.command_name()
-        && matches!(cmd_name, "read" | "readarray" | "mapfile")
-    {
-        return walk_read_builtin(cmd_name, &resolved, &mut new_env);
-    }
-
-    // Check for remaining dynamic parts (unsafe variables, command substitutions, etc.)
-    let mut dynamic = Vec::new();
-    for word in &resolved.words {
-        dynamic.extend(word.dynamic_parts());
-    }
-    for assignment in &resolved.assignments {
-        dynamic.extend(assignment.value.dynamic_parts());
-    }
-    for redir in &resolved.redirections {
-        if let parser::RedirectionTarget::File(w) = &redir.target {
-            dynamic.extend(w.dynamic_parts());
-        }
-    }
-    if !dynamic.is_empty() {
-        let cmd_label = resolved.command_name().unwrap_or("<unknown>");
-        return WalkResult {
-            result: dynamic_ask(&dynamic, &format!("Command `{cmd_label}` contains")),
-            env: new_env,
-        };
-    }
-
-    // Code-execution position detection
-    if let Some(cmd_name) = resolved.command_name() {
-        // Case D: `source` / `.` — always Ask
-        if cmd_name == "source" || cmd_name == "." {
+        // Dynamic args are already caught by the caller's dynamic-parts check;
+        // only opaque (safe but unknown) args need handling here.
+        if args.iter().any(|a| a.has_opaque_parts()) {
             return WalkResult {
+                result: EvalResult::new(
+                    Decision::Ask,
+                    Some("Cannot determine eval'd command: argument value is unknown".into()),
+                ),
+                env: env.clone(),
+            };
+        }
+
+        // All args are literal — concatenate and recursively evaluate
+        let eval_str: String = args.iter().map(|a| a.to_str()).collect::<Vec<_>>().join(" ");
+        let inner_ast = parser::parse(&eval_str);
+        let inner_result = self.walk_with_depth(&inner_ast, env, depth + 1);
+        WalkResult {
+            result: inner_result.result,
+            env: inner_result.env,
+        }
+    }
+
+    fn walk_shell_dash_c(
+        &self,
+        resolved: &SimpleCommand,
+        env: &VarEnv,
+        depth: usize,
+    ) -> Option<WalkResult> {
+        let args = resolved.args();
+
+        let mut found_c = false;
+        let mut cmd_arg = None;
+        for arg in args {
+            let s = arg.to_str();
+            if found_c {
+                cmd_arg = Some(arg);
+                break;
+            }
+            if s == "-c" {
+                found_c = true;
+            }
+        }
+
+        if !found_c {
+            return None;
+        }
+
+        let cmd_arg = cmd_arg?;
+
+        if cmd_arg.has_dynamic_parts() {
+            return None;
+        }
+
+        if cmd_arg.has_opaque_parts() {
+            return Some(WalkResult {
                 result: EvalResult::new(
                     Decision::Ask,
                     Some(format!(
-                        "Cannot statically analyse `{cmd_name}`: sourced file contents are unknown"
+                        "Cannot determine `{} -c` command: argument value is unknown",
+                        resolved.command_name().unwrap_or("sh"),
                     )),
                 ),
-                env: new_env,
-            };
+                env: env.clone(),
+            });
         }
 
-        // Case A: opaque variable as command name
-        if resolved.words.first().is_some_and(|w| w.has_opaque_parts()) {
-            return WalkResult {
-                result: EvalResult::new(
-                    Decision::Ask,
-                    Some("Variable used as command name: cannot determine what runs".into()),
-                ),
-                env: new_env,
-            };
-        }
-
-        // Case B: `eval` command
-        if cmd_name == "eval" && depth < MAX_EVAL_DEPTH {
-            return walk_eval_command(&resolved, config, &new_env, depth);
-        }
-
-        // Case C: `bash -c` / `sh -c` / `zsh -c`
-        if matches!(cmd_name, "bash" | "sh" | "zsh")
-            && depth < MAX_EVAL_DEPTH
-            && let Some(result) = walk_shell_dash_c(&resolved, config, &new_env, depth)
-        {
-            return result;
-        }
-
-        // Case E: function call — inline the function body
-        if depth < MAX_EVAL_DEPTH
-            && let Some(body) = new_env.get_fn(cmd_name).cloned()
-        {
-            let mut fn_env = new_env.clone();
-            // Set positional parameters ($1, $2, ...) from the call arguments
-            for (i, arg) in resolved.args().iter().enumerate() {
-                let state = if arg.is_literal() {
-                    VarState::Safe(Some(arg.to_str()))
-                } else if arg.has_opaque_parts() {
-                    VarState::Safe(None)
-                } else {
-                    VarState::Unsafe
-                };
-                fn_env.set(format!("{}", i + 1), state);
-            }
-            let fn_result = walk_command_with_depth(&body, config, &fn_env, depth + 1);
-            // Function bodies execute in caller's scope — propagate env changes
-            return WalkResult {
-                result: fn_result.result,
-                env: fn_result.env,
-            };
-        }
+        let cmd_str = cmd_arg.to_str();
+        let inner_ast = parser::parse(&cmd_str);
+        let inner_result = self.walk_with_depth(&inner_ast, env, depth + 1);
+        Some(WalkResult {
+            result: inner_result.result,
+            env: env.clone(),
+        })
     }
 
-    // Evaluate the resolved command against rules
-    let result = evaluate_resolved_command(&resolved, config, 0, &new_env);
-    WalkResult {
-        result,
-        env: new_env,
+    /// Evaluate a resolved simple command against rules (no more variable resolution needed).
+    #[allow(clippy::only_used_in_recursion)]
+    fn evaluate_resolved_command(
+        &self,
+        resolved: &SimpleCommand,
+        depth: usize,
+        env: &VarEnv,
+    ) -> EvalResult {
+        let cmd_name = match resolved.command_name() {
+            Some(name) if !name.is_empty() => name,
+            _ => {
+                return EvalResult::new(Decision::Ask, Some("Unknown command".into()));
+            }
+        };
+
+        // R9: Check if this is a wrapper command
+        if depth < 5
+            && let Some(inner) = unwrap_wrapper(resolved, self.config)
+        {
+            if inner.words.len() == 1 {
+                let word = &inner.words[0];
+                if word.has_opaque_parts() {
+                    return EvalResult::new(
+                        Decision::Ask,
+                        Some(format!(
+                            "Cannot determine inner command for `{cmd_name}`: \
+                             argument value is unknown"
+                        )),
+                    );
+                }
+                let s = word.to_str();
+                if s.contains(' ') {
+                    let inner_ast = parser::parse(&s);
+                    return self.walk_with_depth(&inner_ast, env, 1).result;
+                }
+            }
+            return self.evaluate_resolved_command(&inner, depth + 1, env);
+        }
+
+        // Expand flags: -abc → -a -b -c (R8)
+        let expanded_args = expand_flags(resolved.args());
+
+        // Evaluate against rules: deny rules first, then first match
+        let mut first_match: Option<EvalResult> = None;
+        let mut trace = Vec::new();
+        let mut had_command_match = false;
+
+        for rule in &self.config.rules {
+            if !command_matches(cmd_name, &rule.command) {
+                continue;
+            }
+
+            had_command_match = true;
+            let line_num = self.config.source_info.as_ref().map(|si| {
+                may_i_sexpr::offset_to_line_col(&si.content, rule.source_span.start).0
+            });
+            let line_prefix = line_num.map(|n| format!("{n}: ")).unwrap_or_default();
+            let rule_label = format_command_matcher(
+                &rule.command,
+                line_prefix.len() + "rule ".len(),
+            );
+            for (i, line) in rule_label.lines().enumerate() {
+                if i == 0 {
+                    trace.push(format!("{line_prefix}rule {line}"));
+                } else {
+                    trace.push(line.to_string());
+                }
+            }
+
+            let outcome = match &rule.matcher {
+                None => MatchOutcome::MatchedNoEffect,
+                Some(m) => {
+                    let mut collector = TraceCollector::new(2);
+                    let outcome = match_args(m, &expanded_args, &mut |ev| collector.on_event(ev));
+                    for step in collector.into_steps() {
+                        for line in step.lines() {
+                            trace.push(format!("  {line}"));
+                        }
+                    }
+                    outcome
+                }
+            };
+
+            let effect = match outcome {
+                MatchOutcome::NoMatch => {
+                    if rule.matcher.is_some() {
+                        trace.push("  args did not match".into());
+                    }
+                    continue;
+                }
+                MatchOutcome::Matched(eff) => {
+                    if rule.matcher.is_some() {
+                        trace.push("  args matched".into());
+                    }
+                    trace.push(format!(
+                        "  effect: {} — {}",
+                        eff.decision,
+                        eff.reason.as_deref().unwrap_or("(no reason)")
+                    ));
+                    eff
+                }
+                MatchOutcome::MatchedNoEffect => {
+                    if rule.matcher.is_some() {
+                        trace.push("  args matched".into());
+                    }
+                    match &rule.effect {
+                        Some(eff) => {
+                            trace.push(format!(
+                                "  effect: {} — {}",
+                                eff.decision,
+                                eff.reason.as_deref().unwrap_or("(no reason)")
+                            ));
+                            eff.clone()
+                        }
+                        None => continue,
+                    }
+                }
+            };
+
+            let Effect { decision, reason } = effect;
+            let mut result = EvalResult::new(decision, reason);
+
+            if decision == Decision::Deny {
+                result.trace = trace;
+                return result;
+            }
+
+            if first_match.is_none() {
+                result.trace = trace.clone();
+                first_match = Some(result);
+            }
+        }
+
+        first_match.unwrap_or_else(|| {
+            let reason = if had_command_match {
+                format!("Rules for `{cmd_name}` exist but arguments did not match any patterns")
+            } else {
+                format!("No rule for command `{cmd_name}`")
+            };
+            trace.push("  => ask (default)".into());
+            let mut result = EvalResult::new(Decision::Ask, Some(reason));
+            result.trace = trace;
+            result
+        })
     }
 }
+
+// ── Public API ─────────────────────────────────────────────────────
+
+/// Evaluate a shell command string against the config.
+pub fn evaluate(input: &str, config: &Config) -> EvalResult {
+    let ast = parser::parse(input);
+    let env = VarEnv::from_process_env();
+    AstWalker::new(config).walk(&ast, &env).result
+}
+
+/// Evaluate with a specific VarEnv (for testing).
+#[cfg(test)]
+fn evaluate_with_env(input: &str, config: &Config, env: &VarEnv) -> EvalResult {
+    let ast = parser::parse(input);
+    AstWalker::new(config).walk(&ast, env).result
+}
+
+// ── Standalone helpers ─────────────────────────────────────────────
+
+/// Maximum recursion depth for command substitution / eval / bash -c evaluation.
+const MAX_EVAL_DEPTH: usize = 10;
 
 /// Handle `read`/`readarray`/`mapfile` builtins by extracting variable names
 /// and updating the environment.
@@ -644,98 +821,54 @@ fn walk_read_builtin(
     }
 }
 
-/// Handle `eval` command: concatenate args and recursively evaluate if fully literal.
-fn walk_eval_command(
-    resolved: &SimpleCommand,
-    config: &Config,
-    env: &VarEnv,
-    depth: usize,
-) -> WalkResult {
-    let args = resolved.args();
-    if args.is_empty() {
-        return WalkResult {
-            result: EvalResult::new(Decision::Allow, None),
-            env: env.clone(),
-        };
-    }
-
-    // Dynamic args are already caught by the caller's dynamic-parts check;
-    // only opaque (safe but unknown) args need handling here.
-    if args.iter().any(|a| a.has_opaque_parts()) {
-        return WalkResult {
-            result: EvalResult::new(
-                Decision::Ask,
-                Some("Cannot determine eval'd command: argument value is unknown".into()),
-            ),
-            env: env.clone(),
-        };
-    }
-
-    // All args are literal — concatenate and recursively evaluate
-    let eval_str: String = args.iter().map(|a| a.to_str()).collect::<Vec<_>>().join(" ");
-    let inner_ast = parser::parse(&eval_str);
-    let inner_result = walk_command_with_depth(&inner_ast, config, env, depth + 1);
-    WalkResult {
-        result: inner_result.result,
-        env: inner_result.env,
-    }
-}
-
-/// Handle `bash -c` / `sh -c` / `zsh -c`: find `-c` flag and recursively evaluate.
-fn walk_shell_dash_c(
-    resolved: &SimpleCommand,
-    config: &Config,
-    env: &VarEnv,
-    depth: usize,
-) -> Option<WalkResult> {
-    let args = resolved.args();
-
-    // Find the `-c` flag and get the command string after it
-    let mut found_c = false;
-    let mut cmd_arg = None;
-    for arg in args {
-        let s = arg.to_str();
-        if found_c {
-            cmd_arg = Some(arg);
-            break;
-        }
-        if s == "-c" {
-            found_c = true;
+/// Check if an arithmetic expression is safe: all variable references resolve to safe vars.
+fn is_arithmetic_safe(expr: &str, env: &VarEnv) -> bool {
+    let mut i = 0;
+    let bytes = expr.as_bytes();
+    while i < bytes.len() {
+        if bytes[i] == b'$' {
+            i += 1;
+            if i < bytes.len() && bytes[i] == b'{' {
+                i += 1;
+                let start = i;
+                while i < bytes.len() && bytes[i] != b'}' {
+                    i += 1;
+                }
+                let name = &expr[start..i];
+                if !name.is_empty() && !env.is_safe(name) {
+                    return false;
+                }
+                if i < bytes.len() {
+                    i += 1;
+                }
+            } else {
+                let start = i;
+                while i < bytes.len()
+                    && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_')
+                {
+                    i += 1;
+                }
+                let name = &expr[start..i];
+                if !name.is_empty() && !env.is_safe(name) {
+                    return false;
+                }
+            }
+        } else if bytes[i].is_ascii_alphabetic() || bytes[i] == b'_' {
+            let start = i;
+            while i < bytes.len()
+                && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_')
+            {
+                i += 1;
+            }
+            let name = &expr[start..i];
+            if !env.is_safe(name) {
+                return false;
+            }
+        } else {
+            i += 1;
         }
     }
-
-    if !found_c {
-        return None; // No -c flag; not a code-execution pattern
-    }
-
-    let cmd_arg = cmd_arg?;
-
-    if cmd_arg.has_dynamic_parts() {
-        // Already caught by dynamic parts check
-        return None;
-    }
-
-    if cmd_arg.has_opaque_parts() {
-        return Some(WalkResult {
-            result: EvalResult::new(
-                Decision::Ask,
-                Some(format!(
-                    "Cannot determine `{} -c` command: argument value is unknown",
-                    resolved.command_name().unwrap_or("sh"),
-                )),
-            ),
-            env: env.clone(),
-        });
-    }
-
-    // Literal command string — recursively evaluate
-    let cmd_str = cmd_arg.to_str();
-    let inner_ast = parser::parse(&cmd_str);
-    let inner_result = walk_command_with_depth(&inner_ast, config, env, depth + 1);
-    Some(WalkResult {
-        result: inner_result.result,
-        env: env.clone(), // Shell -c runs in a subprocess; don't propagate env changes
-    })
+    true
 }
 
 // ── Trace collector ────────────────────────────────────────────────
@@ -815,162 +948,6 @@ impl TraceCollector {
         self.steps
     }
 }
-
-/// Evaluate a resolved simple command against rules (no more variable resolution needed).
-#[allow(clippy::only_used_in_recursion)]
-fn evaluate_resolved_command(
-    resolved: &SimpleCommand,
-    config: &Config,
-    depth: usize,
-    env: &VarEnv,
-) -> EvalResult {
-    let cmd_name = match resolved.command_name() {
-        Some(name) if !name.is_empty() => name,
-        _ => {
-            return EvalResult::new(Decision::Ask, Some("Unknown command".into()));
-        }
-    };
-
-    // R9: Check if this is a wrapper command
-    if depth < 5
-        && let Some(inner) = unwrap_wrapper(resolved, config)
-    {
-        // If the inner "command" is a single literal word that contains spaces
-        // (e.g. ssh host "curl -sv http://..."), the wrapper was invoked with a
-        // quoted shell string rather than bare words.  Re-parse it the same way
-        // walk_shell_dash_c handles sh -c "...".
-        if inner.words.len() == 1 {
-            let word = &inner.words[0];
-            if word.has_opaque_parts() {
-                return EvalResult::new(
-                    Decision::Ask,
-                    Some(format!(
-                        "Cannot determine inner command for `{cmd_name}`: \
-                         argument value is unknown"
-                    )),
-                );
-            }
-            let s = word.to_str();
-            if s.contains(' ') {
-                let inner_ast = parser::parse(&s);
-                return walk_command_with_depth(&inner_ast, config, env, 1).result;
-            }
-        }
-        return evaluate_resolved_command(&inner, config, depth + 1, env);
-    }
-
-    // Expand flags: -abc → -a -b -c (R8)
-    let expanded_args = expand_flags(resolved.args());
-
-    // Evaluate against rules: deny rules first, then first match
-    let mut first_match: Option<EvalResult> = None;
-    let mut trace = Vec::new();
-    let mut had_command_match = false;
-
-    for rule in &config.rules {
-        if !command_matches(cmd_name, &rule.command) {
-            continue;
-        }
-
-        had_command_match = true;
-        // Rule header with config line number.
-        let line_num = config.source_info.as_ref().map(|si| {
-            may_i_sexpr::offset_to_line_col(&si.content, rule.source_span.start).0
-        });
-        let line_prefix = line_num.map(|n| format!("{n}: ")).unwrap_or_default();
-        let rule_label = format_command_matcher(
-            &rule.command,
-            line_prefix.len() + "rule ".len(),
-        );
-        // Rule header may be multi-line from pretty-printing.
-        for (i, line) in rule_label.lines().enumerate() {
-            if i == 0 {
-                trace.push(format!("{line_prefix}rule {line}"));
-            } else {
-                trace.push(line.to_string());
-            }
-        }
-
-        // Match args and collect trace events
-        let outcome = match &rule.matcher {
-            None => MatchOutcome::MatchedNoEffect,
-            Some(m) => {
-                let mut collector = TraceCollector::new(2);
-                let outcome = match_args(m, &expanded_args, &mut |ev| collector.on_event(ev));
-                for step in collector.into_steps() {
-                    for line in step.lines() {
-                        trace.push(format!("  {line}"));
-                    }
-                }
-                outcome
-            }
-        };
-
-        let effect = match outcome {
-            MatchOutcome::NoMatch => {
-                if rule.matcher.is_some() {
-                    trace.push("  args did not match".into());
-                }
-                continue;
-            }
-            MatchOutcome::Matched(eff) => {
-                if rule.matcher.is_some() {
-                    trace.push("  args matched".into());
-                }
-                trace.push(format!(
-                    "  effect: {} — {}",
-                    eff.decision,
-                    eff.reason.as_deref().unwrap_or("(no reason)")
-                ));
-                eff
-            }
-            MatchOutcome::MatchedNoEffect => {
-                if rule.matcher.is_some() {
-                    trace.push("  args matched".into());
-                }
-                match &rule.effect {
-                    Some(eff) => {
-                        trace.push(format!(
-                            "  effect: {} — {}",
-                            eff.decision,
-                            eff.reason.as_deref().unwrap_or("(no reason)")
-                        ));
-                        eff.clone()
-                    }
-                    None => continue,
-                }
-            }
-        };
-
-        let Effect { decision, reason } = effect;
-        let mut result = EvalResult::new(decision, reason);
-
-        // Deny rules always win
-        if decision == Decision::Deny {
-            result.trace = trace;
-            return result;
-        }
-
-        // Otherwise, first match wins
-        if first_match.is_none() {
-            result.trace = trace.clone();
-            first_match = Some(result);
-        }
-    }
-
-    first_match.unwrap_or_else(|| {
-        let reason = if had_command_match {
-            format!("Rules for `{cmd_name}` exist but arguments did not match any patterns")
-        } else {
-            format!("No rule for command `{cmd_name}`")
-        };
-        trace.push("  => ask (default)".into());
-        let mut result = EvalResult::new(Decision::Ask, Some(reason));
-        result.trace = trace;
-        result
-    })
-}
-
 
 #[cfg(test)]
 mod tests {
@@ -1799,7 +1776,7 @@ mod tests {
             redirections: vec![],
         };
         let env = VarEnv::from_process_env();
-        let result = evaluate_resolved_command(&sc, &empty_config(), 0, &env);
+        let result = AstWalker::new(&empty_config()).evaluate_resolved_command(&sc, 0, &env);
         assert_eq!(result.decision, Decision::Ask);
         assert_eq!(result.reason.as_deref(), Some("Unknown command"));
     }
