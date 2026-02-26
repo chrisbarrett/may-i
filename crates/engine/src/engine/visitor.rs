@@ -5,7 +5,6 @@ use may_i_shell_parser::{Command, SimpleCommand};
 use crate::var_env::VarEnv;
 
 /// Outcome of a visitor inspecting a resolved simple command.
-#[allow(dead_code)] // Recurse will be used by later visitors (eval, bash -c, wrappers)
 pub(crate) enum VisitOutcome {
     /// Terminal: return this result, skip remaining visitors.
     /// The `env` may differ from the input (e.g. `read` builtin updates variables).
@@ -18,7 +17,6 @@ pub(crate) enum VisitOutcome {
 }
 
 /// Context passed to visitors, providing read access to walker state.
-#[allow(dead_code)] // config will be used by later visitors (rule matching, wrappers)
 pub(crate) struct VisitorContext<'a> {
     pub config: &'a Config,
     pub env: &'a VarEnv,
