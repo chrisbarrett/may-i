@@ -68,9 +68,9 @@ fn print_colored_command(command: &str, config: &may_i_core::Config) {
         } else {
             let seg_result = engine::evaluate(text, config);
             let colored = match seg_result.decision {
-                Decision::Allow => text.on_truecolor(0, 80, 0).to_string(),
-                Decision::Ask => text.on_truecolor(120, 100, 0).to_string(),
-                Decision::Deny => text.on_truecolor(120, 0, 0).to_string(),
+                Decision::Allow => text.green().underline().to_string(),
+                Decision::Ask => text.yellow().underline().to_string(),
+                Decision::Deny => text.red().underline().to_string(),
             };
             print!("{colored}");
         }
