@@ -1,9 +1,6 @@
 // Variable safety tracking for AST analysis.
 
-use may_i_shell_parser::{
-    Assignment, Command, Redirection, RedirectionTarget, SimpleCommand, Word,
-    WordPart,
-};
+use may_i_shell_parser::{Command, SimpleCommand, Word, WordPart};
 
 /// The safety state of a shell variable during AST analysis.
 #[derive(Debug, Clone, PartialEq)]
@@ -185,19 +182,5 @@ pub fn resolve_simple_command_with_var_env(
     sc: &SimpleCommand,
     env: &VarEnv,
 ) -> SimpleCommand {
-    SimpleCommand {
-        assignments: sc.assignments.iter().map(|a| Assignment {
-            name: a.name.clone(),
-            value: resolve_word_with_var_env(&a.value, env),
-        }).collect(),
-        words: sc.words.iter().map(|w| resolve_word_with_var_env(w, env)).collect(),
-        redirections: sc.redirections.iter().map(|r| Redirection {
-            fd: r.fd,
-            kind: r.kind.clone(),
-            target: match &r.target {
-                RedirectionTarget::File(w) => RedirectionTarget::File(resolve_word_with_var_env(w, env)),
-                other => other.clone(),
-            },
-        }).collect(),
-    }
+    sc.map_words(|w| resolve_word_with_var_env(w, env))
 }

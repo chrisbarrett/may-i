@@ -1,5 +1,3 @@
-use super::resolve::resolve_param_op;
-
 /// A complete parsed shell command (may contain compound structures).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
@@ -382,16 +380,6 @@ impl Word {
         out
     }
 
-    /// Resolve known environment variables, replacing `Parameter` and
-    /// `ParameterExpansion` parts with `Literal` when the variable name is in `env`.
-    /// Also resolves `ParameterExpansionOp` by applying the operator to the value.
-    /// Other dynamic parts (command substitution, backticks, etc.) are left as-is.
-    pub fn resolve(&self, env: &std::collections::HashMap<String, String>) -> Word {
-        Word {
-            parts: resolve_parts(&self.parts, env),
-        }
-    }
-
     /// Flatten this word to a plain string for matching purposes.
     pub fn to_str(&self) -> String {
         let mut out = String::new();
@@ -420,7 +408,12 @@ fn has_opaque_in(parts: &[WordPart]) -> bool {
     })
 }
 
-/// Resolve environment variables in a slice of word parts.
+// ── Test-only resolution helpers ─────────────────────────────────────
+
+#[cfg(test)]
+use super::resolve::resolve_param_op;
+
+#[cfg(test)]
 fn resolve_parts(
     parts: &[WordPart],
     env: &std::collections::HashMap<String, String>,
@@ -441,6 +434,15 @@ fn resolve_parts(
         }
         _ => part.clone(),
     }).collect()
+}
+
+#[cfg(test)]
+impl Word {
+    pub fn resolve(&self, env: &std::collections::HashMap<String, String>) -> Word {
+        Word {
+            parts: resolve_parts(&self.parts, env),
+        }
+    }
 }
 
 impl Command {
@@ -486,26 +488,6 @@ impl SimpleCommand {
                 ""
             }
         })
-    }
-
-    /// Resolve known environment variables in all words, assignment values,
-    /// and redirect file targets.
-    pub fn resolve(&self, env: &std::collections::HashMap<String, String>) -> SimpleCommand {
-        SimpleCommand {
-            assignments: self.assignments.iter().map(|a| Assignment {
-                name: a.name.clone(),
-                value: a.value.resolve(env),
-            }).collect(),
-            words: self.words.iter().map(|w| w.resolve(env)).collect(),
-            redirections: self.redirections.iter().map(|r| Redirection {
-                fd: r.fd,
-                kind: r.kind.clone(),
-                target: match &r.target {
-                    RedirectionTarget::File(w) => RedirectionTarget::File(w.resolve(env)),
-                    other => other.clone(),
-                },
-            }).collect(),
-        }
     }
 
     /// Apply a transform to every Word in assignments, command words, and

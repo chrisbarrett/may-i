@@ -21,6 +21,21 @@ fn dedup_parts(parts: &[String]) -> Vec<&str> {
         .collect()
 }
 
+/// Build an Ask result for unresolvable dynamic values.
+/// `context` is a prefix like "Cannot statically analyse" or
+/// "Command `foo` contains".
+fn dynamic_ask(dynamic: &[String], context: &str) -> EvalResult {
+    let parts = dedup_parts(dynamic);
+    EvalResult::new(
+        Decision::Ask,
+        Some(format!(
+            "{context} dynamic value{} that cannot be statically analysed: {}",
+            if parts.len() == 1 { "" } else { "s" },
+            parts.join(", "),
+        )),
+    )
+}
+
 /// Result of walking an AST node: the evaluation result and the updated VarEnv.
 struct WalkResult {
     result: EvalResult,
@@ -203,17 +218,8 @@ fn walk_command_with_depth(cmd: &Command, config: &Config, env: &VarEnv, depth: 
         Command::Case { word, arms, .. } => {
             let resolved_word = resolve_word_with_var_env(word, env);
             if resolved_word.has_dynamic_parts() {
-                let dynamic = resolved_word.dynamic_parts();
-                let parts = dedup_parts(&dynamic);
                 return WalkResult {
-                    result: EvalResult::new(
-                        Decision::Ask,
-                        Some(format!(
-                            "Cannot statically analyse dynamic value{}: {}",
-                            if parts.len() == 1 { "" } else { "s" },
-                            parts.join(", "),
-                        )),
-                    ),
+                    result: dynamic_ask(&resolved_word.dynamic_parts(), "Cannot statically analyse"),
                     env: env.clone(),
                 };
             }
@@ -309,20 +315,9 @@ fn walk_for_loop(
     }
 
     // Words contain unsafe dynamic parts
-    let mut dynamic = Vec::new();
-    for w in &resolved_words {
-        dynamic.extend(w.dynamic_parts());
-    }
-    let parts = dedup_parts(&dynamic);
+    let dynamic: Vec<String> = resolved_words.iter().flat_map(|w| w.dynamic_parts()).collect();
     WalkResult {
-        result: EvalResult::new(
-            Decision::Ask,
-            Some(format!(
-                "Cannot statically analyse dynamic value{}: {}",
-                if parts.len() == 1 { "" } else { "s" },
-                parts.join(", "),
-            )),
-        ),
+        result: dynamic_ask(&dynamic, "Cannot statically analyse"),
         env: env.clone(),
     }
 }
@@ -502,16 +497,8 @@ fn walk_simple_command(sc: &SimpleCommand, config: &Config, env: &VarEnv, depth:
     }
     if !dynamic.is_empty() {
         let cmd_label = resolved.command_name().unwrap_or("<unknown>");
-        let parts = dedup_parts(&dynamic);
         return WalkResult {
-            result: EvalResult::new(
-                Decision::Ask,
-                Some(format!(
-                    "Command `{cmd_label}` contains dynamic value{} that cannot be statically analysed: {}",
-                    if parts.len() == 1 { "" } else { "s" },
-                    parts.join(", "),
-                )),
-            ),
+            result: dynamic_ask(&dynamic, &format!("Command `{cmd_label}` contains")),
             env: new_env,
         };
     }
@@ -672,32 +659,9 @@ fn walk_eval_command(
         };
     }
 
-    // Check if any args are opaque or dynamic
-    let has_opaque = args.iter().any(|a| a.has_opaque_parts());
-    let has_dynamic = args.iter().any(|a| a.has_dynamic_parts());
-
-    if has_dynamic {
-        // Already caught by the dynamic parts check in the caller,
-        // but handle explicitly for clarity
-        let mut dynamic = Vec::new();
-        for a in args {
-            dynamic.extend(a.dynamic_parts());
-        }
-        let parts = dedup_parts(&dynamic);
-        return WalkResult {
-            result: EvalResult::new(
-                Decision::Ask,
-                Some(format!(
-                    "Command `eval` contains dynamic value{} that cannot be statically analysed: {}",
-                    if parts.len() == 1 { "" } else { "s" },
-                    parts.join(", "),
-                )),
-            ),
-            env: env.clone(),
-        };
-    }
-
-    if has_opaque {
+    // Dynamic args are already caught by the caller's dynamic-parts check;
+    // only opaque (safe but unknown) args need handling here.
+    if args.iter().any(|a| a.has_opaque_parts()) {
         return WalkResult {
             result: EvalResult::new(
                 Decision::Ask,
