@@ -479,6 +479,7 @@ impl Command {
 
 impl SimpleCommand {
     /// The command name (first word), if any.
+    /// Returns `Some("")` when the first word has no literal leading part.
     pub fn command_name(&self) -> Option<&str> {
         self.words.first().map(|w| {
             // Return a reference to the first literal part
@@ -488,6 +489,11 @@ impl SimpleCommand {
                 ""
             }
         })
+    }
+
+    /// Like `command_name`, but returns `None` for empty names too.
+    pub fn nonempty_command_name(&self) -> Option<&str> {
+        self.command_name().filter(|s| !s.is_empty())
     }
 
     /// Apply a transform to every Word in assignments, command words, and

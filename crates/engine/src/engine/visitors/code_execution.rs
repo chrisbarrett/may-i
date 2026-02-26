@@ -19,7 +19,19 @@ impl CommandVisitor for CodeExecutionVisitor {
         ctx: &VisitorContext,
         resolved: &SimpleCommand,
     ) -> VisitOutcome {
-        let cmd_name = match resolved.command_name() {
+        // Opaque variable as command name (must check before nonempty_command_name
+        // since opaque commands resolve to an empty name)
+        if resolved.words.first().is_some_and(|w| w.has_opaque_parts()) {
+            return VisitOutcome::Terminal {
+                result: EvalResult::new(
+                    Decision::Ask,
+                    Some("Variable used as command name: cannot determine what runs".into()),
+                ),
+                env: ctx.env.clone(),
+            };
+        }
+
+        let cmd_name = match resolved.nonempty_command_name() {
             Some(name) => name,
             None => return VisitOutcome::Continue,
         };
@@ -32,17 +44,6 @@ impl CommandVisitor for CodeExecutionVisitor {
                     Some(format!(
                         "Cannot statically analyse `{cmd_name}`: sourced file contents are unknown"
                     )),
-                ),
-                env: ctx.env.clone(),
-            };
-        }
-
-        // Opaque variable as command name
-        if resolved.words.first().is_some_and(|w| w.has_opaque_parts()) {
-            return VisitOutcome::Terminal {
-                result: EvalResult::new(
-                    Decision::Ask,
-                    Some("Variable used as command name: cannot determine what runs".into()),
                 ),
                 env: ctx.env.clone(),
             };

@@ -14,7 +14,7 @@ impl CommandVisitor for FunctionCallVisitor {
         ctx: &VisitorContext,
         resolved: &SimpleCommand,
     ) -> VisitOutcome {
-        let cmd_name = match resolved.command_name() {
+        let cmd_name = match resolved.nonempty_command_name() {
             Some(name) => name,
             None => return VisitOutcome::Continue,
         };

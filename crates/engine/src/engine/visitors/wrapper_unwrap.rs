@@ -17,9 +17,9 @@ impl CommandVisitor for WrapperUnwrapVisitor {
         ctx: &VisitorContext,
         resolved: &SimpleCommand,
     ) -> VisitOutcome {
-        let cmd_name = match resolved.command_name() {
-            Some(name) if !name.is_empty() => name,
-            _ => return VisitOutcome::Continue,
+        let cmd_name = match resolved.nonempty_command_name() {
+            Some(name) => name,
+            None => return VisitOutcome::Continue,
         };
 
         let inner = match unwrap_wrapper(resolved, ctx.config) {

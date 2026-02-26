@@ -29,9 +29,9 @@ pub(in crate::engine) fn match_against_rules(
     resolved: &SimpleCommand,
     config: &Config,
 ) -> EvalResult {
-    let cmd_name = match resolved.command_name() {
-        Some(name) if !name.is_empty() => name,
-        _ => {
+    let cmd_name = match resolved.nonempty_command_name() {
+        Some(name) => name,
+        None => {
             return EvalResult::new(Decision::Ask, Some("Unknown command".into()));
         }
     };

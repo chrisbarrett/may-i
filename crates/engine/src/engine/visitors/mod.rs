@@ -14,21 +14,16 @@ use crate::var_env::VarEnv;
 /// Maximum recursion depth for command substitution / eval / bash -c evaluation.
 pub(crate) const MAX_EVAL_DEPTH: usize = 10;
 
-/// Deduplicate a list of dynamic part descriptions while preserving order.
-pub(crate) fn dedup_parts(parts: &[String]) -> Vec<&str> {
-    let mut seen = std::collections::HashSet::new();
-    parts
-        .iter()
-        .filter(|p| seen.insert(p.as_str()))
-        .map(|p| p.as_str())
-        .collect()
-}
-
 /// Build an Ask result for unresolvable dynamic values.
 /// `context` is a prefix like "Cannot statically analyse" or
 /// "Command `foo` contains".
 pub(crate) fn dynamic_ask(dynamic: &[String], context: &str) -> EvalResult {
-    let parts = dedup_parts(dynamic);
+    let mut seen = std::collections::HashSet::new();
+    let parts: Vec<&str> = dynamic
+        .iter()
+        .filter(|p| seen.insert(p.as_str()))
+        .map(|p| p.as_str())
+        .collect();
     EvalResult::new(
         Decision::Ask,
         Some(format!(

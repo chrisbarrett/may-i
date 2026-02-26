@@ -41,14 +41,14 @@ pub fn cmd_check(json_mode: bool, verbose: bool, config_path: Option<&std::path:
         let mut failures = Vec::new();
 
         for r in &results {
-            if r.passed {
-                if verbose {
+            if verbose {
+                if r.passed {
                     println!("  {} {}", "PASS".green().bold(), format!("{} → {}", r.command, r.actual).dimmed());
-                }
-            } else {
-                if verbose {
+                } else {
                     println!("  {} {}", "FAIL".red().bold(), format!("{} → {} (expected {})", r.command, r.actual, r.expected).truecolor(255, 165, 0));
                 }
+            }
+            if !r.passed {
                 failures.push(r);
             }
         }
