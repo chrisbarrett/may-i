@@ -1,0 +1,29 @@
+---
+source: tests/parser_snapshots.rs
+expression: "parse(\"ls [abc].txt\")"
+---
+Simple(
+    SimpleCommand {
+        assignments: [],
+        words: [
+            Word {
+                parts: [
+                    Literal(
+                        "ls",
+                    ),
+                ],
+            },
+            Word {
+                parts: [
+                    Glob(
+                        "[abc]",
+                    ),
+                    Literal(
+                        ".txt",
+                    ),
+                ],
+            },
+        ],
+        redirections: [],
+    },
+)

@@ -1,0 +1,43 @@
+---
+source: tests/parser_snapshots.rs
+expression: "parse(\"until false; do echo wait; done\")"
+---
+Until {
+    condition: Simple(
+        SimpleCommand {
+            assignments: [],
+            words: [
+                Word {
+                    parts: [
+                        Literal(
+                            "false",
+                        ),
+                    ],
+                },
+            ],
+            redirections: [],
+        },
+    ),
+    body: Simple(
+        SimpleCommand {
+            assignments: [],
+            words: [
+                Word {
+                    parts: [
+                        Literal(
+                            "echo",
+                        ),
+                    ],
+                },
+                Word {
+                    parts: [
+                        Literal(
+                            "wait",
+                        ),
+                    ],
+                },
+            ],
+            redirections: [],
+        },
+    ),
+}

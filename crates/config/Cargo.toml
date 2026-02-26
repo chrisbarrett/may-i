@@ -1,0 +1,13 @@
+[package]
+name = "may-i-config"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+may-i-sexpr = { path = "../sexpr" }
+may-i-core = { path = "../core" }
+dirs = "6"
+regex = "1"
+
+[dev-dependencies]
+may-i-engine = { path = "../engine" }

@@ -1,0 +1,69 @@
+---
+source: tests/parser_snapshots.rs
+expression: "parse(\"while true; do if test -f marker; then break; fi; done\")"
+---
+While {
+    condition: Simple(
+        SimpleCommand {
+            assignments: [],
+            words: [
+                Word {
+                    parts: [
+                        Literal(
+                            "true",
+                        ),
+                    ],
+                },
+            ],
+            redirections: [],
+        },
+    ),
+    body: If {
+        condition: Simple(
+            SimpleCommand {
+                assignments: [],
+                words: [
+                    Word {
+                        parts: [
+                            Literal(
+                                "test",
+                            ),
+                        ],
+                    },
+                    Word {
+                        parts: [
+                            Literal(
+                                "-f",
+                            ),
+                        ],
+                    },
+                    Word {
+                        parts: [
+                            Literal(
+                                "marker",
+                            ),
+                        ],
+                    },
+                ],
+                redirections: [],
+            },
+        ),
+        then_branch: Simple(
+            SimpleCommand {
+                assignments: [],
+                words: [
+                    Word {
+                        parts: [
+                            Literal(
+                                "break",
+                            ),
+                        ],
+                    },
+                ],
+                redirections: [],
+            },
+        ),
+        elif_branches: [],
+        else_branch: None,
+    },
+}

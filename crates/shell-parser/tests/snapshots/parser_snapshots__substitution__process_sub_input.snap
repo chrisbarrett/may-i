@@ -1,0 +1,35 @@
+---
+source: tests/parser_snapshots.rs
+expression: "parse(\"diff <(sort a) <(sort b)\")"
+---
+Simple(
+    SimpleCommand {
+        assignments: [],
+        words: [
+            Word {
+                parts: [
+                    Literal(
+                        "diff",
+                    ),
+                ],
+            },
+            Word {
+                parts: [
+                    ProcessSubstitution {
+                        direction: Input,
+                        command: "sort a",
+                    },
+                ],
+            },
+            Word {
+                parts: [
+                    ProcessSubstitution {
+                        direction: Input,
+                        command: "sort b",
+                    },
+                ],
+            },
+        ],
+        redirections: [],
+    },
+)

@@ -1,0 +1,70 @@
+---
+source: tests/parser_snapshots.rs
+expression: "parse(\"a && b || c && d\")"
+---
+And(
+    Or(
+        And(
+            Simple(
+                SimpleCommand {
+                    assignments: [],
+                    words: [
+                        Word {
+                            parts: [
+                                Literal(
+                                    "a",
+                                ),
+                            ],
+                        },
+                    ],
+                    redirections: [],
+                },
+            ),
+            Simple(
+                SimpleCommand {
+                    assignments: [],
+                    words: [
+                        Word {
+                            parts: [
+                                Literal(
+                                    "b",
+                                ),
+                            ],
+                        },
+                    ],
+                    redirections: [],
+                },
+            ),
+        ),
+        Simple(
+            SimpleCommand {
+                assignments: [],
+                words: [
+                    Word {
+                        parts: [
+                            Literal(
+                                "c",
+                            ),
+                        ],
+                    },
+                ],
+                redirections: [],
+            },
+        ),
+    ),
+    Simple(
+        SimpleCommand {
+            assignments: [],
+            words: [
+                Word {
+                    parts: [
+                        Literal(
+                            "d",
+                        ),
+                    ],
+                },
+            ],
+            redirections: [],
+        },
+    ),
+)

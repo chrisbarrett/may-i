@@ -1,0 +1,45 @@
+---
+source: tests/parser_snapshots.rs
+expression: "parse(\"(cd /tmp && ls)\")"
+---
+Subshell(
+    And(
+        Simple(
+            SimpleCommand {
+                assignments: [],
+                words: [
+                    Word {
+                        parts: [
+                            Literal(
+                                "cd",
+                            ),
+                        ],
+                    },
+                    Word {
+                        parts: [
+                            Literal(
+                                "/tmp",
+                            ),
+                        ],
+                    },
+                ],
+                redirections: [],
+            },
+        ),
+        Simple(
+            SimpleCommand {
+                assignments: [],
+                words: [
+                    Word {
+                        parts: [
+                            Literal(
+                                "ls",
+                            ),
+                        ],
+                    },
+                ],
+                redirections: [],
+            },
+        ),
+    ),
+)

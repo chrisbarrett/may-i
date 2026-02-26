@@ -1,0 +1,30 @@
+---
+source: tests/parser_snapshots.rs
+expression: "parse(\"echo ${var:-default}\")"
+---
+Simple(
+    SimpleCommand {
+        assignments: [],
+        words: [
+            Word {
+                parts: [
+                    Literal(
+                        "echo",
+                    ),
+                ],
+            },
+            Word {
+                parts: [
+                    ParameterExpansionOp {
+                        name: "var",
+                        op: Default {
+                            colon: true,
+                            value: "default",
+                        },
+                    },
+                ],
+            },
+        ],
+        redirections: [],
+    },
+)

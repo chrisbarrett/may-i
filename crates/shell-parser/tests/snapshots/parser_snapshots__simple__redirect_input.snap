@@ -1,0 +1,33 @@
+---
+source: tests/parser_snapshots.rs
+expression: "parse(\"cat < input.txt\")"
+---
+Simple(
+    SimpleCommand {
+        assignments: [],
+        words: [
+            Word {
+                parts: [
+                    Literal(
+                        "cat",
+                    ),
+                ],
+            },
+        ],
+        redirections: [
+            Redirection {
+                fd: None,
+                kind: Input,
+                target: File(
+                    Word {
+                        parts: [
+                            Literal(
+                                "input.txt",
+                            ),
+                        ],
+                    },
+                ),
+            },
+        ],
+    },
+)

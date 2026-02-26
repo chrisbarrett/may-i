@@ -1,0 +1,26 @@
+---
+source: tests/parser_snapshots.rs
+expression: "parse(\"echo $'col1\\\\tcol2'\")"
+---
+Simple(
+    SimpleCommand {
+        assignments: [],
+        words: [
+            Word {
+                parts: [
+                    Literal(
+                        "echo",
+                    ),
+                ],
+            },
+            Word {
+                parts: [
+                    AnsiCQuoted(
+                        "col1\tcol2",
+                    ),
+                ],
+            },
+        ],
+        redirections: [],
+    },
+)

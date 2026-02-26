@@ -11,14 +11,14 @@
 
 use miette::GraphicalReportHandler;
 
-fn parse_wrappers(input: &str) -> Vec<may_i::types::Wrapper> {
-    may_i::config_parse::parse(input, "<test>")
+fn parse_wrappers(input: &str) -> Vec<may_i_core::Wrapper> {
+    may_i_config::parse::parse(input, "<test>")
         .expect("expected valid config")
         .wrappers
 }
 
 fn render_error(input: &str) -> String {
-    let err = may_i::config_parse::parse(input, "<test>")
+    let err = may_i_config::parse::parse(input, "<test>")
         .expect_err("expected a parse error");
     let handler = GraphicalReportHandler::new_themed(miette::GraphicalTheme::unicode_nocolor());
     let mut out = String::new();

@@ -1,17 +1,23 @@
+[workspace]
+members = ["crates/*"]
+
 [package]
 name = "may-i"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+may-i-shell-parser = { path = "crates/shell-parser" }
+may-i-sexpr = { path = "crates/sexpr" }
+may-i-core = { path = "crates/core" }
+may-i-engine = { path = "crates/engine" }
+may-i-config = { path = "crates/config" }
+may-i-pp = { path = "crates/pp" }
 clap = { version = "4", features = ["derive"] }
 colored = "3.1.1"
-dirs = "6"
 miette = { version = "7", features = ["fancy"] }
-regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-thiserror = "2"
 
 [dev-dependencies]
 assert_cmd = "2"

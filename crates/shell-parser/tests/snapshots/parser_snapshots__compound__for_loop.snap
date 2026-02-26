@@ -1,0 +1,52 @@
+---
+source: tests/parser_snapshots.rs
+expression: "parse(\"for x in a b c; do echo $x; done\")"
+---
+For {
+    var: "x",
+    words: [
+        Word {
+            parts: [
+                Literal(
+                    "a",
+                ),
+            ],
+        },
+        Word {
+            parts: [
+                Literal(
+                    "b",
+                ),
+            ],
+        },
+        Word {
+            parts: [
+                Literal(
+                    "c",
+                ),
+            ],
+        },
+    ],
+    body: Simple(
+        SimpleCommand {
+            assignments: [],
+            words: [
+                Word {
+                    parts: [
+                        Literal(
+                            "echo",
+                        ),
+                    ],
+                },
+                Word {
+                    parts: [
+                        Parameter(
+                            "x",
+                        ),
+                    ],
+                },
+            ],
+            redirections: [],
+        },
+    ),
+}

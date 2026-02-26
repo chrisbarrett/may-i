@@ -1,0 +1,27 @@
+---
+source: tests/parser_snapshots.rs
+expression: "parse(\"cat <<-EOF\\n\\thello\\n\\tworld\\n\\tEOF\")"
+---
+Simple(
+    SimpleCommand {
+        assignments: [],
+        words: [
+            Word {
+                parts: [
+                    Literal(
+                        "cat",
+                    ),
+                ],
+            },
+        ],
+        redirections: [
+            Redirection {
+                fd: None,
+                kind: HeredocStrip,
+                target: Heredoc(
+                    "hello\nworld\n",
+                ),
+            },
+        ],
+    },
+)
