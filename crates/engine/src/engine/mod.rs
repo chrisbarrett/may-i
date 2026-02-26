@@ -7,6 +7,7 @@ mod visitor;
 mod dynamic_parts;
 mod code_execution;
 mod function_call;
+mod read_builtin;
 use matcher::*;
 use visitor::{CommandVisitor, VisitOutcome, VisitorContext};
 
@@ -419,15 +420,15 @@ impl<'a> AstWalker<'a> {
         let with_cmd_subs = sc.map_words(|w| self.resolve_command_substitutions(w, &new_env, depth));
         let resolved = resolve_simple_command_with_var_env(&with_cmd_subs, &new_env);
 
-        // Detect `read`/`readarray`/`mapfile` builtins
-        if let Some(cmd_name) = resolved.command_name()
-            && matches!(cmd_name, "read" | "readarray" | "mapfile")
-        {
-            return walk_read_builtin(cmd_name, &resolved, &mut new_env);
+        // Run visitors: read builtin, dynamic parts, code execution, function calls
+        let ctx = VisitorContext { config: self.config, env: &new_env, depth };
+
+        // Detect `read`/`readarray`/`mapfile` builtins (must run before dynamic check)
+        if let Some(walk) = self.run_visitor(&read_builtin::ReadBuiltinVisitor, &ctx, &resolved) {
+            return walk;
         }
 
         // Check for remaining dynamic parts (unsafe variables, command substitutions, etc.)
-        let ctx = VisitorContext { config: self.config, env: &new_env, depth };
         if let Some(walk) = self.run_visitor(&dynamic_parts::DynamicPartsVisitor, &ctx, &resolved) {
             return walk;
         }
@@ -617,75 +618,6 @@ fn evaluate_with_env(input: &str, config: &Config, env: &VarEnv) -> EvalResult {
 
 /// Maximum recursion depth for command substitution / eval / bash -c evaluation.
 const MAX_EVAL_DEPTH: usize = 10;
-
-/// Handle `read`/`readarray`/`mapfile` builtins by extracting variable names
-/// and updating the environment.
-fn walk_read_builtin(
-    cmd_name: &str,
-    resolved: &SimpleCommand,
-    env: &mut VarEnv,
-) -> WalkResult {
-    // Flags that take an argument (the next token is consumed)
-    let flags_with_arg: &[&str] = match cmd_name {
-        "read" => &["-d", "-n", "-N", "-p", "-t", "-u"],
-        "readarray" | "mapfile" => &["-d", "-n", "-O", "-t", "-u", "-C", "-c"],
-        _ => &[],
-    };
-
-    // Extract variable names from args (skip flags and their values)
-    let args = resolved.args();
-    let mut var_names = Vec::new();
-    let mut skip_next = false;
-    for arg in args {
-        if skip_next {
-            skip_next = false;
-            continue;
-        }
-        let s = arg.to_str();
-        if s.starts_with('-') && s.len() > 1 {
-            if flags_with_arg.iter().any(|f| *f == s) {
-                skip_next = true;
-            }
-            continue;
-        }
-        var_names.push(s);
-    }
-
-    // Check for herestring with literal value
-    let herestring_val = resolved.redirections.iter().find_map(|r| {
-        if matches!(r.kind, parser::RedirectionKind::Herestring)
-            && let parser::RedirectionTarget::File(w) = &r.target
-            && w.is_literal()
-        {
-            return Some(w.to_str());
-        }
-        None
-    });
-
-    // Default variable name for `read` is REPLY
-    if var_names.is_empty() && cmd_name == "read" {
-        var_names.push("REPLY".to_string());
-    }
-
-    // Set variables: if herestring with known value and single var, use it;
-    // otherwise Safe(None) (user-controlled input is safe but unknown)
-    for (i, name) in var_names.iter().enumerate() {
-        let state = if var_names.len() == 1 && i == 0 {
-            match &herestring_val {
-                Some(val) => VarState::Safe(Some(val.clone())),
-                None => VarState::Safe(None),
-            }
-        } else {
-            VarState::Safe(None)
-        };
-        env.set(name.clone(), state);
-    }
-
-    WalkResult {
-        result: EvalResult::new(Decision::Allow, None),
-        env: env.clone(),
-    }
-}
 
 /// Check if an arithmetic expression is safe: all variable references resolve to safe vars.
 fn is_arithmetic_safe(expr: &str, env: &VarEnv) -> bool {
