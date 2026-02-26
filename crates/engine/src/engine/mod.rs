@@ -3,7 +3,10 @@
 // Walks the AST with a VarEnv to track variable safety through shell constructs.
 
 mod matcher;
+mod visitor;
+mod dynamic_parts;
 use matcher::*;
+use visitor::{CommandVisitor, VisitOutcome, VisitorContext};
 
 use may_i_shell_parser::{self as parser, Command, SimpleCommand, Word};
 use may_i_core::{Config, Decision, Effect, EvalResult};
@@ -12,7 +15,7 @@ use crate::var_env::{
 };
 
 /// Deduplicate a list of dynamic part descriptions while preserving order.
-fn dedup_parts(parts: &[String]) -> Vec<&str> {
+pub(crate) fn dedup_parts(parts: &[String]) -> Vec<&str> {
     let mut seen = std::collections::HashSet::new();
     parts
         .iter()
@@ -24,7 +27,7 @@ fn dedup_parts(parts: &[String]) -> Vec<&str> {
 /// Build an Ask result for unresolvable dynamic values.
 /// `context` is a prefix like "Cannot statically analyse" or
 /// "Command `foo` contains".
-fn dynamic_ask(dynamic: &[String], context: &str) -> EvalResult {
+pub(crate) fn dynamic_ask(dynamic: &[String], context: &str) -> EvalResult {
     let parts = dedup_parts(dynamic);
     EvalResult::new(
         Decision::Ask,
@@ -83,6 +86,23 @@ impl<'a> AstWalker<'a> {
 
     fn walk(&self, cmd: &Command, env: &VarEnv) -> WalkResult {
         self.walk_with_depth(cmd, env, 0)
+    }
+
+    /// Dispatch a single visitor on a resolved command.
+    /// Returns `Some(WalkResult)` if the visitor handled it, `None` if it passed.
+    fn run_visitor(
+        &self,
+        visitor: &dyn CommandVisitor,
+        ctx: &VisitorContext,
+        resolved: &SimpleCommand,
+    ) -> Option<WalkResult> {
+        match visitor.visit_simple_command(ctx, resolved) {
+            VisitOutcome::Terminal { result, env } => Some(WalkResult { result, env }),
+            VisitOutcome::Continue => None,
+            VisitOutcome::Recurse { command, env } => {
+                Some(self.walk_with_depth(&command, &env, ctx.depth + 1))
+            }
+        }
     }
 
     fn walk_with_depth(&self, cmd: &Command, env: &VarEnv, depth: usize) -> WalkResult {
@@ -405,24 +425,9 @@ impl<'a> AstWalker<'a> {
         }
 
         // Check for remaining dynamic parts (unsafe variables, command substitutions, etc.)
-        let mut dynamic = Vec::new();
-        for word in &resolved.words {
-            dynamic.extend(word.dynamic_parts());
-        }
-        for assignment in &resolved.assignments {
-            dynamic.extend(assignment.value.dynamic_parts());
-        }
-        for redir in &resolved.redirections {
-            if let parser::RedirectionTarget::File(w) = &redir.target {
-                dynamic.extend(w.dynamic_parts());
-            }
-        }
-        if !dynamic.is_empty() {
-            let cmd_label = resolved.command_name().unwrap_or("<unknown>");
-            return WalkResult {
-                result: dynamic_ask(&dynamic, &format!("Command `{cmd_label}` contains")),
-                env: new_env,
-            };
+        let ctx = VisitorContext { config: self.config, env: &new_env, depth };
+        if let Some(walk) = self.run_visitor(&dynamic_parts::DynamicPartsVisitor, &ctx, &resolved) {
+            return walk;
         }
 
         // Code-execution position detection
