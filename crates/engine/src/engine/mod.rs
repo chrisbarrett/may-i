@@ -109,6 +109,7 @@ impl<'a> AstWalker<'a> {
     }
 
     /// Run the visitor chain on a resolved command. First non-Continue outcome wins.
+    /// The chain always terminates: RuleMatchVisitor is the final catch-all.
     fn run_visitors(
         &self,
         ctx: &VisitorContext,
@@ -119,6 +120,8 @@ impl<'a> AstWalker<'a> {
             &dynamic_parts::DynamicPartsVisitor,
             &code_execution::CodeExecutionVisitor,
             &function_call::FunctionCallVisitor,
+            &WrapperUnwrapVisitor,
+            &RuleMatchVisitor,
         ];
         for visitor in visitors {
             if let Some(walk) = self.run_visitor(*visitor, ctx, resolved) {
@@ -440,165 +443,203 @@ impl<'a> AstWalker<'a> {
         let with_cmd_subs = sc.map_words(|w| self.resolve_command_substitutions(w, &new_env, depth));
         let resolved = resolve_simple_command_with_var_env(&with_cmd_subs, &new_env);
 
-        // Run visitor chain: read builtin → dynamic parts → code execution → function calls
+        // Run visitor chain (terminates with rule matching — always produces a result)
         let ctx = VisitorContext { config: self.config, env: &new_env, depth };
-        if let Some(walk) = self.run_visitors(&ctx, &resolved) {
-            return walk;
-        }
-
-        // No visitor handled it — evaluate against rules
-        let result = self.evaluate_resolved_command(&resolved, 0, &new_env);
-        WalkResult {
-            result,
-            env: new_env,
-        }
+        self.run_visitors(&ctx, &resolved)
+            .unwrap_or_else(|| unreachable!("RuleMatchVisitor always returns Terminal"))
     }
 
-    /// Evaluate a resolved simple command against rules (no more variable resolution needed).
-    #[allow(clippy::only_used_in_recursion)]
-    fn evaluate_resolved_command(
+}
+
+// ── Wrapper unwrapping visitor ──────────────────────────────────────
+
+/// Peels known wrapper commands (e.g. `sudo`, `env`) and recurses into
+/// the inner command. If the inner command is a single word containing
+/// spaces, it is parsed as a full AST.
+struct WrapperUnwrapVisitor;
+
+impl CommandVisitor for WrapperUnwrapVisitor {
+    fn visit_simple_command(
         &self,
+        ctx: &VisitorContext,
         resolved: &SimpleCommand,
-        depth: usize,
-        env: &VarEnv,
-    ) -> EvalResult {
+    ) -> VisitOutcome {
         let cmd_name = match resolved.command_name() {
             Some(name) if !name.is_empty() => name,
-            _ => {
-                return EvalResult::new(Decision::Ask, Some("Unknown command".into()));
-            }
+            _ => return VisitOutcome::Continue,
         };
 
-        // R9: Check if this is a wrapper command
-        if depth < 5
-            && let Some(inner) = unwrap_wrapper(resolved, self.config)
-        {
-            if inner.words.len() == 1 {
-                let word = &inner.words[0];
-                if word.has_opaque_parts() {
-                    return EvalResult::new(
+        let inner = match unwrap_wrapper(resolved, ctx.config) {
+            Some(inner) => inner,
+            None => return VisitOutcome::Continue,
+        };
+
+        // Single-word inner command may contain spaces (e.g. from variable expansion)
+        if inner.words.len() == 1 {
+            let word = &inner.words[0];
+            if word.has_opaque_parts() {
+                return VisitOutcome::Terminal {
+                    result: EvalResult::new(
                         Decision::Ask,
                         Some(format!(
                             "Cannot determine inner command for `{cmd_name}`: \
                              argument value is unknown"
                         )),
-                    );
-                }
-                let s = word.to_str();
-                if s.contains(' ') {
-                    let inner_ast = parser::parse(&s);
-                    return self.walk_with_depth(&inner_ast, env, 1).result;
-                }
+                    ),
+                    env: ctx.env.clone(),
+                };
             }
-            return self.evaluate_resolved_command(&inner, depth + 1, env);
+            let s = word.to_str();
+            if s.contains(' ') {
+                let inner_ast = parser::parse(&s);
+                return VisitOutcome::Recurse {
+                    command: inner_ast,
+                    env: ctx.env.clone(),
+                };
+            }
         }
 
-        // Expand flags: -abc → -a -b -c (R8)
-        let expanded_args = expand_flags(resolved.args());
+        VisitOutcome::Recurse {
+            command: Command::Simple(inner),
+            env: ctx.env.clone(),
+        }
+    }
+}
 
-        // Evaluate against rules: deny rules first, then first match
-        let mut first_match: Option<EvalResult> = None;
-        let mut trace = Vec::new();
-        let mut had_command_match = false;
+// ── Rule matching visitor ──────────────────────────────────────────
 
-        for rule in &self.config.rules {
-            if !command_matches(cmd_name, &rule.command) {
+/// Terminal visitor: matches the resolved command against config rules.
+/// Always returns Terminal (never Continue).
+struct RuleMatchVisitor;
+
+impl CommandVisitor for RuleMatchVisitor {
+    fn visit_simple_command(
+        &self,
+        ctx: &VisitorContext,
+        resolved: &SimpleCommand,
+    ) -> VisitOutcome {
+        let result = match_against_rules(resolved, ctx.config);
+        VisitOutcome::Terminal {
+            result,
+            env: ctx.env.clone(),
+        }
+    }
+}
+
+/// Pure rule-matching logic: expand flags, iterate rules, return first match.
+fn match_against_rules(resolved: &SimpleCommand, config: &Config) -> EvalResult {
+    let cmd_name = match resolved.command_name() {
+        Some(name) if !name.is_empty() => name,
+        _ => {
+            return EvalResult::new(Decision::Ask, Some("Unknown command".into()));
+        }
+    };
+
+    // Expand flags: -abc → -a -b -c (R8)
+    let expanded_args = expand_flags(resolved.args());
+
+    // Evaluate against rules: deny rules first, then first match
+    let mut first_match: Option<EvalResult> = None;
+    let mut trace = Vec::new();
+    let mut had_command_match = false;
+
+    for rule in &config.rules {
+        if !command_matches(cmd_name, &rule.command) {
+            continue;
+        }
+
+        had_command_match = true;
+        let line_num = config.source_info.as_ref().map(|si| {
+            may_i_sexpr::offset_to_line_col(&si.content, rule.source_span.start).0
+        });
+        let line_prefix = line_num.map(|n| format!("{n}: ")).unwrap_or_default();
+        let rule_label = format_command_matcher(
+            &rule.command,
+            line_prefix.len() + "rule ".len(),
+        );
+        for (i, line) in rule_label.lines().enumerate() {
+            if i == 0 {
+                trace.push(format!("{line_prefix}rule {line}"));
+            } else {
+                trace.push(line.to_string());
+            }
+        }
+
+        let outcome = match &rule.matcher {
+            None => MatchOutcome::MatchedNoEffect,
+            Some(m) => {
+                let mut collector = TraceCollector::new(2);
+                let outcome = match_args(m, &expanded_args, &mut |ev| collector.on_event(ev));
+                for step in collector.into_steps() {
+                    for line in step.lines() {
+                        trace.push(format!("  {line}"));
+                    }
+                }
+                outcome
+            }
+        };
+
+        let effect = match outcome {
+            MatchOutcome::NoMatch => {
+                if rule.matcher.is_some() {
+                    trace.push("  args did not match".into());
+                }
                 continue;
             }
-
-            had_command_match = true;
-            let line_num = self.config.source_info.as_ref().map(|si| {
-                may_i_sexpr::offset_to_line_col(&si.content, rule.source_span.start).0
-            });
-            let line_prefix = line_num.map(|n| format!("{n}: ")).unwrap_or_default();
-            let rule_label = format_command_matcher(
-                &rule.command,
-                line_prefix.len() + "rule ".len(),
-            );
-            for (i, line) in rule_label.lines().enumerate() {
-                if i == 0 {
-                    trace.push(format!("{line_prefix}rule {line}"));
-                } else {
-                    trace.push(line.to_string());
+            MatchOutcome::Matched(eff) => {
+                if rule.matcher.is_some() {
+                    trace.push("  args matched".into());
+                }
+                trace.push(format!(
+                    "  effect: {} — {}",
+                    eff.decision,
+                    eff.reason.as_deref().unwrap_or("(no reason)")
+                ));
+                eff
+            }
+            MatchOutcome::MatchedNoEffect => {
+                if rule.matcher.is_some() {
+                    trace.push("  args matched".into());
+                }
+                match &rule.effect {
+                    Some(eff) => {
+                        trace.push(format!(
+                            "  effect: {} — {}",
+                            eff.decision,
+                            eff.reason.as_deref().unwrap_or("(no reason)")
+                        ));
+                        eff.clone()
+                    }
+                    None => continue,
                 }
             }
+        };
 
-            let outcome = match &rule.matcher {
-                None => MatchOutcome::MatchedNoEffect,
-                Some(m) => {
-                    let mut collector = TraceCollector::new(2);
-                    let outcome = match_args(m, &expanded_args, &mut |ev| collector.on_event(ev));
-                    for step in collector.into_steps() {
-                        for line in step.lines() {
-                            trace.push(format!("  {line}"));
-                        }
-                    }
-                    outcome
-                }
-            };
+        let Effect { decision, reason } = effect;
+        let mut result = EvalResult::new(decision, reason);
 
-            let effect = match outcome {
-                MatchOutcome::NoMatch => {
-                    if rule.matcher.is_some() {
-                        trace.push("  args did not match".into());
-                    }
-                    continue;
-                }
-                MatchOutcome::Matched(eff) => {
-                    if rule.matcher.is_some() {
-                        trace.push("  args matched".into());
-                    }
-                    trace.push(format!(
-                        "  effect: {} — {}",
-                        eff.decision,
-                        eff.reason.as_deref().unwrap_or("(no reason)")
-                    ));
-                    eff
-                }
-                MatchOutcome::MatchedNoEffect => {
-                    if rule.matcher.is_some() {
-                        trace.push("  args matched".into());
-                    }
-                    match &rule.effect {
-                        Some(eff) => {
-                            trace.push(format!(
-                                "  effect: {} — {}",
-                                eff.decision,
-                                eff.reason.as_deref().unwrap_or("(no reason)")
-                            ));
-                            eff.clone()
-                        }
-                        None => continue,
-                    }
-                }
-            };
-
-            let Effect { decision, reason } = effect;
-            let mut result = EvalResult::new(decision, reason);
-
-            if decision == Decision::Deny {
-                result.trace = trace;
-                return result;
-            }
-
-            if first_match.is_none() {
-                result.trace = trace.clone();
-                first_match = Some(result);
-            }
+        if decision == Decision::Deny {
+            result.trace = trace;
+            return result;
         }
 
-        first_match.unwrap_or_else(|| {
-            let reason = if had_command_match {
-                format!("Rules for `{cmd_name}` exist but arguments did not match any patterns")
-            } else {
-                format!("No rule for command `{cmd_name}`")
-            };
-            trace.push("  => ask (default)".into());
-            let mut result = EvalResult::new(Decision::Ask, Some(reason));
-            result.trace = trace;
-            result
-        })
+        if first_match.is_none() {
+            result.trace = trace.clone();
+            first_match = Some(result);
+        }
     }
+
+    first_match.unwrap_or_else(|| {
+        let reason = if had_command_match {
+            format!("Rules for `{cmd_name}` exist but arguments did not match any patterns")
+        } else {
+            format!("No rule for command `{cmd_name}`")
+        };
+        trace.push("  => ask (default)".into());
+        let mut result = EvalResult::new(Decision::Ask, Some(reason));
+        result.trace = trace;
+        result
+    })
 }
 
 // ── Public API ─────────────────────────────────────────────────────
@@ -1567,7 +1608,7 @@ mod tests {
         assert_eq!(result.decision, Decision::Allow);
     }
 
-    // ── evaluate_resolved_command(): edge cases ───────────────────────
+    // ── match_against_rules(): edge cases ──────────────────────────
 
     #[test]
     fn evaluate_empty_command_name() {
@@ -1576,8 +1617,7 @@ mod tests {
             words: vec![],
             redirections: vec![],
         };
-        let env = VarEnv::from_process_env();
-        let result = AstWalker::new(&empty_config()).evaluate_resolved_command(&sc, 0, &env);
+        let result = match_against_rules(&sc, &empty_config());
         assert_eq!(result.decision, Decision::Ask);
         assert_eq!(result.reason.as_deref(), Some("Unknown command"));
     }
