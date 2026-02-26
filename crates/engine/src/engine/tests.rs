@@ -2,7 +2,7 @@ use super::*;
 use super::matcher::*;
 use super::visitors::rule_match::match_against_rules;
 use may_i_core::{
-    ArgMatcher, CaptureKind, CommandMatcher, CondBranch, Config, Effect, Expr, PosExpr, Rule,
+    ArgMatcher, CommandMatcher, CondBranch, Config, Effect, Expr, PosExpr, Rule,
     Wrapper, WrapperStep,
 };
 
@@ -597,7 +597,7 @@ fn after_flags_wrapper(command: &str) -> Wrapper {
         command: command.into(),
         steps: vec![WrapperStep::Positional {
             patterns: vec![],
-            capture: Some(CaptureKind::CommandArgs),
+            capture: true,
         }],
     }
 }
@@ -607,7 +607,7 @@ fn after_delimiter_wrapper(command: &str, delim: &str) -> Wrapper {
         command: command.into(),
         steps: vec![WrapperStep::Flag {
             name: delim.into(),
-            capture: CaptureKind::CommandArgs,
+
         }],
     }
 }
@@ -654,7 +654,7 @@ fn wrapper_with_positional_args() {
             command: "docker".into(),
             steps: vec![WrapperStep::Positional {
                 patterns: vec![Expr::Literal("exec".into())],
-                capture: Some(CaptureKind::CommandArgs),
+                capture: true,
             }],
         }],
         ..Config::default()
@@ -671,7 +671,7 @@ fn wrapper_positional_mismatch_no_unwrap() {
             command: "docker".into(),
             steps: vec![WrapperStep::Positional {
                 patterns: vec![Expr::Literal("exec".into())],
-                capture: Some(CaptureKind::CommandArgs),
+                capture: true,
             }],
         }],
         ..Config::default()
@@ -700,7 +700,7 @@ fn wrapper_ssh_skips_hostname() {
             command: "ssh".into(),
             steps: vec![WrapperStep::Positional {
                 patterns: vec![Expr::Wildcard],
-                capture: Some(CaptureKind::CommandArgs),
+                capture: true,
             }],
         }],
         ..Config::default()
@@ -718,7 +718,7 @@ fn wrapper_ssh_no_inner_command() {
             command: "ssh".into(),
             steps: vec![WrapperStep::Positional {
                 patterns: vec![Expr::Wildcard],
-                capture: Some(CaptureKind::CommandArgs),
+                capture: true,
             }],
         }],
         ..Config::default()
@@ -740,11 +740,11 @@ fn wrapper_nix_shell_flag_command() {
                         Expr::Literal("shell".into()),
                         Expr::Literal("develop".into()),
                     ])],
-                    capture: None,
+                    capture: false,
                 },
                 WrapperStep::Flag {
                     name: "--command".into(),
-                    capture: CaptureKind::CommandArgs,
+        
                 },
             ],
         }],
@@ -775,11 +775,11 @@ fn wrapper_mise_validate_then_delimiter() {
             steps: vec![
                 WrapperStep::Positional {
                     patterns: vec![Expr::Literal("exec".into())],
-                    capture: None,
+                    capture: false,
                 },
                 WrapperStep::Flag {
                     name: "--".into(),
-                    capture: CaptureKind::CommandArgs,
+        
                 },
             ],
         }],

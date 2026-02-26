@@ -1,5 +1,6 @@
 ---
 source: tests/wrapper_snapshots.rs
+assertion_line: 84
 expression: "parse_wrappers(r#\"(wrapper \"x\" (positional (or \"foo\" \"bar\") :command+args))\"#)"
 ---
 [
@@ -19,9 +20,7 @@ expression: "parse_wrappers(r#\"(wrapper \"x\" (positional (or \"foo\" \"bar\") 
                         ],
                     ),
                 ],
-                capture: Some(
-                    CommandArgs,
-                ),
+                capture: true,
             },
         ],
     },

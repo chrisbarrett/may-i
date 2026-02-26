@@ -43,6 +43,6 @@ pub fn cmd_hook(config_path: Option<&std::path::Path>) -> Result<(), LoadError> 
         }
     });
 
-    println!("{}", serde_json::to_string(&response).unwrap());
+    println!("{}", serde_json::to_string(&response).expect("response serialization is infallible"));
     Ok(())
 }

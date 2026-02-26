@@ -88,52 +88,13 @@ pub(super) fn parse_expr(sexpr: &Sexpr) -> Result<Expr, RawError> {
 }
 
 pub(super) fn parse_expr_cond_branches(branches: &[Sexpr]) -> Result<Vec<ExprBranch>, RawError> {
-    if branches.is_empty() {
-        return Err(RawError::new(
-            "cond must have at least one branch",
-            Span::new(0, 0),
-        ));
-    }
-    let mut result = Vec::new();
-    for branch in branches {
-        let items = branch.as_list().ok_or_else(|| {
-            RawError::new("cond branch must be a list", branch.span())
-        })?;
-        if items.is_empty() {
-            return Err(RawError::new("empty cond branch", branch.span()));
-        }
-        let test = match &items[0] {
-            Sexpr::Atom(s, _) if s == "else" => Expr::Wildcard,
-            other => parse_expr(other)?,
-        };
-        let mut effect = None;
-        for item in &items[1..] {
-            let il = item.as_list().ok_or_else(|| {
-                RawError::new("cond branch element must be a list", item.span())
-            })?;
-            if il.is_empty() {
-                return Err(RawError::new("empty cond branch element", item.span()));
-            }
-            let tag = il[0].as_atom().ok_or_else(|| {
-                RawError::new("cond branch element tag must be an atom", il[0].span())
-            })?;
-            if tag == "effect" {
-                effect = Some(super::parse_effect(il)?);
-            } else {
-                return Err(RawError::new(
-                    format!("unknown cond branch element: {tag}"),
-                    il[0].span(),
-                ));
-            }
-        }
-        result.push(ExprBranch {
-            test,
-            effect: effect.ok_or_else(|| {
-                RawError::new("cond branch must have an effect", branch.span())
-            })?,
-        });
-    }
-    Ok(result)
+    let pairs = super::parse_cond_branches_generic(
+        branches,
+        Span::new(0, 0),
+        parse_expr,
+        || Expr::Wildcard,
+    )?;
+    Ok(pairs.into_iter().map(|(test, effect)| ExprBranch { test, effect }).collect())
 }
 
 fn parse_if_form(args: &[Sexpr], form_span: Span) -> Result<Expr, RawError> {
@@ -146,11 +107,11 @@ fn parse_if_form(args: &[Sexpr], form_span: Span) -> Result<Expr, RawError> {
 }
 
 fn parse_when_form(args: &[Sexpr], form_span: Span) -> Result<Expr, RawError> {
-    let (test, effect) = super::parse_when_sugar(args, form_span, parse_expr)?;
+    let (test, effect) = super::parse_unary_sugar("when", args, form_span, parse_expr)?;
     Ok(Expr::Cond(vec![ExprBranch { test, effect }]))
 }
 
 fn parse_unless_form(args: &[Sexpr], form_span: Span) -> Result<Expr, RawError> {
-    let (test, effect) = super::parse_unless_sugar(args, form_span, parse_expr)?;
+    let (test, effect) = super::parse_unary_sugar("unless", args, form_span, parse_expr)?;
     Ok(Expr::Cond(vec![ExprBranch { test: Expr::Not(Box::new(test)), effect }]))
 }

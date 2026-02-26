@@ -268,28 +268,14 @@ pub struct Wrapper {
 #[derive(Debug, Clone)]
 pub enum WrapperStep {
     /// Validate positional (non-flag) args match patterns in order.
-    /// If `capture` is `Some`, the inner command starts immediately after
+    /// If `capture` is true, the inner command starts immediately after
     /// the last matched positional in the original arg list.
     Positional {
         patterns: Vec<Expr>,
-        capture: Option<CaptureKind>,
+        capture: bool,
     },
     /// Find a named flag or delimiter; the inner command starts after it.
-    Flag { name: String, capture: CaptureKind },
-}
-
-/// Which part of the remaining args becomes the inner command.
-///
-/// Note: the engine currently treats all variants identically (extracts from
-/// the capture point onward). The distinction is preserved for future use.
-#[derive(Debug, Clone, PartialEq)]
-pub enum CaptureKind {
-    /// Everything remaining is the command followed by its arguments.
-    CommandArgs,
-    /// The first remaining token is the command (no arguments).
-    Command,
-    /// All remaining tokens are arguments to an implicit command.
-    Args,
+    Flag { name: String },
 }
 
 /// Result of evaluating a command.

@@ -12,18 +12,13 @@ pub fn cmd_check(json_mode: bool, verbose: bool, config_path: Option<&std::path:
     let config = config::load(config_path)?;
     let results = engine::run_checks(&config);
 
-    let mut passed = 0;
-    let mut failed = 0;
+    let passed = results.iter().filter(|r| r.passed).count();
+    let failed = results.len() - passed;
 
     if json_mode {
         let json_results: Vec<serde_json::Value> = results
             .iter()
             .map(|r| {
-                if r.passed {
-                    passed += 1;
-                } else {
-                    failed += 1;
-                }
                 serde_json::json!({
                     "command": r.command,
                     "expected": r.expected.to_string(),
@@ -41,18 +36,16 @@ pub fn cmd_check(json_mode: bool, verbose: bool, config_path: Option<&std::path:
             "failed": failed,
             "results": json_results
         });
-        println!("{}", serde_json::to_string(&output).unwrap());
+        println!("{}", serde_json::to_string(&output).expect("response serialization is infallible"));
     } else {
         let mut failures = Vec::new();
 
         for r in &results {
             if r.passed {
-                passed += 1;
                 if verbose {
                     println!("  {} {}", "PASS".green().bold(), format!("{} → {}", r.command, r.actual).dimmed());
                 }
             } else {
-                failed += 1;
                 if verbose {
                     println!("  {} {}", "FAIL".red().bold(), format!("{} → {} (expected {})", r.command, r.actual, r.expected).truecolor(255, 165, 0));
                 }

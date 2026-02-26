@@ -1,5 +1,6 @@
 ---
 source: tests/wrapper_snapshots.rs
+assertion_line: 92
 expression: "parse_wrappers(r#\"(wrapper \"terragrunt\" (flag \"--\" :command+args))\"#)"
 ---
 [
@@ -8,7 +9,6 @@ expression: "parse_wrappers(r#\"(wrapper \"terragrunt\" (flag \"--\" :command+ar
         steps: [
             Flag {
                 name: "--",
-                capture: CommandArgs,
             },
         ],
     },

@@ -15,20 +15,21 @@ pub fn cmd_eval(
     config_path: Option<&std::path::Path>,
 ) -> Result<(), LoadError> {
     let config = config::load(config_path)?;
-    let result = engine::evaluate(command, &config);
 
     if json_mode {
+        let result = engine::evaluate(command, &config);
         let json = serde_json::json!({
             "decision": result.decision.to_string(),
             "reason": result.reason.unwrap_or_default(),
             "trace": result.trace,
         });
-        println!("{}", serde_json::to_string(&json).unwrap());
+        println!("{}", serde_json::to_string(&json).expect("response serialization is infallible"));
     } else {
+        // Evaluate per-segment so we can both colorize and derive the aggregate result.
+        let (result, colored_command) = evaluate_segments(command, &config);
+
         println!("\n{}\n", "Command".bold());
-        print!("  ");
-        print_colored_command(command, &config);
-        println!();
+        println!("  {colored_command}");
 
         println!("\n{}\n", "Result".bold());
         {
@@ -53,18 +54,24 @@ pub fn cmd_eval(
     Ok(())
 }
 
-fn print_colored_command(command: &str, config: &may_i_core::Config) {
+/// Evaluate each segment of a command, returning the aggregate result and a
+/// colorized display string. This avoids evaluating the entire command twice.
+fn evaluate_segments(
+    command: &str,
+    config: &may_i_core::Config,
+) -> (may_i_core::EvalResult, String) {
     let segments = parser::segment(command);
 
     if segments.is_empty() {
-        println!("{command}");
-        return;
+        return (engine::evaluate(command, config), command.to_string());
     }
 
+    let mut parts = Vec::new();
+    let mut seg_results = Vec::new();
     for seg in &segments {
         let text = &command[seg.start..seg.end];
         if seg.is_operator {
-            print!(" {text} ");
+            parts.push(format!(" {text} "));
         } else {
             let seg_result = engine::evaluate(text, config);
             let colored = match seg_result.decision {
@@ -72,8 +79,19 @@ fn print_colored_command(command: &str, config: &may_i_core::Config) {
                 Decision::Ask => text.yellow().underline().to_string(),
                 Decision::Deny => text.red().underline().to_string(),
             };
-            print!("{colored}");
+            parts.push(colored);
+            seg_results.push(seg_result);
         }
     }
-    println!();
+
+    // Aggregate: most restrictive segment wins.
+    let result = seg_results.into_iter().reduce(|acc, r| {
+        let decision = acc.decision.most_restrictive(r.decision);
+        let reason = if decision == r.decision { r.reason } else { acc.reason };
+        let mut trace = acc.trace;
+        trace.extend(r.trace);
+        may_i_core::EvalResult { decision, reason, trace }
+    }).unwrap_or_else(|| engine::evaluate(command, config));
+
+    (result, parts.concat())
 }

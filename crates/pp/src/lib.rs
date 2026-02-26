@@ -182,13 +182,16 @@ fn colorize_atom(s: &str, color: bool) -> String {
     }
 }
 
-/// Visible length of a string, ignoring ANSI escape sequences.
+/// Visible length of a string, ignoring ANSI SGR escape sequences (`ESC[...m`).
+///
+/// Only handles SGR codes (terminated by `m`). Other CSI sequences (cursor
+/// movement, etc.) are not expected here — the `colored` crate only emits SGR.
 pub fn visible_len(s: &str) -> usize {
     let mut len = 0;
     let mut in_escape = false;
     for ch in s.chars() {
         if in_escape {
-            if ch == 'm' {
+            if ch.is_ascii_alphabetic() {
                 in_escape = false;
             }
         } else if ch == '\x1b' {

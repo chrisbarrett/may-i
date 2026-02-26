@@ -4,38 +4,13 @@
 
 mod matcher;
 mod visitors;
-use visitors::{CommandVisitor, VisitOutcome, VisitorContext};
+use visitors::{CommandVisitor, VisitOutcome, VisitorContext, MAX_EVAL_DEPTH, dynamic_ask};
 
 use may_i_shell_parser::{self as parser, Command, SimpleCommand, Word};
 use may_i_core::{Config, Decision, EvalResult};
 use crate::var_env::{
     VarEnv, VarState, resolve_word_with_var_env, resolve_simple_command_with_var_env,
 };
-
-/// Deduplicate a list of dynamic part descriptions while preserving order.
-pub(crate) fn dedup_parts(parts: &[String]) -> Vec<&str> {
-    let mut seen = std::collections::HashSet::new();
-    parts
-        .iter()
-        .filter(|p| seen.insert(p.as_str()))
-        .map(|p| p.as_str())
-        .collect()
-}
-
-/// Build an Ask result for unresolvable dynamic values.
-/// `context` is a prefix like "Cannot statically analyse" or
-/// "Command `foo` contains".
-pub(crate) fn dynamic_ask(dynamic: &[String], context: &str) -> EvalResult {
-    let parts = dedup_parts(dynamic);
-    EvalResult::new(
-        Decision::Ask,
-        Some(format!(
-            "{context} dynamic value{} that cannot be statically analysed: {}",
-            if parts.len() == 1 { "" } else { "s" },
-            parts.join(", "),
-        )),
-    )
-}
 
 /// Result of walking an AST node: the evaluation result and the updated VarEnv.
 struct WalkResult {
@@ -53,6 +28,7 @@ impl WalkResult {
 
 /// Aggregate multiple results: most restrictive wins. Deny short-circuits.
 fn aggregate_results(results: Vec<EvalResult>) -> EvalResult {
+    debug_assert!(!results.is_empty(), "aggregate_results called with empty vec");
     let mut overall: Option<EvalResult> = None;
     for result in results {
         if result.decision == Decision::Deny {
@@ -463,9 +439,6 @@ fn evaluate_with_env(input: &str, config: &Config, env: &VarEnv) -> EvalResult {
 }
 
 // ── Standalone helpers ─────────────────────────────────────────────
-
-/// Maximum recursion depth for command substitution / eval / bash -c evaluation.
-const MAX_EVAL_DEPTH: usize = 10;
 
 /// Check if an arithmetic expression is safe: all variable references resolve to safe vars.
 fn is_arithmetic_safe(expr: &str, env: &VarEnv) -> bool {

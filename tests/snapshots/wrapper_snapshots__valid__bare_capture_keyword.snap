@@ -1,5 +1,6 @@
 ---
 source: tests/wrapper_snapshots.rs
+assertion_line: 37
 expression: "parse_wrappers(r#\"(wrapper \"nohup\" :command+args)\"#)"
 ---
 [
@@ -8,9 +9,7 @@ expression: "parse_wrappers(r#\"(wrapper \"nohup\" :command+args)\"#)"
         steps: [
             Positional {
                 patterns: [],
-                capture: Some(
-                    CommandArgs,
-                ),
+                capture: true,
             },
         ],
     },

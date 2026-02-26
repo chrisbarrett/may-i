@@ -305,6 +305,47 @@ pub(in crate::engine) fn match_args(
     }
 }
 
+/// Extract positional args from a resolved argument list, skipping flags and their values.
+pub(in crate::engine) fn extract_positional_args(args: &[ResolvedArg]) -> Vec<ResolvedArg> {
+    let mut positional = Vec::new();
+    let mut skip_next = false;
+    let mut flags_done = false;
+    for arg in args {
+        let s = match arg {
+            ResolvedArg::Literal(s) => s.as_str(),
+            ResolvedArg::Opaque => {
+                // Opaque values are always positional (we can't tell if they're flags)
+                positional.push(arg.clone());
+                continue;
+            }
+        };
+        if flags_done {
+            positional.push(arg.clone());
+            continue;
+        }
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        if s == "--" {
+            positional.push(arg.clone());
+            flags_done = true;
+            continue;
+        }
+        if s.starts_with("--") {
+            if !s.contains('=') {
+                skip_next = true;
+            }
+            continue;
+        }
+        if s.starts_with('-') && s.len() > 1 {
+            continue;
+        }
+        positional.push(arg.clone());
+    }
+    positional
+}
+
 /// Walk positional patterns against extracted positional args.
 fn match_positional(
     patterns: &[PosExpr],
@@ -1018,47 +1059,6 @@ mod tests {
     }
 }
 
-/// Extract positional args from a resolved argument list, skipping flags and their values.
-pub(in crate::engine) fn extract_positional_args(args: &[ResolvedArg]) -> Vec<ResolvedArg> {
-    let mut positional = Vec::new();
-    let mut skip_next = false;
-    let mut flags_done = false;
-    for arg in args {
-        let s = match arg {
-            ResolvedArg::Literal(s) => s.as_str(),
-            ResolvedArg::Opaque => {
-                // Opaque values are always positional (we can't tell if they're flags)
-                positional.push(arg.clone());
-                continue;
-            }
-        };
-        if flags_done {
-            positional.push(arg.clone());
-            continue;
-        }
-        if skip_next {
-            skip_next = false;
-            continue;
-        }
-        if s == "--" {
-            positional.push(arg.clone());
-            flags_done = true;
-            continue;
-        }
-        if s.starts_with("--") {
-            if !s.contains('=') {
-                skip_next = true;
-            }
-            continue;
-        }
-        if s.starts_with('-') && s.len() > 1 {
-            continue;
-        }
-        positional.push(arg.clone());
-    }
-    positional
-}
-
 /// R8: Expand combined short flags: -abc → -a -b -c
 /// Words with opaque parts produce a single Opaque arg.
 pub(in crate::engine) fn expand_flags(args: &[Word]) -> Vec<ResolvedArg> {
@@ -1109,7 +1109,7 @@ pub(in crate::engine) fn unwrap_wrapper(sc: &SimpleCommand, config: &Config) -> 
                             _ => continue 'wrapper, // pattern mismatch
                         }
                     }
-                    if let Some(_kind) = capture {
+                    if *capture {
                         inner_start = if pos_cursor == 0 {
                             // No patterns consumed — start from first positional.
                             positionals.first().map(|(idx, _)| *idx)
@@ -1119,7 +1119,7 @@ pub(in crate::engine) fn unwrap_wrapper(sc: &SimpleCommand, config: &Config) -> 
                         };
                     }
                 }
-                WrapperStep::Flag { name, capture: _ } => {
+                WrapperStep::Flag { name } => {
                     match sc.words[1..].iter().position(|w| w.to_str() == *name) {
                         Some(flag_idx) => inner_start = Some(flag_idx + 1),
                         None => continue 'wrapper, // delimiter/flag not found

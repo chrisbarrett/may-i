@@ -7,9 +7,37 @@ pub(crate) mod read_builtin;
 pub(crate) mod wrapper_unwrap;
 pub(crate) mod rule_match;
 
-use may_i_core::{Config, EvalResult};
+use may_i_core::{Config, Decision, EvalResult};
 use may_i_shell_parser::{Command, SimpleCommand};
 use crate::var_env::VarEnv;
+
+/// Maximum recursion depth for command substitution / eval / bash -c evaluation.
+pub(crate) const MAX_EVAL_DEPTH: usize = 10;
+
+/// Deduplicate a list of dynamic part descriptions while preserving order.
+pub(crate) fn dedup_parts(parts: &[String]) -> Vec<&str> {
+    let mut seen = std::collections::HashSet::new();
+    parts
+        .iter()
+        .filter(|p| seen.insert(p.as_str()))
+        .map(|p| p.as_str())
+        .collect()
+}
+
+/// Build an Ask result for unresolvable dynamic values.
+/// `context` is a prefix like "Cannot statically analyse" or
+/// "Command `foo` contains".
+pub(crate) fn dynamic_ask(dynamic: &[String], context: &str) -> EvalResult {
+    let parts = dedup_parts(dynamic);
+    EvalResult::new(
+        Decision::Ask,
+        Some(format!(
+            "{context} dynamic value{} that cannot be statically analysed: {}",
+            if parts.len() == 1 { "" } else { "s" },
+            parts.join(", "),
+        )),
+    )
+}
 
 /// Outcome of a visitor inspecting a resolved simple command.
 pub(crate) enum VisitOutcome {

@@ -1,5 +1,6 @@
 ---
 source: tests/wrapper_snapshots.rs
+assertion_line: 116
 expression: "parse_wrappers(r#\"(wrapper \"nix\" (positional (or \"shell\" \"develop\")) (flag \"--command\" :command+args))\"#)"
 ---
 [
@@ -19,11 +20,10 @@ expression: "parse_wrappers(r#\"(wrapper \"nix\" (positional (or \"shell\" \"dev
                         ],
                     ),
                 ],
-                capture: None,
+                capture: false,
             },
             Flag {
                 name: "--command",
-                capture: CommandArgs,
             },
         ],
     },

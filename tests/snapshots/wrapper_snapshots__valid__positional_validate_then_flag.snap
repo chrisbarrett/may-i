@@ -1,5 +1,6 @@
 ---
 source: tests/wrapper_snapshots.rs
+assertion_line: 108
 expression: "parse_wrappers(r#\"(wrapper \"mise\" (positional \"exec\") (flag \"--\" :command+args))\"#)"
 ---
 [
@@ -12,11 +13,10 @@ expression: "parse_wrappers(r#\"(wrapper \"mise\" (positional \"exec\") (flag \"
                         "exec",
                     ),
                 ],
-                capture: None,
+                capture: false,
             },
             Flag {
                 name: "--",
-                capture: CommandArgs,
             },
         ],
     },

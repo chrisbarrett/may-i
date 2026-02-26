@@ -7,7 +7,7 @@ use expr::{parse_expr, parse_pos_expr};
 use may_i_core::ConfigError;
 use may_i_sexpr::{RawError, Span, Sexpr};
 use may_i_core::{
-    ArgMatcher, CaptureKind, Check, CommandMatcher, CondBranch, Config, Decision, Effect, Expr,
+    ArgMatcher, Check, CommandMatcher, CondBranch, Config, Decision, Effect, Expr,
     PosExpr, Rule, SecurityConfig, SourceInfo, Wrapper, WrapperStep,
 };
 
@@ -120,11 +120,16 @@ fn parse_effect(list: &[Sexpr]) -> Result<Effect, RawError> {
     Ok(Effect { decision, reason })
 }
 
-fn parse_cond_branches(list: &[Sexpr]) -> Result<Vec<CondBranch>, RawError> {
-    let branches = &list[1..];
+/// Generic cond branch parser. The `parse_test` closure parses the test
+/// element (returning `None` for `else` catch-all branches).
+fn parse_cond_branches_generic<T>(
+    branches: &[Sexpr],
+    cond_span: Span,
+    parse_test: impl Fn(&Sexpr) -> Result<T, RawError>,
+    make_else: impl Fn() -> T,
+) -> Result<Vec<(T, Effect)>, RawError> {
     if branches.is_empty() {
-        let span = list[0].span();
-        return Err(RawError::new("cond must have at least one branch", span));
+        return Err(RawError::new("cond must have at least one branch", cond_span));
     }
     let mut result = Vec::new();
     for branch in branches {
@@ -134,12 +139,10 @@ fn parse_cond_branches(list: &[Sexpr]) -> Result<Vec<CondBranch>, RawError> {
         if items.is_empty() {
             return Err(RawError::new("empty cond branch", branch.span()));
         }
-        // First element: matcher or catch-all
-        let matcher = match &items[0] {
-            Sexpr::Atom(s, _) if s == "else" => None,
-            other => Some(parse_matcher(other)?),
+        let test = match &items[0] {
+            Sexpr::Atom(s, _) if s == "else" => make_else(),
+            other => parse_test(other)?,
         };
-        // Remaining elements: find (effect ...)
         let mut effect = None;
         for item in &items[1..] {
             let il = item.as_list().ok_or_else(|| {
@@ -160,14 +163,24 @@ fn parse_cond_branches(list: &[Sexpr]) -> Result<Vec<CondBranch>, RawError> {
                 ));
             }
         }
-        result.push(CondBranch {
-            matcher,
-            effect: effect.ok_or_else(|| {
+        result.push((
+            test,
+            effect.ok_or_else(|| {
                 RawError::new("cond branch must have an effect", branch.span())
             })?,
-        });
+        ));
     }
     Ok(result)
+}
+
+fn parse_cond_branches(list: &[Sexpr]) -> Result<Vec<CondBranch>, RawError> {
+    let pairs = parse_cond_branches_generic(
+        &list[1..],
+        list[0].span(),
+        |s| parse_matcher(s).map(Some),
+        || None,
+    )?;
+    Ok(pairs.into_iter().map(|(matcher, effect)| CondBranch { matcher, effect }).collect())
 }
 
 /// Shared helper: parse `(if TEST EFFECT EFFECT?)` sugar.
@@ -202,41 +215,22 @@ fn parse_if_sugar<T>(
     Ok((test, then_effect, else_effect))
 }
 
-/// Shared helper: parse `(when TEST EFFECT)` sugar.
-fn parse_when_sugar<T>(
+/// Shared helper: parse `(when TEST EFFECT)` / `(unless TEST EFFECT)` sugar.
+fn parse_unary_sugar<T>(
+    name: &str,
     args: &[Sexpr],
     form_span: Span,
     parse_test: impl Fn(&Sexpr) -> Result<T, RawError>,
 ) -> Result<(T, Effect), RawError> {
     if args.len() != 2 {
         return Err(RawError::new(
-            "when must have exactly 2 arguments: (when TEST EFFECT)",
+            format!("{name} must have exactly 2 arguments: ({name} TEST EFFECT)"),
             form_span,
         ));
     }
     let test = parse_test(&args[0])?;
     let effect_list = args[1].as_list().ok_or_else(|| {
-        RawError::new("when effect must be an effect list", args[1].span())
-    })?;
-    let effect = parse_effect(effect_list)?;
-    Ok((test, effect))
-}
-
-/// Shared helper: parse `(unless TEST EFFECT)` sugar.
-fn parse_unless_sugar<T>(
-    args: &[Sexpr],
-    form_span: Span,
-    parse_test: impl Fn(&Sexpr) -> Result<T, RawError>,
-) -> Result<(T, Effect), RawError> {
-    if args.len() != 2 {
-        return Err(RawError::new(
-            "unless must have exactly 2 arguments: (unless TEST EFFECT)",
-            form_span,
-        ));
-    }
-    let test = parse_test(&args[0])?;
-    let effect_list = args[1].as_list().ok_or_else(|| {
-        RawError::new("unless effect must be an effect list", args[1].span())
+        RawError::new(format!("{name} effect must be an effect list"), args[1].span())
     })?;
     let effect = parse_effect(effect_list)?;
     Ok((test, effect))
@@ -252,12 +246,12 @@ fn parse_matcher_if_form(args: &[Sexpr], form_span: Span) -> Result<ArgMatcher, 
 }
 
 fn parse_matcher_when_form(args: &[Sexpr], form_span: Span) -> Result<ArgMatcher, RawError> {
-    let (test, effect) = parse_when_sugar(args, form_span, parse_matcher)?;
+    let (test, effect) = parse_unary_sugar("when", args, form_span, parse_matcher)?;
     Ok(ArgMatcher::Cond(vec![CondBranch { matcher: Some(test), effect }]))
 }
 
 fn parse_matcher_unless_form(args: &[Sexpr], form_span: Span) -> Result<ArgMatcher, RawError> {
-    let (test, effect) = parse_unless_sugar(args, form_span, parse_matcher)?;
+    let (test, effect) = parse_unary_sugar("unless", args, form_span, parse_matcher)?;
     Ok(ArgMatcher::Cond(vec![CondBranch { matcher: Some(ArgMatcher::Not(Box::new(test))), effect }]))
 }
 
@@ -497,13 +491,8 @@ fn parse_matcher(sexpr: &Sexpr) -> Result<ArgMatcher, RawError> {
 }
 
 
-fn parse_capture_kind(s: &str) -> Option<CaptureKind> {
-    match s {
-        ":command+args" => Some(CaptureKind::CommandArgs),
-        ":command" => Some(CaptureKind::Command),
-        ":args" => Some(CaptureKind::Args),
-        _ => None,
-    }
+fn is_capture_keyword(s: &str) -> bool {
+    matches!(s, ":command+args" | ":command" | ":args")
 }
 
 fn parse_wrapper(parts: &[Sexpr], wrapper_span: Span) -> Result<Wrapper, RawError> {
@@ -538,30 +527,27 @@ fn parse_wrapper(parts: &[Sexpr], wrapper_span: Span) -> Result<Wrapper, RawErro
         match part {
             // Bare capture keyword: (wrapper "nohup" :command+args)
             Sexpr::Atom(s, span) => {
-                match parse_capture_kind(s) {
-                    Some(kind) => {
-                        if has_capture {
-                            return Err(RawError::new(
-                                "wrapper has more than one capture keyword",
-                                *span,
-                            ));
-                        }
-                        steps.push(WrapperStep::Positional {
-                            patterns: vec![],
-                            capture: Some(kind),
-                        });
-                        has_capture = true;
-                    }
-                    None => {
+                if is_capture_keyword(s) {
+                    if has_capture {
                         return Err(RawError::new(
-                            format!("unexpected atom in wrapper: {s}"),
+                            "wrapper has more than one capture keyword",
                             *span,
-                        )
-                        .with_label("not a recognised wrapper element")
-                        .with_help(
-                            "valid wrapper elements: (positional ...), (flag ...), :command+args, :command, :args",
                         ));
                     }
+                    steps.push(WrapperStep::Positional {
+                        patterns: vec![],
+                        capture: true,
+                    });
+                    has_capture = true;
+                } else {
+                    return Err(RawError::new(
+                        format!("unexpected atom in wrapper: {s}"),
+                        *span,
+                    )
+                    .with_label("not a recognised wrapper element")
+                    .with_help(
+                        "valid wrapper elements: (positional ...), (flag ...), :command+args, :command, :args",
+                    ));
                 }
             }
 
@@ -573,11 +559,11 @@ fn parse_wrapper(parts: &[Sexpr], wrapper_span: Span) -> Result<Wrapper, RawErro
                     "positional" => {
                         // Last element may be a capture keyword.
                         let (pattern_items, capture) =
-                            match list[1..].last().and_then(|s| s.as_atom()).and_then(parse_capture_kind) {
-                                Some(kind) => (&list[1..list.len() - 1], Some(kind)),
-                                None => (&list[1..], None),
+                            match list[1..].last().and_then(|s| s.as_atom()).filter(|s| is_capture_keyword(s)) {
+                                Some(_) => (&list[1..list.len() - 1], true),
+                                None => (&list[1..], false),
                             };
-                        if capture.is_some() {
+                        if capture {
                             if has_capture {
                                 return Err(RawError::new(
                                     "wrapper has more than one capture keyword",
@@ -612,14 +598,13 @@ fn parse_wrapper(parts: &[Sexpr], wrapper_span: Span) -> Result<Wrapper, RawErro
                                 list[2].span(),
                             )
                         })?;
-                        let capture =
-                            parse_capture_kind(capture_str).ok_or_else(|| {
-                                RawError::new(
-                                    format!("unknown capture keyword: {capture_str}"),
-                                    list[2].span(),
-                                )
-                                .with_help("valid capture keywords: :command+args, :command, :args")
-                            })?;
+                        if !is_capture_keyword(capture_str) {
+                            return Err(RawError::new(
+                                format!("unknown capture keyword: {capture_str}"),
+                                list[2].span(),
+                            )
+                            .with_help("valid capture keywords: :command+args, :command, :args"));
+                        }
                         if has_capture {
                             return Err(RawError::new(
                                 "wrapper has more than one capture keyword",
@@ -627,7 +612,7 @@ fn parse_wrapper(parts: &[Sexpr], wrapper_span: Span) -> Result<Wrapper, RawErro
                             ));
                         }
                         has_capture = true;
-                        steps.push(WrapperStep::Flag { name, capture });
+                        steps.push(WrapperStep::Flag { name });
                     }
                     other => {
                         return Err(RawError::new(
@@ -940,7 +925,7 @@ mod tests {
         match &config.wrappers[0].steps[0] {
             WrapperStep::Positional { patterns, capture } => {
                 assert!(patterns.is_empty());
-                assert!(matches!(capture, Some(CaptureKind::CommandArgs)));
+                assert!(capture);
             }
             other => panic!("expected Positional step, got {other:?}"),
         }
@@ -954,7 +939,7 @@ mod tests {
         match &config.wrappers[0].steps[0] {
             WrapperStep::Positional { patterns, capture } => {
                 assert!(patterns.is_empty());
-                assert!(matches!(capture, Some(CaptureKind::CommandArgs)));
+                assert!(capture);
             }
             other => panic!("expected Positional step, got {other:?}"),
         }
@@ -969,7 +954,7 @@ mod tests {
             WrapperStep::Positional { patterns, capture } => {
                 assert_eq!(patterns.len(), 1);
                 assert!(patterns[0].is_wildcard());
-                assert!(matches!(capture, Some(CaptureKind::CommandArgs)));
+                assert!(capture);
             }
             other => panic!("expected Positional step, got {other:?}"),
         }
@@ -981,9 +966,8 @@ mod tests {
         let config = parse(r#"(wrapper "terragrunt" (flag "--" :command+args))"#).unwrap();
         assert_eq!(config.wrappers[0].command, "terragrunt");
         match &config.wrappers[0].steps[0] {
-            WrapperStep::Flag { name, capture } => {
+            WrapperStep::Flag { name } => {
                 assert_eq!(name, "--");
-                assert!(matches!(capture, CaptureKind::CommandArgs));
             }
             other => panic!("expected Flag step, got {other:?}"),
         }
@@ -1002,14 +986,13 @@ mod tests {
             WrapperStep::Positional { patterns, capture } => {
                 assert_eq!(patterns.len(), 1);
                 assert!(patterns[0].is_match("exec"));
-                assert!(capture.is_none());
+                assert!(!capture);
             }
             other => panic!("expected Positional step, got {other:?}"),
         }
         match &config.wrappers[0].steps[1] {
-            WrapperStep::Flag { name, capture } => {
+            WrapperStep::Flag { name } => {
                 assert_eq!(name, "--");
-                assert!(matches!(capture, CaptureKind::CommandArgs));
             }
             other => panic!("expected Flag step, got {other:?}"),
         }
@@ -1029,14 +1012,13 @@ mod tests {
                 assert!(patterns[0].is_match("shell"));
                 assert!(patterns[0].is_match("develop"));
                 assert!(!patterns[0].is_match("run"));
-                assert!(capture.is_none());
+                assert!(!capture);
             }
             other => panic!("expected Positional step, got {other:?}"),
         }
         match &config.wrappers[0].steps[1] {
-            WrapperStep::Flag { name, capture } => {
+            WrapperStep::Flag { name } => {
                 assert_eq!(name, "--command");
-                assert!(matches!(capture, CaptureKind::CommandArgs));
             }
             other => panic!("expected Flag step, got {other:?}"),
         }

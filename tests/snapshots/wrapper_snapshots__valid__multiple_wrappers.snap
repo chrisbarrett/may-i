@@ -1,5 +1,6 @@
 ---
 source: tests/wrapper_snapshots.rs
+assertion_line: 124
 expression: "parse_wrappers(r#\"\n            (wrapper \"nohup\"      :command+args)\n            (wrapper \"ssh\"        (positional * :command+args))\n            (wrapper \"mise\"       (positional \"exec\") (flag \"--\" :command+args))\n            \"#)"
 ---
 [
@@ -8,9 +9,7 @@ expression: "parse_wrappers(r#\"\n            (wrapper \"nohup\"      :command+a
         steps: [
             Positional {
                 patterns: [],
-                capture: Some(
-                    CommandArgs,
-                ),
+                capture: true,
             },
         ],
     },
@@ -21,9 +20,7 @@ expression: "parse_wrappers(r#\"\n            (wrapper \"nohup\"      :command+a
                 patterns: [
                     Wildcard,
                 ],
-                capture: Some(
-                    CommandArgs,
-                ),
+                capture: true,
             },
         ],
     },
@@ -36,11 +33,10 @@ expression: "parse_wrappers(r#\"\n            (wrapper \"nohup\"      :command+a
                         "exec",
                     ),
                 ],
-                capture: None,
+                capture: false,
             },
             Flag {
                 name: "--",
-                capture: CommandArgs,
             },
         ],
     },

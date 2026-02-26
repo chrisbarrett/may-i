@@ -1,8 +1,7 @@
 // Visitor that detects unresolvable dynamic parts in a resolved command.
 
 use may_i_shell_parser::SimpleCommand;
-use super::super::dynamic_ask;
-use super::{CommandVisitor, VisitOutcome, VisitorContext};
+use super::{CommandVisitor, VisitOutcome, VisitorContext, dynamic_ask};
 
 /// Returns `Ask` when a resolved command still contains dynamic parts
 /// (unsafe variables, command substitutions, etc.) that prevent static analysis.
