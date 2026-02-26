@@ -67,12 +67,13 @@ fn evaluate_segments(
         return (engine::evaluate(command, config), command.to_string());
     }
 
-    let mut parts = Vec::new();
-    let mut seg_results = Vec::new();
+    // Evaluate each command segment, collecting (text, result) pairs.
+    let mut display_parts = Vec::new();
+    let mut cmd_evals: Vec<(&str, may_i_core::EvalResult)> = Vec::new();
     for seg in &segments {
         let text = &command[seg.start..seg.end];
         if seg.is_operator {
-            parts.push(format!(" {text} "));
+            display_parts.push(format!(" {text} "));
         } else {
             let seg_result = engine::evaluate(text, config);
             let colored = match seg_result.decision {
@@ -80,19 +81,37 @@ fn evaluate_segments(
                 Decision::Ask => text.yellow().underline().to_string(),
                 Decision::Deny => text.red().underline().to_string(),
             };
-            parts.push(colored);
-            seg_results.push(seg_result);
+            display_parts.push(colored);
+            cmd_evals.push((text, seg_result));
         }
     }
 
-    // Aggregate: most restrictive segment wins.
-    let result = seg_results.into_iter().reduce(|acc, r| {
-        let decision = acc.decision.most_restrictive(r.decision);
-        let reason = if decision == r.decision { r.reason } else { acc.reason };
-        let mut trace = acc.trace;
-        trace.extend(r.trace);
-        may_i_core::EvalResult { decision, reason, trace }
-    }).unwrap_or_else(|| engine::evaluate(command, config));
+    let multi_segment = cmd_evals.len() > 1;
 
-    (result, parts.concat())
+    // Build aggregate trace with segment headers for compound commands.
+    let mut trace = Vec::new();
+    let mut aggregate_decision = Decision::Allow;
+    let mut aggregate_reason = None;
+
+    for (text, eval) in &cmd_evals {
+        if multi_segment {
+            trace.push(may_i_core::TraceStep::SegmentHeader {
+                command: text.to_string(),
+                decision: eval.decision,
+            });
+        }
+        trace.extend(eval.trace.iter().cloned());
+        if eval.decision > aggregate_decision {
+            aggregate_decision = eval.decision;
+            aggregate_reason = eval.reason.clone();
+        }
+    }
+
+    let result = may_i_core::EvalResult {
+        decision: aggregate_decision,
+        reason: aggregate_reason,
+        trace,
+    };
+
+    (result, display_parts.concat())
 }

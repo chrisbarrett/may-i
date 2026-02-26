@@ -42,11 +42,114 @@ impl Doc {
     }
 }
 
+// ── S-expression string parser ──────────────────────────────────────
+
+/// Parse an s-expression string (e.g. `(command "curl")`) into a Doc tree.
+pub fn parse_sexpr(input: &str) -> Doc {
+    let tokens = tokenize(input);
+    if tokens.is_empty() {
+        return Doc::Atom(String::new());
+    }
+    let (doc, _) = parse_tokens(&tokens, 0);
+    doc
+}
+
+fn tokenize(input: &str) -> Vec<&str> {
+    let mut tokens = Vec::new();
+    let bytes = input.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b' ' | b'\t' | b'\n' => { i += 1; }
+            b'(' => { tokens.push(&input[i..i + 1]); i += 1; }
+            b')' => { tokens.push(&input[i..i + 1]); i += 1; }
+            b'"' => {
+                let start = i;
+                i += 1;
+                while i < bytes.len() && bytes[i] != b'"' {
+                    if bytes[i] == b'\\' { i += 1; }
+                    i += 1;
+                }
+                if i < bytes.len() { i += 1; }
+                tokens.push(&input[start..i]);
+            }
+            b'#' if i + 1 < bytes.len() && bytes[i + 1] == b'"' => {
+                let start = i;
+                i += 2;
+                while i < bytes.len() && bytes[i] != b'"' {
+                    if bytes[i] == b'\\' { i += 1; }
+                    i += 1;
+                }
+                if i < bytes.len() { i += 1; }
+                tokens.push(&input[start..i]);
+            }
+            _ => {
+                let start = i;
+                while i < bytes.len() && !matches!(bytes[i], b' ' | b'\t' | b'\n' | b'(' | b')') {
+                    i += 1;
+                }
+                tokens.push(&input[start..i]);
+            }
+        }
+    }
+    tokens
+}
+
+fn parse_tokens(tokens: &[&str], pos: usize) -> (Doc, usize) {
+    if pos >= tokens.len() {
+        return (Doc::Atom(String::new()), pos);
+    }
+    if tokens[pos] == "(" {
+        let mut children = Vec::new();
+        let mut i = pos + 1;
+        while i < tokens.len() && tokens[i] != ")" {
+            let (child, next) = parse_tokens(tokens, i);
+            children.push(child);
+            i = next;
+        }
+        if i < tokens.len() { i += 1; } // skip )
+        (Doc::List(children), i)
+    } else {
+        (Doc::Atom(tokens[pos].to_string()), pos + 1)
+    }
+}
+
+// ── Doc transforms ─────────────────────────────────────────────────
+
+/// Truncate long lists in a Doc tree, keeping the first `keep`
+/// and last 1 elements with an `…` ellipsis in between.
+/// Applies to any list whose head is an atom (e.g. `(or ...)`,
+/// `(and ...)`, `(args ...)`, etc).
+pub fn truncate_long_lists(doc: &Doc, keep: usize) -> Doc {
+    match doc {
+        Doc::Atom(_) => doc.clone(),
+        Doc::List(children) => {
+            let children: Vec<Doc> = children.iter()
+                .map(|c| truncate_long_lists(c, keep))
+                .collect();
+            // Only truncate lists with a head atom (i.e. named forms like
+            // (or ...), (and ...), etc), not bare data lists.
+            let has_head = matches!(children.first(), Some(Doc::Atom(_)));
+            if has_head && children.len() > keep + 2 {
+                // children[0] = head, children[1..] = elements
+                let mut truncated = Vec::with_capacity(keep + 3);
+                truncated.push(children[0].clone());
+                truncated.extend(children[1..=keep].iter().cloned());
+                truncated.push(Doc::atom("…"));
+                truncated.push(children.last().unwrap().clone());
+                Doc::List(truncated)
+            } else {
+                Doc::List(children)
+            }
+        }
+    }
+}
+
 // ── Atom classification ─────────────────────────────────────────────
 
 /// Special-form names that get highlighted.
 const SPECIAL_FORMS: &[&str] = &[
-    "command", "rule", "args", "cond", "when", "if", "unless",
+    "rule", "command", "args",
 ];
 
 fn is_keyword(s: &str) -> bool {
@@ -76,11 +179,14 @@ pub struct Format {
     pub width: usize,
     /// Whether to emit ANSI color codes.
     pub color: bool,
+    /// Optional source line number to prefix on the first output line.
+    /// Subsequent wrapped lines are indented to match.
+    pub line_number: Option<usize>,
 }
 
 impl Default for Format {
     fn default() -> Self {
-        Self { width: 72, color: false }
+        Self { width: 72, color: false, line_number: None }
     }
 }
 
@@ -96,7 +202,41 @@ impl Format {
 /// Pretty-print a Doc with the given format settings.
 /// `indent` is the starting column (for alignment when embedded in other output).
 pub fn pretty(doc: &Doc, indent: usize, fmt: &Format) -> String {
-    render(doc, indent, fmt.width, fmt.color)
+    let prefix_width = fmt.line_number.map_or(0, line_prefix_width);
+    let content = render(doc, indent + prefix_width, fmt.width, fmt.color);
+
+    match fmt.line_number {
+        Some(n) => prepend_line_number(&content, n, fmt.color),
+        None => content,
+    }
+}
+
+/// Width of the `"N: "` prefix for a given line number.
+fn line_prefix_width(n: usize) -> usize {
+    // "N: " = digits + 2
+    format!("{n}").len() + 2
+}
+
+/// Prepend a dimmed line number to the first line. Continuation lines
+/// are left as-is — `render()` already indents them to account for
+/// the prefix width passed via `indent`.
+fn prepend_line_number(content: &str, n: usize, color: bool) -> String {
+    let prefix = format!("{n}: ");
+    let mut result = String::new();
+    for (i, line) in content.lines().enumerate() {
+        if i > 0 {
+            result.push('\n');
+        }
+        if i == 0 {
+            if color {
+                result.push_str(&prefix.dimmed().to_string());
+            } else {
+                result.push_str(&prefix);
+            }
+        }
+        result.push_str(line);
+    }
+    result
 }
 
 fn render(doc: &Doc, indent: usize, width: usize, color: bool) -> String {
@@ -220,7 +360,7 @@ mod tests {
     }
 
     fn pp_color(doc: &Doc, width: usize) -> String {
-        pretty(doc, 0, &Format { width, color: true })
+        pretty(doc, 0, &Format { width, color: true, ..Default::default() })
     }
 
     // ── Flat rendering ──────────────────────────────────────────────
@@ -389,5 +529,80 @@ mod tests {
         // Second line should be indented to align under "first-branch"
         assert_eq!(lines[0], "(and first-branch");
         assert_eq!(lines[1], "     second-branch)");
+    }
+
+    // ── parse_sexpr ────────────────────────────────────────────────
+
+    #[test]
+    fn parse_sexpr_atom() {
+        let doc = parse_sexpr("hello");
+        assert_eq!(pp(&doc, 80), "hello");
+    }
+
+    #[test]
+    fn parse_sexpr_simple_list() {
+        let doc = parse_sexpr("(command \"curl\")");
+        assert_eq!(pp(&doc, 80), "(command \"curl\")");
+    }
+
+    #[test]
+    fn parse_sexpr_nested() {
+        let doc = parse_sexpr("(command (or \"cat\" \"bat\"))");
+        assert_eq!(pp(&doc, 80), "(command (or \"cat\" \"bat\"))");
+    }
+
+    #[test]
+    fn parse_sexpr_regex() {
+        let doc = parse_sexpr("(command (regex \"^git\"))");
+        assert_eq!(pp(&doc, 80), "(command (regex \"^git\"))");
+    }
+
+    #[test]
+    fn parse_sexpr_wraps_when_long() {
+        let doc = parse_sexpr("(command (or \"cat\" \"bat\" \"head\" \"tail\" \"less\"))");
+        let result = pp(&doc, 30);
+        assert!(result.contains('\n'));
+    }
+
+    // ── line_number ────────────────────────────────────────────────
+
+    #[test]
+    fn line_number_single_line() {
+        let doc = l(vec![a("rule"), l(vec![a("command"), a("\"curl\"")])]);
+        let result = pretty(&doc, 0, &Format {
+            width: 80,
+            line_number: Some(108),
+            ..Default::default()
+        });
+        assert_eq!(result, "108: (rule (command \"curl\"))");
+    }
+
+    #[test]
+    fn line_number_wrapped_aligns() {
+        let doc = l(vec![a("rule"), a("aaa"), a("bbb"), a("ccc")]);
+        let result = pretty(&doc, 0, &Format {
+            width: 20,
+            line_number: Some(5),
+            ..Default::default()
+        });
+        let lines: Vec<&str> = result.lines().collect();
+        assert!(lines.len() > 1);
+        assert!(lines[0].starts_with("5: "));
+        // Subsequent lines are indented by render() to align under first arg.
+        // "5: (rule aaa" → align column = prefix(3) + 1("(") + 4("rule") + 1(" ") = 9
+        assert!(lines[1].starts_with("         "));
+    }
+
+    #[test]
+    fn line_number_accounts_for_width() {
+        // With line_number, the effective indent increases, affecting wrap decisions.
+        let doc = l(vec![a("rule"), l(vec![a("command"), a("\"curl\"")])]);
+        // Width 30: "108: (rule (command \"curl\"))" = 27 chars, fits.
+        let result = pretty(&doc, 0, &Format {
+            width: 30,
+            line_number: Some(108),
+            ..Default::default()
+        });
+        assert!(!result.contains('\n'));
     }
 }

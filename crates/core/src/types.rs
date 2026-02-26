@@ -397,6 +397,8 @@ pub enum TraceStep {
     Effect { decision: Decision, reason: Option<String> },
     /// No rule matched; defaulting to ask.
     DefaultAsk,
+    /// Separator between segments of a compound command.
+    SegmentHeader { command: String, decision: Decision },
 }
 
 #[derive(Clone)]
