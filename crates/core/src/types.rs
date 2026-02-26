@@ -1,6 +1,6 @@
 // Shared domain types for authorization rules and configuration.
 
-use may_i_sexpr::Span;
+use crate::span::{Span, offset_to_line_col};
 
 /// The three possible authorization decisions.
 /// Ordered from least to most restrictive: Allow < Ask < Deny.
@@ -89,6 +89,38 @@ impl Expr {
     }
 }
 
+impl std::fmt::Display for Expr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Expr::Literal(s) => write!(f, "\"{s}\""),
+            Expr::Regex(re) => write!(f, "(regex \"{}\")", re.as_str()),
+            Expr::Wildcard => write!(f, "*"),
+            Expr::And(exprs) => {
+                write!(f, "(and")?;
+                for e in exprs {
+                    write!(f, " {e}")?;
+                }
+                write!(f, ")")
+            }
+            Expr::Or(exprs) => {
+                write!(f, "(or")?;
+                for e in exprs {
+                    write!(f, " {e}")?;
+                }
+                write!(f, ")")
+            }
+            Expr::Not(inner) => write!(f, "(not {inner})"),
+            Expr::Cond(branches) => {
+                write!(f, "(cond")?;
+                for b in branches {
+                    write!(f, " ({} => {})", b.test, b.effect.decision)?;
+                }
+                write!(f, ")")
+            }
+        }
+    }
+}
+
 impl std::fmt::Debug for Expr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -120,13 +152,13 @@ pub struct SourceInfo {
 impl SourceInfo {
     /// Format a source location as `file:line:col` from a span.
     pub fn location_of(&self, span: Span) -> String {
-        let (line, col) = may_i_sexpr::offset_to_line_col(&self.content, span.start);
+        let (line, col) = offset_to_line_col(&self.content, span.start);
         format!("{}:{}:{}", self.filename, line, col)
     }
 
     /// Return the 1-based line number for a span.
     pub fn line_of(&self, span: Span) -> usize {
-        may_i_sexpr::offset_to_line_col(&self.content, span.start).0
+        offset_to_line_col(&self.content, span.start).0
     }
 }
 
@@ -229,6 +261,17 @@ impl PosExpr {
     }
 }
 
+impl std::fmt::Display for PosExpr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.quantifier {
+            Quantifier::One => write!(f, "{}", self.expr),
+            Quantifier::Optional => write!(f, "(? {})", self.expr),
+            Quantifier::OneOrMore => write!(f, "(+ {})", self.expr),
+            Quantifier::ZeroOrMore => write!(f, "(* {})", self.expr),
+        }
+    }
+}
+
 impl std::fmt::Debug for PosExpr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.quantifier {
@@ -312,7 +355,7 @@ pub enum WrapperStep {
 pub struct EvalResult {
     pub decision: Decision,
     pub reason: Option<String>,
-    pub trace: Vec<String>,
+    pub trace: Vec<TraceStep>,
 }
 
 impl EvalResult {
@@ -325,11 +368,58 @@ impl EvalResult {
     }
 }
 
+/// A structured trace step emitted during rule evaluation.
+#[derive(Debug, Clone)]
+pub enum TraceStep {
+    /// A rule was considered.
+    Rule { label: String, line: Option<usize> },
+    /// An expression was compared against an argument.
+    ExprVsArg { expr: String, arg: String, matched: bool },
+    /// A quantified expression was evaluated.
+    Quantifier { label: String, count: usize, matched: bool },
+    /// A positional expression had no corresponding argument.
+    Missing { label: String },
+    /// An expression conditional branch matched.
+    ExprCondBranch { label: String, decision: Decision },
+    /// A matcher conditional branch matched.
+    MatcherCondBranch { decision: Decision },
+    /// A matcher conditional else branch.
+    MatcherCondElse { decision: Decision },
+    /// An anywhere expression was tested.
+    Anywhere { label: String, matched: bool },
+    /// Exact positional: remaining unmatched args.
+    ExactRemainder { count: usize },
+    /// Arguments matched the pattern.
+    ArgsMatched,
+    /// Arguments did not match the pattern.
+    ArgsNotMatched,
+    /// The effect produced by the matched rule.
+    Effect { decision: Decision, reason: Option<String> },
+    /// No rule matched; defaulting to ask.
+    DefaultAsk,
+}
+
 #[derive(Clone)]
 pub enum CommandMatcher {
     Exact(String),
     Regex(regex::Regex),
     List(Vec<String>),
+}
+
+impl std::fmt::Display for CommandMatcher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CommandMatcher::Exact(s) => write!(f, "(command \"{s}\")"),
+            CommandMatcher::Regex(re) => write!(f, "(command (regex \"{}\"))", re.as_str()),
+            CommandMatcher::List(names) => {
+                write!(f, "(command (or")?;
+                for n in names {
+                    write!(f, " \"{n}\"")?;
+                }
+                write!(f, "))")
+            }
+        }
+    }
 }
 
 impl std::fmt::Debug for CommandMatcher {

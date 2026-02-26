@@ -5,7 +5,7 @@ use super::{CommandVisitor, VisitOutcome, VisitorContext, dynamic_ask};
 
 /// Returns `Ask` when a resolved command still contains dynamic parts
 /// (unsafe variables, command substitutions, etc.) that prevent static analysis.
-pub(in crate::engine) struct DynamicPartsVisitor;
+pub(crate) struct DynamicPartsVisitor;
 
 impl CommandVisitor for DynamicPartsVisitor {
     fn visit_simple_command(

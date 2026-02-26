@@ -2,19 +2,21 @@
 
 use std::io::Read;
 
-use may_i_core::LoadError;
+use miette::Context;
 use may_i_config as config;
 use may_i_engine as engine;
 
-pub fn cmd_hook(config_path: Option<&std::path::Path>) -> Result<(), LoadError> {
+pub fn cmd_hook(config_path: Option<&std::path::Path>) -> miette::Result<()> {
     let mut input = String::new();
     std::io::stdin()
         .take(65536)
         .read_to_string(&mut input)
-        .map_err(|e| LoadError::Io(format!("Failed to read stdin: {e}")))?;
+        .map_err(|e| miette::miette!("{e}"))
+        .wrap_err("Failed to read stdin")?;
 
     let payload: serde_json::Value = serde_json::from_str(&input)
-        .map_err(|e| LoadError::Io(format!("Invalid JSON: {e}")))?;
+        .map_err(|e| miette::miette!("{e}"))
+        .wrap_err("Invalid JSON")?;
 
     // If tool is not "Bash", exit silently (allow the call)
     let tool_name = payload
@@ -30,7 +32,7 @@ pub fn cmd_hook(config_path: Option<&std::path::Path>) -> Result<(), LoadError> 
         .get("tool_input")
         .and_then(|v| v.get("command"))
         .and_then(|v| v.as_str())
-        .ok_or_else(|| LoadError::Io("Missing tool_input.command".into()))?;
+        .ok_or_else(|| miette::miette!("Missing tool_input.command"))?;
 
     let config = config::load(config_path)?;
     let result = engine::evaluate(command, &config);

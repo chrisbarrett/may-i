@@ -1,6 +1,7 @@
 // Expression-level parsing: Expr, PosExpr, and their conditional sugar forms.
 
-use may_i_sexpr::{RawError, Span, Sexpr};
+use may_i_sexpr::{RawError, Sexpr};
+use may_i_core::Span;
 use may_i_core::{Expr, ExprBranch, PosExpr, Quantifier};
 
 pub(super) fn parse_pos_expr(sexpr: &Sexpr) -> Result<PosExpr, RawError> {

@@ -11,7 +11,7 @@ use super::{CommandVisitor, VisitOutcome, VisitorContext, MAX_EVAL_DEPTH};
 /// - Opaque command name: Ask (can't determine what runs).
 /// - `eval`: concatenate literal args and Recurse, or Ask if opaque.
 /// - `bash -c` / `sh -c` / `zsh -c`: Recurse into the `-c` argument.
-pub(in crate::engine) struct CodeExecutionVisitor;
+pub(crate) struct CodeExecutionVisitor;
 
 impl CommandVisitor for CodeExecutionVisitor {
     fn visit_simple_command(

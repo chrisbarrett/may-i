@@ -432,7 +432,6 @@ dependencies = [
  "may-i-core",
  "may-i-engine",
  "may-i-pp",
- "may-i-sexpr",
  "may-i-shell-parser",
  "miette",
  "predicates",
@@ -449,17 +448,16 @@ dependencies = [
  "may-i-core",
  "may-i-engine",
  "may-i-sexpr",
+ "miette",
  "regex",
+ "thiserror",
 ]
 
 [[package]]
 name = "may-i-core"
 version = "0.1.0"
 dependencies = [
- "may-i-sexpr",
- "miette",
  "regex",
- "thiserror",
 ]
 
 [[package]]
@@ -468,8 +466,6 @@ version = "0.1.0"
 dependencies = [
  "may-i-config",
  "may-i-core",
- "may-i-pp",
- "may-i-sexpr",
  "may-i-shell-parser",
  "regex",
 ]
@@ -486,7 +482,7 @@ dependencies = [
 name = "may-i-sexpr"
 version = "0.1.0"
 dependencies = [
- "miette",
+ "may-i-core",
 ]
 
 [[package]]

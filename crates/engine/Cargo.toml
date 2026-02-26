@@ -5,9 +5,7 @@ edition = "2024"
 
 [dependencies]
 may-i-shell-parser = { path = "../shell-parser" }
-may-i-sexpr = { path = "../sexpr" }
 may-i-core = { path = "../core" }
-may-i-pp = { path = "../pp" }
 
 [dev-dependencies]
 may-i-config = { path = "../config" }

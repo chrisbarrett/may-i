@@ -1,6 +1,6 @@
-use super::*;
-use super::matcher::*;
-use super::visitors::rule_match::match_against_rules;
+use crate::*;
+use crate::matcher::*;
+use crate::visitors::rule_match::match_against_rules;
 use may_i_core::{
     ArgMatcher, CommandMatcher, CondArm, CondBranch, Config, Effect, Expr, PosExpr, Rule, RuleBody,
     Wrapper, WrapperStep,
@@ -24,7 +24,7 @@ fn config_with_rules(rules: Vec<Rule>) -> Config {
     }
 }
 
-use may_i_sexpr::Span;
+use may_i_core::Span;
 
 fn test_span() -> Span {
     Span { start: 0, end: 0 }

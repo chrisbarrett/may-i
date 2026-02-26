@@ -2,7 +2,8 @@
 
 use std::path::{Path, PathBuf};
 
-use may_i_core::{LoadError, Config};
+use may_i_core::Config;
+use miette::{Context, IntoDiagnostic};
 
 /// Find the config file path per R10.
 fn config_path() -> Option<PathBuf> {
@@ -22,30 +23,27 @@ fn config_path() -> Option<PathBuf> {
 ///
 /// If `override_path` is provided, it takes precedence over `$MAYI_CONFIG`
 /// and the default config location.
-pub fn load(override_path: Option<&Path>) -> Result<Config, LoadError> {
+pub fn load(override_path: Option<&Path>) -> miette::Result<Config> {
     let path = match override_path {
         Some(p) => {
             if !p.exists() {
-                return Err(LoadError::Io(format!(
-                    "Config file not found: {}",
-                    p.display()
-                )));
+                miette::bail!("Config file not found: {}", p.display());
             }
             p.to_path_buf()
         }
         None => match config_path() {
             Some(path) => path,
             None => {
-                let path =
-                    default_config_path().ok_or(LoadError::Io("cannot determine config directory".into()))?;
+                let path = default_config_path()
+                    .ok_or_else(|| miette::miette!("cannot determine config directory"))?;
                 if let Some(parent) = path.parent() {
-                    std::fs::create_dir_all(parent).map_err(|e| {
-                        LoadError::Io(format!("Failed to create {}: {e}", parent.display()))
-                    })?;
+                    std::fs::create_dir_all(parent)
+                        .into_diagnostic()
+                        .wrap_err_with(|| format!("Failed to create {}", parent.display()))?;
                 }
-                std::fs::write(&path, include_str!("starter_config.lisp")).map_err(|e| {
-                    LoadError::Io(format!("Failed to write {}: {e}", path.display()))
-                })?;
+                std::fs::write(&path, include_str!("starter_config.lisp"))
+                    .into_diagnostic()
+                    .wrap_err_with(|| format!("Failed to write {}", path.display()))?;
                 eprintln!("Created starter config at {}", path.display());
                 path
             }
@@ -53,10 +51,11 @@ pub fn load(override_path: Option<&Path>) -> Result<Config, LoadError> {
     };
 
     let content = std::fs::read_to_string(&path)
-        .map_err(|e| LoadError::Io(format!("Failed to read {}: {e}", path.display())))?;
+        .into_diagnostic()
+        .wrap_err_with(|| format!("Failed to read {}", path.display()))?;
 
     let filename = path.display().to_string();
-    crate::parse::parse(&content, &filename).map_err(LoadError::from)
+    crate::parse::parse(&content, &filename).map_err(|e| (*e).into())
 }
 
 /// The preferred config path (XDG or ~/.config fallback).

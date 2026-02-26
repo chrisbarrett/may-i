@@ -8,7 +8,6 @@ edition = "2024"
 
 [dependencies]
 may-i-shell-parser = { path = "crates/shell-parser" }
-may-i-sexpr = { path = "crates/sexpr" }
 may-i-core = { path = "crates/core" }
 may-i-engine = { path = "crates/engine" }
 may-i-config = { path = "crates/config" }

@@ -9,7 +9,7 @@ use super::{CommandVisitor, VisitOutcome, VisitorContext};
 /// Detects `read`/`readarray`/`mapfile` and updates the variable
 /// environment to mark target variables as safe (value unknown at
 /// analysis time, but user-controlled input is considered safe).
-pub(in crate::engine) struct ReadBuiltinVisitor;
+pub(crate) struct ReadBuiltinVisitor;
 
 impl CommandVisitor for ReadBuiltinVisitor {
     fn visit_simple_command(

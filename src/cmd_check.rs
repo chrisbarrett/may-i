@@ -2,13 +2,12 @@
 
 use colored::Colorize;
 
-use may_i_core::LoadError;
 use may_i_config as config;
 use may_i_engine as engine;
 
 use crate::output::print_trace;
 
-pub fn cmd_check(json_mode: bool, verbose: bool, config_path: Option<&std::path::Path>) -> Result<(), LoadError> {
+pub fn cmd_check(json_mode: bool, verbose: bool, config_path: Option<&std::path::Path>) -> miette::Result<()> {
     let config = config::load(config_path)?;
     let results = engine::run_checks(&config);
 
@@ -26,7 +25,7 @@ pub fn cmd_check(json_mode: bool, verbose: bool, config_path: Option<&std::path:
                     "passed": r.passed,
                     "location": r.location,
                     "reason": r.reason,
-                    "trace": r.trace,
+                    "trace": crate::output::trace_to_json(&r.trace),
                 })
             })
             .collect();
@@ -81,8 +80,8 @@ pub fn cmd_check(json_mode: bool, verbose: bool, config_path: Option<&std::path:
     }
 
     if failed > 0 {
-        Err(LoadError::CheckFailure(format!("{failed} check(s) failed")))
-    } else {
-        Ok(())
+        miette::bail!("{failed} check(s) failed");
     }
+
+    Ok(())
 }

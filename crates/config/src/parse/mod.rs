@@ -4,8 +4,9 @@
 mod expr;
 use expr::{parse_expr, parse_pos_expr};
 
-use may_i_core::ConfigError;
-use may_i_sexpr::{RawError, Span, Sexpr};
+use crate::errors::ConfigError;
+use may_i_sexpr::{RawError, Sexpr};
+use may_i_core::Span;
 use may_i_core::{
     ArgMatcher, Check, CommandMatcher, CondArm, CondBranch, Config, Decision, Effect, Expr,
     PosExpr, Rule, RuleBody, SecurityConfig, SourceInfo, Wrapper, WrapperStep,

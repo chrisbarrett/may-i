@@ -1,39 +1,9 @@
-// Span and raw error types for s-expression parsing diagnostics.
+// Re-export Span from core; RawError stays local to sexpr.
 
-use miette::SourceSpan;
-
-/// Byte-offset span within source text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Span {
-    pub start: usize,
-    pub end: usize,
-}
-
-impl Span {
-    pub fn new(start: usize, end: usize) -> Self {
-        Self { start, end }
-    }
-}
-
-/// Convert a byte offset in source text to a 1-based (line, column) pair.
-pub fn offset_to_line_col(source: &str, offset: usize) -> (usize, usize) {
-    let before = &source[..offset.min(source.len())];
-    let line = before.bytes().filter(|&b| b == b'\n').count() + 1;
-    let col = before
-        .rfind('\n')
-        .map_or(before.len(), |p| before.len() - p - 1)
-        + 1;
-    (line, col)
-}
-
-impl From<Span> for SourceSpan {
-    fn from(s: Span) -> Self {
-        SourceSpan::new(s.start.into(), s.end - s.start)
-    }
-}
+pub use may_i_core::{Span, offset_to_line_col};
 
 /// Internal error carrying a span but no source text.
-/// Used inside the sexpr and config_parse modules; converted to `ConfigError`
+/// Used inside the sexpr and config_parse modules; converted to a diagnostic
 /// at the API boundary where the source text and filename are known.
 #[derive(Debug, Clone)]
 pub struct RawError {

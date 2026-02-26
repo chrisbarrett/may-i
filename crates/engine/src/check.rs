@@ -1,7 +1,6 @@
 // Config validation — run embedded checks against the engine.
 
-use crate::engine;
-use may_i_core::{Config, Decision};
+use may_i_core::{Config, Decision, TraceStep};
 
 /// Result of evaluating a single embedded check.
 #[derive(Debug)]
@@ -11,7 +10,7 @@ pub struct CheckResult {
     pub actual: Decision,
     pub passed: bool,
     pub reason: Option<String>,
-    pub trace: Vec<String>,
+    pub trace: Vec<TraceStep>,
     pub location: Option<String>,
 }
 
@@ -21,7 +20,7 @@ pub fn run_checks(config: &Config) -> Vec<CheckResult> {
 
     for rule in &config.rules {
         for check in &rule.checks {
-            let eval = engine::evaluate(&check.command, config);
+            let eval = crate::evaluate(&check.command, config);
             let location = config
                 .source_info
                 .as_ref()
@@ -44,7 +43,7 @@ pub fn run_checks(config: &Config) -> Vec<CheckResult> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use may_i_sexpr::Span;
+    use may_i_core::Span;
     use may_i_core::{Check, CommandMatcher, Effect, Rule, RuleBody};
 
     #[test]

@@ -3,13 +3,13 @@
 
 use may_i_core::{Decision, EvalResult};
 use may_i_shell_parser::{self as parser, Command, SimpleCommand};
-use super::super::matcher::unwrap_wrapper;
+use crate::matcher::unwrap_wrapper;
 use super::{CommandVisitor, VisitOutcome, VisitorContext};
 
 /// Peels known wrapper commands and recurses into the inner command.
 /// If the inner command is a single word containing spaces, it is
 /// parsed as a full AST.
-pub(in crate::engine) struct WrapperUnwrapVisitor;
+pub(crate) struct WrapperUnwrapVisitor;
 
 impl CommandVisitor for WrapperUnwrapVisitor {
     fn visit_simple_command(

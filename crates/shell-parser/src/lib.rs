@@ -3,6 +3,7 @@ mod glob;
 mod lexer;
 mod parse;
 pub(crate) mod resolve;
+mod segment;
 
 pub use resolve::resolve_param_op;
 
@@ -10,6 +11,7 @@ pub use resolve::resolve_param_op;
 mod tests;
 
 pub use ast::*;
+pub use segment::{Segment, segment};
 use parse::Parser;
 
 /// Parse a shell command string into an AST.
@@ -17,99 +19,6 @@ use parse::Parser;
 pub fn parse(input: &str) -> Command {
     let mut parser = Parser::new(input);
     parser.parse_complete()
-}
-
-/// A segment of a shell command for display purposes.
-#[derive(Debug, Clone)]
-pub struct Segment {
-    /// Byte range in the original input.
-    pub start: usize,
-    pub end: usize,
-    /// True if this segment is an operator (|, &&, ||, ;, &), false if a command.
-    pub is_operator: bool,
-}
-
-/// Split a shell command into segments at top-level operators.
-/// Returns alternating command and operator segments with their byte ranges.
-pub fn segment(input: &str) -> Vec<Segment> {
-    use lexer::{Lexer, Token};
-
-    let mut lex = Lexer::new(input);
-    let tokens = lex.tokenize_with_offsets();
-
-    let mut segments = Vec::new();
-    let mut depth: i32 = 0;
-    let mut cmd_start: Option<usize> = None;
-
-    for (tok, byte_off) in &tokens {
-        match tok {
-            Token::Eof => {
-                // Flush any pending command segment
-                if let Some(start) = cmd_start {
-                    let end = input[start..].trim_end().len() + start;
-                    if end > start {
-                        segments.push(Segment { start, end, is_operator: false });
-                    }
-                }
-            }
-            // Depth-increasing tokens
-            Token::LParen | Token::If | Token::For | Token::While | Token::Until
-            | Token::Case | Token::Do | Token::LBrace => {
-                depth += 1;
-                if cmd_start.is_none() {
-                    cmd_start = Some(*byte_off);
-                }
-            }
-            // Depth-decreasing tokens
-            Token::RParen | Token::Fi | Token::Done | Token::Esac | Token::RBrace => {
-                depth -= 1;
-                if cmd_start.is_none() {
-                    cmd_start = Some(*byte_off);
-                }
-            }
-            // Top-level operators split segments
-            Token::Pipe | Token::And | Token::Or | Token::Semi | Token::Amp
-                if depth <= 0 =>
-            {
-                // Flush the command segment before this operator
-                if let Some(start) = cmd_start.take() {
-                    let end = trim_end_offset(input, start, *byte_off);
-                    if end > start {
-                        segments.push(Segment { start, end, is_operator: false });
-                    }
-                }
-                // Add the operator segment
-                let op_len = match tok {
-                    Token::And | Token::Or => 2,
-                    _ => 1,
-                };
-                segments.push(Segment { start: *byte_off, end: byte_off + op_len, is_operator: true });
-            }
-            // Newlines are treated like semicolons at depth 0
-            Token::Newline if depth <= 0 => {
-                if let Some(start) = cmd_start.take() {
-                    let end = trim_end_offset(input, start, *byte_off);
-                    if end > start {
-                        segments.push(Segment { start, end, is_operator: false });
-                    }
-                }
-            }
-            // Everything else is part of a command
-            _ => {
-                if cmd_start.is_none() {
-                    cmd_start = Some(*byte_off);
-                }
-            }
-        }
-    }
-
-    segments
-}
-
-/// Find the end of a command segment by trimming trailing whitespace.
-fn trim_end_offset(input: &str, start: usize, operator_start: usize) -> usize {
-    let between = &input[start..operator_start];
-    start + between.trim_end().len()
 }
 
 // ── Test-only helpers ────────────────────────────────────────────────

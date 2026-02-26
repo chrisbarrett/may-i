@@ -2,7 +2,7 @@
 
 use colored::Colorize;
 
-use may_i_core::{Decision, LoadError};
+use may_i_core::Decision;
 use may_i_config as config;
 use may_i_engine as engine;
 use may_i_shell_parser as parser;
@@ -13,7 +13,7 @@ pub fn cmd_eval(
     command: &str,
     json_mode: bool,
     config_path: Option<&std::path::Path>,
-) -> Result<(), LoadError> {
+) -> miette::Result<()> {
     let config = config::load(config_path)?;
 
     if json_mode {
@@ -21,12 +21,17 @@ pub fn cmd_eval(
         let json = serde_json::json!({
             "decision": result.decision.to_string(),
             "reason": result.reason.unwrap_or_default(),
-            "trace": result.trace,
+            "trace": crate::output::trace_to_json(&result.trace),
         });
         println!("{}", serde_json::to_string(&json).expect("response serialization is infallible"));
     } else {
         // Evaluate per-segment so we can both colorize and derive the aggregate result.
         let (result, colored_command) = evaluate_segments(command, &config);
+
+        if !result.trace.is_empty() {
+            println!("\n{}\n", "Trace".bold());
+            print_trace(&result.trace, "  ");
+        }
 
         println!("\n{}\n", "Command".bold());
         println!("  {colored_command}");
@@ -43,10 +48,6 @@ pub fn cmd_eval(
             for line in formatted.lines() {
                 println!("  {line}");
             }
-        }
-        if !result.trace.is_empty() {
-            println!("\n{}\n", "Trace".bold());
-            print_trace(&result.trace, "  ");
         }
         println!();
     }

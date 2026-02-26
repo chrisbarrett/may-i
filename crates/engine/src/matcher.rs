@@ -6,7 +6,7 @@ use may_i_core::{ArgMatcher, CommandMatcher, Config, Effect, Expr, ExprBranch, P
 
 /// A resolved argument that may be a known literal or an opaque (safe but unknown) value.
 #[derive(Debug, Clone, PartialEq)]
-pub(in crate::engine) enum ResolvedArg {
+pub(crate) enum ResolvedArg {
     Literal(String),
     Opaque,
 }
@@ -15,7 +15,7 @@ pub(in crate::engine) enum ResolvedArg {
 
 /// The result of matching args against an ArgMatcher.
 #[derive(Debug)]
-pub(in crate::engine) enum MatchOutcome {
+pub(crate) enum MatchOutcome {
     /// Matched, with an embedded effect (from Expr::Cond or ArgMatcher::Cond).
     Matched(Effect),
     /// Matched, no embedded effect.
@@ -34,7 +34,7 @@ impl MatchOutcome {
 ///
 /// Some variants carry payloads used only for `Debug` output in tests.
 #[derive(Debug)]
-pub(in crate::engine) enum MatchEvent<'a> {
+pub(crate) enum MatchEvent<'a> {
     ExprVsArg { expr: &'a Expr, arg: &'a ResolvedArg, matched: bool },
     Quantifier { pexpr: &'a PosExpr, count: usize, matched: bool },
     Missing { pexpr: &'a PosExpr },
@@ -45,83 +45,10 @@ pub(in crate::engine) enum MatchEvent<'a> {
     ExactRemainder { count: usize },
 }
 
-// ── Formatting helpers ─────────────────────────────────────────────
-
-use may_i_pp::Doc;
-
-pub(in crate::engine) const PP_WIDTH: usize = 72;
-
-/// Format a CommandMatcher for display in traces.
-/// `indent` is the column where the expression starts (e.g. after "rule ").
-pub(in crate::engine) fn format_command_matcher(m: &CommandMatcher, indent: usize) -> String {
-    let doc = match m {
-        CommandMatcher::Exact(s) => Doc::list(vec![Doc::atom("command"), Doc::atom(format!("\"{s}\""))]),
-        CommandMatcher::Regex(re) => Doc::list(vec![Doc::atom("command"), Doc::atom(format!("#\"{}\"", re.as_str()))]),
-        CommandMatcher::List(names) => {
-            let mut or_children = vec![Doc::atom("or")];
-            or_children.extend(names.iter().map(|n| Doc::atom(format!("\"{n}\""))));
-            Doc::list(vec![Doc::atom("command"), Doc::list(or_children)])
-        }
-    };
-    may_i_pp::pretty(&doc, indent, &may_i_pp::Format { width: PP_WIDTH, ..Default::default() })
-}
-
-/// Build a Doc tree from an Expr.
-pub(in crate::engine) fn expr_to_doc(e: &Expr) -> Doc {
-    match e {
-        Expr::Literal(s) => Doc::atom(format!("\"{s}\"")),
-        // Convention: `#"..."` prefix signals regex to pp's colorizer.
-        Expr::Regex(re) => Doc::atom(format!("#\"{}\"", re.as_str())),
-        Expr::Wildcard => Doc::atom("*"),
-        Expr::And(exprs) => {
-            let mut children = vec![Doc::atom("and")];
-            children.extend(exprs.iter().map(expr_to_doc));
-            Doc::list(children)
-        }
-        Expr::Or(exprs) => {
-            let mut children = vec![Doc::atom("or")];
-            children.extend(exprs.iter().map(expr_to_doc));
-            Doc::list(children)
-        }
-        Expr::Not(inner) => Doc::list(vec![Doc::atom("not"), expr_to_doc(inner)]),
-        Expr::Cond(branches) => {
-            let mut children = vec![Doc::atom("cond")];
-            for b in branches {
-                children.push(Doc::list(vec![
-                    expr_to_doc(&b.test),
-                    Doc::atom("=>"),
-                    Doc::atom(b.effect.decision.to_string()),
-                ]));
-            }
-            Doc::list(children)
-        }
-    }
-}
-
-/// Build a Doc tree from a PosExpr.
-pub(in crate::engine) fn pos_expr_to_doc(pe: &PosExpr) -> Doc {
-    use may_i_core::Quantifier;
-    let inner = expr_to_doc(&pe.expr);
-    match pe.quantifier {
-        Quantifier::One => inner,
-        Quantifier::Optional => Doc::list(vec![Doc::atom("?"), inner]),
-        Quantifier::OneOrMore => Doc::list(vec![Doc::atom("+"), inner]),
-        Quantifier::ZeroOrMore => Doc::list(vec![Doc::atom("*"), inner]),
-    }
-}
-
-/// Build a Doc atom from a ResolvedArg.
-pub(in crate::engine) fn resolved_arg_to_doc(a: &ResolvedArg) -> Doc {
-    match a {
-        ResolvedArg::Literal(s) => Doc::atom(format!("\"{s}\"")),
-        ResolvedArg::Opaque => Doc::atom("<opaque>"),
-    }
-}
-
 // ── Core matching ──────────────────────────────────────────────────
 
 /// Check if a command name matches a command matcher.
-pub(in crate::engine) fn command_matches(name: &str, matcher: &CommandMatcher) -> bool {
+pub(crate) fn command_matches(name: &str, matcher: &CommandMatcher) -> bool {
     match matcher {
         CommandMatcher::Exact(s) => name == s,
         CommandMatcher::Regex(re) => re.is_match(name),
@@ -202,7 +129,7 @@ fn match_expr_cond_branches(
 }
 
 /// Unified arg matching: walks the ArgMatcher tree, emits events, returns outcome.
-pub(in crate::engine) fn match_args(
+pub(crate) fn match_args(
     matcher: &ArgMatcher,
     args: &[ResolvedArg],
     emit: &mut dyn for<'e> FnMut(MatchEvent<'e>),
@@ -313,7 +240,7 @@ enum FlagParseState {
 }
 
 /// Extract positional args from a resolved argument list, skipping flags and their values.
-pub(in crate::engine) fn extract_positional_args(args: &[ResolvedArg]) -> Vec<ResolvedArg> {
+pub(crate) fn extract_positional_args(args: &[ResolvedArg]) -> Vec<ResolvedArg> {
     let mut positional = Vec::new();
     let mut state = FlagParseState::Scanning;
     for arg in args {
@@ -426,7 +353,7 @@ fn match_positional(
 
 /// Convenience wrapper: pure boolean match (no tracing, no effect extraction).
 #[cfg(test)]
-pub(in crate::engine) fn matcher_matches(matcher: &ArgMatcher, args: &[ResolvedArg]) -> bool {
+pub(crate) fn matcher_matches(matcher: &ArgMatcher, args: &[ResolvedArg]) -> bool {
     match_args(matcher, args, &mut |_| {}).is_match()
 }
 
@@ -1023,7 +950,7 @@ mod tests {
 
 /// R8: Expand combined short flags: -abc → -a -b -c
 /// Words with opaque parts produce a single Opaque arg.
-pub(in crate::engine) fn expand_flags(args: &[Word]) -> Vec<ResolvedArg> {
+pub(crate) fn expand_flags(args: &[Word]) -> Vec<ResolvedArg> {
     let mut result = Vec::new();
     for arg in args {
         if arg.has_opaque_parts() {
@@ -1043,7 +970,7 @@ pub(in crate::engine) fn expand_flags(args: &[Word]) -> Vec<ResolvedArg> {
 }
 
 /// R9: Attempt to unwrap a wrapper command, returning the inner command.
-pub(in crate::engine) fn unwrap_wrapper(sc: &SimpleCommand, config: &Config) -> Option<SimpleCommand> {
+pub(crate) fn unwrap_wrapper(sc: &SimpleCommand, config: &Config) -> Option<SimpleCommand> {
     let cmd_name = sc.command_name()?;
 
     'wrapper: for wrapper in &config.wrappers {

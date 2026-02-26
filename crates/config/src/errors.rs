@@ -5,6 +5,7 @@
 
 use miette::{Diagnostic, LabeledSpan, NamedSource, SourceSpan};
 use may_i_sexpr::RawError;
+use may_i_core::Span;
 use thiserror::Error;
 
 /// User-facing diagnostic error with source context.
@@ -20,17 +21,21 @@ pub struct ConfigError {
     help: Option<String>,
 }
 
+fn span_to_source_span(s: Span) -> SourceSpan {
+    SourceSpan::new(s.start.into(), s.end - s.start)
+}
+
 impl ConfigError {
     /// Build from a `RawError` plus the original source text and filename.
     pub fn from_raw(raw: RawError, source: &str, filename: &str) -> Self {
         let primary_label = raw.label.unwrap_or_else(|| "here".to_string());
         let mut labels = vec![LabeledSpan::at(
-            SourceSpan::from(raw.span),
+            span_to_source_span(raw.span),
             primary_label,
         )];
         if let Some(secondary) = raw.secondary {
             let (span, label) = *secondary;
-            labels.push(LabeledSpan::at(SourceSpan::from(span), label));
+            labels.push(LabeledSpan::at(span_to_source_span(span), label));
         }
         Self {
             message: raw.message,
@@ -39,16 +44,4 @@ impl ConfigError {
             help: raw.help,
         }
     }
-}
-
-/// Top-level error from loading a config file or running checks.
-#[derive(Debug, Error, Diagnostic)]
-pub enum LoadError {
-    #[error("{0}")]
-    Io(String),
-    #[error(transparent)]
-    #[diagnostic(transparent)]
-    Config(#[from] Box<ConfigError>),
-    #[error("{0}")]
-    CheckFailure(String),
 }

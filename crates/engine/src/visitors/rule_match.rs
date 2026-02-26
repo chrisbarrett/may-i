@@ -1,14 +1,14 @@
 // Visitor that matches resolved commands against config rules.
 // Terminal visitor: always returns Terminal (never Continue).
 
-use may_i_core::{Config, Decision, Effect, EvalResult, RuleBody};
+use may_i_core::{Config, Decision, Effect, EvalResult, RuleBody, TraceStep};
 use may_i_shell_parser::SimpleCommand;
-use super::super::matcher::*;
+use crate::matcher::*;
 use super::{CommandVisitor, VisitOutcome, VisitorContext};
 
 /// Terminal visitor: matches the resolved command against config rules.
 /// Always returns Terminal (never Continue).
-pub(in crate::engine) struct RuleMatchVisitor;
+pub(crate) struct RuleMatchVisitor;
 
 impl CommandVisitor for RuleMatchVisitor {
     fn visit_simple_command(
@@ -25,7 +25,7 @@ impl CommandVisitor for RuleMatchVisitor {
 }
 
 /// Pure rule-matching logic: expand flags, iterate rules, return first match.
-pub(in crate::engine) fn match_against_rules(
+pub(crate) fn match_against_rules(
     resolved: &SimpleCommand,
     config: &Config,
 ) -> EvalResult {
@@ -51,36 +51,24 @@ pub(in crate::engine) fn match_against_rules(
 
         had_command_match = true;
         let line_num = config.source_info.as_ref().map(|si| si.line_of(rule.source_span));
-        let line_prefix = line_num.map(|n| format!("{n}: ")).unwrap_or_default();
-        let rule_label = format_command_matcher(
-            &rule.command,
-            line_prefix.len() + "rule ".len(),
-        );
-        for (i, line) in rule_label.lines().enumerate() {
-            if i == 0 {
-                trace.push(format!("{line_prefix}rule {line}"));
-            } else {
-                trace.push(line.to_string());
-            }
-        }
+        trace.push(TraceStep::Rule {
+            label: rule.command.to_string(),
+            line: line_num,
+        });
 
         let effect = match &rule.body {
             RuleBody::Effect { matcher: None, effect } => {
                 effect.clone()
             }
             RuleBody::Effect { matcher: Some(m), effect } => {
-                let mut collector = TraceCollector::new(2);
+                let mut collector = TraceCollector::new();
                 let outcome = match_args(m, &expanded_args, &mut |ev| collector.on_event(ev));
-                for step in collector.into_steps() {
-                    for line in step.lines() {
-                        trace.push(format!("  {line}"));
-                    }
-                }
+                trace.extend(collector.into_steps());
                 if matches!(outcome, MatchOutcome::NoMatch) {
-                    trace.push("  args did not match".into());
+                    trace.push(TraceStep::ArgsNotMatched);
                     continue;
                 }
-                trace.push("  args matched".into());
+                trace.push(TraceStep::ArgsMatched);
                 // Prefer the embedded effect if the matcher produced one,
                 // otherwise fall back to the rule-level effect.
                 if let MatchOutcome::Matched(eff) = outcome {
@@ -90,31 +78,26 @@ pub(in crate::engine) fn match_against_rules(
                 }
             }
             RuleBody::Branching(m) => {
-                let mut collector = TraceCollector::new(2);
+                let mut collector = TraceCollector::new();
                 let outcome = match_args(m, &expanded_args, &mut |ev| collector.on_event(ev));
-                for step in collector.into_steps() {
-                    for line in step.lines() {
-                        trace.push(format!("  {line}"));
-                    }
-                }
+                trace.extend(collector.into_steps());
                 match outcome {
                     MatchOutcome::Matched(eff) => {
-                        trace.push("  args matched".into());
+                        trace.push(TraceStep::ArgsMatched);
                         eff
                     }
                     _ => {
-                        trace.push("  args did not match".into());
+                        trace.push(TraceStep::ArgsNotMatched);
                         continue;
                     }
                 }
             }
         };
 
-        trace.push(format!(
-            "  effect: {} — {}",
-            effect.decision,
-            effect.reason.as_deref().unwrap_or("(no reason)")
-        ));
+        trace.push(TraceStep::Effect {
+            decision: effect.decision,
+            reason: effect.reason.clone(),
+        });
 
         let Effect { decision, reason } = effect;
         let mut result = EvalResult::new(decision, reason);
@@ -136,7 +119,7 @@ pub(in crate::engine) fn match_against_rules(
         } else {
             format!("No rule for command `{cmd_name}`")
         };
-        trace.push("  => ask (default)".into());
+        trace.push(TraceStep::DefaultAsk);
         let mut result = EvalResult::new(Decision::Ask, Some(reason));
         result.trace = trace;
         result
@@ -145,74 +128,77 @@ pub(in crate::engine) fn match_against_rules(
 
 // ── Trace collector ────────────────────────────────────────────────
 
-/// Collects MatchEvents into human-readable trace strings.
+/// Collects MatchEvents into structured TraceStep values.
 struct TraceCollector {
-    steps: Vec<String>,
-    /// Column at which trace expressions start (for pp wrapping).
-    indent: usize,
+    steps: Vec<TraceStep>,
 }
 
 impl TraceCollector {
-    fn new(indent: usize) -> Self {
-        Self { steps: Vec::new(), indent }
-    }
-
-    /// Pretty-print a Doc at the current indent.
-    fn pp(&self, doc: &may_i_pp::Doc) -> String {
-        may_i_pp::pretty(doc, self.indent, &may_i_pp::Format { width: PP_WIDTH, ..Default::default() })
+    fn new() -> Self {
+        Self { steps: Vec::new() }
     }
 
     fn on_event(&mut self, ev: MatchEvent<'_>) {
         match ev {
             MatchEvent::ExprVsArg { expr, arg, matched } => {
-                let result = if matched { "yes" } else { "no" };
-                let lhs = self.pp(&expr_to_doc(expr));
-                let rhs = self.pp(&resolved_arg_to_doc(arg));
-                self.steps.push(format!("{lhs} vs {rhs} => {result}"));
+                self.steps.push(TraceStep::ExprVsArg {
+                    expr: expr.to_string(),
+                    arg: resolved_arg_to_string(arg),
+                    matched,
+                });
             }
             MatchEvent::Quantifier { pexpr, count, matched } => {
-                let result = if matched {
-                    format!("yes (matched {count})")
-                } else {
-                    "no".into()
-                };
-                let label = self.pp(&pos_expr_to_doc(pexpr));
-                self.steps.push(format!("{label} => {result}"));
+                self.steps.push(TraceStep::Quantifier {
+                    label: pexpr.to_string(),
+                    count,
+                    matched,
+                });
             }
             MatchEvent::Missing { pexpr } => {
-                let label = self.pp(&pos_expr_to_doc(pexpr));
-                self.steps.push(format!("{label} vs <missing> => no"));
+                self.steps.push(TraceStep::Missing {
+                    label: pexpr.to_string(),
+                });
             }
             MatchEvent::ExprCondBranch { test, matched, effect } => {
                 if matched {
-                    let label = self.pp(&expr_to_doc(test));
-                    self.steps.push(format!("{label} => yes [{}]", effect.decision));
+                    self.steps.push(TraceStep::ExprCondBranch {
+                        label: test.to_string(),
+                        decision: effect.decision,
+                    });
                 }
             }
             MatchEvent::MatcherCondBranch { matched, effect } => {
                 if matched {
-                    self.steps.push(format!("=> yes [{}]", effect.decision));
+                    self.steps.push(TraceStep::MatcherCondBranch {
+                        decision: effect.decision,
+                    });
                 }
             }
             MatchEvent::MatcherCondElse { effect } => {
-                self.steps.push(format!("else => [{}]", effect.decision));
+                self.steps.push(TraceStep::MatcherCondElse {
+                    decision: effect.decision,
+                });
             }
             MatchEvent::Anywhere { expr, matched } => {
-                let result = if matched { "yes" } else { "no" };
-                let doc = may_i_pp::Doc::list(vec![
-                    may_i_pp::Doc::atom("anywhere"),
-                    expr_to_doc(expr),
-                ]);
-                let label = self.pp(&doc);
-                self.steps.push(format!("{label} => {result}"));
+                self.steps.push(TraceStep::Anywhere {
+                    label: format!("(anywhere {})", expr),
+                    matched,
+                });
             }
             MatchEvent::ExactRemainder { count } => {
-                self.steps.push(format!("exact: {count} positional args remaining"));
+                self.steps.push(TraceStep::ExactRemainder { count });
             }
         }
     }
 
-    fn into_steps(self) -> Vec<String> {
+    fn into_steps(self) -> Vec<TraceStep> {
         self.steps
+    }
+}
+
+fn resolved_arg_to_string(a: &ResolvedArg) -> String {
+    match a {
+        ResolvedArg::Literal(s) => format!("\"{s}\""),
+        ResolvedArg::Opaque => "<opaque>".into(),
     }
 }

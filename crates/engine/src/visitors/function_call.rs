@@ -6,7 +6,7 @@ use super::{CommandVisitor, VisitOutcome, VisitorContext, MAX_EVAL_DEPTH};
 
 /// When the command name matches a previously defined function, set up
 /// positional parameters and recurse into the function body.
-pub(in crate::engine) struct FunctionCallVisitor;
+pub(crate) struct FunctionCallVisitor;
 
 impl CommandVisitor for FunctionCallVisitor {
     fn visit_simple_command(
