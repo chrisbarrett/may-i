@@ -56,16 +56,6 @@ pub enum Expr {
 }
 
 impl Expr {
-    /// True if this expression (or any sub-expression) is a Cond with effects.
-    pub fn has_effect(&self) -> bool {
-        match self {
-            Expr::Cond(_) => true,
-            Expr::And(exprs) | Expr::Or(exprs) => exprs.iter().any(|e| e.has_effect()),
-            Expr::Not(expr) => expr.has_effect(),
-            Expr::Literal(_) | Expr::Regex(_) | Expr::Wildcard => false,
-        }
-    }
-
     /// Find the effect from the first matching Cond branch for the given text.
     pub fn find_effect(&self, text: &str) -> Option<&Effect> {
         match self {
@@ -368,9 +358,9 @@ impl ArgMatcher {
     pub fn has_effect(&self) -> bool {
         match self {
             ArgMatcher::Positional(pexprs) | ArgMatcher::ExactPositional(pexprs) => {
-                pexprs.iter().any(|pe| pe.expr().has_effect())
+                pexprs.iter().any(|pe| has_expr_effect(pe.expr()))
             }
-            ArgMatcher::Anywhere(exprs) => exprs.iter().any(|e| e.has_effect()),
+            ArgMatcher::Anywhere(exprs) => exprs.iter().any(has_expr_effect),
             ArgMatcher::And(matchers) | ArgMatcher::Or(matchers) => {
                 matchers.iter().any(|m| m.has_effect())
             }
@@ -380,128 +370,16 @@ impl ArgMatcher {
             }),
         }
     }
-
-    /// Walk the matcher tree and extract the effect from the first Expr::Cond
-    /// whose branch matches. `args` are the expanded argument list.
-    pub fn find_expr_effect(&self, args: &[String]) -> Option<Effect> {
-        match self {
-            ArgMatcher::Positional(pexprs) => {
-                find_pos_expr_effect(pexprs, args, false)
-            }
-            ArgMatcher::ExactPositional(pexprs) => {
-                find_pos_expr_effect(pexprs, args, true)
-            }
-            ArgMatcher::Anywhere(exprs) => {
-                exprs.iter().find_map(|expr| {
-                    args.iter().find_map(|arg| expr.find_effect(arg)).cloned()
-                })
-            }
-            ArgMatcher::And(matchers) | ArgMatcher::Or(matchers) => {
-                matchers.iter().find_map(|m| m.find_expr_effect(args))
-            }
-            ArgMatcher::Not(inner) => inner.find_expr_effect(args),
-            ArgMatcher::Cond(branches) => {
-                branches.iter().find_map(|b| {
-                    b.matcher.as_ref().and_then(|m| m.find_expr_effect(args))
-                })
-            }
-        }
-    }
 }
 
-/// Extract positional args from an argument list, skipping flags and their values.
-fn extract_positional_args(args: &[String]) -> Vec<String> {
-    let mut positional = Vec::new();
-    let mut skip_next = false;
-    let mut flags_done = false;
-    for arg in args {
-        if flags_done {
-            positional.push(arg.clone());
-            continue;
-        }
-        if skip_next {
-            skip_next = false;
-            continue;
-        }
-        if arg == "--" {
-            positional.push(arg.clone());
-            flags_done = true;
-            continue;
-        }
-        if arg.starts_with("--") {
-            if !arg.contains('=') {
-                skip_next = true;
-            }
-            continue;
-        }
-        if arg.starts_with('-') && arg.len() > 1 {
-            continue;
-        }
-        positional.push(arg.clone());
+/// True if this expression (or any sub-expression) is a Cond with effects.
+fn has_expr_effect(expr: &Expr) -> bool {
+    match expr {
+        Expr::Cond(_) => true,
+        Expr::And(exprs) | Expr::Or(exprs) => exprs.iter().any(has_expr_effect),
+        Expr::Not(e) => has_expr_effect(e),
+        Expr::Literal(_) | Expr::Regex(_) | Expr::Wildcard => false,
     }
-    positional
-}
-
-/// Walk PosExpr patterns with two-cursor logic and find the first Expr::Cond effect.
-fn find_pos_expr_effect(pexprs: &[PosExpr], args: &[String], exact: bool) -> Option<Effect> {
-    let positional = extract_positional_args(args);
-    let mut pos = 0;
-
-    for pexpr in pexprs {
-        match pexpr {
-            PosExpr::One(e) => {
-                if let Some(arg) = positional.get(pos) {
-                    if let Some(eff) = e.find_effect(arg) {
-                        return Some(eff.clone());
-                    }
-                    pos += 1;
-                } else {
-                    return None;
-                }
-            }
-            PosExpr::Optional(e) => {
-                if let Some(arg) = positional.get(pos)
-                    && e.is_match(arg)
-                {
-                    if let Some(eff) = e.find_effect(arg) {
-                        return Some(eff.clone());
-                    }
-                    pos += 1;
-                }
-            }
-            PosExpr::OneOrMore(e) => {
-                if positional.get(pos).is_none_or(|arg| !e.is_match(arg)) {
-                    return None;
-                }
-                while let Some(arg) = positional.get(pos) {
-                    if !e.is_match(arg) {
-                        break;
-                    }
-                    if let Some(eff) = e.find_effect(arg) {
-                        return Some(eff.clone());
-                    }
-                    pos += 1;
-                }
-            }
-            PosExpr::ZeroOrMore(e) => {
-                while let Some(arg) = positional.get(pos) {
-                    if !e.is_match(arg) {
-                        break;
-                    }
-                    if let Some(eff) = e.find_effect(arg) {
-                        return Some(eff.clone());
-                    }
-                    pos += 1;
-                }
-            }
-        }
-    }
-
-    if exact && pos != positional.len() {
-        return None;
-    }
-
-    None
 }
 
 /// Wrapper configuration for command unwrapping.
@@ -881,103 +759,6 @@ mod tests {
         assert!(!PosExpr::One(Expr::Literal("x".into())).is_wildcard());
     }
 
-    // --- find_pos_expr_effect with quantifiers ---
-
-    #[test]
-    fn find_expr_effect_positional_with_cond() {
-        let cond_expr = Expr::Cond(vec![
-            ExprBranch {
-                test: Expr::Literal("safe".into()),
-                effect: Effect { decision: Decision::Allow, reason: Some("safe".into()) },
-            },
-            ExprBranch {
-                test: Expr::Wildcard,
-                effect: Effect { decision: Decision::Deny, reason: Some("bad".into()) },
-            },
-        ]);
-        let matcher = ArgMatcher::Positional(vec![
-            PosExpr::One(Expr::Literal("cmd".into())),
-            PosExpr::One(cond_expr),
-        ]);
-        let args = vec!["cmd".to_string(), "safe".to_string()];
-        let eff = matcher.find_expr_effect(&args).unwrap();
-        assert_eq!(eff.decision, Decision::Allow);
-
-        let args2 = vec!["cmd".to_string(), "other".to_string()];
-        let eff2 = matcher.find_expr_effect(&args2).unwrap();
-        assert_eq!(eff2.decision, Decision::Deny);
-    }
-
-    #[test]
-    fn find_expr_effect_exact_positional_with_cond() {
-        let cond_expr = Expr::Cond(vec![ExprBranch {
-            test: Expr::Wildcard,
-            effect: Effect { decision: Decision::Ask, reason: None },
-        }]);
-        let matcher = ArgMatcher::ExactPositional(vec![PosExpr::One(cond_expr)]);
-        let eff = matcher.find_expr_effect(&["x".to_string()]).unwrap();
-        assert_eq!(eff.decision, Decision::Ask);
-
-        // Too few args returns None (pattern expects 1 but 0 given)
-        assert!(matcher.find_expr_effect(&[]).is_none());
-    }
-
-    #[test]
-    fn find_expr_effect_optional_with_cond() {
-        let cond_expr = Expr::Cond(vec![ExprBranch {
-            test: Expr::Literal("hit".into()),
-            effect: Effect { decision: Decision::Deny, reason: None },
-        }]);
-        let matcher = ArgMatcher::Positional(vec![PosExpr::Optional(cond_expr)]);
-
-        // Matches and returns effect
-        let eff = matcher.find_expr_effect(&["hit".to_string()]).unwrap();
-        assert_eq!(eff.decision, Decision::Deny);
-
-        // No args — optional is skipped, no effect
-        assert!(matcher.find_expr_effect(&[]).is_none());
-    }
-
-    #[test]
-    fn find_expr_effect_one_or_more_with_cond() {
-        let cond_expr = Expr::Cond(vec![ExprBranch {
-            test: Expr::Wildcard,
-            effect: Effect { decision: Decision::Allow, reason: None },
-        }]);
-        let matcher = ArgMatcher::Positional(vec![PosExpr::OneOrMore(cond_expr)]);
-
-        let eff = matcher.find_expr_effect(&["a".to_string()]).unwrap();
-        assert_eq!(eff.decision, Decision::Allow);
-
-        // No args — OneOrMore fails
-        assert!(matcher.find_expr_effect(&[]).is_none());
-    }
-
-    #[test]
-    fn find_expr_effect_zero_or_more_with_cond() {
-        let cond_expr = Expr::Cond(vec![ExprBranch {
-            test: Expr::Literal("match".into()),
-            effect: Effect { decision: Decision::Deny, reason: None },
-        }]);
-        let matcher = ArgMatcher::Positional(vec![PosExpr::ZeroOrMore(cond_expr)]);
-
-        let eff = matcher.find_expr_effect(&["match".to_string()]).unwrap();
-        assert_eq!(eff.decision, Decision::Deny);
-
-        // No matching args — zero consumed, no effect
-        assert!(matcher.find_expr_effect(&[]).is_none());
-    }
-
-    #[test]
-    fn find_expr_effect_too_few_args_for_one() {
-        let matcher = ArgMatcher::Positional(vec![
-            PosExpr::One(Expr::Literal("a".into())),
-            PosExpr::One(Expr::Literal("b".into())),
-        ]);
-        // Only one arg — second One fails
-        assert!(matcher.find_expr_effect(&["a".to_string()]).is_none());
-    }
-
     // --- has_effect for PosExpr paths ---
 
     #[test]
@@ -1037,196 +818,5 @@ mod tests {
         }]);
         let e = Expr::Not(Box::new(cond));
         assert_eq!(e.find_effect("x").unwrap().decision, Decision::Ask);
-    }
-
-    // --- find_expr_effect through And/Or/Not/Cond ArgMatcher ---
-
-    #[test]
-    fn find_expr_effect_through_and_matcher() {
-        let cond_expr = Expr::Cond(vec![ExprBranch {
-            test: Expr::Wildcard,
-            effect: Effect { decision: Decision::Allow, reason: None },
-        }]);
-        let m = ArgMatcher::And(vec![
-            ArgMatcher::Positional(vec![PosExpr::One(cond_expr)]),
-        ]);
-        let eff = m.find_expr_effect(&["x".to_string()]).unwrap();
-        assert_eq!(eff.decision, Decision::Allow);
-    }
-
-    #[test]
-    fn find_expr_effect_through_or_matcher() {
-        let cond_expr = Expr::Cond(vec![ExprBranch {
-            test: Expr::Wildcard,
-            effect: Effect { decision: Decision::Deny, reason: None },
-        }]);
-        let m = ArgMatcher::Or(vec![
-            ArgMatcher::Positional(vec![PosExpr::One(cond_expr)]),
-        ]);
-        let eff = m.find_expr_effect(&["x".to_string()]).unwrap();
-        assert_eq!(eff.decision, Decision::Deny);
-    }
-
-    #[test]
-    fn find_expr_effect_through_not_matcher() {
-        let cond_expr = Expr::Cond(vec![ExprBranch {
-            test: Expr::Wildcard,
-            effect: Effect { decision: Decision::Ask, reason: None },
-        }]);
-        let m = ArgMatcher::Not(Box::new(
-            ArgMatcher::Positional(vec![PosExpr::One(cond_expr)]),
-        ));
-        let eff = m.find_expr_effect(&["x".to_string()]).unwrap();
-        assert_eq!(eff.decision, Decision::Ask);
-    }
-
-    #[test]
-    fn find_expr_effect_through_cond_matcher() {
-        let cond_expr = Expr::Cond(vec![ExprBranch {
-            test: Expr::Wildcard,
-            effect: Effect { decision: Decision::Allow, reason: None },
-        }]);
-        let m = ArgMatcher::Cond(vec![CondBranch {
-            matcher: Some(ArgMatcher::Positional(vec![PosExpr::One(cond_expr)])),
-            effect: Effect { decision: Decision::Deny, reason: None },
-        }]);
-        let eff = m.find_expr_effect(&["x".to_string()]).unwrap();
-        assert_eq!(eff.decision, Decision::Allow);
-    }
-
-    // --- extract_positional_args in types.rs (exercised via find_pos_expr_effect) ---
-
-    #[test]
-    fn find_expr_effect_skips_flags() {
-        let cond_expr = Expr::Cond(vec![ExprBranch {
-            test: Expr::Literal("val".into()),
-            effect: Effect { decision: Decision::Allow, reason: None },
-        }]);
-        let m = ArgMatcher::Positional(vec![PosExpr::One(cond_expr)]);
-        // --flag consumes next arg, so "val" at index 2 is the first positional
-        let eff = m.find_expr_effect(&["--flag".to_string(), "flagval".to_string(), "val".to_string()]);
-        assert_eq!(eff.unwrap().decision, Decision::Allow);
-    }
-
-    #[test]
-    fn find_expr_effect_skips_short_flags() {
-        let cond_expr = Expr::Cond(vec![ExprBranch {
-            test: Expr::Literal("val".into()),
-            effect: Effect { decision: Decision::Allow, reason: None },
-        }]);
-        let m = ArgMatcher::Positional(vec![PosExpr::One(cond_expr)]);
-        let eff = m.find_expr_effect(&["-v".to_string(), "val".to_string()]);
-        assert_eq!(eff.unwrap().decision, Decision::Allow);
-    }
-
-    #[test]
-    fn find_expr_effect_double_dash_terminates_flags() {
-        let cond_expr = Expr::Cond(vec![ExprBranch {
-            test: Expr::Literal("--".into()),
-            effect: Effect { decision: Decision::Ask, reason: None },
-        }]);
-        let m = ArgMatcher::Positional(vec![PosExpr::One(cond_expr)]);
-        let eff = m.find_expr_effect(&["--".to_string(), "--force".to_string()]);
-        assert_eq!(eff.unwrap().decision, Decision::Ask);
-    }
-
-    #[test]
-    fn find_expr_effect_long_flag_with_equals() {
-        let cond_expr = Expr::Cond(vec![ExprBranch {
-            test: Expr::Literal("val".into()),
-            effect: Effect { decision: Decision::Allow, reason: None },
-        }]);
-        let m = ArgMatcher::Positional(vec![PosExpr::One(cond_expr)]);
-        // --key=value doesn't consume next arg
-        let eff = m.find_expr_effect(&["--key=value".to_string(), "val".to_string()]);
-        assert_eq!(eff.unwrap().decision, Decision::Allow);
-    }
-
-    // --- find_pos_expr_effect: quantifier advance-without-effect paths ---
-
-    #[test]
-    fn find_pos_expr_effect_optional_advances_no_effect() {
-        // Optional matches but has no effect; next pattern has the effect
-        let cond_expr = Expr::Cond(vec![ExprBranch {
-            test: Expr::Wildcard,
-            effect: Effect { decision: Decision::Allow, reason: None },
-        }]);
-        let m = ArgMatcher::Positional(vec![
-            PosExpr::Optional(Expr::Literal("opt".into())),
-            PosExpr::One(cond_expr),
-        ]);
-        let eff = m.find_expr_effect(&["opt".to_string(), "val".to_string()]);
-        assert_eq!(eff.unwrap().decision, Decision::Allow);
-    }
-
-    #[test]
-    fn find_pos_expr_effect_one_or_more_advances_no_effect() {
-        // OneOrMore consumes multiple non-effect args, then next has effect
-        let cond_expr = Expr::Cond(vec![ExprBranch {
-            test: Expr::Wildcard,
-            effect: Effect { decision: Decision::Deny, reason: None },
-        }]);
-        let m = ArgMatcher::Positional(vec![
-            PosExpr::OneOrMore(Expr::Regex(regex::Regex::new("^f").unwrap())),
-            PosExpr::One(cond_expr),
-        ]);
-        let eff = m.find_expr_effect(&["foo".to_string(), "far".to_string(), "val".to_string()]);
-        assert_eq!(eff.unwrap().decision, Decision::Deny);
-    }
-
-    #[test]
-    fn find_pos_expr_effect_one_or_more_breaks_on_mismatch() {
-        // OneOrMore stops when an arg doesn't match, remaining handled by next pattern
-        let cond_expr = Expr::Cond(vec![ExprBranch {
-            test: Expr::Literal("stop".into()),
-            effect: Effect { decision: Decision::Ask, reason: None },
-        }]);
-        let m = ArgMatcher::Positional(vec![
-            PosExpr::OneOrMore(Expr::Literal("go".into())),
-            PosExpr::One(cond_expr),
-        ]);
-        let eff = m.find_expr_effect(&["go".to_string(), "stop".to_string()]);
-        assert_eq!(eff.unwrap().decision, Decision::Ask);
-    }
-
-    #[test]
-    fn find_pos_expr_effect_zero_or_more_advances_no_effect() {
-        let cond_expr = Expr::Cond(vec![ExprBranch {
-            test: Expr::Wildcard,
-            effect: Effect { decision: Decision::Allow, reason: None },
-        }]);
-        let m = ArgMatcher::Positional(vec![
-            PosExpr::ZeroOrMore(Expr::Literal("x".into())),
-            PosExpr::One(cond_expr),
-        ]);
-        let eff = m.find_expr_effect(&["x".to_string(), "x".to_string(), "val".to_string()]);
-        assert_eq!(eff.unwrap().decision, Decision::Allow);
-    }
-
-    #[test]
-    fn find_pos_expr_effect_zero_or_more_breaks_on_mismatch() {
-        let cond_expr = Expr::Cond(vec![ExprBranch {
-            test: Expr::Literal("end".into()),
-            effect: Effect { decision: Decision::Deny, reason: None },
-        }]);
-        let m = ArgMatcher::Positional(vec![
-            PosExpr::ZeroOrMore(Expr::Literal("a".into())),
-            PosExpr::One(cond_expr),
-        ]);
-        // ZeroOrMore("a") consumes nothing since first arg isn't "a"
-        let eff = m.find_expr_effect(&["end".to_string()]);
-        assert_eq!(eff.unwrap().decision, Decision::Deny);
-    }
-
-    #[test]
-    fn find_pos_expr_effect_exact_rejects_extra() {
-        // Exact mode: after consuming all patterns, extra args → None
-        let m = ArgMatcher::ExactPositional(vec![
-            PosExpr::One(Expr::Literal("a".into())),
-        ]);
-        // No effect to find, and exact check passes (1 pattern, 1 arg) → None
-        assert!(m.find_expr_effect(&["a".to_string()]).is_none());
-        // Extra args with exact → still None (no effects anyway)
-        assert!(m.find_expr_effect(&["a".to_string(), "b".to_string()]).is_none());
     }
 }

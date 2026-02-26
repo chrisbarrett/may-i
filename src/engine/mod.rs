@@ -6,7 +6,7 @@ mod matcher;
 use matcher::*;
 
 use crate::parser::{self, Command, SimpleCommand, Word};
-use crate::types::{ArgMatcher, Config, Decision, Effect, EvalResult, VarEnv, VarState};
+use crate::types::{Config, Decision, Effect, EvalResult, VarEnv, VarState};
 
 /// Deduplicate a list of dynamic part descriptions while preserving order.
 fn dedup_parts(parts: &[String]) -> Vec<&str> {
@@ -771,6 +771,75 @@ fn walk_shell_dash_c(
     })
 }
 
+// ── Trace collector ────────────────────────────────────────────────
+
+/// Collects MatchEvents into human-readable trace strings.
+struct TraceCollector {
+    steps: Vec<String>,
+}
+
+impl TraceCollector {
+    fn new() -> Self {
+        Self { steps: Vec::new() }
+    }
+
+    fn on_event(&mut self, ev: MatchEvent<'_>) {
+        match ev {
+            MatchEvent::ExprVsArg { expr, arg, matched } => {
+                let result = if matched { "yes" } else { "no" };
+                self.steps.push(format!(
+                    "{} vs {} => {result}",
+                    format_expr(expr),
+                    format_resolved_arg(arg),
+                ));
+            }
+            MatchEvent::EnterOptional { .. } => {}
+            MatchEvent::LeaveOptional { .. } => {}
+            MatchEvent::Quantifier { pexpr, count, matched } => {
+                let result = if matched {
+                    format!("yes (matched {count})")
+                } else {
+                    "no".into()
+                };
+                self.steps.push(format!("{} => {result}", format_pos_expr(pexpr)));
+            }
+            MatchEvent::Missing { pexpr } => {
+                self.steps.push(format!("{} vs <missing> => no", format_pos_expr(pexpr)));
+            }
+            MatchEvent::EnterCond { .. } => {}
+            MatchEvent::ExprCondBranch { test, matched, effect } => {
+                if matched {
+                    self.steps.push(format!(
+                        "{} => yes [{}]",
+                        format_expr(test),
+                        effect.decision,
+                    ));
+                }
+            }
+            MatchEvent::MatcherCondBranch { matched, effect } => {
+                if matched {
+                    self.steps.push(format!("=> yes [{}]", effect.decision));
+                }
+            }
+            MatchEvent::MatcherCondElse { effect } => {
+                self.steps.push(format!("else => [{}]", effect.decision));
+            }
+            MatchEvent::LeaveCond => {}
+            MatchEvent::Anywhere { expr, matched } => {
+                let result = if matched { "yes" } else { "no" };
+                self.steps.push(format!("(anywhere {}) => {result}", format_expr(expr)));
+            }
+            MatchEvent::ExactRemainder { count } => {
+                self.steps.push(format!("exact: {count} positional args remaining"));
+            }
+        }
+    }
+
+    fn into_steps(self) -> Vec<String> {
+        self.steps
+    }
+}
+
 /// Evaluate a resolved simple command against rules (no more variable resolution needed).
 #[allow(clippy::only_used_in_recursion)]
 fn evaluate_resolved_command(
@@ -830,64 +899,55 @@ fn evaluate_resolved_command(
 
         trace.push(format!("matched command: {rule_label}"));
 
-        // Determine if args match
-        let args_match = match &rule.matcher {
-            None => true,
-            Some(m) => matcher_matches(m, &expanded_args),
+        // Match args and collect trace events
+        let outcome = match &rule.matcher {
+            None => MatchOutcome::MatchedNoEffect,
+            Some(m) => {
+                let mut collector = TraceCollector::new();
+                let outcome = match_args(m, &expanded_args, &mut |ev| collector.on_event(ev));
+                for step in collector.into_steps() {
+                    for line in step.lines() {
+                        trace.push(format!("  {line}"));
+                    }
+                }
+                outcome
+            }
         };
-        if !args_match {
-            trace.push("  args did not match".into());
-            continue;
-        }
-        if rule.matcher.is_some() {
-            trace.push("  args matched".into());
-        }
 
-        // Determine decision+reason: from rule-level effect, top-level cond branches,
-        // or embedded Expr::Cond effects
-        let effect = if let Some(ref eff) = rule.effect {
-            trace.push(format!("  effect: {} — {}", eff.decision, eff.reason.as_deref().unwrap_or("(no reason)")));
-            eff.clone()
-        } else if let Some(ArgMatcher::Cond(branches)) = &rule.matcher {
-            // Top-level cond: find first matching branch for its effect
-            let mut found = None;
-            for (i, branch) in branches.iter().enumerate() {
-                let branch_match = match &branch.matcher {
-                    None => {
-                        trace.push(format!("  cond branch {}: else (catch-all)", i + 1));
-                        true
+        let effect = match outcome {
+            MatchOutcome::NoMatch => {
+                if rule.matcher.is_some() {
+                    trace.push("  args did not match".into());
+                }
+                continue;
+            }
+            MatchOutcome::Matched(eff) => {
+                if rule.matcher.is_some() {
+                    trace.push("  args matched".into());
+                }
+                trace.push(format!(
+                    "  effect: {} — {}",
+                    eff.decision,
+                    eff.reason.as_deref().unwrap_or("(no reason)")
+                ));
+                eff
+            }
+            MatchOutcome::MatchedNoEffect => {
+                if rule.matcher.is_some() {
+                    trace.push("  args matched".into());
+                }
+                match &rule.effect {
+                    Some(eff) => {
+                        trace.push(format!(
+                            "  effect: {} — {}",
+                            eff.decision,
+                            eff.reason.as_deref().unwrap_or("(no reason)")
+                        ));
+                        eff.clone()
                     }
-                    Some(m) => {
-                        let matched = matcher_matches(m, &expanded_args);
-                        trace.push(format!("  cond branch {}: {}", i + 1, if matched { "matched" } else { "no match" }));
-                        matched
-                    }
-                };
-                if branch_match {
-                    trace.push(format!("  effect: {} — {}", branch.effect.decision, branch.effect.reason.as_deref().unwrap_or("(no reason)")));
-                    found = Some(branch.effect.clone());
-                    break;
+                    None => continue,
                 }
             }
-            let Some(eff) = found else { continue };
-            eff
-        } else if let Some(ref m) = rule.matcher {
-            // Walk matcher tree for Expr::Cond effects.
-            let string_args: Vec<String> = expanded_args
-                .iter()
-                .filter_map(|a| match a {
-                    ResolvedArg::Literal(s) => Some(s.clone()),
-                    ResolvedArg::Opaque => None,
-                })
-                .collect();
-            let Some(eff) = m.find_expr_effect(&string_args) else {
-                trace.push("  no matching expr cond branch".into());
-                continue;
-            };
-            trace.push(format!("  expr effect: {} — {}", eff.decision, eff.reason.as_deref().unwrap_or("(no reason)")));
-            eff
-        } else {
-            continue;
         };
 
         let Effect { decision, reason } = effect;
@@ -922,8 +982,8 @@ fn evaluate_resolved_command(
 mod tests {
     use super::*;
     use crate::types::{
-        CaptureKind, CommandMatcher, CondBranch, Config, Effect, Expr, PosExpr, Rule, Wrapper,
-        WrapperStep,
+        ArgMatcher, CaptureKind, CommandMatcher, CondBranch, Config, Effect, Expr, PosExpr, Rule,
+        Wrapper, WrapperStep,
     };
 
     /// Helper to wrap Expr values in PosExpr::One for tests.
