@@ -1150,3 +1150,153 @@ mod tests {
         assert_eq!(doc_text(&rule.to_doc()), r#"(rule (command "git") (effect :allow))"#);
     }
 }
+
+// ── Property-based tests ────────────────────────────────────────────
+
+#[cfg(test)]
+mod prop_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn arb_decision() -> impl Strategy<Value = Decision> {
+        prop_oneof![
+            Just(Decision::Allow),
+            Just(Decision::Ask),
+            Just(Decision::Deny),
+        ]
+    }
+
+    // Expr strategy: recursive tree of Literal, Wildcard, And, Or, Not.
+    // Skips Regex (hard to generate valid patterns) and Cond (has effects).
+    fn arb_expr() -> impl Strategy<Value = Expr> {
+        let leaf = prop_oneof![
+            "[a-z]{1,8}".prop_map(Expr::Literal),
+            Just(Expr::Wildcard),
+        ];
+        leaf.prop_recursive(4, 16, 4, |inner| {
+            prop_oneof![
+                prop::collection::vec(inner.clone(), 1..4).prop_map(Expr::And),
+                prop::collection::vec(inner.clone(), 1..4).prop_map(Expr::Or),
+                inner.prop_map(|e| Expr::Not(Box::new(e))),
+            ]
+        })
+    }
+
+    // ── Decision lattice ────────────────────────────────────────────
+
+    proptest! {
+        #[test]
+        fn decision_most_restrictive_is_commutative(a in arb_decision(), b in arb_decision()) {
+            prop_assert_eq!(a.most_restrictive(b), b.most_restrictive(a));
+        }
+
+        #[test]
+        fn decision_most_restrictive_is_associative(
+            a in arb_decision(), b in arb_decision(), c in arb_decision()
+        ) {
+            prop_assert_eq!(
+                a.most_restrictive(b).most_restrictive(c),
+                a.most_restrictive(b.most_restrictive(c))
+            );
+        }
+
+        #[test]
+        fn decision_most_restrictive_is_idempotent(a in arb_decision()) {
+            prop_assert_eq!(a.most_restrictive(a), a);
+        }
+
+        #[test]
+        fn decision_deny_is_absorbing(a in arb_decision()) {
+            prop_assert_eq!(a.most_restrictive(Decision::Deny), Decision::Deny);
+        }
+
+        #[test]
+        fn decision_allow_is_identity(a in arb_decision()) {
+            prop_assert_eq!(a.most_restrictive(Decision::Allow), a);
+        }
+
+        #[test]
+        fn decision_most_restrictive_is_at_least_as_restrictive(
+            a in arb_decision(), b in arb_decision()
+        ) {
+            let result = a.most_restrictive(b);
+            prop_assert!(result >= a);
+            prop_assert!(result >= b);
+        }
+    }
+
+    // ── Expr boolean algebra ────────────────────────────────────────
+
+    proptest! {
+        #[test]
+        fn expr_wildcard_matches_anything(s in "[a-z]{0,20}") {
+            prop_assert!(Expr::Wildcard.is_match(&s));
+        }
+
+        #[test]
+        fn expr_literal_matches_only_itself(s in "[a-z]{1,10}") {
+            let e = Expr::Literal(s.clone());
+            prop_assert!(e.is_match(&s));
+        }
+
+        #[test]
+        fn expr_literal_rejects_different(a in "[a-z]{1,5}", b in "[a-z]{1,5}") {
+            prop_assume!(a != b);
+            prop_assert!(!Expr::Literal(a).is_match(&b));
+        }
+
+        #[test]
+        fn expr_double_negation(e in arb_expr(), s in "[a-z]{1,10}") {
+            let double_neg = Expr::Not(Box::new(Expr::Not(Box::new(e.clone()))));
+            prop_assert_eq!(e.is_match(&s), double_neg.is_match(&s));
+        }
+
+        #[test]
+        fn expr_and_is_commutative(a in arb_expr(), b in arb_expr(), s in "[a-z]{1,10}") {
+            let ab = Expr::And(vec![a.clone(), b.clone()]);
+            let ba = Expr::And(vec![b, a]);
+            prop_assert_eq!(ab.is_match(&s), ba.is_match(&s));
+        }
+
+        #[test]
+        fn expr_or_is_commutative(a in arb_expr(), b in arb_expr(), s in "[a-z]{1,10}") {
+            let ab = Expr::Or(vec![a.clone(), b.clone()]);
+            let ba = Expr::Or(vec![b, a]);
+            prop_assert_eq!(ab.is_match(&s), ba.is_match(&s));
+        }
+
+        #[test]
+        fn expr_de_morgan_not_and(a in arb_expr(), b in arb_expr(), s in "[a-z]{1,10}") {
+            // !(a && b) == (!a || !b)
+            let lhs = Expr::Not(Box::new(Expr::And(vec![a.clone(), b.clone()])));
+            let rhs = Expr::Or(vec![
+                Expr::Not(Box::new(a)),
+                Expr::Not(Box::new(b)),
+            ]);
+            prop_assert_eq!(lhs.is_match(&s), rhs.is_match(&s));
+        }
+
+        #[test]
+        fn expr_de_morgan_not_or(a in arb_expr(), b in arb_expr(), s in "[a-z]{1,10}") {
+            // !(a || b) == (!a && !b)
+            let lhs = Expr::Not(Box::new(Expr::Or(vec![a.clone(), b.clone()])));
+            let rhs = Expr::And(vec![
+                Expr::Not(Box::new(a)),
+                Expr::Not(Box::new(b)),
+            ]);
+            prop_assert_eq!(lhs.is_match(&s), rhs.is_match(&s));
+        }
+
+        #[test]
+        fn expr_and_with_wildcard_is_identity(e in arb_expr(), s in "[a-z]{1,10}") {
+            let ew = Expr::And(vec![e.clone(), Expr::Wildcard]);
+            prop_assert_eq!(e.is_match(&s), ew.is_match(&s));
+        }
+
+        #[test]
+        fn expr_or_with_wildcard_always_matches(e in arb_expr(), s in "[a-z]{1,10}") {
+            let ew = Expr::Or(vec![e, Expr::Wildcard]);
+            prop_assert!(ew.is_match(&s));
+        }
+    }
+}

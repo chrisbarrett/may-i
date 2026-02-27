@@ -9,4 +9,5 @@ may-i-core = { path = "../core" }
 
 [dev-dependencies]
 may-i-config = { path = "../config" }
+proptest = "1"
 regex = "1"

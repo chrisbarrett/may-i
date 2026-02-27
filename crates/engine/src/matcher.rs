@@ -571,6 +571,147 @@ mod tests {
     }
 }
 
+// ── Property-based tests ────────────────────────────────────────────
+
+#[cfg(test)]
+mod prop_tests {
+    use super::*;
+    use may_i_core::{ArgMatcher, Expr, PosExpr};
+    use proptest::prelude::*;
+
+    fn lit(s: &str) -> ResolvedArg {
+        ResolvedArg::Literal(s.into())
+    }
+
+    // Generate a simple Expr (no Cond/Regex — pure boolean matching).
+    fn arb_expr() -> impl Strategy<Value = Expr> {
+        let leaf = prop_oneof![
+            "[a-z]{1,6}".prop_map(Expr::Literal),
+            Just(Expr::Wildcard),
+        ];
+        leaf.prop_recursive(3, 12, 3, |inner| {
+            prop_oneof![
+                prop::collection::vec(inner.clone(), 1..3).prop_map(Expr::And),
+                prop::collection::vec(inner.clone(), 1..3).prop_map(Expr::Or),
+                inner.prop_map(|e| Expr::Not(Box::new(e))),
+            ]
+        })
+    }
+
+    // Generate a simple ArgMatcher (no Cond — pure boolean matching).
+    fn arb_matcher() -> impl Strategy<Value = ArgMatcher> {
+        let leaf = prop_oneof![
+            prop::collection::vec(arb_expr().prop_map(PosExpr::one), 0..3)
+                .prop_map(ArgMatcher::Positional),
+            prop::collection::vec(arb_expr().prop_map(PosExpr::one), 0..3)
+                .prop_map(ArgMatcher::ExactPositional),
+            prop::collection::vec(arb_expr(), 1..3)
+                .prop_map(ArgMatcher::Anywhere),
+        ];
+        leaf.prop_recursive(2, 8, 3, |inner| {
+            prop_oneof![
+                prop::collection::vec(inner.clone(), 1..3).prop_map(ArgMatcher::And),
+                prop::collection::vec(inner.clone(), 1..3).prop_map(ArgMatcher::Or),
+                inner.prop_map(|m| ArgMatcher::Not(Box::new(m))),
+            ]
+        })
+    }
+
+    fn arb_args() -> impl Strategy<Value = Vec<ResolvedArg>> {
+        prop::collection::vec("[a-z]{1,6}".prop_map(|s| ResolvedArg::Literal(s)), 0..5)
+    }
+
+    proptest! {
+        // ── De Morgan for ArgMatcher combinators ─────────────────────
+
+        #[test]
+        fn arg_matcher_de_morgan_not_and(
+            a in arb_matcher(), b in arb_matcher(), args in arb_args()
+        ) {
+            // !(a && b) == (!a || !b)
+            let lhs = ArgMatcher::Not(Box::new(
+                ArgMatcher::And(vec![a.clone(), b.clone()])
+            ));
+            let rhs = ArgMatcher::Or(vec![
+                ArgMatcher::Not(Box::new(a)),
+                ArgMatcher::Not(Box::new(b)),
+            ]);
+            prop_assert_eq!(matcher_matches(&lhs, &args), matcher_matches(&rhs, &args));
+        }
+
+        #[test]
+        fn arg_matcher_de_morgan_not_or(
+            a in arb_matcher(), b in arb_matcher(), args in arb_args()
+        ) {
+            // !(a || b) == (!a && !b)
+            let lhs = ArgMatcher::Not(Box::new(
+                ArgMatcher::Or(vec![a.clone(), b.clone()])
+            ));
+            let rhs = ArgMatcher::And(vec![
+                ArgMatcher::Not(Box::new(a)),
+                ArgMatcher::Not(Box::new(b)),
+            ]);
+            prop_assert_eq!(matcher_matches(&lhs, &args), matcher_matches(&rhs, &args));
+        }
+
+        // ── Double negation ──────────────────────────────────────────
+
+        #[test]
+        fn arg_matcher_double_negation(m in arb_matcher(), args in arb_args()) {
+            let double_neg = ArgMatcher::Not(Box::new(ArgMatcher::Not(Box::new(m.clone()))));
+            prop_assert_eq!(matcher_matches(&m, &args), matcher_matches(&double_neg, &args));
+        }
+
+        // ── And/Or commutativity ─────────────────────────────────────
+
+        #[test]
+        fn arg_matcher_and_is_commutative(
+            a in arb_matcher(), b in arb_matcher(), args in arb_args()
+        ) {
+            let ab = ArgMatcher::And(vec![a.clone(), b.clone()]);
+            let ba = ArgMatcher::And(vec![b, a]);
+            prop_assert_eq!(matcher_matches(&ab, &args), matcher_matches(&ba, &args));
+        }
+
+        #[test]
+        fn arg_matcher_or_is_commutative(
+            a in arb_matcher(), b in arb_matcher(), args in arb_args()
+        ) {
+            let ab = ArgMatcher::Or(vec![a.clone(), b.clone()]);
+            let ba = ArgMatcher::Or(vec![b, a]);
+            prop_assert_eq!(matcher_matches(&ab, &args), matcher_matches(&ba, &args));
+        }
+
+        // ── Not drops effects ────────────────────────────────────────
+
+        #[test]
+        fn arg_matcher_not_drops_effects(m in arb_matcher(), args in arb_args()) {
+            // Not should never produce a Matched(effect), only MatchedNoEffect or NoMatch.
+            let negated = ArgMatcher::Not(Box::new(m));
+            let outcome = crate::annotate::annotate_matcher(&negated, &args).1;
+            match outcome {
+                MatchOutcome::Matched(_) => prop_assert!(false, "Not should not propagate effects"),
+                _ => {}
+            }
+        }
+
+        // ── ExactPositional rejects wrong arity ──────────────────────
+
+        #[test]
+        fn exact_positional_rejects_extra_args(
+            exprs in prop::collection::vec(arb_expr().prop_map(PosExpr::one), 1..3),
+            extra in "[a-z]{1,6}",
+        ) {
+            let n = exprs.len();
+            // Build args that have one more positional than patterns.
+            let mut args: Vec<ResolvedArg> = (0..n).map(|_| lit("a")).collect();
+            args.push(lit(&extra));
+            let matcher = ArgMatcher::ExactPositional(exprs);
+            prop_assert!(!matcher_matches(&matcher, &args));
+        }
+    }
+}
+
 /// R8: Expand combined short flags: -abc → -a -b -c
 /// Words with opaque parts produce a single Opaque arg.
 pub(crate) fn expand_flags(args: &[Word]) -> Vec<ResolvedArg> {
