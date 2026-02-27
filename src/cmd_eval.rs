@@ -7,6 +7,7 @@ use may_i_config as config;
 use may_i_engine as engine;
 use may_i_shell_parser as parser;
 
+use crate::output;
 use crate::output::print_trace;
 
 pub fn cmd_eval(
@@ -38,15 +39,15 @@ pub fn cmd_eval(
 
         println!("\n{}\n", "Result".bold());
         {
-            use may_i_pp::{Doc, Format, pretty};
-            let mut children = vec![Doc::atom(format!(":{}", result.decision))];
-            if let Some(reason) = &result.reason {
-                children.push(Doc::atom(format!("\"{reason}\"")));
-            }
-            let doc = Doc::list(children);
-            let formatted = pretty(&doc, 2, &Format::colored());
-            for line in formatted.lines() {
-                println!("  {line}");
+            use may_i_pp::colorize_atom;
+            let keyword = format!(":{}", result.decision);
+            let colored_keyword = output::colorize_decision_keyword(&keyword);
+            match &result.reason {
+                Some(reason) => {
+                    let quoted = format!("\"{reason}\"");
+                    println!("  {colored_keyword} {}", colorize_atom(&quoted, true));
+                }
+                None => println!("  {colored_keyword}"),
             }
         }
         println!();

@@ -2,7 +2,7 @@
 
 use colored::Colorize;
 use may_i_core::TraceStep;
-use may_i_pp::{Doc, Format, parse_sexpr, pretty, truncate_long_lists, visible_len};
+use may_i_pp::{Doc, Format, colorize_atom, parse_sexpr, pretty, truncate_long_lists, visible_len};
 
 // ── Layout geometry ────────────────────────────────────────────────
 
@@ -449,7 +449,15 @@ fn colorize_right(s: &str) -> String {
             "yes" => "yes".green().bold().to_string(),
             "no" => "no".yellow().to_string(),
             "missing" => "missing".yellow().to_string(),
-            other if other.starts_with(':') => colorize_keyword(other),
+            other if other.starts_with(':') => {
+                if let Some(space) = other.find(' ') {
+                    let keyword = &other[..space];
+                    let rest = other[space..].trim();
+                    format!("{} {}", colorize_decision_keyword(keyword), colorize_atom(rest, true))
+                } else {
+                    colorize_decision_keyword(other)
+                }
+            }
             other => other.to_string(),
         };
         format!("{}{} {colored_result}", before.dimmed(), "→".dimmed())
@@ -458,7 +466,7 @@ fn colorize_right(s: &str) -> String {
     }
 }
 
-fn colorize_keyword(s: &str) -> String {
+pub fn colorize_decision_keyword(s: &str) -> String {
     if s == ":allow" {
         s.green().bold().to_string()
     } else if s == ":ask" {

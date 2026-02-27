@@ -306,7 +306,7 @@ fn render_broken(children: &[Doc], indent: usize, width: usize, color: bool) -> 
 }
 
 /// Colorize an atom value based on its content.
-fn colorize_atom(s: &str, color: bool) -> String {
+pub fn colorize_atom(s: &str, color: bool) -> String {
     if !color {
         return s.to_string();
     }
