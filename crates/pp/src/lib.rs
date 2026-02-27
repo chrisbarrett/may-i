@@ -1,42 +1,141 @@
 // S-expression pretty-printer with configurable width and syntax coloring.
+//
+// The core types factor s-expression structure from annotation:
+//
+//   `DocF<R>` — base functor (one layer of tree, parameterized over children)
+//   `Doc<A>`  — fixpoint of `DocF` where each node carries an annotation `A`
+//
+// Two generic traversals:
+//
+//   `map`  (functor)      — transform annotations, preserving structure
+//   `fold` (catamorphism) — reduce the tree bottom-up via an algebra
 
 use colored::Colorize;
 
-/// A lightweight tree for pretty-printing. Separates structure from
-/// presentation so callers can build trees without dragging in Sexpr spans.
+// ── Base functor ───────────────────────────────────────────────────
+
+/// One layer of s-expression structure, parameterized over what sits
+/// in recursive positions.
 #[derive(Debug, Clone)]
-pub enum Doc {
-    /// Atom rendered verbatim (coloring is inferred from content).
+pub enum DocF<R> {
     Atom(String),
-    /// A parenthesised list of children.
-    List(Vec<Doc>),
+    List(Vec<R>),
 }
 
-impl Doc {
-    /// Convenience: atom from a string slice.
+impl<R> DocF<R> {
+    /// Functor map: transform children (recursive positions).
+    pub fn map<S>(self, mut f: impl FnMut(R) -> S) -> DocF<S> {
+        match self {
+            DocF::Atom(s) => DocF::Atom(s),
+            DocF::List(rs) => DocF::List(rs.into_iter().map(&mut f).collect()),
+        }
+    }
+
+    /// Functor map by reference.
+    pub fn map_ref<S>(&self, mut f: impl FnMut(&R) -> S) -> DocF<S> {
+        match self {
+            DocF::Atom(s) => DocF::Atom(s.clone()),
+            DocF::List(rs) => DocF::List(rs.iter().map(&mut f).collect()),
+        }
+    }
+
+    pub fn as_atom(&self) -> Option<&str> {
+        match self {
+            DocF::Atom(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    pub fn children(&self) -> Option<&[R]> {
+        match self {
+            DocF::List(cs) => Some(cs),
+            _ => None,
+        }
+    }
+}
+
+// ── Annotated fixpoint ─────────────────────────────────────────────
+
+/// An annotated s-expression tree — the fixpoint of `DocF` where each
+/// node carries an annotation of type `A`.
+///
+/// `Doc<()>` is the unannotated tree used for parsing and rendering.
+#[derive(Debug, Clone)]
+pub struct Doc<A = ()> {
+    pub ann: A,
+    pub node: DocF<Doc<A>>,
+}
+
+// ── Constructors (unannotated) ─────────────────────────────────────
+
+impl Doc<()> {
     pub fn atom(s: impl Into<String>) -> Self {
-        Doc::Atom(s.into())
+        Doc { ann: (), node: DocF::Atom(s.into()) }
     }
 
-    /// Convenience: wrap children in a list.
-    pub fn list(children: Vec<Doc>) -> Self {
-        Doc::List(children)
+    pub fn list(children: Vec<Doc<()>>) -> Self {
+        Doc { ann: (), node: DocF::List(children) }
+    }
+}
+
+// ── Accessors ──────────────────────────────────────────────────────
+
+impl<A> Doc<A> {
+    pub fn as_atom(&self) -> Option<&str> {
+        self.node.as_atom()
     }
 
-    /// Build a Doc from an [`may_i_sexpr::Sexpr`] node, re-quoting atoms
-    /// that need it (contain spaces, parens, etc).
-    #[cfg(test)]
+    pub fn children(&self) -> Option<&[Doc<A>]> {
+        self.node.children()
+    }
+
+    /// The head atom of a list (first child's text if it's an Atom).
+    pub fn head_atom(&self) -> Option<&str> {
+        self.children()
+            .and_then(|cs| cs.first())
+            .and_then(|c| c.as_atom())
+    }
+}
+
+// ── Functor (map) ──────────────────────────────────────────────────
+
+impl<A> Doc<A> {
+    /// Transform every annotation in the tree, preserving structure.
+    pub fn map<B>(self, f: &impl Fn(A) -> B) -> Doc<B> {
+        Doc {
+            ann: f(self.ann),
+            node: self.node.map(|c| c.map(f)),
+        }
+    }
+}
+
+// ── Catamorphism (fold) ────────────────────────────────────────────
+
+impl<A> Doc<A> {
+    /// Bottom-up fold. Children are reduced first, then the algebra
+    /// receives the shape (with reduced children) and the annotation.
+    pub fn fold<B>(&self, alg: &impl Fn(DocF<B>, &A) -> B) -> B {
+        let reduced = self.node.map_ref(|child| child.fold(alg));
+        alg(reduced, &self.ann)
+    }
+}
+
+// ── from_sexpr (test-only) ─────────────────────────────────────────
+
+#[cfg(test)]
+impl Doc<()> {
     pub fn from_sexpr(sexpr: &may_i_sexpr::Sexpr) -> Self {
         match sexpr {
             may_i_sexpr::Sexpr::Atom(s, _) => {
-                if may_i_sexpr::needs_quoting(s) {
-                    Doc::Atom(may_i_sexpr::quote_atom(s))
+                let text = if may_i_sexpr::needs_quoting(s) {
+                    may_i_sexpr::quote_atom(s)
                 } else {
-                    Doc::Atom(s.clone())
-                }
+                    s.clone()
+                };
+                Doc { ann: (), node: DocF::Atom(text) }
             }
             may_i_sexpr::Sexpr::List(items, _) => {
-                Doc::List(items.iter().map(Doc::from_sexpr).collect())
+                Doc { ann: (), node: DocF::List(items.iter().map(Doc::from_sexpr).collect()) }
             }
         }
     }
@@ -48,7 +147,7 @@ impl Doc {
 pub fn parse_sexpr(input: &str) -> Doc {
     let tokens = tokenize(input);
     if tokens.is_empty() {
-        return Doc::Atom(String::new());
+        return Doc::atom("");
     }
     let (doc, _) = parse_tokens(&tokens, 0);
     doc
@@ -97,7 +196,7 @@ fn tokenize(input: &str) -> Vec<&str> {
 
 fn parse_tokens(tokens: &[&str], pos: usize) -> (Doc, usize) {
     if pos >= tokens.len() {
-        return (Doc::Atom(String::new()), pos);
+        return (Doc::atom(""), pos);
     }
     if tokens[pos] == "(" {
         let mut children = Vec::new();
@@ -108,9 +207,9 @@ fn parse_tokens(tokens: &[&str], pos: usize) -> (Doc, usize) {
             i = next;
         }
         if i < tokens.len() { i += 1; } // skip )
-        (Doc::List(children), i)
+        (Doc::list(children), i)
     } else {
-        (Doc::Atom(tokens[pos].to_string()), pos + 1)
+        (Doc::atom(tokens[pos]), pos + 1)
     }
 }
 
@@ -118,28 +217,23 @@ fn parse_tokens(tokens: &[&str], pos: usize) -> (Doc, usize) {
 
 /// Truncate long lists in a Doc tree, keeping the first `keep`
 /// and last 1 elements with an `…` ellipsis in between.
-/// Applies to any list whose head is an atom (e.g. `(or ...)`,
-/// `(and ...)`, `(args ...)`, etc).
 pub fn truncate_long_lists(doc: &Doc, keep: usize) -> Doc {
-    match doc {
-        Doc::Atom(_) => doc.clone(),
-        Doc::List(children) => {
+    match &doc.node {
+        DocF::Atom(_) => doc.clone(),
+        DocF::List(children) => {
             let children: Vec<Doc> = children.iter()
                 .map(|c| truncate_long_lists(c, keep))
                 .collect();
-            // Only truncate lists with a head atom (i.e. named forms like
-            // (or ...), (and ...), etc), not bare data lists.
-            let has_head = matches!(children.first(), Some(Doc::Atom(_)));
+            let has_head = children.first().is_some_and(|c| c.as_atom().is_some());
             if has_head && children.len() > keep + 2 {
-                // children[0] = head, children[1..] = elements
                 let mut truncated = Vec::with_capacity(keep + 3);
                 truncated.push(children[0].clone());
                 truncated.extend(children[1..=keep].iter().cloned());
                 truncated.push(Doc::atom("…"));
                 truncated.push(children.last().unwrap().clone());
-                Doc::List(truncated)
+                Doc::list(truncated)
             } else {
-                Doc::List(children)
+                Doc { ann: (), node: DocF::List(children) }
             }
         }
     }
@@ -147,40 +241,23 @@ pub fn truncate_long_lists(doc: &Doc, keep: usize) -> Doc {
 
 // ── Atom classification ─────────────────────────────────────────────
 
-/// Special-form names that get highlighted.
 const SPECIAL_FORMS: &[&str] = &[
-    "rule", "command", "args",
+    "rule", "command", "args", "effect",
+    "cond", "if", "when", "unless", "else",
+    "positional", "exact", "anywhere",
 ];
 
-fn is_keyword(s: &str) -> bool {
-    s.starts_with(':')
-}
-
-fn is_string(s: &str) -> bool {
-    s.starts_with('"')
-}
-
-/// Convention: the engine formats regex patterns as `#"pattern"` atoms
-/// so that the pretty-printer can colorize them distinctly from strings.
-fn is_regex(s: &str) -> bool {
-    s.starts_with("#\"")
-}
-
-fn is_special_form(s: &str) -> bool {
-    SPECIAL_FORMS.contains(&s)
-}
+fn is_keyword(s: &str) -> bool { s.starts_with(':') }
+fn is_string(s: &str) -> bool { s.starts_with('"') }
+fn is_regex(s: &str) -> bool { s.starts_with("#\"") }
+fn is_special_form(s: &str) -> bool { SPECIAL_FORMS.contains(&s) }
 
 // ── Formatting settings ─────────────────────────────────────────────
 
-/// Configuration for pretty-printing.
 #[derive(Debug, Clone)]
 pub struct Format {
-    /// Column at which to wrap long forms.
     pub width: usize,
-    /// Whether to emit ANSI color codes.
     pub color: bool,
-    /// Optional source line number to prefix on the first output line.
-    /// Subsequent wrapped lines are indented to match.
     pub line_number: Option<usize>,
 }
 
@@ -191,7 +268,6 @@ impl Default for Format {
 }
 
 impl Format {
-    /// Colored output at the default width.
     pub fn colored() -> Self {
         Self { color: true, ..Self::default() }
     }
@@ -200,8 +276,7 @@ impl Format {
 // ── Rendering ───────────────────────────────────────────────────────
 
 /// Pretty-print a Doc with the given format settings.
-/// `indent` is the starting column (for alignment when embedded in other output).
-pub fn pretty(doc: &Doc, indent: usize, fmt: &Format) -> String {
+pub fn pretty<A>(doc: &Doc<A>, indent: usize, fmt: &Format) -> String {
     let prefix_width = fmt.line_number.map_or(0, line_prefix_width);
     let content = render(doc, indent + prefix_width, fmt.width, fmt.color);
 
@@ -211,15 +286,10 @@ pub fn pretty(doc: &Doc, indent: usize, fmt: &Format) -> String {
     }
 }
 
-/// Width of the `"N: "` prefix for a given line number.
 fn line_prefix_width(n: usize) -> usize {
-    // "N: " = digits + 2
     format!("{n}").len() + 2
 }
 
-/// Prepend a dimmed line number to the first line. Continuation lines
-/// are left as-is — `render()` already indents them to account for
-/// the prefix width passed via `indent`.
 fn prepend_line_number(content: &str, n: usize, color: bool) -> String {
     let prefix = format!("{n}: ");
     let mut result = String::new();
@@ -239,49 +309,48 @@ fn prepend_line_number(content: &str, n: usize, color: bool) -> String {
     result
 }
 
-fn render(doc: &Doc, indent: usize, width: usize, color: bool) -> String {
-    match doc {
-        Doc::Atom(s) => colorize_atom(s, color),
-        Doc::List(children) if children.is_empty() => {
+fn render<A>(doc: &Doc<A>, indent: usize, width: usize, color: bool) -> String {
+    match &doc.node {
+        DocF::Atom(s) => colorize_atom(s, color),
+        DocF::List(children) if children.is_empty() => {
             if color {
                 format!("{}{}", "(".dimmed(), ")".dimmed())
             } else {
                 "()".into()
             }
         }
-        Doc::List(children) => {
-            // Try flat first.
+        DocF::List(children) => {
+            if let Some(head) = children.first().and_then(|c| c.as_atom()) {
+                match head {
+                    "cond" => return render_cond(children, indent, width, color),
+                    "if" | "when" | "unless" => {
+                        return render_body_indent(children, indent, width, color);
+                    }
+                    _ => {}
+                }
+            }
+
             let flat = render_flat(children, color);
             if indent + visible_len(&flat) <= width {
                 return flat;
             }
-            // Break: (head first-child\n<align>rest-children...)
             render_broken(children, indent, width, color)
         }
     }
 }
 
-/// Render all children on one line: `(a b c)`.
-fn render_flat(children: &[Doc], color: bool) -> String {
+fn render_flat<A>(children: &[Doc<A>], color: bool) -> String {
     let open = if color { "(".dimmed().to_string() } else { "(".into() };
     let close = if color { ")".dimmed().to_string() } else { ")".into() };
     let parts: Vec<String> = children.iter().map(|c| render(c, 0, usize::MAX, color)).collect();
     format!("{open}{}{close}", parts.join(" "))
 }
 
-/// Break: align subsequent children under the first argument.
-///
-/// ```text
-/// (head first-arg
-///       second-arg
-///       third-arg)
-/// ```
-fn render_broken(children: &[Doc], indent: usize, width: usize, color: bool) -> String {
+fn render_broken<A>(children: &[Doc<A>], indent: usize, width: usize, color: bool) -> String {
     let open = if color { "(".dimmed().to_string() } else { "(".into() };
     let close = if color { ")".dimmed().to_string() } else { ")".into() };
 
     let head = render(&children[0], indent + 1, width, color);
-    // Align column: "(" + head + " "
     let align = indent + visible_len(&head) + 2;
 
     let mut lines = Vec::new();
@@ -296,10 +365,94 @@ fn render_broken(children: &[Doc], indent: usize, width: usize, color: bool) -> 
             let child_str = render(child, align, width, color);
             lines.push(format!("{:pad$}{child_str}", "", pad = align));
         }
-        // Append closing paren to last line.
         if let Some(last) = lines.last_mut() {
             last.push_str(&close);
         }
+    }
+
+    lines.join("\n")
+}
+
+fn render_cond<A>(children: &[Doc<A>], indent: usize, width: usize, color: bool) -> String {
+    let open = if color { "(".dimmed().to_string() } else { "(".into() };
+    let close = if color { ")".dimmed().to_string() } else { ")".into() };
+
+    let head = render(&children[0], indent + 1, width, color);
+    let body_indent = indent + 2;
+
+    let mut lines = vec![format!("{open}{head}")];
+
+    for (i, clause) in children[1..].iter().enumerate() {
+        let is_last = i == children.len() - 2;
+        match &clause.node {
+            DocF::List(parts) if parts.len() >= 2 => {
+                let clause_open = if color { "(".dimmed().to_string() } else { "(".into() };
+                let clause_close = if color { ")".dimmed().to_string() } else { ")".into() };
+
+                let test = render(&parts[0], body_indent + 1, width, color);
+                lines.push(format!("{:pad$}{clause_open}{test}", "", pad = body_indent));
+
+                let body_col = body_indent + 1;
+                for (j, body_part) in parts[1..].iter().enumerate() {
+                    let is_last_part = j == parts.len() - 2;
+                    let rendered = render(body_part, body_col, width, color);
+                    if is_last_part && is_last {
+                        lines.push(format!("{:pad$}{rendered}{clause_close}{close}", "", pad = body_col));
+                    } else if is_last_part {
+                        lines.push(format!("{:pad$}{rendered}{clause_close}", "", pad = body_col));
+                    } else {
+                        lines.push(format!("{:pad$}{rendered}", "", pad = body_col));
+                    }
+                }
+            }
+            _ => {
+                let rendered = render(clause, body_indent, width, color);
+                if is_last {
+                    lines.push(format!("{:pad$}{rendered}{close}", "", pad = body_indent));
+                } else {
+                    lines.push(format!("{:pad$}{rendered}", "", pad = body_indent));
+                }
+            }
+        }
+    }
+
+    if children.len() == 1
+        && let Some(last) = lines.last_mut()
+    {
+        last.push_str(&close);
+    }
+
+    lines.join("\n")
+}
+
+fn render_body_indent<A>(children: &[Doc<A>], indent: usize, width: usize, color: bool) -> String {
+    let open = if color { "(".dimmed().to_string() } else { "(".into() };
+    let close = if color { ")".dimmed().to_string() } else { ")".into() };
+
+    let head = render(&children[0], indent + 1, width, color);
+    let body_indent = indent + 2;
+
+    if children.len() == 1 {
+        return format!("{open}{head}{close}");
+    }
+
+    let first = render(&children[1], indent + 1 + visible_len(&head) + 1, width, color);
+    let mut lines = vec![format!("{open}{head} {first}")];
+
+    for (i, child) in children[2..].iter().enumerate() {
+        let is_last = i == children.len() - 3;
+        let rendered = render(child, body_indent, width, color);
+        if is_last {
+            lines.push(format!("{:pad$}{rendered}{close}", "", pad = body_indent));
+        } else {
+            lines.push(format!("{:pad$}{rendered}", "", pad = body_indent));
+        }
+    }
+
+    if children.len() == 2
+        && let Some(last) = lines.last_mut()
+    {
+        last.push_str(&close);
     }
 
     lines.join("\n")
@@ -311,7 +464,6 @@ pub fn colorize_atom(s: &str, color: bool) -> String {
         return s.to_string();
     }
     if is_keyword(s) {
-        // Indigo: roughly (75, 0, 130)
         s.truecolor(120, 120, 255).to_string()
     } else if is_string(s) || is_regex(s) {
         s.green().to_string()
@@ -322,10 +474,7 @@ pub fn colorize_atom(s: &str, color: bool) -> String {
     }
 }
 
-/// Visible length of a string, ignoring ANSI SGR escape sequences (`ESC[...m`).
-///
-/// Only handles SGR codes (terminated by `m`). Other CSI sequences (cursor
-/// movement, etc.) are not expected here — the `colored` crate only emits SGR.
+/// Visible length of a string, ignoring ANSI SGR escape sequences.
 pub fn visible_len(s: &str) -> usize {
     let mut len = 0;
     let mut in_escape = false;
@@ -394,7 +543,6 @@ mod tests {
     #[test]
     fn wraps_when_exceeds_width() {
         let doc = l(vec![a("rule"), a("aaa"), a("bbb"), a("ccc")]);
-        // Width 15: "(rule aaa bbb ccc)" = 18 chars, won't fit.
         let result = pp(&doc, 15);
         assert_eq!(result, "(rule aaa\n      bbb\n      ccc)");
     }
@@ -424,9 +572,6 @@ mod tests {
     }
 
     // ── Coloring ────────────────────────────────────────────────────
-    //
-    // The `colored` crate suppresses ANSI when stdout is not a TTY
-    // (e.g. in tests). Force it on for these tests.
 
     fn with_forced_color(f: impl FnOnce()) {
         colored::control::set_override(true);
@@ -526,7 +671,6 @@ mod tests {
         let result = pp(&doc, 20);
         let lines: Vec<&str> = result.lines().collect();
         assert_eq!(lines.len(), 2);
-        // Second line should be indented to align under "first-branch"
         assert_eq!(lines[0], "(and first-branch");
         assert_eq!(lines[1], "     second-branch)");
     }
@@ -588,21 +732,91 @@ mod tests {
         let lines: Vec<&str> = result.lines().collect();
         assert!(lines.len() > 1);
         assert!(lines[0].starts_with("5: "));
-        // Subsequent lines are indented by render() to align under first arg.
-        // "5: (rule aaa" → align column = prefix(3) + 1("(") + 4("rule") + 1(" ") = 9
         assert!(lines[1].starts_with("         "));
     }
 
     #[test]
     fn line_number_accounts_for_width() {
-        // With line_number, the effective indent increases, affecting wrap decisions.
         let doc = l(vec![a("rule"), l(vec![a("command"), a("\"curl\"")])]);
-        // Width 30: "108: (rule (command \"curl\"))" = 27 chars, fits.
         let result = pretty(&doc, 0, &Format {
             width: 30,
             line_number: Some(108),
             ..Default::default()
         });
         assert!(!result.contains('\n'));
+    }
+
+    // ── map ────────────────────────────────────────────────────────
+
+    #[test]
+    fn map_tags_all_nodes() {
+        let doc = l(vec![a("head"), a("child")]);
+        let tagged = doc.map(&|()| 42);
+        assert_eq!(tagged.ann, 42);
+        if let DocF::List(children) = &tagged.node {
+            assert_eq!(children[0].ann, 42);
+            assert_eq!(children[1].ann, 42);
+        } else {
+            panic!("expected list");
+        }
+    }
+
+    #[test]
+    fn map_preserves_structure() {
+        let doc = l(vec![a("x"), l(vec![a("y")])]);
+        let tagged = doc.map(&|()| "ann");
+        assert_eq!(pretty(&tagged, 0, &Format::default()), "(x (y))");
+    }
+
+    // ── fold ───────────────────────────────────────────────────────
+
+    #[test]
+    fn fold_counts_nodes() {
+        let doc = l(vec![a("a"), l(vec![a("b"), a("c")])]);
+        let count: usize = doc.fold(&|node, _ann| match node {
+            DocF::Atom(_) => 1,
+            DocF::List(children) => 1 + children.iter().sum::<usize>(),
+        });
+        assert_eq!(count, 5); // list + a + list + b + c
+    }
+
+    #[test]
+    fn fold_collects_atoms() {
+        let doc = l(vec![a("rule"), a("foo"), l(vec![a("bar")])]);
+        let atoms: Vec<String> = doc.fold(&|node, _ann| match node {
+            DocF::Atom(s) => vec![s],
+            DocF::List(children) => children.into_iter().flatten().collect(),
+        });
+        assert_eq!(atoms, vec!["rule", "foo", "bar"]);
+    }
+
+    #[test]
+    fn fold_rebuilds_tree() {
+        // Use fold to rebuild a tree with truncated atoms.
+        let doc = l(vec![a("hello-world"), a("short")]);
+        let truncated: Doc<()> = doc.fold(&|node, _ann| match node {
+            DocF::Atom(s) => {
+                let t = if s.len() > 5 { &s[..5] } else { &s };
+                Doc::atom(t)
+            }
+            DocF::List(children) => Doc::list(children),
+        });
+        assert_eq!(pp(&truncated, 80), "(hello short)");
+    }
+
+    // ── DocF::map ──────────────────────────────────────────────────
+
+    #[test]
+    fn docf_map_transforms_children() {
+        let layer: DocF<i32> = DocF::List(vec![1, 2, 3]);
+        let doubled = layer.map(|x| x * 2);
+        assert_eq!(doubled.children(), Some(&[2, 4, 6][..]));
+    }
+
+    #[test]
+    fn docf_map_atom_is_identity() {
+        let layer: DocF<i32> = DocF::Atom("hello".into());
+        let mapped = layer.map(|x| x * 2);
+        assert_eq!(mapped.as_atom(), Some("hello"));
     }
 }

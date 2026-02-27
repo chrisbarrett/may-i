@@ -35,6 +35,15 @@ pub struct Effect {
     pub reason: Option<String>,
 }
 
+impl std::fmt::Display for Effect {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.reason {
+            Some(r) => write!(f, "(effect :{} \"{}\")", self.decision, r),
+            None => write!(f, "(effect :{})", self.decision),
+        }
+    }
+}
+
 /// An expression that matches a single string, optionally carrying effects.
 #[derive(Clone)]
 pub enum Expr {
@@ -113,7 +122,7 @@ impl std::fmt::Display for Expr {
             Expr::Cond(branches) => {
                 write!(f, "(cond")?;
                 for b in branches {
-                    write!(f, " ({} => {})", b.test, b.effect.decision)?;
+                    write!(f, " ({} {})", b.test, b.effect)?;
                 }
                 write!(f, ")")
             }
@@ -195,6 +204,16 @@ pub enum RuleBody {
     Branching(ArgMatcher),
 }
 
+impl std::fmt::Display for RuleBody {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RuleBody::Effect { matcher: None, effect } => write!(f, "{effect}"),
+            RuleBody::Effect { matcher: Some(m), effect } => write!(f, "(args {m}) {effect}"),
+            RuleBody::Branching(m) => write!(f, "(args {m})"),
+        }
+    }
+}
+
 /// A single guarded branch inside a matcher-level `cond` form.
 #[derive(Debug, Clone)]
 pub struct CondBranch {
@@ -207,6 +226,19 @@ pub struct CondBranch {
 pub struct CondArm {
     pub branches: Vec<CondBranch>,
     pub fallback: Option<Effect>,
+}
+
+impl std::fmt::Display for CondArm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "(cond")?;
+        for b in &self.branches {
+            write!(f, " ({} {})", b.matcher, b.effect)?;
+        }
+        if let Some(fb) = &self.fallback {
+            write!(f, " (else {})", fb)?;
+        }
+        write!(f, ")")
+    }
 }
 
 /// How many arguments a positional expression consumes.
@@ -300,6 +332,40 @@ pub enum ArgMatcher {
     Not(Box<ArgMatcher>),
     /// Branch on args; first matching branch wins, with optional else fallback.
     Cond(CondArm),
+}
+
+impl std::fmt::Display for ArgMatcher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ArgMatcher::Positional(pexprs) => {
+                write!(f, "(positional")?;
+                for pe in pexprs { write!(f, " {pe}")?; }
+                write!(f, ")")
+            }
+            ArgMatcher::ExactPositional(pexprs) => {
+                write!(f, "(exact")?;
+                for pe in pexprs { write!(f, " {pe}")?; }
+                write!(f, ")")
+            }
+            ArgMatcher::Anywhere(exprs) => {
+                write!(f, "(anywhere")?;
+                for e in exprs { write!(f, " {e}")?; }
+                write!(f, ")")
+            }
+            ArgMatcher::And(matchers) => {
+                write!(f, "(and")?;
+                for m in matchers { write!(f, " {m}")?; }
+                write!(f, ")")
+            }
+            ArgMatcher::Or(matchers) => {
+                write!(f, "(or")?;
+                for m in matchers { write!(f, " {m}")?; }
+                write!(f, ")")
+            }
+            ArgMatcher::Not(inner) => write!(f, "(not {inner})"),
+            ArgMatcher::Cond(arm) => write!(f, "{arm}"),
+        }
+    }
 }
 
 impl ArgMatcher {

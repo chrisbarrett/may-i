@@ -52,7 +52,7 @@ pub(crate) fn match_against_rules(
         had_command_match = true;
         let line_num = config.source_info.as_ref().map(|si| si.line_of(rule.source_span));
         trace.push(TraceStep::Rule {
-            label: rule.command.to_string(),
+            label: format!("(rule {} {})", rule.command, rule.body),
             line: line_num,
         });
 

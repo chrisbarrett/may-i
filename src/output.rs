@@ -2,7 +2,7 @@
 
 use colored::Colorize;
 use may_i_core::TraceStep;
-use may_i_pp::{Doc, Format, colorize_atom, parse_sexpr, pretty, visible_len};
+use may_i_pp::{Format, colorize_atom, parse_sexpr, pretty, visible_len};
 
 // ── Layout geometry ────────────────────────────────────────────────
 
@@ -71,26 +71,6 @@ pub enum Element {
     },
     /// A group of rows sharing a divider column.
     Table(Vec<Row>),
-}
-
-// ── Elision ────────────────────────────────────────────────────────
-
-/// Elide the middle of a row list, keeping the first `keep` and last 1
-/// rows, inserting a single `…` | `…` row in the middle.
-pub fn elide_rows(mut rows: Vec<Row>, keep: usize) -> Vec<Row> {
-    if rows.len() <= keep + 1 {
-        return rows;
-    }
-    let last = rows.pop().unwrap();
-    rows.truncate(keep);
-    rows.push(Row {
-        left: "…".dimmed().to_string(),
-        left_visible: 1,
-        right: "…".to_string(),
-        right_precolored: false,
-    });
-    rows.push(last);
-    rows
 }
 
 // ── Rendering ──────────────────────────────────────────────────────
@@ -302,7 +282,7 @@ fn render_simple_rule(
 
     let right = outcome.map(format_outcome).unwrap_or_default();
 
-    let doc = Doc::list(vec![Doc::atom("rule"), parse_sexpr(rule_label)]);
+    let doc = parse_sexpr(rule_label);
     let fmt = Format {
         width: layout.left_width,
         color: true,
@@ -323,10 +303,8 @@ fn render_simple_rule(
     rows
 }
 
-/// Render a rule with matching steps as a nested s-expression.
-///
-/// Builds all rows first, then applies elision to collapse long runs
-/// of matching steps (keeping first 2 and last 1).
+/// Render a rule with matching steps, using forward-scanning text matching
+/// to align right-column annotations with the corresponding rendered lines.
 fn render_rule_with_steps(
     rule_label: &str,
     rule_line: Option<usize>,
@@ -335,17 +313,11 @@ fn render_rule_with_steps(
     matched: bool,
     layout: &Layout,
 ) -> Vec<Row> {
-    // Build the full s-expression Doc and annotations without truncation.
     let annotations: Vec<String> = matching_steps.iter()
         .map(|s| format_matching_step_right(s))
         .collect();
 
-    let mut children = vec![Doc::atom("rule"), parse_sexpr(rule_label)];
-    for step in matching_steps {
-        children.push(step_to_doc(step));
-    }
-    let doc = Doc::list(children);
-
+    let doc = parse_sexpr(rule_label);
     let fmt = Format {
         width: layout.left_width,
         color: true,
@@ -353,34 +325,36 @@ fn render_rule_with_steps(
     };
     let rendered = pretty(&doc, 0, &fmt);
 
-    // Build rows: pair each rendered line with its annotation.
     let rendered_lines: Vec<&str> = rendered.lines().collect();
-    let num_steps = annotations.len();
-    let total_lines = rendered_lines.len();
-    let step_start = total_lines.saturating_sub(num_steps);
+    let stripped_lines: Vec<String> = rendered_lines.iter().map(|l| strip_ansi(l)).collect();
 
-    let mut header_rows = Vec::new();
-    let mut step_rows = Vec::new();
+    // Forward-scan: match each annotation to a rendered line by searching
+    // for the step's expression text in the ANSI-stripped output.
+    let mut line_annotations: Vec<String> = vec![String::new(); rendered_lines.len()];
+    let mut overflow: Vec<String> = Vec::new();
+    let mut search_from = 0;
 
-    for (i, sline) in rendered_lines.iter().enumerate() {
-        let right = if i >= step_start {
-            annotations[i - step_start].clone()
+    for (step, ann) in matching_steps.iter().zip(annotations.iter()) {
+        if let Some(needle) = step_search_needle(step) {
+            if let Some(idx) = find_line(&stripped_lines, &needle, &mut search_from) {
+                line_annotations[idx] = ann.clone();
+            } else {
+                overflow.push(ann.clone());
+            }
         } else {
-            String::new()
-        };
-        let row = Row::trace(sline.to_string(), visible_len(sline), right);
-        if i < step_start {
-            header_rows.push(row);
-        } else {
-            step_rows.push(row);
+            overflow.push(ann.clone());
         }
     }
 
-    // Elide long step runs: keep first 2, last 1.
-    let step_rows = elide_rows(step_rows, 2);
+    // Build rows from rendered lines with aligned annotations.
+    let mut rows: Vec<Row> = rendered_lines.iter().enumerate().map(|(i, sline)| {
+        Row::trace(sline.to_string(), visible_len(sline), line_annotations[i].clone())
+    }).collect();
 
-    let mut rows = header_rows;
-    rows.extend(step_rows);
+    // Overflow: annotations that couldn't be aligned to a rendered line.
+    for ann in &overflow {
+        rows.push(Row::trace("", 0, ann.clone()));
+    }
 
     if let Some(out) = outcome
         && matched
@@ -391,18 +365,58 @@ fn render_rule_with_steps(
     rows
 }
 
-/// Convert a matching step into a Doc for embedding in the rule s-expression.
-fn step_to_doc(step: &TraceStep) -> Doc {
+/// Extract a search needle from a trace step for aligning annotations
+/// with rendered s-expression lines.
+fn step_search_needle(step: &TraceStep) -> Option<String> {
     match step {
-        TraceStep::ExprVsArg { expr, .. } => parse_sexpr(expr),
-        TraceStep::Quantifier { label, .. } => parse_sexpr(label),
-        TraceStep::Missing { label } => parse_sexpr(label),
-        TraceStep::Anywhere { label, .. } => parse_sexpr(label),
-        TraceStep::ExprCondBranch { label, .. } => parse_sexpr(label),
-        TraceStep::MatcherCondElse { .. } => Doc::atom("else"),
-        TraceStep::ExactRemainder { count } => Doc::atom(format!("{count} extra args")),
-        _ => Doc::atom(""),
+        TraceStep::ExprVsArg { expr, .. } => Some(expr.clone()),
+        TraceStep::Quantifier { label, .. } => Some(label.clone()),
+        TraceStep::Missing { label } => Some(label.clone()),
+        TraceStep::Anywhere { label, .. } => Some(label.clone()),
+        TraceStep::ExprCondBranch { label, .. } => Some(label.clone()),
+        TraceStep::MatcherCondBranch { decision } => Some(format!("(effect :{decision})")),
+        TraceStep::MatcherCondElse { .. } => Some("(else".into()),
+        _ => None,
     }
+}
+
+/// Forward-scan stripped lines for a needle, advancing the search position.
+/// Falls back to matching the first token for multi-line expressions.
+fn find_line(stripped_lines: &[String], needle: &str, search_from: &mut usize) -> Option<usize> {
+    // Try exact substring match.
+    for (i, line) in stripped_lines.iter().enumerate().skip(*search_from) {
+        if line.contains(needle) {
+            *search_from = i + 1;
+            return Some(i);
+        }
+    }
+    // For long needles the pp may have broken across lines; try first token.
+    let first_token = needle.split_whitespace().next().unwrap_or(needle);
+    if first_token != needle && first_token.len() >= 2 {
+        for (i, line) in stripped_lines.iter().enumerate().skip(*search_from) {
+            if line.contains(first_token) {
+                *search_from = i + 1;
+                return Some(i);
+            }
+        }
+    }
+    None
+}
+
+/// Strip ANSI SGR escape codes from a string.
+fn strip_ansi(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut in_escape = false;
+    for ch in s.chars() {
+        if in_escape {
+            if ch == 'm' { in_escape = false; }
+        } else if ch == '\x1b' {
+            in_escape = true;
+        } else {
+            result.push(ch);
+        }
+    }
+    result
 }
 
 /// Format the right-column annotation for a matching step.
