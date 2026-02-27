@@ -36,6 +36,35 @@ fn unannotate(doc: Doc<()>) -> ADoc {
     doc.map(&|()| None)
 }
 
+/// Post-process an annotated Doc tree: mark any list as AlwaysBreak
+/// when it has multiple children with visible annotations, so the pp
+/// keeps each annotated node on its own line for trace alignment.
+fn propagate_break_hints(doc: ADoc) -> ADoc {
+    match doc.node {
+        DocF::Atom(_) => doc,
+        DocF::List(children) => {
+            let children: Vec<ADoc> = children.into_iter().map(propagate_break_hints).collect();
+            let visible_ann_count = children.iter()
+                .filter(|c| c.ann.as_ref().is_some_and(has_visible_annotation))
+                .count();
+            let layout = if visible_ann_count > 1 {
+                LayoutHint::AlwaysBreak
+            } else {
+                doc.layout
+            };
+            Doc { ann: doc.ann, node: DocF::List(children), layout }
+        }
+    }
+}
+
+/// True if this annotation produces right-column output in the trace.
+fn has_visible_annotation(ann: &EvalAnn) -> bool {
+    !matches!(
+        ann,
+        EvalAnn::CommandMatch(_) | EvalAnn::ArgsResult(_) | EvalAnn::RuleEffect { .. }
+    )
+}
+
 fn arg_to_string(a: &ResolvedArg) -> String {
     match a {
         ResolvedArg::Literal(s) => format!("\"{s}\""),
@@ -72,7 +101,8 @@ pub(crate) fn annotate_rule(
         decision: e.decision,
         reason: e.reason.clone(),
     });
-    (Doc { ann, node: DocF::List(cs), layout: LayoutHint::Auto }, effect)
+    let doc = Doc { ann, node: DocF::List(cs), layout: LayoutHint::Auto };
+    (propagate_break_hints(doc), effect)
 }
 
 fn annotate_command(matcher: &CommandMatcher, matched: bool) -> ADoc {

@@ -216,25 +216,24 @@ fn render<A>(doc: &Doc<A>, indent: usize, width: usize, color: bool) -> String {
                 }
             }
 
-            // Node-level layout hint: drop all children to separate lines.
-            if doc.layout == LayoutHint::AlwaysBreak {
-                return render_all_drop(children, indent, width, color);
-            }
-
-            let flat = render_flat(children, color);
-            if indent + visible_len(&flat) <= width {
-                return flat;
+            // Skip flat when this node or any child requires breaking.
+            let must_break = doc.layout == LayoutHint::AlwaysBreak
+                || children.iter().any(|c| c.layout == LayoutHint::AlwaysBreak);
+            if !must_break {
+                let flat = render_flat(children, color);
+                if !flat.contains('\n') && indent + visible_len(&flat) <= width {
+                    return flat;
+                }
             }
             let broken = render_broken(children, indent, width, color);
-            // Fall through to body-indent if:
-            // - any line still exceeds the width, or
-            // - a child wrapped internally (more lines than children),
-            //   creating inconsistent indentation.
-            let min_lines = if children.len() <= 1 { 1 } else { children.len() - 1 };
-            if max_line_width(&broken, indent) <= width
-                && broken.lines().count() <= min_lines
-            {
+            // Accept broken layout if every line fits within the width.
+            if max_line_width(&broken, indent) <= width {
                 return broken;
+            }
+            // Last resort: body-indent (indent+2). For AlwaysBreak nodes
+            // that still overflow, drop all children uniformly.
+            if doc.layout == LayoutHint::AlwaysBreak {
+                return render_all_drop(children, indent, width, color);
             }
             render_body_indent(children, indent, width, color)
         }
@@ -783,10 +782,11 @@ mod tests {
     // ── AlwaysBreak ────────────────────────────────────────────────
 
     #[test]
-    fn always_break_drops_all_children() {
+    fn always_break_uses_broken_layout() {
+        // AlwaysBreak skips flat but still uses broken (align-under-first-arg).
         let doc = Doc::broken_list(vec![a("or"), a("\"a\""), a("\"b\""), a("\"c\"")]);
         let result = pp(&doc, 80);
-        assert_eq!(result, "(or\n  \"a\"\n  \"b\"\n  \"c\")");
+        assert_eq!(result, "(or \"a\"\n    \"b\"\n    \"c\")");
     }
 
     #[test]
@@ -794,5 +794,83 @@ mod tests {
         let doc = Doc::broken_list(vec![a("or")]);
         let result = pp(&doc, 80);
         assert_eq!(result, "(or)");
+    }
+
+    #[test]
+    fn always_break_falls_back_to_all_drop_at_narrow_width() {
+        // At narrow width, broken layout overflows → falls to render_all_drop.
+        let doc = Doc::broken_list(vec![
+            a("or"), a("\"long-value-one\""), a("\"long-value-two\""),
+        ]);
+        let result = pp(&doc, 20);
+        assert_eq!(result, "(or\n  \"long-value-one\"\n  \"long-value-two\")");
+    }
+
+    #[test]
+    fn cond_renders_clauses() {
+        let doc = l(vec![
+            a("cond"),
+            l(vec![a("\"a\""), a(":allow")]),
+            l(vec![a("\"b\""), a(":deny")]),
+        ]);
+        let result = pp(&doc, 40);
+        assert!(result.contains("cond"));
+        assert!(result.contains("\"a\""));
+        assert!(result.contains(":allow"));
+        assert!(result.contains("\"b\""));
+        assert!(result.contains(":deny"));
+    }
+
+    #[test]
+    fn cond_single_child() {
+        let doc = l(vec![a("cond")]);
+        let result = pp(&doc, 40);
+        assert_eq!(result, "(cond)");
+    }
+
+    #[test]
+    fn cond_atom_clause() {
+        let doc = l(vec![a("cond"), a("else")]);
+        let result = pp(&doc, 40);
+        assert!(result.contains("cond"));
+        assert!(result.contains("else"));
+    }
+
+    #[test]
+    fn body_indent_multiline_first_child() {
+        // when/if/unless use body-indent; if the predicate wraps it
+        // gets extra indent (indent+4) to distinguish from body.
+        let pred = l(vec![a("and"), a("xxxxxxxxxxxx"), a("yyyyyyyyyyyy")]);
+        let doc = l(vec![a("when"), pred, a(":allow")]);
+        let result = pp(&doc, 25);
+        let lines: Vec<&str> = result.lines().collect();
+        assert!(lines.len() >= 3);
+        assert!(lines[0].contains("when"));
+    }
+
+    #[test]
+    fn body_indent_two_children() {
+        // (when pred) — only head + one child, exercises the len==2 close path.
+        let pred = l(vec![a("and"), a("xxxxx"), a("yyyyy")]);
+        let doc = l(vec![a("when"), pred]);
+        let result = pp(&doc, 15);
+        assert!(result.contains("when"));
+    }
+
+    #[test]
+    fn breaking_descendant_prevents_flat() {
+        // (? (and (or "a" "b") "--")) where (or ...) is AlwaysBreak.
+        // Even at wide width, (? ...) must not flatten since the or
+        // descendant would render at indent=0 producing wrong columns.
+        let or_doc = Doc::broken_list(vec![a("or"), a("\"a\""), a("\"b\"")]);
+        let and_doc = l(vec![a("and"), or_doc, a("\"--\"")]);
+        let q_doc = l(vec![a("?"), and_doc]);
+        let result = pp(&q_doc, 80);
+        // The (or ...) children must be indented relative to their parent,
+        // not at column 0.
+        for line in result.lines().skip(1) {
+            let leading = line.len() - line.trim_start().len();
+            assert!(leading >= 2, "line has too little indent: {result:?}");
+        }
     }
 }
