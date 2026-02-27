@@ -385,8 +385,8 @@ pub enum TraceStep {
     MatcherCondBranch { decision: Decision },
     /// A matcher conditional else branch.
     MatcherCondElse { decision: Decision },
-    /// An anywhere expression was tested.
-    Anywhere { label: String, matched: bool },
+    /// An anywhere expression was tested against the full arg list.
+    Anywhere { label: String, args: Vec<String>, matched: bool },
     /// Exact positional: remaining unmatched args.
     ExactRemainder { count: usize },
     /// Arguments matched the pattern.

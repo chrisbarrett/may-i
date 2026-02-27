@@ -179,9 +179,10 @@ impl TraceCollector {
                     decision: effect.decision,
                 });
             }
-            MatchEvent::Anywhere { expr, matched } => {
+            MatchEvent::Anywhere { expr, args, matched } => {
                 self.steps.push(TraceStep::Anywhere {
                     label: format!("(anywhere {})", expr),
+                    args: args.iter().map(resolved_arg_to_string).collect(),
                     matched,
                 });
             }

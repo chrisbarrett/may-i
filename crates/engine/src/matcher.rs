@@ -41,7 +41,7 @@ pub(crate) enum MatchEvent<'a> {
     ExprCondBranch { test: &'a Expr, matched: bool, effect: &'a Effect },
     MatcherCondBranch { matched: bool, effect: &'a Effect },
     MatcherCondElse { effect: &'a Effect },
-    Anywhere { expr: &'a Expr, matched: bool },
+    Anywhere { expr: &'a Expr, args: &'a [ResolvedArg], matched: bool },
     ExactRemainder { count: usize },
 }
 
@@ -142,7 +142,7 @@ pub(crate) fn match_args(
             // Any of the listed tokens appears anywhere in args (OR semantics).
             for token in tokens {
                 let matched = args.iter().any(|a| expr_matches_resolved(token, a));
-                emit(MatchEvent::Anywhere { expr: token, matched });
+                emit(MatchEvent::Anywhere { expr: token, args, matched });
                 if matched {
                     // Check for effect in the matching arg
                     if let Expr::Cond(branches) = token {
