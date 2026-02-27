@@ -1,7 +1,7 @@
 // Shared display helpers for trace output.
 
 use colored::Colorize;
-use may_i_core::{Doc, DocF, EvalAnn, TraceEntry};
+use may_i_core::{Doc, DocF, EvalAnn, LayoutHint, TraceEntry};
 use may_i_pp::{Format, colorize_atom, pretty, visible_len};
 
 // ── Layout geometry ────────────────────────────────────────────────
@@ -252,19 +252,20 @@ fn render_annotated_rule(
     line: Option<usize>,
     layout: &Layout,
 ) -> Vec<Row> {
+    let doc = truncate_unevaluated(doc, 2);
     let fmt = Format {
         width: layout.left_width,
         color: true,
         line_number: line,
     };
-    let rendered = pretty(doc, 0, &fmt);
+    let rendered = pretty(&doc, 0, &fmt);
 
     // Collect annotations in tree-walk order.
-    let annotations = collect_annotations(doc);
+    let annotations = collect_annotations(&doc);
 
     // Find the outcome (RuleEffect on the top-level node).
-    let outcome = extract_outcome(doc);
-    let matched = has_args_match(doc);
+    let outcome = extract_outcome(&doc);
+    let matched = has_args_match(&doc);
 
     let rendered_lines: Vec<&str> = rendered.lines().collect();
     let stripped_lines: Vec<String> = rendered_lines.iter().map(|l| strip_ansi(l)).collect();
@@ -459,6 +460,48 @@ fn strip_ansi(s: &str) -> String {
         }
     }
     result
+}
+
+/// Truncate unevaluated lists in an annotated Doc tree.
+///
+/// A list whose args (children after the head atom) all lack annotations
+/// is considered unevaluated. If it has more than `keep + 2` children
+/// (head + keep args + last), keep the first `keep` args, insert "…",
+/// and keep the last arg.
+fn truncate_unevaluated(doc: &Doc<Option<EvalAnn>>, keep: usize) -> Doc<Option<EvalAnn>> {
+    match &doc.node {
+        DocF::Atom(_) => doc.clone(),
+        DocF::List(children) => {
+            let children: Vec<Doc<Option<EvalAnn>>> = children.iter()
+                .map(|c| truncate_unevaluated(c, keep))
+                .collect();
+            let has_head = children.first().is_some_and(|c| c.as_atom().is_some());
+            // Only truncate if the args (children after head) are all unevaluated.
+            let args_unevaluated = has_head && children[1..].iter().all(|c| !has_any_annotation(c));
+            if args_unevaluated && children.len() > keep + 2 {
+                let mut truncated = Vec::with_capacity(keep + 3);
+                truncated.push(children[0].clone());
+                truncated.extend(children[1..=keep].iter().cloned());
+                truncated.push(Doc { ann: None, node: DocF::Atom("…".into()), layout: LayoutHint::Auto });
+                truncated.push(children.last().unwrap().clone());
+                Doc { ann: doc.ann.clone(), node: DocF::List(truncated), layout: doc.layout }
+            } else {
+                Doc { ann: doc.ann.clone(), node: DocF::List(children), layout: doc.layout }
+            }
+        }
+    }
+}
+
+/// True if a node or any descendant has a non-None annotation.
+fn has_any_annotation(doc: &Doc<Option<EvalAnn>>) -> bool {
+    if doc.ann.is_some() {
+        return true;
+    }
+    if let DocF::List(children) = &doc.node {
+        children.iter().any(has_any_annotation)
+    } else {
+        false
+    }
 }
 
 /// Truncate a list for display, keeping first few and last.
