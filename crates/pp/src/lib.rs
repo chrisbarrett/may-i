@@ -316,7 +316,7 @@ pub fn colorize_atom(s: &str, color: bool) -> String {
     } else if is_string(s) || is_regex(s) {
         s.green().to_string()
     } else if is_special_form(s) {
-        s.yellow().bold().to_string()
+        s.blue().to_string()
     } else {
         s.to_string()
     }
