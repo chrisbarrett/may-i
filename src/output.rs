@@ -189,9 +189,18 @@ pub fn print_trace(entries: &[TraceEntry], indent: &str) {
                 }
             }
             TraceEntry::DefaultAsk { .. } => {
-                elements.push(Element::Table(vec![
-                    Row::trace("", 0, "→ :ask (default)"),
-                ]));
+                let label = "No matching rule".italic().yellow().to_string();
+                let label_visible = "No matching rule".len();
+                let padded_visible = layout.left_width;
+                let pad = padded_visible.saturating_sub(label_visible);
+                let left = format!("{:pad$}{label}", "");
+                let row = Row::trace(left, padded_visible, "→ :ask (default)");
+                // Append to the previous table if possible, else new table.
+                if let Some(Element::Table(rows)) = elements.last_mut() {
+                    rows.push(row);
+                } else {
+                    elements.push(Element::Table(vec![row]));
+                }
             }
         }
         first = false;
