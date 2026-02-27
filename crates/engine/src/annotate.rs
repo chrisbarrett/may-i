@@ -37,15 +37,15 @@ fn unannotate(doc: Doc<()>) -> ADoc {
 }
 
 /// Post-process an annotated Doc tree: mark any list as AlwaysBreak
-/// when it has multiple children with visible annotations, so the pp
-/// keeps each annotated node on its own line for trace alignment.
+/// when multiple children (or their subtrees) carry visible annotations,
+/// so the pp keeps each annotated subtree on its own line for trace alignment.
 fn propagate_break_hints(doc: ADoc) -> ADoc {
     match doc.node {
         DocF::Atom(_) => doc,
         DocF::List(children) => {
             let children: Vec<ADoc> = children.into_iter().map(propagate_break_hints).collect();
             let visible_ann_count = children.iter()
-                .filter(|c| c.ann.as_ref().is_some_and(has_visible_annotation))
+                .filter(|c| subtree_has_visible_annotation(c))
                 .count();
             let layout = if visible_ann_count > 1 {
                 LayoutHint::AlwaysBreak
@@ -58,11 +58,23 @@ fn propagate_break_hints(doc: ADoc) -> ADoc {
 }
 
 /// True if this annotation produces right-column output in the trace.
-fn has_visible_annotation(ann: &EvalAnn) -> bool {
+fn is_visible_annotation(ann: &EvalAnn) -> bool {
     !matches!(
         ann,
         EvalAnn::CommandMatch(_) | EvalAnn::ArgsResult(_) | EvalAnn::RuleEffect { .. }
     )
+}
+
+/// True if this node or any descendant carries a visible annotation.
+fn subtree_has_visible_annotation(doc: &ADoc) -> bool {
+    if doc.ann.as_ref().is_some_and(is_visible_annotation) {
+        return true;
+    }
+    if let DocF::List(children) = &doc.node {
+        children.iter().any(subtree_has_visible_annotation)
+    } else {
+        false
+    }
 }
 
 fn arg_to_string(a: &ResolvedArg) -> String {

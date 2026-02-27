@@ -230,12 +230,10 @@ fn render<A>(doc: &Doc<A>, indent: usize, width: usize, color: bool) -> String {
             if max_line_width(&broken, indent) <= width {
                 return broken;
             }
-            // Last resort: body-indent (indent+2). For AlwaysBreak nodes
-            // that still overflow, drop all children uniformly.
-            if doc.layout == LayoutHint::AlwaysBreak {
-                return render_all_drop(children, indent, width, color);
-            }
-            render_body_indent(children, indent, width, color)
+            // Last resort: drop all children to separate lines at indent+2.
+            // (Special forms like when/if/unless are routed to
+            // render_body_indent above and never reach here.)
+            render_all_drop(children, indent, width, color)
         }
     }
 }

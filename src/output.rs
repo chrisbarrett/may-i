@@ -284,6 +284,23 @@ fn render_annotated_rule(
         }
     }
 
+    // Place outcome annotation on the "(effect" line if possible.
+    if let Some(out) = outcome
+        && matched
+    {
+        let mut placed = false;
+        for (i, stripped) in stripped_lines.iter().enumerate() {
+            if stripped.contains("(effect") && line_annotations[i].is_empty() {
+                line_annotations[i] = out.clone();
+                placed = true;
+                break;
+            }
+        }
+        if !placed {
+            overflow.push(out);
+        }
+    }
+
     // Build rows from rendered lines with aligned annotations.
     let mut rows: Vec<Row> = rendered_lines.iter().enumerate().map(|(i, sline)| {
         Row::trace(sline.to_string(), visible_len(sline), line_annotations[i].clone())
@@ -292,13 +309,6 @@ fn render_annotated_rule(
     // Overflow annotations.
     for ann in &overflow {
         rows.push(Row::trace("", 0, ann.clone()));
-    }
-
-    // Append outcome on the last line or a new line.
-    if let Some(out) = outcome
-        && matched
-    {
-        rows.push(Row::trace("", 0, out));
     }
 
     rows
