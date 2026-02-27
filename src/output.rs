@@ -77,14 +77,15 @@ pub fn print_trace(steps: &[TraceStep], indent: &str) {
 
     for block in &blocks {
         if let Some(TraceStep::SegmentHeader { command, decision }) = block.steps.first() {
-            output.push(PrintableLine::Blank);
+            if !first {
+                output.push(PrintableLine::Blank);
+            }
             output.push(PrintableLine::SegmentHeader {
                 command: command.clone(),
                 decision: *decision,
             });
             let rest = RuleBlock { steps: &block.steps[1..] };
             if !rest.steps.is_empty() {
-                output.push(PrintableLine::Blank);
                 for line in render_block(&rest, &layout) {
                     output.push(PrintableLine::Trace(line));
                 }
@@ -301,15 +302,14 @@ fn step_to_doc(step: &TraceStep) -> Doc {
 fn format_matching_step_right(step: &TraceStep) -> String {
     match step {
         TraceStep::ExprVsArg { expr, arg, matched } => {
-            let op = if expr.starts_with("(regex ") {
-                "~"
-            } else if expr.starts_with("(or ") || expr.starts_with("(and ") {
-                "∈"
-            } else {
-                "="
-            };
             let arrow = if *matched { "→ yes" } else { "→ no" };
-            format!("{arg} {op} {expr} {arrow}")
+            if expr.starts_with("(regex ") {
+                format!("{arg} ~ {expr} {arrow}")
+            } else if let Some(elts) = extract_set_elements(expr) {
+                format!("{arg} ∈ {{{elts}}} {arrow}")
+            } else {
+                format!("{arg} = {expr} {arrow}")
+            }
         }
         TraceStep::Quantifier { count, matched, .. } => {
             if *matched {
@@ -319,10 +319,11 @@ fn format_matching_step_right(step: &TraceStep) -> String {
             }
         }
         TraceStep::Missing { .. } => "→ missing".into(),
-        TraceStep::Anywhere { args, matched, .. } => {
-            let truncated = truncate_args_list(args);
+        TraceStep::Anywhere { label, args, matched } => {
+            let pattern = extract_anywhere_pattern(label);
+            let truncated = truncate_list(args, 4);
             let arrow = if *matched { "→ yes" } else { "→ no" };
-            format!("in [{truncated}] {arrow}")
+            format!("{pattern} ∈ {{{truncated}}} {arrow}")
         }
         TraceStep::ExprCondBranch { decision, .. } => format!("→ :{decision}"),
         TraceStep::MatcherCondBranch { decision } => format!("→ :{decision}"),
@@ -332,14 +333,35 @@ fn format_matching_step_right(step: &TraceStep) -> String {
     }
 }
 
-/// Truncate an argument list for display, keeping first few and last.
-fn truncate_args_list(args: &[String]) -> String {
-    if args.len() <= 4 {
-        args.join(", ")
+/// Extract inner elements from `(or ...)` or `(and ...)` as a comma-separated string.
+fn extract_set_elements(expr: &str) -> Option<String> {
+    let inner = if let Some(rest) = expr.strip_prefix("(or ") {
+        rest.strip_suffix(')')
+    } else if let Some(rest) = expr.strip_prefix("(and ") {
+        rest.strip_suffix(')')
     } else {
-        let mut parts: Vec<&str> = args[..2].iter().map(|s| s.as_str()).collect();
+        None
+    }?;
+    let elts: Vec<&str> = inner.split_whitespace().collect();
+    Some(elts.join(", "))
+}
+
+/// Extract the pattern from an anywhere label like `(anywhere "--hard")`.
+fn extract_anywhere_pattern(label: &str) -> &str {
+    label
+        .strip_prefix("(anywhere ")
+        .and_then(|s| s.strip_suffix(')'))
+        .unwrap_or(label)
+}
+
+/// Truncate a list for display, keeping first few and last.
+fn truncate_list(items: &[String], max: usize) -> String {
+    if items.len() <= max {
+        items.join(", ")
+    } else {
+        let mut parts: Vec<&str> = items[..2].iter().map(|s| s.as_str()).collect();
         parts.push("…");
-        parts.push(args.last().unwrap());
+        parts.push(items.last().unwrap());
         parts.join(", ")
     }
 }
