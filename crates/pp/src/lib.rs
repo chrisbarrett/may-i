@@ -226,11 +226,16 @@ fn render<A>(doc: &Doc<A>, indent: usize, width: usize, color: bool) -> String {
                 return flat;
             }
             let broken = render_broken(children, indent, width, color);
-            if max_line_width(&broken, indent) <= width {
+            // Fall through to body-indent if:
+            // - any line still exceeds the width, or
+            // - a child wrapped internally (more lines than children),
+            //   creating inconsistent indentation.
+            let min_lines = if children.len() <= 1 { 1 } else { children.len() - 1 };
+            if max_line_width(&broken, indent) <= width
+                && broken.lines().count() <= min_lines
+            {
                 return broken;
             }
-            // Align-under-first-arg was still too wide; fall back to
-            // body-indent style which uses indent+2 for children.
             render_body_indent(children, indent, width, color)
         }
     }
@@ -333,8 +338,26 @@ fn render_body_indent<A>(children: &[Doc<A>], indent: usize, width: usize, color
         return format!("{open}{head}{close}");
     }
 
-    let first = render(&children[1], indent + 1 + visible_len(&head) + 1, width, color);
-    let mut lines = vec![format!("{open}{head} {first}")];
+    // Try placing the first child on the same line as the head.
+    let inline_col = indent + 1 + visible_len(&head) + 1;
+    let first = render(&children[1], inline_col, width, color);
+    let first_multiline = first.contains('\n');
+
+    let mut lines = if first_multiline {
+        // First child wraps — drop it to the next line.
+        // For predicate forms (when/if/unless), use extra indent (indent+4)
+        // to visually distinguish the predicate from the body (at indent+2).
+        let head_atom = children[0].as_atom().unwrap_or("");
+        let is_predicate_form = matches!(head_atom, "when" | "if" | "unless");
+        let first_indent = if is_predicate_form { indent + 4 } else { body_indent };
+        let first = render(&children[1], first_indent, width, color);
+        vec![
+            format!("{open}{head}"),
+            format!("{:pad$}{first}", "", pad = first_indent),
+        ]
+    } else {
+        vec![format!("{open}{head} {first}")]
+    };
 
     for (i, child) in children[2..].iter().enumerate() {
         let is_last = i == children.len() - 3;
