@@ -3,8 +3,6 @@
 
 use may_i_shell_parser::{SimpleCommand, Word};
 use may_i_core::{CommandMatcher, Config, Effect, Expr, WrapperStep};
-#[cfg(test)]
-use may_i_core::{ArgMatcher, ExprBranch, PosExpr};
 
 /// A resolved argument that may be a known literal or an opaque (safe but unknown) value.
 #[derive(Debug, Clone, PartialEq)]
@@ -13,7 +11,7 @@ pub(crate) enum ResolvedArg {
     Opaque,
 }
 
-// ── Match outcome and events ───────────────────────────────────────
+// ── Match outcome ─────────────────────────────────────────────────
 
 /// The result of matching args against an ArgMatcher.
 #[derive(Debug)]
@@ -32,22 +30,6 @@ impl MatchOutcome {
     }
 }
 
-/// Events emitted during matching for tracing/debugging.
-///
-/// Some variants carry payloads used only for `Debug` output in tests.
-#[cfg(test)]
-#[derive(Debug)]
-pub(crate) enum MatchEvent<'a> {
-    ExprVsArg { expr: &'a Expr, arg: &'a ResolvedArg, matched: bool },
-    Quantifier { pexpr: &'a PosExpr, count: usize, matched: bool },
-    Missing { pexpr: &'a PosExpr },
-    ExprCondBranch { test: &'a Expr, matched: bool, effect: &'a Effect },
-    MatcherCondBranch { matched: bool, effect: &'a Effect },
-    MatcherCondElse { effect: &'a Effect },
-    Anywhere { expr: &'a Expr, args: &'a [ResolvedArg], matched: bool },
-    ExactRemainder { count: usize },
-}
-
 // ── Core matching ──────────────────────────────────────────────────
 
 /// Check if a command name matches a command matcher.
@@ -64,197 +46,6 @@ pub(crate) fn expr_matches_resolved(expr: &Expr, arg: &ResolvedArg) -> bool {
     match arg {
         ResolvedArg::Literal(s) => expr.is_wildcard() || expr.is_match(s),
         ResolvedArg::Opaque => expr.is_wildcard(),
-    }
-}
-
-/// Match a single Expr against a single ResolvedArg, handling Expr::Cond specially.
-/// Emits events and may return Matched(effect) when a Cond branch matches.
-#[cfg(test)]
-fn match_expr_arg(
-    expr: &Expr,
-    arg: &ResolvedArg,
-    emit: &mut dyn for<'e> FnMut(MatchEvent<'e>),
-) -> MatchOutcome {
-    if let Expr::Cond(branches) = expr {
-        let outcome = match arg {
-            ResolvedArg::Literal(s) => {
-                match_expr_cond_branches(branches, s, emit)
-            }
-            ResolvedArg::Opaque => {
-                // Opaque args can't match specific cond branches
-                for branch in branches {
-                    emit(MatchEvent::ExprCondBranch {
-                        test: &branch.test,
-                        matched: false,
-                        effect: &branch.effect,
-                    });
-                }
-                MatchOutcome::NoMatch
-            }
-        };
-        return outcome;
-    }
-
-    // For And/Or, recurse per-child so each sub-expression gets its own trace event.
-    match expr {
-        Expr::And(children) => {
-            for child in children {
-                match match_expr_arg(child, arg, emit) {
-                    MatchOutcome::NoMatch => return MatchOutcome::NoMatch,
-                    MatchOutcome::Matched(eff) => return MatchOutcome::Matched(eff),
-                    MatchOutcome::MatchedNoEffect => {}
-                }
-            }
-            return MatchOutcome::MatchedNoEffect;
-        }
-        Expr::Or(children) => {
-            for child in children {
-                match match_expr_arg(child, arg, emit) {
-                    MatchOutcome::NoMatch => {}
-                    outcome => return outcome,
-                }
-            }
-            return MatchOutcome::NoMatch;
-        }
-        _ => {
-            let matched = expr_matches_resolved(expr, arg);
-            emit(MatchEvent::ExprVsArg { expr, arg, matched });
-            if !matched {
-                return MatchOutcome::NoMatch;
-            }
-        }
-    }
-
-    // Check for nested Cond effects inside And/Or/Not
-    if let ResolvedArg::Literal(s) = arg
-        && let Some(eff) = expr.find_effect(s)
-    {
-        return MatchOutcome::Matched(eff.clone());
-    }
-
-    MatchOutcome::MatchedNoEffect
-}
-
-/// Test Expr::Cond branches against a literal string.
-#[cfg(test)]
-fn match_expr_cond_branches(
-    branches: &[ExprBranch],
-    text: &str,
-    emit: &mut dyn for<'e> FnMut(MatchEvent<'e>),
-) -> MatchOutcome {
-    for branch in branches {
-        let matched = branch.test.is_match(text);
-        emit(MatchEvent::ExprCondBranch {
-            test: &branch.test,
-            matched,
-            effect: &branch.effect,
-        });
-        if matched {
-            return MatchOutcome::Matched(branch.effect.clone());
-        }
-    }
-    MatchOutcome::NoMatch
-}
-
-/// Unified arg matching: walks the ArgMatcher tree, emits events, returns outcome.
-#[cfg(test)]
-fn match_args(
-    matcher: &ArgMatcher,
-    args: &[ResolvedArg],
-    emit: &mut dyn for<'e> FnMut(MatchEvent<'e>),
-) -> MatchOutcome {
-    match matcher {
-        ArgMatcher::Positional(patterns) => match_positional(patterns, args, false, emit),
-        ArgMatcher::ExactPositional(patterns) => match_positional(patterns, args, true, emit),
-
-        ArgMatcher::Anywhere(tokens) => {
-            // Any of the listed tokens appears anywhere in args (OR semantics).
-            for token in tokens {
-                let matched = args.iter().any(|a| expr_matches_resolved(token, a));
-                emit(MatchEvent::Anywhere { expr: token, args, matched });
-                if matched {
-                    // Check for effect in the matching arg
-                    if let Expr::Cond(branches) = token {
-                        // For Anywhere + Cond, find the first matching arg and extract its effect
-                        for a in args {
-                            if let ResolvedArg::Literal(s) = a {
-                                for branch in branches {
-                                    if branch.test.is_match(s) {
-                                        return MatchOutcome::Matched(branch.effect.clone());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    // Check for nested cond effects
-                    for a in args {
-                        if let ResolvedArg::Literal(s) = a
-                            && let Some(eff) = token.find_effect(s)
-                        {
-                            return MatchOutcome::Matched(eff.clone());
-                        }
-                    }
-                    return MatchOutcome::MatchedNoEffect;
-                }
-            }
-            MatchOutcome::NoMatch
-        }
-
-        ArgMatcher::And(matchers) => {
-            let mut first_effect: Option<Effect> = None;
-            for m in matchers {
-                let outcome = match_args(m, args, emit);
-                match outcome {
-                    MatchOutcome::NoMatch => return MatchOutcome::NoMatch,
-                    MatchOutcome::Matched(eff) if first_effect.is_none() => {
-                        first_effect = Some(eff);
-                    }
-                    _ => {}
-                }
-            }
-            match first_effect {
-                Some(eff) => MatchOutcome::Matched(eff),
-                None => MatchOutcome::MatchedNoEffect,
-            }
-        }
-
-        ArgMatcher::Or(matchers) => {
-            for m in matchers {
-                let outcome = match_args(m, args, emit);
-                if outcome.is_match() {
-                    return outcome;
-                }
-            }
-            MatchOutcome::NoMatch
-        }
-
-        ArgMatcher::Not(inner) => {
-            // Not inverts the match result but doesn't propagate effects
-            let inner_outcome = match_args(inner, args, &mut |_| {});
-            if inner_outcome.is_match() {
-                MatchOutcome::NoMatch
-            } else {
-                MatchOutcome::MatchedNoEffect
-            }
-        }
-
-        ArgMatcher::Cond(arm) => {
-            for branch in &arm.branches {
-                let matched = match_args(&branch.matcher, args, emit).is_match();
-                emit(MatchEvent::MatcherCondBranch {
-                    matched,
-                    effect: &branch.effect,
-                });
-                if matched {
-                    return MatchOutcome::Matched(branch.effect.clone());
-                }
-            }
-            if let Some(fallback) = &arm.fallback {
-                emit(MatchEvent::MatcherCondElse { effect: fallback });
-                return MatchOutcome::Matched(fallback.clone());
-            }
-            MatchOutcome::NoMatch
-        }
     }
 }
 
@@ -307,90 +98,17 @@ pub(crate) fn extract_positional_args(args: &[ResolvedArg]) -> Vec<ResolvedArg> 
     positional
 }
 
-/// Walk positional patterns against extracted positional args.
-#[cfg(test)]
-fn match_positional(
-    patterns: &[PosExpr],
-    args: &[ResolvedArg],
-    exact: bool,
-    emit: &mut dyn for<'e> FnMut(MatchEvent<'e>),
-) -> MatchOutcome {
-    let positional = extract_positional_args(args);
-    let mut pos = 0;
-    let mut first_effect: Option<Effect> = None;
-
-    for pexpr in patterns {
-        let e = &pexpr.expr;
-
-        if pexpr.quantifier.is_repeating() {
-            // Greedy: consume as many matching args as possible
-            let start = pos;
-            while let Some(arg) = positional.get(pos) {
-                if !expr_matches_resolved(e, arg) {
-                    break;
-                }
-                if first_effect.is_none()
-                    && let ResolvedArg::Literal(s) = arg
-                    && let Some(eff) = e.find_effect(s)
-                {
-                    first_effect = Some(eff.clone());
-                }
-                pos += 1;
-            }
-            let count = pos - start;
-            if count < pexpr.quantifier.min() {
-                emit(MatchEvent::Quantifier { pexpr, count, matched: false });
-                return MatchOutcome::NoMatch;
-            }
-            emit(MatchEvent::Quantifier { pexpr, count, matched: true });
-        } else {
-            // Single: match exactly one arg (One) or optionally one (Optional)
-            match positional.get(pos) {
-                Some(arg) => {
-                    let outcome = match_expr_arg(e, arg, emit);
-                    if outcome.is_match() {
-                        if let MatchOutcome::Matched(eff) = outcome
-                            && first_effect.is_none()
-                        {
-                            first_effect = Some(eff);
-                        }
-                        pos += 1;
-                    } else if pexpr.quantifier.min() > 0 {
-                        return MatchOutcome::NoMatch;
-                    }
-                }
-                None => {
-                    if pexpr.quantifier.min() > 0 {
-                        emit(MatchEvent::Missing { pexpr });
-                        return MatchOutcome::NoMatch;
-                    }
-                }
-            }
-        }
-    }
-
-    if exact && pos != positional.len() {
-        let remainder = positional.len() - pos;
-        emit(MatchEvent::ExactRemainder { count: remainder });
-        return MatchOutcome::NoMatch;
-    }
-
-    match first_effect {
-        Some(eff) => MatchOutcome::Matched(eff),
-        None => MatchOutcome::MatchedNoEffect,
-    }
-}
-
 /// Convenience wrapper: pure boolean match (no tracing, no effect extraction).
+/// Delegates to the annotated matcher and discards the Doc tree.
 #[cfg(test)]
-pub(crate) fn matcher_matches(matcher: &ArgMatcher, args: &[ResolvedArg]) -> bool {
-    match_args(matcher, args, &mut |_| {}).is_match()
+pub(crate) fn matcher_matches(matcher: &may_i_core::ArgMatcher, args: &[ResolvedArg]) -> bool {
+    crate::annotate::annotate_matcher(matcher, args).1.is_match()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use may_i_core::{CondArm, CondBranch, Decision, Quantifier};
+    use may_i_core::{ArgMatcher, CondArm, CondBranch, Decision, ExprBranch, PosExpr, Quantifier};
 
     fn lit(s: &str) -> ResolvedArg {
         ResolvedArg::Literal(s.into())
@@ -408,13 +126,14 @@ mod tests {
         Expr::Cond(branches.into_iter().map(|(test, effect)| ExprBranch { test, effect }).collect())
     }
 
-    /// Collect events from a match_args call.
-    fn match_with_events(matcher: &ArgMatcher, args: &[ResolvedArg]) -> (MatchOutcome, Vec<String>) {
-        let mut events = Vec::new();
-        let outcome = match_args(matcher, args, &mut |ev| {
-            events.push(format!("{ev:?}"));
-        });
-        (outcome, events)
+    /// Match args via the annotated matcher (single source of matching logic).
+    fn match_args(matcher: &ArgMatcher, args: &[ResolvedArg]) -> MatchOutcome {
+        crate::annotate::annotate_matcher(matcher, args).1
+    }
+
+    /// Match a single expr against a single arg via the annotated matcher.
+    fn match_expr_arg(expr: &Expr, arg: &ResolvedArg) -> MatchOutcome {
+        crate::annotate::annotate_expr_arg(expr, arg).1
     }
 
     // ── expr_matches_resolved ────────────────────────────────────────
@@ -482,19 +201,18 @@ mod tests {
         assert!(!expr_matches_resolved(&e, &lit("bad")));
     }
 
-    // ── match_expr_arg ───────────────────────────────────────────────
+    // ── match_expr_arg (delegates to annotate) ───────────────────────
 
     #[test]
     fn match_expr_arg_simple_match() {
-        let outcome = match_expr_arg(&Expr::Literal("x".into()), &lit("x"), &mut |_| {});
+        let outcome = match_expr_arg(&Expr::Literal("x".into()), &lit("x"));
         assert!(outcome.is_match());
         assert!(matches!(outcome, MatchOutcome::MatchedNoEffect));
     }
 
     #[test]
     fn match_expr_arg_simple_no_match() {
-        let outcome = match_expr_arg(&Expr::Literal("x".into()), &lit("y"), &mut |_| {});
-        assert!(!outcome.is_match());
+        assert!(!match_expr_arg(&Expr::Literal("x".into()), &lit("y")).is_match());
     }
 
     #[test]
@@ -503,8 +221,7 @@ mod tests {
             (Expr::Literal("safe".into()), allow_effect("safe")),
             (Expr::Wildcard, deny_effect("fallback")),
         ]);
-        let outcome = match_expr_arg(&expr, &lit("safe"), &mut |_| {});
-        match outcome {
+        match match_expr_arg(&expr, &lit("safe")) {
             MatchOutcome::Matched(eff) => {
                 assert_eq!(eff.decision, Decision::Allow);
                 assert_eq!(eff.reason.as_deref(), Some("safe"));
@@ -519,11 +236,8 @@ mod tests {
             (Expr::Literal("safe".into()), allow_effect("safe")),
             (Expr::Wildcard, deny_effect("fallback")),
         ]);
-        let outcome = match_expr_arg(&expr, &lit("danger"), &mut |_| {});
-        match outcome {
-            MatchOutcome::Matched(eff) => {
-                assert_eq!(eff.decision, Decision::Deny);
-            }
+        match match_expr_arg(&expr, &lit("danger")) {
+            MatchOutcome::Matched(eff) => assert_eq!(eff.decision, Decision::Deny),
             _ => panic!("expected Matched with fallback"),
         }
     }
@@ -533,8 +247,7 @@ mod tests {
         let expr = cond_expr(vec![
             (Expr::Literal("a".into()), allow_effect("a")),
         ]);
-        let outcome = match_expr_arg(&expr, &lit("z"), &mut |_| {});
-        assert!(!outcome.is_match());
+        assert!(!match_expr_arg(&expr, &lit("z")).is_match());
     }
 
     #[test]
@@ -543,22 +256,17 @@ mod tests {
             (Expr::Literal("a".into()), allow_effect("a")),
             (Expr::Literal("b".into()), deny_effect("b")),
         ]);
-        let outcome = match_expr_arg(&expr, &ResolvedArg::Opaque, &mut |_| {});
-        assert!(!outcome.is_match());
+        assert!(!match_expr_arg(&expr, &ResolvedArg::Opaque).is_match());
     }
 
     #[test]
     fn match_expr_arg_nested_cond_in_and() {
-        // And([Cond([...]), Literal]) — find_effect extracts cond effect
         let inner_cond = cond_expr(vec![
             (Expr::Wildcard, allow_effect("nested")),
         ]);
         let expr = Expr::And(vec![inner_cond, Expr::Wildcard]);
-        let outcome = match_expr_arg(&expr, &lit("x"), &mut |_| {});
-        match outcome {
-            MatchOutcome::Matched(eff) => {
-                assert_eq!(eff.reason.as_deref(), Some("nested"));
-            }
+        match match_expr_arg(&expr, &lit("x")) {
+            MatchOutcome::Matched(eff) => assert_eq!(eff.reason.as_deref(), Some("nested")),
             _ => panic!("expected Matched from nested cond"),
         }
     }
@@ -569,17 +277,13 @@ mod tests {
             (Expr::Literal("x".into()), deny_effect("found")),
         ]);
         let expr = Expr::Or(vec![Expr::Literal("z".into()), inner_cond]);
-        let outcome = match_expr_arg(&expr, &lit("x"), &mut |_| {});
-        match outcome {
-            MatchOutcome::Matched(eff) => {
-                assert_eq!(eff.decision, Decision::Deny);
-            }
+        match match_expr_arg(&expr, &lit("x")) {
+            MatchOutcome::Matched(eff) => assert_eq!(eff.decision, Decision::Deny),
             _ => panic!("expected Matched from nested cond in Or"),
         }
     }
 
     // ── match_args: Positional effect extraction ─────────────────────
-    // (replaces deleted find_expr_effect tests)
 
     #[test]
     fn positional_cond_effect_extracted() {
@@ -590,8 +294,7 @@ mod tests {
                 (Expr::Wildcard, deny_effect("bad")),
             ])),
         ]);
-        let args = vec![lit("cmd"), lit("safe")];
-        match match_args(&matcher, &args, &mut |_| {}) {
+        match match_args(&matcher, &[lit("cmd"), lit("safe")]) {
             MatchOutcome::Matched(eff) => assert_eq!(eff.decision, Decision::Allow),
             other => panic!("expected Matched, got {other:?}"),
         }
@@ -605,7 +308,7 @@ mod tests {
                 (Expr::Wildcard, deny_effect("fallback")),
             ])),
         ]);
-        match match_args(&matcher, &[lit("z")], &mut |_| {}) {
+        match match_args(&matcher, &[lit("z")]) {
             MatchOutcome::Matched(eff) => assert_eq!(eff.decision, Decision::Deny),
             other => panic!("expected Matched, got {other:?}"),
         }
@@ -618,7 +321,7 @@ mod tests {
                 (Expr::Wildcard, allow_effect("any")),
             ])),
         ]);
-        match match_args(&matcher, &[lit("x")], &mut |_| {}) {
+        match match_args(&matcher, &[lit("x")]) {
             MatchOutcome::Matched(eff) => assert_eq!(eff.decision, Decision::Allow),
             other => panic!("expected Matched, got {other:?}"),
         }
@@ -631,10 +334,8 @@ mod tests {
                 (Expr::Wildcard, allow_effect("any")),
             ])),
         ]);
-        // Too many args
-        assert!(!match_args(&matcher, &[lit("x"), lit("y")], &mut |_| {}).is_match());
-        // Too few args
-        assert!(!match_args(&matcher, &[], &mut |_| {}).is_match());
+        assert!(!match_args(&matcher, &[lit("x"), lit("y")]).is_match());
+        assert!(!match_args(&matcher, &[]).is_match());
     }
 
     #[test]
@@ -644,7 +345,7 @@ mod tests {
                 (Expr::Literal("hit".into()), deny_effect("hit")),
             ]) },
         ]);
-        match match_args(&matcher, &[lit("hit")], &mut |_| {}) {
+        match match_args(&matcher, &[lit("hit")]) {
             MatchOutcome::Matched(eff) => assert_eq!(eff.decision, Decision::Deny),
             other => panic!("expected Matched, got {other:?}"),
         }
@@ -657,8 +358,7 @@ mod tests {
                 (Expr::Literal("hit".into()), deny_effect("hit")),
             ]) },
         ]);
-        // No args — optional is skipped, no effect
-        match match_args(&matcher, &[], &mut |_| {}) {
+        match match_args(&matcher, &[]) {
             MatchOutcome::MatchedNoEffect => {}
             other => panic!("expected MatchedNoEffect, got {other:?}"),
         }
@@ -671,7 +371,7 @@ mod tests {
                 (Expr::Wildcard, allow_effect("any")),
             ]) },
         ]);
-        match match_args(&matcher, &[lit("a")], &mut |_| {}) {
+        match match_args(&matcher, &[lit("a")]) {
             MatchOutcome::Matched(eff) => assert_eq!(eff.decision, Decision::Allow),
             other => panic!("expected Matched, got {other:?}"),
         }
@@ -682,7 +382,7 @@ mod tests {
         let matcher = ArgMatcher::Positional(vec![
             PosExpr { quantifier: Quantifier::OneOrMore, expr: Expr::Wildcard },
         ]);
-        assert!(!match_args(&matcher, &[], &mut |_| {}).is_match());
+        assert!(!match_args(&matcher, &[]).is_match());
     }
 
     #[test]
@@ -692,7 +392,7 @@ mod tests {
                 (Expr::Literal("match".into()), deny_effect("matched")),
             ]) },
         ]);
-        match match_args(&matcher, &[lit("match")], &mut |_| {}) {
+        match match_args(&matcher, &[lit("match")]) {
             MatchOutcome::Matched(eff) => assert_eq!(eff.decision, Decision::Deny),
             other => panic!("expected Matched, got {other:?}"),
         }
@@ -705,7 +405,7 @@ mod tests {
                 (Expr::Wildcard, allow_effect("any")),
             ]) },
         ]);
-        match match_args(&matcher, &[], &mut |_| {}) {
+        match match_args(&matcher, &[]) {
             MatchOutcome::MatchedNoEffect => {}
             other => panic!("expected MatchedNoEffect, got {other:?}"),
         }
@@ -718,15 +418,14 @@ mod tests {
                 (Expr::Literal("val".into()), allow_effect("got it")),
             ])),
         ]);
-        // --flag consumes next arg, so "val" is the first positional
         let args = vec![lit("--flag"), lit("flagval"), lit("val")];
-        match match_args(&matcher, &args, &mut |_| {}) {
+        match match_args(&matcher, &args) {
             MatchOutcome::Matched(eff) => assert_eq!(eff.decision, Decision::Allow),
             other => panic!("expected Matched, got {other:?}"),
         }
     }
 
-    // ── match_args: And/Or/Not effect propagation ────────────────────
+    // ── And/Or/Not effect propagation ────────────────────────────────
 
     #[test]
     fn and_propagates_first_effect() {
@@ -735,7 +434,7 @@ mod tests {
             ArgMatcher::Positional(vec![PosExpr::one(cond)]),
             ArgMatcher::Positional(vec![PosExpr::one(Expr::Wildcard)]),
         ]);
-        match match_args(&matcher, &[lit("x")], &mut |_| {}) {
+        match match_args(&matcher, &[lit("x")]) {
             MatchOutcome::Matched(eff) => assert_eq!(eff.reason.as_deref(), Some("from cond")),
             other => panic!("expected Matched, got {other:?}"),
         }
@@ -747,7 +446,7 @@ mod tests {
             ArgMatcher::Positional(vec![PosExpr::one(Expr::Literal("a".into()))]),
             ArgMatcher::Positional(vec![PosExpr::one(Expr::Literal("b".into()))]),
         ]);
-        assert!(!match_args(&matcher, &[lit("x")], &mut |_| {}).is_match());
+        assert!(!match_args(&matcher, &[lit("x")]).is_match());
     }
 
     #[test]
@@ -757,7 +456,7 @@ mod tests {
             ArgMatcher::Positional(vec![PosExpr::one(Expr::Literal("nope".into()))]),
             ArgMatcher::Positional(vec![PosExpr::one(cond)]),
         ]);
-        match match_args(&matcher, &[lit("x")], &mut |_| {}) {
+        match match_args(&matcher, &[lit("x")]) {
             MatchOutcome::Matched(eff) => assert_eq!(eff.decision, Decision::Deny),
             other => panic!("expected Matched, got {other:?}"),
         }
@@ -769,7 +468,7 @@ mod tests {
             ArgMatcher::Positional(vec![PosExpr::one(Expr::Literal("a".into()))]),
             ArgMatcher::Positional(vec![PosExpr::one(Expr::Literal("b".into()))]),
         ]);
-        assert!(!match_args(&matcher, &[lit("z")], &mut |_| {}).is_match());
+        assert!(!match_args(&matcher, &[lit("z")]).is_match());
     }
 
     #[test]
@@ -777,8 +476,8 @@ mod tests {
         let matcher = ArgMatcher::Not(Box::new(
             ArgMatcher::Anywhere(vec![Expr::Literal("--force".into())]),
         ));
-        assert!(match_args(&matcher, &[lit("push")], &mut |_| {}).is_match());
-        assert!(!match_args(&matcher, &[lit("--force")], &mut |_| {}).is_match());
+        assert!(match_args(&matcher, &[lit("push")]).is_match());
+        assert!(!match_args(&matcher, &[lit("--force")]).is_match());
     }
 
     #[test]
@@ -787,11 +486,10 @@ mod tests {
         let matcher = ArgMatcher::Not(Box::new(
             ArgMatcher::Positional(vec![PosExpr::one(cond)]),
         ));
-        // Inner matches (with effect), so Not inverts → NoMatch
-        assert!(!match_args(&matcher, &[lit("x")], &mut |_| {}).is_match());
+        assert!(!match_args(&matcher, &[lit("x")]).is_match());
     }
 
-    // ── match_args: ArgMatcher::Cond ─────────────────────────────────
+    // ── ArgMatcher::Cond ─────────────────────────────────────────────
 
     #[test]
     fn matcher_cond_first_branch() {
@@ -802,7 +500,7 @@ mod tests {
             }],
             fallback: Some(deny_effect("else")),
         });
-        match match_args(&matcher, &[lit("a")], &mut |_| {}) {
+        match match_args(&matcher, &[lit("a")]) {
             MatchOutcome::Matched(eff) => assert_eq!(eff.reason.as_deref(), Some("branch a")),
             other => panic!("expected Matched, got {other:?}"),
         }
@@ -817,7 +515,7 @@ mod tests {
             }],
             fallback: Some(deny_effect("else")),
         });
-        match match_args(&matcher, &[lit("z")], &mut |_| {}) {
+        match match_args(&matcher, &[lit("z")]) {
             MatchOutcome::Matched(eff) => {
                 assert_eq!(eff.decision, Decision::Deny);
                 assert_eq!(eff.reason.as_deref(), Some("else"));
@@ -835,10 +533,10 @@ mod tests {
             }],
             fallback: None,
         });
-        assert!(!match_args(&matcher, &[lit("z")], &mut |_| {}).is_match());
+        assert!(!match_args(&matcher, &[lit("z")]).is_match());
     }
 
-    // ── match_args: Anywhere with effects ────────────────────────────
+    // ── Anywhere with effects ────────────────────────────────────────
 
     #[test]
     fn anywhere_cond_extracts_effect() {
@@ -847,7 +545,7 @@ mod tests {
             (Expr::Wildcard, deny_effect("unsafe")),
         ]);
         let matcher = ArgMatcher::Anywhere(vec![cond]);
-        match match_args(&matcher, &[lit("--safe")], &mut |_| {}) {
+        match match_args(&matcher, &[lit("--safe")]) {
             MatchOutcome::Matched(eff) => assert_eq!(eff.decision, Decision::Allow),
             other => panic!("expected Matched, got {other:?}"),
         }
@@ -855,13 +553,12 @@ mod tests {
 
     #[test]
     fn anywhere_nested_cond_effect() {
-        // Anywhere with Expr::Or containing a Cond (find_effect path)
         let inner_cond = cond_expr(vec![
             (Expr::Literal("x".into()), allow_effect("found x")),
         ]);
         let expr = Expr::Or(vec![Expr::Literal("z".into()), inner_cond]);
         let matcher = ArgMatcher::Anywhere(vec![expr]);
-        match match_args(&matcher, &[lit("x")], &mut |_| {}) {
+        match match_args(&matcher, &[lit("x")]) {
             MatchOutcome::Matched(eff) => assert_eq!(eff.reason.as_deref(), Some("found x")),
             other => panic!("expected Matched, got {other:?}"),
         }
@@ -870,111 +567,7 @@ mod tests {
     #[test]
     fn anywhere_no_match() {
         let matcher = ArgMatcher::Anywhere(vec![Expr::Literal("--force".into())]);
-        assert!(!match_args(&matcher, &[lit("push")], &mut |_| {}).is_match());
-    }
-
-    // ── Event emission ───────────────────────────────────────────────
-
-    #[test]
-    fn events_emitted_for_positional_match() {
-        let matcher = ArgMatcher::Positional(vec![
-            PosExpr::one(Expr::Literal("a".into())),
-        ]);
-        let (outcome, events) = match_with_events(&matcher, &[lit("a")]);
-        assert!(outcome.is_match());
-        assert_eq!(events.len(), 1);
-        assert!(events[0].contains("ExprVsArg"));
-        assert!(events[0].contains("matched: true"));
-    }
-
-    #[test]
-    fn events_emitted_for_missing_arg() {
-        let matcher = ArgMatcher::Positional(vec![
-            PosExpr::one(Expr::Literal("a".into())),
-        ]);
-        let (outcome, events) = match_with_events(&matcher, &[]);
-        assert!(!outcome.is_match());
-        assert_eq!(events.len(), 1);
-        assert!(events[0].contains("Missing"));
-    }
-
-    #[test]
-    fn events_emitted_for_optional() {
-        let matcher = ArgMatcher::Positional(vec![
-            PosExpr { quantifier: Quantifier::Optional, expr: Expr::Literal("opt".into()) },
-        ]);
-        let (_, events) = match_with_events(&matcher, &[lit("opt")]);
-        assert!(events.iter().any(|e| e.contains("ExprVsArg")));
-    }
-
-    #[test]
-    fn events_emitted_for_cond() {
-        let cond = cond_expr(vec![
-            (Expr::Literal("a".into()), allow_effect("a")),
-            (Expr::Wildcard, deny_effect("else")),
-        ]);
-        let matcher = ArgMatcher::Positional(vec![PosExpr::one(cond)]);
-        let (_, events) = match_with_events(&matcher, &[lit("a")]);
-        assert!(events.iter().any(|e| e.contains("ExprCondBranch")));
-    }
-
-    #[test]
-    fn events_emitted_for_matcher_cond() {
-        let matcher = ArgMatcher::Cond(CondArm {
-            branches: vec![CondBranch {
-                matcher: ArgMatcher::Positional(vec![PosExpr::one(Expr::Literal("a".into()))]),
-                effect: allow_effect("a"),
-            }],
-            fallback: Some(deny_effect("else")),
-        });
-        let (_, events) = match_with_events(&matcher, &[lit("z")]);
-        // First branch: inner events + MatcherCondBranch
-        assert!(events.iter().any(|e| e.contains("MatcherCondBranch")));
-        // Second branch: else
-        assert!(events.iter().any(|e| e.contains("MatcherCondElse")));
-    }
-
-    #[test]
-    fn events_emitted_for_anywhere() {
-        let matcher = ArgMatcher::Anywhere(vec![Expr::Literal("--force".into())]);
-        let (_, events) = match_with_events(&matcher, &[lit("push"), lit("--force")]);
-        assert!(events.iter().any(|e| e.contains("Anywhere")));
-        assert!(events.iter().any(|e| e.contains("matched: true")));
-    }
-
-    #[test]
-    fn events_emitted_for_exact_remainder() {
-        let matcher = ArgMatcher::ExactPositional(vec![
-            PosExpr::one(Expr::Literal("a".into())),
-        ]);
-        let (_, events) = match_with_events(&matcher, &[lit("a"), lit("extra")]);
-        assert!(events.iter().any(|e| e.contains("ExactRemainder")));
-    }
-
-    #[test]
-    fn events_emitted_for_quantifier() {
-        let matcher = ArgMatcher::Positional(vec![
-            PosExpr { quantifier: Quantifier::ZeroOrMore, expr: Expr::Literal("x".into()) },
-        ]);
-        let (_, events) = match_with_events(&matcher, &[lit("x"), lit("x")]);
-        assert!(events.iter().any(|e| e.contains("Quantifier")));
-        assert!(events.iter().any(|e| e.contains("count: 2")));
-    }
-
-    #[test]
-    fn noop_callback_still_produces_correct_outcome() {
-        // Verify that the noop callback (hook mode) produces the same match result
-        let cond = cond_expr(vec![
-            (Expr::Literal("safe".into()), allow_effect("safe")),
-            (Expr::Wildcard, deny_effect("fallback")),
-        ]);
-        let matcher = ArgMatcher::Positional(vec![PosExpr::one(cond)]);
-
-        let outcome = match_args(&matcher, &[lit("safe")], &mut |_| {});
-        match outcome {
-            MatchOutcome::Matched(eff) => assert_eq!(eff.decision, Decision::Allow),
-            other => panic!("expected Matched, got {other:?}"),
-        }
+        assert!(!match_args(&matcher, &[lit("push")]).is_match());
     }
 }
 

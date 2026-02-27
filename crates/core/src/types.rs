@@ -271,16 +271,6 @@ impl Rule {
     }
 }
 
-impl std::fmt::Display for RuleBody {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            RuleBody::Effect { matcher: None, effect } => write!(f, "{effect}"),
-            RuleBody::Effect { matcher: Some(m), effect } => write!(f, "(args {m}) {effect}"),
-            RuleBody::Branching(m) => write!(f, "(args {m})"),
-        }
-    }
-}
-
 /// A single guarded branch inside a matcher-level `cond` form.
 #[derive(Debug, Clone)]
 pub struct CondBranch {
@@ -305,19 +295,6 @@ impl CondArm {
             cs.push(Doc::list(vec![Doc::atom("else"), fb.to_doc()]));
         }
         Doc::list(cs)
-    }
-}
-
-impl std::fmt::Display for CondArm {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "(cond")?;
-        for b in &self.branches {
-            write!(f, " ({} {})", b.matcher, b.effect)?;
-        }
-        if let Some(fb) = &self.fallback {
-            write!(f, " (else {})", fb)?;
-        }
-        write!(f, ")")
     }
 }
 
@@ -382,17 +359,6 @@ impl PosExpr {
     }
 }
 
-impl std::fmt::Display for PosExpr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.quantifier {
-            Quantifier::One => write!(f, "{}", self.expr),
-            Quantifier::Optional => write!(f, "(? {})", self.expr),
-            Quantifier::OneOrMore => write!(f, "(+ {})", self.expr),
-            Quantifier::ZeroOrMore => write!(f, "(* {})", self.expr),
-        }
-    }
-}
-
 impl std::fmt::Debug for PosExpr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.quantifier {
@@ -421,40 +387,6 @@ pub enum ArgMatcher {
     Not(Box<ArgMatcher>),
     /// Branch on args; first matching branch wins, with optional else fallback.
     Cond(CondArm),
-}
-
-impl std::fmt::Display for ArgMatcher {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ArgMatcher::Positional(pexprs) => {
-                write!(f, "(positional")?;
-                for pe in pexprs { write!(f, " {pe}")?; }
-                write!(f, ")")
-            }
-            ArgMatcher::ExactPositional(pexprs) => {
-                write!(f, "(exact")?;
-                for pe in pexprs { write!(f, " {pe}")?; }
-                write!(f, ")")
-            }
-            ArgMatcher::Anywhere(exprs) => {
-                write!(f, "(anywhere")?;
-                for e in exprs { write!(f, " {e}")?; }
-                write!(f, ")")
-            }
-            ArgMatcher::And(matchers) => {
-                write!(f, "(and")?;
-                for m in matchers { write!(f, " {m}")?; }
-                write!(f, ")")
-            }
-            ArgMatcher::Or(matchers) => {
-                write!(f, "(or")?;
-                for m in matchers { write!(f, " {m}")?; }
-                write!(f, ")")
-            }
-            ArgMatcher::Not(inner) => write!(f, "(not {inner})"),
-            ArgMatcher::Cond(arm) => write!(f, "{arm}"),
-        }
-    }
 }
 
 impl ArgMatcher {
@@ -625,22 +557,6 @@ impl CommandMatcher {
                 let mut or_cs = vec![Doc::atom("or")];
                 or_cs.extend(names.iter().map(|n| Doc::atom(format!("\"{n}\""))));
                 Doc::list(vec![Doc::atom("command"), Doc::list(or_cs)])
-            }
-        }
-    }
-}
-
-impl std::fmt::Display for CommandMatcher {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            CommandMatcher::Exact(s) => write!(f, "(command \"{s}\")"),
-            CommandMatcher::Regex(re) => write!(f, "(command (regex \"{}\"))", re.as_str()),
-            CommandMatcher::List(names) => {
-                write!(f, "(command (or")?;
-                for n in names {
-                    write!(f, " \"{n}\"")?;
-                }
-                write!(f, "))")
             }
         }
     }

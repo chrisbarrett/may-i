@@ -12,6 +12,15 @@ const MIN_TERM_WIDTH: usize = 40;
 /// Unicode box-drawing character used as a column divider.
 const DIVIDER: &str = "│";
 
+/// Detect the terminal width from `$COLUMNS`, `terminal_size`, or default 80.
+fn term_width() -> usize {
+    std::env::var("COLUMNS")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .or_else(|| terminal_size::terminal_size().map(|(w, _)| w.0 as usize))
+        .unwrap_or(80)
+}
+
 /// Layout parameters derived from the terminal width.
 struct Layout {
     /// Maximum visible width for the left (s-expression) column.
@@ -19,12 +28,7 @@ struct Layout {
 }
 
 fn detect_layout() -> Layout {
-    let term_width = std::env::var("COLUMNS")
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok())
-        .or_else(|| terminal_size::terminal_size().map(|(w, _)| w.0 as usize))
-        .unwrap_or(80);
-    let usable = term_width.saturating_sub(2).max(MIN_TERM_WIDTH);
+    let usable = term_width().saturating_sub(2).max(MIN_TERM_WIDTH);
     let left_width = usable / 2;
     Layout { left_width }
 }
@@ -158,12 +162,7 @@ fn print_row(indent: &str, row: &Row, divider_col: usize) {
 
 /// Print a full-width horizontal rule, optionally embedding a label.
 pub fn print_separator(indent: &str, label: Option<(&str, usize)>) {
-    let term_width = std::env::var("COLUMNS")
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok())
-        .or_else(|| terminal_size::terminal_size().map(|(w, _)| w.0 as usize))
-        .unwrap_or(80);
-    let usable = term_width.saturating_sub(indent.len());
+    let usable = term_width().saturating_sub(indent.len());
 
     match label {
         Some((colored_label, label_width)) => {

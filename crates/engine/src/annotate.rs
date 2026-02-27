@@ -223,7 +223,7 @@ fn unannotate_effect(effect: &Effect) -> ADoc {
 
 // ── Matcher annotation ────────────────────────────────────────────
 
-fn annotate_matcher(
+pub(crate) fn annotate_matcher(
     matcher: &ArgMatcher,
     args: &[ResolvedArg],
 ) -> (ADoc, MatchOutcome) {
@@ -507,7 +507,7 @@ fn annotate_anywhere(
 
 // ── Expression annotation ─────────────────────────────────────────
 
-fn annotate_expr_arg(expr: &Expr, arg: &ResolvedArg) -> (ADoc, MatchOutcome) {
+pub(crate) fn annotate_expr_arg(expr: &Expr, arg: &ResolvedArg) -> (ADoc, MatchOutcome) {
     if let Expr::Cond(branches) = expr {
         return annotate_expr_cond(branches, arg);
     }

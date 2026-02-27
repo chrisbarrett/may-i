@@ -1,5 +1,5 @@
-// Re-export Span from core; RawError stays local to sexpr.
-
+// Span is re-exported at module level for internal crate use (e.g. sexpr.rs),
+// but not from the crate root — consumers should import Span from may_i_core.
 pub use may_i_core::{Span, offset_to_line_col};
 
 /// Internal error carrying a span but no source text.

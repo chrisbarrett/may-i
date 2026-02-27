@@ -603,14 +603,14 @@ mod tests {
 
     #[test]
     fn from_sexpr_atom_bare() {
-        let sexpr = may_i_sexpr::Sexpr::Atom("hello".into(), may_i_sexpr::Span::new(0, 0));
+        let sexpr = may_i_sexpr::Sexpr::Atom("hello".into(), may_i_core::Span::new(0, 0));
         let doc = doc_from_sexpr(&sexpr);
         assert_eq!(pp(&doc, 80), "hello");
     }
 
     #[test]
     fn from_sexpr_atom_needs_quoting() {
-        let sexpr = may_i_sexpr::Sexpr::Atom("hello world".into(), may_i_sexpr::Span::new(0, 0));
+        let sexpr = may_i_sexpr::Sexpr::Atom("hello world".into(), may_i_core::Span::new(0, 0));
         let doc = doc_from_sexpr(&sexpr);
         assert_eq!(pp(&doc, 80), "\"hello world\"");
     }
@@ -619,10 +619,10 @@ mod tests {
     fn from_sexpr_list() {
         let sexpr = may_i_sexpr::Sexpr::List(
             vec![
-                may_i_sexpr::Sexpr::Atom("rule".into(), may_i_sexpr::Span::new(0, 0)),
-                may_i_sexpr::Sexpr::Atom("foo".into(), may_i_sexpr::Span::new(0, 0)),
+                may_i_sexpr::Sexpr::Atom("rule".into(), may_i_core::Span::new(0, 0)),
+                may_i_sexpr::Sexpr::Atom("foo".into(), may_i_core::Span::new(0, 0)),
             ],
-            may_i_sexpr::Span::new(0, 0),
+            may_i_core::Span::new(0, 0),
         );
         let doc = doc_from_sexpr(&sexpr);
         assert_eq!(pp(&doc, 80), "(rule foo)");
