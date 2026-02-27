@@ -498,11 +498,14 @@ fn truncate_unevaluated(doc: &Doc<Option<EvalAnn>>, keep: usize) -> Doc<Option<E
             // Only truncate if the args (children after head) are all unevaluated.
             let args_unevaluated = has_head && children[1..].iter().all(|c| !has_any_visible_annotation(c));
             // Control-flow forms: collapse unevaluated trailing runs to …
+            // Use has_any_annotation (not visible-only) so that nodes with
+            // invisible annotations like CommandMatch are still considered
+            // evaluated and preserved.
             let is_control_flow = matches!(head, Some("cond" | "and" | "or" | "if" | "when" | "unless"));
             if is_control_flow && children.len() > 1 {
                 // Find where the unevaluated tail begins (after the head).
                 let tail_start = children[1..].iter()
-                    .rposition(has_any_visible_annotation)
+                    .rposition(has_any_annotation)
                     .map(|i| i + 2)  // convert to index in children (offset by 1 for head, +1 for past)
                     .unwrap_or(1);   // all unevaluated → tail starts right after head
                 let tail_len = children.len() - tail_start;
@@ -556,6 +559,19 @@ fn dim_unevaluated_inner(doc: Doc<Option<EvalAnn>>) -> (Doc<Option<EvalAnn>>, us
             let dimmed = doc.dimmed || total == 0;
             (Doc { ann: doc.ann, node: DocF::List(children), layout: doc.layout, dimmed }, total)
         }
+    }
+}
+
+/// True if a node or any descendant has any non-None annotation
+/// (the evaluator visited it, regardless of visibility in the trace).
+fn has_any_annotation(doc: &Doc<Option<EvalAnn>>) -> bool {
+    if doc.ann.is_some() {
+        return true;
+    }
+    if let DocF::List(children) = &doc.node {
+        children.iter().any(has_any_annotation)
+    } else {
+        false
     }
 }
 

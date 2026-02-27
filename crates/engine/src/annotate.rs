@@ -95,7 +95,7 @@ pub(crate) fn annotate_rule(
     expanded_args: &[ResolvedArg],
 ) -> (ADoc, Option<Effect>) {
     let cmd_matched = command_matches(cmd_name, &rule.command);
-    let cmd_doc = annotate_command(&rule.command, cmd_matched);
+    let cmd_doc = annotate_command(&rule.command, cmd_name, cmd_matched);
 
     if !cmd_matched {
         let mut cs = vec![atom("rule"), cmd_doc];
@@ -117,7 +117,7 @@ pub(crate) fn annotate_rule(
     (propagate_break_hints(doc), effect)
 }
 
-fn annotate_command(matcher: &CommandMatcher, matched: bool) -> ADoc {
+fn annotate_command(matcher: &CommandMatcher, cmd_name: &str, matched: bool) -> ADoc {
     let ann = EvalAnn::CommandMatch(matched);
     let children = match matcher {
         CommandMatcher::Exact(s) => {
@@ -130,8 +130,17 @@ fn annotate_command(matcher: &CommandMatcher, matched: bool) -> ADoc {
             ]
         }
         CommandMatcher::List(names) => {
-            let mut or_cs = vec![atom("or")];
-            or_cs.extend(names.iter().map(|n| atom(format!("\"{n}\""))));
+            let mut or_cs: Vec<ADoc> = vec![atom("or")];
+            or_cs.extend(names.iter().map(|n| {
+                let a = atom(format!("\"{n}\""));
+                if matched && n == cmd_name {
+                    // Mark the matching entry so it survives truncation
+                    // and shows which command was matched.
+                    Doc { ann: Some(EvalAnn::CommandMatch(true)), ..a }
+                } else {
+                    a
+                }
+            }));
             vec![atom("command"), list(or_cs)]
         }
     };
