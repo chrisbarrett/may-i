@@ -252,7 +252,7 @@ fn render_annotated_rule(
     line: Option<usize>,
     layout: &Layout,
 ) -> Vec<Row> {
-    let doc = truncate_unevaluated(doc, 2);
+    let doc = dim_unevaluated(truncate_unevaluated(doc, 2));
     let fmt = Format {
         width: layout.left_width,
         color: true,
@@ -475,30 +475,82 @@ fn truncate_unevaluated(doc: &Doc<Option<EvalAnn>>, keep: usize) -> Doc<Option<E
             let children: Vec<Doc<Option<EvalAnn>>> = children.iter()
                 .map(|c| truncate_unevaluated(c, keep))
                 .collect();
-            let has_head = children.first().is_some_and(|c| c.as_atom().is_some());
+            let head = children.first().and_then(|c| c.as_atom());
+            let has_head = head.is_some();
             // Only truncate if the args (children after head) are all unevaluated.
-            let args_unevaluated = has_head && children[1..].iter().all(|c| !has_any_annotation(c));
+            let args_unevaluated = has_head && children[1..].iter().all(|c| !has_any_visible_annotation(c));
+            // Control-flow forms: collapse unevaluated trailing runs to …
+            let is_control_flow = matches!(head, Some("cond" | "and" | "or" | "if" | "when" | "unless"));
+            if is_control_flow && children.len() > 1 {
+                // Find where the unevaluated tail begins (after the head).
+                let tail_start = children[1..].iter()
+                    .rposition(has_any_visible_annotation)
+                    .map(|i| i + 2)  // convert to index in children (offset by 1 for head, +1 for past)
+                    .unwrap_or(1);   // all unevaluated → tail starts right after head
+                let tail_len = children.len() - tail_start;
+                if tail_len >= 1 {
+                    let ellipsis = Doc { ann: None, node: DocF::Atom("…".into()), layout: LayoutHint::Auto, dimmed: true };
+                    let mut truncated: Vec<_> = children[..tail_start].to_vec();
+                    truncated.push(ellipsis);
+                    return Doc {
+                        ann: doc.ann.clone(),
+                        node: DocF::List(truncated),
+                        layout: doc.layout,
+                        dimmed: doc.dimmed,
+                    };
+                }
+            }
             if args_unevaluated && children.len() > keep + 2 {
                 let mut truncated = Vec::with_capacity(keep + 3);
                 truncated.push(children[0].clone());
                 truncated.extend(children[1..=keep].iter().cloned());
-                truncated.push(Doc { ann: None, node: DocF::Atom("…".into()), layout: LayoutHint::Auto });
+                truncated.push(Doc { ann: None, node: DocF::Atom("…".into()), layout: LayoutHint::Auto, dimmed: true });
                 truncated.push(children.last().unwrap().clone());
-                Doc { ann: doc.ann.clone(), node: DocF::List(truncated), layout: doc.layout }
+                Doc { ann: doc.ann.clone(), node: DocF::List(truncated), layout: doc.layout, dimmed: doc.dimmed }
             } else {
-                Doc { ann: doc.ann.clone(), node: DocF::List(children), layout: doc.layout }
+                Doc { ann: doc.ann.clone(), node: DocF::List(children), layout: doc.layout, dimmed: doc.dimmed }
             }
         }
     }
 }
 
-/// True if a node or any descendant has a non-None annotation.
-fn has_any_annotation(doc: &Doc<Option<EvalAnn>>) -> bool {
-    if doc.ann.is_some() {
+/// Mark unevaluated subtrees as dimmed via a bottom-up eval count.
+///
+/// Each node's score = (1 if it carries an annotation, else 0) + sum of
+/// children's scores. A list node with score 0 is entirely unevaluated
+/// and gets `dimmed = true`. Atoms are never dimmed directly — they
+/// inherit dimming from their parent list via the PP's format-flag stack.
+fn dim_unevaluated(doc: Doc<Option<EvalAnn>>) -> Doc<Option<EvalAnn>> {
+    dim_unevaluated_inner(doc).0
+}
+
+fn dim_unevaluated_inner(doc: Doc<Option<EvalAnn>>) -> (Doc<Option<EvalAnn>>, usize) {
+    let self_score = usize::from(doc.ann.is_some());
+    match doc.node {
+        DocF::Atom(_) => (doc, self_score),
+        DocF::List(children) => {
+            let mut total = self_score;
+            let children: Vec<_> = children.into_iter().map(|c| {
+                let (c, n) = dim_unevaluated_inner(c);
+                total += n;
+                c
+            }).collect();
+            let dimmed = doc.dimmed || total == 0;
+            (Doc { ann: doc.ann, node: DocF::List(children), layout: doc.layout, dimmed }, total)
+        }
+    }
+}
+
+/// True if a node or any descendant has a visible annotation
+/// (one that produces right-column output in the trace).
+fn has_any_visible_annotation(doc: &Doc<Option<EvalAnn>>) -> bool {
+    if let Some(ann) = &doc.ann
+        && !matches!(ann, EvalAnn::CommandMatch(_) | EvalAnn::ArgsResult(_) | EvalAnn::RuleEffect { .. })
+    {
         return true;
     }
     if let DocF::List(children) = &doc.node {
-        children.iter().any(has_any_annotation)
+        children.iter().any(has_any_visible_annotation)
     } else {
         false
     }

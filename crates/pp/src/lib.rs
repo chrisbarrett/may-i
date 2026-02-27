@@ -119,7 +119,7 @@ pub fn truncate_long_lists(doc: &Doc, keep: usize) -> Doc {
                 truncated.push(children.last().unwrap().clone());
                 Doc::list(truncated)
             } else {
-                Doc { ann: (), node: DocF::List(children), layout: doc.layout }
+                Doc { ann: (), node: DocF::List(children), layout: doc.layout, dimmed: false }
             }
         }
     }
@@ -164,7 +164,7 @@ impl Format {
 /// Pretty-print a Doc with the given format settings.
 pub fn pretty<A>(doc: &Doc<A>, indent: usize, fmt: &Format) -> String {
     let prefix_width = fmt.line_number.map_or(0, line_prefix_width);
-    let content = render(doc, indent + prefix_width, fmt.width, fmt.color);
+    let content = render(doc, indent + prefix_width, fmt.width, fmt.color, false);
 
     match fmt.line_number {
         Some(n) => prepend_line_number(&content, n, fmt.color),
@@ -195,9 +195,11 @@ fn prepend_line_number(content: &str, n: usize, color: bool) -> String {
     result
 }
 
-fn render<A>(doc: &Doc<A>, indent: usize, width: usize, color: bool) -> String {
+fn render<A>(doc: &Doc<A>, indent: usize, width: usize, color: bool, dimmed: bool) -> String {
+    // Inherit dimmed from ancestors; once dimmed, stays dimmed.
+    let dimmed = dimmed || doc.dimmed;
     match &doc.node {
-        DocF::Atom(s) => colorize_atom(s, color),
+        DocF::Atom(s) => render_atom(s, color, dimmed),
         DocF::List(children) if children.is_empty() => {
             if color {
                 format!("{}{}", "(".dimmed(), ")".dimmed())
@@ -208,9 +210,16 @@ fn render<A>(doc: &Doc<A>, indent: usize, width: usize, color: bool) -> String {
         DocF::List(children) => {
             if let Some(head) = children.first().and_then(|c| c.as_atom()) {
                 match head {
-                    "cond" => return render_cond(children, indent, width, color),
+                    "rule" => {
+                        let broken = render_broken(children, indent, width, color, dimmed);
+                        if max_line_width(&broken, indent) <= width {
+                            return broken;
+                        }
+                        return render_all_drop(children, indent, width, color, dimmed);
+                    }
+                    "cond" => return render_cond(children, indent, width, color, dimmed),
                     "if" | "when" | "unless" => {
-                        return render_body_indent(children, indent, width, color);
+                        return render_body_indent(children, indent, width, color, dimmed);
                     }
                     _ => {}
                 }
@@ -220,12 +229,12 @@ fn render<A>(doc: &Doc<A>, indent: usize, width: usize, color: bool) -> String {
             let must_break = doc.layout == LayoutHint::AlwaysBreak
                 || children.iter().any(|c| c.layout == LayoutHint::AlwaysBreak);
             if !must_break {
-                let flat = render_flat(children, color);
+                let flat = render_flat(children, color, dimmed);
                 if !flat.contains('\n') && indent + visible_len(&flat) <= width {
                     return flat;
                 }
             }
-            let broken = render_broken(children, indent, width, color);
+            let broken = render_broken(children, indent, width, color, dimmed);
             // Accept broken layout if every line fits within the width.
             if max_line_width(&broken, indent) <= width {
                 return broken;
@@ -233,23 +242,33 @@ fn render<A>(doc: &Doc<A>, indent: usize, width: usize, color: bool) -> String {
             // Last resort: drop all children to separate lines at indent+2.
             // (Special forms like when/if/unless are routed to
             // render_body_indent above and never reach here.)
-            render_all_drop(children, indent, width, color)
+            render_all_drop(children, indent, width, color, dimmed)
         }
     }
 }
 
-fn render_flat<A>(children: &[Doc<A>], color: bool) -> String {
+/// Render an atom, respecting dimmed state. When dimmed, all atoms
+/// render as dim text regardless of their syntactic role.
+fn render_atom(s: &str, color: bool, dimmed: bool) -> String {
+    if dimmed && color {
+        s.dimmed().to_string()
+    } else {
+        colorize_atom(s, color)
+    }
+}
+
+fn render_flat<A>(children: &[Doc<A>], color: bool, dimmed: bool) -> String {
     let open = if color { "(".dimmed().to_string() } else { "(".into() };
     let close = if color { ")".dimmed().to_string() } else { ")".into() };
-    let parts: Vec<String> = children.iter().map(|c| render(c, 0, usize::MAX, color)).collect();
+    let parts: Vec<String> = children.iter().map(|c| render(c, 0, usize::MAX, color, dimmed)).collect();
     format!("{open}{}{close}", parts.join(" "))
 }
 
-fn render_broken<A>(children: &[Doc<A>], indent: usize, width: usize, color: bool) -> String {
+fn render_broken<A>(children: &[Doc<A>], indent: usize, width: usize, color: bool, dimmed: bool) -> String {
     let open = if color { "(".dimmed().to_string() } else { "(".into() };
     let close = if color { ")".dimmed().to_string() } else { ")".into() };
 
-    let head = render(&children[0], indent + 1, width, color);
+    let head = render(&children[0], indent + 1, width, color, dimmed);
     let align = indent + visible_len(&head) + 2;
 
     let mut lines = Vec::new();
@@ -257,11 +276,11 @@ fn render_broken<A>(children: &[Doc<A>], indent: usize, width: usize, color: boo
     if children.len() == 1 {
         lines.push(format!("{open}{head}{close}"));
     } else {
-        let first_child = render(&children[1], align, width, color);
+        let first_child = render(&children[1], align, width, color, dimmed);
         lines.push(format!("{open}{head} {first_child}"));
 
         for child in &children[2..] {
-            let child_str = render(child, align, width, color);
+            let child_str = render(child, align, width, color, dimmed);
             lines.push(format!("{:pad$}{child_str}", "", pad = align));
         }
         if let Some(last) = lines.last_mut() {
@@ -274,11 +293,11 @@ fn render_broken<A>(children: &[Doc<A>], indent: usize, width: usize, color: boo
 
 /// Render with all children dropped to new lines at indent+2.
 /// Used for AlwaysBreak nodes where uniform child alignment is wanted.
-fn render_all_drop<A>(children: &[Doc<A>], indent: usize, width: usize, color: bool) -> String {
+fn render_all_drop<A>(children: &[Doc<A>], indent: usize, width: usize, color: bool, dimmed: bool) -> String {
     let open = if color { "(".dimmed().to_string() } else { "(".into() };
     let close = if color { ")".dimmed().to_string() } else { ")".into() };
 
-    let head = render(&children[0], indent + 1, width, color);
+    let head = render(&children[0], indent + 1, width, color, dimmed);
     let child_indent = indent + 2;
 
     if children.len() == 1 {
@@ -288,7 +307,7 @@ fn render_all_drop<A>(children: &[Doc<A>], indent: usize, width: usize, color: b
     let mut lines = vec![format!("{open}{head}")];
     for (i, child) in children[1..].iter().enumerate() {
         let is_last = i == children.len() - 2;
-        let rendered = render(child, child_indent, width, color);
+        let rendered = render(child, child_indent, width, color, dimmed);
         if is_last {
             lines.push(format!("{:pad$}{rendered}{close}", "", pad = child_indent));
         } else {
@@ -299,29 +318,31 @@ fn render_all_drop<A>(children: &[Doc<A>], indent: usize, width: usize, color: b
     lines.join("\n")
 }
 
-fn render_cond<A>(children: &[Doc<A>], indent: usize, width: usize, color: bool) -> String {
+fn render_cond<A>(children: &[Doc<A>], indent: usize, width: usize, color: bool, dimmed: bool) -> String {
     let open = if color { "(".dimmed().to_string() } else { "(".into() };
     let close = if color { ")".dimmed().to_string() } else { ")".into() };
 
-    let head = render(&children[0], indent + 1, width, color);
+    let head = render(&children[0], indent + 1, width, color, dimmed);
     let body_indent = indent + 2;
 
     let mut lines = vec![format!("{open}{head}")];
 
     for (i, clause) in children[1..].iter().enumerate() {
         let is_last = i == children.len() - 2;
+        // Inherit dimmed from the clause node itself (e.g. unevaluated branches).
+        let clause_dimmed = dimmed || clause.dimmed;
         match &clause.node {
             DocF::List(parts) if parts.len() >= 2 => {
                 let clause_open = if color { "(".dimmed().to_string() } else { "(".into() };
                 let clause_close = if color { ")".dimmed().to_string() } else { ")".into() };
 
-                let test = render(&parts[0], body_indent + 1, width, color);
+                let test = render(&parts[0], body_indent + 1, width, color, clause_dimmed);
                 lines.push(format!("{:pad$}{clause_open}{test}", "", pad = body_indent));
 
                 let body_col = body_indent + 1;
                 for (j, body_part) in parts[1..].iter().enumerate() {
                     let is_last_part = j == parts.len() - 2;
-                    let rendered = render(body_part, body_col, width, color);
+                    let rendered = render(body_part, body_col, width, color, clause_dimmed);
                     if is_last_part && is_last {
                         lines.push(format!("{:pad$}{rendered}{clause_close}{close}", "", pad = body_col));
                     } else if is_last_part {
@@ -332,7 +353,7 @@ fn render_cond<A>(children: &[Doc<A>], indent: usize, width: usize, color: bool)
                 }
             }
             _ => {
-                let rendered = render(clause, body_indent, width, color);
+                let rendered = render(clause, body_indent, width, color, clause_dimmed);
                 if is_last {
                     lines.push(format!("{:pad$}{rendered}{close}", "", pad = body_indent));
                 } else {
@@ -351,11 +372,11 @@ fn render_cond<A>(children: &[Doc<A>], indent: usize, width: usize, color: bool)
     lines.join("\n")
 }
 
-fn render_body_indent<A>(children: &[Doc<A>], indent: usize, width: usize, color: bool) -> String {
+fn render_body_indent<A>(children: &[Doc<A>], indent: usize, width: usize, color: bool, dimmed: bool) -> String {
     let open = if color { "(".dimmed().to_string() } else { "(".into() };
     let close = if color { ")".dimmed().to_string() } else { ")".into() };
 
-    let head = render(&children[0], indent + 1, width, color);
+    let head = render(&children[0], indent + 1, width, color, dimmed);
     let body_indent = indent + 2;
 
     if children.len() == 1 {
@@ -364,7 +385,7 @@ fn render_body_indent<A>(children: &[Doc<A>], indent: usize, width: usize, color
 
     // Try placing the first child on the same line as the head.
     let inline_col = indent + 1 + visible_len(&head) + 1;
-    let first = render(&children[1], inline_col, width, color);
+    let first = render(&children[1], inline_col, width, color, dimmed);
     let first_multiline = first.contains('\n');
 
     let mut lines = if first_multiline {
@@ -374,7 +395,7 @@ fn render_body_indent<A>(children: &[Doc<A>], indent: usize, width: usize, color
         let head_atom = children[0].as_atom().unwrap_or("");
         let is_predicate_form = matches!(head_atom, "when" | "if" | "unless");
         let first_indent = if is_predicate_form { indent + 4 } else { body_indent };
-        let first = render(&children[1], first_indent, width, color);
+        let first = render(&children[1], first_indent, width, color, dimmed);
         vec![
             format!("{open}{head}"),
             format!("{:pad$}{first}", "", pad = first_indent),
@@ -385,7 +406,7 @@ fn render_body_indent<A>(children: &[Doc<A>], indent: usize, width: usize, color
 
     for (i, child) in children[2..].iter().enumerate() {
         let is_last = i == children.len() - 3;
-        let rendered = render(child, body_indent, width, color);
+        let rendered = render(child, body_indent, width, color, dimmed);
         if is_last {
             lines.push(format!("{:pad$}{rendered}{close}", "", pad = body_indent));
         } else {
@@ -870,5 +891,48 @@ mod tests {
             let leading = line.len() - line.trim_start().len();
             assert!(leading >= 2, "line has too little indent: {result:?}");
         }
+    }
+
+    // ── Dimmed rendering ─────────────────────────────────────────────
+
+    #[test]
+    fn dimmed_atom_renders_dimmed() {
+        with_forced_color(|| {
+            let doc = Doc { dimmed: true, ..a("command") };
+            let result = pp_color(&doc, 80);
+            // Should contain ANSI (dimmed), but not the blue syntax color.
+            assert!(result.contains("\x1b["), "expected ANSI in: {result:?}");
+            assert!(result.contains("command"));
+        });
+    }
+
+    #[test]
+    fn dimmed_inherits_to_children() {
+        with_forced_color(|| {
+            // Parent list is dimmed → children should also render dimmed.
+            let doc = Doc {
+                ann: (),
+                node: DocF::List(vec![a("rule"), a(":allow")]),
+                layout: LayoutHint::Auto,
+                dimmed: true,
+            };
+            let result = pp_color(&doc, 80);
+            assert!(result.contains("rule"));
+            assert!(result.contains(":allow"));
+        });
+    }
+
+    #[test]
+    fn dimmed_only_affects_flagged_subtree() {
+        with_forced_color(|| {
+            // One child dimmed, sibling not — sibling retains syntax color.
+            let dimmed_child = Doc { dimmed: true, ..a("\"dimmed\"") };
+            let normal_child = a("\"bright\"");
+            let doc = l(vec![a("or"), dimmed_child, normal_child]);
+            let result = pp_color(&doc, 80);
+            // Both should be present.
+            assert!(result.contains("dimmed"));
+            assert!(result.contains("bright"));
+        });
     }
 }

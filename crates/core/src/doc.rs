@@ -62,22 +62,24 @@ pub struct Doc<A = ()> {
     pub ann: A,
     pub node: DocF<Doc<A>>,
     pub layout: LayoutHint,
+    /// Render this subtree in dimmed style (for unevaluated content).
+    pub dimmed: bool,
 }
 
 // ── Constructors (unannotated) ─────────────────────────────────────
 
 impl Doc<()> {
     pub fn atom(s: impl Into<String>) -> Self {
-        Doc { ann: (), node: DocF::Atom(s.into()), layout: LayoutHint::Auto }
+        Doc { ann: (), node: DocF::Atom(s.into()), layout: LayoutHint::Auto, dimmed: false }
     }
 
     pub fn list(children: Vec<Doc<()>>) -> Self {
-        Doc { ann: (), node: DocF::List(children), layout: LayoutHint::Auto }
+        Doc { ann: (), node: DocF::List(children), layout: LayoutHint::Auto, dimmed: false }
     }
 
     /// Create a list node that always breaks to separate lines.
     pub fn broken_list(children: Vec<Doc<()>>) -> Self {
-        Doc { ann: (), node: DocF::List(children), layout: LayoutHint::AlwaysBreak }
+        Doc { ann: (), node: DocF::List(children), layout: LayoutHint::AlwaysBreak, dimmed: false }
     }
 }
 
@@ -109,6 +111,7 @@ impl<A> Doc<A> {
             ann: f(self.ann),
             node: self.node.map(|c| c.map(f)),
             layout: self.layout,
+            dimmed: self.dimmed,
         }
     }
 }

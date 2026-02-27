@@ -20,15 +20,15 @@ pub(crate) type ADoc = Doc<Option<EvalAnn>>;
 // ── Constructors ──────────────────────────────────────────────────
 
 fn atom(s: impl Into<String>) -> ADoc {
-    Doc { ann: None, node: DocF::Atom(s.into()), layout: LayoutHint::Auto }
+    Doc { ann: None, node: DocF::Atom(s.into()), layout: LayoutHint::Auto, dimmed: false }
 }
 
 fn list(children: Vec<ADoc>) -> ADoc {
-    Doc { ann: None, node: DocF::List(children), layout: LayoutHint::Auto }
+    Doc { ann: None, node: DocF::List(children), layout: LayoutHint::Auto, dimmed: false }
 }
 
 fn ann_list(ann: EvalAnn, children: Vec<ADoc>) -> ADoc {
-    Doc { ann: Some(ann), node: DocF::List(children), layout: LayoutHint::Auto }
+    Doc { ann: Some(ann), node: DocF::List(children), layout: LayoutHint::Auto, dimmed: false }
 }
 
 /// Convert an unannotated Doc<()> to Doc<Option<EvalAnn>> (all None).
@@ -52,7 +52,7 @@ fn propagate_break_hints(doc: ADoc) -> ADoc {
             } else {
                 doc.layout
             };
-            Doc { ann: doc.ann, node: DocF::List(children), layout }
+            Doc { ann: doc.ann, node: DocF::List(children), layout, dimmed: false }
         }
     }
 }
@@ -113,7 +113,7 @@ pub(crate) fn annotate_rule(
         decision: e.decision,
         reason: e.reason.clone(),
     });
-    let doc = Doc { ann, node: DocF::List(cs), layout: LayoutHint::Auto };
+    let doc = Doc { ann, node: DocF::List(cs), layout: LayoutHint::Auto, dimmed: false };
     (propagate_break_hints(doc), effect)
 }
 
@@ -154,15 +154,15 @@ fn annotate_body(
                 EvalAnn::ArgsResult(matched),
                 vec![atom("args"), matcher_doc],
             );
-            let effect_doc = annotate_effect(effect);
-            let final_effect = if matched {
-                if let MatchOutcome::Matched(eff) = outcome {
-                    Some(eff)
+            let (effect_doc, final_effect) = if matched {
+                let eff = if let MatchOutcome::Matched(eff) = outcome {
+                    eff
                 } else {
-                    Some(effect.clone())
-                }
+                    effect.clone()
+                };
+                (annotate_effect(&eff), Some(eff))
             } else {
-                None
+                (unannotate_effect(effect), None)
             };
             (vec![args_doc, effect_doc], final_effect)
         }
@@ -198,6 +198,18 @@ fn annotate_effect(effect: &Effect) -> ADoc {
         },
         cs,
     )
+}
+
+/// Build an unannotated effect node (for display when the effect was never reached).
+fn unannotate_effect(effect: &Effect) -> ADoc {
+    let mut cs = vec![
+        atom("effect"),
+        atom(format!(":{}", effect.decision)),
+    ];
+    if let Some(r) = &effect.reason {
+        cs.push(atom(format!("\"{r}\"")));
+    }
+    list(cs)
 }
 
 // ── Matcher annotation ────────────────────────────────────────────
@@ -309,6 +321,7 @@ fn annotate_matcher_cond(
             ann: branch_ann,
             node: DocF::List(vec![matcher_doc, effect_doc]),
             layout: LayoutHint::Auto,
+            dimmed: false,
         });
         if matched {
             // Remaining branches unannotated
@@ -402,6 +415,7 @@ fn annotate_positional(
             ann: Some(EvalAnn::ExactRemainder { count: remainder }),
             node: DocF::List(cs),
             layout: LayoutHint::Auto,
+            dimmed: false,
         };
         return (doc, MatchOutcome::NoMatch);
     }
@@ -527,6 +541,7 @@ fn annotate_expr_arg(expr: &Expr, arg: &ResolvedArg) -> (ADoc, MatchOutcome) {
                 ann: Some(EvalAnn::ExprVsArg { arg: arg_str, matched }),
                 node: DocF::List(vec![atom("not"), inner_doc]),
                 layout: LayoutHint::Auto,
+                dimmed: false,
             };
             if !matched {
                 return (doc, MatchOutcome::NoMatch);
