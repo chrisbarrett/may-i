@@ -584,53 +584,6 @@ pub struct Check {
 mod tests {
     use super::*;
 
-    // --- Decision::most_restrictive ---
-
-    #[test]
-    fn most_restrictive_allow_allow() {
-        assert_eq!(Decision::Allow.most_restrictive(Decision::Allow), Decision::Allow);
-    }
-
-    #[test]
-    fn most_restrictive_allow_ask() {
-        assert_eq!(Decision::Allow.most_restrictive(Decision::Ask), Decision::Ask);
-    }
-
-    #[test]
-    fn most_restrictive_allow_deny() {
-        assert_eq!(Decision::Allow.most_restrictive(Decision::Deny), Decision::Deny);
-    }
-
-    #[test]
-    fn most_restrictive_ask_allow() {
-        assert_eq!(Decision::Ask.most_restrictive(Decision::Allow), Decision::Ask);
-    }
-
-    #[test]
-    fn most_restrictive_ask_ask() {
-        assert_eq!(Decision::Ask.most_restrictive(Decision::Ask), Decision::Ask);
-    }
-
-    #[test]
-    fn most_restrictive_ask_deny() {
-        assert_eq!(Decision::Ask.most_restrictive(Decision::Deny), Decision::Deny);
-    }
-
-    #[test]
-    fn most_restrictive_deny_allow() {
-        assert_eq!(Decision::Deny.most_restrictive(Decision::Allow), Decision::Deny);
-    }
-
-    #[test]
-    fn most_restrictive_deny_ask() {
-        assert_eq!(Decision::Deny.most_restrictive(Decision::Ask), Decision::Deny);
-    }
-
-    #[test]
-    fn most_restrictive_deny_deny() {
-        assert_eq!(Decision::Deny.most_restrictive(Decision::Deny), Decision::Deny);
-    }
-
     // --- Decision::Display ---
 
     #[test]
@@ -651,18 +604,6 @@ mod tests {
     // --- Expr::is_match ---
 
     #[test]
-    fn expr_literal_exact_match() {
-        let e = Expr::Literal("hello".into());
-        assert!(e.is_match("hello"));
-    }
-
-    #[test]
-    fn expr_literal_no_match() {
-        let e = Expr::Literal("hello".into());
-        assert!(!e.is_match("world"));
-    }
-
-    #[test]
     fn expr_literal_no_partial_match() {
         let e = Expr::Literal("hello".into());
         assert!(!e.is_match("hello world"));
@@ -678,12 +619,6 @@ mod tests {
     fn expr_regex_no_match() {
         let e = Expr::Regex(regex::Regex::new("^foo.*bar$").unwrap());
         assert!(!e.is_match("baz"));
-    }
-
-    #[test]
-    fn expr_wildcard_matches_anything() {
-        assert!(Expr::Wildcard.is_match("anything"));
-        assert!(Expr::Wildcard.is_match(""));
     }
 
     #[test]

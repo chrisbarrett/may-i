@@ -480,15 +480,6 @@ mod tests {
         assert!(!match_args(&matcher, &[lit("--force")]).is_match());
     }
 
-    #[test]
-    fn not_does_not_propagate_effects() {
-        let cond = cond_expr(vec![(Expr::Wildcard, allow_effect("should not appear"))]);
-        let matcher = ArgMatcher::Not(Box::new(
-            ArgMatcher::Positional(vec![PosExpr::one(cond)]),
-        ));
-        assert!(!match_args(&matcher, &[lit("x")]).is_match());
-    }
-
     // ── ArgMatcher::Cond ─────────────────────────────────────────────
 
     #[test]

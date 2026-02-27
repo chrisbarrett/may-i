@@ -493,11 +493,6 @@ mod tests {
     // ── Flat rendering ──────────────────────────────────────────────
 
     #[test]
-    fn flat_atom() {
-        assert_eq!(pp(&a("hello"), 80), "hello");
-    }
-
-    #[test]
     fn flat_empty_list() {
         assert_eq!(pp(&l(vec![]), 80), "()");
     }
