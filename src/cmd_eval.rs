@@ -15,7 +15,8 @@ pub fn cmd_eval(
     json_mode: bool,
     config_path: Option<&std::path::Path>,
 ) -> miette::Result<()> {
-    let config = config::load(config_path)?;
+    let config_file = config::resolve_path(config_path)?;
+    let config = config::load(&config_file)?;
 
     if json_mode {
         let result = engine::evaluate(command, &config);
@@ -50,6 +51,8 @@ pub fn cmd_eval(
             }
         }
         println!();
+        let display_path = output::shorten_home(&config_file);
+        println!("  {} {}", "config:".dimmed(), display_path.dimmed());
     }
 
     Ok(())

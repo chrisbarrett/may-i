@@ -508,6 +508,18 @@ fn colorize_effect_sexpr(s: &str) -> String {
         .replace(":deny", &":deny".red().bold().to_string())
 }
 
+// ── Path display ───────────────────────────────────────────────────
+
+/// Replace the home directory prefix with `~` for display.
+pub fn shorten_home(path: &std::path::Path) -> String {
+    if let Ok(home) = std::env::var("HOME")
+        && let Ok(rest) = path.strip_prefix(&home)
+    {
+        return format!("~/{}", rest.display());
+    }
+    path.display().to_string()
+}
+
 // ── JSON output ────────────────────────────────────────────────────
 
 /// Serialize trace steps for JSON output.

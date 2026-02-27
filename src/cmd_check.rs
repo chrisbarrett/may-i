@@ -10,7 +10,8 @@ use crate::output;
 use crate::output::print_trace;
 
 pub fn cmd_check(json_mode: bool, verbose: bool, config_path: Option<&std::path::Path>) -> miette::Result<()> {
-    let config = config::load(config_path)?;
+    let config_file = config::resolve_path(config_path)?;
+    let config = config::load(&config_file)?;
     let results = engine::run_checks(&config);
 
     let passed = results.iter().filter(|r| r.passed).count();
@@ -67,7 +68,8 @@ pub fn cmd_check(json_mode: bool, verbose: bool, config_path: Option<&std::path:
             // Location
             let loc = r.location.as_deref().unwrap_or("<unknown>");
             let (file, line_col) = loc.split_once(':').unwrap_or((loc, ""));
-            print!("{}", file.red());
+            let short_file = output::shorten_home(std::path::Path::new(file));
+            print!("{}", short_file.red());
             if !line_col.is_empty() {
                 print!("{}", format!(":{line_col}").dimmed());
             }
@@ -96,6 +98,9 @@ pub fn cmd_check(json_mode: bool, verbose: bool, config_path: Option<&std::path:
         println!("\n{}\n", "Summary".bold());
         let icon = if failed > 0 { "✗".red() } else { "✓".green() };
         println!("  {icon} {} passed, {} failed", passed.to_string().bold(), failed.to_string().bold());
+        println!();
+        let display_path = output::shorten_home(&config_file);
+        println!("  {} {}", "config:".dimmed(), display_path.dimmed());
     }
 
     if failed > 0 {

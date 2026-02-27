@@ -3,4 +3,4 @@ pub(crate) mod io;
 pub mod parse;
 
 pub use errors::ConfigError;
-pub use io::load;
+pub use io::{load, resolve_path};

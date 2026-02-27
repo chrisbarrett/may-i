@@ -34,7 +34,8 @@ pub fn cmd_hook(config_path: Option<&std::path::Path>) -> miette::Result<()> {
         .and_then(|v| v.as_str())
         .ok_or_else(|| miette::miette!("Missing tool_input.command"))?;
 
-    let config = config::load(config_path)?;
+    let config_file = config::resolve_path(config_path)?;
+    let config = config::load(&config_file)?;
     let result = engine::evaluate(command, &config);
 
     let response = serde_json::json!({
