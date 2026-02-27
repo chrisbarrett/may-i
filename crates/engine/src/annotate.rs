@@ -424,6 +424,22 @@ fn annotate_positional(
         Some(eff) => MatchOutcome::Matched(eff),
         None => MatchOutcome::MatchedNoEffect,
     };
+
+    if exact {
+        let pattern_strs: Vec<String> = patterns.iter()
+            .map(|p| p.expr.to_string())
+            .collect();
+        let arg_strs: Vec<String> = positional.iter()
+            .map(arg_to_string)
+            .collect();
+        let matched = outcome.is_match();
+        let doc = ann_list(
+            EvalAnn::ExactArgs { patterns: pattern_strs, args: arg_strs, matched },
+            cs,
+        );
+        return (doc, outcome);
+    }
+
     (list(cs), outcome)
 }
 

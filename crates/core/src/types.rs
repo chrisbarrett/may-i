@@ -557,6 +557,8 @@ pub enum EvalAnn {
     CondBranch { decision: Decision },
     /// A conditional else/fallback was selected.
     CondElse { decision: Decision },
+    /// Exact positional vector equality: patterns vs actual args.
+    ExactArgs { patterns: Vec<String>, args: Vec<String>, matched: bool },
     /// Exact positional had leftover arguments.
     ExactRemainder { count: usize },
     /// Overall args match result.

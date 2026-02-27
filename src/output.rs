@@ -375,6 +375,24 @@ fn format_annotation(doc: &Doc<Option<EvalAnn>>, ann: &EvalAnn) -> Option<(Strin
         EvalAnn::CondElse { decision } => {
             Some(("else".into(), format!("→ :{decision}")))
         }
+        EvalAnn::ExactArgs { patterns, args, matched } => {
+            let needle = node_text(doc);
+            // Find first mismatch; ellipsize remaining elements in both vectors.
+            let mismatch = patterns.iter().zip(args.iter())
+                .position(|(p, a)| p != a);
+            let (show_pats, show_args) = match mismatch {
+                Some(i) => (
+                    ellipsize_after(patterns, i),
+                    ellipsize_after(args, i),
+                ),
+                None => (
+                    format!("[{}]", patterns.join(", ")),
+                    format!("[{}]", args.join(", ")),
+                ),
+            };
+            let arrow = if *matched { "→ yes" } else { "→ no" };
+            Some((needle, format!("{show_args} = {show_pats} {arrow}")))
+        }
         EvalAnn::ExactRemainder { count } => {
             Some((String::new(), format!("{count} extra args")))
         }
@@ -556,6 +574,18 @@ fn has_any_visible_annotation(doc: &Doc<Option<EvalAnn>>) -> bool {
     }
 }
 
+/// Format a vector as `[a, b, …]`, keeping elements up to index `i`
+/// and ellipsizing the rest if `i` is not the last element.
+fn ellipsize_after(items: &[String], i: usize) -> String {
+    if i >= items.len().saturating_sub(1) {
+        format!("[{}]", items.join(", "))
+    } else {
+        let mut parts: Vec<&str> = items[..=i].iter().map(|s| s.as_str()).collect();
+        parts.push("…");
+        format!("[{}]", parts.join(", "))
+    }
+}
+
 /// Truncate a list for display, keeping first few and last.
 fn truncate_list(items: &[String], max: usize) -> String {
     if items.len() <= max {
@@ -704,6 +734,12 @@ fn eval_ann_to_json(ann: &EvalAnn) -> serde_json::Value {
         EvalAnn::CondElse { decision } => serde_json::json!({
             "type": "cond_else",
             "decision": decision.to_string(),
+        }),
+        EvalAnn::ExactArgs { patterns, args, matched } => serde_json::json!({
+            "type": "exact_args",
+            "patterns": patterns,
+            "args": args,
+            "matched": matched,
         }),
         EvalAnn::ExactRemainder { count } => serde_json::json!({
             "type": "exact_remainder",
