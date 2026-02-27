@@ -1,8 +1,8 @@
 // Shared display helpers for trace output.
 
 use colored::Colorize;
-use may_i_core::TraceStep;
-use may_i_pp::{Format, colorize_atom, parse_sexpr, pretty, visible_len};
+use may_i_core::{Doc, DocF, EvalAnn, TraceEntry};
+use may_i_pp::{Format, colorize_atom, pretty, visible_len};
 
 // ── Layout geometry ────────────────────────────────────────────────
 
@@ -164,37 +164,39 @@ pub fn print_separator(indent: &str, label: Option<(&str, usize)>) {
 
 // ── Trace rendering ────────────────────────────────────────────────
 
-/// Group flat trace steps into per-rule blocks, then render each as a
-/// two-column s-expression: left = rule structure, right = eval result.
-pub fn print_trace(steps: &[TraceStep], indent: &str) {
+/// Render a trace as two-column output: left = rule structure, right = eval.
+pub fn print_trace(entries: &[TraceEntry], indent: &str) {
     let layout = detect_layout();
-    let blocks = group_into_rule_blocks(steps);
-
-    // Pass 1: build all elements.
     let mut elements: Vec<Element> = Vec::new();
     let mut first = true;
 
-    for block in &blocks {
-        if let Some(TraceStep::SegmentHeader { command, decision }) = block.steps.first() {
-            if !first {
-                elements.push(Element::Blank);
-                elements.push(Element::Blank);
+    for entry in entries {
+        match entry {
+            TraceEntry::SegmentHeader { command, decision } => {
+                if !first {
+                    elements.push(Element::Blank);
+                    elements.push(Element::Blank);
+                }
+                elements.push(segment_header_element(command, *decision));
             }
-            elements.push(segment_header_element(command, *decision));
-            let rest = RuleBlock { steps: &block.steps[1..] };
-            if !rest.steps.is_empty() {
-                elements.push(Element::Table(render_block(&rest, &layout)));
+            TraceEntry::Rule { doc, line } => {
+                if !first {
+                    elements.push(Element::Blank);
+                }
+                let rows = render_annotated_rule(doc, *line, &layout);
+                if !rows.is_empty() {
+                    elements.push(Element::Table(rows));
+                }
             }
-        } else {
-            if !first {
-                elements.push(Element::Blank);
+            TraceEntry::DefaultAsk { .. } => {
+                elements.push(Element::Table(vec![
+                    Row::trace("", 0, "→ :ask (default)"),
+                ]));
             }
-            elements.push(Element::Table(render_block(block, &layout)));
         }
         first = false;
     }
 
-    // Pass 2: render.
     render_elements(indent, &elements);
 }
 
@@ -210,139 +212,43 @@ fn segment_header_element(command: &str, decision: may_i_core::Decision) -> Elem
     Element::Separator { label: Some((label, label_width)) }
 }
 
-/// A block of trace steps belonging to a single rule evaluation (or default).
-struct RuleBlock<'a> {
-    steps: &'a [TraceStep],
-}
+// ── Annotated Doc renderer ─────────────────────────────────────────
 
-/// Split trace steps at Rule boundaries.
-fn group_into_rule_blocks(steps: &[TraceStep]) -> Vec<RuleBlock<'_>> {
-    let mut blocks = Vec::new();
-    let mut start = 0;
-
-    for (i, step) in steps.iter().enumerate() {
-        if matches!(step, TraceStep::Rule { .. } | TraceStep::SegmentHeader { .. }) && i > start {
-            blocks.push(RuleBlock { steps: &steps[start..i] });
-            start = i;
-        }
-    }
-    if start < steps.len() {
-        blocks.push(RuleBlock { steps: &steps[start..] });
-    }
-    blocks
-}
-
-/// Render a rule block into rows.
-fn render_block(block: &RuleBlock<'_>, layout: &Layout) -> Vec<Row> {
-    let mut matching_steps: Vec<&TraceStep> = Vec::new();
-    let mut rule_label = String::new();
-    let mut rule_line: Option<usize> = None;
-    let mut outcome: Option<&TraceStep> = None;
-    let mut matched = false;
-
-    for step in block.steps {
-        match step {
-            TraceStep::Rule { label, line } => {
-                rule_label = label.clone();
-                rule_line = *line;
-            }
-            TraceStep::ArgsMatched => { matched = true; }
-            TraceStep::ArgsNotMatched => { matched = false; }
-            TraceStep::Effect { .. } | TraceStep::DefaultAsk => {
-                outcome = Some(step);
-            }
-            _ => {
-                matching_steps.push(step);
-            }
-        }
-    }
-
-    if matching_steps.is_empty() {
-        render_simple_rule(&rule_label, rule_line, outcome, layout)
-    } else {
-        render_rule_with_steps(&rule_label, rule_line, &matching_steps, outcome, matched, layout)
-    }
-}
-
-/// Render a rule with no matching steps (immediate effect or default).
-fn render_simple_rule(
-    rule_label: &str,
-    rule_line: Option<usize>,
-    outcome: Option<&TraceStep>,
+/// Render an annotated rule Doc into two-column rows.
+fn render_annotated_rule(
+    doc: &Doc<Option<EvalAnn>>,
+    line: Option<usize>,
     layout: &Layout,
 ) -> Vec<Row> {
-    let mut rows = Vec::new();
-
-    if rule_label.is_empty() {
-        if let Some(out) = outcome {
-            rows.push(Row::trace("", 0, format_outcome(out)));
-        }
-        return rows;
-    }
-
-    let right = outcome.map(format_outcome).unwrap_or_default();
-
-    let doc = parse_sexpr(rule_label);
     let fmt = Format {
         width: layout.left_width,
         color: true,
-        line_number: rule_line,
+        line_number: line,
     };
-    let rendered = pretty(&doc, 0, &fmt);
+    let rendered = pretty(doc, 0, &fmt);
 
-    let rendered_lines: Vec<&str> = rendered.lines().collect();
-    for (i, sline) in rendered_lines.iter().enumerate() {
-        let is_last = i == rendered_lines.len() - 1;
-        rows.push(Row::trace(
-            sline.to_string(),
-            visible_len(sline),
-            if is_last { right.clone() } else { String::new() },
-        ));
-    }
+    // Collect annotations in tree-walk order.
+    let annotations = collect_annotations(doc);
 
-    rows
-}
-
-/// Render a rule with matching steps, using forward-scanning text matching
-/// to align right-column annotations with the corresponding rendered lines.
-fn render_rule_with_steps(
-    rule_label: &str,
-    rule_line: Option<usize>,
-    matching_steps: &[&TraceStep],
-    outcome: Option<&TraceStep>,
-    matched: bool,
-    layout: &Layout,
-) -> Vec<Row> {
-    let annotations: Vec<String> = matching_steps.iter()
-        .map(|s| format_matching_step_right(s))
-        .collect();
-
-    let doc = parse_sexpr(rule_label);
-    let fmt = Format {
-        width: layout.left_width,
-        color: true,
-        line_number: rule_line,
-    };
-    let rendered = pretty(&doc, 0, &fmt);
+    // Find the outcome (RuleEffect on the top-level node).
+    let outcome = extract_outcome(doc);
+    let matched = has_args_match(doc);
 
     let rendered_lines: Vec<&str> = rendered.lines().collect();
     let stripped_lines: Vec<String> = rendered_lines.iter().map(|l| strip_ansi(l)).collect();
 
-    // Forward-scan: match each annotation to a rendered line by searching
-    // for the step's expression text in the ANSI-stripped output.
+    // Forward-scan: match each annotation to a rendered line.
     let mut line_annotations: Vec<String> = vec![String::new(); rendered_lines.len()];
     let mut overflow: Vec<String> = Vec::new();
     let mut search_from = 0;
 
-    for (step, ann) in matching_steps.iter().zip(annotations.iter()) {
-        if let Some(needle) = step_search_needle(step) {
-            if let Some(idx) = find_line(&stripped_lines, &needle, &mut search_from) {
-                line_annotations[idx] = ann.clone();
-            } else {
-                overflow.push(ann.clone());
-            }
+    for (needle, right_text) in &annotations {
+        if needle.is_empty() {
+            overflow.push(right_text.clone());
+        } else if let Some(idx) = find_line(&stripped_lines, needle, &mut search_from) {
+            line_annotations[idx] = right_text.clone();
         } else {
-            overflow.push(ann.clone());
+            overflow.push(right_text.clone());
         }
     }
 
@@ -351,37 +257,131 @@ fn render_rule_with_steps(
         Row::trace(sline.to_string(), visible_len(sline), line_annotations[i].clone())
     }).collect();
 
-    // Overflow: annotations that couldn't be aligned to a rendered line.
+    // Overflow annotations.
     for ann in &overflow {
         rows.push(Row::trace("", 0, ann.clone()));
     }
 
+    // Append outcome on the last line or a new line.
     if let Some(out) = outcome
         && matched
     {
-        rows.push(Row::trace("", 0, format_outcome(out)));
+        rows.push(Row::trace("", 0, out));
     }
 
     rows
 }
 
-/// Extract a search needle from a trace step for aligning annotations
-/// with rendered s-expression lines.
-fn step_search_needle(step: &TraceStep) -> Option<String> {
-    match step {
-        TraceStep::ExprVsArg { expr, .. } => Some(expr.clone()),
-        TraceStep::Quantifier { label, .. } => Some(label.clone()),
-        TraceStep::Missing { label } => Some(label.clone()),
-        TraceStep::Anywhere { label, .. } => Some(label.clone()),
-        TraceStep::ExprCondBranch { label, .. } => Some(label.clone()),
-        TraceStep::MatcherCondBranch { decision } => Some(format!("(effect :{decision})")),
-        TraceStep::MatcherCondElse { .. } => Some("(else".into()),
+/// Collect (search_needle, right_column_text) pairs from annotated Doc nodes.
+fn collect_annotations(doc: &Doc<Option<EvalAnn>>) -> Vec<(String, String)> {
+    let mut result = Vec::new();
+    collect_annotations_inner(doc, &mut result);
+    result
+}
+
+fn collect_annotations_inner(doc: &Doc<Option<EvalAnn>>, out: &mut Vec<(String, String)>) {
+    if let Some(ann) = &doc.ann
+        && let Some(pair) = format_annotation(doc, ann)
+    {
+        out.push(pair);
+    }
+    if let DocF::List(children) = &doc.node {
+        for child in children {
+            collect_annotations_inner(child, out);
+        }
+    }
+}
+
+/// Format an annotation into (search_needle, right_column_text).
+/// Returns None for annotations that don't produce right-column output.
+fn format_annotation(doc: &Doc<Option<EvalAnn>>, ann: &EvalAnn) -> Option<(String, String)> {
+    match ann {
+        EvalAnn::CommandMatch(_) => None,
+        EvalAnn::ArgsResult(_) => None,
+        EvalAnn::RuleEffect { .. } => None, // handled as outcome
+        EvalAnn::DefaultAsk => None,
+
+        EvalAnn::ExprVsArg { arg, matched } => {
+            let needle = node_text(doc);
+            let op = if is_regex_node(doc) { "~" } else { "=" };
+            let arrow = if *matched { "→ yes" } else { "→ no" };
+            let right = format!("{arg} {op} {needle} {arrow}");
+            Some((needle, right))
+        }
+        EvalAnn::Quantifier { count, matched } => {
+            let needle = node_text(doc);
+            if *matched {
+                Some((needle, format!("{count} matched → yes")))
+            } else {
+                Some((needle, "→ no".into()))
+            }
+        }
+        EvalAnn::Missing => {
+            Some((node_text(doc), "→ missing".into()))
+        }
+        EvalAnn::Anywhere { args, matched } => {
+            let pattern = node_text(doc);
+            let truncated = truncate_list(args, 4);
+            let arrow = if *matched { "→ yes" } else { "→ no" };
+            Some((pattern.clone(), format!("{pattern} ∈ {{{truncated}}} {arrow}")))
+        }
+        EvalAnn::CondBranch { decision } => {
+            let needle = node_text(doc);
+            Some((needle, format!("→ :{decision}")))
+        }
+        EvalAnn::CondElse { decision } => {
+            Some(("else".into(), format!("→ :{decision}")))
+        }
+        EvalAnn::ExactRemainder { count } => {
+            Some((String::new(), format!("{count} extra args")))
+        }
+    }
+}
+
+/// Get the plain text of a Doc node (for search needle matching).
+fn node_text(doc: &Doc<Option<EvalAnn>>) -> String {
+    doc.fold(&|node, _ann: &Option<EvalAnn>| match node {
+        DocF::Atom(s) => s,
+        DocF::List(cs) => format!("({})", cs.join(" ")),
+    })
+}
+
+/// Check if a Doc node is a regex form like `(regex "...")`.
+fn is_regex_node(doc: &Doc<Option<EvalAnn>>) -> bool {
+    doc.head_atom() == Some("regex")
+}
+
+/// Extract the rule-level outcome annotation.
+fn extract_outcome(doc: &Doc<Option<EvalAnn>>) -> Option<String> {
+    match &doc.ann {
+        Some(EvalAnn::RuleEffect { decision, reason }) => {
+            Some(match reason {
+                Some(r) => format!("→ :{decision} \"{r}\""),
+                None => format!("→ :{decision}"),
+            })
+        }
         _ => None,
     }
 }
 
+/// Check if the rule's args matched (look for ArgsResult(true) annotation).
+fn has_args_match(doc: &Doc<Option<EvalAnn>>) -> bool {
+    doc.fold(&|node, ann: &Option<EvalAnn>| {
+        if matches!(ann, Some(EvalAnn::ArgsResult(true))) {
+            return true;
+        }
+        // If no ArgsResult at all and there's a RuleEffect, it's a simple rule (always matched).
+        if matches!(ann, Some(EvalAnn::RuleEffect { .. })) {
+            return true;
+        }
+        match node {
+            DocF::List(children) => children.iter().any(|c| *c),
+            DocF::Atom(_) => false,
+        }
+    })
+}
+
 /// Forward-scan stripped lines for a needle, advancing the search position.
-/// Falls back to matching the first token for multi-line expressions.
 fn find_line(stripped_lines: &[String], needle: &str, search_from: &mut usize) -> Option<usize> {
     // Try exact substring match.
     for (i, line) in stripped_lines.iter().enumerate().skip(*search_from) {
@@ -419,47 +419,6 @@ fn strip_ansi(s: &str) -> String {
     result
 }
 
-/// Format the right-column annotation for a matching step.
-fn format_matching_step_right(step: &TraceStep) -> String {
-    match step {
-        TraceStep::ExprVsArg { expr, arg, matched } => {
-            let arrow = if *matched { "→ yes" } else { "→ no" };
-            if expr.starts_with("(regex ") {
-                format!("{arg} ~ {expr} {arrow}")
-            } else {
-                format!("{arg} = {expr} {arrow}")
-            }
-        }
-        TraceStep::Quantifier { count, matched, .. } => {
-            if *matched {
-                format!("{count} matched → yes")
-            } else {
-                "→ no".into()
-            }
-        }
-        TraceStep::Missing { .. } => "→ missing".into(),
-        TraceStep::Anywhere { label, args, matched } => {
-            let pattern = extract_anywhere_pattern(label);
-            let truncated = truncate_list(args, 4);
-            let arrow = if *matched { "→ yes" } else { "→ no" };
-            format!("{pattern} ∈ {{{truncated}}} {arrow}")
-        }
-        TraceStep::ExprCondBranch { decision, .. } => format!("→ :{decision}"),
-        TraceStep::MatcherCondBranch { decision } => format!("→ :{decision}"),
-        TraceStep::MatcherCondElse { decision } => format!("→ :{decision}"),
-        TraceStep::ExactRemainder { count } => format!("{count} extra args"),
-        _ => String::new(),
-    }
-}
-
-/// Extract the pattern from an anywhere label like `(anywhere "--hard")`.
-fn extract_anywhere_pattern(label: &str) -> &str {
-    label
-        .strip_prefix("(anywhere ")
-        .and_then(|s| s.strip_suffix(')'))
-        .unwrap_or(label)
-}
-
 /// Truncate a list for display, keeping first few and last.
 fn truncate_list(items: &[String], max: usize) -> String {
     if items.len() <= max {
@@ -469,20 +428,6 @@ fn truncate_list(items: &[String], max: usize) -> String {
         parts.push("…");
         parts.push(items.last().unwrap());
         parts.join(", ")
-    }
-}
-
-/// Format an outcome step for the right column.
-fn format_outcome(step: &TraceStep) -> String {
-    match step {
-        TraceStep::Effect { decision, reason } => {
-            match reason {
-                Some(r) => format!("→ :{decision} \"{r}\""),
-                None => format!("→ :{decision}"),
-            }
-        }
-        TraceStep::DefaultAsk => "→ :ask (default)".into(),
-        _ => String::new(),
     }
 }
 
@@ -552,67 +497,102 @@ pub fn shorten_home(path: &std::path::Path) -> String {
 
 // ── JSON output ────────────────────────────────────────────────────
 
-/// Serialize trace steps for JSON output.
-pub fn trace_to_json(steps: &[TraceStep]) -> Vec<serde_json::Value> {
-    steps.iter().map(|step| {
-        match step {
-            TraceStep::Rule { label, line } => serde_json::json!({
-                "type": "rule",
-                "label": label,
-                "line": line,
-            }),
-            TraceStep::ExprVsArg { expr, arg, matched } => serde_json::json!({
-                "type": "expr_vs_arg",
-                "expr": expr,
-                "arg": arg,
-                "matched": matched,
-            }),
-            TraceStep::Quantifier { label, count, matched } => serde_json::json!({
-                "type": "quantifier",
-                "label": label,
-                "count": count,
-                "matched": matched,
-            }),
-            TraceStep::Missing { label } => serde_json::json!({
-                "type": "missing",
-                "label": label,
-            }),
-            TraceStep::ExprCondBranch { label, decision } => serde_json::json!({
-                "type": "expr_cond_branch",
-                "label": label,
-                "decision": decision.to_string(),
-            }),
-            TraceStep::MatcherCondBranch { decision } => serde_json::json!({
-                "type": "matcher_cond_branch",
-                "decision": decision.to_string(),
-            }),
-            TraceStep::MatcherCondElse { decision } => serde_json::json!({
-                "type": "matcher_cond_else",
-                "decision": decision.to_string(),
-            }),
-            TraceStep::Anywhere { label, args, matched } => serde_json::json!({
-                "type": "anywhere",
-                "label": label,
-                "args": args,
-                "matched": matched,
-            }),
-            TraceStep::ExactRemainder { count } => serde_json::json!({
-                "type": "exact_remainder",
-                "count": count,
-            }),
-            TraceStep::ArgsMatched => serde_json::json!({ "type": "args_matched" }),
-            TraceStep::ArgsNotMatched => serde_json::json!({ "type": "args_not_matched" }),
-            TraceStep::Effect { decision, reason } => serde_json::json!({
-                "type": "effect",
-                "decision": decision.to_string(),
-                "reason": reason,
-            }),
-            TraceStep::DefaultAsk => serde_json::json!({ "type": "default_ask" }),
-            TraceStep::SegmentHeader { command, decision } => serde_json::json!({
+/// Serialize trace entries for JSON output.
+pub fn trace_to_json(entries: &[TraceEntry]) -> Vec<serde_json::Value> {
+    entries.iter().map(|entry| {
+        match entry {
+            TraceEntry::SegmentHeader { command, decision } => serde_json::json!({
                 "type": "segment_header",
                 "command": command,
                 "decision": decision.to_string(),
             }),
+            TraceEntry::DefaultAsk { reason } => serde_json::json!({
+                "type": "default_ask",
+                "reason": reason,
+            }),
+            TraceEntry::Rule { doc, line } => {
+                let mut annotations = Vec::new();
+                collect_json_annotations(doc, &mut annotations);
+                serde_json::json!({
+                    "type": "rule",
+                    "line": line,
+                    "structure": doc_to_json(doc),
+                    "annotations": annotations,
+                })
+            }
         }
     }).collect()
+}
+
+/// Collect annotations from a Doc tree for JSON serialization.
+fn collect_json_annotations(doc: &Doc<Option<EvalAnn>>, out: &mut Vec<serde_json::Value>) {
+    if let Some(ann) = &doc.ann {
+        out.push(eval_ann_to_json(ann));
+    }
+    if let DocF::List(children) = &doc.node {
+        for child in children {
+            collect_json_annotations(child, out);
+        }
+    }
+}
+
+fn eval_ann_to_json(ann: &EvalAnn) -> serde_json::Value {
+    match ann {
+        EvalAnn::CommandMatch(matched) => serde_json::json!({
+            "type": "command_match",
+            "matched": matched,
+        }),
+        EvalAnn::ExprVsArg { arg, matched } => serde_json::json!({
+            "type": "expr_vs_arg",
+            "arg": arg,
+            "matched": matched,
+        }),
+        EvalAnn::Quantifier { count, matched } => serde_json::json!({
+            "type": "quantifier",
+            "count": count,
+            "matched": matched,
+        }),
+        EvalAnn::Missing => serde_json::json!({
+            "type": "missing",
+        }),
+        EvalAnn::Anywhere { args, matched } => serde_json::json!({
+            "type": "anywhere",
+            "args": args,
+            "matched": matched,
+        }),
+        EvalAnn::CondBranch { decision } => serde_json::json!({
+            "type": "cond_branch",
+            "decision": decision.to_string(),
+        }),
+        EvalAnn::CondElse { decision } => serde_json::json!({
+            "type": "cond_else",
+            "decision": decision.to_string(),
+        }),
+        EvalAnn::ExactRemainder { count } => serde_json::json!({
+            "type": "exact_remainder",
+            "count": count,
+        }),
+        EvalAnn::ArgsResult(matched) => serde_json::json!({
+            "type": "args_result",
+            "matched": matched,
+        }),
+        EvalAnn::RuleEffect { decision, reason } => serde_json::json!({
+            "type": "effect",
+            "decision": decision.to_string(),
+            "reason": reason,
+        }),
+        EvalAnn::DefaultAsk => serde_json::json!({
+            "type": "default_ask",
+        }),
+    }
+}
+
+/// Serialize a Doc tree to JSON.
+fn doc_to_json(doc: &Doc<Option<EvalAnn>>) -> serde_json::Value {
+    match &doc.node {
+        DocF::Atom(s) => serde_json::json!(s),
+        DocF::List(children) => {
+            serde_json::json!(children.iter().map(doc_to_json).collect::<Vec<_>>())
+        }
+    }
 }

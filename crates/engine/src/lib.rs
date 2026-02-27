@@ -2,6 +2,7 @@
 // Evaluates parsed commands against rules, handles wrappers and flag expansion.
 // Walks the AST with a VarEnv to track variable safety through shell constructs.
 
+pub(crate) mod annotate;
 pub(crate) mod matcher;
 pub(crate) mod visitors;
 pub(crate) mod check;

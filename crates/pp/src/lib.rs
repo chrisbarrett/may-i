@@ -1,142 +1,28 @@
 // S-expression pretty-printer with configurable width and syntax coloring.
 //
-// The core types factor s-expression structure from annotation:
-//
-//   `DocF<R>` — base functor (one layer of tree, parameterized over children)
-//   `Doc<A>`  — fixpoint of `DocF` where each node carries an annotation `A`
-//
-// Two generic traversals:
-//
-//   `map`  (functor)      — transform annotations, preserving structure
-//   `fold` (catamorphism) — reduce the tree bottom-up via an algebra
+// The core Doc/DocF types live in `may-i-core::doc` and are re-exported here
+// for convenience. This crate provides rendering (pretty-printing, colorization)
+// and s-expression string parsing.
 
 use colored::Colorize;
 
-// ── Base functor ───────────────────────────────────────────────────
-
-/// One layer of s-expression structure, parameterized over what sits
-/// in recursive positions.
-#[derive(Debug, Clone)]
-pub enum DocF<R> {
-    Atom(String),
-    List(Vec<R>),
-}
-
-impl<R> DocF<R> {
-    /// Functor map: transform children (recursive positions).
-    pub fn map<S>(self, mut f: impl FnMut(R) -> S) -> DocF<S> {
-        match self {
-            DocF::Atom(s) => DocF::Atom(s),
-            DocF::List(rs) => DocF::List(rs.into_iter().map(&mut f).collect()),
-        }
-    }
-
-    /// Functor map by reference.
-    pub fn map_ref<S>(&self, mut f: impl FnMut(&R) -> S) -> DocF<S> {
-        match self {
-            DocF::Atom(s) => DocF::Atom(s.clone()),
-            DocF::List(rs) => DocF::List(rs.iter().map(&mut f).collect()),
-        }
-    }
-
-    pub fn as_atom(&self) -> Option<&str> {
-        match self {
-            DocF::Atom(s) => Some(s),
-            _ => None,
-        }
-    }
-
-    pub fn children(&self) -> Option<&[R]> {
-        match self {
-            DocF::List(cs) => Some(cs),
-            _ => None,
-        }
-    }
-}
-
-// ── Annotated fixpoint ─────────────────────────────────────────────
-
-/// An annotated s-expression tree — the fixpoint of `DocF` where each
-/// node carries an annotation of type `A`.
-///
-/// `Doc<()>` is the unannotated tree used for parsing and rendering.
-#[derive(Debug, Clone)]
-pub struct Doc<A = ()> {
-    pub ann: A,
-    pub node: DocF<Doc<A>>,
-}
-
-// ── Constructors (unannotated) ─────────────────────────────────────
-
-impl Doc<()> {
-    pub fn atom(s: impl Into<String>) -> Self {
-        Doc { ann: (), node: DocF::Atom(s.into()) }
-    }
-
-    pub fn list(children: Vec<Doc<()>>) -> Self {
-        Doc { ann: (), node: DocF::List(children) }
-    }
-}
-
-// ── Accessors ──────────────────────────────────────────────────────
-
-impl<A> Doc<A> {
-    pub fn as_atom(&self) -> Option<&str> {
-        self.node.as_atom()
-    }
-
-    pub fn children(&self) -> Option<&[Doc<A>]> {
-        self.node.children()
-    }
-
-    /// The head atom of a list (first child's text if it's an Atom).
-    pub fn head_atom(&self) -> Option<&str> {
-        self.children()
-            .and_then(|cs| cs.first())
-            .and_then(|c| c.as_atom())
-    }
-}
-
-// ── Functor (map) ──────────────────────────────────────────────────
-
-impl<A> Doc<A> {
-    /// Transform every annotation in the tree, preserving structure.
-    pub fn map<B>(self, f: &impl Fn(A) -> B) -> Doc<B> {
-        Doc {
-            ann: f(self.ann),
-            node: self.node.map(|c| c.map(f)),
-        }
-    }
-}
-
-// ── Catamorphism (fold) ────────────────────────────────────────────
-
-impl<A> Doc<A> {
-    /// Bottom-up fold. Children are reduced first, then the algebra
-    /// receives the shape (with reduced children) and the annotation.
-    pub fn fold<B>(&self, alg: &impl Fn(DocF<B>, &A) -> B) -> B {
-        let reduced = self.node.map_ref(|child| child.fold(alg));
-        alg(reduced, &self.ann)
-    }
-}
+pub use may_i_core::{Doc, DocF};
 
 // ── from_sexpr (test-only) ─────────────────────────────────────────
 
 #[cfg(test)]
-impl Doc<()> {
-    pub fn from_sexpr(sexpr: &may_i_sexpr::Sexpr) -> Self {
-        match sexpr {
-            may_i_sexpr::Sexpr::Atom(s, _) => {
-                let text = if may_i_sexpr::needs_quoting(s) {
-                    may_i_sexpr::quote_atom(s)
-                } else {
-                    s.clone()
-                };
-                Doc { ann: (), node: DocF::Atom(text) }
-            }
-            may_i_sexpr::Sexpr::List(items, _) => {
-                Doc { ann: (), node: DocF::List(items.iter().map(Doc::from_sexpr).collect()) }
-            }
+fn doc_from_sexpr(sexpr: &may_i_sexpr::Sexpr) -> Doc {
+    match sexpr {
+        may_i_sexpr::Sexpr::Atom(s, _) => {
+            let text = if may_i_sexpr::needs_quoting(s) {
+                may_i_sexpr::quote_atom(s)
+            } else {
+                s.clone()
+            };
+            Doc { ann: (), node: DocF::Atom(text) }
+        }
+        may_i_sexpr::Sexpr::List(items, _) => {
+            Doc { ann: (), node: DocF::List(items.iter().map(doc_from_sexpr).collect()) }
         }
     }
 }
@@ -626,14 +512,14 @@ mod tests {
     #[test]
     fn from_sexpr_atom_bare() {
         let sexpr = may_i_sexpr::Sexpr::Atom("hello".into(), may_i_sexpr::Span::new(0, 0));
-        let doc = Doc::from_sexpr(&sexpr);
+        let doc = doc_from_sexpr(&sexpr);
         assert_eq!(pp(&doc, 80), "hello");
     }
 
     #[test]
     fn from_sexpr_atom_needs_quoting() {
         let sexpr = may_i_sexpr::Sexpr::Atom("hello world".into(), may_i_sexpr::Span::new(0, 0));
-        let doc = Doc::from_sexpr(&sexpr);
+        let doc = doc_from_sexpr(&sexpr);
         assert_eq!(pp(&doc, 80), "\"hello world\"");
     }
 
@@ -646,7 +532,7 @@ mod tests {
             ],
             may_i_sexpr::Span::new(0, 0),
         );
-        let doc = Doc::from_sexpr(&sexpr);
+        let doc = doc_from_sexpr(&sexpr);
         assert_eq!(pp(&doc, 80), "(rule foo)");
     }
 

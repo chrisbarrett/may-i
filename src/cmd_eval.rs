@@ -98,7 +98,7 @@ fn evaluate_segments(
 
     for (text, eval) in &cmd_evals {
         if multi_segment {
-            trace.push(may_i_core::TraceStep::SegmentHeader {
+            trace.push(may_i_core::TraceEntry::SegmentHeader {
                 command: text.to_string(),
                 decision: eval.decision,
             });

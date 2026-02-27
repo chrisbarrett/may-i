@@ -1,6 +1,6 @@
 // Config validation — run embedded checks against the engine.
 
-use may_i_core::{Config, Decision, TraceStep};
+use may_i_core::{Config, Decision, TraceEntry};
 
 /// Result of evaluating a single embedded check.
 #[derive(Debug)]
@@ -10,7 +10,7 @@ pub struct CheckResult {
     pub actual: Decision,
     pub passed: bool,
     pub reason: Option<String>,
-    pub trace: Vec<TraceStep>,
+    pub trace: Vec<TraceEntry>,
     pub location: Option<String>,
 }
 

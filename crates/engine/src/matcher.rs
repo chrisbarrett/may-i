@@ -2,7 +2,9 @@
 // Pure matching logic: no AST walking, no variable resolution.
 
 use may_i_shell_parser::{SimpleCommand, Word};
-use may_i_core::{ArgMatcher, CommandMatcher, Config, Effect, Expr, ExprBranch, PosExpr, WrapperStep};
+use may_i_core::{CommandMatcher, Config, Effect, Expr, WrapperStep};
+#[cfg(test)]
+use may_i_core::{ArgMatcher, ExprBranch, PosExpr};
 
 /// A resolved argument that may be a known literal or an opaque (safe but unknown) value.
 #[derive(Debug, Clone, PartialEq)]
@@ -25,7 +27,7 @@ pub(crate) enum MatchOutcome {
 }
 
 impl MatchOutcome {
-    fn is_match(&self) -> bool {
+    pub(crate) fn is_match(&self) -> bool {
         !matches!(self, MatchOutcome::NoMatch)
     }
 }
@@ -33,6 +35,7 @@ impl MatchOutcome {
 /// Events emitted during matching for tracing/debugging.
 ///
 /// Some variants carry payloads used only for `Debug` output in tests.
+#[cfg(test)]
 #[derive(Debug)]
 pub(crate) enum MatchEvent<'a> {
     ExprVsArg { expr: &'a Expr, arg: &'a ResolvedArg, matched: bool },
@@ -57,7 +60,7 @@ pub(crate) fn command_matches(name: &str, matcher: &CommandMatcher) -> bool {
 }
 
 /// Pure boolean: does this expr match this resolved arg?
-fn expr_matches_resolved(expr: &Expr, arg: &ResolvedArg) -> bool {
+pub(crate) fn expr_matches_resolved(expr: &Expr, arg: &ResolvedArg) -> bool {
     match arg {
         ResolvedArg::Literal(s) => expr.is_wildcard() || expr.is_match(s),
         ResolvedArg::Opaque => expr.is_wildcard(),
@@ -66,6 +69,7 @@ fn expr_matches_resolved(expr: &Expr, arg: &ResolvedArg) -> bool {
 
 /// Match a single Expr against a single ResolvedArg, handling Expr::Cond specially.
 /// Emits events and may return Matched(effect) when a Cond branch matches.
+#[cfg(test)]
 fn match_expr_arg(
     expr: &Expr,
     arg: &ResolvedArg,
@@ -132,6 +136,7 @@ fn match_expr_arg(
 }
 
 /// Test Expr::Cond branches against a literal string.
+#[cfg(test)]
 fn match_expr_cond_branches(
     branches: &[ExprBranch],
     text: &str,
@@ -152,7 +157,8 @@ fn match_expr_cond_branches(
 }
 
 /// Unified arg matching: walks the ArgMatcher tree, emits events, returns outcome.
-pub(crate) fn match_args(
+#[cfg(test)]
+fn match_args(
     matcher: &ArgMatcher,
     args: &[ResolvedArg],
     emit: &mut dyn for<'e> FnMut(MatchEvent<'e>),
@@ -302,6 +308,7 @@ pub(crate) fn extract_positional_args(args: &[ResolvedArg]) -> Vec<ResolvedArg> 
 }
 
 /// Walk positional patterns against extracted positional args.
+#[cfg(test)]
 fn match_positional(
     patterns: &[PosExpr],
     args: &[ResolvedArg],

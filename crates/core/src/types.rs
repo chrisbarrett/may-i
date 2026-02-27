@@ -1,5 +1,6 @@
 // Shared domain types for authorization rules and configuration.
 
+use crate::doc::Doc;
 use crate::span::{Span, offset_to_line_col};
 
 /// The three possible authorization decisions.
@@ -33,6 +34,16 @@ impl std::fmt::Display for Decision {
 pub struct Effect {
     pub decision: Decision,
     pub reason: Option<String>,
+}
+
+impl Effect {
+    pub fn to_doc(&self) -> Doc {
+        let mut cs = vec![Doc::atom("effect"), Doc::atom(format!(":{}", self.decision))];
+        if let Some(r) = &self.reason {
+            cs.push(Doc::atom(format!("\"{r}\"")));
+        }
+        Doc::list(cs)
+    }
 }
 
 impl std::fmt::Display for Effect {
@@ -95,6 +106,35 @@ impl Expr {
     /// Returns true if this is the wildcard expression.
     pub fn is_wildcard(&self) -> bool {
         matches!(self, Expr::Wildcard)
+    }
+
+    pub fn to_doc(&self) -> Doc {
+        match self {
+            Expr::Literal(s) => Doc::atom(format!("\"{s}\"")),
+            Expr::Regex(re) => Doc::list(vec![
+                Doc::atom("regex"),
+                Doc::atom(format!("\"{}\"", re.as_str())),
+            ]),
+            Expr::Wildcard => Doc::atom("*"),
+            Expr::And(exprs) => {
+                let mut cs = vec![Doc::atom("and")];
+                cs.extend(exprs.iter().map(|e| e.to_doc()));
+                Doc::list(cs)
+            }
+            Expr::Or(exprs) => {
+                let mut cs = vec![Doc::atom("or")];
+                cs.extend(exprs.iter().map(|e| e.to_doc()));
+                Doc::list(cs)
+            }
+            Expr::Not(inner) => Doc::list(vec![Doc::atom("not"), inner.to_doc()]),
+            Expr::Cond(branches) => {
+                let mut cs = vec![Doc::atom("cond")];
+                for b in branches {
+                    cs.push(Doc::list(vec![b.test.to_doc(), b.effect.to_doc()]));
+                }
+                Doc::list(cs)
+            }
+        }
     }
 }
 
@@ -204,6 +244,33 @@ pub enum RuleBody {
     Branching(ArgMatcher),
 }
 
+impl RuleBody {
+    pub fn to_doc(&self) -> Vec<Doc> {
+        match self {
+            RuleBody::Effect { matcher: None, effect } => {
+                vec![effect.to_doc()]
+            }
+            RuleBody::Effect { matcher: Some(m), effect } => {
+                vec![
+                    Doc::list(vec![Doc::atom("args"), m.to_doc()]),
+                    effect.to_doc(),
+                ]
+            }
+            RuleBody::Branching(m) => {
+                vec![Doc::list(vec![Doc::atom("args"), m.to_doc()])]
+            }
+        }
+    }
+}
+
+impl Rule {
+    pub fn to_doc(&self) -> Doc {
+        let mut cs = vec![Doc::atom("rule"), self.command.to_doc()];
+        cs.extend(self.body.to_doc());
+        Doc::list(cs)
+    }
+}
+
 impl std::fmt::Display for RuleBody {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -226,6 +293,19 @@ pub struct CondBranch {
 pub struct CondArm {
     pub branches: Vec<CondBranch>,
     pub fallback: Option<Effect>,
+}
+
+impl CondArm {
+    pub fn to_doc(&self) -> Doc {
+        let mut cs = vec![Doc::atom("cond")];
+        for b in &self.branches {
+            cs.push(Doc::list(vec![b.matcher.to_doc(), b.effect.to_doc()]));
+        }
+        if let Some(fb) = &self.fallback {
+            cs.push(Doc::list(vec![Doc::atom("else"), fb.to_doc()]));
+        }
+        Doc::list(cs)
+    }
 }
 
 impl std::fmt::Display for CondArm {
@@ -290,6 +370,15 @@ impl PosExpr {
     /// Delegate to the inner expression's `is_wildcard`.
     pub fn is_wildcard(&self) -> bool {
         self.expr.is_wildcard()
+    }
+
+    pub fn to_doc(&self) -> Doc {
+        match self.quantifier {
+            Quantifier::One => self.expr.to_doc(),
+            Quantifier::Optional => Doc::list(vec![Doc::atom("?"), self.expr.to_doc()]),
+            Quantifier::OneOrMore => Doc::list(vec![Doc::atom("+"), self.expr.to_doc()]),
+            Quantifier::ZeroOrMore => Doc::list(vec![Doc::atom("*"), self.expr.to_doc()]),
+        }
     }
 }
 
@@ -369,6 +458,38 @@ impl std::fmt::Display for ArgMatcher {
 }
 
 impl ArgMatcher {
+    pub fn to_doc(&self) -> Doc {
+        match self {
+            ArgMatcher::Positional(pexprs) => {
+                let mut cs = vec![Doc::atom("positional")];
+                cs.extend(pexprs.iter().map(|pe| pe.to_doc()));
+                Doc::list(cs)
+            }
+            ArgMatcher::ExactPositional(pexprs) => {
+                let mut cs = vec![Doc::atom("exact")];
+                cs.extend(pexprs.iter().map(|pe| pe.to_doc()));
+                Doc::list(cs)
+            }
+            ArgMatcher::Anywhere(exprs) => {
+                let mut cs = vec![Doc::atom("anywhere")];
+                cs.extend(exprs.iter().map(|e| e.to_doc()));
+                Doc::list(cs)
+            }
+            ArgMatcher::And(matchers) => {
+                let mut cs = vec![Doc::atom("and")];
+                cs.extend(matchers.iter().map(|m| m.to_doc()));
+                Doc::list(cs)
+            }
+            ArgMatcher::Or(matchers) => {
+                let mut cs = vec![Doc::atom("or")];
+                cs.extend(matchers.iter().map(|m| m.to_doc()));
+                Doc::list(cs)
+            }
+            ArgMatcher::Not(inner) => Doc::list(vec![Doc::atom("not"), inner.to_doc()]),
+            ArgMatcher::Cond(arm) => arm.to_doc(),
+        }
+    }
+
     /// True if any expression in this matcher tree contains a Cond with effects.
     pub fn has_effect(&self) -> bool {
         match self {
@@ -416,12 +537,57 @@ pub enum WrapperStep {
     Flag { name: String },
 }
 
+/// Annotation placed on Doc nodes during rule evaluation.
+///
+/// Each node in a `Doc<Option<EvalAnn>>` carries `Some(ann)` if the evaluator
+/// visited it, or `None` if it was structural scaffolding.
+#[derive(Debug, Clone)]
+pub enum EvalAnn {
+    /// Command name matched or didn't.
+    CommandMatch(bool),
+    /// Expression was tested against a resolved argument.
+    ExprVsArg { arg: String, matched: bool },
+    /// Quantified pattern consumed some arguments.
+    Quantifier { count: usize, matched: bool },
+    /// Required positional argument was missing.
+    Missing,
+    /// Token-anywhere search against all args.
+    Anywhere { args: Vec<String>, matched: bool },
+    /// A conditional branch was selected (expr-level or matcher-level).
+    CondBranch { decision: Decision },
+    /// A conditional else/fallback was selected.
+    CondElse { decision: Decision },
+    /// Exact positional had leftover arguments.
+    ExactRemainder { count: usize },
+    /// Overall args match result.
+    ArgsResult(bool),
+    /// The effect produced by this rule.
+    RuleEffect { decision: Decision, reason: Option<String> },
+    /// No rule matched; defaulting to ask.
+    DefaultAsk,
+}
+
+/// A single entry in an evaluation trace.
+#[derive(Debug, Clone)]
+pub enum TraceEntry {
+    /// An annotated rule evaluation. The doc tree carries eval annotations
+    /// on each node that was visited by the evaluator.
+    Rule {
+        doc: Doc<Option<EvalAnn>>,
+        line: Option<usize>,
+    },
+    /// Segment boundary for compound commands.
+    SegmentHeader { command: String, decision: Decision },
+    /// No rule matched; defaulting to ask.
+    DefaultAsk { reason: String },
+}
+
 /// Result of evaluating a command.
 #[derive(Debug, Clone)]
 pub struct EvalResult {
     pub decision: Decision,
     pub reason: Option<String>,
-    pub trace: Vec<TraceStep>,
+    pub trace: Vec<TraceEntry>,
 }
 
 impl EvalResult {
@@ -434,44 +600,32 @@ impl EvalResult {
     }
 }
 
-/// A structured trace step emitted during rule evaluation.
-#[derive(Debug, Clone)]
-pub enum TraceStep {
-    /// A rule was considered.
-    Rule { label: String, line: Option<usize> },
-    /// An expression was compared against an argument.
-    ExprVsArg { expr: String, arg: String, matched: bool },
-    /// A quantified expression was evaluated.
-    Quantifier { label: String, count: usize, matched: bool },
-    /// A positional expression had no corresponding argument.
-    Missing { label: String },
-    /// An expression conditional branch matched.
-    ExprCondBranch { label: String, decision: Decision },
-    /// A matcher conditional branch matched.
-    MatcherCondBranch { decision: Decision },
-    /// A matcher conditional else branch.
-    MatcherCondElse { decision: Decision },
-    /// An anywhere expression was tested against the full arg list.
-    Anywhere { label: String, args: Vec<String>, matched: bool },
-    /// Exact positional: remaining unmatched args.
-    ExactRemainder { count: usize },
-    /// Arguments matched the pattern.
-    ArgsMatched,
-    /// Arguments did not match the pattern.
-    ArgsNotMatched,
-    /// The effect produced by the matched rule.
-    Effect { decision: Decision, reason: Option<String> },
-    /// No rule matched; defaulting to ask.
-    DefaultAsk,
-    /// Separator between segments of a compound command.
-    SegmentHeader { command: String, decision: Decision },
-}
-
 #[derive(Clone)]
 pub enum CommandMatcher {
     Exact(String),
     Regex(regex::Regex),
     List(Vec<String>),
+}
+
+impl CommandMatcher {
+    pub fn to_doc(&self) -> Doc {
+        match self {
+            CommandMatcher::Exact(s) => {
+                Doc::list(vec![Doc::atom("command"), Doc::atom(format!("\"{s}\""))])
+            }
+            CommandMatcher::Regex(re) => {
+                Doc::list(vec![
+                    Doc::atom("command"),
+                    Doc::list(vec![Doc::atom("regex"), Doc::atom(format!("\"{}\"", re.as_str()))]),
+                ])
+            }
+            CommandMatcher::List(names) => {
+                let mut or_cs = vec![Doc::atom("or")];
+                or_cs.extend(names.iter().map(|n| Doc::atom(format!("\"{n}\""))));
+                Doc::list(vec![Doc::atom("command"), Doc::list(or_cs)])
+            }
+        }
+    }
 }
 
 impl std::fmt::Display for CommandMatcher {
@@ -869,5 +1023,212 @@ mod tests {
         }]);
         let e = Expr::Not(Box::new(cond));
         assert_eq!(e.find_effect("x").unwrap().decision, Decision::Ask);
+    }
+
+    // --- to_doc tests ---
+
+    fn doc_text(doc: &crate::doc::Doc) -> String {
+        doc.fold(&|node, _ann| match node {
+            crate::doc::DocF::Atom(s) => s,
+            crate::doc::DocF::List(cs) => format!("({})", cs.join(" ")),
+        })
+    }
+
+    #[test]
+    fn effect_to_doc_no_reason() {
+        let e = Effect { decision: Decision::Allow, reason: None };
+        assert_eq!(doc_text(&e.to_doc()), "(effect :allow)");
+    }
+
+    #[test]
+    fn effect_to_doc_with_reason() {
+        let e = Effect { decision: Decision::Deny, reason: Some("bad".into()) };
+        assert_eq!(doc_text(&e.to_doc()), r#"(effect :deny "bad")"#);
+    }
+
+    #[test]
+    fn expr_to_doc_literal() {
+        assert_eq!(doc_text(&Expr::Literal("foo".into()).to_doc()), r#""foo""#);
+    }
+
+    #[test]
+    fn expr_to_doc_wildcard() {
+        assert_eq!(doc_text(&Expr::Wildcard.to_doc()), "*");
+    }
+
+    #[test]
+    fn expr_to_doc_regex() {
+        let e = Expr::Regex(regex::Regex::new("^x$").unwrap());
+        assert_eq!(doc_text(&e.to_doc()), r#"(regex "^x$")"#);
+    }
+
+    #[test]
+    fn expr_to_doc_and() {
+        let e = Expr::And(vec![Expr::Literal("a".into()), Expr::Literal("b".into())]);
+        assert_eq!(doc_text(&e.to_doc()), r#"(and "a" "b")"#);
+    }
+
+    #[test]
+    fn expr_to_doc_or() {
+        let e = Expr::Or(vec![Expr::Literal("a".into())]);
+        assert_eq!(doc_text(&e.to_doc()), r#"(or "a")"#);
+    }
+
+    #[test]
+    fn expr_to_doc_not() {
+        let e = Expr::Not(Box::new(Expr::Wildcard));
+        assert_eq!(doc_text(&e.to_doc()), "(not *)");
+    }
+
+    #[test]
+    fn expr_to_doc_cond() {
+        let e = Expr::Cond(vec![ExprBranch {
+            test: Expr::Literal("x".into()),
+            effect: Effect { decision: Decision::Allow, reason: None },
+        }]);
+        assert_eq!(doc_text(&e.to_doc()), r#"(cond ("x" (effect :allow)))"#);
+    }
+
+    #[test]
+    fn pos_expr_to_doc_one() {
+        let pe = PosExpr::one(Expr::Literal("x".into()));
+        assert_eq!(doc_text(&pe.to_doc()), r#""x""#);
+    }
+
+    #[test]
+    fn pos_expr_to_doc_optional() {
+        let pe = PosExpr { quantifier: Quantifier::Optional, expr: Expr::Wildcard };
+        assert_eq!(doc_text(&pe.to_doc()), "(? *)");
+    }
+
+    #[test]
+    fn pos_expr_to_doc_one_or_more() {
+        let pe = PosExpr { quantifier: Quantifier::OneOrMore, expr: Expr::Wildcard };
+        assert_eq!(doc_text(&pe.to_doc()), "(+ *)");
+    }
+
+    #[test]
+    fn pos_expr_to_doc_zero_or_more() {
+        let pe = PosExpr { quantifier: Quantifier::ZeroOrMore, expr: Expr::Wildcard };
+        assert_eq!(doc_text(&pe.to_doc()), "(* *)");
+    }
+
+    #[test]
+    fn command_matcher_to_doc_exact() {
+        let m = CommandMatcher::Exact("git".into());
+        assert_eq!(doc_text(&m.to_doc()), r#"(command "git")"#);
+    }
+
+    #[test]
+    fn command_matcher_to_doc_regex() {
+        let m = CommandMatcher::Regex(regex::Regex::new("^git$").unwrap());
+        assert_eq!(doc_text(&m.to_doc()), r#"(command (regex "^git$"))"#);
+    }
+
+    #[test]
+    fn command_matcher_to_doc_list() {
+        let m = CommandMatcher::List(vec!["a".into(), "b".into()]);
+        assert_eq!(doc_text(&m.to_doc()), r#"(command (or "a" "b"))"#);
+    }
+
+    #[test]
+    fn arg_matcher_to_doc_positional() {
+        let m = ArgMatcher::Positional(vec![PosExpr::one(Expr::Wildcard)]);
+        assert_eq!(doc_text(&m.to_doc()), "(positional *)");
+    }
+
+    #[test]
+    fn arg_matcher_to_doc_exact_positional() {
+        let m = ArgMatcher::ExactPositional(vec![PosExpr::one(Expr::Literal("x".into()))]);
+        assert_eq!(doc_text(&m.to_doc()), r#"(exact "x")"#);
+    }
+
+    #[test]
+    fn arg_matcher_to_doc_anywhere() {
+        let m = ArgMatcher::Anywhere(vec![Expr::Literal("--flag".into())]);
+        assert_eq!(doc_text(&m.to_doc()), r#"(anywhere "--flag")"#);
+    }
+
+    #[test]
+    fn arg_matcher_to_doc_and() {
+        let m = ArgMatcher::And(vec![
+            ArgMatcher::Positional(vec![]),
+            ArgMatcher::Positional(vec![]),
+        ]);
+        assert_eq!(doc_text(&m.to_doc()), "(and (positional) (positional))");
+    }
+
+    #[test]
+    fn arg_matcher_to_doc_or() {
+        let m = ArgMatcher::Or(vec![ArgMatcher::Positional(vec![])]);
+        assert_eq!(doc_text(&m.to_doc()), "(or (positional))");
+    }
+
+    #[test]
+    fn arg_matcher_to_doc_not() {
+        let m = ArgMatcher::Not(Box::new(ArgMatcher::Positional(vec![])));
+        assert_eq!(doc_text(&m.to_doc()), "(not (positional))");
+    }
+
+    #[test]
+    fn arg_matcher_to_doc_cond() {
+        let m = ArgMatcher::Cond(CondArm {
+            branches: vec![CondBranch {
+                matcher: ArgMatcher::Positional(vec![]),
+                effect: Effect { decision: Decision::Allow, reason: None },
+            }],
+            fallback: None,
+        });
+        assert_eq!(doc_text(&m.to_doc()), "(cond ((positional) (effect :allow)))");
+    }
+
+    #[test]
+    fn cond_arm_to_doc_with_fallback() {
+        let arm = CondArm {
+            branches: vec![],
+            fallback: Some(Effect { decision: Decision::Deny, reason: Some("nope".into()) }),
+        };
+        assert_eq!(doc_text(&arm.to_doc()), r#"(cond (else (effect :deny "nope")))"#);
+    }
+
+    #[test]
+    fn rule_body_to_doc_effect_only() {
+        let body = RuleBody::Effect {
+            matcher: None,
+            effect: Effect { decision: Decision::Allow, reason: None },
+        };
+        let docs: Vec<String> = body.to_doc().iter().map(|d| doc_text(d)).collect();
+        assert_eq!(docs, vec!["(effect :allow)"]);
+    }
+
+    #[test]
+    fn rule_body_to_doc_effect_with_matcher() {
+        let body = RuleBody::Effect {
+            matcher: Some(ArgMatcher::Positional(vec![])),
+            effect: Effect { decision: Decision::Deny, reason: None },
+        };
+        let docs: Vec<String> = body.to_doc().iter().map(|d| doc_text(d)).collect();
+        assert_eq!(docs, vec!["(args (positional))", "(effect :deny)"]);
+    }
+
+    #[test]
+    fn rule_body_to_doc_branching() {
+        let body = RuleBody::Branching(ArgMatcher::Positional(vec![]));
+        let docs: Vec<String> = body.to_doc().iter().map(|d| doc_text(d)).collect();
+        assert_eq!(docs, vec!["(args (positional))"]);
+    }
+
+    #[test]
+    fn rule_to_doc_full() {
+        let rule = Rule {
+            command: CommandMatcher::Exact("git".into()),
+            body: RuleBody::Effect {
+                matcher: None,
+                effect: Effect { decision: Decision::Allow, reason: None },
+            },
+            checks: vec![],
+            source_span: Span { start: 0, end: 0 },
+        };
+        assert_eq!(doc_text(&rule.to_doc()), r#"(rule (command "git") (effect :allow))"#);
     }
 }

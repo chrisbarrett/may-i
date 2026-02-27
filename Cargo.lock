@@ -476,6 +476,7 @@ name = "may-i-pp"
 version = "0.1.0"
 dependencies = [
  "colored",
+ "may-i-core",
  "may-i-sexpr",
 ]
 

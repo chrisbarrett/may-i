@@ -7,7 +7,7 @@ use may_i_config as config;
 use may_i_engine as engine;
 
 use crate::output;
-use crate::output::print_trace;
+use crate::output::{print_trace, trace_to_json};
 
 pub fn cmd_check(json_mode: bool, verbose: bool, config_path: Option<&std::path::Path>) -> miette::Result<()> {
     let config_file = config::resolve_path(config_path)?;
@@ -28,7 +28,7 @@ pub fn cmd_check(json_mode: bool, verbose: bool, config_path: Option<&std::path:
                     "passed": r.passed,
                     "location": r.location,
                     "reason": r.reason,
-                    "trace": crate::output::trace_to_json(&r.trace),
+                    "trace": trace_to_json(&r.trace),
                 })
             })
             .collect();
