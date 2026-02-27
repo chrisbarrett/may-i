@@ -119,12 +119,12 @@ impl Expr {
             Expr::And(exprs) => {
                 let mut cs = vec![Doc::atom("and")];
                 cs.extend(exprs.iter().map(|e| e.to_doc()));
-                Doc::list(cs)
+                if exprs.len() > 4 { Doc::broken_list(cs) } else { Doc::list(cs) }
             }
             Expr::Or(exprs) => {
                 let mut cs = vec![Doc::atom("or")];
                 cs.extend(exprs.iter().map(|e| e.to_doc()));
-                Doc::list(cs)
+                if exprs.len() > 4 { Doc::broken_list(cs) } else { Doc::list(cs) }
             }
             Expr::Not(inner) => Doc::list(vec![Doc::atom("not"), inner.to_doc()]),
             Expr::Cond(branches) => {

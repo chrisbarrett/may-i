@@ -6,7 +6,7 @@
 
 use colored::Colorize;
 
-pub use may_i_core::{Doc, DocF};
+pub use may_i_core::{Doc, DocF, LayoutHint};
 
 // ── from_sexpr (test-only) ─────────────────────────────────────────
 
@@ -19,10 +19,10 @@ fn doc_from_sexpr(sexpr: &may_i_sexpr::Sexpr) -> Doc {
             } else {
                 s.clone()
             };
-            Doc { ann: (), node: DocF::Atom(text) }
+            Doc::atom(text)
         }
         may_i_sexpr::Sexpr::List(items, _) => {
-            Doc { ann: (), node: DocF::List(items.iter().map(doc_from_sexpr).collect()) }
+            Doc::list(items.iter().map(doc_from_sexpr).collect())
         }
     }
 }
@@ -119,7 +119,7 @@ pub fn truncate_long_lists(doc: &Doc, keep: usize) -> Doc {
                 truncated.push(children.last().unwrap().clone());
                 Doc::list(truncated)
             } else {
-                Doc { ann: (), node: DocF::List(children) }
+                Doc { ann: (), node: DocF::List(children), layout: doc.layout }
             }
         }
     }
@@ -216,11 +216,22 @@ fn render<A>(doc: &Doc<A>, indent: usize, width: usize, color: bool) -> String {
                 }
             }
 
+            // Node-level layout hint: skip flat attempt entirely.
+            if doc.layout == LayoutHint::AlwaysBreak {
+                return render_body_indent(children, indent, width, color);
+            }
+
             let flat = render_flat(children, color);
             if indent + visible_len(&flat) <= width {
                 return flat;
             }
-            render_broken(children, indent, width, color)
+            let broken = render_broken(children, indent, width, color);
+            if max_line_width(&broken, indent) <= width {
+                return broken;
+            }
+            // Align-under-first-arg was still too wide; fall back to
+            // body-indent style which uses indent+2 for children.
+            render_body_indent(children, indent, width, color)
         }
     }
 }
@@ -358,6 +369,19 @@ pub fn colorize_atom(s: &str, color: bool) -> String {
     } else {
         s.to_string()
     }
+}
+
+/// Widest visible line in a multi-line rendered string.
+/// `base_indent` is added to the first line (which lacks indentation padding
+/// because indentation is added by the caller).
+fn max_line_width(rendered: &str, base_indent: usize) -> usize {
+    rendered.lines().enumerate()
+        .map(|(i, line)| {
+            let w = visible_len(line);
+            if i == 0 { base_indent + w } else { w }
+        })
+        .max()
+        .unwrap_or(0)
 }
 
 /// Visible length of a string, ignoring ANSI SGR escape sequences.

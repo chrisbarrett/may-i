@@ -43,6 +43,16 @@ impl<R> DocF<R> {
     }
 }
 
+/// Layout hint for the pretty-printer.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum LayoutHint {
+    /// Let the pretty-printer decide flat vs broken.
+    #[default]
+    Auto,
+    /// Always break children to separate lines.
+    AlwaysBreak,
+}
+
 /// An annotated s-expression tree — the fixpoint of `DocF` where each
 /// node carries an annotation of type `A`.
 ///
@@ -51,17 +61,23 @@ impl<R> DocF<R> {
 pub struct Doc<A = ()> {
     pub ann: A,
     pub node: DocF<Doc<A>>,
+    pub layout: LayoutHint,
 }
 
 // ── Constructors (unannotated) ─────────────────────────────────────
 
 impl Doc<()> {
     pub fn atom(s: impl Into<String>) -> Self {
-        Doc { ann: (), node: DocF::Atom(s.into()) }
+        Doc { ann: (), node: DocF::Atom(s.into()), layout: LayoutHint::Auto }
     }
 
     pub fn list(children: Vec<Doc<()>>) -> Self {
-        Doc { ann: (), node: DocF::List(children) }
+        Doc { ann: (), node: DocF::List(children), layout: LayoutHint::Auto }
+    }
+
+    /// Create a list node that always breaks to separate lines.
+    pub fn broken_list(children: Vec<Doc<()>>) -> Self {
+        Doc { ann: (), node: DocF::List(children), layout: LayoutHint::AlwaysBreak }
     }
 }
 
@@ -87,11 +103,12 @@ impl<A> Doc<A> {
 // ── Functor (map) ──────────────────────────────────────────────────
 
 impl<A> Doc<A> {
-    /// Transform every annotation in the tree, preserving structure.
+    /// Transform every annotation in the tree, preserving structure and layout.
     pub fn map<B>(self, f: &impl Fn(A) -> B) -> Doc<B> {
         Doc {
             ann: f(self.ann),
             node: self.node.map(|c| c.map(f)),
+            layout: self.layout,
         }
     }
 }

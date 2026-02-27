@@ -2,7 +2,7 @@ pub mod doc;
 pub mod span;
 pub mod types;
 
-pub use doc::{Doc, DocF};
+pub use doc::{Doc, DocF, LayoutHint};
 pub use span::{Span, offset_to_line_col};
 pub use types::{
     ArgMatcher, Check, CommandMatcher, CondArm, CondBranch, Config, Decision, Effect,

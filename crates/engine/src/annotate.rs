@@ -7,7 +7,7 @@
 
 use may_i_core::{
     ArgMatcher, CommandMatcher, CondArm, Doc, DocF, Effect, EvalAnn, Expr, ExprBranch,
-    PosExpr, Rule, RuleBody,
+    LayoutHint, PosExpr, Rule, RuleBody,
 };
 
 use crate::matcher::{
@@ -20,15 +20,15 @@ pub(crate) type ADoc = Doc<Option<EvalAnn>>;
 // ── Constructors ──────────────────────────────────────────────────
 
 fn atom(s: impl Into<String>) -> ADoc {
-    Doc { ann: None, node: DocF::Atom(s.into()) }
+    Doc { ann: None, node: DocF::Atom(s.into()), layout: LayoutHint::Auto }
 }
 
 fn list(children: Vec<ADoc>) -> ADoc {
-    Doc { ann: None, node: DocF::List(children) }
+    Doc { ann: None, node: DocF::List(children), layout: LayoutHint::Auto }
 }
 
 fn ann_list(ann: EvalAnn, children: Vec<ADoc>) -> ADoc {
-    Doc { ann: Some(ann), node: DocF::List(children) }
+    Doc { ann: Some(ann), node: DocF::List(children), layout: LayoutHint::Auto }
 }
 
 /// Convert an unannotated Doc<()> to Doc<Option<EvalAnn>> (all None).
@@ -72,7 +72,7 @@ pub(crate) fn annotate_rule(
         decision: e.decision,
         reason: e.reason.clone(),
     });
-    (Doc { ann, node: DocF::List(cs) }, effect)
+    (Doc { ann, node: DocF::List(cs), layout: LayoutHint::Auto }, effect)
 }
 
 fn annotate_command(matcher: &CommandMatcher, matched: bool) -> ADoc {
@@ -266,6 +266,7 @@ fn annotate_matcher_cond(
         cs.push(Doc {
             ann: branch_ann,
             node: DocF::List(vec![matcher_doc, effect_doc]),
+            layout: LayoutHint::Auto,
         });
         if matched {
             // Remaining branches unannotated
@@ -358,6 +359,7 @@ fn annotate_positional(
         let doc = Doc {
             ann: Some(EvalAnn::ExactRemainder { count: remainder }),
             node: DocF::List(cs),
+            layout: LayoutHint::Auto,
         };
         return (doc, MatchOutcome::NoMatch);
     }
@@ -482,6 +484,7 @@ fn annotate_expr_arg(expr: &Expr, arg: &ResolvedArg) -> (ADoc, MatchOutcome) {
             let doc = Doc {
                 ann: Some(EvalAnn::ExprVsArg { arg: arg_str, matched }),
                 node: DocF::List(vec![atom("not"), inner_doc]),
+                layout: LayoutHint::Auto,
             };
             if !matched {
                 return (doc, MatchOutcome::NoMatch);
