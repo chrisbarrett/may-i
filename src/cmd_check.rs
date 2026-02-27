@@ -61,15 +61,17 @@ pub fn cmd_check(json_mode: bool, verbose: bool, config_path: Option<&std::path:
             }
 
             println!();
-            let colored_cmd = r.command.bold().to_string();
-            output::print_separator("", Some((&colored_cmd, r.command.len())));
+            let icon = "✗".red().bold().to_string();
+            let label = format!("{icon} {}", r.command.bold());
+            let label_width = 2 + r.command.len();
+            output::print_separator("", Some((&label, label_width)));
             println!();
 
             // Location
             let loc = r.location.as_deref().unwrap_or("<unknown>");
             let (file, line_col) = loc.split_once(':').unwrap_or((loc, ""));
             let short_file = output::shorten_home(std::path::Path::new(file));
-            print!("{}", short_file.red());
+            print!("{}", short_file.dimmed());
             if !line_col.is_empty() {
                 print!("{}", format!(":{line_col}").dimmed());
             }
@@ -77,16 +79,19 @@ pub fn cmd_check(json_mode: bool, verbose: bool, config_path: Option<&std::path:
 
             let expected_kw = format!(":{}", r.expected);
             let actual_kw = format!(":{}", r.actual);
-            println!("  expected: {}", output::colorize_decision_keyword(&expected_kw));
-            println!("  actual:   {}", output::colorize_decision_keyword(&actual_kw));
+            let mut rows = vec![
+                output::KvRow::new("expected", output::colorize_decision_keyword(&expected_kw)),
+                output::KvRow::new("actual", output::colorize_decision_keyword(&actual_kw)),
+            ];
             if let Some(reason) = &r.reason {
                 let quoted = format!("\"{reason}\"");
-                println!("  reason:   {}", colorize_atom(&quoted, true));
+                rows.push(output::KvRow::new("reason", colorize_atom(&quoted, true)));
             }
+            output::print_kv_table("  ", &rows);
 
             // Trace
             if !r.trace.is_empty() {
-                println!("\n{}\n", "Trace".bold());
+                println!("\n  {}\n", "Trace".bold());
                 print_trace(&r.trace, "  ");
             }
         }

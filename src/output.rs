@@ -313,8 +313,6 @@ fn format_matching_step_right(step: &TraceStep) -> String {
             let arrow = if *matched { "→ yes" } else { "→ no" };
             if expr.starts_with("(regex ") {
                 format!("{arg} ~ {expr} {arrow}")
-            } else if let Some(elts) = extract_set_elements(expr) {
-                format!("{arg} ∈ {{{elts}}} {arrow}")
             } else {
                 format!("{arg} = {expr} {arrow}")
             }
@@ -339,19 +337,6 @@ fn format_matching_step_right(step: &TraceStep) -> String {
         TraceStep::ExactRemainder { count } => format!("{count} extra args"),
         _ => String::new(),
     }
-}
-
-/// Extract inner elements from `(or ...)` or `(and ...)` as a comma-separated string.
-fn extract_set_elements(expr: &str) -> Option<String> {
-    let inner = if let Some(rest) = expr.strip_prefix("(or ") {
-        rest.strip_suffix(')')
-    } else if let Some(rest) = expr.strip_prefix("(and ") {
-        rest.strip_suffix(')')
-    } else {
-        None
-    }?;
-    let elts: Vec<&str> = inner.split_whitespace().collect();
-    Some(elts.join(", "))
 }
 
 /// Extract the pattern from an anywhere label like `(anywhere "--hard")`.
@@ -422,6 +407,45 @@ pub fn print_separator(indent: &str, label: Option<(&str, usize)>) {
             let rule = "─".repeat(usable);
             println!("{indent}{}", rule.dimmed());
         }
+    }
+}
+
+// ── Key-value table ────────────────────────────────────────────────
+
+/// A row in a key-value table rendered with a vertical bar divider.
+pub struct KvRow {
+    /// The label (left column, plain text).
+    pub key: String,
+    /// The value (right column, pre-colorized).
+    pub value: String,
+}
+
+impl KvRow {
+    pub fn new(key: impl Into<String>, value: impl Into<String>) -> Self {
+        Self { key: key.into(), value: value.into() }
+    }
+}
+
+/// Print a key-value table with a vertical bar divider, aligned to the
+/// widest key.
+///
+/// ```text
+///   expected │ :allow
+///   actual   │ :ask
+///   reason   │ "Rules for cargo exist..."
+/// ```
+pub fn print_kv_table(indent: &str, rows: &[KvRow]) {
+    let max_key = rows.iter().map(|r| r.key.len()).max().unwrap_or(0);
+    for row in rows {
+        let pad = max_key.saturating_sub(row.key.len());
+        println!(
+            "{indent}{}{:pad$} {} {}",
+            row.key,
+            "",
+            DIVIDER.dimmed(),
+            row.value,
+            pad = pad,
+        );
     }
 }
 

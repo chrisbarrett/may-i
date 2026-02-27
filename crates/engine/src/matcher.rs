@@ -91,11 +91,34 @@ fn match_expr_arg(
         return outcome;
     }
 
-    let matched = expr_matches_resolved(expr, arg);
-    emit(MatchEvent::ExprVsArg { expr, arg, matched });
-
-    if !matched {
-        return MatchOutcome::NoMatch;
+    // For And/Or, recurse per-child so each sub-expression gets its own trace event.
+    match expr {
+        Expr::And(children) => {
+            for child in children {
+                match match_expr_arg(child, arg, emit) {
+                    MatchOutcome::NoMatch => return MatchOutcome::NoMatch,
+                    MatchOutcome::Matched(eff) => return MatchOutcome::Matched(eff),
+                    MatchOutcome::MatchedNoEffect => {}
+                }
+            }
+            return MatchOutcome::MatchedNoEffect;
+        }
+        Expr::Or(children) => {
+            for child in children {
+                match match_expr_arg(child, arg, emit) {
+                    MatchOutcome::NoMatch => {}
+                    outcome => return outcome,
+                }
+            }
+            return MatchOutcome::NoMatch;
+        }
+        _ => {
+            let matched = expr_matches_resolved(expr, arg);
+            emit(MatchEvent::ExprVsArg { expr, arg, matched });
+            if !matched {
+                return MatchOutcome::NoMatch;
+            }
+        }
     }
 
     // Check for nested Cond effects inside And/Or/Not
