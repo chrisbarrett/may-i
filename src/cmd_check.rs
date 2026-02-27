@@ -80,14 +80,14 @@ pub fn cmd_check(json_mode: bool, verbose: bool, config_path: Option<&std::path:
             let expected_kw = format!(":{}", r.expected);
             let actual_kw = format!(":{}", r.actual);
             let mut rows = vec![
-                output::KvRow::new("expected", output::colorize_decision_keyword(&expected_kw)),
-                output::KvRow::new("actual", output::colorize_decision_keyword(&actual_kw)),
+                output::Row::kv("expected", output::colorize_decision_keyword(&expected_kw)),
+                output::Row::kv("actual", output::colorize_decision_keyword(&actual_kw)),
             ];
             if let Some(reason) = &r.reason {
                 let quoted = format!("\"{reason}\"");
-                rows.push(output::KvRow::new("reason", colorize_atom(&quoted, true)));
+                rows.push(output::Row::kv("reason", colorize_atom(&quoted, true)));
             }
-            output::print_kv_table("  ", &rows);
+            output::render_elements("  ", &[output::Element::Table(rows)]);
 
             // Trace
             if !r.trace.is_empty() {

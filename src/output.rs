@@ -2,15 +2,12 @@
 
 use colored::Colorize;
 use may_i_core::TraceStep;
-use may_i_pp::{Doc, Format, colorize_atom, parse_sexpr, pretty, truncate_long_lists, visible_len};
+use may_i_pp::{Doc, Format, colorize_atom, parse_sexpr, pretty, visible_len};
 
 // ── Layout geometry ────────────────────────────────────────────────
 
 /// Minimum usable terminal width before we stop trying to fit two columns.
 const MIN_TERM_WIDTH: usize = 40;
-
-/// The indent prefix printed before each trace line.
-const INDENT: &str = "  ";
 
 /// Unicode box-drawing character used as a column divider.
 const DIVIDER: &str = "│";
@@ -27,41 +24,165 @@ fn detect_layout() -> Layout {
         .and_then(|s| s.parse::<usize>().ok())
         .or_else(|| terminal_size::terminal_size().map(|(w, _)| w.0 as usize))
         .unwrap_or(80);
-    let usable = term_width.saturating_sub(INDENT.len()).max(MIN_TERM_WIDTH);
+    let usable = term_width.saturating_sub(2).max(MIN_TERM_WIDTH);
     let left_width = usable / 2;
     Layout { left_width }
 }
 
-/// Compute the divider column: min(half the terminal, widest left content + gap).
-fn divider_column(lines: &[PrintableLine], layout: &Layout) -> usize {
-    let max_left = lines.iter()
-        .map(|l| match l {
-            PrintableLine::Trace(tl) => tl.left_visible,
-            _ => 0,
-        })
+// ── Document types ─────────────────────────────────────────────────
+
+/// A row in a two-column table with a vertical bar divider.
+pub struct Row {
+    /// Left column content (may contain ANSI codes).
+    pub left: String,
+    /// Visible width of left column (excluding ANSI).
+    pub left_visible: usize,
+    /// Right column content (colorized at render time unless pre-colored).
+    pub right: String,
+    /// If true, the right column is already colorized.
+    pub right_precolored: bool,
+}
+
+impl Row {
+    /// Create a row with auto-colorized right column (trace style).
+    pub fn trace(left: impl Into<String>, left_visible: usize, right: impl Into<String>) -> Self {
+        Self { left: left.into(), left_visible, right: right.into(), right_precolored: false }
+    }
+
+    /// Create a row with a pre-colorized right column (KV style).
+    pub fn kv(key: impl Into<String>, value: impl Into<String>) -> Self {
+        let key = key.into();
+        let len = key.len();
+        Self { left: key, left_visible: len, right: value.into(), right_precolored: true }
+    }
+
+    fn is_elision(&self) -> bool {
+        self.left_visible == 1 && self.left.contains('…')
+    }
+}
+
+/// A rendered document element.
+pub enum Element {
+    /// Empty line.
+    Blank,
+    /// Full-width horizontal rule with optional label.
+    Separator {
+        label: Option<(String, usize)>,
+    },
+    /// A group of rows sharing a divider column.
+    Table(Vec<Row>),
+}
+
+// ── Elision ────────────────────────────────────────────────────────
+
+/// Elide the middle of a row list, keeping the first `keep` and last 1
+/// rows, inserting a single `…` | `…` row in the middle.
+pub fn elide_rows(mut rows: Vec<Row>, keep: usize) -> Vec<Row> {
+    if rows.len() <= keep + 1 {
+        return rows;
+    }
+    let last = rows.pop().unwrap();
+    rows.truncate(keep);
+    rows.push(Row {
+        left: "…".dimmed().to_string(),
+        left_visible: 1,
+        right: "…".to_string(),
+        right_precolored: false,
+    });
+    rows.push(last);
+    rows
+}
+
+// ── Rendering ──────────────────────────────────────────────────────
+
+/// Render a sequence of elements with the given indent prefix.
+pub fn render_elements(indent: &str, elements: &[Element]) {
+    for element in elements {
+        match element {
+            Element::Blank => println!(),
+            Element::Separator { label } => {
+                print_separator(indent, label.as_ref().map(|(s, w)| (s.as_str(), *w)));
+            }
+            Element::Table(rows) => {
+                let divider_col = compute_divider_col(rows);
+                for row in rows {
+                    print_row(indent, row, divider_col);
+                }
+            }
+        }
+    }
+}
+
+fn compute_divider_col(rows: &[Row]) -> usize {
+    let max_left = rows.iter()
+        .filter(|r| !r.is_elision())
+        .map(|r| r.left_visible)
         .max()
         .unwrap_or(0);
-    (max_left + 2).min(layout.left_width + 1)
+    max_left + 2
 }
 
-// ── Two-column s-expression trace ──────────────────────────────────
+fn print_row(indent: &str, row: &Row, divider_col: usize) {
+    if row.left.is_empty() && row.right.is_empty() {
+        return;
+    }
 
-/// A line in the two-column trace layout.
-struct TraceLine {
-    /// Left column (colorized s-expression fragment). Contains ANSI codes.
-    left: String,
-    /// Visible width of the left column (excluding ANSI).
-    left_visible: usize,
-    /// Right column annotation (plain text, colorized at print time).
-    right: String,
+    let left_pad = divider_col.saturating_sub(row.left_visible);
+
+    if row.right.is_empty() {
+        println!(
+            "{indent}{}{:pad$}{}",
+            row.left, "", DIVIDER.dimmed(),
+            pad = left_pad,
+        );
+    } else {
+        let right = if row.right_precolored {
+            row.right.clone()
+        } else {
+            colorize_right(&row.right)
+        };
+        println!(
+            "{indent}{}{:pad$}{} {}",
+            row.left, "", DIVIDER.dimmed(), right,
+            pad = left_pad,
+        );
+    }
 }
 
-/// An element in the flat printable output.
-enum PrintableLine {
-    Blank,
-    SegmentHeader { command: String, decision: may_i_core::Decision },
-    Trace(TraceLine),
+// ── Separator ──────────────────────────────────────────────────────
+
+/// Print a full-width horizontal rule, optionally embedding a label.
+pub fn print_separator(indent: &str, label: Option<(&str, usize)>) {
+    let term_width = std::env::var("COLUMNS")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .or_else(|| terminal_size::terminal_size().map(|(w, _)| w.0 as usize))
+        .unwrap_or(80);
+    let usable = term_width.saturating_sub(indent.len());
+
+    match label {
+        Some((colored_label, label_width)) => {
+            let prefix = "─── ";
+            let mid = " ";
+            let used = visible_len(prefix) + label_width + visible_len(mid);
+            let remaining = usable.saturating_sub(used);
+            let suffix = "─".repeat(remaining);
+            println!(
+                "{indent}{}{}{}{}",
+                prefix.dimmed(),
+                colored_label,
+                mid.dimmed(),
+                suffix.dimmed(),
+            );
+        }
+        None => {
+            let rule = "─".repeat(usable);
+            println!("{indent}{}", rule.dimmed());
+        }
+    }
 }
+
+// ── Trace rendering ────────────────────────────────────────────────
 
 /// Group flat trace steps into per-rule blocks, then render each as a
 /// two-column s-expression: left = rule structure, right = eval result.
@@ -69,61 +190,44 @@ pub fn print_trace(steps: &[TraceStep], indent: &str) {
     let layout = detect_layout();
     let blocks = group_into_rule_blocks(steps);
 
-    // Pass 1: render all blocks into a flat list.
-    let mut output: Vec<PrintableLine> = Vec::new();
+    // Pass 1: build all elements.
+    let mut elements: Vec<Element> = Vec::new();
     let mut first = true;
 
     for block in &blocks {
         if let Some(TraceStep::SegmentHeader { command, decision }) = block.steps.first() {
             if !first {
-                output.push(PrintableLine::Blank);
-                output.push(PrintableLine::Blank);
+                elements.push(Element::Blank);
+                elements.push(Element::Blank);
             }
-            output.push(PrintableLine::SegmentHeader {
-                command: command.clone(),
-                decision: *decision,
-            });
+            elements.push(segment_header_element(command, *decision));
             let rest = RuleBlock { steps: &block.steps[1..] };
             if !rest.steps.is_empty() {
-                for line in render_block(&rest, &layout) {
-                    output.push(PrintableLine::Trace(line));
-                }
+                elements.push(Element::Table(render_block(&rest, &layout)));
             }
         } else {
             if !first {
-                output.push(PrintableLine::Blank);
+                elements.push(Element::Blank);
             }
-            for line in render_block(block, &layout) {
-                output.push(PrintableLine::Trace(line));
-            }
+            elements.push(Element::Table(render_block(block, &layout)));
         }
         first = false;
     }
 
-    // Pass 2: compute divider column from actual content.
-    let divider_col = divider_column(&output, &layout);
+    // Pass 2: render.
+    render_elements(indent, &elements);
+}
 
-    // Pass 3: print.
-    for line in &output {
-        match line {
-            PrintableLine::Blank => println!(),
-            PrintableLine::SegmentHeader { command, decision } => {
-                use may_i_core::Decision;
-                let icon = match decision {
-                    Decision::Allow => "✓".green().bold().to_string(),
-                    Decision::Ask => "?".yellow().bold().to_string(),
-                    Decision::Deny => "✗".red().bold().to_string(),
-                };
-                let label = format!("{icon} {}", command.bold());
-                // icon is 1 visible char + space + command
-                let label_width = 2 + command.len();
-                print_separator(indent, Some((&label, label_width)));
-            }
-            PrintableLine::Trace(tl) => {
-                print_two_col(indent, tl, divider_col);
-            }
-        }
-    }
+fn segment_header_element(command: &str, decision: may_i_core::Decision) -> Element {
+    use may_i_core::Decision;
+    let icon = match decision {
+        Decision::Allow => "✓".green().bold().to_string(),
+        Decision::Ask => "?".yellow().bold().to_string(),
+        Decision::Deny => "✗".red().bold().to_string(),
+    };
+    let label = format!("{icon} {}", command.bold());
+    let label_width = 2 + command.len();
+    Element::Separator { label: Some((label, label_width)) }
 }
 
 /// A block of trace steps belonging to a single rule evaluation (or default).
@@ -148,9 +252,8 @@ fn group_into_rule_blocks(steps: &[TraceStep]) -> Vec<RuleBlock<'_>> {
     blocks
 }
 
-/// Render a rule block into two-column lines using the pp crate for
-/// s-expression fontification and layout.
-fn render_block(block: &RuleBlock<'_>, layout: &Layout) -> Vec<TraceLine> {
+/// Render a rule block into rows.
+fn render_block(block: &RuleBlock<'_>, layout: &Layout) -> Vec<Row> {
     let mut matching_steps: Vec<&TraceStep> = Vec::new();
     let mut rule_label = String::new();
     let mut rule_line: Option<usize> = None;
@@ -187,26 +290,19 @@ fn render_simple_rule(
     rule_line: Option<usize>,
     outcome: Option<&TraceStep>,
     layout: &Layout,
-) -> Vec<TraceLine> {
-    let mut lines = Vec::new();
+) -> Vec<Row> {
+    let mut rows = Vec::new();
 
     if rule_label.is_empty() {
         if let Some(out) = outcome {
-            lines.push(TraceLine {
-                left: String::new(),
-                left_visible: 0,
-                right: format_outcome(out),
-            });
+            rows.push(Row::trace("", 0, format_outcome(out)));
         }
-        return lines;
+        return rows;
     }
 
     let right = outcome.map(format_outcome).unwrap_or_default();
 
-    let doc = truncate_long_lists(
-        &Doc::list(vec![Doc::atom("rule"), parse_sexpr(rule_label)]),
-        3,
-    );
+    let doc = Doc::list(vec![Doc::atom("rule"), parse_sexpr(rule_label)]);
     let fmt = Format {
         width: layout.left_width,
         color: true,
@@ -217,17 +313,20 @@ fn render_simple_rule(
     let rendered_lines: Vec<&str> = rendered.lines().collect();
     for (i, sline) in rendered_lines.iter().enumerate() {
         let is_last = i == rendered_lines.len() - 1;
-        lines.push(TraceLine {
-            left_visible: visible_len(sline),
-            left: sline.to_string(),
-            right: if is_last { right.clone() } else { String::new() },
-        });
+        rows.push(Row::trace(
+            sline.to_string(),
+            visible_len(sline),
+            if is_last { right.clone() } else { String::new() },
+        ));
     }
 
-    lines
+    rows
 }
 
 /// Render a rule with matching steps as a nested s-expression.
+///
+/// Builds all rows first, then applies elision to collapse long runs
+/// of matching steps (keeping first 2 and last 1).
 fn render_rule_with_steps(
     rule_label: &str,
     rule_line: Option<usize>,
@@ -235,9 +334,8 @@ fn render_rule_with_steps(
     outcome: Option<&TraceStep>,
     matched: bool,
     layout: &Layout,
-) -> Vec<TraceLine> {
-    let mut lines = Vec::new();
-
+) -> Vec<Row> {
+    // Build the full s-expression Doc and annotations without truncation.
     let annotations: Vec<String> = matching_steps.iter()
         .map(|s| format_matching_step_right(s))
         .collect();
@@ -246,7 +344,7 @@ fn render_rule_with_steps(
     for step in matching_steps {
         children.push(step_to_doc(step));
     }
-    let doc = truncate_long_lists(&Doc::list(children), 3);
+    let doc = Doc::list(children);
 
     let fmt = Format {
         width: layout.left_width,
@@ -255,36 +353,42 @@ fn render_rule_with_steps(
     };
     let rendered = pretty(&doc, 0, &fmt);
 
+    // Build rows: pair each rendered line with its annotation.
     let rendered_lines: Vec<&str> = rendered.lines().collect();
-    let num_steps = matching_steps.len();
+    let num_steps = annotations.len();
     let total_lines = rendered_lines.len();
     let step_start = total_lines.saturating_sub(num_steps);
 
+    let mut header_rows = Vec::new();
+    let mut step_rows = Vec::new();
+
     for (i, sline) in rendered_lines.iter().enumerate() {
         let right = if i >= step_start {
-            let step_idx = i - step_start;
-            annotations.get(step_idx).cloned().unwrap_or_default()
+            annotations[i - step_start].clone()
         } else {
             String::new()
         };
-        lines.push(TraceLine {
-            left_visible: visible_len(sline),
-            left: sline.to_string(),
-            right,
-        });
+        let row = Row::trace(sline.to_string(), visible_len(sline), right);
+        if i < step_start {
+            header_rows.push(row);
+        } else {
+            step_rows.push(row);
+        }
     }
+
+    // Elide long step runs: keep first 2, last 1.
+    let step_rows = elide_rows(step_rows, 2);
+
+    let mut rows = header_rows;
+    rows.extend(step_rows);
 
     if let Some(out) = outcome
         && matched
     {
-        lines.push(TraceLine {
-            left: String::new(),
-            left_visible: 0,
-            right: format_outcome(out),
-        });
+        rows.push(Row::trace("", 0, format_outcome(out)));
     }
 
-    lines
+    rows
 }
 
 /// Convert a matching step into a Doc for embedding in the rule s-expression.
@@ -302,11 +406,6 @@ fn step_to_doc(step: &TraceStep) -> Doc {
 }
 
 /// Format the right-column annotation for a matching step.
-///
-/// Conventions:
-///   a = b   → yes/no   (literal comparison)
-///   a ~ b   → yes/no   (regex match)
-///   in [..] → yes/no   (anywhere search)
 fn format_matching_step_right(step: &TraceStep) -> String {
     match step {
         TraceStep::ExprVsArg { expr, arg, matched } => {
@@ -370,113 +469,6 @@ fn format_outcome(step: &TraceStep) -> String {
         }
         TraceStep::DefaultAsk => "→ :ask (default)".into(),
         _ => String::new(),
-    }
-}
-
-/// Print a full-width horizontal rule, optionally embedding a label.
-///
-/// Without a label: `──────────────────────────────────`
-/// With a label:    `─── label ────────────────────────`
-///
-/// `label` is the pre-colorized string to embed; `label_visible` is its
-/// display width (excluding ANSI codes). Pass `None` for a plain rule.
-pub fn print_separator(indent: &str, label: Option<(&str, usize)>) {
-    let term_width = std::env::var("COLUMNS")
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok())
-        .or_else(|| terminal_size::terminal_size().map(|(w, _)| w.0 as usize))
-        .unwrap_or(80);
-    let usable = term_width.saturating_sub(indent.len());
-
-    match label {
-        Some((colored_label, label_width)) => {
-            let prefix = "─── ";
-            let mid = " ";
-            let used = visible_len(prefix) + label_width + visible_len(mid);
-            let remaining = usable.saturating_sub(used);
-            let suffix = "─".repeat(remaining);
-            println!(
-                "{indent}{}{}{}{}",
-                prefix.dimmed(),
-                colored_label,
-                mid.dimmed(),
-                suffix.dimmed(),
-            );
-        }
-        None => {
-            let rule = "─".repeat(usable);
-            println!("{indent}{}", rule.dimmed());
-        }
-    }
-}
-
-// ── Key-value table ────────────────────────────────────────────────
-
-/// A row in a key-value table rendered with a vertical bar divider.
-pub struct KvRow {
-    /// The label (left column, plain text).
-    pub key: String,
-    /// The value (right column, pre-colorized).
-    pub value: String,
-}
-
-impl KvRow {
-    pub fn new(key: impl Into<String>, value: impl Into<String>) -> Self {
-        Self { key: key.into(), value: value.into() }
-    }
-}
-
-/// Print a key-value table with a vertical bar divider, aligned to the
-/// widest key.
-///
-/// ```text
-///   expected │ :allow
-///   actual   │ :ask
-///   reason   │ "Rules for cargo exist..."
-/// ```
-pub fn print_kv_table(indent: &str, rows: &[KvRow]) {
-    let max_key = rows.iter().map(|r| r.key.len()).max().unwrap_or(0);
-    for row in rows {
-        let pad = max_key.saturating_sub(row.key.len());
-        println!(
-            "{indent}{}{:pad$} {} {}",
-            row.key,
-            "",
-            DIVIDER.dimmed(),
-            row.value,
-            pad = pad,
-        );
-    }
-}
-
-// ── Two-column printing ────────────────────────────────────────────
-
-/// Print a single two-column line with a box-drawing divider.
-fn print_two_col(indent: &str, line: &TraceLine, divider_col: usize) {
-    if line.left.is_empty() && line.right.is_empty() {
-        return;
-    }
-
-    let left_pad = divider_col.saturating_sub(line.left_visible);
-
-    if line.right.is_empty() {
-        println!(
-            "{indent}{}{:pad$}{}",
-            line.left,
-            "",
-            DIVIDER.dimmed(),
-            pad = left_pad,
-        );
-    } else {
-        let colored_right = colorize_right(&line.right);
-        println!(
-            "{indent}{}{:pad$}{} {}",
-            line.left,
-            "",
-            DIVIDER.dimmed(),
-            colored_right,
-            pad = left_pad,
-        );
     }
 }
 
