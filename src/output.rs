@@ -31,33 +31,59 @@ fn detect_layout() -> Layout {
 
 // ── Document types ─────────────────────────────────────────────────
 
+/// Horizontal alignment for a cell within its column.
+#[derive(Clone, Copy, Default)]
+pub enum Align {
+    #[default]
+    Left,
+    Right,
+}
+
+/// A single cell in a table row.
+pub struct Cell {
+    /// Rendered content (may contain ANSI codes).
+    pub content: String,
+    /// Visible width of content (excluding ANSI).
+    pub visible_width: usize,
+    /// How to align this cell within its column.
+    pub align: Align,
+    /// If true, content is already colorized (skip auto-colorization).
+    pub precolored: bool,
+}
+
+impl Cell {
+    pub fn new(content: impl Into<String>, visible_width: usize) -> Self {
+        Self { content: content.into(), visible_width, align: Align::Left, precolored: false }
+    }
+
+    fn is_elision(&self) -> bool {
+        self.visible_width == 1 && self.content.contains('…')
+    }
+}
+
 /// A row in a two-column table with a vertical bar divider.
 pub struct Row {
-    /// Left column content (may contain ANSI codes).
-    pub left: String,
-    /// Visible width of left column (excluding ANSI).
-    pub left_visible: usize,
-    /// Right column content (colorized at render time unless pre-colored).
-    pub right: String,
-    /// If true, the right column is already colorized.
-    pub right_precolored: bool,
+    pub left: Cell,
+    pub right: Cell,
 }
 
 impl Row {
     /// Create a row with auto-colorized right column (trace style).
     pub fn trace(left: impl Into<String>, left_visible: usize, right: impl Into<String>) -> Self {
-        Self { left: left.into(), left_visible, right: right.into(), right_precolored: false }
+        Self {
+            left: Cell::new(left, left_visible),
+            right: Cell::new(right, 0),
+        }
     }
 
     /// Create a row with a pre-colorized right column (KV style).
     pub fn kv(key: impl Into<String>, value: impl Into<String>) -> Self {
         let key = key.into();
         let len = key.len();
-        Self { left: key, left_visible: len, right: value.into(), right_precolored: true }
-    }
-
-    fn is_elision(&self) -> bool {
-        self.left_visible == 1 && self.left.contains('…')
+        Self {
+            left: Cell::new(key, len),
+            right: Cell { content: value.into(), visible_width: 0, align: Align::Left, precolored: true },
+        }
     }
 }
 
@@ -95,38 +121,37 @@ pub fn render_elements(indent: &str, elements: &[Element]) {
 
 fn compute_divider_col(rows: &[Row]) -> usize {
     let max_left = rows.iter()
-        .filter(|r| !r.is_elision())
-        .map(|r| r.left_visible)
+        .filter(|r| !r.left.is_elision() && matches!(r.left.align, Align::Left))
+        .map(|r| r.left.visible_width)
         .max()
         .unwrap_or(0);
-    max_left + 2
+    max_left + 1
 }
 
 fn print_row(indent: &str, row: &Row, divider_col: usize) {
-    if row.left.is_empty() && row.right.is_empty() {
+    if row.left.content.is_empty() && row.right.content.is_empty() {
         return;
     }
 
-    let left_pad = divider_col.saturating_sub(row.left_visible);
+    let gap = divider_col.saturating_sub(row.left.visible_width);
 
-    if row.right.is_empty() {
-        println!(
-            "{indent}{}{:pad$}{}",
-            row.left, "", DIVIDER.dimmed(),
-            pad = left_pad,
-        );
+    let (lead, trail) = match row.left.align {
+        Align::Right => (gap.saturating_sub(1), 1),
+        Align::Left => (0, gap),
+    };
+
+    let right = if row.right.content.is_empty() {
+        String::new()
+    } else if row.right.precolored {
+        format!(" {}", row.right.content)
     } else {
-        let right = if row.right_precolored {
-            row.right.clone()
-        } else {
-            colorize_right(&row.right)
-        };
-        println!(
-            "{indent}{}{:pad$}{} {}",
-            row.left, "", DIVIDER.dimmed(), right,
-            pad = left_pad,
-        );
-    }
+        format!(" {}", colorize_right(&row.right.content))
+    };
+
+    println!(
+        "{indent}{:lead$}{}{:trail$}{}{}",
+        "", row.left.content, "", DIVIDER.dimmed(), right,
+    );
 }
 
 // ── Separator ──────────────────────────────────────────────────────
@@ -191,10 +216,8 @@ pub fn print_trace(entries: &[TraceEntry], indent: &str) {
             TraceEntry::DefaultAsk { .. } => {
                 let label = "No matching rule".italic().yellow().to_string();
                 let label_visible = "No matching rule".len();
-                let padded_visible = layout.left_width;
-                let pad = padded_visible.saturating_sub(label_visible);
-                let left = format!("{:pad$}{label}", "");
-                let row = Row::trace(left, padded_visible, "→ :ask (default)");
+                let mut row = Row::trace(label, label_visible, "→ :ask (default)");
+                row.left.align = Align::Right;
                 // Append to the previous table if possible, else new table.
                 if let Some(Element::Table(rows)) = elements.last_mut() {
                     rows.push(row);
