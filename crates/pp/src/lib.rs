@@ -216,9 +216,9 @@ fn render<A>(doc: &Doc<A>, indent: usize, width: usize, color: bool) -> String {
                 }
             }
 
-            // Node-level layout hint: skip flat attempt entirely.
+            // Node-level layout hint: drop all children to separate lines.
             if doc.layout == LayoutHint::AlwaysBreak {
-                return render_body_indent(children, indent, width, color);
+                return render_all_drop(children, indent, width, color);
             }
 
             let flat = render_flat(children, color);
@@ -269,6 +269,33 @@ fn render_broken<A>(children: &[Doc<A>], indent: usize, width: usize, color: boo
         }
         if let Some(last) = lines.last_mut() {
             last.push_str(&close);
+        }
+    }
+
+    lines.join("\n")
+}
+
+/// Render with all children dropped to new lines at indent+2.
+/// Used for AlwaysBreak nodes where uniform child alignment is wanted.
+fn render_all_drop<A>(children: &[Doc<A>], indent: usize, width: usize, color: bool) -> String {
+    let open = if color { "(".dimmed().to_string() } else { "(".into() };
+    let close = if color { ")".dimmed().to_string() } else { ")".into() };
+
+    let head = render(&children[0], indent + 1, width, color);
+    let child_indent = indent + 2;
+
+    if children.len() == 1 {
+        return format!("{open}{head}{close}");
+    }
+
+    let mut lines = vec![format!("{open}{head}")];
+    for (i, child) in children[1..].iter().enumerate() {
+        let is_last = i == children.len() - 2;
+        let rendered = render(child, child_indent, width, color);
+        if is_last {
+            lines.push(format!("{:pad$}{rendered}{close}", "", pad = child_indent));
+        } else {
+            lines.push(format!("{:pad$}{rendered}", "", pad = child_indent));
         }
     }
 
@@ -751,5 +778,21 @@ mod tests {
         let layer: DocF<i32> = DocF::Atom("hello".into());
         let mapped = layer.map(|x| x * 2);
         assert_eq!(mapped.as_atom(), Some("hello"));
+    }
+
+    // ── AlwaysBreak ────────────────────────────────────────────────
+
+    #[test]
+    fn always_break_drops_all_children() {
+        let doc = Doc::broken_list(vec![a("or"), a("\"a\""), a("\"b\""), a("\"c\"")]);
+        let result = pp(&doc, 80);
+        assert_eq!(result, "(or\n  \"a\"\n  \"b\"\n  \"c\")");
+    }
+
+    #[test]
+    fn always_break_single_child() {
+        let doc = Doc::broken_list(vec![a("or")]);
+        let result = pp(&doc, 80);
+        assert_eq!(result, "(or)");
     }
 }
