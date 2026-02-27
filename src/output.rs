@@ -19,8 +19,6 @@ const DIVIDER: &str = "│";
 struct Layout {
     /// Maximum visible width for the left (s-expression) column.
     left_width: usize,
-    /// Total usable width after indent.
-    usable: usize,
 }
 
 fn detect_layout() -> Layout {
@@ -31,7 +29,7 @@ fn detect_layout() -> Layout {
         .unwrap_or(80);
     let usable = term_width.saturating_sub(INDENT.len()).max(MIN_TERM_WIDTH);
     let left_width = usable / 2;
-    Layout { left_width, usable }
+    Layout { left_width }
 }
 
 /// Compute the divider column: min(half the terminal, widest left content + gap).
@@ -79,6 +77,7 @@ pub fn print_trace(steps: &[TraceStep], indent: &str) {
         if let Some(TraceStep::SegmentHeader { command, decision }) = block.steps.first() {
             if !first {
                 output.push(PrintableLine::Blank);
+                output.push(PrintableLine::Blank);
             }
             output.push(PrintableLine::SegmentHeader {
                 command: command.clone(),
@@ -109,7 +108,16 @@ pub fn print_trace(steps: &[TraceStep], indent: &str) {
         match line {
             PrintableLine::Blank => println!(),
             PrintableLine::SegmentHeader { command, decision } => {
-                print_segment_header(indent, command, *decision, layout.usable);
+                use may_i_core::Decision;
+                let icon = match decision {
+                    Decision::Allow => "✓".green().bold().to_string(),
+                    Decision::Ask => "?".yellow().bold().to_string(),
+                    Decision::Deny => "✗".red().bold().to_string(),
+                };
+                let label = format!("{icon} {}", command.bold());
+                // icon is 1 visible char + space + command
+                let label_width = 2 + command.len();
+                print_separator(indent, Some((&label, label_width)));
             }
             PrintableLine::Trace(tl) => {
                 print_two_col(indent, tl, divider_col);
@@ -380,14 +388,41 @@ fn format_outcome(step: &TraceStep) -> String {
     }
 }
 
-/// Print a full-width horizontal rule using box-drawing characters.
-pub fn print_separator() {
+/// Print a full-width horizontal rule, optionally embedding a label.
+///
+/// Without a label: `──────────────────────────────────`
+/// With a label:    `─── label ────────────────────────`
+///
+/// `label` is the pre-colorized string to embed; `label_visible` is its
+/// display width (excluding ANSI codes). Pass `None` for a plain rule.
+pub fn print_separator(indent: &str, label: Option<(&str, usize)>) {
     let term_width = std::env::var("COLUMNS")
         .ok()
         .and_then(|s| s.parse::<usize>().ok())
         .or_else(|| terminal_size::terminal_size().map(|(w, _)| w.0 as usize))
         .unwrap_or(80);
-    println!("{}", "─".repeat(term_width).dimmed());
+    let usable = term_width.saturating_sub(indent.len());
+
+    match label {
+        Some((colored_label, label_width)) => {
+            let prefix = "─── ";
+            let mid = " ";
+            let used = visible_len(prefix) + label_width + visible_len(mid);
+            let remaining = usable.saturating_sub(used);
+            let suffix = "─".repeat(remaining);
+            println!(
+                "{indent}{}{}{}{}",
+                prefix.dimmed(),
+                colored_label,
+                mid.dimmed(),
+                suffix.dimmed(),
+            );
+        }
+        None => {
+            let rule = "─".repeat(usable);
+            println!("{indent}{}", rule.dimmed());
+        }
+    }
 }
 
 // ── Two-column printing ────────────────────────────────────────────
@@ -419,28 +454,6 @@ fn print_two_col(indent: &str, line: &TraceLine, divider_col: usize) {
             pad = left_pad,
         );
     }
-}
-
-/// Print a segment header: `─── command ───────────────────────────`.
-fn print_segment_header(indent: &str, command: &str, decision: may_i_core::Decision, usable: usize) {
-    use may_i_core::Decision;
-    let colored_cmd = match decision {
-        Decision::Allow => command.green().bold().to_string(),
-        Decision::Ask => command.yellow().bold().to_string(),
-        Decision::Deny => command.red().bold().to_string(),
-    };
-    let prefix = "─── ";
-    let mid = " ";
-    let used = prefix.len() + command.len() + mid.len();
-    let remaining = usable.saturating_sub(used);
-    let suffix = "─".repeat(remaining);
-    println!(
-        "{indent}{}{}{}{}",
-        prefix.dimmed(),
-        colored_cmd,
-        mid.dimmed(),
-        suffix.dimmed(),
-    );
 }
 
 // ── Right-column colorization ──────────────────────────────────────

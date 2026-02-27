@@ -34,10 +34,9 @@ pub fn cmd_eval(
             print_trace(&result.trace, "  ");
         }
 
-        println!("\n{}\n", "Command".bold());
-        println!("  {colored_command}");
-
         println!("\n{}\n", "Result".bold());
+        println!("  {colored_command}");
+        println!();
         {
             use may_i_pp::colorize_atom;
             let keyword = format!(":{}", result.decision);
@@ -45,9 +44,9 @@ pub fn cmd_eval(
             match &result.reason {
                 Some(reason) => {
                     let quoted = format!("\"{reason}\"");
-                    println!("  {colored_keyword} {}", colorize_atom(&quoted, true));
+                    println!("  {} {colored_keyword} {}", "→".dimmed(), colorize_atom(&quoted, true));
                 }
-                None => println!("  {colored_keyword}"),
+                None => println!("  {} {colored_keyword}", "→".dimmed()),
             }
         }
         println!();

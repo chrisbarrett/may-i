@@ -60,16 +60,18 @@ pub fn cmd_check(json_mode: bool, verbose: bool, config_path: Option<&std::path:
             }
 
             println!();
-            output::print_separator();
+            let colored_cmd = r.command.bold().to_string();
+            output::print_separator("", Some((&colored_cmd, r.command.len())));
+            println!();
 
-            // Location + command heading
+            // Location
             let loc = r.location.as_deref().unwrap_or("<unknown>");
             let (file, line_col) = loc.split_once(':').unwrap_or((loc, ""));
             print!("{}", file.red());
             if !line_col.is_empty() {
                 print!("{}", format!(":{line_col}").dimmed());
             }
-            println!(": {}\n", r.command.bold());
+            println!();
 
             let expected_kw = format!(":{}", r.expected);
             let actual_kw = format!(":{}", r.actual);
@@ -89,7 +91,7 @@ pub fn cmd_check(json_mode: bool, verbose: bool, config_path: Option<&std::path:
 
         if !failures.is_empty() {
             println!();
-            output::print_separator();
+            output::print_separator("", None);
         }
         println!("\n{}\n", "Summary".bold());
         let icon = if failed > 0 { "✗".red() } else { "✓".green() };
