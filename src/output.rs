@@ -380,6 +380,16 @@ fn format_outcome(step: &TraceStep) -> String {
     }
 }
 
+/// Print a full-width horizontal rule using box-drawing characters.
+pub fn print_separator() {
+    let term_width = std::env::var("COLUMNS")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .or_else(|| terminal_size::terminal_size().map(|(w, _)| w.0 as usize))
+        .unwrap_or(80);
+    println!("{}", "─".repeat(term_width).dimmed());
+}
+
 // ── Two-column printing ────────────────────────────────────────────
 
 /// Print a single two-column line with a box-drawing divider.

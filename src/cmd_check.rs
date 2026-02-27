@@ -1,10 +1,12 @@
 // Check subcommand — validate config and run checks.
 
 use colored::Colorize;
+use may_i_pp::colorize_atom;
 
 use may_i_config as config;
 use may_i_engine as engine;
 
+use crate::output;
 use crate::output::print_trace;
 
 pub fn cmd_check(json_mode: bool, verbose: bool, config_path: Option<&std::path::Path>) -> miette::Result<()> {
@@ -52,35 +54,50 @@ pub fn cmd_check(json_mode: bool, verbose: bool, config_path: Option<&std::path:
             }
         }
 
-        if !failures.is_empty() {
-            println!("\n{}\n", "Failures".bold());
-            for r in &failures {
-                let loc = r.location.as_deref().unwrap_or("<unknown>");
-                let (file, line_col) = loc.split_once(':').unwrap_or((loc, ""));
-                print!("{}", file.red());
-                if !line_col.is_empty() {
-                    print!("{}", format!(":{line_col}").dimmed());
-                }
-                println!(": {}", r.command.bold());
-                println!("  expected: {}", r.expected.to_string().green());
-                println!("  actual:   {}", r.actual.to_string().red());
-                if let Some(reason) = &r.reason {
-                    println!("  reason:   {}", reason.italic());
-                }
-                if !r.trace.is_empty() {
-                    println!("  trace:");
-                    print_trace(&r.trace, "    ");
-                }
+        for (i, r) in failures.iter().enumerate() {
+            if i > 0 {
                 println!();
+            }
+
+            println!();
+            output::print_separator();
+
+            // Location + command heading
+            let loc = r.location.as_deref().unwrap_or("<unknown>");
+            let (file, line_col) = loc.split_once(':').unwrap_or((loc, ""));
+            print!("{}", file.red());
+            if !line_col.is_empty() {
+                print!("{}", format!(":{line_col}").dimmed());
+            }
+            println!(": {}\n", r.command.bold());
+
+            let expected_kw = format!(":{}", r.expected);
+            let actual_kw = format!(":{}", r.actual);
+            println!("  expected: {}", output::colorize_decision_keyword(&expected_kw));
+            println!("  actual:   {}", output::colorize_decision_keyword(&actual_kw));
+            if let Some(reason) = &r.reason {
+                let quoted = format!("\"{reason}\"");
+                println!("  reason:   {}", colorize_atom(&quoted, true));
+            }
+
+            // Trace
+            if !r.trace.is_empty() {
+                println!("\n{}\n", "Trace".bold());
+                print_trace(&r.trace, "  ");
             }
         }
 
-        println!("{}\n", "Summary".bold());
-        println!("  {passed} passed, {failed} failed");
+        if !failures.is_empty() {
+            println!();
+            output::print_separator();
+        }
+        println!("\n{}\n", "Summary".bold());
+        let icon = if failed > 0 { "✗".red() } else { "✓".green() };
+        println!("  {icon} {} passed, {} failed", passed.to_string().bold(), failed.to_string().bold());
     }
 
     if failed > 0 {
-        miette::bail!("{failed} check(s) failed");
+        std::process::exit(1);
     }
 
     Ok(())
