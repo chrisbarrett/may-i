@@ -11,9 +11,14 @@ into the binary; user rules prepend to (and override) defaults.
 ### Related specs
 
 - [CLI Interface](cli-interface.md) — R1–R5
-- [Shell Parser](shell-parser.md) — R5, R6
-- [Configuration](configuration.md) — R10, R10a–R10f
-- [Security Filters](security-filters.md) — R11
+- [Shell Parser](shell-parser.md) — R5–R7
+- [Configuration](configuration.md) — R10–R10f
+- [Hook Protocol](hook-protocol.md) — R12–R15
+- [Variable Resolution](variable-resolution.md) — R16–R21
+- [Visitor Pipeline](visitor-pipeline.md) — R22–R29
+- [Evaluation Trace](evaluation-trace.md) — R30–R35
+- [Domain Model](domain-model.md) — R36–R43
+- [Security Filters](security-filters.md) — R11 (removed)
 
 ---
 
