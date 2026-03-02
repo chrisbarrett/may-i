@@ -1,10 +1,10 @@
 // Visitor that handles `read`, `readarray`, and `mapfile` builtins
 // by marking the target variables as safe in the environment.
 
+use super::{CommandVisitor, VisitOutcome, VisitorContext};
+use crate::var_env::VarState;
 use may_i_core::{Decision, EvalResult};
 use may_i_shell_parser::{self as parser, SimpleCommand};
-use crate::var_env::VarState;
-use super::{CommandVisitor, VisitOutcome, VisitorContext};
 
 /// Detects `read`/`readarray`/`mapfile` and updates the variable
 /// environment to mark target variables as safe (value unknown at
@@ -12,11 +12,7 @@ use super::{CommandVisitor, VisitOutcome, VisitorContext};
 pub(crate) struct ReadBuiltinVisitor;
 
 impl CommandVisitor for ReadBuiltinVisitor {
-    fn visit_simple_command(
-        &self,
-        ctx: &VisitorContext,
-        resolved: &SimpleCommand,
-    ) -> VisitOutcome {
+    fn visit_simple_command(&self, ctx: &VisitorContext, resolved: &SimpleCommand) -> VisitOutcome {
         let cmd_name = match resolved.command_name() {
             Some(name) if matches!(name, "read" | "readarray" | "mapfile") => name,
             _ => return VisitOutcome::Continue,

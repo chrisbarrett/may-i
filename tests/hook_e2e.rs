@@ -4,8 +4,8 @@
 // exactly as Claude Code does in production, and verify stdout JSON, stderr,
 // and exit codes.
 
-use assert_cmd::cargo::cargo_bin_cmd;
 use assert_cmd::Command;
+use assert_cmd::cargo::cargo_bin_cmd;
 use predicates::prelude::*;
 use std::io::Write;
 use tempfile::NamedTempFile;
@@ -92,14 +92,8 @@ fn hook_allows_matching_command() {
     let resp: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("valid JSON stdout");
 
-    assert_eq!(
-        resp["hookSpecificOutput"]["hookEventName"],
-        "PreToolUse"
-    );
-    assert_eq!(
-        resp["hookSpecificOutput"]["permissionDecision"],
-        "allow"
-    );
+    assert_eq!(resp["hookSpecificOutput"]["hookEventName"], "PreToolUse");
+    assert_eq!(resp["hookSpecificOutput"]["permissionDecision"], "allow");
 }
 
 #[test]
@@ -115,10 +109,7 @@ fn hook_denies_matching_command() {
     let resp: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("valid JSON stdout");
 
-    assert_eq!(
-        resp["hookSpecificOutput"]["permissionDecision"],
-        "deny"
-    );
+    assert_eq!(resp["hookSpecificOutput"]["permissionDecision"], "deny");
     // Reason should be populated
     let reason = resp["hookSpecificOutput"]["permissionDecisionReason"]
         .as_str()
@@ -139,10 +130,7 @@ fn hook_asks_for_unmatched_command() {
     let resp: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("valid JSON stdout");
 
-    assert_eq!(
-        resp["hookSpecificOutput"]["permissionDecision"],
-        "ask"
-    );
+    assert_eq!(resp["hookSpecificOutput"]["permissionDecision"], "ask");
 }
 
 // ---------------------------------------------------------------------------
@@ -205,10 +193,7 @@ fn hook_silent_when_tool_name_absent() {
     })
     .to_string();
 
-    let output = may_i(&cfg)
-        .write_stdin(payload)
-        .output()
-        .expect("run");
+    let output = may_i(&cfg).write_stdin(payload).output().expect("run");
 
     assert!(output.status.success());
     assert!(output.stdout.is_empty());
@@ -248,9 +233,7 @@ fn hook_exits_2_on_missing_command_field() {
 #[test]
 fn hook_exits_2_on_bad_config() {
     let mut bad_cfg = NamedTempFile::new().expect("create temp");
-    bad_cfg
-        .write_all(b"this is not valid (((")
-        .expect("write");
+    bad_cfg.write_all(b"this is not valid (((").expect("write");
 
     let mut cmd = cargo_bin_cmd!("may-i");
     cmd.env("MAYI_CONFIG", bad_cfg.path());
@@ -274,8 +257,7 @@ fn hook_response_has_correct_structure() {
 
     assert!(output.status.success());
 
-    let resp: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("valid JSON");
+    let resp: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
 
     // Top-level must have hookSpecificOutput and nothing else unexpected
     assert!(resp.get("hookSpecificOutput").is_some());
@@ -317,19 +299,12 @@ fn hook_handles_real_bash_payload() {
     })
     .to_string();
 
-    let output = may_i(&cfg)
-        .write_stdin(payload)
-        .output()
-        .expect("run");
+    let output = may_i(&cfg).write_stdin(payload).output().expect("run");
 
     assert!(output.status.success());
 
-    let resp: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("valid JSON");
-    assert_eq!(
-        resp["hookSpecificOutput"]["permissionDecision"],
-        "allow"
-    );
+    let resp: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    assert_eq!(resp["hookSpecificOutput"]["permissionDecision"], "allow");
 }
 
 #[test]
@@ -350,10 +325,7 @@ fn hook_handles_payload_with_extra_fields() {
     })
     .to_string();
 
-    let output = may_i(&cfg)
-        .write_stdin(payload)
-        .output()
-        .expect("run");
+    let output = may_i(&cfg).write_stdin(payload).output().expect("run");
 
     assert!(output.status.success());
     assert!(!output.stdout.is_empty(), "should produce JSON output");
@@ -375,12 +347,8 @@ fn hook_asks_for_credential_access() {
 
     assert!(output.status.success());
 
-    let resp: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("valid JSON");
-    assert_eq!(
-        resp["hookSpecificOutput"]["permissionDecision"],
-        "ask"
-    );
+    let resp: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    assert_eq!(resp["hookSpecificOutput"]["permissionDecision"], "ask");
 }
 
 #[test]
@@ -393,12 +361,8 @@ fn hook_asks_for_env_file_access() {
 
     assert!(output.status.success());
 
-    let resp: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("valid JSON");
-    assert_eq!(
-        resp["hookSpecificOutput"]["permissionDecision"],
-        "ask"
-    );
+    let resp: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    assert_eq!(resp["hookSpecificOutput"]["permissionDecision"], "ask");
 }
 
 // ---------------------------------------------------------------------------

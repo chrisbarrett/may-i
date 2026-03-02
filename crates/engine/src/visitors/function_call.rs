@@ -1,19 +1,15 @@
 // Visitor that handles shell function calls by inlining the function body.
 
-use may_i_shell_parser::SimpleCommand;
+use super::{CommandVisitor, MAX_EVAL_DEPTH, VisitOutcome, VisitorContext};
 use crate::var_env::VarState;
-use super::{CommandVisitor, VisitOutcome, VisitorContext, MAX_EVAL_DEPTH};
+use may_i_shell_parser::SimpleCommand;
 
 /// When the command name matches a previously defined function, set up
 /// positional parameters and recurse into the function body.
 pub(crate) struct FunctionCallVisitor;
 
 impl CommandVisitor for FunctionCallVisitor {
-    fn visit_simple_command(
-        &self,
-        ctx: &VisitorContext,
-        resolved: &SimpleCommand,
-    ) -> VisitOutcome {
+    fn visit_simple_command(&self, ctx: &VisitorContext, resolved: &SimpleCommand) -> VisitOutcome {
         let cmd_name = match resolved.nonempty_command_name() {
             Some(name) => name,
             None => return VisitOutcome::Continue,

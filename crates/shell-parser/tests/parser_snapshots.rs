@@ -151,23 +151,17 @@ mod compound {
 
     #[test]
     fn case_multiple_patterns() {
-        insta::assert_debug_snapshot!(parse(
-            "case $x in a|b|c) echo match;; esac"
-        ));
+        insta::assert_debug_snapshot!(parse("case $x in a|b|c) echo match;; esac"));
     }
 
     #[test]
     fn case_fallthrough() {
-        insta::assert_debug_snapshot!(parse(
-            "case $x in a) echo a;& b) echo b;; esac"
-        ));
+        insta::assert_debug_snapshot!(parse("case $x in a) echo a;& b) echo b;; esac"));
     }
 
     #[test]
     fn case_continue() {
-        insta::assert_debug_snapshot!(parse(
-            "case $x in a) echo a;;& b) echo b;; esac"
-        ));
+        insta::assert_debug_snapshot!(parse("case $x in a) echo a;;& b) echo b;; esac"));
     }
 
     #[test]
@@ -497,16 +491,12 @@ mod complex {
 
     #[test]
     fn function_with_local_and_redirect() {
-        insta::assert_debug_snapshot!(parse(
-            "f() { local x=1; echo $x > /dev/null; }"
-        ));
+        insta::assert_debug_snapshot!(parse("f() { local x=1; echo $x > /dev/null; }"));
     }
 
     #[test]
     fn pipeline_of_compound_commands() {
-        insta::assert_debug_snapshot!(parse(
-            "{ echo a; echo b; } | sort | uniq"
-        ));
+        insta::assert_debug_snapshot!(parse("{ echo a; echo b; } | sort | uniq"));
     }
 
     #[test]
@@ -517,8 +507,6 @@ mod complex {
 
     #[test]
     fn double_quotes_multiple_expansions() {
-        insta::assert_debug_snapshot!(parse(
-            r#"echo "user=$USER home=$HOME shell=$SHELL""#
-        ));
+        insta::assert_debug_snapshot!(parse(r#"echo "user=$USER home=$HOME shell=$SHELL""#));
     }
 }

@@ -18,8 +18,7 @@ fn parse_wrappers(input: &str) -> Vec<may_i_core::Wrapper> {
 }
 
 fn render_error(input: &str) -> String {
-    let err = may_i_config::parse::parse(input, "<test>")
-        .expect_err("expected a parse error");
+    let err = may_i_config::parse::parse(input, "<test>").expect_err("expected a parse error");
     let handler = GraphicalReportHandler::new_themed(miette::GraphicalTheme::unicode_nocolor());
     let mut out = String::new();
     handler.render_report(&mut out, err.as_ref()).unwrap();
@@ -150,9 +149,7 @@ mod errors {
     #[test]
     fn positional_with_no_capture() {
         // Positional step but capture keyword omitted
-        insta::assert_snapshot!(render_error(
-            r#"(wrapper "x" (positional "sub"))"#
-        ));
+        insta::assert_snapshot!(render_error(r#"(wrapper "x" (positional "sub"))"#));
     }
 
     #[test]
@@ -164,9 +161,7 @@ mod errors {
 
     #[test]
     fn duplicate_capture_two_bare_keywords() {
-        insta::assert_snapshot!(render_error(
-            r#"(wrapper "x" :command+args :command+args)"#
-        ));
+        insta::assert_snapshot!(render_error(r#"(wrapper "x" :command+args :command+args)"#));
     }
 
     #[test]

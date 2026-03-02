@@ -31,13 +31,23 @@ pub fn segment(input: &str) -> Vec<Segment> {
                 if let Some(start) = cmd_start {
                     let end = input[start..].trim_end().len() + start;
                     if end > start {
-                        segments.push(Segment { start, end, is_operator: false });
+                        segments.push(Segment {
+                            start,
+                            end,
+                            is_operator: false,
+                        });
                     }
                 }
             }
             // Depth-increasing tokens
-            Token::LParen | Token::If | Token::For | Token::While | Token::Until
-            | Token::Case | Token::Do | Token::LBrace => {
+            Token::LParen
+            | Token::If
+            | Token::For
+            | Token::While
+            | Token::Until
+            | Token::Case
+            | Token::Do
+            | Token::LBrace => {
                 depth += 1;
                 if cmd_start.is_none() {
                     cmd_start = Some(*byte_off);
@@ -51,14 +61,16 @@ pub fn segment(input: &str) -> Vec<Segment> {
                 }
             }
             // Top-level operators split segments
-            Token::Pipe | Token::And | Token::Or | Token::Semi | Token::Amp
-                if depth <= 0 =>
-            {
+            Token::Pipe | Token::And | Token::Or | Token::Semi | Token::Amp if depth <= 0 => {
                 // Flush the command segment before this operator
                 if let Some(start) = cmd_start.take() {
                     let end = trim_end_offset(input, start, *byte_off);
                     if end > start {
-                        segments.push(Segment { start, end, is_operator: false });
+                        segments.push(Segment {
+                            start,
+                            end,
+                            is_operator: false,
+                        });
                     }
                 }
                 // Add the operator segment
@@ -66,14 +78,22 @@ pub fn segment(input: &str) -> Vec<Segment> {
                     Token::And | Token::Or => 2,
                     _ => 1,
                 };
-                segments.push(Segment { start: *byte_off, end: byte_off + op_len, is_operator: true });
+                segments.push(Segment {
+                    start: *byte_off,
+                    end: byte_off + op_len,
+                    is_operator: true,
+                });
             }
             // Newlines are treated like semicolons at depth 0
             Token::Newline if depth <= 0 => {
                 if let Some(start) = cmd_start.take() {
                     let end = trim_end_offset(input, start, *byte_off);
                     if end > start {
-                        segments.push(Segment { start, end, is_operator: false });
+                        segments.push(Segment {
+                            start,
+                            end,
+                            is_operator: false,
+                        });
                     }
                 }
             }

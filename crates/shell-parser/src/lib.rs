@@ -11,8 +11,8 @@ pub use resolve::resolve_param_op;
 mod tests;
 
 pub use ast::*;
-pub use segment::{Segment, segment};
 use parse::Parser;
+pub use segment::{Segment, segment};
 
 /// Parse a shell command string into an AST.
 /// Returns a partial AST on malformed input (never panics).

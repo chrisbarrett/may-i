@@ -3,15 +3,15 @@ use super::ast::*;
 #[derive(Debug, Clone, PartialEq)]
 pub(super) enum Token {
     Word(Word),
-    Pipe,           // |
-    And,            // &&
-    Or,             // ||
-    Semi,           // ;
-    Amp,            // &
-    LParen,         // (
-    RParen,         // )
-    LBrace,         // {
-    RBrace,         // }
+    Pipe,   // |
+    And,    // &&
+    Or,     // ||
+    Semi,   // ;
+    Amp,    // &
+    LParen, // (
+    RParen, // )
+    LBrace, // {
+    RBrace, // }
     Newline,
     If,
     Then,
@@ -26,9 +26,9 @@ pub(super) enum Token {
     Done,
     Case,
     Esac,
-    DoubleSemi,     // ;;
-    SemiAmp,        // ;&
-    DoubleSemiAmp,  // ;;&
+    DoubleSemi,    // ;;
+    SemiAmp,       // ;&
+    DoubleSemiAmp, // ;;&
     Function,
     Redirect(Redirection),
     Eof,
@@ -94,7 +94,10 @@ impl Lexer {
     }
 
     pub(super) fn tokenize(&mut self) -> Vec<Token> {
-        self.tokenize_with_offsets().into_iter().map(|(tok, _)| tok).collect()
+        self.tokenize_with_offsets()
+            .into_iter()
+            .map(|(tok, _)| tok)
+            .collect()
     }
 
     pub(super) fn tokenize_with_offsets(&mut self) -> Vec<(Token, usize)> {
@@ -571,8 +574,16 @@ impl Lexer {
                 self.advance(); // skip closing '
                 Some(WordPart::AnsiCQuoted(s))
             }
-            Some(ch) if ch.is_ascii_alphanumeric() || ch == '_' || ch == '@' || ch == '#'
-                || ch == '?' || ch == '-' || ch == '!' || ch == '$' || ch == '*' =>
+            Some(ch)
+                if ch.is_ascii_alphanumeric()
+                    || ch == '_'
+                    || ch == '@'
+                    || ch == '#'
+                    || ch == '?'
+                    || ch == '-'
+                    || ch == '!'
+                    || ch == '$'
+                    || ch == '*' =>
             {
                 let mut name = String::new();
                 if ch.is_ascii_alphanumeric() || ch == '_' {
@@ -683,7 +694,11 @@ impl Lexer {
                 self.advance(); // skip }
                 Some(WordPart::ParameterExpansionOp {
                     name,
-                    op: ParameterOperator::Replace { all, pattern, replacement },
+                    op: ParameterOperator::Replace {
+                        all,
+                        pattern,
+                        replacement,
+                    },
                 })
             }
             Some(':') => {
@@ -713,7 +728,10 @@ impl Lexer {
                         self.advance();
                         Some(WordPart::ParameterExpansionOp {
                             name,
-                            op: ParameterOperator::Error { colon: true, message },
+                            op: ParameterOperator::Error {
+                                colon: true,
+                                message,
+                            },
                         })
                     }
                     Some('=') => {
@@ -748,7 +766,10 @@ impl Lexer {
                 self.advance();
                 Some(WordPart::ParameterExpansionOp {
                     name,
-                    op: ParameterOperator::Default { colon: false, value },
+                    op: ParameterOperator::Default {
+                        colon: false,
+                        value,
+                    },
                 })
             }
             Some('+') => {
@@ -757,7 +778,10 @@ impl Lexer {
                 self.advance();
                 Some(WordPart::ParameterExpansionOp {
                     name,
-                    op: ParameterOperator::Alternative { colon: false, value },
+                    op: ParameterOperator::Alternative {
+                        colon: false,
+                        value,
+                    },
                 })
             }
             Some('?') => {
@@ -766,7 +790,10 @@ impl Lexer {
                 self.advance();
                 Some(WordPart::ParameterExpansionOp {
                     name,
-                    op: ParameterOperator::Error { colon: false, message },
+                    op: ParameterOperator::Error {
+                        colon: false,
+                        message,
+                    },
                 })
             }
             Some('=') => {
@@ -775,7 +802,10 @@ impl Lexer {
                 self.advance();
                 Some(WordPart::ParameterExpansionOp {
                     name,
-                    op: ParameterOperator::Assign { colon: false, value },
+                    op: ParameterOperator::Assign {
+                        colon: false,
+                        value,
+                    },
                 })
             }
             Some('^') => {
@@ -1105,7 +1135,10 @@ impl Lexer {
         // The main tokenizer loop only calls read_word_or_keyword for
         // characters that are not metacharacters, so read_word_parts
         // always consumes at least one character here.
-        assert!(!parts.is_empty(), "unreachable: read_word_or_keyword called at metachar");
+        assert!(
+            !parts.is_empty(),
+            "unreachable: read_word_or_keyword called at metachar"
+        );
 
         // Check if this is a keyword (single literal part)
         if parts.len() == 1
@@ -1137,7 +1170,10 @@ impl Lexer {
 }
 
 pub(super) fn is_metachar(ch: char) -> bool {
-    matches!(ch, ' ' | '\t' | '\n' | '|' | '&' | ';' | '(' | ')' | '<' | '>' | '#')
+    matches!(
+        ch,
+        ' ' | '\t' | '\n' | '|' | '&' | ';' | '(' | ')' | '<' | '>' | '#'
+    )
 }
 
 fn is_word_char(ch: char) -> bool {

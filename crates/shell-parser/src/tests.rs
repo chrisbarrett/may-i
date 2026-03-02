@@ -1,5 +1,5 @@
-use super::*;
 use super::glob::{glob_match, glob_replace, glob_strip_prefix, glob_strip_suffix};
+use super::*;
 
 #[test]
 fn test_parse_simple_command() {
@@ -109,12 +109,10 @@ fn test_or() {
 fn test_and_or_chained() {
     let cmd = parse("a && b || c");
     match &cmd {
-        Command::Or(left, _) => {
-            match left.as_ref() {
-                Command::And(_, _) => {}
-                _ => panic!("Expected And inside Or"),
-            }
-        }
+        Command::Or(left, _) => match left.as_ref() {
+            Command::And(_, _) => {}
+            _ => panic!("Expected And inside Or"),
+        },
         _ => panic!("Expected Or command"),
     }
 }
@@ -147,12 +145,10 @@ fn test_sequence_trailing_semi() {
 fn test_background() {
     let cmd = parse("sleep 10 &");
     match &cmd {
-        Command::Background(inner) => {
-            match inner.as_ref() {
-                Command::Simple(sc) => assert_eq!(sc.command_name(), Some("sleep")),
-                _ => panic!("Expected simple command"),
-            }
-        }
+        Command::Background(inner) => match inner.as_ref() {
+            Command::Simple(sc) => assert_eq!(sc.command_name(), Some("sleep")),
+            _ => panic!("Expected simple command"),
+        },
         _ => panic!("Expected background command"),
     }
 }
@@ -178,12 +174,10 @@ fn test_background_in_sequence() {
 fn test_subshell() {
     let cmd = parse("(cmd1; cmd2)");
     match &cmd {
-        Command::Subshell(inner) => {
-            match inner.as_ref() {
-                Command::Sequence(cmds) => assert_eq!(cmds.len(), 2),
-                _ => panic!("Expected sequence inside subshell"),
-            }
-        }
+        Command::Subshell(inner) => match inner.as_ref() {
+            Command::Sequence(cmds) => assert_eq!(cmds.len(), 2),
+            _ => panic!("Expected sequence inside subshell"),
+        },
         _ => panic!("Expected subshell"),
     }
 }
@@ -192,12 +186,10 @@ fn test_subshell() {
 fn test_subshell_single_command() {
     let cmd = parse("(echo hello)");
     match &cmd {
-        Command::Subshell(inner) => {
-            match inner.as_ref() {
-                Command::Simple(sc) => assert_eq!(sc.command_name(), Some("echo")),
-                _ => panic!("Expected simple command"),
-            }
-        }
+        Command::Subshell(inner) => match inner.as_ref() {
+            Command::Simple(sc) => assert_eq!(sc.command_name(), Some("echo")),
+            _ => panic!("Expected simple command"),
+        },
         _ => panic!("Expected subshell"),
     }
 }
@@ -208,12 +200,10 @@ fn test_subshell_single_command() {
 fn test_brace_group() {
     let cmd = parse("{ cmd1; cmd2; }");
     match &cmd {
-        Command::BraceGroup(inner) => {
-            match inner.as_ref() {
-                Command::Sequence(cmds) => assert_eq!(cmds.len(), 2),
-                _ => panic!("Expected sequence inside brace group"),
-            }
-        }
+        Command::BraceGroup(inner) => match inner.as_ref() {
+            Command::Sequence(cmds) => assert_eq!(cmds.len(), 2),
+            _ => panic!("Expected sequence inside brace group"),
+        },
         _ => panic!("Expected brace group"),
     }
 }
@@ -224,7 +214,12 @@ fn test_brace_group() {
 fn test_if_then_fi() {
     let cmd = parse("if true; then echo yes; fi");
     match &cmd {
-        Command::If { condition, then_branch, elif_branches, else_branch } => {
+        Command::If {
+            condition,
+            then_branch,
+            elif_branches,
+            else_branch,
+        } => {
             match condition.as_ref() {
                 Command::Simple(sc) => assert_eq!(sc.command_name(), Some("true")),
                 _ => panic!("Expected simple condition"),
@@ -255,7 +250,11 @@ fn test_if_else() {
 fn test_if_elif_else() {
     let cmd = parse("if a; then b; elif c; then d; elif e; then f; else g; fi");
     match &cmd {
-        Command::If { elif_branches, else_branch, .. } => {
+        Command::If {
+            elif_branches,
+            else_branch,
+            ..
+        } => {
             assert_eq!(elif_branches.len(), 2);
             assert!(else_branch.is_some());
         }
@@ -290,7 +289,11 @@ fn test_for_loop() {
 fn test_while_loop() {
     let cmd = parse("while true; do echo loop; done");
     match &cmd {
-        Command::Loop { kind: LoopKind::While, condition, body } => {
+        Command::Loop {
+            kind: LoopKind::While,
+            condition,
+            body,
+        } => {
             match condition.as_ref() {
                 Command::Simple(sc) => assert_eq!(sc.command_name(), Some("true")),
                 _ => panic!("Expected simple condition"),
@@ -310,7 +313,11 @@ fn test_while_loop() {
 fn test_until_loop() {
     let cmd = parse("until false; do echo loop; done");
     match &cmd {
-        Command::Loop { kind: LoopKind::Until, condition, body } => {
+        Command::Loop {
+            kind: LoopKind::Until,
+            condition,
+            body,
+        } => {
             match condition.as_ref() {
                 Command::Simple(sc) => assert_eq!(sc.command_name(), Some("false")),
                 _ => panic!("Expected simple condition"),
@@ -384,7 +391,12 @@ fn test_case_glob_pattern() {
         Command::Case { arms, .. } => {
             assert_eq!(arms.len(), 1);
             // The * is parsed as a glob
-            assert!(arms[0].patterns[0].parts.iter().any(|p| matches!(p, WordPart::Glob(_))));
+            assert!(
+                arms[0].patterns[0]
+                    .parts
+                    .iter()
+                    .any(|p| matches!(p, WordPart::Glob(_)))
+            );
         }
         _ => panic!("Expected case command"),
     }
@@ -624,16 +636,14 @@ fn test_double_quotes_literal() {
 fn test_double_quotes_with_variable() {
     let cmd = parse(r#"echo "hello $name""#);
     match &cmd {
-        Command::Simple(sc) => {
-            match &sc.words[1].parts[0] {
-                WordPart::DoubleQuoted(parts) => {
-                    assert_eq!(parts.len(), 2);
-                    assert!(matches!(&parts[0], WordPart::Literal(s) if s == "hello "));
-                    assert!(matches!(&parts[1], WordPart::Parameter(s) if s == "name"));
-                }
-                _ => panic!("Expected double quoted"),
+        Command::Simple(sc) => match &sc.words[1].parts[0] {
+            WordPart::DoubleQuoted(parts) => {
+                assert_eq!(parts.len(), 2);
+                assert!(matches!(&parts[0], WordPart::Literal(s) if s == "hello "));
+                assert!(matches!(&parts[1], WordPart::Parameter(s) if s == "name"));
             }
-        }
+            _ => panic!("Expected double quoted"),
+        },
         _ => panic!("Expected simple command"),
     }
 }
@@ -642,14 +652,16 @@ fn test_double_quotes_with_variable() {
 fn test_double_quotes_with_command_sub() {
     let cmd = parse(r#"echo "today is $(date)""#);
     match &cmd {
-        Command::Simple(sc) => {
-            match &sc.words[1].parts[0] {
-                WordPart::DoubleQuoted(parts) => {
-                    assert!(parts.iter().any(|p| matches!(p, WordPart::CommandSubstitution(s) if s == "date")));
-                }
-                _ => panic!("Expected double quoted"),
+        Command::Simple(sc) => match &sc.words[1].parts[0] {
+            WordPart::DoubleQuoted(parts) => {
+                assert!(
+                    parts
+                        .iter()
+                        .any(|p| matches!(p, WordPart::CommandSubstitution(s) if s == "date"))
+                );
             }
-        }
+            _ => panic!("Expected double quoted"),
+        },
         _ => panic!("Expected simple command"),
     }
 }
@@ -658,14 +670,16 @@ fn test_double_quotes_with_command_sub() {
 fn test_double_quotes_with_backtick() {
     let cmd = parse(r#"echo "today is `date`""#);
     match &cmd {
-        Command::Simple(sc) => {
-            match &sc.words[1].parts[0] {
-                WordPart::DoubleQuoted(parts) => {
-                    assert!(parts.iter().any(|p| matches!(p, WordPart::Backtick(s) if s == "date")));
-                }
-                _ => panic!("Expected double quoted"),
+        Command::Simple(sc) => match &sc.words[1].parts[0] {
+            WordPart::DoubleQuoted(parts) => {
+                assert!(
+                    parts
+                        .iter()
+                        .any(|p| matches!(p, WordPart::Backtick(s) if s == "date"))
+                );
             }
-        }
+            _ => panic!("Expected double quoted"),
+        },
         _ => panic!("Expected simple command"),
     }
 }
@@ -676,7 +690,12 @@ fn test_ansi_c_quoting() {
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(sc.words.len(), 2);
-            assert!(sc.words[1].parts.iter().any(|p| matches!(p, WordPart::AnsiCQuoted(s) if s == "hello\nworld")));
+            assert!(
+                sc.words[1]
+                    .parts
+                    .iter()
+                    .any(|p| matches!(p, WordPart::AnsiCQuoted(s) if s == "hello\nworld"))
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -703,7 +722,12 @@ fn test_parameter() {
     let cmd = parse("echo $VAR");
     match &cmd {
         Command::Simple(sc) => {
-            assert!(sc.words[1].parts.iter().any(|p| matches!(p, WordPart::Parameter(s) if s == "VAR")));
+            assert!(
+                sc.words[1]
+                    .parts
+                    .iter()
+                    .any(|p| matches!(p, WordPart::Parameter(s) if s == "VAR"))
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -714,7 +738,12 @@ fn test_parameter_expansion() {
     let cmd = parse("echo ${VAR}");
     match &cmd {
         Command::Simple(sc) => {
-            assert!(sc.words[1].parts.iter().any(|p| matches!(p, WordPart::ParameterExpansion(s) if s == "VAR")));
+            assert!(
+                sc.words[1]
+                    .parts
+                    .iter()
+                    .any(|p| matches!(p, WordPart::ParameterExpansion(s) if s == "VAR"))
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -727,7 +756,11 @@ fn test_special_variables() {
         let cmd = parse(&input);
         match &cmd {
             Command::Simple(sc) => {
-                assert!(sc.words[1].has_dynamic_parts(), "Expected dynamic for {}", var);
+                assert!(
+                    sc.words[1].has_dynamic_parts(),
+                    "Expected dynamic for {}",
+                    var
+                );
             }
             _ => panic!("Expected simple command for {}", var),
         }
@@ -741,7 +774,12 @@ fn test_command_substitution() {
     let cmd = parse("echo $(whoami)");
     match &cmd {
         Command::Simple(sc) => {
-            assert!(sc.words[1].parts.iter().any(|p| matches!(p, WordPart::CommandSubstitution(s) if s == "whoami")));
+            assert!(
+                sc.words[1]
+                    .parts
+                    .iter()
+                    .any(|p| matches!(p, WordPart::CommandSubstitution(s) if s == "whoami"))
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -752,7 +790,12 @@ fn test_backtick_substitution() {
     let cmd = parse("echo `whoami`");
     match &cmd {
         Command::Simple(sc) => {
-            assert!(sc.words[1].parts.iter().any(|p| matches!(p, WordPart::Backtick(s) if s == "whoami")));
+            assert!(
+                sc.words[1]
+                    .parts
+                    .iter()
+                    .any(|p| matches!(p, WordPart::Backtick(s) if s == "whoami"))
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -762,12 +805,10 @@ fn test_backtick_substitution() {
 fn test_nested_command_substitution() {
     let cmd = parse("echo $(echo $(whoami))");
     match &cmd {
-        Command::Simple(sc) => {
-            match &sc.words[1].parts[0] {
-                WordPart::CommandSubstitution(s) => assert_eq!(s, "echo $(whoami)"),
-                _ => panic!("Expected command substitution"),
-            }
-        }
+        Command::Simple(sc) => match &sc.words[1].parts[0] {
+            WordPart::CommandSubstitution(s) => assert_eq!(s, "echo $(whoami)"),
+            _ => panic!("Expected command substitution"),
+        },
         _ => panic!("Expected simple command"),
     }
 }
@@ -779,7 +820,12 @@ fn test_arithmetic_expansion() {
     let cmd = parse("echo $((1 + 2))");
     match &cmd {
         Command::Simple(sc) => {
-            assert!(sc.words[1].parts.iter().any(|p| matches!(p, WordPart::Arithmetic(s) if s == "1 + 2")));
+            assert!(
+                sc.words[1]
+                    .parts
+                    .iter()
+                    .any(|p| matches!(p, WordPart::Arithmetic(s) if s == "1 + 2"))
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -793,8 +839,16 @@ fn test_glob_star() {
     match &cmd {
         Command::Simple(sc) => {
             let word = &sc.words[1];
-            assert!(word.parts.iter().any(|p| matches!(p, WordPart::Glob(s) if s == "*")));
-            assert!(word.parts.iter().any(|p| matches!(p, WordPart::Literal(s) if s == ".txt")));
+            assert!(
+                word.parts
+                    .iter()
+                    .any(|p| matches!(p, WordPart::Glob(s) if s == "*"))
+            );
+            assert!(
+                word.parts
+                    .iter()
+                    .any(|p| matches!(p, WordPart::Literal(s) if s == ".txt"))
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -805,7 +859,12 @@ fn test_glob_question() {
     let cmd = parse("echo file?.txt");
     match &cmd {
         Command::Simple(sc) => {
-            assert!(sc.words[1].parts.iter().any(|p| matches!(p, WordPart::Glob(s) if s == "?")));
+            assert!(
+                sc.words[1]
+                    .parts
+                    .iter()
+                    .any(|p| matches!(p, WordPart::Glob(s) if s == "?"))
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -816,7 +875,12 @@ fn test_glob_bracket() {
     let cmd = parse("echo [abc].txt");
     match &cmd {
         Command::Simple(sc) => {
-            assert!(sc.words[1].parts.iter().any(|p| matches!(p, WordPart::Glob(s) if s == "[abc]")));
+            assert!(
+                sc.words[1]
+                    .parts
+                    .iter()
+                    .any(|p| matches!(p, WordPart::Glob(s) if s == "[abc]"))
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -828,14 +892,12 @@ fn test_glob_bracket() {
 fn test_brace_expansion() {
     let cmd = parse("echo {a,b,c}");
     match &cmd {
-        Command::Simple(sc) => {
-            match &sc.words[1].parts[0] {
-                WordPart::BraceExpansion(items) => {
-                    assert_eq!(items, &["a", "b", "c"]);
-                }
-                _ => panic!("Expected brace expansion"),
+        Command::Simple(sc) => match &sc.words[1].parts[0] {
+            WordPart::BraceExpansion(items) => {
+                assert_eq!(items, &["a", "b", "c"]);
             }
-        }
+            _ => panic!("Expected brace expansion"),
+        },
         _ => panic!("Expected simple command"),
     }
 }
@@ -877,15 +939,13 @@ fn test_process_substitution_input() {
 fn test_process_substitution_output() {
     let cmd = parse("tee >(grep error)");
     match &cmd {
-        Command::Simple(sc) => {
-            match &sc.words[1].parts[0] {
-                WordPart::ProcessSubstitution { direction, command } => {
-                    assert_eq!(*direction, ProcessDirection::Output);
-                    assert_eq!(command, "grep error");
-                }
-                _ => panic!("Expected process substitution"),
+        Command::Simple(sc) => match &sc.words[1].parts[0] {
+            WordPart::ProcessSubstitution { direction, command } => {
+                assert_eq!(*direction, ProcessDirection::Output);
+                assert_eq!(command, "grep error");
             }
-        }
+            _ => panic!("Expected process substitution"),
+        },
         _ => panic!("Expected simple command"),
     }
 }
@@ -1330,15 +1390,13 @@ fn test_pipeline_with_redirections() {
 fn test_complex_nested_structure() {
     let cmd = parse("if true; then for x in a b; do echo $x; done; fi");
     match &cmd {
-        Command::If { then_branch, .. } => {
-            match then_branch.as_ref() {
-                Command::For { var, words, .. } => {
-                    assert_eq!(var, "x");
-                    assert_eq!(words.len(), 2);
-                }
-                _ => panic!("Expected for loop in then branch"),
+        Command::If { then_branch, .. } => match then_branch.as_ref() {
+            Command::For { var, words, .. } => {
+                assert_eq!(var, "x");
+                assert_eq!(words.len(), 2);
             }
-        }
+            _ => panic!("Expected for loop in then branch"),
+        },
         _ => panic!("Expected if command"),
     }
 }
@@ -1381,7 +1439,12 @@ fn test_bare_dollar() {
     let cmd = parse("echo $");
     match &cmd {
         Command::Simple(sc) => {
-            assert!(sc.words[1].parts.iter().any(|p| matches!(p, WordPart::Literal(s) if s == "$")));
+            assert!(
+                sc.words[1]
+                    .parts
+                    .iter()
+                    .any(|p| matches!(p, WordPart::Literal(s) if s == "$"))
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -1443,14 +1506,12 @@ fn test_heredoc_body_basic() {
 fn test_heredoc_body_strip_tabs() {
     let cmd = parse("cat <<-EOF\n\t\thello\n\t\tworld\n\t\tEOF");
     match &cmd {
-        Command::Simple(sc) => {
-            match &sc.redirections[0].target {
-                RedirectionTarget::Heredoc(body) => {
-                    assert_eq!(body, "hello\nworld\n");
-                }
-                _ => panic!("Expected Heredoc target"),
+        Command::Simple(sc) => match &sc.redirections[0].target {
+            RedirectionTarget::Heredoc(body) => {
+                assert_eq!(body, "hello\nworld\n");
             }
-        }
+            _ => panic!("Expected Heredoc target"),
+        },
         _ => panic!("Expected simple command"),
     }
 }
@@ -1459,14 +1520,12 @@ fn test_heredoc_body_strip_tabs() {
 fn test_heredoc_single_quoted_delimiter() {
     let cmd = parse("cat <<'EOF'\nhello\nEOF");
     match &cmd {
-        Command::Simple(sc) => {
-            match &sc.redirections[0].target {
-                RedirectionTarget::Heredoc(body) => {
-                    assert_eq!(body, "hello\n");
-                }
-                _ => panic!("Expected Heredoc target"),
+        Command::Simple(sc) => match &sc.redirections[0].target {
+            RedirectionTarget::Heredoc(body) => {
+                assert_eq!(body, "hello\n");
             }
-        }
+            _ => panic!("Expected Heredoc target"),
+        },
         _ => panic!("Expected simple command"),
     }
 }
@@ -1475,14 +1534,12 @@ fn test_heredoc_single_quoted_delimiter() {
 fn test_heredoc_double_quoted_delimiter() {
     let cmd = parse("cat <<\"EOF\"\nhello\nEOF");
     match &cmd {
-        Command::Simple(sc) => {
-            match &sc.redirections[0].target {
-                RedirectionTarget::Heredoc(body) => {
-                    assert_eq!(body, "hello\n");
-                }
-                _ => panic!("Expected Heredoc target"),
+        Command::Simple(sc) => match &sc.redirections[0].target {
+            RedirectionTarget::Heredoc(body) => {
+                assert_eq!(body, "hello\n");
             }
-        }
+            _ => panic!("Expected Heredoc target"),
+        },
         _ => panic!("Expected simple command"),
     }
 }
@@ -1491,14 +1548,12 @@ fn test_heredoc_double_quoted_delimiter() {
 fn test_heredoc_backslash_escaped_delimiter() {
     let cmd = parse("cat <<\\EOF\nhello\nEOF");
     match &cmd {
-        Command::Simple(sc) => {
-            match &sc.redirections[0].target {
-                RedirectionTarget::Heredoc(body) => {
-                    assert_eq!(body, "hello\n");
-                }
-                _ => panic!("Expected Heredoc target"),
+        Command::Simple(sc) => match &sc.redirections[0].target {
+            RedirectionTarget::Heredoc(body) => {
+                assert_eq!(body, "hello\n");
             }
-        }
+            _ => panic!("Expected Heredoc target"),
+        },
         _ => panic!("Expected simple command"),
     }
 }
@@ -1507,14 +1562,12 @@ fn test_heredoc_backslash_escaped_delimiter() {
 fn test_heredoc_empty_body() {
     let cmd = parse("cat <<EOF\nEOF");
     match &cmd {
-        Command::Simple(sc) => {
-            match &sc.redirections[0].target {
-                RedirectionTarget::Heredoc(body) => {
-                    assert_eq!(body, "");
-                }
-                _ => panic!("Expected Heredoc target"),
+        Command::Simple(sc) => match &sc.redirections[0].target {
+            RedirectionTarget::Heredoc(body) => {
+                assert_eq!(body, "");
             }
-        }
+            _ => panic!("Expected Heredoc target"),
+        },
         _ => panic!("Expected simple command"),
     }
 }
@@ -1562,10 +1615,13 @@ fn test_double_quotes_with_escape() {
             match &sc.words[1].parts[0] {
                 WordPart::DoubleQuoted(parts) => {
                     // Should have literal containing the escaped quote
-                    let text: String = parts.iter().map(|p| match p {
-                        WordPart::Literal(s) => s.clone(),
-                        _ => String::new(),
-                    }).collect();
+                    let text: String = parts
+                        .iter()
+                        .map(|p| match p {
+                            WordPart::Literal(s) => s.clone(),
+                            _ => String::new(),
+                        })
+                        .collect();
                     assert!(text.contains("hello"));
                     assert!(text.contains("\""));
                     assert!(text.contains("world"));
@@ -1596,9 +1652,9 @@ fn test_word_to_str_glob() {
 #[test]
 fn test_has_dynamic_parts_double_quoted_static() {
     let w = Word {
-        parts: vec![WordPart::DoubleQuoted(vec![
-            WordPart::Literal("static".to_string()),
-        ])],
+        parts: vec![WordPart::DoubleQuoted(vec![WordPart::Literal(
+            "static".to_string(),
+        )])],
     };
     assert!(!w.has_dynamic_parts());
 }
@@ -1685,7 +1741,9 @@ fn cat_heredoc_multiline_body() {
         Command::Simple(sc) => {
             assert_eq!(
                 sc.words[1].parts,
-                vec![WordPart::Literal("line one\nline two\nline three".to_string())]
+                vec![WordPart::Literal(
+                    "line one\nline two\nline three".to_string()
+                )]
             );
         }
         _ => panic!("Expected simple command"),
@@ -1739,7 +1797,12 @@ fn cat_with_file_arg_stays_dynamic() {
     let cmd = parse("echo $(cat /etc/hostname)");
     match &cmd {
         Command::Simple(sc) => {
-            assert!(sc.words[1].parts.iter().any(|p| matches!(p, WordPart::CommandSubstitution(_))));
+            assert!(
+                sc.words[1]
+                    .parts
+                    .iter()
+                    .any(|p| matches!(p, WordPart::CommandSubstitution(_)))
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -1764,7 +1827,12 @@ fn cat_herestring_dynamic_stays() {
     let cmd = parse("echo $(cat <<< $HOME)");
     match &cmd {
         Command::Simple(sc) => {
-            assert!(sc.words[1].parts.iter().any(|p| matches!(p, WordPart::CommandSubstitution(_))));
+            assert!(
+                sc.words[1]
+                    .parts
+                    .iter()
+                    .any(|p| matches!(p, WordPart::CommandSubstitution(_)))
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -1775,7 +1843,12 @@ fn non_cat_command_sub_stays_dynamic() {
     let cmd = parse("echo $(whoami)");
     match &cmd {
         Command::Simple(sc) => {
-            assert!(sc.words[1].parts.iter().any(|p| matches!(p, WordPart::CommandSubstitution(_))));
+            assert!(
+                sc.words[1]
+                    .parts
+                    .iter()
+                    .any(|p| matches!(p, WordPart::CommandSubstitution(_)))
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -1787,7 +1860,12 @@ fn cat_with_output_redirect_stays_dynamic() {
     let cmd = parse("echo $(cat <<'EOF'\nhello\nEOF\n > /tmp/out)");
     match &cmd {
         Command::Simple(sc) => {
-            assert!(sc.words[1].parts.iter().any(|p| matches!(p, WordPart::CommandSubstitution(_))));
+            assert!(
+                sc.words[1]
+                    .parts
+                    .iter()
+                    .any(|p| matches!(p, WordPart::CommandSubstitution(_)))
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -1799,7 +1877,12 @@ fn bare_cat_stays_dynamic() {
     let cmd = parse("echo $(cat)");
     match &cmd {
         Command::Simple(sc) => {
-            assert!(sc.words[1].parts.iter().any(|p| matches!(p, WordPart::CommandSubstitution(_))));
+            assert!(
+                sc.words[1]
+                    .parts
+                    .iter()
+                    .any(|p| matches!(p, WordPart::CommandSubstitution(_)))
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -1816,11 +1899,26 @@ fn ansi_c_standard_escapes() {
             assert_eq!(sc.words[2].parts, vec![WordPart::AnsiCQuoted("\n".into())]);
             assert_eq!(sc.words[3].parts, vec![WordPart::AnsiCQuoted("\t".into())]);
             assert_eq!(sc.words[4].parts, vec![WordPart::AnsiCQuoted("\r".into())]);
-            assert_eq!(sc.words[5].parts, vec![WordPart::AnsiCQuoted("\x07".into())]);
-            assert_eq!(sc.words[6].parts, vec![WordPart::AnsiCQuoted("\x08".into())]);
-            assert_eq!(sc.words[7].parts, vec![WordPart::AnsiCQuoted("\x1B".into())]);
-            assert_eq!(sc.words[8].parts, vec![WordPart::AnsiCQuoted("\x0C".into())]);
-            assert_eq!(sc.words[9].parts, vec![WordPart::AnsiCQuoted("\x0B".into())]);
+            assert_eq!(
+                sc.words[5].parts,
+                vec![WordPart::AnsiCQuoted("\x07".into())]
+            );
+            assert_eq!(
+                sc.words[6].parts,
+                vec![WordPart::AnsiCQuoted("\x08".into())]
+            );
+            assert_eq!(
+                sc.words[7].parts,
+                vec![WordPart::AnsiCQuoted("\x1B".into())]
+            );
+            assert_eq!(
+                sc.words[8].parts,
+                vec![WordPart::AnsiCQuoted("\x0C".into())]
+            );
+            assert_eq!(
+                sc.words[9].parts,
+                vec![WordPart::AnsiCQuoted("\x0B".into())]
+            );
             assert_eq!(sc.words[10].parts, vec![WordPart::AnsiCQuoted("'".into())]);
             assert_eq!(sc.words[11].parts, vec![WordPart::AnsiCQuoted("\"".into())]);
         }
@@ -1888,7 +1986,10 @@ fn ansi_c_control_char() {
     let cmd = parse(r"echo $'\cA'");
     match &cmd {
         Command::Simple(sc) => {
-            assert_eq!(sc.words[1].parts, vec![WordPart::AnsiCQuoted("\x01".into())]);
+            assert_eq!(
+                sc.words[1].parts,
+                vec![WordPart::AnsiCQuoted("\x01".into())]
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -1920,46 +2021,58 @@ fn ansi_c_backslash_at_eof() {
 
 #[test]
 fn dynamic_parts_parameter_expansion() {
-    let w = Word { parts: vec![WordPart::ParameterExpansion("HOME".into())] };
+    let w = Word {
+        parts: vec![WordPart::ParameterExpansion("HOME".into())],
+    };
     assert_eq!(w.dynamic_parts(), vec!["${HOME}"]);
 }
 
 #[test]
 fn dynamic_parts_backtick() {
-    let w = Word { parts: vec![WordPart::Backtick("date".into())] };
+    let w = Word {
+        parts: vec![WordPart::Backtick("date".into())],
+    };
     assert_eq!(w.dynamic_parts(), vec!["`date`"]);
 }
 
 #[test]
 fn dynamic_parts_arithmetic() {
-    let w = Word { parts: vec![WordPart::Arithmetic("1+2".into())] };
+    let w = Word {
+        parts: vec![WordPart::Arithmetic("1+2".into())],
+    };
     assert_eq!(w.dynamic_parts(), vec!["$((1+2))"]);
 }
 
 #[test]
 fn dynamic_parts_process_sub_input() {
-    let w = Word { parts: vec![WordPart::ProcessSubstitution {
-        direction: ProcessDirection::Input,
-        command: "sort".into(),
-    }] };
+    let w = Word {
+        parts: vec![WordPart::ProcessSubstitution {
+            direction: ProcessDirection::Input,
+            command: "sort".into(),
+        }],
+    };
     assert_eq!(w.dynamic_parts(), vec!["<(sort)"]);
 }
 
 #[test]
 fn dynamic_parts_process_sub_output() {
-    let w = Word { parts: vec![WordPart::ProcessSubstitution {
-        direction: ProcessDirection::Output,
-        command: "tee log".into(),
-    }] };
+    let w = Word {
+        parts: vec![WordPart::ProcessSubstitution {
+            direction: ProcessDirection::Output,
+            command: "tee log".into(),
+        }],
+    };
     assert_eq!(w.dynamic_parts(), vec![">(tee log)"]);
 }
 
 #[test]
 fn dynamic_parts_in_double_quotes() {
-    let w = Word { parts: vec![WordPart::DoubleQuoted(vec![
-        WordPart::Literal("hi ".into()),
-        WordPart::Parameter("USER".into()),
-    ])] };
+    let w = Word {
+        parts: vec![WordPart::DoubleQuoted(vec![
+            WordPart::Literal("hi ".into()),
+            WordPart::Parameter("USER".into()),
+        ])],
+    };
     assert_eq!(w.dynamic_parts(), vec!["$USER"]);
 }
 
@@ -1967,19 +2080,25 @@ fn dynamic_parts_in_double_quotes() {
 
 #[test]
 fn to_str_parameter_expansion() {
-    let w = Word { parts: vec![WordPart::ParameterExpansion("HOME".into())] };
+    let w = Word {
+        parts: vec![WordPart::ParameterExpansion("HOME".into())],
+    };
     assert_eq!(w.to_str(), "HOME");
 }
 
 #[test]
 fn to_str_backtick() {
-    let w = Word { parts: vec![WordPart::Backtick("date".into())] };
+    let w = Word {
+        parts: vec![WordPart::Backtick("date".into())],
+    };
     assert_eq!(w.to_str(), "date");
 }
 
 #[test]
 fn to_str_arithmetic() {
-    let w = Word { parts: vec![WordPart::Arithmetic("1+2".into())] };
+    let w = Word {
+        parts: vec![WordPart::Arithmetic("1+2".into())],
+    };
     assert_eq!(w.to_str(), "1+2");
 }
 
@@ -2233,7 +2352,12 @@ fn unclosed_arithmetic_at_eof() {
     let cmd = parse("echo $((1+2");
     match &cmd {
         Command::Simple(sc) => {
-            assert!(sc.words[1].parts.iter().any(|p| matches!(p, WordPart::Arithmetic(_))));
+            assert!(
+                sc.words[1]
+                    .parts
+                    .iter()
+                    .any(|p| matches!(p, WordPart::Arithmetic(_)))
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -2244,7 +2368,12 @@ fn unclosed_command_sub_at_eof() {
     let cmd = parse("echo $(whoami");
     match &cmd {
         Command::Simple(sc) => {
-            assert!(sc.words[1].parts.iter().any(|p| matches!(p, WordPart::CommandSubstitution(_))));
+            assert!(
+                sc.words[1]
+                    .parts
+                    .iter()
+                    .any(|p| matches!(p, WordPart::CommandSubstitution(_)))
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -2299,10 +2428,12 @@ fn cat_no_input_stays_dynamic() {
     let cmd = parse("echo $(cat)");
     match &cmd {
         Command::Simple(sc) => {
-            assert!(sc.words[1]
-                .parts
-                .iter()
-                .any(|p| matches!(p, WordPart::CommandSubstitution(_))));
+            assert!(
+                sc.words[1]
+                    .parts
+                    .iter()
+                    .any(|p| matches!(p, WordPart::CommandSubstitution(_)))
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -2368,12 +2499,17 @@ fn ansic_unicode_big_short_sequence() {
 fn redirect_dup_fd_with_dash() {
     let cmd = parse("echo hi 2>&-");
     match &cmd {
-        Command::Redirected { redirections, .. } | Command::Simple(SimpleCommand { redirections, .. }) => {
+        Command::Redirected { redirections, .. }
+        | Command::Simple(SimpleCommand { redirections, .. }) => {
             let has_fd_target = redirections.iter().any(|r| {
                 matches!(&r.target, RedirectionTarget::Fd(_))
                     || matches!(&r.target, RedirectionTarget::File(w) if w.to_str() == "-")
             });
-            assert!(has_fd_target, "Expected fd target in redirections: {:?}", redirections);
+            assert!(
+                has_fd_target,
+                "Expected fd target in redirections: {:?}",
+                redirections
+            );
         }
         _ => panic!("Expected redirected command, got {:?}", cmd),
     }
@@ -2402,10 +2538,12 @@ fn compound_command_sub_stays_dynamic() {
     let cmd = parse("echo $(echo a; echo b)");
     match &cmd {
         Command::Simple(sc) => {
-            assert!(sc.words[1]
-                .parts
-                .iter()
-                .any(|p| matches!(p, WordPart::CommandSubstitution(_))));
+            assert!(
+                sc.words[1]
+                    .parts
+                    .iter()
+                    .any(|p| matches!(p, WordPart::CommandSubstitution(_)))
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -2434,12 +2572,13 @@ fn parse_param_length() {
     let cmd = parse("echo ${#VAR}");
     match &cmd {
         Command::Simple(sc) => {
-            assert_eq!(sc.words[1].parts, vec![
-                WordPart::ParameterExpansionOp {
+            assert_eq!(
+                sc.words[1].parts,
+                vec![WordPart::ParameterExpansionOp {
                     name: "VAR".into(),
                     op: ParameterOperator::Length,
-                },
-            ]);
+                },]
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -2450,15 +2589,16 @@ fn parse_param_strip_prefix_short() {
     let cmd = parse("echo ${VAR#*/}");
     match &cmd {
         Command::Simple(sc) => {
-            assert_eq!(sc.words[1].parts, vec![
-                WordPart::ParameterExpansionOp {
+            assert_eq!(
+                sc.words[1].parts,
+                vec![WordPart::ParameterExpansionOp {
                     name: "VAR".into(),
                     op: ParameterOperator::StripPrefix {
                         longest: false,
                         pattern: "*/".into(),
                     },
-                },
-            ]);
+                },]
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -2469,15 +2609,16 @@ fn parse_param_strip_prefix_long() {
     let cmd = parse("echo ${VAR##*/}");
     match &cmd {
         Command::Simple(sc) => {
-            assert_eq!(sc.words[1].parts, vec![
-                WordPart::ParameterExpansionOp {
+            assert_eq!(
+                sc.words[1].parts,
+                vec![WordPart::ParameterExpansionOp {
                     name: "VAR".into(),
                     op: ParameterOperator::StripPrefix {
                         longest: true,
                         pattern: "*/".into(),
                     },
-                },
-            ]);
+                },]
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -2488,15 +2629,16 @@ fn parse_param_strip_suffix_short() {
     let cmd = parse("echo ${VAR%.*}");
     match &cmd {
         Command::Simple(sc) => {
-            assert_eq!(sc.words[1].parts, vec![
-                WordPart::ParameterExpansionOp {
+            assert_eq!(
+                sc.words[1].parts,
+                vec![WordPart::ParameterExpansionOp {
                     name: "VAR".into(),
                     op: ParameterOperator::StripSuffix {
                         longest: false,
                         pattern: ".*".into(),
                     },
-                },
-            ]);
+                },]
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -2507,15 +2649,16 @@ fn parse_param_strip_suffix_long() {
     let cmd = parse("echo ${VAR%%.*}");
     match &cmd {
         Command::Simple(sc) => {
-            assert_eq!(sc.words[1].parts, vec![
-                WordPart::ParameterExpansionOp {
+            assert_eq!(
+                sc.words[1].parts,
+                vec![WordPart::ParameterExpansionOp {
                     name: "VAR".into(),
                     op: ParameterOperator::StripSuffix {
                         longest: true,
                         pattern: ".*".into(),
                     },
-                },
-            ]);
+                },]
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -2526,16 +2669,17 @@ fn parse_param_replace_first() {
     let cmd = parse("echo ${VAR/foo/bar}");
     match &cmd {
         Command::Simple(sc) => {
-            assert_eq!(sc.words[1].parts, vec![
-                WordPart::ParameterExpansionOp {
+            assert_eq!(
+                sc.words[1].parts,
+                vec![WordPart::ParameterExpansionOp {
                     name: "VAR".into(),
                     op: ParameterOperator::Replace {
                         all: false,
                         pattern: "foo".into(),
                         replacement: "bar".into(),
                     },
-                },
-            ]);
+                },]
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -2546,16 +2690,17 @@ fn parse_param_replace_all() {
     let cmd = parse("echo ${VAR//foo/bar}");
     match &cmd {
         Command::Simple(sc) => {
-            assert_eq!(sc.words[1].parts, vec![
-                WordPart::ParameterExpansionOp {
+            assert_eq!(
+                sc.words[1].parts,
+                vec![WordPart::ParameterExpansionOp {
                     name: "VAR".into(),
                     op: ParameterOperator::Replace {
                         all: true,
                         pattern: "foo".into(),
                         replacement: "bar".into(),
                     },
-                },
-            ]);
+                },]
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -2566,16 +2711,17 @@ fn parse_param_replace_empty_replacement() {
     let cmd = parse("echo ${VAR/foo}");
     match &cmd {
         Command::Simple(sc) => {
-            assert_eq!(sc.words[1].parts, vec![
-                WordPart::ParameterExpansionOp {
+            assert_eq!(
+                sc.words[1].parts,
+                vec![WordPart::ParameterExpansionOp {
                     name: "VAR".into(),
                     op: ParameterOperator::Replace {
                         all: false,
                         pattern: "foo".into(),
                         replacement: String::new(),
                     },
-                },
-            ]);
+                },]
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -2586,15 +2732,16 @@ fn parse_param_default_colon() {
     let cmd = parse("echo ${VAR:-fallback}");
     match &cmd {
         Command::Simple(sc) => {
-            assert_eq!(sc.words[1].parts, vec![
-                WordPart::ParameterExpansionOp {
+            assert_eq!(
+                sc.words[1].parts,
+                vec![WordPart::ParameterExpansionOp {
                     name: "VAR".into(),
                     op: ParameterOperator::Default {
                         colon: true,
                         value: "fallback".into(),
                     },
-                },
-            ]);
+                },]
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -2605,15 +2752,16 @@ fn parse_param_default_no_colon() {
     let cmd = parse("echo ${VAR-fallback}");
     match &cmd {
         Command::Simple(sc) => {
-            assert_eq!(sc.words[1].parts, vec![
-                WordPart::ParameterExpansionOp {
+            assert_eq!(
+                sc.words[1].parts,
+                vec![WordPart::ParameterExpansionOp {
                     name: "VAR".into(),
                     op: ParameterOperator::Default {
                         colon: false,
                         value: "fallback".into(),
                     },
-                },
-            ]);
+                },]
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -2624,15 +2772,16 @@ fn parse_param_alternative_colon() {
     let cmd = parse("echo ${VAR:+set}");
     match &cmd {
         Command::Simple(sc) => {
-            assert_eq!(sc.words[1].parts, vec![
-                WordPart::ParameterExpansionOp {
+            assert_eq!(
+                sc.words[1].parts,
+                vec![WordPart::ParameterExpansionOp {
                     name: "VAR".into(),
                     op: ParameterOperator::Alternative {
                         colon: true,
                         value: "set".into(),
                     },
-                },
-            ]);
+                },]
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -2643,15 +2792,16 @@ fn parse_param_error_colon() {
     let cmd = parse("echo ${VAR:?not set}");
     match &cmd {
         Command::Simple(sc) => {
-            assert_eq!(sc.words[1].parts, vec![
-                WordPart::ParameterExpansionOp {
+            assert_eq!(
+                sc.words[1].parts,
+                vec![WordPart::ParameterExpansionOp {
                     name: "VAR".into(),
                     op: ParameterOperator::Error {
                         colon: true,
                         message: "not set".into(),
                     },
-                },
-            ]);
+                },]
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -2662,15 +2812,16 @@ fn parse_param_assign_colon() {
     let cmd = parse("echo ${VAR:=default}");
     match &cmd {
         Command::Simple(sc) => {
-            assert_eq!(sc.words[1].parts, vec![
-                WordPart::ParameterExpansionOp {
+            assert_eq!(
+                sc.words[1].parts,
+                vec![WordPart::ParameterExpansionOp {
                     name: "VAR".into(),
                     op: ParameterOperator::Assign {
                         colon: true,
                         value: "default".into(),
                     },
-                },
-            ]);
+                },]
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -2681,15 +2832,16 @@ fn parse_param_substring() {
     let cmd = parse("echo ${VAR:2:5}");
     match &cmd {
         Command::Simple(sc) => {
-            assert_eq!(sc.words[1].parts, vec![
-                WordPart::ParameterExpansionOp {
+            assert_eq!(
+                sc.words[1].parts,
+                vec![WordPart::ParameterExpansionOp {
                     name: "VAR".into(),
                     op: ParameterOperator::Substring {
                         offset: "2".into(),
                         length: Some("5".into()),
                     },
-                },
-            ]);
+                },]
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -2700,15 +2852,16 @@ fn parse_param_substring_no_length() {
     let cmd = parse("echo ${VAR:3}");
     match &cmd {
         Command::Simple(sc) => {
-            assert_eq!(sc.words[1].parts, vec![
-                WordPart::ParameterExpansionOp {
+            assert_eq!(
+                sc.words[1].parts,
+                vec![WordPart::ParameterExpansionOp {
                     name: "VAR".into(),
                     op: ParameterOperator::Substring {
                         offset: "3".into(),
                         length: None,
                     },
-                },
-            ]);
+                },]
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -2719,12 +2872,13 @@ fn parse_param_uppercase_first() {
     let cmd = parse("echo ${VAR^}");
     match &cmd {
         Command::Simple(sc) => {
-            assert_eq!(sc.words[1].parts, vec![
-                WordPart::ParameterExpansionOp {
+            assert_eq!(
+                sc.words[1].parts,
+                vec![WordPart::ParameterExpansionOp {
                     name: "VAR".into(),
                     op: ParameterOperator::Uppercase { all: false },
-                },
-            ]);
+                },]
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -2735,12 +2889,13 @@ fn parse_param_uppercase_all() {
     let cmd = parse("echo ${VAR^^}");
     match &cmd {
         Command::Simple(sc) => {
-            assert_eq!(sc.words[1].parts, vec![
-                WordPart::ParameterExpansionOp {
+            assert_eq!(
+                sc.words[1].parts,
+                vec![WordPart::ParameterExpansionOp {
                     name: "VAR".into(),
                     op: ParameterOperator::Uppercase { all: true },
-                },
-            ]);
+                },]
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -2751,12 +2906,13 @@ fn parse_param_lowercase_first() {
     let cmd = parse("echo ${VAR,}");
     match &cmd {
         Command::Simple(sc) => {
-            assert_eq!(sc.words[1].parts, vec![
-                WordPart::ParameterExpansionOp {
+            assert_eq!(
+                sc.words[1].parts,
+                vec![WordPart::ParameterExpansionOp {
                     name: "VAR".into(),
                     op: ParameterOperator::Lowercase { all: false },
-                },
-            ]);
+                },]
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -2767,12 +2923,13 @@ fn parse_param_lowercase_all() {
     let cmd = parse("echo ${VAR,,}");
     match &cmd {
         Command::Simple(sc) => {
-            assert_eq!(sc.words[1].parts, vec![
-                WordPart::ParameterExpansionOp {
+            assert_eq!(
+                sc.words[1].parts,
+                vec![WordPart::ParameterExpansionOp {
                     name: "VAR".into(),
                     op: ParameterOperator::Lowercase { all: true },
-                },
-            ]);
+                },]
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -2783,9 +2940,10 @@ fn parse_param_simple_braced_unchanged() {
     let cmd = parse("echo ${VAR}");
     match &cmd {
         Command::Simple(sc) => {
-            assert_eq!(sc.words[1].parts, vec![
-                WordPart::ParameterExpansion("VAR".into()),
-            ]);
+            assert_eq!(
+                sc.words[1].parts,
+                vec![WordPart::ParameterExpansion("VAR".into()),]
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -2796,8 +2954,9 @@ fn parse_param_op_in_double_quotes() {
     let cmd = parse(r#"echo "${HOME##*/}""#);
     match &cmd {
         Command::Simple(sc) => {
-            assert_eq!(sc.words[1].parts, vec![
-                WordPart::DoubleQuoted(vec![
+            assert_eq!(
+                sc.words[1].parts,
+                vec![WordPart::DoubleQuoted(vec![
                     WordPart::ParameterExpansionOp {
                         name: "HOME".into(),
                         op: ParameterOperator::StripPrefix {
@@ -2805,8 +2964,8 @@ fn parse_param_op_in_double_quotes() {
                             pattern: "*/".into(),
                         },
                     },
-                ]),
-            ]);
+                ]),]
+            );
         }
         _ => panic!("Expected simple command"),
     }
@@ -2864,7 +3023,10 @@ fn glob_match_empty() {
 
 #[test]
 fn glob_strip_prefix_shortest() {
-    assert_eq!(glob_strip_prefix("*/", "/usr/local/bin", false), "usr/local/bin");
+    assert_eq!(
+        glob_strip_prefix("*/", "/usr/local/bin", false),
+        "usr/local/bin"
+    );
 }
 
 #[test]
@@ -2908,7 +3070,10 @@ fn glob_replace_all_occurrences() {
 
 #[test]
 fn glob_replace_with_wildcard() {
-    assert_eq!(glob_replace("*.txt", "hello.txt", "goodbye", false), "goodbye");
+    assert_eq!(
+        glob_replace("*.txt", "hello.txt", "goodbye", false),
+        "goodbye"
+    );
 }
 
 // -- Resolution of parameter expansion operators --
@@ -2916,10 +3081,12 @@ fn glob_replace_with_wildcard() {
 #[test]
 fn resolve_param_length() {
     let env = [("VAR".into(), "hello".into())].into();
-    let w = Word { parts: vec![WordPart::ParameterExpansionOp {
-        name: "VAR".into(),
-        op: ParameterOperator::Length,
-    }] };
+    let w = Word {
+        parts: vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Length,
+        }],
+    };
     let resolved = w.resolve(&env);
     assert_eq!(resolved.to_str(), "5");
     assert!(!resolved.has_dynamic_parts());
@@ -2928,13 +3095,15 @@ fn resolve_param_length() {
 #[test]
 fn resolve_param_strip_prefix() {
     let env = [("PATH".into(), "/usr/local/bin".into())].into();
-    let w = Word { parts: vec![WordPart::ParameterExpansionOp {
-        name: "PATH".into(),
-        op: ParameterOperator::StripPrefix {
-            longest: true,
-            pattern: "*/".into(),
-        },
-    }] };
+    let w = Word {
+        parts: vec![WordPart::ParameterExpansionOp {
+            name: "PATH".into(),
+            op: ParameterOperator::StripPrefix {
+                longest: true,
+                pattern: "*/".into(),
+            },
+        }],
+    };
     let resolved = w.resolve(&env);
     assert_eq!(resolved.to_str(), "bin");
     assert!(!resolved.has_dynamic_parts());
@@ -2943,13 +3112,15 @@ fn resolve_param_strip_prefix() {
 #[test]
 fn resolve_param_strip_suffix() {
     let env = [("FILE".into(), "archive.tar.gz".into())].into();
-    let w = Word { parts: vec![WordPart::ParameterExpansionOp {
-        name: "FILE".into(),
-        op: ParameterOperator::StripSuffix {
-            longest: false,
-            pattern: ".*".into(),
-        },
-    }] };
+    let w = Word {
+        parts: vec![WordPart::ParameterExpansionOp {
+            name: "FILE".into(),
+            op: ParameterOperator::StripSuffix {
+                longest: false,
+                pattern: ".*".into(),
+            },
+        }],
+    };
     let resolved = w.resolve(&env);
     assert_eq!(resolved.to_str(), "archive.tar");
 }
@@ -2957,14 +3128,16 @@ fn resolve_param_strip_suffix() {
 #[test]
 fn resolve_param_replace() {
     let env = [("VAR".into(), "hello world".into())].into();
-    let w = Word { parts: vec![WordPart::ParameterExpansionOp {
-        name: "VAR".into(),
-        op: ParameterOperator::Replace {
-            all: false,
-            pattern: "world".into(),
-            replacement: "rust".into(),
-        },
-    }] };
+    let w = Word {
+        parts: vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Replace {
+                all: false,
+                pattern: "world".into(),
+                replacement: "rust".into(),
+            },
+        }],
+    };
     let resolved = w.resolve(&env);
     assert_eq!(resolved.to_str(), "hello rust");
 }
@@ -2972,10 +3145,15 @@ fn resolve_param_replace() {
 #[test]
 fn resolve_param_default_colon_empty() {
     let env = [("VAR".into(), String::new())].into();
-    let w = Word { parts: vec![WordPart::ParameterExpansionOp {
-        name: "VAR".into(),
-        op: ParameterOperator::Default { colon: true, value: "fallback".into() },
-    }] };
+    let w = Word {
+        parts: vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Default {
+                colon: true,
+                value: "fallback".into(),
+            },
+        }],
+    };
     let resolved = w.resolve(&env);
     assert_eq!(resolved.to_str(), "fallback");
 }
@@ -2983,10 +3161,15 @@ fn resolve_param_default_colon_empty() {
 #[test]
 fn resolve_param_default_colon_set() {
     let env = [("VAR".into(), "value".into())].into();
-    let w = Word { parts: vec![WordPart::ParameterExpansionOp {
-        name: "VAR".into(),
-        op: ParameterOperator::Default { colon: true, value: "fallback".into() },
-    }] };
+    let w = Word {
+        parts: vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Default {
+                colon: true,
+                value: "fallback".into(),
+            },
+        }],
+    };
     let resolved = w.resolve(&env);
     assert_eq!(resolved.to_str(), "value");
 }
@@ -2994,10 +3177,15 @@ fn resolve_param_default_colon_set() {
 #[test]
 fn resolve_param_alternative_colon_set() {
     let env = [("VAR".into(), "value".into())].into();
-    let w = Word { parts: vec![WordPart::ParameterExpansionOp {
-        name: "VAR".into(),
-        op: ParameterOperator::Alternative { colon: true, value: "alt".into() },
-    }] };
+    let w = Word {
+        parts: vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Alternative {
+                colon: true,
+                value: "alt".into(),
+            },
+        }],
+    };
     let resolved = w.resolve(&env);
     assert_eq!(resolved.to_str(), "alt");
 }
@@ -3005,10 +3193,15 @@ fn resolve_param_alternative_colon_set() {
 #[test]
 fn resolve_param_alternative_colon_empty() {
     let env = [("VAR".into(), String::new())].into();
-    let w = Word { parts: vec![WordPart::ParameterExpansionOp {
-        name: "VAR".into(),
-        op: ParameterOperator::Alternative { colon: true, value: "alt".into() },
-    }] };
+    let w = Word {
+        parts: vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Alternative {
+                colon: true,
+                value: "alt".into(),
+            },
+        }],
+    };
     let resolved = w.resolve(&env);
     assert_eq!(resolved.to_str(), "");
 }
@@ -3016,13 +3209,15 @@ fn resolve_param_alternative_colon_empty() {
 #[test]
 fn resolve_param_substring() {
     let env = [("VAR".into(), "hello world".into())].into();
-    let w = Word { parts: vec![WordPart::ParameterExpansionOp {
-        name: "VAR".into(),
-        op: ParameterOperator::Substring {
-            offset: "6".into(),
-            length: Some("5".into()),
-        },
-    }] };
+    let w = Word {
+        parts: vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Substring {
+                offset: "6".into(),
+                length: Some("5".into()),
+            },
+        }],
+    };
     let resolved = w.resolve(&env);
     assert_eq!(resolved.to_str(), "world");
 }
@@ -3030,13 +3225,15 @@ fn resolve_param_substring() {
 #[test]
 fn resolve_param_substring_no_length() {
     let env = [("VAR".into(), "hello world".into())].into();
-    let w = Word { parts: vec![WordPart::ParameterExpansionOp {
-        name: "VAR".into(),
-        op: ParameterOperator::Substring {
-            offset: "6".into(),
-            length: None,
-        },
-    }] };
+    let w = Word {
+        parts: vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Substring {
+                offset: "6".into(),
+                length: None,
+            },
+        }],
+    };
     let resolved = w.resolve(&env);
     assert_eq!(resolved.to_str(), "world");
 }
@@ -3044,10 +3241,12 @@ fn resolve_param_substring_no_length() {
 #[test]
 fn resolve_param_uppercase_all() {
     let env = [("VAR".into(), "hello".into())].into();
-    let w = Word { parts: vec![WordPart::ParameterExpansionOp {
-        name: "VAR".into(),
-        op: ParameterOperator::Uppercase { all: true },
-    }] };
+    let w = Word {
+        parts: vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Uppercase { all: true },
+        }],
+    };
     let resolved = w.resolve(&env);
     assert_eq!(resolved.to_str(), "HELLO");
 }
@@ -3055,10 +3254,12 @@ fn resolve_param_uppercase_all() {
 #[test]
 fn resolve_param_uppercase_first() {
     let env = [("VAR".into(), "hello".into())].into();
-    let w = Word { parts: vec![WordPart::ParameterExpansionOp {
-        name: "VAR".into(),
-        op: ParameterOperator::Uppercase { all: false },
-    }] };
+    let w = Word {
+        parts: vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Uppercase { all: false },
+        }],
+    };
     let resolved = w.resolve(&env);
     assert_eq!(resolved.to_str(), "Hello");
 }
@@ -3066,10 +3267,12 @@ fn resolve_param_uppercase_first() {
 #[test]
 fn resolve_param_lowercase_all() {
     let env = [("VAR".into(), "HELLO".into())].into();
-    let w = Word { parts: vec![WordPart::ParameterExpansionOp {
-        name: "VAR".into(),
-        op: ParameterOperator::Lowercase { all: true },
-    }] };
+    let w = Word {
+        parts: vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Lowercase { all: true },
+        }],
+    };
     let resolved = w.resolve(&env);
     assert_eq!(resolved.to_str(), "hello");
 }
@@ -3077,10 +3280,15 @@ fn resolve_param_lowercase_all() {
 #[test]
 fn resolve_param_error_set() {
     let env = [("VAR".into(), "value".into())].into();
-    let w = Word { parts: vec![WordPart::ParameterExpansionOp {
-        name: "VAR".into(),
-        op: ParameterOperator::Error { colon: true, message: "oops".into() },
-    }] };
+    let w = Word {
+        parts: vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Error {
+                colon: true,
+                message: "oops".into(),
+            },
+        }],
+    };
     let resolved = w.resolve(&env);
     assert_eq!(resolved.to_str(), "value");
 }
@@ -3088,10 +3296,15 @@ fn resolve_param_error_set() {
 #[test]
 fn resolve_param_assign_set() {
     let env = [("VAR".into(), "value".into())].into();
-    let w = Word { parts: vec![WordPart::ParameterExpansionOp {
-        name: "VAR".into(),
-        op: ParameterOperator::Assign { colon: true, value: "default".into() },
-    }] };
+    let w = Word {
+        parts: vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Assign {
+                colon: true,
+                value: "default".into(),
+            },
+        }],
+    };
     let resolved = w.resolve(&env);
     assert_eq!(resolved.to_str(), "value");
 }
@@ -3099,13 +3312,15 @@ fn resolve_param_assign_set() {
 #[test]
 fn resolve_param_unresolved_stays_dynamic() {
     let env = std::collections::HashMap::new();
-    let w = Word { parts: vec![WordPart::ParameterExpansionOp {
-        name: "UNKNOWN".into(),
-        op: ParameterOperator::StripPrefix {
-            longest: true,
-            pattern: "*/".into(),
-        },
-    }] };
+    let w = Word {
+        parts: vec![WordPart::ParameterExpansionOp {
+            name: "UNKNOWN".into(),
+            op: ParameterOperator::StripPrefix {
+                longest: true,
+                pattern: "*/".into(),
+            },
+        }],
+    };
     let resolved = w.resolve(&env);
     assert!(resolved.has_dynamic_parts());
     assert_eq!(resolved.dynamic_parts(), vec!["${UNKNOWN##*/}"]);
@@ -3114,15 +3329,17 @@ fn resolve_param_unresolved_stays_dynamic() {
 #[test]
 fn resolve_param_op_in_double_quotes() {
     let env = [("HOME".into(), "/home/user".into())].into();
-    let w = Word { parts: vec![WordPart::DoubleQuoted(vec![
-        WordPart::ParameterExpansionOp {
-            name: "HOME".into(),
-            op: ParameterOperator::StripPrefix {
-                longest: true,
-                pattern: "*/".into(),
+    let w = Word {
+        parts: vec![WordPart::DoubleQuoted(vec![
+            WordPart::ParameterExpansionOp {
+                name: "HOME".into(),
+                op: ParameterOperator::StripPrefix {
+                    longest: true,
+                    pattern: "*/".into(),
+                },
             },
-        },
-    ])] };
+        ])],
+    };
     let resolved = w.resolve(&env);
     assert_eq!(resolved.to_str(), "user");
     assert!(!resolved.has_dynamic_parts());
@@ -3133,10 +3350,15 @@ fn resolve_param_op_in_double_quotes() {
 #[test]
 fn resolve_param_default_no_colon_set() {
     let env = [("VAR".into(), "hello".into())].into();
-    let w = Word { parts: vec![WordPart::ParameterExpansionOp {
-        name: "VAR".into(),
-        op: ParameterOperator::Default { colon: false, value: "fallback".into() },
-    }] };
+    let w = Word {
+        parts: vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Default {
+                colon: false,
+                value: "fallback".into(),
+            },
+        }],
+    };
     let resolved = w.resolve(&env);
     assert_eq!(resolved.to_str(), "hello");
 }
@@ -3146,10 +3368,15 @@ fn resolve_param_default_no_colon_set() {
 #[test]
 fn resolve_param_alternative_no_colon_set() {
     let env = [("VAR".into(), "hello".into())].into();
-    let w = Word { parts: vec![WordPart::ParameterExpansionOp {
-        name: "VAR".into(),
-        op: ParameterOperator::Alternative { colon: false, value: "alt".into() },
-    }] };
+    let w = Word {
+        parts: vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Alternative {
+                colon: false,
+                value: "alt".into(),
+            },
+        }],
+    };
     let resolved = w.resolve(&env);
     // ${VAR+alt}: variable is set, so use alternative
     assert_eq!(resolved.to_str(), "alt");
@@ -3160,10 +3387,15 @@ fn resolve_param_alternative_no_colon_set() {
 #[test]
 fn resolve_param_substring_negative_offset() {
     let env = [("VAR".into(), "hello world".into())].into();
-    let w = Word { parts: vec![WordPart::ParameterExpansionOp {
-        name: "VAR".into(),
-        op: ParameterOperator::Substring { offset: "-5".into(), length: None },
-    }] };
+    let w = Word {
+        parts: vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Substring {
+                offset: "-5".into(),
+                length: None,
+            },
+        }],
+    };
     let resolved = w.resolve(&env);
     assert_eq!(resolved.to_str(), "world");
 }
@@ -3173,10 +3405,12 @@ fn resolve_param_substring_negative_offset() {
 #[test]
 fn resolve_param_uppercase_first_char() {
     let env = [("VAR".into(), "hello".into())].into();
-    let w = Word { parts: vec![WordPart::ParameterExpansionOp {
-        name: "VAR".into(),
-        op: ParameterOperator::Uppercase { all: false },
-    }] };
+    let w = Word {
+        parts: vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Uppercase { all: false },
+        }],
+    };
     let resolved = w.resolve(&env);
     assert_eq!(resolved.to_str(), "Hello");
 }
@@ -3184,10 +3418,12 @@ fn resolve_param_uppercase_first_char() {
 #[test]
 fn resolve_param_uppercase_first_empty() {
     let env = [("VAR".into(), "".into())].into();
-    let w = Word { parts: vec![WordPart::ParameterExpansionOp {
-        name: "VAR".into(),
-        op: ParameterOperator::Uppercase { all: false },
-    }] };
+    let w = Word {
+        parts: vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Uppercase { all: false },
+        }],
+    };
     let resolved = w.resolve(&env);
     assert_eq!(resolved.to_str(), "");
 }
@@ -3197,10 +3433,12 @@ fn resolve_param_uppercase_first_empty() {
 #[test]
 fn resolve_param_lowercase_first() {
     let env = [("VAR".into(), "HELLO".into())].into();
-    let w = Word { parts: vec![WordPart::ParameterExpansionOp {
-        name: "VAR".into(),
-        op: ParameterOperator::Lowercase { all: false },
-    }] };
+    let w = Word {
+        parts: vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Lowercase { all: false },
+        }],
+    };
     let resolved = w.resolve(&env);
     assert_eq!(resolved.to_str(), "hELLO");
 }
@@ -3208,10 +3446,12 @@ fn resolve_param_lowercase_first() {
 #[test]
 fn resolve_param_lowercase_first_empty() {
     let env = [("VAR".into(), "".into())].into();
-    let w = Word { parts: vec![WordPart::ParameterExpansionOp {
-        name: "VAR".into(),
-        op: ParameterOperator::Lowercase { all: false },
-    }] };
+    let w = Word {
+        parts: vec![WordPart::ParameterExpansionOp {
+            name: "VAR".into(),
+            op: ParameterOperator::Lowercase { all: false },
+        }],
+    };
     let resolved = w.resolve(&env);
     assert_eq!(resolved.to_str(), "");
 }
@@ -3222,11 +3462,25 @@ fn resolve_param_lowercase_first_empty() {
 fn format_param_op_replace() {
     use super::ast::format_param_op;
     assert_eq!(
-        format_param_op("VAR", &ParameterOperator::Replace { all: false, pattern: "a".into(), replacement: "b".into() }),
+        format_param_op(
+            "VAR",
+            &ParameterOperator::Replace {
+                all: false,
+                pattern: "a".into(),
+                replacement: "b".into()
+            }
+        ),
         "VAR/a/b"
     );
     assert_eq!(
-        format_param_op("VAR", &ParameterOperator::Replace { all: true, pattern: "a".into(), replacement: "b".into() }),
+        format_param_op(
+            "VAR",
+            &ParameterOperator::Replace {
+                all: true,
+                pattern: "a".into(),
+                replacement: "b".into()
+            }
+        ),
         "VAR//a/b"
     );
 }
@@ -3235,11 +3489,23 @@ fn format_param_op_replace() {
 fn format_param_op_alternative() {
     use super::ast::format_param_op;
     assert_eq!(
-        format_param_op("VAR", &ParameterOperator::Alternative { colon: true, value: "alt".into() }),
+        format_param_op(
+            "VAR",
+            &ParameterOperator::Alternative {
+                colon: true,
+                value: "alt".into()
+            }
+        ),
         "VAR:+alt"
     );
     assert_eq!(
-        format_param_op("VAR", &ParameterOperator::Alternative { colon: false, value: "alt".into() }),
+        format_param_op(
+            "VAR",
+            &ParameterOperator::Alternative {
+                colon: false,
+                value: "alt".into()
+            }
+        ),
         "VAR+alt"
     );
 }
@@ -3248,11 +3514,23 @@ fn format_param_op_alternative() {
 fn format_param_op_error() {
     use super::ast::format_param_op;
     assert_eq!(
-        format_param_op("VAR", &ParameterOperator::Error { colon: true, message: "msg".into() }),
+        format_param_op(
+            "VAR",
+            &ParameterOperator::Error {
+                colon: true,
+                message: "msg".into()
+            }
+        ),
         "VAR:?msg"
     );
     assert_eq!(
-        format_param_op("VAR", &ParameterOperator::Error { colon: false, message: "msg".into() }),
+        format_param_op(
+            "VAR",
+            &ParameterOperator::Error {
+                colon: false,
+                message: "msg".into()
+            }
+        ),
         "VAR?msg"
     );
 }
@@ -3261,11 +3539,23 @@ fn format_param_op_error() {
 fn format_param_op_assign() {
     use super::ast::format_param_op;
     assert_eq!(
-        format_param_op("VAR", &ParameterOperator::Assign { colon: true, value: "val".into() }),
+        format_param_op(
+            "VAR",
+            &ParameterOperator::Assign {
+                colon: true,
+                value: "val".into()
+            }
+        ),
         "VAR:=val"
     );
     assert_eq!(
-        format_param_op("VAR", &ParameterOperator::Assign { colon: false, value: "val".into() }),
+        format_param_op(
+            "VAR",
+            &ParameterOperator::Assign {
+                colon: false,
+                value: "val".into()
+            }
+        ),
         "VAR=val"
     );
 }
@@ -3274,11 +3564,23 @@ fn format_param_op_assign() {
 fn format_param_op_substring() {
     use super::ast::format_param_op;
     assert_eq!(
-        format_param_op("VAR", &ParameterOperator::Substring { offset: "2".into(), length: Some("3".into()) }),
+        format_param_op(
+            "VAR",
+            &ParameterOperator::Substring {
+                offset: "2".into(),
+                length: Some("3".into())
+            }
+        ),
         "VAR:2:3"
     );
     assert_eq!(
-        format_param_op("VAR", &ParameterOperator::Substring { offset: "2".into(), length: None }),
+        format_param_op(
+            "VAR",
+            &ParameterOperator::Substring {
+                offset: "2".into(),
+                length: None
+            }
+        ),
         "VAR:2"
     );
 }
@@ -3364,10 +3666,16 @@ fn parse_param_expansion_no_colon_default() {
     let cmd = parse("echo ${VAR-fallback}");
     if let Command::Simple(sc) = &cmd {
         assert_eq!(sc.words.len(), 2);
-        assert_eq!(sc.words[1].parts, vec![WordPart::ParameterExpansionOp {
-            name: "VAR".into(),
-            op: ParameterOperator::Default { colon: false, value: "fallback".into() },
-        }]);
+        assert_eq!(
+            sc.words[1].parts,
+            vec![WordPart::ParameterExpansionOp {
+                name: "VAR".into(),
+                op: ParameterOperator::Default {
+                    colon: false,
+                    value: "fallback".into()
+                },
+            }]
+        );
     } else {
         panic!("Expected simple command");
     }
@@ -3377,10 +3685,16 @@ fn parse_param_expansion_no_colon_default() {
 fn parse_param_expansion_no_colon_alternative() {
     let cmd = parse("echo ${VAR+alt}");
     if let Command::Simple(sc) = &cmd {
-        assert_eq!(sc.words[1].parts, vec![WordPart::ParameterExpansionOp {
-            name: "VAR".into(),
-            op: ParameterOperator::Alternative { colon: false, value: "alt".into() },
-        }]);
+        assert_eq!(
+            sc.words[1].parts,
+            vec![WordPart::ParameterExpansionOp {
+                name: "VAR".into(),
+                op: ParameterOperator::Alternative {
+                    colon: false,
+                    value: "alt".into()
+                },
+            }]
+        );
     } else {
         panic!("Expected simple command");
     }
@@ -3390,10 +3704,16 @@ fn parse_param_expansion_no_colon_alternative() {
 fn parse_param_expansion_no_colon_error() {
     let cmd = parse("echo ${VAR?msg}");
     if let Command::Simple(sc) = &cmd {
-        assert_eq!(sc.words[1].parts, vec![WordPart::ParameterExpansionOp {
-            name: "VAR".into(),
-            op: ParameterOperator::Error { colon: false, message: "msg".into() },
-        }]);
+        assert_eq!(
+            sc.words[1].parts,
+            vec![WordPart::ParameterExpansionOp {
+                name: "VAR".into(),
+                op: ParameterOperator::Error {
+                    colon: false,
+                    message: "msg".into()
+                },
+            }]
+        );
     } else {
         panic!("Expected simple command");
     }
@@ -3403,10 +3723,16 @@ fn parse_param_expansion_no_colon_error() {
 fn parse_param_expansion_no_colon_assign() {
     let cmd = parse("echo ${VAR=val}");
     if let Command::Simple(sc) = &cmd {
-        assert_eq!(sc.words[1].parts, vec![WordPart::ParameterExpansionOp {
-            name: "VAR".into(),
-            op: ParameterOperator::Assign { colon: false, value: "val".into() },
-        }]);
+        assert_eq!(
+            sc.words[1].parts,
+            vec![WordPart::ParameterExpansionOp {
+                name: "VAR".into(),
+                op: ParameterOperator::Assign {
+                    colon: false,
+                    value: "val".into()
+                },
+            }]
+        );
     } else {
         panic!("Expected simple command");
     }
@@ -3416,10 +3742,13 @@ fn parse_param_expansion_no_colon_assign() {
 fn parse_param_expansion_uppercase_single() {
     let cmd = parse("echo ${VAR^}");
     if let Command::Simple(sc) = &cmd {
-        assert_eq!(sc.words[1].parts, vec![WordPart::ParameterExpansionOp {
-            name: "VAR".into(),
-            op: ParameterOperator::Uppercase { all: false },
-        }]);
+        assert_eq!(
+            sc.words[1].parts,
+            vec![WordPart::ParameterExpansionOp {
+                name: "VAR".into(),
+                op: ParameterOperator::Uppercase { all: false },
+            }]
+        );
     } else {
         panic!("Expected simple command");
     }
@@ -3429,10 +3758,13 @@ fn parse_param_expansion_uppercase_single() {
 fn parse_param_expansion_uppercase_all() {
     let cmd = parse("echo ${VAR^^}");
     if let Command::Simple(sc) = &cmd {
-        assert_eq!(sc.words[1].parts, vec![WordPart::ParameterExpansionOp {
-            name: "VAR".into(),
-            op: ParameterOperator::Uppercase { all: true },
-        }]);
+        assert_eq!(
+            sc.words[1].parts,
+            vec![WordPart::ParameterExpansionOp {
+                name: "VAR".into(),
+                op: ParameterOperator::Uppercase { all: true },
+            }]
+        );
     } else {
         panic!("Expected simple command");
     }
@@ -3442,10 +3774,13 @@ fn parse_param_expansion_uppercase_all() {
 fn parse_param_expansion_lowercase_single() {
     let cmd = parse("echo ${VAR,}");
     if let Command::Simple(sc) = &cmd {
-        assert_eq!(sc.words[1].parts, vec![WordPart::ParameterExpansionOp {
-            name: "VAR".into(),
-            op: ParameterOperator::Lowercase { all: false },
-        }]);
+        assert_eq!(
+            sc.words[1].parts,
+            vec![WordPart::ParameterExpansionOp {
+                name: "VAR".into(),
+                op: ParameterOperator::Lowercase { all: false },
+            }]
+        );
     } else {
         panic!("Expected simple command");
     }
@@ -3455,10 +3790,13 @@ fn parse_param_expansion_lowercase_single() {
 fn parse_param_expansion_lowercase_all() {
     let cmd = parse("echo ${VAR,,}");
     if let Command::Simple(sc) = &cmd {
-        assert_eq!(sc.words[1].parts, vec![WordPart::ParameterExpansionOp {
-            name: "VAR".into(),
-            op: ParameterOperator::Lowercase { all: true },
-        }]);
+        assert_eq!(
+            sc.words[1].parts,
+            vec![WordPart::ParameterExpansionOp {
+                name: "VAR".into(),
+                op: ParameterOperator::Lowercase { all: true },
+            }]
+        );
     } else {
         panic!("Expected simple command");
     }
@@ -3469,7 +3807,10 @@ fn parse_param_expansion_unknown_operator_fallback() {
     // An operator the lexer doesn't recognise falls back to flat ParameterExpansion
     let cmd = parse("echo ${VAR@Q}");
     if let Command::Simple(sc) = &cmd {
-        assert_eq!(sc.words[1].parts, vec![WordPart::ParameterExpansion("VAR@Q".into())]);
+        assert_eq!(
+            sc.words[1].parts,
+            vec![WordPart::ParameterExpansion("VAR@Q".into())]
+        );
     } else {
         panic!("Expected simple command");
     }
@@ -3480,7 +3821,10 @@ fn parse_param_expansion_non_identifier_fallback() {
     // ${!VAR} — '!' is not a valid identifier start, falls back to flat
     let cmd = parse("echo ${!VAR}");
     if let Command::Simple(sc) = &cmd {
-        assert_eq!(sc.words[1].parts, vec![WordPart::ParameterExpansion("!VAR".into())]);
+        assert_eq!(
+            sc.words[1].parts,
+            vec![WordPart::ParameterExpansion("!VAR".into())]
+        );
     } else {
         panic!("Expected simple command");
     }
@@ -3513,10 +3857,12 @@ fn format_param_op_length() {
 
 #[test]
 fn dynamic_parts_unresolved_length() {
-    let w = Word { parts: vec![WordPart::ParameterExpansionOp {
-        name: "UNSET".into(),
-        op: ParameterOperator::Length,
-    }] };
+    let w = Word {
+        parts: vec![WordPart::ParameterExpansionOp {
+            name: "UNSET".into(),
+            op: ParameterOperator::Length,
+        }],
+    };
     assert!(w.has_dynamic_parts());
     assert_eq!(w.dynamic_parts(), vec!["${#UNSET}"]);
 }
@@ -3528,7 +3874,10 @@ fn parse_param_expansion_hash_not_length() {
     // ${#} — '#' with no identifier is not length op, falls back to flat
     let cmd = parse("echo ${#}");
     if let Command::Simple(sc) = &cmd {
-        assert_eq!(sc.words[1].parts, vec![WordPart::ParameterExpansion("#".into())]);
+        assert_eq!(
+            sc.words[1].parts,
+            vec![WordPart::ParameterExpansion("#".into())]
+        );
     } else {
         panic!("Expected simple command");
     }
@@ -3540,7 +3889,10 @@ fn parse_param_expansion_hash_special() {
     let cmd = parse("echo ${#*}");
     if let Command::Simple(sc) = &cmd {
         // '#' not followed by ident+'}', so it restores pos and reads '#*' as flat
-        assert_eq!(sc.words[1].parts, vec![WordPart::ParameterExpansion("#*".into())]);
+        assert_eq!(
+            sc.words[1].parts,
+            vec![WordPart::ParameterExpansion("#*".into())]
+        );
     } else {
         panic!("Expected simple command");
     }
@@ -3555,7 +3907,10 @@ fn test_bracket_command() {
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(sc.command_name(), Some("["));
-            assert_eq!(sc.args().iter().map(|w| w.to_str()).collect::<Vec<_>>(), vec!["-f", "foo", "]"]);
+            assert_eq!(
+                sc.args().iter().map(|w| w.to_str()).collect::<Vec<_>>(),
+                vec!["-f", "foo", "]"]
+            );
         }
         _ => panic!("Expected simple command, got: {cmd:?}"),
     }
@@ -3571,7 +3926,10 @@ fn test_bracket_command_in_if() {
             match condition.as_ref() {
                 Command::Simple(sc) => {
                     assert_eq!(sc.command_name(), Some("["));
-                    assert_eq!(sc.args().iter().map(|w| w.to_str()).collect::<Vec<_>>(), vec!["-f", "foo", "]"]);
+                    assert_eq!(
+                        sc.args().iter().map(|w| w.to_str()).collect::<Vec<_>>(),
+                        vec!["-f", "foo", "]"]
+                    );
                 }
                 other => panic!("Expected simple command as condition, got: {other:?}"),
             }
@@ -3587,7 +3945,10 @@ fn test_double_bracket_command() {
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(sc.command_name(), Some("[["));
-            assert_eq!(sc.args().iter().map(|w| w.to_str()).collect::<Vec<_>>(), vec!["-f", "foo", "]]"]);
+            assert_eq!(
+                sc.args().iter().map(|w| w.to_str()).collect::<Vec<_>>(),
+                vec!["-f", "foo", "]]"]
+            );
         }
         _ => panic!("Expected simple command, got: {cmd:?}"),
     }
@@ -3597,15 +3958,16 @@ fn test_double_bracket_command() {
 fn test_double_bracket_in_if() {
     let cmd = parse("if [[ -f foo ]]; then echo yes; fi");
     match &cmd {
-        Command::If { condition, .. } => {
-            match condition.as_ref() {
-                Command::Simple(sc) => {
-                    assert_eq!(sc.command_name(), Some("[["));
-                    assert_eq!(sc.args().iter().map(|w| w.to_str()).collect::<Vec<_>>(), vec!["-f", "foo", "]]"]);
-                }
-                other => panic!("Expected simple command as condition, got: {other:?}"),
+        Command::If { condition, .. } => match condition.as_ref() {
+            Command::Simple(sc) => {
+                assert_eq!(sc.command_name(), Some("[["));
+                assert_eq!(
+                    sc.args().iter().map(|w| w.to_str()).collect::<Vec<_>>(),
+                    vec!["-f", "foo", "]]"]
+                );
             }
-        }
+            other => panic!("Expected simple command as condition, got: {other:?}"),
+        },
         _ => panic!("Expected if command, got: {cmd:?}"),
     }
 }

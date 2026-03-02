@@ -2,8 +2,8 @@
 
 use colored::Colorize;
 
-use may_i_core::Decision;
 use may_i_config as config;
+use may_i_core::Decision;
 use may_i_engine as engine;
 use may_i_shell_parser as parser;
 
@@ -25,7 +25,10 @@ pub fn cmd_eval(
             "reason": result.reason.unwrap_or_default(),
             "trace": crate::output::trace_to_json(&result.trace),
         });
-        println!("{}", serde_json::to_string(&json).expect("response serialization is infallible"));
+        println!(
+            "{}",
+            serde_json::to_string(&json).expect("response serialization is infallible")
+        );
     } else {
         // Evaluate per-segment so we can both colorize and derive the aggregate result.
         let (result, colored_command) = evaluate_segments(command, &config);
@@ -45,7 +48,11 @@ pub fn cmd_eval(
             match &result.reason {
                 Some(reason) => {
                     let quoted = format!("\"{reason}\"");
-                    println!("  {} {colored_keyword} {}", "→".dimmed(), colorize_atom(&quoted, true));
+                    println!(
+                        "  {} {colored_keyword} {}",
+                        "→".dimmed(),
+                        colorize_atom(&quoted, true)
+                    );
                 }
                 None => println!("  {} {colored_keyword}", "→".dimmed()),
             }

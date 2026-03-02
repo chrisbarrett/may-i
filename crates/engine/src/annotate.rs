@@ -6,8 +6,8 @@
 // annotated trees to produce two-column trace output.
 
 use may_i_core::{
-    ArgMatcher, CommandMatcher, CondArm, Doc, DocF, Effect, EvalAnn, Expr, ExprBranch,
-    LayoutHint, PosExpr, Rule, RuleBody,
+    ArgMatcher, CommandMatcher, CondArm, Doc, DocF, Effect, EvalAnn, Expr, ExprBranch, LayoutHint,
+    PosExpr, Rule, RuleBody,
 };
 
 use crate::matcher::{
@@ -20,15 +20,30 @@ pub(crate) type ADoc = Doc<Option<EvalAnn>>;
 // ── Constructors ──────────────────────────────────────────────────
 
 fn atom(s: impl Into<String>) -> ADoc {
-    Doc { ann: None, node: DocF::Atom(s.into()), layout: LayoutHint::Auto, dimmed: false }
+    Doc {
+        ann: None,
+        node: DocF::Atom(s.into()),
+        layout: LayoutHint::Auto,
+        dimmed: false,
+    }
 }
 
 fn list(children: Vec<ADoc>) -> ADoc {
-    Doc { ann: None, node: DocF::List(children), layout: LayoutHint::Auto, dimmed: false }
+    Doc {
+        ann: None,
+        node: DocF::List(children),
+        layout: LayoutHint::Auto,
+        dimmed: false,
+    }
 }
 
 fn ann_list(ann: EvalAnn, children: Vec<ADoc>) -> ADoc {
-    Doc { ann: Some(ann), node: DocF::List(children), layout: LayoutHint::Auto, dimmed: false }
+    Doc {
+        ann: Some(ann),
+        node: DocF::List(children),
+        layout: LayoutHint::Auto,
+        dimmed: false,
+    }
 }
 
 /// Convert an unannotated Doc<()> to Doc<Option<EvalAnn>> (all None).
@@ -44,7 +59,8 @@ fn propagate_break_hints(doc: ADoc) -> ADoc {
         DocF::Atom(_) => doc,
         DocF::List(children) => {
             let children: Vec<ADoc> = children.into_iter().map(propagate_break_hints).collect();
-            let visible_ann_count = children.iter()
+            let visible_ann_count = children
+                .iter()
                 .filter(|c| subtree_has_visible_annotation(c))
                 .count();
             let layout = if visible_ann_count > 1 {
@@ -52,7 +68,12 @@ fn propagate_break_hints(doc: ADoc) -> ADoc {
             } else {
                 doc.layout
             };
-            Doc { ann: doc.ann, node: DocF::List(children), layout, dimmed: false }
+            Doc {
+                ann: doc.ann,
+                node: DocF::List(children),
+                layout,
+                dimmed: false,
+            }
         }
     }
 }
@@ -113,7 +134,12 @@ pub(crate) fn annotate_rule(
         decision: e.decision,
         reason: e.reason.clone(),
     });
-    let doc = Doc { ann, node: DocF::List(cs), layout: LayoutHint::Auto, dimmed: false };
+    let doc = Doc {
+        ann,
+        node: DocF::List(cs),
+        layout: LayoutHint::Auto,
+        dimmed: false,
+    };
     (propagate_break_hints(doc), effect)
 }
 
@@ -136,7 +162,10 @@ fn annotate_command(matcher: &CommandMatcher, cmd_name: &str, matched: bool) -> 
                 if matched && n == cmd_name {
                     // Mark the matching entry so it survives truncation
                     // and shows which command was matched.
-                    Doc { ann: Some(EvalAnn::CommandMatch(true)), ..a }
+                    Doc {
+                        ann: Some(EvalAnn::CommandMatch(true)),
+                        ..a
+                    }
                 } else {
                     a
                 }
@@ -147,16 +176,19 @@ fn annotate_command(matcher: &CommandMatcher, cmd_name: &str, matched: bool) -> 
     ann_list(ann, children)
 }
 
-fn annotate_body(
-    body: &RuleBody,
-    args: &[ResolvedArg],
-) -> (Vec<ADoc>, Option<Effect>) {
+fn annotate_body(body: &RuleBody, args: &[ResolvedArg]) -> (Vec<ADoc>, Option<Effect>) {
     match body {
-        RuleBody::Effect { matcher: None, effect } => {
+        RuleBody::Effect {
+            matcher: None,
+            effect,
+        } => {
             let effect_doc = annotate_effect(effect);
             (vec![effect_doc], Some(effect.clone()))
         }
-        RuleBody::Effect { matcher: Some(m), effect } => {
+        RuleBody::Effect {
+            matcher: Some(m),
+            effect,
+        } => {
             let (matcher_doc, outcome) = annotate_matcher(m, args);
             let matched = outcome.is_match();
             let args_doc = ann_list(
@@ -193,10 +225,7 @@ fn annotate_body(
 }
 
 fn annotate_effect(effect: &Effect) -> ADoc {
-    let mut cs = vec![
-        atom("effect"),
-        atom(format!(":{}", effect.decision)),
-    ];
+    let mut cs = vec![atom("effect"), atom(format!(":{}", effect.decision))];
     if let Some(r) = &effect.reason {
         cs.push(atom(format!("\"{r}\"")));
     }
@@ -211,10 +240,7 @@ fn annotate_effect(effect: &Effect) -> ADoc {
 
 /// Build an unannotated effect node (for display when the effect was never reached).
 fn unannotate_effect(effect: &Effect) -> ADoc {
-    let mut cs = vec![
-        atom("effect"),
-        atom(format!(":{}", effect.decision)),
-    ];
+    let mut cs = vec![atom("effect"), atom(format!(":{}", effect.decision))];
     if let Some(r) = &effect.reason {
         cs.push(atom(format!("\"{r}\"")));
     }
@@ -223,10 +249,7 @@ fn unannotate_effect(effect: &Effect) -> ADoc {
 
 // ── Matcher annotation ────────────────────────────────────────────
 
-pub(crate) fn annotate_matcher(
-    matcher: &ArgMatcher,
-    args: &[ResolvedArg],
-) -> (ADoc, MatchOutcome) {
+pub(crate) fn annotate_matcher(matcher: &ArgMatcher, args: &[ResolvedArg]) -> (ADoc, MatchOutcome) {
     match matcher {
         ArgMatcher::Positional(patterns) => annotate_positional(patterns, args, false),
         ArgMatcher::ExactPositional(patterns) => annotate_positional(patterns, args, true),
@@ -238,10 +261,7 @@ pub(crate) fn annotate_matcher(
     }
 }
 
-fn annotate_matcher_and(
-    matchers: &[ArgMatcher],
-    args: &[ResolvedArg],
-) -> (ADoc, MatchOutcome) {
+fn annotate_matcher_and(matchers: &[ArgMatcher], args: &[ResolvedArg]) -> (ADoc, MatchOutcome) {
     let mut cs = vec![atom("and")];
     let mut first_effect: Option<Effect> = None;
     let mut all_matched = true;
@@ -275,10 +295,7 @@ fn annotate_matcher_and(
     (list(cs), outcome)
 }
 
-fn annotate_matcher_or(
-    matchers: &[ArgMatcher],
-    args: &[ResolvedArg],
-) -> (ADoc, MatchOutcome) {
+fn annotate_matcher_or(matchers: &[ArgMatcher], args: &[ResolvedArg]) -> (ADoc, MatchOutcome) {
     let mut cs = vec![atom("or")];
     let mut result = MatchOutcome::NoMatch;
     let mut found = false;
@@ -298,10 +315,7 @@ fn annotate_matcher_or(
     (list(cs), result)
 }
 
-fn annotate_matcher_not(
-    inner: &ArgMatcher,
-    args: &[ResolvedArg],
-) -> (ADoc, MatchOutcome) {
+fn annotate_matcher_not(inner: &ArgMatcher, args: &[ResolvedArg]) -> (ADoc, MatchOutcome) {
     let (inner_doc, inner_outcome) = annotate_matcher(inner, args);
     let outcome = if inner_outcome.is_match() {
         MatchOutcome::NoMatch
@@ -311,10 +325,7 @@ fn annotate_matcher_not(
     (list(vec![atom("not"), inner_doc]), outcome)
 }
 
-fn annotate_matcher_cond(
-    arm: &CondArm,
-    args: &[ResolvedArg],
-) -> (ADoc, MatchOutcome) {
+fn annotate_matcher_cond(arm: &CondArm, args: &[ResolvedArg]) -> (ADoc, MatchOutcome) {
     let mut cs = vec![atom("cond")];
 
     for branch in &arm.branches {
@@ -322,7 +333,9 @@ fn annotate_matcher_cond(
         let matched = outcome.is_match();
         let effect_doc = annotate_effect(&branch.effect);
         let branch_ann = if matched {
-            Some(EvalAnn::CondBranch { decision: branch.effect.decision })
+            Some(EvalAnn::CondBranch {
+                decision: branch.effect.decision,
+            })
         } else {
             None
         };
@@ -341,7 +354,9 @@ fn annotate_matcher_cond(
     if let Some(fallback) = &arm.fallback {
         let effect_doc = annotate_effect(fallback);
         cs.push(ann_list(
-            EvalAnn::CondElse { decision: fallback.decision },
+            EvalAnn::CondElse {
+                decision: fallback.decision,
+            },
             vec![atom("else"), effect_doc],
         ));
         return (list(cs), MatchOutcome::Matched(fallback.clone()));
@@ -410,7 +425,10 @@ fn annotate_positional(
                 None => {
                     if pexpr.quantifier.min() > 0 {
                         let inner = unannotate(pexpr.to_doc());
-                        cs.push(Doc { ann: Some(EvalAnn::Missing), ..inner });
+                        cs.push(Doc {
+                            ann: Some(EvalAnn::Missing),
+                            ..inner
+                        });
                         return (list(cs), MatchOutcome::NoMatch);
                     }
                 }
@@ -435,15 +453,15 @@ fn annotate_positional(
     };
 
     if exact {
-        let pattern_strs: Vec<String> = patterns.iter()
-            .map(|p| p.expr.to_string())
-            .collect();
-        let arg_strs: Vec<String> = positional.iter()
-            .map(arg_to_string)
-            .collect();
+        let pattern_strs: Vec<String> = patterns.iter().map(|p| p.expr.to_string()).collect();
+        let arg_strs: Vec<String> = positional.iter().map(arg_to_string).collect();
         let matched = outcome.is_match();
         let doc = ann_list(
-            EvalAnn::ExactArgs { patterns: pattern_strs, args: arg_strs, matched },
+            EvalAnn::ExactArgs {
+                patterns: pattern_strs,
+                args: arg_strs,
+                matched,
+            },
             cs,
         );
         return (doc, outcome);
@@ -463,10 +481,7 @@ fn wrap_quantifier(q: may_i_core::Quantifier, inner: ADoc) -> ADoc {
 
 // ── Anywhere annotation ───────────────────────────────────────────
 
-fn annotate_anywhere(
-    tokens: &[Expr],
-    args: &[ResolvedArg],
-) -> (ADoc, MatchOutcome) {
+fn annotate_anywhere(tokens: &[Expr], args: &[ResolvedArg]) -> (ADoc, MatchOutcome) {
     let mut cs = vec![atom("anywhere")];
     let args_strs: Vec<String> = args.iter().map(arg_to_string).collect();
 
@@ -474,7 +489,10 @@ fn annotate_anywhere(
         let matched = args.iter().any(|a| expr_matches_resolved(token, a));
         let token_doc_inner = unannotate(token.to_doc());
         let token_doc = Doc {
-            ann: Some(EvalAnn::Anywhere { args: args_strs.clone(), matched }),
+            ann: Some(EvalAnn::Anywhere {
+                args: args_strs.clone(),
+                matched,
+            }),
             ..token_doc_inner
         };
         cs.push(token_doc);
@@ -563,7 +581,10 @@ pub(crate) fn annotate_expr_arg(expr: &Expr, arg: &ResolvedArg) -> (ADoc, MatchO
             let matched = expr_matches_resolved(expr, arg);
             let arg_str = arg_to_string(arg);
             let doc = Doc {
-                ann: Some(EvalAnn::ExprVsArg { arg: arg_str, matched }),
+                ann: Some(EvalAnn::ExprVsArg {
+                    arg: arg_str,
+                    matched,
+                }),
                 node: DocF::List(vec![atom("not"), inner_doc]),
                 layout: LayoutHint::Auto,
                 dimmed: false,
@@ -584,7 +605,10 @@ pub(crate) fn annotate_expr_arg(expr: &Expr, arg: &ResolvedArg) -> (ADoc, MatchO
             let arg_str = arg_to_string(arg);
             let inner = unannotate(expr.to_doc());
             let doc = Doc {
-                ann: Some(EvalAnn::ExprVsArg { arg: arg_str, matched }),
+                ann: Some(EvalAnn::ExprVsArg {
+                    arg: arg_str,
+                    matched,
+                }),
                 ..inner
             };
             if !matched {
@@ -597,15 +621,11 @@ pub(crate) fn annotate_expr_arg(expr: &Expr, arg: &ResolvedArg) -> (ADoc, MatchO
                 return (doc, MatchOutcome::Matched(eff.clone()));
             }
             (doc, MatchOutcome::MatchedNoEffect)
-        }
-        // Cond handled at the top of the function
+        } // Cond handled at the top of the function
     }
 }
 
-fn annotate_expr_cond(
-    branches: &[ExprBranch],
-    arg: &ResolvedArg,
-) -> (ADoc, MatchOutcome) {
+fn annotate_expr_cond(branches: &[ExprBranch], arg: &ResolvedArg) -> (ADoc, MatchOutcome) {
     let mut cs = vec![atom("cond")];
 
     match arg {
@@ -616,7 +636,9 @@ fn annotate_expr_cond(
                 let effect_doc = annotate_effect(&branch.effect);
                 let branch_doc = if matched {
                     ann_list(
-                        EvalAnn::CondBranch { decision: branch.effect.decision },
+                        EvalAnn::CondBranch {
+                            decision: branch.effect.decision,
+                        },
                         vec![test_doc, effect_doc],
                     )
                 } else {
@@ -651,11 +673,17 @@ mod tests {
     }
 
     fn allow(reason: &str) -> Effect {
-        Effect { decision: Decision::Allow, reason: Some(reason.into()) }
+        Effect {
+            decision: Decision::Allow,
+            reason: Some(reason.into()),
+        }
     }
 
     fn deny(reason: &str) -> Effect {
-        Effect { decision: Decision::Deny, reason: Some(reason.into()) }
+        Effect {
+            decision: Decision::Deny,
+            reason: Some(reason.into()),
+        }
     }
 
     /// Collect all annotations from an annotated Doc tree.
@@ -695,7 +723,10 @@ mod tests {
             command: CommandMatcher::Exact("ls".into()),
             body: RuleBody::Effect {
                 matcher: None,
-                effect: Effect { decision: Decision::Allow, reason: None },
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
             },
             checks: vec![],
             source_span: Span::new(0, 0),
@@ -705,8 +736,17 @@ mod tests {
         assert_eq!(effect.unwrap().decision, Decision::Allow);
 
         let anns = collect_annotations(&doc);
-        assert!(anns.iter().any(|a| matches!(a, EvalAnn::CommandMatch(true))));
-        assert!(anns.iter().any(|a| matches!(a, EvalAnn::RuleEffect { decision: Decision::Allow, .. })));
+        assert!(
+            anns.iter()
+                .any(|a| matches!(a, EvalAnn::CommandMatch(true)))
+        );
+        assert!(anns.iter().any(|a| matches!(
+            a,
+            EvalAnn::RuleEffect {
+                decision: Decision::Allow,
+                ..
+            }
+        )));
     }
 
     #[test]
@@ -715,7 +755,10 @@ mod tests {
             command: CommandMatcher::Exact("ls".into()),
             body: RuleBody::Effect {
                 matcher: None,
-                effect: Effect { decision: Decision::Allow, reason: None },
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
             },
             checks: vec![],
             source_span: Span::new(0, 0),
@@ -724,7 +767,10 @@ mod tests {
         assert!(effect.is_none());
 
         let anns = collect_annotations(&doc);
-        assert!(anns.iter().any(|a| matches!(a, EvalAnn::CommandMatch(false))));
+        assert!(
+            anns.iter()
+                .any(|a| matches!(a, EvalAnn::CommandMatch(false)))
+        );
     }
 
     // ── Positional matching ─────────────────────────────────────────
@@ -734,10 +780,13 @@ mod tests {
         let rule = Rule {
             command: CommandMatcher::Exact("git".into()),
             body: RuleBody::Effect {
-                matcher: Some(ArgMatcher::Positional(vec![
-                    PosExpr::one(Expr::Literal("push".into())),
-                ])),
-                effect: Effect { decision: Decision::Allow, reason: None },
+                matcher: Some(ArgMatcher::Positional(vec![PosExpr::one(Expr::Literal(
+                    "push".into(),
+                ))])),
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
             },
             checks: vec![],
             source_span: Span::new(0, 0),
@@ -747,7 +796,10 @@ mod tests {
         assert!(effect.is_some());
 
         let anns = collect_annotations(&doc);
-        assert!(anns.iter().any(|a| matches!(a, EvalAnn::ExprVsArg { matched: true, .. })));
+        assert!(
+            anns.iter()
+                .any(|a| matches!(a, EvalAnn::ExprVsArg { matched: true, .. }))
+        );
         assert!(anns.iter().any(|a| matches!(a, EvalAnn::ArgsResult(true))));
     }
 
@@ -756,10 +808,13 @@ mod tests {
         let rule = Rule {
             command: CommandMatcher::Exact("git".into()),
             body: RuleBody::Effect {
-                matcher: Some(ArgMatcher::Positional(vec![
-                    PosExpr::one(Expr::Literal("push".into())),
-                ])),
-                effect: Effect { decision: Decision::Allow, reason: None },
+                matcher: Some(ArgMatcher::Positional(vec![PosExpr::one(Expr::Literal(
+                    "push".into(),
+                ))])),
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
             },
             checks: vec![],
             source_span: Span::new(0, 0),
@@ -769,7 +824,10 @@ mod tests {
         assert!(effect.is_none());
 
         let anns = collect_annotations(&doc);
-        assert!(anns.iter().any(|a| matches!(a, EvalAnn::ExprVsArg { matched: false, .. })));
+        assert!(
+            anns.iter()
+                .any(|a| matches!(a, EvalAnn::ExprVsArg { matched: false, .. }))
+        );
         assert!(anns.iter().any(|a| matches!(a, EvalAnn::ArgsResult(false))));
     }
 
@@ -778,10 +836,13 @@ mod tests {
         let rule = Rule {
             command: CommandMatcher::Exact("git".into()),
             body: RuleBody::Effect {
-                matcher: Some(ArgMatcher::Positional(vec![
-                    PosExpr::one(Expr::Literal("push".into())),
-                ])),
-                effect: Effect { decision: Decision::Allow, reason: None },
+                matcher: Some(ArgMatcher::Positional(vec![PosExpr::one(Expr::Literal(
+                    "push".into(),
+                ))])),
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
             },
             checks: vec![],
             source_span: Span::new(0, 0),
@@ -799,9 +860,15 @@ mod tests {
             body: RuleBody::Effect {
                 matcher: Some(ArgMatcher::Positional(vec![
                     PosExpr::one(Expr::Literal("push".into())),
-                    PosExpr { quantifier: Quantifier::ZeroOrMore, expr: Expr::Wildcard },
+                    PosExpr {
+                        quantifier: Quantifier::ZeroOrMore,
+                        expr: Expr::Wildcard,
+                    },
                 ])),
-                effect: Effect { decision: Decision::Allow, reason: None },
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
             },
             checks: vec![],
             source_span: Span::new(0, 0),
@@ -811,7 +878,13 @@ mod tests {
         assert!(effect.is_some());
 
         let anns = collect_annotations(&doc);
-        assert!(anns.iter().any(|a| matches!(a, EvalAnn::Quantifier { count: 2, matched: true })));
+        assert!(anns.iter().any(|a| matches!(
+            a,
+            EvalAnn::Quantifier {
+                count: 2,
+                matched: true
+            }
+        )));
     }
 
     // ── Anywhere matching ───────────────────────────────────────────
@@ -821,10 +894,11 @@ mod tests {
         let rule = Rule {
             command: CommandMatcher::Exact("git".into()),
             body: RuleBody::Effect {
-                matcher: Some(ArgMatcher::Anywhere(vec![
-                    Expr::Literal("--force".into()),
-                ])),
-                effect: Effect { decision: Decision::Deny, reason: Some("force push".into()) },
+                matcher: Some(ArgMatcher::Anywhere(vec![Expr::Literal("--force".into())])),
+                effect: Effect {
+                    decision: Decision::Deny,
+                    reason: Some("force push".into()),
+                },
             },
             checks: vec![],
             source_span: Span::new(0, 0),
@@ -835,7 +909,10 @@ mod tests {
         assert!(effect.is_some());
 
         let anns = collect_annotations(&doc);
-        assert!(anns.iter().any(|a| matches!(a, EvalAnn::Anywhere { matched: true, .. })));
+        assert!(
+            anns.iter()
+                .any(|a| matches!(a, EvalAnn::Anywhere { matched: true, .. }))
+        );
     }
 
     // ── Branching (cond) matching ───────────────────────────────────
@@ -860,7 +937,12 @@ mod tests {
         assert_eq!(effect.unwrap().decision, Decision::Allow);
 
         let anns = collect_annotations(&doc);
-        assert!(anns.iter().any(|a| matches!(a, EvalAnn::CondElse { decision: Decision::Allow })));
+        assert!(anns.iter().any(|a| matches!(
+            a,
+            EvalAnn::CondElse {
+                decision: Decision::Allow
+            }
+        )));
     }
 
     #[test]
@@ -883,7 +965,12 @@ mod tests {
         assert_eq!(effect.unwrap().decision, Decision::Deny);
 
         let anns = collect_annotations(&doc);
-        assert!(anns.iter().any(|a| matches!(a, EvalAnn::CondBranch { decision: Decision::Deny })));
+        assert!(anns.iter().any(|a| matches!(
+            a,
+            EvalAnn::CondBranch {
+                decision: Decision::Deny
+            }
+        )));
     }
 
     // ── Expr-level cond ─────────────────────────────────────────────
@@ -904,7 +991,10 @@ mod tests {
             command: CommandMatcher::Exact("cmd".into()),
             body: RuleBody::Effect {
                 matcher: Some(ArgMatcher::Positional(vec![PosExpr::one(cond_expr)])),
-                effect: Effect { decision: Decision::Ask, reason: None },
+                effect: Effect {
+                    decision: Decision::Ask,
+                    reason: None,
+                },
             },
             checks: vec![],
             source_span: Span::new(0, 0),
@@ -921,7 +1011,10 @@ mod tests {
             command: CommandMatcher::Regex(regex::Regex::new("^git").unwrap()),
             body: RuleBody::Effect {
                 matcher: None,
-                effect: Effect { decision: Decision::Allow, reason: None },
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
             },
             checks: vec![],
             source_span: Span::new(0, 0),
@@ -936,7 +1029,10 @@ mod tests {
             command: CommandMatcher::List(vec!["cat".into(), "bat".into()]),
             body: RuleBody::Effect {
                 matcher: None,
-                effect: Effect { decision: Decision::Allow, reason: None },
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
             },
             checks: vec![],
             source_span: Span::new(0, 0),
@@ -956,7 +1052,10 @@ mod tests {
                     ArgMatcher::Positional(vec![PosExpr::one(Expr::Literal("push".into()))]),
                     ArgMatcher::Positional(vec![PosExpr::one(Expr::Literal("pull".into()))]),
                 ])),
-                effect: Effect { decision: Decision::Allow, reason: None },
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
             },
             checks: vec![],
             source_span: Span::new(0, 0),
@@ -970,10 +1069,13 @@ mod tests {
         let rule = Rule {
             command: CommandMatcher::Exact("git".into()),
             body: RuleBody::Effect {
-                matcher: Some(ArgMatcher::Not(Box::new(
-                    ArgMatcher::Anywhere(vec![Expr::Literal("--force".into())]),
-                ))),
-                effect: Effect { decision: Decision::Allow, reason: None },
+                matcher: Some(ArgMatcher::Not(Box::new(ArgMatcher::Anywhere(vec![
+                    Expr::Literal("--force".into()),
+                ])))),
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
             },
             checks: vec![],
             source_span: Span::new(0, 0),
@@ -993,7 +1095,10 @@ mod tests {
                     ArgMatcher::Positional(vec![PosExpr::one(Expr::Literal("push".into()))]),
                     ArgMatcher::Anywhere(vec![Expr::Literal("--force".into())]),
                 ])),
-                effect: Effect { decision: Decision::Deny, reason: Some("force push".into()) },
+                effect: Effect {
+                    decision: Decision::Deny,
+                    reason: Some("force push".into()),
+                },
             },
             checks: vec![],
             source_span: Span::new(0, 0),
@@ -1011,7 +1116,10 @@ mod tests {
                     ArgMatcher::Positional(vec![PosExpr::one(Expr::Literal("push".into()))]),
                     ArgMatcher::Anywhere(vec![Expr::Literal("--force".into())]),
                 ])),
-                effect: Effect { decision: Decision::Deny, reason: None },
+                effect: Effect {
+                    decision: Decision::Deny,
+                    reason: None,
+                },
             },
             checks: vec![],
             source_span: Span::new(0, 0),
@@ -1027,10 +1135,13 @@ mod tests {
         let rule = Rule {
             command: CommandMatcher::Exact("git".into()),
             body: RuleBody::Effect {
-                matcher: Some(ArgMatcher::ExactPositional(vec![
-                    PosExpr::one(Expr::Literal("push".into())),
-                ])),
-                effect: Effect { decision: Decision::Allow, reason: None },
+                matcher: Some(ArgMatcher::ExactPositional(vec![PosExpr::one(
+                    Expr::Literal("push".into()),
+                )])),
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
             },
             checks: vec![],
             source_span: Span::new(0, 0),
@@ -1040,7 +1151,10 @@ mod tests {
         assert!(effect.is_none()); // extra arg "origin"
 
         let anns = collect_annotations(&doc);
-        assert!(anns.iter().any(|a| matches!(a, EvalAnn::ExactRemainder { count: 1 })));
+        assert!(
+            anns.iter()
+                .any(|a| matches!(a, EvalAnn::ExactRemainder { count: 1 }))
+        );
     }
 
     // ── Optional quantifier ─────────────────────────────────────────
@@ -1051,10 +1165,16 @@ mod tests {
             command: CommandMatcher::Exact("cmd".into()),
             body: RuleBody::Effect {
                 matcher: Some(ArgMatcher::Positional(vec![
-                    PosExpr { quantifier: Quantifier::Optional, expr: Expr::Literal("opt".into()) },
+                    PosExpr {
+                        quantifier: Quantifier::Optional,
+                        expr: Expr::Literal("opt".into()),
+                    },
                     PosExpr::one(Expr::Literal("req".into())),
                 ])),
-                effect: Effect { decision: Decision::Allow, reason: None },
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
             },
             checks: vec![],
             source_span: Span::new(0, 0),
@@ -1069,10 +1189,16 @@ mod tests {
             command: CommandMatcher::Exact("cmd".into()),
             body: RuleBody::Effect {
                 matcher: Some(ArgMatcher::Positional(vec![
-                    PosExpr { quantifier: Quantifier::Optional, expr: Expr::Literal("opt".into()) },
+                    PosExpr {
+                        quantifier: Quantifier::Optional,
+                        expr: Expr::Literal("opt".into()),
+                    },
                     PosExpr::one(Expr::Literal("req".into())),
                 ])),
-                effect: Effect { decision: Decision::Allow, reason: None },
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
             },
             checks: vec![],
             source_span: Span::new(0, 0),
@@ -1088,10 +1214,11 @@ mod tests {
         let rule = Rule {
             command: CommandMatcher::Exact("cmd".into()),
             body: RuleBody::Effect {
-                matcher: Some(ArgMatcher::Positional(vec![
-                    PosExpr::one(Expr::Wildcard),
-                ])),
-                effect: Effect { decision: Decision::Allow, reason: None },
+                matcher: Some(ArgMatcher::Positional(vec![PosExpr::one(Expr::Wildcard)])),
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
             },
             checks: vec![],
             source_span: Span::new(0, 0),
@@ -1105,10 +1232,13 @@ mod tests {
         let rule = Rule {
             command: CommandMatcher::Exact("cmd".into()),
             body: RuleBody::Effect {
-                matcher: Some(ArgMatcher::Positional(vec![
-                    PosExpr::one(Expr::Literal("specific".into())),
-                ])),
-                effect: Effect { decision: Decision::Allow, reason: None },
+                matcher: Some(ArgMatcher::Positional(vec![PosExpr::one(Expr::Literal(
+                    "specific".into(),
+                ))])),
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
             },
             checks: vec![],
             source_span: Span::new(0, 0),
@@ -1124,13 +1254,14 @@ mod tests {
         let rule = Rule {
             command: CommandMatcher::Exact("cmd".into()),
             body: RuleBody::Effect {
-                matcher: Some(ArgMatcher::Positional(vec![
-                    PosExpr::one(Expr::Or(vec![
-                        Expr::Literal("a".into()),
-                        Expr::Literal("b".into()),
-                    ])),
-                ])),
-                effect: Effect { decision: Decision::Allow, reason: None },
+                matcher: Some(ArgMatcher::Positional(vec![PosExpr::one(Expr::Or(vec![
+                    Expr::Literal("a".into()),
+                    Expr::Literal("b".into()),
+                ]))])),
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
             },
             checks: vec![],
             source_span: Span::new(0, 0),
@@ -1144,10 +1275,13 @@ mod tests {
         let rule = Rule {
             command: CommandMatcher::Exact("cmd".into()),
             body: RuleBody::Effect {
-                matcher: Some(ArgMatcher::Positional(vec![
-                    PosExpr::one(Expr::Not(Box::new(Expr::Literal("bad".into())))),
-                ])),
-                effect: Effect { decision: Decision::Allow, reason: None },
+                matcher: Some(ArgMatcher::Positional(vec![PosExpr::one(Expr::Not(
+                    Box::new(Expr::Literal("bad".into())),
+                ))])),
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
             },
             checks: vec![],
             source_span: Span::new(0, 0),
@@ -1180,17 +1314,18 @@ mod tests {
 
     #[test]
     fn expr_cond_opaque_no_match() {
-        let cond_expr = Expr::Cond(vec![
-            ExprBranch {
-                test: Expr::Literal("safe".into()),
-                effect: allow("safe arg"),
-            },
-        ]);
+        let cond_expr = Expr::Cond(vec![ExprBranch {
+            test: Expr::Literal("safe".into()),
+            effect: allow("safe arg"),
+        }]);
         let rule = Rule {
             command: CommandMatcher::Exact("cmd".into()),
             body: RuleBody::Effect {
                 matcher: Some(ArgMatcher::Positional(vec![PosExpr::one(cond_expr)])),
-                effect: Effect { decision: Decision::Ask, reason: None },
+                effect: Effect {
+                    decision: Decision::Ask,
+                    reason: None,
+                },
             },
             checks: vec![],
             source_span: Span::new(0, 0),
@@ -1208,9 +1343,15 @@ mod tests {
             body: RuleBody::Effect {
                 matcher: Some(ArgMatcher::Positional(vec![
                     PosExpr::one(Expr::Literal("push".into())),
-                    PosExpr { quantifier: Quantifier::ZeroOrMore, expr: Expr::Wildcard },
+                    PosExpr {
+                        quantifier: Quantifier::ZeroOrMore,
+                        expr: Expr::Wildcard,
+                    },
                 ])),
-                effect: Effect { decision: Decision::Allow, reason: None },
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
             },
             checks: vec![],
             source_span: Span::new(0, 0),

@@ -1,9 +1,9 @@
 // Visitor that detects code-execution constructs (source, eval, bash -c)
 // and either returns Ask or requests recursion into the inner command.
 
+use super::{CommandVisitor, MAX_EVAL_DEPTH, VisitOutcome, VisitorContext};
 use may_i_core::{Decision, EvalResult};
 use may_i_shell_parser::{self as parser, SimpleCommand};
-use super::{CommandVisitor, VisitOutcome, VisitorContext, MAX_EVAL_DEPTH};
 
 /// Detects `source`/`.`, opaque command names, `eval`, and `bash/sh/zsh -c`.
 ///
@@ -14,11 +14,7 @@ use super::{CommandVisitor, VisitOutcome, VisitorContext, MAX_EVAL_DEPTH};
 pub(crate) struct CodeExecutionVisitor;
 
 impl CommandVisitor for CodeExecutionVisitor {
-    fn visit_simple_command(
-        &self,
-        ctx: &VisitorContext,
-        resolved: &SimpleCommand,
-    ) -> VisitOutcome {
+    fn visit_simple_command(&self, ctx: &VisitorContext, resolved: &SimpleCommand) -> VisitOutcome {
         // Opaque variable as command name (must check before nonempty_command_name
         // since opaque commands resolve to an empty name)
         if resolved.words.first().is_some_and(|w| w.has_opaque_parts()) {
@@ -89,7 +85,11 @@ impl CodeExecutionVisitor {
         }
 
         // All args are literal — concatenate and recurse
-        let eval_str: String = args.iter().map(|a| a.to_str()).collect::<Vec<_>>().join(" ");
+        let eval_str: String = args
+            .iter()
+            .map(|a| a.to_str())
+            .collect::<Vec<_>>()
+            .join(" ");
         let inner_ast = parser::parse(&eval_str);
         VisitOutcome::Recurse {
             command: inner_ast,

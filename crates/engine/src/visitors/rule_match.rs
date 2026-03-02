@@ -1,22 +1,18 @@
 // Visitor that matches resolved commands against config rules.
 // Terminal visitor: always returns Terminal (never Continue).
 
-use may_i_core::{Config, Decision, Effect, EvalResult, TraceEntry};
-use may_i_shell_parser::SimpleCommand;
+use super::{CommandVisitor, VisitOutcome, VisitorContext};
 use crate::annotate::annotate_rule;
 use crate::matcher::*;
-use super::{CommandVisitor, VisitOutcome, VisitorContext};
+use may_i_core::{Config, Decision, Effect, EvalResult, TraceEntry};
+use may_i_shell_parser::SimpleCommand;
 
 /// Terminal visitor: matches the resolved command against config rules.
 /// Always returns Terminal (never Continue).
 pub(crate) struct RuleMatchVisitor;
 
 impl CommandVisitor for RuleMatchVisitor {
-    fn visit_simple_command(
-        &self,
-        ctx: &VisitorContext,
-        resolved: &SimpleCommand,
-    ) -> VisitOutcome {
+    fn visit_simple_command(&self, ctx: &VisitorContext, resolved: &SimpleCommand) -> VisitOutcome {
         let result = match_against_rules(resolved, ctx.config);
         VisitOutcome::Terminal {
             result,
@@ -26,10 +22,7 @@ impl CommandVisitor for RuleMatchVisitor {
 }
 
 /// Pure rule-matching logic: expand flags, iterate rules, return first match.
-pub(crate) fn match_against_rules(
-    resolved: &SimpleCommand,
-    config: &Config,
-) -> EvalResult {
+pub(crate) fn match_against_rules(resolved: &SimpleCommand, config: &Config) -> EvalResult {
     let cmd_name = match resolved.nonempty_command_name() {
         Some(name) => name,
         None => {
@@ -51,9 +44,15 @@ pub(crate) fn match_against_rules(
         }
 
         had_command_match = true;
-        let line_num = config.source_info.as_ref().map(|si| si.line_of(rule.source_span));
+        let line_num = config
+            .source_info
+            .as_ref()
+            .map(|si| si.line_of(rule.source_span));
         let (doc, effect) = annotate_rule(rule, cmd_name, &expanded_args);
-        trace.push(TraceEntry::Rule { doc, line: line_num });
+        trace.push(TraceEntry::Rule {
+            doc,
+            line: line_num,
+        });
 
         let effect = match effect {
             Some(eff) => eff,
@@ -80,7 +79,9 @@ pub(crate) fn match_against_rules(
         } else {
             format!("No rule for command `{cmd_name}`")
         };
-        trace.push(TraceEntry::DefaultAsk { reason: reason.clone() });
+        trace.push(TraceEntry::DefaultAsk {
+            reason: reason.clone(),
+        });
         let mut result = EvalResult::new(Decision::Ask, Some(reason));
         result.trace = trace;
         result

@@ -70,16 +70,31 @@ pub struct Doc<A = ()> {
 
 impl Doc<()> {
     pub fn atom(s: impl Into<String>) -> Self {
-        Doc { ann: (), node: DocF::Atom(s.into()), layout: LayoutHint::Auto, dimmed: false }
+        Doc {
+            ann: (),
+            node: DocF::Atom(s.into()),
+            layout: LayoutHint::Auto,
+            dimmed: false,
+        }
     }
 
     pub fn list(children: Vec<Doc<()>>) -> Self {
-        Doc { ann: (), node: DocF::List(children), layout: LayoutHint::Auto, dimmed: false }
+        Doc {
+            ann: (),
+            node: DocF::List(children),
+            layout: LayoutHint::Auto,
+            dimmed: false,
+        }
     }
 
     /// Create a list node that always breaks to separate lines.
     pub fn broken_list(children: Vec<Doc<()>>) -> Self {
-        Doc { ann: (), node: DocF::List(children), layout: LayoutHint::AlwaysBreak, dimmed: false }
+        Doc {
+            ann: (),
+            node: DocF::List(children),
+            layout: LayoutHint::AlwaysBreak,
+            dimmed: false,
+        }
     }
 }
 

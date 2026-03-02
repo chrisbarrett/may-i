@@ -21,9 +21,7 @@ fn doc_from_sexpr(sexpr: &may_i_sexpr::Sexpr) -> Doc {
             };
             Doc::atom(text)
         }
-        may_i_sexpr::Sexpr::List(items, _) => {
-            Doc::list(items.iter().map(doc_from_sexpr).collect())
-        }
+        may_i_sexpr::Sexpr::List(items, _) => Doc::list(items.iter().map(doc_from_sexpr).collect()),
     }
 }
 
@@ -45,27 +43,43 @@ fn tokenize(input: &str) -> Vec<&str> {
     let mut i = 0;
     while i < bytes.len() {
         match bytes[i] {
-            b' ' | b'\t' | b'\n' => { i += 1; }
-            b'(' => { tokens.push(&input[i..i + 1]); i += 1; }
-            b')' => { tokens.push(&input[i..i + 1]); i += 1; }
+            b' ' | b'\t' | b'\n' => {
+                i += 1;
+            }
+            b'(' => {
+                tokens.push(&input[i..i + 1]);
+                i += 1;
+            }
+            b')' => {
+                tokens.push(&input[i..i + 1]);
+                i += 1;
+            }
             b'"' => {
                 let start = i;
                 i += 1;
                 while i < bytes.len() && bytes[i] != b'"' {
-                    if bytes[i] == b'\\' { i += 1; }
+                    if bytes[i] == b'\\' {
+                        i += 1;
+                    }
                     i += 1;
                 }
-                if i < bytes.len() { i += 1; }
+                if i < bytes.len() {
+                    i += 1;
+                }
                 tokens.push(&input[start..i]);
             }
             b'#' if i + 1 < bytes.len() && bytes[i + 1] == b'"' => {
                 let start = i;
                 i += 2;
                 while i < bytes.len() && bytes[i] != b'"' {
-                    if bytes[i] == b'\\' { i += 1; }
+                    if bytes[i] == b'\\' {
+                        i += 1;
+                    }
                     i += 1;
                 }
-                if i < bytes.len() { i += 1; }
+                if i < bytes.len() {
+                    i += 1;
+                }
                 tokens.push(&input[start..i]);
             }
             _ => {
@@ -92,7 +106,9 @@ fn parse_tokens(tokens: &[&str], pos: usize) -> (Doc, usize) {
             children.push(child);
             i = next;
         }
-        if i < tokens.len() { i += 1; } // skip )
+        if i < tokens.len() {
+            i += 1;
+        } // skip )
         (Doc::list(children), i)
     } else {
         (Doc::atom(tokens[pos]), pos + 1)
@@ -107,7 +123,8 @@ pub fn truncate_long_lists(doc: &Doc, keep: usize) -> Doc {
     match &doc.node {
         DocF::Atom(_) => doc.clone(),
         DocF::List(children) => {
-            let children: Vec<Doc> = children.iter()
+            let children: Vec<Doc> = children
+                .iter()
                 .map(|c| truncate_long_lists(c, keep))
                 .collect();
             let has_head = children.first().is_some_and(|c| c.as_atom().is_some());
@@ -119,7 +136,12 @@ pub fn truncate_long_lists(doc: &Doc, keep: usize) -> Doc {
                 truncated.push(children.last().unwrap().clone());
                 Doc::list(truncated)
             } else {
-                Doc { ann: (), node: DocF::List(children), layout: doc.layout, dimmed: false }
+                Doc {
+                    ann: (),
+                    node: DocF::List(children),
+                    layout: doc.layout,
+                    dimmed: false,
+                }
             }
         }
     }
@@ -128,15 +150,32 @@ pub fn truncate_long_lists(doc: &Doc, keep: usize) -> Doc {
 // ── Atom classification ─────────────────────────────────────────────
 
 const SPECIAL_FORMS: &[&str] = &[
-    "rule", "command", "args", "effect",
-    "cond", "if", "when", "unless", "else",
-    "positional", "exact", "anywhere",
+    "rule",
+    "command",
+    "args",
+    "effect",
+    "cond",
+    "if",
+    "when",
+    "unless",
+    "else",
+    "positional",
+    "exact",
+    "anywhere",
 ];
 
-fn is_keyword(s: &str) -> bool { s.starts_with(':') }
-fn is_string(s: &str) -> bool { s.starts_with('"') }
-fn is_regex(s: &str) -> bool { s.starts_with("#\"") }
-fn is_special_form(s: &str) -> bool { SPECIAL_FORMS.contains(&s) }
+fn is_keyword(s: &str) -> bool {
+    s.starts_with(':')
+}
+fn is_string(s: &str) -> bool {
+    s.starts_with('"')
+}
+fn is_regex(s: &str) -> bool {
+    s.starts_with("#\"")
+}
+fn is_special_form(s: &str) -> bool {
+    SPECIAL_FORMS.contains(&s)
+}
 
 // ── Formatting settings ─────────────────────────────────────────────
 
@@ -149,13 +188,20 @@ pub struct Format {
 
 impl Default for Format {
     fn default() -> Self {
-        Self { width: 72, color: false, line_number: None }
+        Self {
+            width: 72,
+            color: false,
+            line_number: None,
+        }
     }
 }
 
 impl Format {
     pub fn colored() -> Self {
-        Self { color: true, ..Self::default() }
+        Self {
+            color: true,
+            ..Self::default()
+        }
     }
 }
 
@@ -258,15 +304,40 @@ fn render_atom(s: &str, color: bool, dimmed: bool) -> String {
 }
 
 fn render_flat<A>(children: &[Doc<A>], color: bool, dimmed: bool) -> String {
-    let open = if color { "(".dimmed().to_string() } else { "(".into() };
-    let close = if color { ")".dimmed().to_string() } else { ")".into() };
-    let parts: Vec<String> = children.iter().map(|c| render(c, 0, usize::MAX, color, dimmed)).collect();
+    let open = if color {
+        "(".dimmed().to_string()
+    } else {
+        "(".into()
+    };
+    let close = if color {
+        ")".dimmed().to_string()
+    } else {
+        ")".into()
+    };
+    let parts: Vec<String> = children
+        .iter()
+        .map(|c| render(c, 0, usize::MAX, color, dimmed))
+        .collect();
     format!("{open}{}{close}", parts.join(" "))
 }
 
-fn render_broken<A>(children: &[Doc<A>], indent: usize, width: usize, color: bool, dimmed: bool) -> String {
-    let open = if color { "(".dimmed().to_string() } else { "(".into() };
-    let close = if color { ")".dimmed().to_string() } else { ")".into() };
+fn render_broken<A>(
+    children: &[Doc<A>],
+    indent: usize,
+    width: usize,
+    color: bool,
+    dimmed: bool,
+) -> String {
+    let open = if color {
+        "(".dimmed().to_string()
+    } else {
+        "(".into()
+    };
+    let close = if color {
+        ")".dimmed().to_string()
+    } else {
+        ")".into()
+    };
 
     let head = render(&children[0], indent + 1, width, color, dimmed);
     let align = indent + visible_len(&head) + 2;
@@ -293,9 +364,23 @@ fn render_broken<A>(children: &[Doc<A>], indent: usize, width: usize, color: boo
 
 /// Render with all children dropped to new lines at indent+2.
 /// Used for AlwaysBreak nodes where uniform child alignment is wanted.
-fn render_all_drop<A>(children: &[Doc<A>], indent: usize, width: usize, color: bool, dimmed: bool) -> String {
-    let open = if color { "(".dimmed().to_string() } else { "(".into() };
-    let close = if color { ")".dimmed().to_string() } else { ")".into() };
+fn render_all_drop<A>(
+    children: &[Doc<A>],
+    indent: usize,
+    width: usize,
+    color: bool,
+    dimmed: bool,
+) -> String {
+    let open = if color {
+        "(".dimmed().to_string()
+    } else {
+        "(".into()
+    };
+    let close = if color {
+        ")".dimmed().to_string()
+    } else {
+        ")".into()
+    };
 
     let head = render(&children[0], indent + 1, width, color, dimmed);
     let child_indent = indent + 2;
@@ -318,9 +403,23 @@ fn render_all_drop<A>(children: &[Doc<A>], indent: usize, width: usize, color: b
     lines.join("\n")
 }
 
-fn render_cond<A>(children: &[Doc<A>], indent: usize, width: usize, color: bool, dimmed: bool) -> String {
-    let open = if color { "(".dimmed().to_string() } else { "(".into() };
-    let close = if color { ")".dimmed().to_string() } else { ")".into() };
+fn render_cond<A>(
+    children: &[Doc<A>],
+    indent: usize,
+    width: usize,
+    color: bool,
+    dimmed: bool,
+) -> String {
+    let open = if color {
+        "(".dimmed().to_string()
+    } else {
+        "(".into()
+    };
+    let close = if color {
+        ")".dimmed().to_string()
+    } else {
+        ")".into()
+    };
 
     let head = render(&children[0], indent + 1, width, color, dimmed);
     let body_indent = indent + 2;
@@ -333,8 +432,16 @@ fn render_cond<A>(children: &[Doc<A>], indent: usize, width: usize, color: bool,
         let clause_dimmed = dimmed || clause.dimmed;
         match &clause.node {
             DocF::List(parts) if parts.len() >= 2 => {
-                let clause_open = if color { "(".dimmed().to_string() } else { "(".into() };
-                let clause_close = if color { ")".dimmed().to_string() } else { ")".into() };
+                let clause_open = if color {
+                    "(".dimmed().to_string()
+                } else {
+                    "(".into()
+                };
+                let clause_close = if color {
+                    ")".dimmed().to_string()
+                } else {
+                    ")".into()
+                };
 
                 let test = render(&parts[0], body_indent + 1, width, color, clause_dimmed);
                 lines.push(format!("{:pad$}{clause_open}{test}", "", pad = body_indent));
@@ -344,9 +451,17 @@ fn render_cond<A>(children: &[Doc<A>], indent: usize, width: usize, color: bool,
                     let is_last_part = j == parts.len() - 2;
                     let rendered = render(body_part, body_col, width, color, clause_dimmed);
                     if is_last_part && is_last {
-                        lines.push(format!("{:pad$}{rendered}{clause_close}{close}", "", pad = body_col));
+                        lines.push(format!(
+                            "{:pad$}{rendered}{clause_close}{close}",
+                            "",
+                            pad = body_col
+                        ));
                     } else if is_last_part {
-                        lines.push(format!("{:pad$}{rendered}{clause_close}", "", pad = body_col));
+                        lines.push(format!(
+                            "{:pad$}{rendered}{clause_close}",
+                            "",
+                            pad = body_col
+                        ));
                     } else {
                         lines.push(format!("{:pad$}{rendered}", "", pad = body_col));
                     }
@@ -372,9 +487,23 @@ fn render_cond<A>(children: &[Doc<A>], indent: usize, width: usize, color: bool,
     lines.join("\n")
 }
 
-fn render_body_indent<A>(children: &[Doc<A>], indent: usize, width: usize, color: bool, dimmed: bool) -> String {
-    let open = if color { "(".dimmed().to_string() } else { "(".into() };
-    let close = if color { ")".dimmed().to_string() } else { ")".into() };
+fn render_body_indent<A>(
+    children: &[Doc<A>],
+    indent: usize,
+    width: usize,
+    color: bool,
+    dimmed: bool,
+) -> String {
+    let open = if color {
+        "(".dimmed().to_string()
+    } else {
+        "(".into()
+    };
+    let close = if color {
+        ")".dimmed().to_string()
+    } else {
+        ")".into()
+    };
 
     let head = render(&children[0], indent + 1, width, color, dimmed);
     let body_indent = indent + 2;
@@ -394,7 +523,11 @@ fn render_body_indent<A>(children: &[Doc<A>], indent: usize, width: usize, color
         // to visually distinguish the predicate from the body (at indent+2).
         let head_atom = children[0].as_atom().unwrap_or("");
         let is_predicate_form = matches!(head_atom, "when" | "if" | "unless");
-        let first_indent = if is_predicate_form { indent + 4 } else { body_indent };
+        let first_indent = if is_predicate_form {
+            indent + 4
+        } else {
+            body_indent
+        };
         let first = render(&children[1], first_indent, width, color, dimmed);
         vec![
             format!("{open}{head}"),
@@ -443,7 +576,9 @@ pub fn colorize_atom(s: &str, color: bool) -> String {
 /// `base_indent` is added to the first line (which lacks indentation padding
 /// because indentation is added by the caller).
 fn max_line_width(rendered: &str, base_indent: usize) -> usize {
-    rendered.lines().enumerate()
+    rendered
+        .lines()
+        .enumerate()
         .map(|(i, line)| {
             let w = visible_len(line);
             if i == 0 { base_indent + w } else { w }
@@ -483,11 +618,26 @@ mod tests {
     }
 
     fn pp(doc: &Doc, width: usize) -> String {
-        pretty(doc, 0, &Format { width, ..Default::default() })
+        pretty(
+            doc,
+            0,
+            &Format {
+                width,
+                ..Default::default()
+            },
+        )
     }
 
     fn pp_color(doc: &Doc, width: usize) -> String {
-        pretty(doc, 0, &Format { width, color: true, ..Default::default() })
+        pretty(
+            doc,
+            0,
+            &Format {
+                width,
+                color: true,
+                ..Default::default()
+            },
+        )
     }
 
     // ── Flat rendering ──────────────────────────────────────────────
@@ -556,7 +706,10 @@ mod tests {
     fn keywords_get_colored() {
         with_forced_color(|| {
             let result = pp_color(&a(":deny"), 80);
-            assert!(result.contains("\x1b["), "expected ANSI codes in: {result:?}");
+            assert!(
+                result.contains("\x1b["),
+                "expected ANSI codes in: {result:?}"
+            );
             assert!(result.contains("deny"));
         });
     }
@@ -565,7 +718,10 @@ mod tests {
     fn strings_get_colored() {
         with_forced_color(|| {
             let result = pp_color(&a("\"rm\""), 80);
-            assert!(result.contains("\x1b["), "expected ANSI codes in: {result:?}");
+            assert!(
+                result.contains("\x1b["),
+                "expected ANSI codes in: {result:?}"
+            );
             assert!(result.contains("rm"));
         });
     }
@@ -574,7 +730,10 @@ mod tests {
     fn special_forms_get_colored() {
         with_forced_color(|| {
             let result = pp_color(&a("command"), 80);
-            assert!(result.contains("\x1b["), "expected ANSI codes in: {result:?}");
+            assert!(
+                result.contains("\x1b["),
+                "expected ANSI codes in: {result:?}"
+            );
         });
     }
 
@@ -582,7 +741,10 @@ mod tests {
     fn plain_atoms_not_colored() {
         with_forced_color(|| {
             let result = pp_color(&a("foo"), 80);
-            assert!(!result.contains("\x1b["), "unexpected ANSI codes in: {result:?}");
+            assert!(
+                !result.contains("\x1b["),
+                "unexpected ANSI codes in: {result:?}"
+            );
         });
     }
 
@@ -590,7 +752,10 @@ mod tests {
     fn parens_dimmed_in_color_mode() {
         with_forced_color(|| {
             let result = pp_color(&l(vec![a("x")]), 80);
-            assert!(result.contains("\x1b["), "expected ANSI codes in: {result:?}");
+            assert!(
+                result.contains("\x1b["),
+                "expected ANSI codes in: {result:?}"
+            );
         });
     }
 
@@ -686,22 +851,30 @@ mod tests {
     #[test]
     fn line_number_single_line() {
         let doc = l(vec![a("rule"), l(vec![a("command"), a("\"curl\"")])]);
-        let result = pretty(&doc, 0, &Format {
-            width: 80,
-            line_number: Some(108),
-            ..Default::default()
-        });
+        let result = pretty(
+            &doc,
+            0,
+            &Format {
+                width: 80,
+                line_number: Some(108),
+                ..Default::default()
+            },
+        );
         assert_eq!(result, "108: (rule (command \"curl\"))");
     }
 
     #[test]
     fn line_number_wrapped_aligns() {
         let doc = l(vec![a("rule"), a("aaa"), a("bbb"), a("ccc")]);
-        let result = pretty(&doc, 0, &Format {
-            width: 20,
-            line_number: Some(5),
-            ..Default::default()
-        });
+        let result = pretty(
+            &doc,
+            0,
+            &Format {
+                width: 20,
+                line_number: Some(5),
+                ..Default::default()
+            },
+        );
         let lines: Vec<&str> = result.lines().collect();
         assert!(lines.len() > 1);
         assert!(lines[0].starts_with("5: "));
@@ -711,11 +884,15 @@ mod tests {
     #[test]
     fn line_number_accounts_for_width() {
         let doc = l(vec![a("rule"), l(vec![a("command"), a("\"curl\"")])]);
-        let result = pretty(&doc, 0, &Format {
-            width: 30,
-            line_number: Some(108),
-            ..Default::default()
-        });
+        let result = pretty(
+            &doc,
+            0,
+            &Format {
+                width: 30,
+                line_number: Some(108),
+                ..Default::default()
+            },
+        );
         assert!(!result.contains('\n'));
     }
 
@@ -814,7 +991,9 @@ mod tests {
     fn always_break_falls_back_to_all_drop_at_narrow_width() {
         // At narrow width, broken layout overflows → falls to render_all_drop.
         let doc = Doc::broken_list(vec![
-            a("or"), a("\"long-value-one\""), a("\"long-value-two\""),
+            a("or"),
+            a("\"long-value-one\""),
+            a("\"long-value-two\""),
         ]);
         let result = pp(&doc, 20);
         assert_eq!(result, "(or\n  \"long-value-one\"\n  \"long-value-two\")");
@@ -893,7 +1072,10 @@ mod tests {
     #[test]
     fn dimmed_atom_renders_dimmed() {
         with_forced_color(|| {
-            let doc = Doc { dimmed: true, ..a("command") };
+            let doc = Doc {
+                dimmed: true,
+                ..a("command")
+            };
             let result = pp_color(&doc, 80);
             // Should contain ANSI (dimmed), but not the blue syntax color.
             assert!(result.contains("\x1b["), "expected ANSI in: {result:?}");
@@ -921,7 +1103,10 @@ mod tests {
     fn dimmed_only_affects_flagged_subtree() {
         with_forced_color(|| {
             // One child dimmed, sibling not — sibling retains syntax color.
-            let dimmed_child = Doc { dimmed: true, ..a("\"dimmed\"") };
+            let dimmed_child = Doc {
+                dimmed: true,
+                ..a("\"dimmed\"")
+            };
             let normal_child = a("\"bright\"");
             let doc = l(vec![a("or"), dimmed_child, normal_child]);
             let result = pp_color(&doc, 80);
@@ -950,10 +1135,11 @@ mod prop_tests {
                 (
                     "[a-z]{1,8}".prop_map(|s| Doc::atom(s)),
                     prop::collection::vec(inner, 0..4),
-                ).prop_map(|(head, mut children)| {
-                    children.insert(0, head);
-                    Doc::list(children)
-                }),
+                )
+                    .prop_map(|(head, mut children)| {
+                        children.insert(0, head);
+                        Doc::list(children)
+                    }),
             ]
         })
     }
@@ -964,7 +1150,9 @@ mod prop_tests {
         let (mut open, mut close) = (0, 0);
         for ch in s.chars() {
             if in_escape {
-                if ch.is_ascii_alphabetic() { in_escape = false; }
+                if ch.is_ascii_alphabetic() {
+                    in_escape = false;
+                }
             } else if ch == '\x1b' {
                 in_escape = true;
             } else if ch == '(' {
@@ -1049,7 +1237,9 @@ mod prop_tests {
         let mut in_escape = false;
         for ch in s.chars() {
             if in_escape {
-                if ch.is_ascii_alphabetic() { in_escape = false; }
+                if ch.is_ascii_alphabetic() {
+                    in_escape = false;
+                }
             } else if ch == '\x1b' {
                 in_escape = true;
             } else {

@@ -219,7 +219,11 @@ impl Parser {
                         && matches!(self.peek(), Token::LParen)
                     {
                         // Peek further for RParen
-                        if self.tokens.get(self.pos + 1).is_some_and(|t| matches!(t, Token::RParen)) {
+                        if self
+                            .tokens
+                            .get(self.pos + 1)
+                            .is_some_and(|t| matches!(t, Token::RParen))
+                        {
                             let name = words.pop().unwrap().to_str();
                             self.advance(); // skip LParen
                             self.advance(); // skip RParen
@@ -242,9 +246,7 @@ impl Parser {
         }
 
         // If only assignments and no words, return as assignment command
-        if !assignments.is_empty() && words.is_empty()
-            && assignments.len() == 1
-        {
+        if !assignments.is_empty() && words.is_empty() && assignments.len() == 1 {
             return Command::Assignment(assignments.pop().unwrap());
         }
 
@@ -263,19 +265,13 @@ impl Parser {
         {
             let name = &s[..eq_pos];
             if !name.is_empty()
-                && name
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '_')
-                && name
-                    .chars()
-                    .next()
-                    .is_some_and(|c| !c.is_ascii_digit())
+                && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                && name.chars().next().is_some_and(|c| !c.is_ascii_digit())
             {
                 let value_start = &s[eq_pos + 1..];
                 let mut value_parts = Vec::new();
                 if !value_start.is_empty() {
-                    value_parts
-                        .push(WordPart::Literal(value_start.to_string()));
+                    value_parts.push(WordPart::Literal(value_start.to_string()));
                 }
                 // Include additional word parts
                 for part in &w.parts[1..] {

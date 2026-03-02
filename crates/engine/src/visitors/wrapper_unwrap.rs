@@ -1,10 +1,10 @@
 // Visitor that peels known wrapper commands (e.g. sudo, env) and
 // recurses into the inner command.
 
+use super::{CommandVisitor, VisitOutcome, VisitorContext};
+use crate::matcher::unwrap_wrapper;
 use may_i_core::{Decision, EvalResult};
 use may_i_shell_parser::{self as parser, Command, SimpleCommand};
-use crate::matcher::unwrap_wrapper;
-use super::{CommandVisitor, VisitOutcome, VisitorContext};
 
 /// Peels known wrapper commands and recurses into the inner command.
 /// If the inner command is a single word containing spaces, it is
@@ -12,11 +12,7 @@ use super::{CommandVisitor, VisitOutcome, VisitorContext};
 pub(crate) struct WrapperUnwrapVisitor;
 
 impl CommandVisitor for WrapperUnwrapVisitor {
-    fn visit_simple_command(
-        &self,
-        ctx: &VisitorContext,
-        resolved: &SimpleCommand,
-    ) -> VisitOutcome {
+    fn visit_simple_command(&self, ctx: &VisitorContext, resolved: &SimpleCommand) -> VisitOutcome {
         let cmd_name = match resolved.nonempty_command_name() {
             Some(name) => name,
             None => return VisitOutcome::Continue,

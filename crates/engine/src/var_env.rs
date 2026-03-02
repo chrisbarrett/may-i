@@ -128,20 +128,16 @@ impl VarEnv {
 // live here to avoid a circular dependency.
 
 /// Resolve variables using VarEnv: Safe(Some) → Literal, Safe(None) → Opaque, absent → keep.
-pub fn resolve_parts_with_var_env(
-    parts: &[WordPart],
-    env: &VarEnv,
-) -> Vec<WordPart> {
-    parts.iter().map(|part| match part {
-        WordPart::Parameter(name) | WordPart::ParameterExpansion(name) => {
-            match env.get(name) {
+pub fn resolve_parts_with_var_env(parts: &[WordPart], env: &VarEnv) -> Vec<WordPart> {
+    parts
+        .iter()
+        .map(|part| match part {
+            WordPart::Parameter(name) | WordPart::ParameterExpansion(name) => match env.get(name) {
                 Some(VarState::Known(val)) => WordPart::Literal(val.clone()),
                 Some(VarState::Opaque) => WordPart::Opaque(format!("${name}")),
                 Some(VarState::Unsafe) | None => part.clone(),
-            }
-        }
-        WordPart::ParameterExpansionOp { name, op } => {
-            match env.get(name) {
+            },
+            WordPart::ParameterExpansionOp { name, op } => match env.get(name) {
                 Some(VarState::Known(val)) => {
                     let mut map = std::collections::HashMap::new();
                     map.insert(name.clone(), val.clone());
@@ -149,13 +145,13 @@ pub fn resolve_parts_with_var_env(
                 }
                 Some(VarState::Opaque) => WordPart::Opaque(format!("${{{name}...}}")),
                 Some(VarState::Unsafe) | None => part.clone(),
+            },
+            WordPart::DoubleQuoted(inner) => {
+                WordPart::DoubleQuoted(resolve_parts_with_var_env(inner, env))
             }
-        }
-        WordPart::DoubleQuoted(inner) => {
-            WordPart::DoubleQuoted(resolve_parts_with_var_env(inner, env))
-        }
-        _ => part.clone(),
-    }).collect()
+            _ => part.clone(),
+        })
+        .collect()
 }
 
 /// Resolve a Word using VarEnv. Safe+resolvable variables become Literal,
@@ -168,9 +164,6 @@ pub fn resolve_word_with_var_env(word: &Word, env: &VarEnv) -> Word {
 
 /// Resolve a SimpleCommand using VarEnv in all words, assignment values,
 /// and redirect file targets.
-pub fn resolve_simple_command_with_var_env(
-    sc: &SimpleCommand,
-    env: &VarEnv,
-) -> SimpleCommand {
+pub fn resolve_simple_command_with_var_env(sc: &SimpleCommand, env: &VarEnv) -> SimpleCommand {
     sc.map_words(|w| resolve_word_with_var_env(w, env))
 }

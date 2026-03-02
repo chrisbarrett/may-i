@@ -1,8 +1,8 @@
 // Rule matching — given a resolved command and config, find the applicable rule.
 // Pure matching logic: no AST walking, no variable resolution.
 
-use may_i_shell_parser::{SimpleCommand, Word};
 use may_i_core::{CommandMatcher, Config, Effect, Expr, WrapperStep};
+use may_i_shell_parser::{SimpleCommand, Word};
 
 /// A resolved argument that may be a known literal or an opaque (safe but unknown) value.
 #[derive(Debug, Clone, PartialEq)]
@@ -102,7 +102,9 @@ pub(crate) fn extract_positional_args(args: &[ResolvedArg]) -> Vec<ResolvedArg> 
 /// Delegates to the annotated matcher and discards the Doc tree.
 #[cfg(test)]
 pub(crate) fn matcher_matches(matcher: &may_i_core::ArgMatcher, args: &[ResolvedArg]) -> bool {
-    crate::annotate::annotate_matcher(matcher, args).1.is_match()
+    crate::annotate::annotate_matcher(matcher, args)
+        .1
+        .is_match()
 }
 
 #[cfg(test)]
@@ -115,15 +117,26 @@ mod tests {
     }
 
     fn allow_effect(reason: &str) -> Effect {
-        Effect { decision: Decision::Allow, reason: Some(reason.into()) }
+        Effect {
+            decision: Decision::Allow,
+            reason: Some(reason.into()),
+        }
     }
 
     fn deny_effect(reason: &str) -> Effect {
-        Effect { decision: Decision::Deny, reason: Some(reason.into()) }
+        Effect {
+            decision: Decision::Deny,
+            reason: Some(reason.into()),
+        }
     }
 
     fn cond_expr(branches: Vec<(Expr, Effect)>) -> Expr {
-        Expr::Cond(branches.into_iter().map(|(test, effect)| ExprBranch { test, effect }).collect())
+        Expr::Cond(
+            branches
+                .into_iter()
+                .map(|(test, effect)| ExprBranch { test, effect })
+                .collect(),
+        )
     }
 
     /// Match args via the annotated matcher (single source of matching logic).
@@ -140,12 +153,18 @@ mod tests {
 
     #[test]
     fn expr_resolved_literal_match() {
-        assert!(expr_matches_resolved(&Expr::Literal("foo".into()), &lit("foo")));
+        assert!(expr_matches_resolved(
+            &Expr::Literal("foo".into()),
+            &lit("foo")
+        ));
     }
 
     #[test]
     fn expr_resolved_literal_no_match() {
-        assert!(!expr_matches_resolved(&Expr::Literal("foo".into()), &lit("bar")));
+        assert!(!expr_matches_resolved(
+            &Expr::Literal("foo".into()),
+            &lit("bar")
+        ));
     }
 
     #[test]
@@ -160,7 +179,10 @@ mod tests {
 
     #[test]
     fn expr_resolved_literal_rejects_opaque() {
-        assert!(!expr_matches_resolved(&Expr::Literal("foo".into()), &ResolvedArg::Opaque));
+        assert!(!expr_matches_resolved(
+            &Expr::Literal("foo".into()),
+            &ResolvedArg::Opaque
+        ));
     }
 
     #[test]
@@ -244,9 +266,7 @@ mod tests {
 
     #[test]
     fn match_expr_arg_cond_no_matching_branch() {
-        let expr = cond_expr(vec![
-            (Expr::Literal("a".into()), allow_effect("a")),
-        ]);
+        let expr = cond_expr(vec![(Expr::Literal("a".into()), allow_effect("a"))]);
         assert!(!match_expr_arg(&expr, &lit("z")).is_match());
     }
 
@@ -261,9 +281,7 @@ mod tests {
 
     #[test]
     fn match_expr_arg_nested_cond_in_and() {
-        let inner_cond = cond_expr(vec![
-            (Expr::Wildcard, allow_effect("nested")),
-        ]);
+        let inner_cond = cond_expr(vec![(Expr::Wildcard, allow_effect("nested"))]);
         let expr = Expr::And(vec![inner_cond, Expr::Wildcard]);
         match match_expr_arg(&expr, &lit("x")) {
             MatchOutcome::Matched(eff) => assert_eq!(eff.reason.as_deref(), Some("nested")),
@@ -273,9 +291,7 @@ mod tests {
 
     #[test]
     fn match_expr_arg_nested_cond_in_or() {
-        let inner_cond = cond_expr(vec![
-            (Expr::Literal("x".into()), deny_effect("found")),
-        ]);
+        let inner_cond = cond_expr(vec![(Expr::Literal("x".into()), deny_effect("found"))]);
         let expr = Expr::Or(vec![Expr::Literal("z".into()), inner_cond]);
         match match_expr_arg(&expr, &lit("x")) {
             MatchOutcome::Matched(eff) => assert_eq!(eff.decision, Decision::Deny),
@@ -302,12 +318,10 @@ mod tests {
 
     #[test]
     fn positional_cond_fallback_effect() {
-        let matcher = ArgMatcher::Positional(vec![
-            PosExpr::one(cond_expr(vec![
-                (Expr::Literal("a".into()), allow_effect("a")),
-                (Expr::Wildcard, deny_effect("fallback")),
-            ])),
-        ]);
+        let matcher = ArgMatcher::Positional(vec![PosExpr::one(cond_expr(vec![
+            (Expr::Literal("a".into()), allow_effect("a")),
+            (Expr::Wildcard, deny_effect("fallback")),
+        ]))]);
         match match_args(&matcher, &[lit("z")]) {
             MatchOutcome::Matched(eff) => assert_eq!(eff.decision, Decision::Deny),
             other => panic!("expected Matched, got {other:?}"),
@@ -316,11 +330,10 @@ mod tests {
 
     #[test]
     fn exact_positional_cond_effect() {
-        let matcher = ArgMatcher::ExactPositional(vec![
-            PosExpr::one(cond_expr(vec![
-                (Expr::Wildcard, allow_effect("any")),
-            ])),
-        ]);
+        let matcher = ArgMatcher::ExactPositional(vec![PosExpr::one(cond_expr(vec![(
+            Expr::Wildcard,
+            allow_effect("any"),
+        )]))]);
         match match_args(&matcher, &[lit("x")]) {
             MatchOutcome::Matched(eff) => assert_eq!(eff.decision, Decision::Allow),
             other => panic!("expected Matched, got {other:?}"),
@@ -329,22 +342,20 @@ mod tests {
 
     #[test]
     fn exact_positional_rejects_extra_despite_cond() {
-        let matcher = ArgMatcher::ExactPositional(vec![
-            PosExpr::one(cond_expr(vec![
-                (Expr::Wildcard, allow_effect("any")),
-            ])),
-        ]);
+        let matcher = ArgMatcher::ExactPositional(vec![PosExpr::one(cond_expr(vec![(
+            Expr::Wildcard,
+            allow_effect("any"),
+        )]))]);
         assert!(!match_args(&matcher, &[lit("x"), lit("y")]).is_match());
         assert!(!match_args(&matcher, &[]).is_match());
     }
 
     #[test]
     fn optional_cond_effect_when_matched() {
-        let matcher = ArgMatcher::Positional(vec![
-            PosExpr { quantifier: Quantifier::Optional, expr: cond_expr(vec![
-                (Expr::Literal("hit".into()), deny_effect("hit")),
-            ]) },
-        ]);
+        let matcher = ArgMatcher::Positional(vec![PosExpr {
+            quantifier: Quantifier::Optional,
+            expr: cond_expr(vec![(Expr::Literal("hit".into()), deny_effect("hit"))]),
+        }]);
         match match_args(&matcher, &[lit("hit")]) {
             MatchOutcome::Matched(eff) => assert_eq!(eff.decision, Decision::Deny),
             other => panic!("expected Matched, got {other:?}"),
@@ -353,11 +364,10 @@ mod tests {
 
     #[test]
     fn optional_no_arg_no_effect() {
-        let matcher = ArgMatcher::Positional(vec![
-            PosExpr { quantifier: Quantifier::Optional, expr: cond_expr(vec![
-                (Expr::Literal("hit".into()), deny_effect("hit")),
-            ]) },
-        ]);
+        let matcher = ArgMatcher::Positional(vec![PosExpr {
+            quantifier: Quantifier::Optional,
+            expr: cond_expr(vec![(Expr::Literal("hit".into()), deny_effect("hit"))]),
+        }]);
         match match_args(&matcher, &[]) {
             MatchOutcome::MatchedNoEffect => {}
             other => panic!("expected MatchedNoEffect, got {other:?}"),
@@ -366,11 +376,10 @@ mod tests {
 
     #[test]
     fn one_or_more_cond_effect() {
-        let matcher = ArgMatcher::Positional(vec![
-            PosExpr { quantifier: Quantifier::OneOrMore, expr: cond_expr(vec![
-                (Expr::Wildcard, allow_effect("any")),
-            ]) },
-        ]);
+        let matcher = ArgMatcher::Positional(vec![PosExpr {
+            quantifier: Quantifier::OneOrMore,
+            expr: cond_expr(vec![(Expr::Wildcard, allow_effect("any"))]),
+        }]);
         match match_args(&matcher, &[lit("a")]) {
             MatchOutcome::Matched(eff) => assert_eq!(eff.decision, Decision::Allow),
             other => panic!("expected Matched, got {other:?}"),
@@ -379,19 +388,22 @@ mod tests {
 
     #[test]
     fn one_or_more_no_args_fails() {
-        let matcher = ArgMatcher::Positional(vec![
-            PosExpr { quantifier: Quantifier::OneOrMore, expr: Expr::Wildcard },
-        ]);
+        let matcher = ArgMatcher::Positional(vec![PosExpr {
+            quantifier: Quantifier::OneOrMore,
+            expr: Expr::Wildcard,
+        }]);
         assert!(!match_args(&matcher, &[]).is_match());
     }
 
     #[test]
     fn zero_or_more_cond_effect() {
-        let matcher = ArgMatcher::Positional(vec![
-            PosExpr { quantifier: Quantifier::ZeroOrMore, expr: cond_expr(vec![
-                (Expr::Literal("match".into()), deny_effect("matched")),
-            ]) },
-        ]);
+        let matcher = ArgMatcher::Positional(vec![PosExpr {
+            quantifier: Quantifier::ZeroOrMore,
+            expr: cond_expr(vec![(
+                Expr::Literal("match".into()),
+                deny_effect("matched"),
+            )]),
+        }]);
         match match_args(&matcher, &[lit("match")]) {
             MatchOutcome::Matched(eff) => assert_eq!(eff.decision, Decision::Deny),
             other => panic!("expected Matched, got {other:?}"),
@@ -400,11 +412,10 @@ mod tests {
 
     #[test]
     fn zero_or_more_no_args_no_effect() {
-        let matcher = ArgMatcher::Positional(vec![
-            PosExpr { quantifier: Quantifier::ZeroOrMore, expr: cond_expr(vec![
-                (Expr::Wildcard, allow_effect("any")),
-            ]) },
-        ]);
+        let matcher = ArgMatcher::Positional(vec![PosExpr {
+            quantifier: Quantifier::ZeroOrMore,
+            expr: cond_expr(vec![(Expr::Wildcard, allow_effect("any"))]),
+        }]);
         match match_args(&matcher, &[]) {
             MatchOutcome::MatchedNoEffect => {}
             other => panic!("expected MatchedNoEffect, got {other:?}"),
@@ -413,11 +424,10 @@ mod tests {
 
     #[test]
     fn positional_skips_flags_for_effect() {
-        let matcher = ArgMatcher::Positional(vec![
-            PosExpr::one(cond_expr(vec![
-                (Expr::Literal("val".into()), allow_effect("got it")),
-            ])),
-        ]);
+        let matcher = ArgMatcher::Positional(vec![PosExpr::one(cond_expr(vec![(
+            Expr::Literal("val".into()),
+            allow_effect("got it"),
+        )]))]);
         let args = vec![lit("--flag"), lit("flagval"), lit("val")];
         match match_args(&matcher, &args) {
             MatchOutcome::Matched(eff) => assert_eq!(eff.decision, Decision::Allow),
@@ -473,9 +483,9 @@ mod tests {
 
     #[test]
     fn not_inverts_match() {
-        let matcher = ArgMatcher::Not(Box::new(
-            ArgMatcher::Anywhere(vec![Expr::Literal("--force".into())]),
-        ));
+        let matcher = ArgMatcher::Not(Box::new(ArgMatcher::Anywhere(vec![Expr::Literal(
+            "--force".into(),
+        )])));
         assert!(match_args(&matcher, &[lit("push")]).is_match());
         assert!(!match_args(&matcher, &[lit("--force")]).is_match());
     }
@@ -544,9 +554,7 @@ mod tests {
 
     #[test]
     fn anywhere_nested_cond_effect() {
-        let inner_cond = cond_expr(vec![
-            (Expr::Literal("x".into()), allow_effect("found x")),
-        ]);
+        let inner_cond = cond_expr(vec![(Expr::Literal("x".into()), allow_effect("found x"))]);
         let expr = Expr::Or(vec![Expr::Literal("z".into()), inner_cond]);
         let matcher = ArgMatcher::Anywhere(vec![expr]);
         match match_args(&matcher, &[lit("x")]) {
@@ -576,10 +584,7 @@ mod prop_tests {
 
     // Generate a simple Expr (no Cond/Regex — pure boolean matching).
     fn arb_expr() -> impl Strategy<Value = Expr> {
-        let leaf = prop_oneof![
-            "[a-z]{1,6}".prop_map(Expr::Literal),
-            Just(Expr::Wildcard),
-        ];
+        let leaf = prop_oneof!["[a-z]{1,6}".prop_map(Expr::Literal), Just(Expr::Wildcard),];
         leaf.prop_recursive(3, 12, 3, |inner| {
             prop_oneof![
                 prop::collection::vec(inner.clone(), 1..3).prop_map(Expr::And),
@@ -596,8 +601,7 @@ mod prop_tests {
                 .prop_map(ArgMatcher::Positional),
             prop::collection::vec(arb_expr().prop_map(PosExpr::one), 0..3)
                 .prop_map(ArgMatcher::ExactPositional),
-            prop::collection::vec(arb_expr(), 1..3)
-                .prop_map(ArgMatcher::Anywhere),
+            prop::collection::vec(arb_expr(), 1..3).prop_map(ArgMatcher::Anywhere),
         ];
         leaf.prop_recursive(2, 8, 3, |inner| {
             prop_oneof![

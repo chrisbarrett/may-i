@@ -1,15 +1,15 @@
 // Visitor trait and concrete visitor implementations for the engine.
 
-pub(crate) mod dynamic_parts;
 pub(crate) mod code_execution;
+pub(crate) mod dynamic_parts;
 pub(crate) mod function_call;
 pub(crate) mod read_builtin;
-pub(crate) mod wrapper_unwrap;
 pub(crate) mod rule_match;
+pub(crate) mod wrapper_unwrap;
 
+use crate::var_env::VarEnv;
 use may_i_core::{Config, Decision, EvalResult};
 use may_i_shell_parser::{Command, SimpleCommand};
-use crate::var_env::VarEnv;
 
 /// Maximum recursion depth for command substitution / eval / bash -c evaluation.
 pub(crate) const MAX_EVAL_DEPTH: usize = 10;
@@ -65,11 +65,7 @@ pub(crate) trait CommandVisitor {
     ///
     /// Called after variable resolution and command-substitution resolution,
     /// so all resolvable parts are already literals or opaque.
-    fn visit_simple_command(
-        &self,
-        ctx: &VisitorContext,
-        resolved: &SimpleCommand,
-    ) -> VisitOutcome {
+    fn visit_simple_command(&self, ctx: &VisitorContext, resolved: &SimpleCommand) -> VisitOutcome {
         let _ = (ctx, resolved);
         VisitOutcome::Continue
     }

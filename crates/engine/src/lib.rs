@@ -3,20 +3,18 @@
 // Walks the AST with a VarEnv to track variable safety through shell constructs.
 
 pub(crate) mod annotate;
-pub(crate) mod matcher;
-pub(crate) mod visitors;
 pub(crate) mod check;
+pub(crate) mod matcher;
 pub(crate) mod var_env;
+pub(crate) mod visitors;
 
-use visitors::{CommandVisitor, VisitOutcome, VisitorContext, MAX_EVAL_DEPTH, dynamic_ask};
+use visitors::{CommandVisitor, MAX_EVAL_DEPTH, VisitOutcome, VisitorContext, dynamic_ask};
 
-use may_i_shell_parser::{self as parser, Command, SimpleCommand, Word};
 use may_i_core::{Config, Decision, EvalResult};
-use var_env::{
-    VarEnv, VarState, resolve_word_with_var_env, resolve_simple_command_with_var_env,
-};
+use may_i_shell_parser::{self as parser, Command, SimpleCommand, Word};
+use var_env::{VarEnv, VarState, resolve_simple_command_with_var_env, resolve_word_with_var_env};
 
-pub use check::{run_checks, CheckResult};
+pub use check::{CheckResult, run_checks};
 
 /// Result of walking an AST node: the evaluation result and the updated VarEnv.
 struct WalkResult {
@@ -28,13 +26,19 @@ impl WalkResult {
     /// For subprocess-like constructs (subshell, pipeline, background) that run
     /// in a child scope: env changes inside do not propagate back to the parent.
     fn with_parent_env(result: EvalResult, parent_env: &VarEnv) -> Self {
-        WalkResult { result, env: parent_env.clone() }
+        WalkResult {
+            result,
+            env: parent_env.clone(),
+        }
     }
 }
 
 /// Aggregate multiple results: most restrictive decision wins.
 fn aggregate_results(results: Vec<EvalResult>) -> EvalResult {
-    debug_assert!(!results.is_empty(), "aggregate_results called with empty vec");
+    debug_assert!(
+        !results.is_empty(),
+        "aggregate_results called with empty vec"
+    );
     results
         .into_iter()
         .max_by_key(|r| r.decision)
@@ -77,11 +81,7 @@ impl<'a> AstWalker<'a> {
 
     /// Run the visitor chain on a resolved command. First non-Continue outcome wins.
     /// The chain always terminates: RuleMatchVisitor is the final catch-all.
-    fn run_visitors(
-        &self,
-        ctx: &VisitorContext,
-        resolved: &SimpleCommand,
-    ) -> Option<WalkResult> {
+    fn run_visitors(&self, ctx: &VisitorContext, resolved: &SimpleCommand) -> Option<WalkResult> {
         let visitors: &[&dyn CommandVisitor] = &[
             &visitors::read_builtin::ReadBuiltinVisitor,
             &visitors::dynamic_parts::DynamicPartsVisitor,
@@ -196,7 +196,9 @@ impl<'a> AstWalker<'a> {
 
             Command::For { var, words, body } => self.walk_for_loop(var, words, body, env, depth),
 
-            Command::Loop { condition, body, .. } => {
+            Command::Loop {
+                condition, body, ..
+            } => {
                 let walk_cond = self.walk_with_depth(condition, env, depth);
                 let walk_body = self.walk_with_depth(body, &walk_cond.env, depth);
                 let merged = VarEnv::merge_branches(env, &[env.clone(), walk_body.env]);
@@ -211,9 +213,7 @@ impl<'a> AstWalker<'a> {
                 WalkResult::with_parent_env(walk.result, env)
             }
 
-            Command::BraceGroup(c) => {
-                self.walk_with_depth(c, env, depth)
-            }
+            Command::BraceGroup(c) => self.walk_with_depth(c, env, depth),
 
             Command::Background(c) => {
                 let walk = self.walk_with_depth(c, env, depth);
@@ -224,7 +224,10 @@ impl<'a> AstWalker<'a> {
                 let resolved_word = resolve_word_with_var_env(word, env);
                 if resolved_word.has_dynamic_parts() {
                     return WalkResult {
-                        result: dynamic_ask(&resolved_word.dynamic_parts(), "Cannot statically analyse"),
+                        result: dynamic_ask(
+                            &resolved_word.dynamic_parts(),
+                            "Cannot statically analyse",
+                        ),
                         env: env.clone(),
                     };
                 }
@@ -255,9 +258,7 @@ impl<'a> AstWalker<'a> {
                 }
             }
 
-            Command::Redirected { command, .. } => {
-                self.walk_with_depth(command, env, depth)
-            }
+            Command::Redirected { command, .. } => self.walk_with_depth(command, env, depth),
         }
     }
 
@@ -269,7 +270,10 @@ impl<'a> AstWalker<'a> {
         env: &VarEnv,
         depth: usize,
     ) -> WalkResult {
-        let resolved_words: Vec<Word> = words.iter().map(|w| resolve_word_with_var_env(w, env)).collect();
+        let resolved_words: Vec<Word> = words
+            .iter()
+            .map(|w| resolve_word_with_var_env(w, env))
+            .collect();
 
         if resolved_words.iter().all(|w| w.is_literal()) {
             let literals: Vec<String> = resolved_words.iter().map(|w| w.to_str()).collect();
@@ -315,7 +319,10 @@ impl<'a> AstWalker<'a> {
             };
         }
 
-        let dynamic: Vec<String> = resolved_words.iter().flat_map(|w| w.dynamic_parts()).collect();
+        let dynamic: Vec<String> = resolved_words
+            .iter()
+            .flat_map(|w| w.dynamic_parts())
+            .collect();
         WalkResult {
             result: dynamic_ask(&dynamic, "Cannot statically analyse"),
             env: env.clone(),
@@ -323,7 +330,8 @@ impl<'a> AstWalker<'a> {
     }
 
     fn evaluate_assignment_value(&self, value: &Word, env: &VarEnv, depth: usize) -> VarState {
-        let resolved = resolve_word_with_var_env(&self.resolve_command_substitutions(value, env, depth), env);
+        let resolved =
+            resolve_word_with_var_env(&self.resolve_command_substitutions(value, env, depth), env);
         if resolved.has_dynamic_parts() {
             VarState::Unsafe
         } else if resolved.is_literal() {
@@ -369,7 +377,11 @@ impl<'a> AstWalker<'a> {
                             parser::ProcessDirection::Input => '<',
                             parser::ProcessDirection::Output => '>',
                         };
-                        parser::WordPart::Opaque(format!("{}({})", sigil, parser::abbreviate(command)))
+                        parser::WordPart::Opaque(format!(
+                            "{}({})",
+                            sigil,
+                            parser::abbreviate(command)
+                        ))
                     } else {
                         part.clone()
                     }
@@ -407,11 +419,16 @@ impl<'a> AstWalker<'a> {
         }
 
         // Resolve command substitutions first, then resolve variables
-        let with_cmd_subs = sc.map_words(|w| self.resolve_command_substitutions(w, &new_env, depth));
+        let with_cmd_subs =
+            sc.map_words(|w| self.resolve_command_substitutions(w, &new_env, depth));
         let resolved = resolve_simple_command_with_var_env(&with_cmd_subs, &new_env);
 
         // Run visitor chain (terminates with rule matching — always produces a result)
-        let ctx = VisitorContext { config: self.config, env: &new_env, depth };
+        let ctx = VisitorContext {
+            config: self.config,
+            env: &new_env,
+            depth,
+        };
         self.run_visitors(&ctx, &resolved)
             .unwrap_or_else(|| unreachable!("RuleMatchVisitor always returns Terminal"))
     }
@@ -457,9 +474,7 @@ fn is_arithmetic_safe(expr: &str, env: &VarEnv) -> bool {
                 }
             } else {
                 let start = i;
-                while i < bytes.len()
-                    && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_')
-                {
+                while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
                     i += 1;
                 }
                 let name = &expr[start..i];
@@ -469,9 +484,7 @@ fn is_arithmetic_safe(expr: &str, env: &VarEnv) -> bool {
             }
         } else if bytes[i].is_ascii_alphabetic() || bytes[i] == b'_' {
             let start = i;
-            while i < bytes.len()
-                && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_')
-            {
+            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
                 i += 1;
             }
             let name = &expr[start..i];

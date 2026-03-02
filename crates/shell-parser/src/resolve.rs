@@ -26,13 +26,19 @@ pub fn resolve_param_op(
         ParameterOperator::StripSuffix { longest, pattern } => {
             glob_strip_suffix(pattern, val, *longest).to_string()
         }
-        ParameterOperator::Replace { all, pattern, replacement } => {
-            glob_replace(pattern, val, replacement, *all)
-        }
+        ParameterOperator::Replace {
+            all,
+            pattern,
+            replacement,
+        } => glob_replace(pattern, val, replacement, *all),
         ParameterOperator::Default { colon, value } => {
             if *colon {
                 // ${VAR:-val}: use default if unset or empty
-                if val.is_empty() { value.clone() } else { val.to_string() }
+                if val.is_empty() {
+                    value.clone()
+                } else {
+                    val.to_string()
+                }
             } else {
                 // ${VAR-val}: use default if unset (var is set, so use val)
                 val.to_string()
@@ -41,7 +47,11 @@ pub fn resolve_param_op(
         ParameterOperator::Alternative { colon, value } => {
             if *colon {
                 // ${VAR:+val}: use alternative if set and non-empty
-                if val.is_empty() { String::new() } else { value.clone() }
+                if val.is_empty() {
+                    String::new()
+                } else {
+                    value.clone()
+                }
             } else {
                 // ${VAR+val}: use alternative if set (var is set)
                 value.clone()

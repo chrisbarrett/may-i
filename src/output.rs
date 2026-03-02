@@ -57,7 +57,12 @@ pub struct Cell {
 
 impl Cell {
     pub fn new(content: impl Into<String>, visible_width: usize) -> Self {
-        Self { content: content.into(), visible_width, align: Align::Left, precolored: false }
+        Self {
+            content: content.into(),
+            visible_width,
+            align: Align::Left,
+            precolored: false,
+        }
     }
 
     fn is_elision(&self) -> bool {
@@ -86,7 +91,12 @@ impl Row {
         let len = key.len();
         Self {
             left: Cell::new(key, len),
-            right: Cell { content: value.into(), visible_width: 0, align: Align::Left, precolored: true },
+            right: Cell {
+                content: value.into(),
+                visible_width: 0,
+                align: Align::Left,
+                precolored: true,
+            },
         }
     }
 }
@@ -96,9 +106,7 @@ pub enum Element {
     /// Empty line.
     Blank,
     /// Full-width horizontal rule with optional label.
-    Separator {
-        label: Option<(String, usize)>,
-    },
+    Separator { label: Option<(String, usize)> },
     /// A group of rows sharing a divider column.
     Table(Vec<Row>),
 }
@@ -124,7 +132,8 @@ pub fn render_elements(indent: &str, elements: &[Element]) {
 }
 
 fn compute_divider_col(rows: &[Row]) -> usize {
-    let max_left = rows.iter()
+    let max_left = rows
+        .iter()
         .filter(|r| !r.left.is_elision() && matches!(r.left.align, Align::Left))
         .map(|r| r.left.visible_width)
         .max()
@@ -154,7 +163,11 @@ fn print_row(indent: &str, row: &Row, divider_col: usize) {
 
     println!(
         "{indent}{:lead$}{}{:trail$}{}{}",
-        "", row.left.content, "", DIVIDER.dimmed(), right,
+        "",
+        row.left.content,
+        "",
+        DIVIDER.dimmed(),
+        right,
     );
 }
 
@@ -240,7 +253,9 @@ fn segment_header_element(command: &str, decision: may_i_core::Decision) -> Elem
     };
     let label = format!("{icon} {}", command.bold());
     let label_width = 2 + command.len();
-    Element::Separator { label: Some((label, label_width)) }
+    Element::Separator {
+        label: Some((label, label_width)),
+    }
 }
 
 // ── Annotated Doc renderer ─────────────────────────────────────────
@@ -302,9 +317,17 @@ fn render_annotated_rule(
     }
 
     // Build rows from rendered lines with aligned annotations.
-    let mut rows: Vec<Row> = rendered_lines.iter().enumerate().map(|(i, sline)| {
-        Row::trace(sline.to_string(), visible_len(sline), line_annotations[i].clone())
-    }).collect();
+    let mut rows: Vec<Row> = rendered_lines
+        .iter()
+        .enumerate()
+        .map(|(i, sline)| {
+            Row::trace(
+                sline.to_string(),
+                visible_len(sline),
+                line_annotations[i].clone(),
+            )
+        })
+        .collect();
 
     // Overflow annotations.
     for ann in &overflow {
@@ -358,32 +381,31 @@ fn format_annotation(doc: &Doc<Option<EvalAnn>>, ann: &EvalAnn) -> Option<(Strin
                 Some((needle, "→ no".into()))
             }
         }
-        EvalAnn::Missing => {
-            Some((node_text(doc), "→ missing".into()))
-        }
+        EvalAnn::Missing => Some((node_text(doc), "→ missing".into())),
         EvalAnn::Anywhere { args, matched } => {
             let pattern = node_text(doc);
             let truncated = truncate_list(args, 4);
             let arrow = if *matched { "→ yes" } else { "→ no" };
-            Some((pattern.clone(), format!("{pattern} ∈ {{{truncated}}} {arrow}")))
+            Some((
+                pattern.clone(),
+                format!("{pattern} ∈ {{{truncated}}} {arrow}"),
+            ))
         }
         EvalAnn::CondBranch { decision } => {
             let needle = node_text(doc);
             Some((needle, format!("→ :{decision}")))
         }
-        EvalAnn::CondElse { decision } => {
-            Some(("else".into(), format!("→ :{decision}")))
-        }
-        EvalAnn::ExactArgs { patterns, args, matched } => {
+        EvalAnn::CondElse { decision } => Some(("else".into(), format!("→ :{decision}"))),
+        EvalAnn::ExactArgs {
+            patterns,
+            args,
+            matched,
+        } => {
             let needle = node_text(doc);
             // Find first mismatch; ellipsize remaining elements in both vectors.
-            let mismatch = patterns.iter().zip(args.iter())
-                .position(|(p, a)| p != a);
+            let mismatch = patterns.iter().zip(args.iter()).position(|(p, a)| p != a);
             let (show_pats, show_args) = match mismatch {
-                Some(i) => (
-                    ellipsize_after(patterns, i),
-                    ellipsize_after(args, i),
-                ),
+                Some(i) => (ellipsize_after(patterns, i), ellipsize_after(args, i)),
                 None => (
                     format!("[{}]", patterns.join(", ")),
                     format!("[{}]", args.join(", ")),
@@ -392,9 +414,7 @@ fn format_annotation(doc: &Doc<Option<EvalAnn>>, ann: &EvalAnn) -> Option<(Strin
             let arrow = if *matched { "→ yes" } else { "→ no" };
             Some((needle, format!("{show_args} = {show_pats} {arrow}")))
         }
-        EvalAnn::ExactRemainder { count } => {
-            Some((String::new(), format!("{count} extra args")))
-        }
+        EvalAnn::ExactRemainder { count } => Some((String::new(), format!("{count} extra args"))),
     }
 }
 
@@ -414,12 +434,10 @@ fn is_regex_node(doc: &Doc<Option<EvalAnn>>) -> bool {
 /// Extract the rule-level outcome annotation.
 fn extract_outcome(doc: &Doc<Option<EvalAnn>>) -> Option<String> {
     match &doc.ann {
-        Some(EvalAnn::RuleEffect { decision, reason }) => {
-            Some(match reason {
-                Some(r) => format!("→ :{decision} \"{r}\""),
-                None => format!("→ :{decision}"),
-            })
-        }
+        Some(EvalAnn::RuleEffect { decision, reason }) => Some(match reason {
+            Some(r) => format!("→ :{decision} \"{r}\""),
+            None => format!("→ :{decision}"),
+        }),
         _ => None,
     }
 }
@@ -469,7 +487,9 @@ fn strip_ansi(s: &str) -> String {
     let mut in_escape = false;
     for ch in s.chars() {
         if in_escape {
-            if ch == 'm' { in_escape = false; }
+            if ch == 'm' {
+                in_escape = false;
+            }
         } else if ch == '\x1b' {
             in_escape = true;
         } else {
@@ -489,27 +509,36 @@ fn truncate_unevaluated(doc: &Doc<Option<EvalAnn>>, keep: usize) -> Doc<Option<E
     match &doc.node {
         DocF::Atom(_) => doc.clone(),
         DocF::List(children) => {
-            let children: Vec<Doc<Option<EvalAnn>>> = children.iter()
+            let children: Vec<Doc<Option<EvalAnn>>> = children
+                .iter()
                 .map(|c| truncate_unevaluated(c, keep))
                 .collect();
             let head = children.first().and_then(|c| c.as_atom());
             let has_head = head.is_some();
             // Only truncate if the args (children after head) are all unevaluated.
-            let args_unevaluated = has_head && children[1..].iter().all(|c| !has_any_visible_annotation(c));
+            let args_unevaluated =
+                has_head && children[1..].iter().all(|c| !has_any_visible_annotation(c));
             // Control-flow forms: collapse unevaluated trailing runs to …
             // Use has_any_annotation (not visible-only) so that nodes with
             // invisible annotations like CommandMatch are still considered
             // evaluated and preserved.
-            let is_control_flow = matches!(head, Some("cond" | "and" | "or" | "if" | "when" | "unless"));
+            let is_control_flow =
+                matches!(head, Some("cond" | "and" | "or" | "if" | "when" | "unless"));
             if is_control_flow && children.len() > 1 {
                 // Find where the unevaluated tail begins (after the head).
-                let tail_start = children[1..].iter()
+                let tail_start = children[1..]
+                    .iter()
                     .rposition(has_any_annotation)
-                    .map(|i| i + 2)  // convert to index in children (offset by 1 for head, +1 for past)
-                    .unwrap_or(1);   // all unevaluated → tail starts right after head
+                    .map(|i| i + 2) // convert to index in children (offset by 1 for head, +1 for past)
+                    .unwrap_or(1); // all unevaluated → tail starts right after head
                 let tail_len = children.len() - tail_start;
                 if tail_len >= 1 {
-                    let ellipsis = Doc { ann: None, node: DocF::Atom("…".into()), layout: LayoutHint::Auto, dimmed: true };
+                    let ellipsis = Doc {
+                        ann: None,
+                        node: DocF::Atom("…".into()),
+                        layout: LayoutHint::Auto,
+                        dimmed: true,
+                    };
                     let mut truncated: Vec<_> = children[..tail_start].to_vec();
                     truncated.push(ellipsis);
                     return Doc {
@@ -524,11 +553,26 @@ fn truncate_unevaluated(doc: &Doc<Option<EvalAnn>>, keep: usize) -> Doc<Option<E
                 let mut truncated = Vec::with_capacity(keep + 3);
                 truncated.push(children[0].clone());
                 truncated.extend(children[1..=keep].iter().cloned());
-                truncated.push(Doc { ann: None, node: DocF::Atom("…".into()), layout: LayoutHint::Auto, dimmed: true });
+                truncated.push(Doc {
+                    ann: None,
+                    node: DocF::Atom("…".into()),
+                    layout: LayoutHint::Auto,
+                    dimmed: true,
+                });
                 truncated.push(children.last().unwrap().clone());
-                Doc { ann: doc.ann.clone(), node: DocF::List(truncated), layout: doc.layout, dimmed: doc.dimmed }
+                Doc {
+                    ann: doc.ann.clone(),
+                    node: DocF::List(truncated),
+                    layout: doc.layout,
+                    dimmed: doc.dimmed,
+                }
             } else {
-                Doc { ann: doc.ann.clone(), node: DocF::List(children), layout: doc.layout, dimmed: doc.dimmed }
+                Doc {
+                    ann: doc.ann.clone(),
+                    node: DocF::List(children),
+                    layout: doc.layout,
+                    dimmed: doc.dimmed,
+                }
             }
         }
     }
@@ -550,13 +594,24 @@ fn dim_unevaluated_inner(doc: Doc<Option<EvalAnn>>) -> (Doc<Option<EvalAnn>>, us
         DocF::Atom(_) => (doc, self_score),
         DocF::List(children) => {
             let mut total = self_score;
-            let children: Vec<_> = children.into_iter().map(|c| {
-                let (c, n) = dim_unevaluated_inner(c);
-                total += n;
-                c
-            }).collect();
+            let children: Vec<_> = children
+                .into_iter()
+                .map(|c| {
+                    let (c, n) = dim_unevaluated_inner(c);
+                    total += n;
+                    c
+                })
+                .collect();
             let dimmed = doc.dimmed || total == 0;
-            (Doc { ann: doc.ann, node: DocF::List(children), layout: doc.layout, dimmed }, total)
+            (
+                Doc {
+                    ann: doc.ann,
+                    node: DocF::List(children),
+                    layout: doc.layout,
+                    dimmed,
+                },
+                total,
+            )
         }
     }
 }
@@ -578,7 +633,10 @@ fn has_any_annotation(doc: &Doc<Option<EvalAnn>>) -> bool {
 /// (one that produces right-column output in the trace).
 fn has_any_visible_annotation(doc: &Doc<Option<EvalAnn>>) -> bool {
     if let Some(ann) = &doc.ann
-        && !matches!(ann, EvalAnn::CommandMatch(_) | EvalAnn::ArgsResult(_) | EvalAnn::RuleEffect { .. })
+        && !matches!(
+            ann,
+            EvalAnn::CommandMatch(_) | EvalAnn::ArgsResult(_) | EvalAnn::RuleEffect { .. }
+        )
     {
         return true;
     }
@@ -633,7 +691,11 @@ fn colorize_right(s: &str) -> String {
                 if let Some(space) = other.find(' ') {
                     let keyword = &other[..space];
                     let rest = other[space..].trim();
-                    format!("{} {}", colorize_decision_keyword(keyword), colorize_atom(rest, true))
+                    format!(
+                        "{} {}",
+                        colorize_decision_keyword(keyword),
+                        colorize_atom(rest, true)
+                    )
                 } else {
                     colorize_decision_keyword(other)
                 }
@@ -681,8 +743,9 @@ pub fn shorten_home(path: &std::path::Path) -> String {
 
 /// Serialize trace entries for JSON output.
 pub fn trace_to_json(entries: &[TraceEntry]) -> Vec<serde_json::Value> {
-    entries.iter().map(|entry| {
-        match entry {
+    entries
+        .iter()
+        .map(|entry| match entry {
             TraceEntry::SegmentHeader { command, decision } => serde_json::json!({
                 "type": "segment_header",
                 "command": command,
@@ -702,8 +765,8 @@ pub fn trace_to_json(entries: &[TraceEntry]) -> Vec<serde_json::Value> {
                     "annotations": annotations,
                 })
             }
-        }
-    }).collect()
+        })
+        .collect()
 }
 
 /// Collect annotations from a Doc tree for JSON serialization.
@@ -750,7 +813,11 @@ fn eval_ann_to_json(ann: &EvalAnn) -> serde_json::Value {
             "type": "cond_else",
             "decision": decision.to_string(),
         }),
-        EvalAnn::ExactArgs { patterns, args, matched } => serde_json::json!({
+        EvalAnn::ExactArgs {
+            patterns,
+            args,
+            matched,
+        } => serde_json::json!({
             "type": "exact_args",
             "patterns": patterns,
             "args": args,

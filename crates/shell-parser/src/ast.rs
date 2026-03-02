@@ -55,9 +55,9 @@ pub struct CaseArm {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum CaseTerminator {
-    Break,      // ;;
+    Break,       // ;;
     Fallthrough, // ;&
-    Continue,   // ;;&
+    Continue,    // ;;&
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -87,13 +87,19 @@ pub enum WordPart {
     AnsiCQuoted(String),
     Parameter(String),
     ParameterExpansion(String),
-    ParameterExpansionOp { name: String, op: ParameterOperator },
+    ParameterExpansionOp {
+        name: String,
+        op: ParameterOperator,
+    },
     CommandSubstitution(String),
     Backtick(String),
     Arithmetic(String),
     BraceExpansion(Vec<String>),
     Glob(String),
-    ProcessSubstitution { direction: ProcessDirection, command: String },
+    ProcessSubstitution {
+        direction: ProcessDirection,
+        command: String,
+    },
     /// A safe but opaque value: the variable is trusted but its runtime value
     /// is unknown. The string is a label for diagnostics (e.g. "$f").
     Opaque(String),
@@ -108,17 +114,46 @@ pub enum ProcessDirection {
 /// Structured representation of parameter expansion operators.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ParameterOperator {
-    Length,                                                        // ${#VAR}
-    StripPrefix { longest: bool, pattern: String },                // ${VAR#pat} / ${VAR##pat}
-    StripSuffix { longest: bool, pattern: String },                // ${VAR%pat} / ${VAR%%pat}
-    Replace { all: bool, pattern: String, replacement: String },   // ${VAR/pat/rep} / ${VAR//pat/rep}
-    Default { colon: bool, value: String },                        // ${VAR:-val} / ${VAR-val}
-    Alternative { colon: bool, value: String },                    // ${VAR:+val} / ${VAR+val}
-    Error { colon: bool, message: String },                        // ${VAR:?msg} / ${VAR?msg}
-    Assign { colon: bool, value: String },                         // ${VAR:=val} / ${VAR=val}
-    Substring { offset: String, length: Option<String> },          // ${VAR:n} / ${VAR:n:m}
-    Uppercase { all: bool },                                       // ${VAR^} / ${VAR^^}
-    Lowercase { all: bool },                                       // ${VAR,} / ${VAR,,}
+    Length, // ${#VAR}
+    StripPrefix {
+        longest: bool,
+        pattern: String,
+    }, // ${VAR#pat} / ${VAR##pat}
+    StripSuffix {
+        longest: bool,
+        pattern: String,
+    }, // ${VAR%pat} / ${VAR%%pat}
+    Replace {
+        all: bool,
+        pattern: String,
+        replacement: String,
+    }, // ${VAR/pat/rep} / ${VAR//pat/rep}
+    Default {
+        colon: bool,
+        value: String,
+    }, // ${VAR:-val} / ${VAR-val}
+    Alternative {
+        colon: bool,
+        value: String,
+    }, // ${VAR:+val} / ${VAR+val}
+    Error {
+        colon: bool,
+        message: String,
+    }, // ${VAR:?msg} / ${VAR?msg}
+    Assign {
+        colon: bool,
+        value: String,
+    }, // ${VAR:=val} / ${VAR=val}
+    Substring {
+        offset: String,
+        length: Option<String>,
+    }, // ${VAR:n} / ${VAR:n:m}
+    Uppercase {
+        all: bool,
+    }, // ${VAR^} / ${VAR^^}
+    Lowercase {
+        all: bool,
+    }, // ${VAR,} / ${VAR,,}
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -130,15 +165,15 @@ pub struct Redirection {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum RedirectionKind {
-    Input,       // <
-    Output,      // >
-    Append,      // >>
-    Clobber,     // >|
-    DupInput,    // <&
-    DupOutput,   // >&
-    Heredoc,     // <<
+    Input,        // <
+    Output,       // >
+    Append,       // >>
+    Clobber,      // >|
+    DupInput,     // <&
+    DupOutput,    // >&
+    Heredoc,      // <<
     HeredocStrip, // <<-
-    Herestring,  // <<<
+    Herestring,   // <<<
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -212,7 +247,10 @@ fn check_cat_heredoc(sc: &SimpleCommand) -> Option<String> {
 
     // Unreachable: the early return on empty redirections guarantees we
     // entered the loop, and every non-bailing arm sets has_heredoc.
-    assert!(has_heredoc, "unreachable: loop exited without setting has_heredoc");
+    assert!(
+        has_heredoc,
+        "unreachable: loop exited without setting has_heredoc"
+    );
 
     // The parser's heredoc body may include a trailing newline;
     // strip it to match the actual output of `cat`.
@@ -240,12 +278,24 @@ pub(super) fn format_param_op(name: &str, op: &ParameterOperator) -> String {
     match op {
         ParameterOperator::Length => format!("#{name}"),
         ParameterOperator::StripPrefix { longest, pattern } => {
-            if *longest { format!("{name}##{pattern}") } else { format!("{name}#{pattern}") }
+            if *longest {
+                format!("{name}##{pattern}")
+            } else {
+                format!("{name}#{pattern}")
+            }
         }
         ParameterOperator::StripSuffix { longest, pattern } => {
-            if *longest { format!("{name}%%{pattern}") } else { format!("{name}%{pattern}") }
+            if *longest {
+                format!("{name}%%{pattern}")
+            } else {
+                format!("{name}%{pattern}")
+            }
         }
-        ParameterOperator::Replace { all, pattern, replacement } => {
+        ParameterOperator::Replace {
+            all,
+            pattern,
+            replacement,
+        } => {
             if *all {
                 format!("{name}//{pattern}/{replacement}")
             } else {
@@ -253,28 +303,50 @@ pub(super) fn format_param_op(name: &str, op: &ParameterOperator) -> String {
             }
         }
         ParameterOperator::Default { colon, value } => {
-            if *colon { format!("{name}:-{value}") } else { format!("{name}-{value}") }
-        }
-        ParameterOperator::Alternative { colon, value } => {
-            if *colon { format!("{name}:+{value}") } else { format!("{name}+{value}") }
-        }
-        ParameterOperator::Error { colon, message } => {
-            if *colon { format!("{name}:?{message}") } else { format!("{name}?{message}") }
-        }
-        ParameterOperator::Assign { colon, value } => {
-            if *colon { format!("{name}:={value}") } else { format!("{name}={value}") }
-        }
-        ParameterOperator::Substring { offset, length } => {
-            match length {
-                Some(len) => format!("{name}:{offset}:{len}"),
-                None => format!("{name}:{offset}"),
+            if *colon {
+                format!("{name}:-{value}")
+            } else {
+                format!("{name}-{value}")
             }
         }
+        ParameterOperator::Alternative { colon, value } => {
+            if *colon {
+                format!("{name}:+{value}")
+            } else {
+                format!("{name}+{value}")
+            }
+        }
+        ParameterOperator::Error { colon, message } => {
+            if *colon {
+                format!("{name}:?{message}")
+            } else {
+                format!("{name}?{message}")
+            }
+        }
+        ParameterOperator::Assign { colon, value } => {
+            if *colon {
+                format!("{name}:={value}")
+            } else {
+                format!("{name}={value}")
+            }
+        }
+        ParameterOperator::Substring { offset, length } => match length {
+            Some(len) => format!("{name}:{offset}:{len}"),
+            None => format!("{name}:{offset}"),
+        },
         ParameterOperator::Uppercase { all } => {
-            if *all { format!("{name}^^") } else { format!("{name}^") }
+            if *all {
+                format!("{name}^^")
+            } else {
+                format!("{name}^")
+            }
         }
         ParameterOperator::Lowercase { all } => {
-            if *all { format!("{name},,") } else { format!("{name},") }
+            if *all {
+                format!("{name},,")
+            } else {
+                format!("{name},")
+            }
         }
     }
 }
@@ -399,7 +471,6 @@ impl Word {
     pub fn is_literal(&self) -> bool {
         !has_dynamic_in(&self.parts) && !has_opaque_in(&self.parts)
     }
-
 }
 
 /// Returns true if any part in the slice is an Opaque value.
@@ -421,22 +492,21 @@ fn resolve_parts(
     parts: &[WordPart],
     env: &std::collections::HashMap<String, String>,
 ) -> Vec<WordPart> {
-    parts.iter().map(|part| match part {
-        WordPart::Parameter(name) | WordPart::ParameterExpansion(name) => {
-            if let Some(val) = env.get(name.as_str()) {
-                WordPart::Literal(val.clone())
-            } else {
-                part.clone()
+    parts
+        .iter()
+        .map(|part| match part {
+            WordPart::Parameter(name) | WordPart::ParameterExpansion(name) => {
+                if let Some(val) = env.get(name.as_str()) {
+                    WordPart::Literal(val.clone())
+                } else {
+                    part.clone()
+                }
             }
-        }
-        WordPart::ParameterExpansionOp { name, op } => {
-            resolve_param_op(name, op, env)
-        }
-        WordPart::DoubleQuoted(inner) => {
-            WordPart::DoubleQuoted(resolve_parts(inner, env))
-        }
-        _ => part.clone(),
-    }).collect()
+            WordPart::ParameterExpansionOp { name, op } => resolve_param_op(name, op, env),
+            WordPart::DoubleQuoted(inner) => WordPart::DoubleQuoted(resolve_parts(inner, env)),
+            _ => part.clone(),
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -456,7 +526,12 @@ impl Command {
             Command::Pipeline(cmds) | Command::Sequence(cmds) => cmds.iter().collect(),
             Command::And(a, b) | Command::Or(a, b) => vec![a, b],
             Command::Background(c) | Command::Subshell(c) | Command::BraceGroup(c) => vec![c],
-            Command::If { condition, then_branch, elif_branches, else_branch } => {
+            Command::If {
+                condition,
+                then_branch,
+                elif_branches,
+                else_branch,
+            } => {
                 let mut children = vec![condition.as_ref(), then_branch.as_ref()];
                 for (cond, body) in elif_branches {
                     children.push(cond);
@@ -468,12 +543,12 @@ impl Command {
                 children
             }
             Command::For { body, .. } => vec![body],
-            Command::Loop { condition, body, .. } => {
+            Command::Loop {
+                condition, body, ..
+            } => {
                 vec![condition, body]
             }
-            Command::Case { arms, .. } => {
-                arms.iter().filter_map(|arm| arm.body.as_ref()).collect()
-            }
+            Command::Case { arms, .. } => arms.iter().filter_map(|arm| arm.body.as_ref()).collect(),
             Command::FunctionDef { body, .. } => vec![body],
             Command::Redirected { command, .. } => vec![command],
         }
@@ -503,19 +578,27 @@ impl SimpleCommand {
     /// file-redirect targets, returning a new SimpleCommand.
     pub fn map_words(&self, f: impl Fn(&Word) -> Word) -> SimpleCommand {
         SimpleCommand {
-            assignments: self.assignments.iter().map(|a| Assignment {
-                name: a.name.clone(),
-                value: f(&a.value),
-            }).collect(),
+            assignments: self
+                .assignments
+                .iter()
+                .map(|a| Assignment {
+                    name: a.name.clone(),
+                    value: f(&a.value),
+                })
+                .collect(),
             words: self.words.iter().map(&f).collect(),
-            redirections: self.redirections.iter().map(|r| Redirection {
-                fd: r.fd,
-                kind: r.kind.clone(),
-                target: match &r.target {
-                    RedirectionTarget::File(w) => RedirectionTarget::File(f(w)),
-                    other => other.clone(),
-                },
-            }).collect(),
+            redirections: self
+                .redirections
+                .iter()
+                .map(|r| Redirection {
+                    fd: r.fd,
+                    kind: r.kind.clone(),
+                    target: match &r.target {
+                        RedirectionTarget::File(w) => RedirectionTarget::File(f(w)),
+                        other => other.clone(),
+                    },
+                })
+                .collect(),
         }
     }
 
@@ -527,5 +610,4 @@ impl SimpleCommand {
             &[]
         }
     }
-
 }

@@ -10,8 +10,7 @@
 use miette::GraphicalReportHandler;
 
 fn render_error(input: &str) -> String {
-    let err = may_i_config::parse::parse(input, "<test>")
-        .expect_err("expected a parse error");
+    let err = may_i_config::parse::parse(input, "<test>").expect_err("expected a parse error");
     let handler = GraphicalReportHandler::new_themed(miette::GraphicalTheme::unicode_nocolor());
     let mut out = String::new();
     handler.render_report(&mut out, err.as_ref()).unwrap();

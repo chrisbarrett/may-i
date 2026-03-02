@@ -4,14 +4,18 @@ use std::io::IsTerminal;
 
 use clap::{CommandFactory, Parser, Subcommand};
 
-mod cmd_eval;
 mod cmd_check;
-mod cmd_parse;
+mod cmd_eval;
 mod cmd_hook;
+mod cmd_parse;
 mod output;
 
 #[derive(Parser)]
-#[command(name = "may-i", version, about = "Shell command authorization evaluator")]
+#[command(
+    name = "may-i",
+    version,
+    about = "Shell command authorization evaluator"
+)]
 struct Cli {
     /// Output as JSON
     #[arg(long, global = true)]
@@ -67,8 +71,12 @@ fn run() -> miette::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Command::Eval { command }) => cmd_eval::cmd_eval(&command, cli.json, cli.config.as_deref())?,
-        Some(Command::Check { verbose }) => cmd_check::cmd_check(cli.json, verbose, cli.config.as_deref())?,
+        Some(Command::Eval { command }) => {
+            cmd_eval::cmd_eval(&command, cli.json, cli.config.as_deref())?
+        }
+        Some(Command::Check { verbose }) => {
+            cmd_check::cmd_check(cli.json, verbose, cli.config.as_deref())?
+        }
         Some(Command::Parse { command, file }) => cmd_parse::cmd_parse(command, file)?,
         None => {
             if std::io::stdin().is_terminal() {

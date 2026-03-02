@@ -3,9 +3,9 @@
 // false positives on struct fields.
 #![allow(unused_assignments)]
 
-use miette::{Diagnostic, LabeledSpan, NamedSource, SourceSpan};
-use may_i_sexpr::RawError;
 use may_i_core::Span;
+use may_i_sexpr::RawError;
+use miette::{Diagnostic, LabeledSpan, NamedSource, SourceSpan};
 use thiserror::Error;
 
 /// User-facing diagnostic error with source context.

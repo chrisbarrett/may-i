@@ -38,7 +38,10 @@ pub struct Effect {
 
 impl Effect {
     pub fn to_doc(&self) -> Doc {
-        let mut cs = vec![Doc::atom("effect"), Doc::atom(format!(":{}", self.decision))];
+        let mut cs = vec![
+            Doc::atom("effect"),
+            Doc::atom(format!(":{}", self.decision)),
+        ];
         if let Some(r) = &self.reason {
             cs.push(Doc::atom(format!("\"{r}\"")));
         }
@@ -82,9 +85,7 @@ impl Expr {
                 .iter()
                 .find(|b| b.test.is_match(text))
                 .map(|b| &b.effect),
-            Expr::And(exprs) | Expr::Or(exprs) => {
-                exprs.iter().find_map(|e| e.find_effect(text))
-            }
+            Expr::And(exprs) | Expr::Or(exprs) => exprs.iter().find_map(|e| e.find_effect(text)),
             Expr::Not(expr) => expr.find_effect(text),
             Expr::Literal(_) | Expr::Regex(_) | Expr::Wildcard => None,
         }
@@ -119,12 +120,20 @@ impl Expr {
             Expr::And(exprs) => {
                 let mut cs = vec![Doc::atom("and")];
                 cs.extend(exprs.iter().map(|e| e.to_doc()));
-                if exprs.len() > 4 { Doc::broken_list(cs) } else { Doc::list(cs) }
+                if exprs.len() > 4 {
+                    Doc::broken_list(cs)
+                } else {
+                    Doc::list(cs)
+                }
             }
             Expr::Or(exprs) => {
                 let mut cs = vec![Doc::atom("or")];
                 cs.extend(exprs.iter().map(|e| e.to_doc()));
-                if exprs.len() > 4 { Doc::broken_list(cs) } else { Doc::list(cs) }
+                if exprs.len() > 4 {
+                    Doc::broken_list(cs)
+                } else {
+                    Doc::list(cs)
+                }
             }
             Expr::Not(inner) => Doc::list(vec![Doc::atom("not"), inner.to_doc()]),
             Expr::Cond(branches) => {
@@ -239,7 +248,10 @@ pub struct Rule {
 #[derive(Debug, Clone)]
 pub enum RuleBody {
     /// Apply a fixed effect, optionally requiring an arg matcher to succeed first.
-    Effect { matcher: Option<ArgMatcher>, effect: Effect },
+    Effect {
+        matcher: Option<ArgMatcher>,
+        effect: Effect,
+    },
     /// The matcher tree itself determines the effect (via embedded Cond branches).
     Branching(ArgMatcher),
 }
@@ -247,10 +259,16 @@ pub enum RuleBody {
 impl RuleBody {
     pub fn to_doc(&self) -> Vec<Doc> {
         match self {
-            RuleBody::Effect { matcher: None, effect } => {
+            RuleBody::Effect {
+                matcher: None,
+                effect,
+            } => {
                 vec![effect.to_doc()]
             }
-            RuleBody::Effect { matcher: Some(m), effect } => {
+            RuleBody::Effect {
+                matcher: Some(m),
+                effect,
+            } => {
                 vec![
                     Doc::list(vec![Doc::atom("args"), m.to_doc()]),
                     effect.to_doc(),
@@ -336,7 +354,10 @@ pub struct PosExpr {
 impl PosExpr {
     /// Shorthand: match exactly one arg.
     pub fn one(expr: Expr) -> Self {
-        Self { quantifier: Quantifier::One, expr }
+        Self {
+            quantifier: Quantifier::One,
+            expr,
+        }
     }
 
     /// Delegate to the inner expression's `is_match`.
@@ -461,10 +482,7 @@ pub enum WrapperStep {
     /// Validate positional (non-flag) args match patterns in order.
     /// If `capture` is true, the inner command starts immediately after
     /// the last matched positional in the original arg list.
-    Positional {
-        patterns: Vec<Expr>,
-        capture: bool,
-    },
+    Positional { patterns: Vec<Expr>, capture: bool },
     /// Find a named flag or delimiter; the inner command starts after it.
     Flag { name: String },
 }
@@ -490,13 +508,20 @@ pub enum EvalAnn {
     /// A conditional else/fallback was selected.
     CondElse { decision: Decision },
     /// Exact positional vector equality: patterns vs actual args.
-    ExactArgs { patterns: Vec<String>, args: Vec<String>, matched: bool },
+    ExactArgs {
+        patterns: Vec<String>,
+        args: Vec<String>,
+        matched: bool,
+    },
     /// Exact positional had leftover arguments.
     ExactRemainder { count: usize },
     /// Overall args match result.
     ArgsResult(bool),
     /// The effect produced by this rule.
-    RuleEffect { decision: Decision, reason: Option<String> },
+    RuleEffect {
+        decision: Decision,
+        reason: Option<String>,
+    },
     /// No rule matched; defaulting to ask.
     DefaultAsk,
 }
@@ -547,12 +572,13 @@ impl CommandMatcher {
             CommandMatcher::Exact(s) => {
                 Doc::list(vec![Doc::atom("command"), Doc::atom(format!("\"{s}\""))])
             }
-            CommandMatcher::Regex(re) => {
+            CommandMatcher::Regex(re) => Doc::list(vec![
+                Doc::atom("command"),
                 Doc::list(vec![
-                    Doc::atom("command"),
-                    Doc::list(vec![Doc::atom("regex"), Doc::atom(format!("\"{}\"", re.as_str()))]),
-                ])
-            }
+                    Doc::atom("regex"),
+                    Doc::atom(format!("\"{}\"", re.as_str())),
+                ]),
+            ]),
             CommandMatcher::List(names) => {
                 let mut or_cs = vec![Doc::atom("or")];
                 or_cs.extend(names.iter().map(|n| Doc::atom(format!("\"{n}\""))));
@@ -641,10 +667,7 @@ mod tests {
 
     #[test]
     fn expr_or_any_match() {
-        let e = Expr::Or(vec![
-            Expr::Literal("a".into()),
-            Expr::Literal("b".into()),
-        ]);
+        let e = Expr::Or(vec![Expr::Literal("a".into()), Expr::Literal("b".into())]);
         assert!(e.is_match("a"));
         assert!(e.is_match("b"));
         assert!(!e.is_match("c"));
@@ -661,7 +684,10 @@ mod tests {
     fn expr_cond_matches_branch() {
         let e = Expr::Cond(vec![ExprBranch {
             test: Expr::Literal("a".into()),
-            effect: Effect { decision: Decision::Allow, reason: None },
+            effect: Effect {
+                decision: Decision::Allow,
+                reason: None,
+            },
         }]);
         assert!(e.is_match("a"));
         assert!(!e.is_match("b"));
@@ -767,7 +793,10 @@ mod tests {
     fn expr_debug_cond() {
         let e = Expr::Cond(vec![ExprBranch {
             test: Expr::Wildcard,
-            effect: Effect { decision: Decision::Allow, reason: None },
+            effect: Effect {
+                decision: Decision::Allow,
+                reason: None,
+            },
         }]);
         let dbg = format!("{:?}", e);
         assert!(dbg.starts_with("Cond("));
@@ -783,21 +812,30 @@ mod tests {
 
     #[test]
     fn pos_expr_debug_optional() {
-        let pe = PosExpr { quantifier: Quantifier::Optional, expr: Expr::Wildcard };
+        let pe = PosExpr {
+            quantifier: Quantifier::Optional,
+            expr: Expr::Wildcard,
+        };
         let dbg = format!("{:?}", pe);
         assert!(dbg.starts_with("Optional("));
     }
 
     #[test]
     fn pos_expr_debug_one_or_more() {
-        let pe = PosExpr { quantifier: Quantifier::OneOrMore, expr: Expr::Wildcard };
+        let pe = PosExpr {
+            quantifier: Quantifier::OneOrMore,
+            expr: Expr::Wildcard,
+        };
         let dbg = format!("{:?}", pe);
         assert!(dbg.starts_with("OneOrMore("));
     }
 
     #[test]
     fn pos_expr_debug_zero_or_more() {
-        let pe = PosExpr { quantifier: Quantifier::ZeroOrMore, expr: Expr::Wildcard };
+        let pe = PosExpr {
+            quantifier: Quantifier::ZeroOrMore,
+            expr: Expr::Wildcard,
+        };
         let dbg = format!("{:?}", pe);
         assert!(dbg.starts_with("ZeroOrMore("));
     }
@@ -806,14 +844,23 @@ mod tests {
 
     #[test]
     fn pos_expr_is_match_delegates() {
-        let pe = PosExpr { quantifier: Quantifier::Optional, expr: Expr::Literal("x".into()) };
+        let pe = PosExpr {
+            quantifier: Quantifier::Optional,
+            expr: Expr::Literal("x".into()),
+        };
         assert!(pe.is_match("x"));
         assert!(!pe.is_match("y"));
     }
 
     #[test]
     fn pos_expr_is_wildcard_delegates() {
-        assert!(PosExpr { quantifier: Quantifier::ZeroOrMore, expr: Expr::Wildcard }.is_wildcard());
+        assert!(
+            PosExpr {
+                quantifier: Quantifier::ZeroOrMore,
+                expr: Expr::Wildcard
+            }
+            .is_wildcard()
+        );
         assert!(!PosExpr::one(Expr::Literal("x".into())).is_wildcard());
     }
 
@@ -823,7 +870,10 @@ mod tests {
     fn has_effect_positional_with_cond() {
         let cond_expr = Expr::Cond(vec![ExprBranch {
             test: Expr::Wildcard,
-            effect: Effect { decision: Decision::Allow, reason: None },
+            effect: Effect {
+                decision: Decision::Allow,
+                reason: None,
+            },
         }]);
         let m = ArgMatcher::Positional(vec![PosExpr::one(cond_expr)]);
         assert!(m.has_effect());
@@ -833,9 +883,15 @@ mod tests {
     fn has_effect_exact_positional_with_cond() {
         let cond_expr = Expr::Cond(vec![ExprBranch {
             test: Expr::Wildcard,
-            effect: Effect { decision: Decision::Allow, reason: None },
+            effect: Effect {
+                decision: Decision::Allow,
+                reason: None,
+            },
         }]);
-        let m = ArgMatcher::ExactPositional(vec![PosExpr { quantifier: Quantifier::Optional, expr: cond_expr }]);
+        let m = ArgMatcher::ExactPositional(vec![PosExpr {
+            quantifier: Quantifier::Optional,
+            expr: cond_expr,
+        }]);
         assert!(m.has_effect());
     }
 
@@ -851,7 +907,10 @@ mod tests {
     fn find_effect_through_and() {
         let cond = Expr::Cond(vec![ExprBranch {
             test: Expr::Literal("x".into()),
-            effect: Effect { decision: Decision::Allow, reason: None },
+            effect: Effect {
+                decision: Decision::Allow,
+                reason: None,
+            },
         }]);
         let e = Expr::And(vec![cond]);
         assert_eq!(e.find_effect("x").unwrap().decision, Decision::Allow);
@@ -862,7 +921,10 @@ mod tests {
     fn find_effect_through_or() {
         let cond = Expr::Cond(vec![ExprBranch {
             test: Expr::Literal("x".into()),
-            effect: Effect { decision: Decision::Deny, reason: None },
+            effect: Effect {
+                decision: Decision::Deny,
+                reason: None,
+            },
         }]);
         let e = Expr::Or(vec![Expr::Literal("z".into()), cond]);
         assert_eq!(e.find_effect("x").unwrap().decision, Decision::Deny);
@@ -872,7 +934,10 @@ mod tests {
     fn find_effect_through_not() {
         let cond = Expr::Cond(vec![ExprBranch {
             test: Expr::Literal("x".into()),
-            effect: Effect { decision: Decision::Ask, reason: None },
+            effect: Effect {
+                decision: Decision::Ask,
+                reason: None,
+            },
         }]);
         let e = Expr::Not(Box::new(cond));
         assert_eq!(e.find_effect("x").unwrap().decision, Decision::Ask);
@@ -889,13 +954,19 @@ mod tests {
 
     #[test]
     fn effect_to_doc_no_reason() {
-        let e = Effect { decision: Decision::Allow, reason: None };
+        let e = Effect {
+            decision: Decision::Allow,
+            reason: None,
+        };
         assert_eq!(doc_text(&e.to_doc()), "(effect :allow)");
     }
 
     #[test]
     fn effect_to_doc_with_reason() {
-        let e = Effect { decision: Decision::Deny, reason: Some("bad".into()) };
+        let e = Effect {
+            decision: Decision::Deny,
+            reason: Some("bad".into()),
+        };
         assert_eq!(doc_text(&e.to_doc()), r#"(effect :deny "bad")"#);
     }
 
@@ -937,7 +1008,10 @@ mod tests {
     fn expr_to_doc_cond() {
         let e = Expr::Cond(vec![ExprBranch {
             test: Expr::Literal("x".into()),
-            effect: Effect { decision: Decision::Allow, reason: None },
+            effect: Effect {
+                decision: Decision::Allow,
+                reason: None,
+            },
         }]);
         assert_eq!(doc_text(&e.to_doc()), r#"(cond ("x" (effect :allow)))"#);
     }
@@ -950,19 +1024,28 @@ mod tests {
 
     #[test]
     fn pos_expr_to_doc_optional() {
-        let pe = PosExpr { quantifier: Quantifier::Optional, expr: Expr::Wildcard };
+        let pe = PosExpr {
+            quantifier: Quantifier::Optional,
+            expr: Expr::Wildcard,
+        };
         assert_eq!(doc_text(&pe.to_doc()), "(? *)");
     }
 
     #[test]
     fn pos_expr_to_doc_one_or_more() {
-        let pe = PosExpr { quantifier: Quantifier::OneOrMore, expr: Expr::Wildcard };
+        let pe = PosExpr {
+            quantifier: Quantifier::OneOrMore,
+            expr: Expr::Wildcard,
+        };
         assert_eq!(doc_text(&pe.to_doc()), "(+ *)");
     }
 
     #[test]
     fn pos_expr_to_doc_zero_or_more() {
-        let pe = PosExpr { quantifier: Quantifier::ZeroOrMore, expr: Expr::Wildcard };
+        let pe = PosExpr {
+            quantifier: Quantifier::ZeroOrMore,
+            expr: Expr::Wildcard,
+        };
         assert_eq!(doc_text(&pe.to_doc()), "(* *)");
     }
 
@@ -1028,27 +1111,42 @@ mod tests {
         let m = ArgMatcher::Cond(CondArm {
             branches: vec![CondBranch {
                 matcher: ArgMatcher::Positional(vec![]),
-                effect: Effect { decision: Decision::Allow, reason: None },
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
             }],
             fallback: None,
         });
-        assert_eq!(doc_text(&m.to_doc()), "(cond ((positional) (effect :allow)))");
+        assert_eq!(
+            doc_text(&m.to_doc()),
+            "(cond ((positional) (effect :allow)))"
+        );
     }
 
     #[test]
     fn cond_arm_to_doc_with_fallback() {
         let arm = CondArm {
             branches: vec![],
-            fallback: Some(Effect { decision: Decision::Deny, reason: Some("nope".into()) }),
+            fallback: Some(Effect {
+                decision: Decision::Deny,
+                reason: Some("nope".into()),
+            }),
         };
-        assert_eq!(doc_text(&arm.to_doc()), r#"(cond (else (effect :deny "nope")))"#);
+        assert_eq!(
+            doc_text(&arm.to_doc()),
+            r#"(cond (else (effect :deny "nope")))"#
+        );
     }
 
     #[test]
     fn rule_body_to_doc_effect_only() {
         let body = RuleBody::Effect {
             matcher: None,
-            effect: Effect { decision: Decision::Allow, reason: None },
+            effect: Effect {
+                decision: Decision::Allow,
+                reason: None,
+            },
         };
         let docs: Vec<String> = body.to_doc().iter().map(|d| doc_text(d)).collect();
         assert_eq!(docs, vec!["(effect :allow)"]);
@@ -1058,7 +1156,10 @@ mod tests {
     fn rule_body_to_doc_effect_with_matcher() {
         let body = RuleBody::Effect {
             matcher: Some(ArgMatcher::Positional(vec![])),
-            effect: Effect { decision: Decision::Deny, reason: None },
+            effect: Effect {
+                decision: Decision::Deny,
+                reason: None,
+            },
         };
         let docs: Vec<String> = body.to_doc().iter().map(|d| doc_text(d)).collect();
         assert_eq!(docs, vec!["(args (positional))", "(effect :deny)"]);
@@ -1077,12 +1178,18 @@ mod tests {
             command: CommandMatcher::Exact("git".into()),
             body: RuleBody::Effect {
                 matcher: None,
-                effect: Effect { decision: Decision::Allow, reason: None },
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
             },
             checks: vec![],
             source_span: Span { start: 0, end: 0 },
         };
-        assert_eq!(doc_text(&rule.to_doc()), r#"(rule (command "git") (effect :allow))"#);
+        assert_eq!(
+            doc_text(&rule.to_doc()),
+            r#"(rule (command "git") (effect :allow))"#
+        );
     }
 }
 
@@ -1104,10 +1211,7 @@ mod prop_tests {
     // Expr strategy: recursive tree of Literal, Wildcard, And, Or, Not.
     // Skips Regex (hard to generate valid patterns) and Cond (has effects).
     fn arb_expr() -> impl Strategy<Value = Expr> {
-        let leaf = prop_oneof![
-            "[a-z]{1,8}".prop_map(Expr::Literal),
-            Just(Expr::Wildcard),
-        ];
+        let leaf = prop_oneof!["[a-z]{1,8}".prop_map(Expr::Literal), Just(Expr::Wildcard),];
         leaf.prop_recursive(4, 16, 4, |inner| {
             prop_oneof![
                 prop::collection::vec(inner.clone(), 1..4).prop_map(Expr::And),

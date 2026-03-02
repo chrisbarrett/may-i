@@ -9,7 +9,11 @@ use may_i_engine as engine;
 use crate::output;
 use crate::output::{print_trace, trace_to_json};
 
-pub fn cmd_check(json_mode: bool, verbose: bool, config_path: Option<&std::path::Path>) -> miette::Result<()> {
+pub fn cmd_check(
+    json_mode: bool,
+    verbose: bool,
+    config_path: Option<&std::path::Path>,
+) -> miette::Result<()> {
     let config_file = config::resolve_path(config_path)?;
     let config = config::load(&config_file)?;
     let results = engine::run_checks(&config);
@@ -38,16 +42,28 @@ pub fn cmd_check(json_mode: bool, verbose: bool, config_path: Option<&std::path:
             "failed": failed,
             "results": json_results
         });
-        println!("{}", serde_json::to_string(&output).expect("response serialization is infallible"));
+        println!(
+            "{}",
+            serde_json::to_string(&output).expect("response serialization is infallible")
+        );
     } else {
         let mut failures = Vec::new();
 
         for r in &results {
             if verbose {
                 if r.passed {
-                    println!("  {} {}", "PASS".green().bold(), format!("{} → {}", r.command, r.actual).dimmed());
+                    println!(
+                        "  {} {}",
+                        "PASS".green().bold(),
+                        format!("{} → {}", r.command, r.actual).dimmed()
+                    );
                 } else {
-                    println!("  {} {}", "FAIL".red().bold(), format!("{} → {} (expected {})", r.command, r.actual, r.expected).truecolor(255, 165, 0));
+                    println!(
+                        "  {} {}",
+                        "FAIL".red().bold(),
+                        format!("{} → {} (expected {})", r.command, r.actual, r.expected)
+                            .truecolor(255, 165, 0)
+                    );
                 }
             }
             if !r.passed {
@@ -101,8 +117,16 @@ pub fn cmd_check(json_mode: bool, verbose: bool, config_path: Option<&std::path:
             output::print_separator("", None);
         }
         println!("\n{}\n", "Summary".bold());
-        let icon = if failed > 0 { "✗".red() } else { "✓".green() };
-        println!("  {icon} {} passed, {} failed", passed.to_string().bold(), failed.to_string().bold());
+        let icon = if failed > 0 {
+            "✗".red()
+        } else {
+            "✓".green()
+        };
+        println!(
+            "  {icon} {} passed, {} failed",
+            passed.to_string().bold(),
+            failed.to_string().bold()
+        );
         println!();
         let display_path = output::shorten_home(&config_file);
         println!("  {} {}", "config:".dimmed(), display_path.dimmed());

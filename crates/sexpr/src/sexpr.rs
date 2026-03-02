@@ -85,10 +85,7 @@ pub fn needs_quoting(s: &str) -> bool {
 
 /// Quote an atom string for s-expression display, escaping backslashes and double quotes.
 pub fn quote_atom(s: &str) -> String {
-    format!(
-        "\"{}\"",
-        s.replace('\\', "\\\\").replace('"', "\\\"")
-    )
+    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 // --- Tokenizer ---
@@ -130,11 +127,17 @@ fn tokenize(input: &str) -> Result<Vec<Token>, RawError> {
                 }
             }
             '(' => {
-                tokens.push(Token { kind: TokenKind::Open, span: Span::new(pos, pos + 1) });
+                tokens.push(Token {
+                    kind: TokenKind::Open,
+                    span: Span::new(pos, pos + 1),
+                });
                 chars.next();
             }
             ')' => {
-                tokens.push(Token { kind: TokenKind::Close, span: Span::new(pos, pos + 1) });
+                tokens.push(Token {
+                    kind: TokenKind::Close,
+                    span: Span::new(pos, pos + 1),
+                });
                 chars.next();
             }
             '"' => {
@@ -238,7 +241,11 @@ pub fn parse(input: &str) -> (Vec<Sexpr>, Vec<RawError>) {
     let mut errors: Vec<RawError> = Vec::new();
     while pos < tokens.len() {
         // Case C: extra ')' at top level — recover by skipping
-        if let Some(Token { kind: TokenKind::Close, span }) = tokens.get(pos) {
+        if let Some(Token {
+            kind: TokenKind::Close,
+            span,
+        }) = tokens.get(pos)
+        {
             let mut err = RawError::new("unexpected ')'", *span)
                 .with_label("no matching '('")
                 .with_help("remove this ')'");
@@ -260,22 +267,34 @@ pub fn parse(input: &str) -> (Vec<Sexpr>, Vec<RawError>) {
     (results, errors)
 }
 
-fn parse_one(input: &str, tokens: &[Token], pos: usize, errors: &mut Vec<RawError>) -> (Sexpr, usize) {
+fn parse_one(
+    input: &str,
+    tokens: &[Token],
+    pos: usize,
+    errors: &mut Vec<RawError>,
+) -> (Sexpr, usize) {
     match tokens.get(pos) {
         None => {
             // Should not happen — caller checks pos < tokens.len()
             errors.push(RawError::new("unexpected end of input", Span::new(0, 0)));
             (Sexpr::List(vec![], Span::new(0, 0)), pos)
         }
-        Some(Token { kind: TokenKind::Close, span }) => {
+        Some(Token {
+            kind: TokenKind::Close,
+            span,
+        }) => {
             // Should not happen — caller handles Case C
             errors.push(RawError::new("unexpected ')'", *span));
             (Sexpr::List(vec![], *span), pos + 1)
         }
-        Some(Token { kind: TokenKind::Atom(s) | TokenKind::Str(s), span }) => {
-            (Sexpr::Atom(s.clone(), *span), pos + 1)
-        }
-        Some(Token { kind: TokenKind::Open, span: open_span }) => {
+        Some(Token {
+            kind: TokenKind::Atom(s) | TokenKind::Str(s),
+            span,
+        }) => (Sexpr::Atom(s.clone(), *span), pos + 1),
+        Some(Token {
+            kind: TokenKind::Open,
+            span: open_span,
+        }) => {
             let opener_col = column_of(input, open_span.start);
             let opener_line = line_of(input, open_span.start);
             let mut items: Vec<Sexpr> = Vec::new();
@@ -305,18 +324,21 @@ fn parse_one(input: &str, tokens: &[Token], pos: usize, errors: &mut Vec<RawErro
                         );
                         return (Sexpr::List(items, list_span), p);
                     }
-                    Some(Token { kind: TokenKind::Close, span: close_span }) => {
+                    Some(Token {
+                        kind: TokenKind::Close,
+                        span: close_span,
+                    }) => {
                         let list_span = Span::new(open_span.start, close_span.end);
                         return (Sexpr::List(items, list_span), p + 1);
                     }
-                    Some(Token { kind: TokenKind::Open, span: next_span }) => {
+                    Some(Token {
+                        kind: TokenKind::Open,
+                        span: next_span,
+                    }) => {
                         // Case B: indentation heuristic for sibling absorbed
                         let next_col = column_of(input, next_span.start);
                         let next_line = line_of(input, next_span.start);
-                        if !items.is_empty()
-                            && next_line > opener_line
-                            && next_col == opener_col
-                        {
+                        if !items.is_empty() && next_line > opener_line && next_col == opener_col {
                             // Recover: implicitly close this list
                             let insert_point = items.last().unwrap().span().end;
                             let label = match items.first().and_then(|s| s.as_atom()) {
@@ -397,13 +419,13 @@ mod tests {
 
     #[test]
     fn parse_bare_atom_with_special_chars() {
-        assert_eq!(parse_result("after-flags").unwrap(), vec![atom("after-flags")]);
+        assert_eq!(
+            parse_result("after-flags").unwrap(),
+            vec![atom("after-flags")]
+        );
         assert_eq!(parse_result("foo_bar").unwrap(), vec![atom("foo_bar")]);
         assert_eq!(parse_result("*").unwrap(), vec![atom("*")]);
-        assert_eq!(
-            parse_result("^foo.*bar").unwrap(),
-            vec![atom("^foo.*bar")]
-        );
+        assert_eq!(parse_result("^foo.*bar").unwrap(), vec![atom("^foo.*bar")]);
     }
 
     #[test]
@@ -589,10 +611,7 @@ mod tests {
 
     #[test]
     fn display_list() {
-        assert_eq!(
-            format!("{}", list(vec![atom("a"), atom("b")])),
-            "(a b)"
-        );
+        assert_eq!(format!("{}", list(vec![atom("a"), atom("b")])), "(a b)");
     }
 
     #[test]
@@ -677,10 +696,7 @@ mod tests {
 
     #[test]
     fn parse_atom_immediately_before_close() {
-        assert_eq!(
-            parse_result("(a)").unwrap(),
-            vec![list(vec![atom("a")])]
-        );
+        assert_eq!(parse_result("(a)").unwrap(), vec![list(vec![atom("a")])]);
     }
 
     // --- Display round-trip ---
@@ -790,7 +806,17 @@ mod tests {
             .iter()
             .map(|f| f.as_list().unwrap()[0].as_atom().unwrap())
             .collect();
-        assert_eq!(tags, vec!["rule", "rule", "rule", "wrapper", "wrapper", "blocked-paths"]);
+        assert_eq!(
+            tags,
+            vec![
+                "rule",
+                "rule",
+                "rule",
+                "wrapper",
+                "wrapper",
+                "blocked-paths"
+            ]
+        );
     }
 
     // --- Paren mismatch diagnostics ---

@@ -2,9 +2,9 @@
 
 use std::io::Read;
 
-use miette::Context;
 use may_i_config as config;
 use may_i_engine as engine;
+use miette::Context;
 
 pub fn cmd_hook(config_path: Option<&std::path::Path>) -> miette::Result<()> {
     let mut input = String::new();
@@ -46,6 +46,9 @@ pub fn cmd_hook(config_path: Option<&std::path::Path>) -> miette::Result<()> {
         }
     });
 
-    println!("{}", serde_json::to_string(&response).expect("response serialization is infallible"));
+    println!(
+        "{}",
+        serde_json::to_string(&response).expect("response serialization is infallible")
+    );
     Ok(())
 }
