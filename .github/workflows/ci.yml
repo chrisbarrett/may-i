@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "" # uses rust-toolchain.toml
+
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo fmt --check
+
+      - run: cargo clippy --workspace -- -D warnings
+
+      - run: cargo test --workspace
