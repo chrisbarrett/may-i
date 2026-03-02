@@ -13,8 +13,6 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: "" # uses rust-toolchain.toml
 
       - uses: Swatinem/rust-cache@v2
 
