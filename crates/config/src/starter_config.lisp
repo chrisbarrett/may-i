@@ -1,82 +1,85 @@
-; may-i configuration
-;
-; Rules are evaluated in order. First match wins (deny rules always win).
-; Commands with no matching rule default to "ask". Edits to this file take
-; effect immediately.
-;
-; Validate your config with: may-i check
-;
-; -- Quick reference ----------------------------------------------------------
-;
-; RULES
-;
-;   (rule (command "grep")                           ; exact command name
-;         (effect :allow "Text search"))             ; decision + optional reason
-;
-;   (rule (command (or "cat" "head" "tail"))      ; match any of these commands
-;         (effect :allow))
-;
-;   (rule (command (regex "^git-.*"))                 ; match by regex
-;         (effect :allow))
-;
-; ARGUMENT MATCHERS (inside (args ...))
-;
-;   (positional "push" *)             ; match by position (skip flags); * = any
-;   (exact "remote")                  ; like positional but requires exact arg count
-;   (anywhere "-r" "--recursive")     ; any of these tokens appears in argv
-;   (forbidden "-d" "--data")         ; sugar for (not (anywhere ...)))
-;   (and (anywhere "-r") (anywhere "/"))   ; all sub-matchers must match
-;   (or (positional "a") (positional "b")) ; any sub-matcher must match
-;   (not (anywhere "--force"))             ; inverts a sub-matcher
-;
-; POSITIONAL QUANTIFIERS
-;
-;   (positional "cmd" *)              ; bare expr = exactly one
-;   (positional "cmd" (? *))          ; zero or one
-;   (positional "cmd" (+ *))          ; one or more
-;   (positional "cmd" (* *))          ; zero or more
-;
-; PATTERNS (inside positional/anywhere)
-;
-;   "literal"                         ; exact string match
-;   *                                 ; wildcard (matches anything)
-;   (regex "^(get|list).*")           ; regex match
-;   (or "create" "delete" "fork")  ; match any of these strings
-;   (and (regex "^/") (not "/tmp"))   ; combine with and/not
-;
-; COND (branch on args within a single rule; first matching branch wins)
-;
-;   (rule (command "tmux")
-;         (args (cond
-;                 ((positional "source-file" "~/.tmux.conf")
-;                  (effect :allow "Reloading config"))
-;                 (else
-;                  (effect :deny "Unknown tmux command")))))
-;
-; SUGAR FORMS (desugar to cond; also work at expression level)
-;
-;   (if MATCHER THEN-EFFECT)           ; one-branch conditional
-;   (if MATCHER THEN-EFFECT ELSE-EFFECT) ; two-branch conditional
-;   (when MATCHER EFFECT)              ; same as (if MATCHER EFFECT)
-;   (unless MATCHER EFFECT)            ; same as (if (not MATCHER) EFFECT)
-;
-; INLINE CHECKS (validated by `may-i check`)
-;
-;   (check :allow "curl -I https://x.com"
-;          :ask "curl -d data https://x.com")
-;
-; WRAPPERS (unwrap to evaluate the inner command)
-;
-;   (wrapper "nohup"      :command+args)              ; inner cmd after flags
-;   (wrapper "mise"       (positional "exec") (flag "--" :command+args))
-;   (wrapper "ssh"        (positional * :command+args))
-;   (wrapper "nix"        (positional (or "shell" "develop")) (flag "--command" :command+args))
-;
-; ENV VAR RESOLUTION (allow static analysis to resolve these env vars)
-;
-;   (safe-env-vars "HOME" "PWD" "USER" "SHELL" "EDITOR" "TERM")
-;
-; -- Deny: dangerous operations -----------------------------------------------
+;;; may-i configuration
+;;
+;; Rules are evaluated in order. First match wins (deny rules always win).
+;; Commands with no matching rule default to "ask". Edits to this file take
+;; effect immediately.
+;;
+;; Validate your config with: may-i check
+
+;;; --- Quick reference ----------------------------------------------------------
+;;
+;; RULES
+;;
+;;   (rule (command "grep")                           ; exact command name
+;;         (effect :allow "Text search"))             ; decision + optional reason
+;;
+;;   (rule (command (or "cat" "head" "tail"))      ; match any of these commands
+;;         (effect :allow))
+;;
+;;   (rule (command (regex "^git-.*"))                 ; match by regex
+;;         (effect :allow))
+;;
+;; ARGUMENT MATCHERS (inside (args ...))
+;;
+;;   (positional "push" *)                  ; match by position (skip flags); * = any
+;;   (exact "remote")                       ; like positional but requires exact arg count
+;;   (anywhere "-r" "--recursive")          ; any of these tokens appears in argv
+;;   (forbidden "-d" "--data")              ; sugar for (not (anywhere ...))
+;;   (and (anywhere "-r") (anywhere "/"))   ; all sub-matchers must match
+;;   (or (positional "a") (positional "b")) ; any sub-matcher must match
+;;   (not (anywhere "--force"))             ; inverts a sub-matcher
+;;
+;; POSITIONAL QUANTIFIERS
+;;
+;;   (positional "cmd" *)              ; bare expr = exactly one
+;;   (positional "cmd" (? *))          ; zero or one
+;;   (positional "cmd" (+ *))          ; one or more
+;;   (positional "cmd" (* *))          ; zero or more
+;;
+;; PATTERNS (inside positional/anywhere)
+;;
+;;   "literal"                         ; exact string match
+;;   *                                 ; wildcard (matches anything)
+;;   (regex "^(get|list).*")           ; regex match
+;;   (or "create" "delete" "fork")     ; match any of these strings
+;;   (and (regex "^/") (not "/tmp"))   ; combine with and/not
+;;
+;; COND (branch on args within a single rule; first matching branch wins)
+;;
+;;   (rule (command "tmux")
+;;         (args (cond
+;;                 ((positional "source-file" "~/.tmux.conf")
+;;                  (effect :allow "Reloading config"))
+;;                 (else
+;;                  (effect :deny "Unknown tmux command")))))
+;;
+;; SUGAR FORMS (desugar to cond; also work at expression level)
+;;
+;;   (if MATCHER THEN-EFFECT)             ; one-branch conditional
+;;   (if MATCHER THEN-EFFECT ELSE-EFFECT) ; two-branch conditional
+;;   (when MATCHER EFFECT)                ; same as (if MATCHER EFFECT)
+;;   (unless MATCHER EFFECT)              ; same as (if (not MATCHER) EFFECT)
+;;
+;; INLINE CHECKS (validated by `may-i check`)
+;;
+;;   (check :allow "curl -I https://example.com"
+;;          :ask "curl -d data https://example.com")
+;;
+;; WRAPPERS (unwrap to evaluate the inner command)
+;;
+;;   (wrapper "nohup"      :command+args)              ; inner cmd after flags
+;;   (wrapper "mise"       (positional "exec") (flag "--" :command+args))
+;;   (wrapper "ssh"        (positional * :command+args))
+;;   (wrapper "nix"        (positional (or "shell" "develop")) (flag "--command" :command+args))
+;;
+;; ENV VAR RESOLUTION (allow static analysis to resolve these env vars)
+;;
+;;   (safe-env-vars "HOME" "PWD" "USER" "SHELL" "EDITOR" "TERM")
+;;
+
+(wrapper "time" :command+args)
+
+;;; -- Deny: dangerous operations ---------------------------------------------
 
 (rule (command "rm")
       (args (and (anywhere "-r" "--recursive")
@@ -92,7 +95,7 @@
 (rule (command (or "iptables" "nft" "pfctl"))
       (effect :deny "Firewall manipulation"))
 
-; -- Allow: read-only operations -----------------------------------------------
+;;; -- Allow: read-only operations ---------------------------------------------
 
 (rule (command (or "cat" "head" "tail" "less" "more" "wc" "sort" "uniq"))
       (effect :allow "Read-only file operations"))
@@ -117,4 +120,3 @@
 
 (rule (command (or "basename" "dirname" "realpath" "readlink" "pwd"))
       (effect :allow "Path utilities"))
-

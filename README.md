@@ -96,26 +96,3 @@ may-i eval 'rm -rf /'
 ## Configuration
 
 See the documentation in your generated `~/.config/may-i/config.lisp`.
-
-### Wrappers
-
-You can teach `may-i` to treat certain commands as _wrappers_; this is
-particularly useful for commands like `time`, `mise`, etc. Validation is
-performed against the inner command.
-
-```scheme
-(wrapper "nohup"      :command+args)
-(wrapper "mise"       (positional "exec") (flag "--" :command+args))
-(wrapper "ssh"        (positional * :command+args))
-(wrapper "nix"        (positional (or "shell" "develop")) (flag "--command" :command+args))
-```
-
-### Safe Environment Variables
-
-Declare environment variables that `may-i` can resolve during static analysis of
-shell commands. This improves accuracy when commands reference variables like
-`$HOME` or `$PWD`.
-
-```scheme
-(safe-env-vars "HOME" "PWD" "USER" "SHELL" "EDITOR" "TERM")
-```
