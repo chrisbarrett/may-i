@@ -1,88 +1,91 @@
 # may-i
 
-A tool allowing you to declare rich, reliable Bash tool authorization rules in
-Claude Code, improving safety while nagging you less with permission prompts.
-It's a nice middle-ground between "nag me for everything" and "dangerously wipe
-my boot partition".
+`may-i` is a helper for Claude Code that dramatically reduces the number of
+permission prompts you get nagged with. It gives you an experience much closer
+to running under `--dangerously-skip-permissions` without giving up the safety
+of a permission system.
 
-`may-i` is configured using an s-expression file at
-`~/.config/may-i/config.lisp`. Edits to this file take effect immediately--no
-need to re-launch Claude Code to pick up changes.
+`may-i` is pretty smart, and it knows how to parse Bash accurately before
+checking your rules. This means you don't get unnecessarily nagged for
+permission just because a command was wrapped in a for-loop. 🎉
 
-Permissions checks use a fully-featured Bash parser, making your rules much more
-accurate than naive globbing. It can handle all the conditionals, complex
-redirections, and other shell features that your agents might use.
+## A simple example
+
+For example, you might like to allow Claude to run `mv` whenever it chooses, so
+long as it doesn't use `--force`, which could inadvertently delete files.
+
+```scheme
+(rule (command "mv")
+      (args (if (anywhere "-f" "--force")
+                (effect :ask "File moves with -f/--force can be destructive")
+                (effect :allow)))
+      (check :allow "mv foo bar"
+             :ask "mv -f foo bar"))
+```
+
+Stack enough of these simple rules up and suddenly you'll find Claude can get a
+lot more done without needing your approval.
+
+You can use `(check ...)` forms to define inline unit tests, helping you check
+your work and avoid accidental breakages as your rules grow in complexity.
 
 ## Installation
 
-Build this program and add it to your PATH:
+1. Grab the latest `may-i` build from the GitHub releases, and put it on your
+   PATH.
 
-1. you can do it with Cargo, or
-2. use the flake as an input; the derivation to use will be at
-   `packages.default.${system}`.
+2. tell Claude Code to use `may-i` as a bash tool pre-authorizer in your
+   `.claude/settings.json`:
 
-Then, tell Claude Code to use `may-i` as a bash tool pre-authorizer in your
-`.claude/settings.json`:
+   ```json
+   {
+     "hooks": {
+       "PreToolUse": [
+         {
+           "matcher": "Bash",
+           "hooks": [
+             {
+               "type": "command",
+               "command": "may-i"
+             }
+           ]
+         }
+       ]
+     }
+   }
+   ```
 
-```json
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "may-i"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-`may-i` will create a starter config for you at
-`~/.config/may-i/config.lisp`--customise it to your heart's content.
+That's it! `may-i` will create a starter config for you at
+`~/.config/may-i/config.lisp` if it doesn't already exist yet--customise it to
+your heart's content.
 
 ## Usage
 
-### Direct Evaluation
+`may-i` stays out of your way--most of the time it just chugs away, using the
+rules you define to make sure Claude behaves.
 
-Use `may-i eval "${command}"` to test the authorizer against a command.
-
-```bash
-may-i eval 'cat README.md'
-# Output: allow: Read-only file operations
-
-may-i eval 'rm -rf /'
-# Output: deny: Recursive deletion from root
-
-may-i eval --json 'git push'
-# Output: {"decision":"ask","reason":"No matching rule for command `git`"}
-```
+Keep an eye on the commands you're asked for permission to run by Claude; if you
+think it's safe, you can add a rule to `~/.config/may-i/config.lisp` (or ask
+Claude to do it for you). After playing this whack-a-mole for a while you will
+start to notice fewer prompts.
 
 ### Validation & Testing
 
-Use `may-i check` to test whether your config is valid. Any inline
-checks you wrote will also be validated.
+It's a good idea to write unit tests as you go to keep your config
+predictable--write `(check ...)` forms in your rules with example commands. Run
+`may-i check` to verify everything works as expected.
 
 ```bash
 may-i check
-# Output:
-#   PASS: curl -I https://example.com → allow
-#   PASS: curl --head https://example.com → allow
-#
-# 2 passed, 0 failed
 ```
 
-### Shell Parsing
+### Direct Evaluation
 
-Use `may-i parse` to inspect how a command is parsed:
+Use `may-i eval "CMD..."` to test out how your rules behave with different
+inputs.
 
 ```bash
-may-i parse 'echo hello | cat'
-may-i parse -f script.sh
+may-i eval 'rm -rf /'
 ```
 
 ### Global Flags
@@ -92,108 +95,7 @@ may-i parse -f script.sh
 
 ## Configuration
 
-### Rules
-
-Rules match commands by exact name, list of names, or regex. Each rule specifies
-an effect (`allow`, `deny`, or `ask`) and optional matchers for arguments.
-Matchers can be composed with `and`, `or`, and `not`.
-
-```scheme
-;; Deny recursive deletion from root
-(rule (command "rm")
-      (args (and (anywhere "-r" "--recursive")
-                 (anywhere "/")))
-      (effect :deny "Recursive deletion from root"))
-
-;; Allow simple read-only commands
-(rule (command (or "cat" "head" "tail"))
-      (effect :allow "Read-only file operations"))
-
-;; Allow curl without mutating flags
-(rule (command "curl")
-      (args (forbidden "-d" "--data" "-F" "--form" "-X" "--request"))
-      (effect :allow "GET request (no mutating flags)"))
-
-;; Deny dangerous gh operations
-(rule (command "gh")
-      (args (or (positional "repo" (or "create" "delete" "fork"))
-                (positional "secret" (or "set" "delete"))))
-      (effect :deny "Supply chain attack vector"))
-```
-
-Available argument matchers:
-
-- `positional` — Match arguments at specific positions (skip flags); `*` = any
-- `exact` — Like `positional`, but requires exactly as many positional args as
-  patterns (no extra args allowed)
-- `anywhere` — Match if any of these tokens appear anywhere (OR semantics)
-- `forbidden` — Sugar for `(not (anywhere ...))` — rule matches only if none of
-  these flags are present
-- `and` — All sub-matchers must match
-- `or` — Any sub-matcher must match
-- `not` — Inverts a sub-matcher
-
-Pattern values: `"literal"` (exact match), `(regex "^pat")` (regex match),
-`(or "a" "b")` (any of), `*` (wildcard, unquoted).
-
-Patterns also support `(and ...)` and `(not ...)` for composition.
-
-Positional patterns support quantifiers: `(? expr)` (zero or one), `(+ expr)`
-(one or more), `(* expr)` (zero or more). Bare patterns match exactly one arg.
-
-**Deny rules always win** regardless of position. For other rules, first match
-wins. Commands with no matching rule default to `ask`.
-
-### Conditional branching
-
-Use `cond` inside `(args ...)` to express multiple branches within a single
-rule. This is useful when you want to allow specific args but deny everything
-else for the same command -- something separate rules can't do because deny
-always wins across rules.
-
-```scheme
-(rule (command "tmux")
-      (args (cond
-              ((positional "source-file" (or "~/.tmux.conf"
-                                             "~/.config/tmux/tmux.conf"))
-               (effect :allow "Reloading config is safe"))
-              (else
-               (effect :deny "Unknown tmux command"))))
-      (check :allow "tmux source-file ~/.tmux.conf"
-             :deny "tmux kill-server"))
-```
-
-Each branch is `(matcher effect)` where the matcher is a regular arg matcher
-(e.g. `(positional ...)`, `(anywhere ...)`) or a wildcard (`else`). Branches
-are tried in order; first match wins. If no branch matches, the rule is skipped.
-
-When `cond` is the top-level matcher, effects come from branches and the rule
-must not have a separate `(effect ...)`. When nested inside combinators
-(`and`/`or`/`not`), it acts as a boolean matcher and the rule's own effect
-applies.
-
-Sugar forms for common patterns:
-
-- `(if MATCHER THEN-EFFECT ELSE-EFFECT)` — Two-branch conditional; the else
-  branch is optional
-- `(when MATCHER EFFECT)` — Same as `(if MATCHER EFFECT)`
-- `(unless MATCHER EFFECT)` — Same as `(if (not MATCHER) EFFECT)`
-
-These desugar to `cond` internally. `cond`, `if`, `when`, and `unless` also
-work at the expression level inside `positional` and `anywhere` patterns, where
-each branch carries its own effect.
-
-### Inline Checks
-
-Rules can embed checks for validation via `may-i check`.
-
-```scheme
-(rule (command "curl")
-      (args (anywhere "-I" "--head"))
-      (effect :allow "HEAD request is read-only")
-      (check :allow "curl -I https://example.com"
-             :allow "curl --head https://example.com"))
-```
+See the documentation in your generated `~/.config/may-i/config.lisp`.
 
 ### Wrappers
 
