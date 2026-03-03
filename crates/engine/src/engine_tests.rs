@@ -1087,6 +1087,28 @@ fn unresolved_env_var_triggers_ask() {
 }
 
 #[test]
+fn safe_env_vars_seed_as_opaque_when_missing() {
+    // Configure a var name that is very unlikely to exist in the process env.
+    let mut config = config_with_rules(vec![allow_rule("echo")]);
+    config
+        .security
+        .safe_env_vars
+        .insert("MAYI_TEST_SAFE_MISSING".into());
+    // Should allow: the missing var is treated as safe opaque (not dynamic),
+    // so rule matching proceeds and the allow rule for `echo` applies.
+    let result = evaluate("echo $MAYI_TEST_SAFE_MISSING", &config);
+    assert_eq!(result.decision, Decision::Allow);
+}
+
+#[test]
+fn unknown_var_without_safe_list_asks() {
+    // Without safe-env-vars, a missing variable remains unresolved and is dynamic → ask.
+    let config = config_with_rules(vec![allow_rule("echo")]);
+    let result = evaluate("echo $MAYI_TEST_UNSAFE_MISSING", &config);
+    assert_eq!(result.decision, Decision::Ask);
+}
+
+#[test]
 fn command_sub_never_resolvable() {
     let env = VarEnv::empty();
     let config = config_with_rules(vec![allow_rule("echo"), allow_rule("ls")]);

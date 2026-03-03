@@ -439,7 +439,18 @@ impl<'a> AstWalker<'a> {
 /// Evaluate a shell command string against the config.
 pub fn evaluate(input: &str, config: &Config) -> EvalResult {
     let ast = parser::parse(input);
-    let env = VarEnv::from_process_env();
+
+    // Seed environment from process, then ensure any vars listed in
+    // `(safe-env-vars ...)` are present as safe (opaque) even if absent.
+    let mut env = VarEnv::from_process_env();
+    if !config.security.safe_env_vars.is_empty() {
+        for name in &config.security.safe_env_vars {
+            if env.get(name).is_none() {
+                env.set(name.clone(), VarState::Opaque);
+            }
+        }
+    }
+
     AstWalker::new(config).walk(&ast, &env).result
 }
 
