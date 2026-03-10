@@ -33,6 +33,10 @@
 ;;         (context (= :claude-code/permission-mode "acceptEdits"))
 ;;         (effect :allow))
 ;;
+;;   (rule (command "git")
+;;         (context (= :opencode/agent "plan"))
+;;         (effect :ask "Git commands in the plan agent need approval"))
+;;
 ;; ARGUMENT MATCHERS (inside (args ...))
 ;;
 ;;   (positional "push" *)                  ; match by position (skip flags); * = any
