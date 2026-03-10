@@ -3,12 +3,14 @@
 use colored::Colorize;
 
 use may_i_config as config;
-use may_i_core::Decision;
+use may_i_core::{ContextFacts, Decision};
 use may_i_engine as engine;
 use may_i_shell_parser as parser;
 
 use crate::output;
 use crate::output::print_trace;
+
+const OPENCODE_AGENT_ENV: &str = "MAYI_OPENCODE_AGENT";
 
 pub fn cmd_eval(
     command: &str,
@@ -17,9 +19,10 @@ pub fn cmd_eval(
 ) -> miette::Result<()> {
     let config_file = config::resolve_path(config_path)?;
     let config = config::load(&config_file)?;
+    let context = eval_context_from_env();
 
     if json_mode {
-        let result = engine::evaluate(command, &config);
+        let result = engine::evaluate_with_context(command, &config, &context);
         let json = serde_json::json!({
             "decision": result.decision.to_string(),
             "reason": result.reason.unwrap_or_default(),
@@ -31,7 +34,7 @@ pub fn cmd_eval(
         );
     } else {
         // Evaluate per-segment so we can both colorize and derive the aggregate result.
-        let (result, colored_command) = evaluate_segments(command, &config);
+        let (result, colored_command) = evaluate_segments(command, &config, &context);
 
         if !result.trace.is_empty() {
             println!("\n{}\n", "Trace".bold());
@@ -65,16 +68,34 @@ pub fn cmd_eval(
     Ok(())
 }
 
+fn eval_context_from_env() -> ContextFacts {
+    let mut context = ContextFacts::default();
+
+    if let Ok(agent) = std::env::var(OPENCODE_AGENT_ENV) {
+        let agent = agent.trim();
+        if !agent.is_empty() {
+            context.insert_present(":client/opencode");
+            context.insert_scalar(":opencode/agent", agent);
+        }
+    }
+
+    context
+}
+
 /// Evaluate each segment of a command, returning the aggregate result and a
 /// colorized display string. This avoids evaluating the entire command twice.
 fn evaluate_segments(
     command: &str,
     config: &may_i_core::Config,
+    context: &ContextFacts,
 ) -> (may_i_core::EvalResult, String) {
     let segments = parser::segment(command);
 
     if segments.is_empty() {
-        return (engine::evaluate(command, config), command.to_string());
+        return (
+            engine::evaluate_with_context(command, config, context),
+            command.to_string(),
+        );
     }
 
     // Evaluate each command segment, collecting (text, result) pairs.
@@ -85,7 +106,7 @@ fn evaluate_segments(
         if seg.is_operator {
             display_parts.push(format!(" {text} "));
         } else {
-            let seg_result = engine::evaluate(text, config);
+            let seg_result = engine::evaluate_with_context(text, config, context);
             let colored = match seg_result.decision {
                 Decision::Allow => text.green().underline().to_string(),
                 Decision::Ask => text.yellow().underline().to_string(),

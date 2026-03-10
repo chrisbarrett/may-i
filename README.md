@@ -46,6 +46,18 @@ example, this only allows `journalctl` when the command was unwrapped from an
       (effect :allow "Read-only prod inspection over ssh"))
 ```
 
+OpenCode integrations can also pass the active agent explicitly so policies can
+distinguish planning from implementation work:
+
+```scheme
+(rule (command "git")
+      (context (= :opencode/agent "plan"))
+      (effect :ask "Git commands in the plan agent need approval"))
+```
+
+The current integration contract uses `MAYI_OPENCODE_AGENT=<agent>` to populate
+`:client/opencode` and `:opencode/agent` during `may-i eval`.
+
 ## Installation
 
 1. Grab the latest `may-i` build from the GitHub releases, and put it on your
