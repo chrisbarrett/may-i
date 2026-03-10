@@ -212,6 +212,17 @@ Rules may contain inline `(check ...)` forms for self-testing:
              :allow "curl --head https://example.com"))
 ```
 
+Facts are the runtime context attached to a command evaluation. Fact keys are
+always namespaced. A fact may be a presence fact (the key is present) or a
+scalar fact (the key maps to a string value). Facts may be introduced by
+integrations at runtime or by wrappers during command unwrapping.
+
+Rules query facts inside `(context ...)` with:
+
+- `(has :key)` for presence
+- `(= :key "value")` for exact scalar matches
+- `(matches :key "regex")` for regex scalar matches
+
 Context-aware assertions use scoped fact blocks:
 
 ```scheme
@@ -227,6 +238,10 @@ Context-aware assertions use scoped fact blocks:
                      [:opencode/agent "plan"]]
           :ask "git add .")))
 ```
+
+`with-facts` uses vector fact literals. `[[:key]]` declares a presence fact.
+`[[:key "value"]]` declares a scalar fact. Nested `with-facts` scopes inherit
+outer facts, and inner bindings override outer bindings for the same key.
 
 `may-i check` evaluates all inline checks (built-in and user) and reports failures.
 

@@ -19,6 +19,31 @@
 ;;   (rule (command (regex "^git-.*"))                 ; match by regex
 ;;         (effect :allow))
 ;;
+;; FACTS (runtime context attached to a command evaluation)
+;;
+;; Facts are always namespaced keys like :via/ssh or :opencode/agent.
+;; They come in two shapes:
+;;
+;;   presence fact: [:via/ssh]                 ; key is present
+;;   scalar fact:   [:opencode/agent "build"] ; key has a string value
+;;
+;; Facts are introduced in a few ways:
+;;
+;;   runtime integrations
+;;     - OpenCode adds :client/opencode and :opencode/agent
+;;     - Claude Code adds :client/claude-code and related metadata
+;;
+;;   wrappers
+;;     - matched wrappers automatically add :via/<wrapper-command>
+;;     - bracket bindings like [:ssh/host *] capture a matched value as a fact
+;;
+;; Facts are queried inside (context ...) with:
+;;
+;;   (has :via/ssh)                              ; presence check
+;;   (= :opencode/agent "build")                ; exact string value
+;;   (matches :ssh/host "^prod-")               ; regex value match
+;;   (and (has :via/ssh) (= :opencode/agent "build"))
+;;
 ;; CONTEXT MATCHERS (inside (context ...))
 ;;
 ;;   (defcontext remote-prod
@@ -80,8 +105,15 @@
 ;;
 ;; INLINE CHECKS (validated by `may-i check`)
 ;;
+;; Plain checks just assert a command's expected decision:
+;;
 ;;   (check :allow "curl -I https://example.com"
 ;;          :ask "curl -d data https://example.com")
+;;
+;; Fact-aware checks simulate runtime context with (with-facts ...).
+;; Each entry in the fact vector is either [[:key]] for presence or
+;; [[:key "value"]] for a scalar binding. Nested with-facts scopes inherit
+;; outer facts, and inner bindings override outer bindings with the same key.
 ;;
 ;;   (check
 ;;     (with-facts [[:client/opencode]
@@ -97,9 +129,6 @@
 ;;   (wrapper "mise"       (positional "exec") (flag "--" :command+args))
 ;;   (wrapper "ssh"        (positional [:ssh/host *] :command+args))
 ;;   (wrapper "nix"        (positional (or "shell" "develop")) (flag "--command" :command+args))
-;;
-;;   ; matched wrappers automatically add :via/<wrapper-command>
-;;   ; bracket bindings add a scalar fact when the matched value is known
 ;;
 ;; ENV VAR RESOLUTION (allow static analysis to resolve these env vars)
 ;;

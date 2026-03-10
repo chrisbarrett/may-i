@@ -29,7 +29,18 @@ lot more done without needing your approval.
 You can use `(check ...)` forms to define inline unit tests, helping you check
 your work and avoid accidental breakages as your rules grow in complexity.
 
-Checks can also supply runtime context facts explicitly when a rule depends on
+Facts are the runtime context attached to a command evaluation. They are always
+namespaced keys like `:via/ssh` or `:opencode/agent`, and they come in two
+shapes:
+
+- presence facts: the key is present, like `:via/ssh`
+- scalar facts: the key has a string value, like `:opencode/agent = "build"`
+
+Facts can come from integrations at runtime or from wrappers while unwrapping a
+command. Rules query them in `(context ...)` with `(has :key)`, `(= :key
+"value")`, and `(matches :key "regex")`.
+
+Checks can also simulate runtime facts explicitly when a rule depends on
 client-specific state:
 
 ```scheme
@@ -44,6 +55,11 @@ client-specific state:
                      [:opencode/agent "plan"]]
           :ask "git add .")))
 ```
+
+`with-facts` takes a vector of fact-entry vectors. Use `[[:key]]` for a
+presence fact and `[[:key "value"]]` for a scalar fact. Nested `with-facts`
+scopes inherit outer facts, and inner bindings override outer bindings with the
+same key.
 
 You can also scope rules to runtime or wrapper-derived context facts. For
 example, this only allows `journalctl` when the command was unwrapped from an
