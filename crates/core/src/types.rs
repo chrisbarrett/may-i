@@ -1,7 +1,7 @@
 // Shared domain types for authorization rules and configuration.
 
 use crate::doc::Doc;
-use crate::span::{Span, offset_to_line_col};
+use crate::span::{offset_to_line_col, Span};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContextValue {
@@ -44,6 +44,13 @@ impl ContextFacts {
     pub fn iter(&self) -> impl Iterator<Item = (&str, &ContextValue)> {
         self.values.iter().map(|(k, v)| (k.as_str(), v))
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigWarning {
+    pub message: String,
+    pub span: Span,
+    pub help: Option<String>,
 }
 
 #[derive(Clone)]
@@ -355,6 +362,7 @@ pub struct Config {
     pub rules: Vec<Rule>,
     pub wrappers: Vec<Wrapper>,
     pub security: SecurityConfig,
+    pub warnings: Vec<ConfigWarning>,
     pub source_info: Option<SourceInfo>,
 }
 
@@ -1023,13 +1031,11 @@ mod tests {
 
     #[test]
     fn pos_expr_is_wildcard_delegates() {
-        assert!(
-            PosExpr {
-                quantifier: Quantifier::ZeroOrMore,
-                expr: Expr::Wildcard
-            }
-            .is_wildcard()
-        );
+        assert!(PosExpr {
+            quantifier: Quantifier::ZeroOrMore,
+            expr: Expr::Wildcard
+        }
+        .is_wildcard());
         assert!(!PosExpr::one(Expr::Literal("x".into())).is_wildcard());
     }
 

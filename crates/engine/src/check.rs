@@ -201,4 +201,35 @@ mod tests {
             Some("build")
         );
     }
+
+    #[test]
+    fn run_checks_supports_nested_with_facts_scopes() {
+        let config = may_i_config::parse::parse(
+            r#"(rule (command "git")
+                   (context (= :opencode/agent "build"))
+                   (effect :allow "build agent")
+                   (check
+                     (with-facts [[:client/opencode]]
+                       (with-facts [[:opencode/agent "build"]]
+                         :allow "git status")
+                       (with-facts [[:opencode/agent "plan"]]
+                         :ask "git status"))))"#,
+            "<test>",
+        )
+        .expect("config parses");
+
+        let results = run_checks(&config);
+        assert_eq!(results.len(), 2);
+        assert!(results[0].passed);
+        assert_eq!(results[0].actual, Decision::Allow);
+        assert_eq!(results[1].actual, Decision::Ask);
+        assert_eq!(
+            results[0].context.get_scalar(":opencode/agent"),
+            Some("build")
+        );
+        assert_eq!(
+            results[1].context.get_scalar(":opencode/agent"),
+            Some("plan")
+        );
+    }
 }

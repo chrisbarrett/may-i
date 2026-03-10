@@ -51,7 +51,11 @@ cond      = "(" "cond" branch+ ")"
 branch    = "(" condition decision ")"
 condition = "else" | matcher
 
-check     = "(" "check" (decision-kw STRING)+ ")"
+check     = "(" "check" check-item+ ")"
+check-item = decision-kw STRING | with-facts
+with-facts = "(" "with-facts" fact-literal check-item* ")"
+fact-literal = "[" fact-entry* "]"
+fact-entry = "[" KEY "]" | "[" KEY STRING "]"
 
 defcontext = "(" "defcontext" context-name context-expr ")"
 
@@ -206,6 +210,22 @@ Rules may contain inline `(check ...)` forms for self-testing:
       (effect :allow "HEAD request")
       (check :allow "curl -I https://example.com"
              :allow "curl --head https://example.com"))
+```
+
+Context-aware assertions use scoped fact blocks:
+
+```scheme
+(rule (command "git")
+      (context (= :opencode/agent "build"))
+      (effect :allow)
+      (check
+        (with-facts [[:client/opencode]
+                     [:opencode/agent "build"]]
+          :allow "git add ."
+          :allow "git checkout main")
+        (with-facts [[:client/opencode]
+                     [:opencode/agent "plan"]]
+          :ask "git add .")))
 ```
 
 `may-i check` evaluates all inline checks (built-in and user) and reports failures.

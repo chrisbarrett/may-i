@@ -36,8 +36,13 @@ client-specific state:
 (rule (command "git")
       (context (= :opencode/agent "build"))
       (effect :allow)
-      (check :allow (facts :client/opencode (:opencode/agent "build")) "git add ."
-             :ask   (facts :client/opencode (:opencode/agent "plan"))  "git add ."))
+      (check
+        (with-facts [[:client/opencode]
+                     [:opencode/agent "build"]]
+          :allow "git add .")
+        (with-facts [[:client/opencode]
+                     [:opencode/agent "plan"]]
+          :ask "git add .")))
 ```
 
 You can also scope rules to runtime or wrapper-derived context facts. For

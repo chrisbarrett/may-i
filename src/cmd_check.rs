@@ -1,7 +1,7 @@
 // Check subcommand — validate config and run checks.
 
 use colored::Colorize;
-use may_i_core::{ContextFacts, ContextValue};
+use may_i_core::{ConfigWarning, ContextFacts, ContextValue};
 use may_i_pp::colorize_atom;
 
 use may_i_config as config;
@@ -39,9 +39,16 @@ pub fn cmd_check(
             })
             .collect();
 
+        let json_warnings: Vec<serde_json::Value> = config
+            .warnings
+            .iter()
+            .map(|warning| warning_to_json(warning, &config))
+            .collect();
+
         let output = serde_json::json!({
             "passed": passed,
             "failed": failed,
+            "warnings": json_warnings,
             "results": json_results
         });
         println!(
@@ -49,6 +56,22 @@ pub fn cmd_check(
             serde_json::to_string(&output).expect("response serialization is infallible")
         );
     } else {
+        if !config.warnings.is_empty() {
+            println!("\n{}\n", "Warnings".yellow().bold());
+            for warning in &config.warnings {
+                let location = warning_location(warning, &config);
+                println!(
+                    "  {} {}",
+                    "WARN".yellow().bold(),
+                    warning.message.truecolor(255, 215, 0)
+                );
+                println!("       {}", location.dimmed());
+                if let Some(help) = &warning.help {
+                    println!("       {} {}", "help:".dimmed(), help.dimmed());
+                }
+            }
+        }
+
         let mut failures = Vec::new();
 
         for r in &results {
@@ -165,4 +188,20 @@ fn render_context(context: &ContextFacts) -> String {
         })
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+fn warning_location(warning: &ConfigWarning, config: &may_i_core::Config) -> String {
+    config
+        .source_info
+        .as_ref()
+        .map(|info| info.location_of(warning.span))
+        .unwrap_or_else(|| "<unknown>".to_string())
+}
+
+fn warning_to_json(warning: &ConfigWarning, config: &may_i_core::Config) -> serde_json::Value {
+    serde_json::json!({
+        "message": warning.message,
+        "location": warning_location(warning, config),
+        "help": warning.help,
+    })
 }

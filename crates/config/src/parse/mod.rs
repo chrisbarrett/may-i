@@ -9,9 +9,9 @@ use crate::errors::ConfigError;
 use may_i_core::Quantifier;
 use may_i_core::Span;
 use may_i_core::{
-    ArgMatcher, Check, CommandMatcher, CondArm, CondBranch, Config, ContextExpr, ContextFacts,
-    Decision, Effect, Expr, PosExpr, Rule, RuleBody, SecurityConfig, SourceInfo, Wrapper,
-    WrapperPattern, WrapperStep,
+    ArgMatcher, Check, CommandMatcher, CondArm, CondBranch, Config, ConfigWarning, ContextExpr,
+    ContextFacts, Decision, Effect, Expr, PosExpr, Rule, RuleBody, SecurityConfig, SourceInfo,
+    Wrapper, WrapperPattern, WrapperStep,
 };
 use may_i_sexpr::{RawError, Sexpr};
 
@@ -36,6 +36,7 @@ fn parse_raw(input: &str) -> Result<Config, RawError> {
     let mut rules = Vec::new();
     let mut wrappers = Vec::new();
     let mut security = SecurityConfig::default();
+    let mut warnings = Vec::new();
     let mut context_defs = std::collections::BTreeMap::new();
 
     for form in &forms {
@@ -50,7 +51,7 @@ fn parse_raw(input: &str) -> Result<Config, RawError> {
             .as_atom()
             .ok_or_else(|| RawError::new("form tag must be an atom", list[0].span()))?;
         match tag {
-            "rule" => rules.push(parse_rule(&list[1..], form.span())?),
+            "rule" => rules.push(parse_rule(&list[1..], form.span(), &mut warnings)?),
             "wrapper" => wrappers.push(parse_wrapper(&list[1..], form.span())?),
             "defcontext" => {
                 if list.len() != 3 {
@@ -121,6 +122,7 @@ fn parse_raw(input: &str) -> Result<Config, RawError> {
         rules,
         wrappers,
         security,
+        warnings,
         source_info: None,
     })
 }
@@ -226,45 +228,187 @@ fn parse_context_key(sexpr: &Sexpr) -> Result<String, RawError> {
     Ok(key.to_string())
 }
 
-fn parse_context_facts(sexpr: &Sexpr) -> Result<ContextFacts, RawError> {
-    let list = sexpr
-        .as_list()
-        .ok_or_else(|| RawError::new("check facts must be a list", sexpr.span()))?;
-    if list.is_empty() || list[0].as_atom() != Some("facts") {
+fn parse_fact_entry(entry: &Sexpr) -> Result<(String, Option<String>), RawError> {
+    let items = match entry {
+        Sexpr::Vector(items, _) => items,
+        _ => {
+            return Err(RawError::new(
+                "fact entries must be vectors like [:key] or [:key \"value\"]",
+                entry.span(),
+            ));
+        }
+    };
+
+    if items.is_empty() || items.len() > 2 {
         return Err(RawError::new(
-            "check facts must start with 'facts'",
-            sexpr.span(),
+            "fact entries must have exactly a key or a key and value",
+            entry.span(),
         ));
     }
 
-    let mut facts = ContextFacts::default();
-    for item in &list[1..] {
-        if item.as_atom().is_some() {
-            let key = parse_context_key(item)?;
-            facts.insert_present(key);
-            continue;
-        }
+    let key = parse_context_key(&items[0])?;
+    let value = if items.len() == 2 {
+        Some(
+            items[1]
+                .as_atom()
+                .ok_or_else(|| RawError::new("context fact value must be a string", items[1].span()))?
+                .to_string(),
+        )
+    } else {
+        None
+    };
 
-        let pair = item.as_list().ok_or_else(|| {
-            RawError::new(
-                "check facts entries must be a namespaced key or (:key \"value\") pair",
-                item.span(),
-            )
-        })?;
-        if pair.len() != 2 {
+    Ok((key, value))
+}
+
+fn parse_fact_literal(
+    sexpr: &Sexpr,
+    warnings: &mut Vec<ConfigWarning>,
+) -> Result<ContextFacts, RawError> {
+    let items = match sexpr {
+        Sexpr::Vector(items, _) => items,
+        _ => return Err(RawError::new("with-facts requires a fact vector", sexpr.span())),
+    };
+
+    if items.is_empty() {
+        warnings.push(ConfigWarning {
+            message: "with-facts fact vector binds no facts".to_string(),
+            span: sexpr.span(),
+            help: Some("add at least one fact entry like [[:client/opencode]] or remove the empty vector".to_string()),
+        });
+    }
+
+    let mut facts = ContextFacts::default();
+    for item in items {
+        let (key, value) = parse_fact_entry(item)?;
+        if facts.has(&key) {
             return Err(RawError::new(
-                "scalar context facts must have exactly a key and a value",
+                format!("duplicate fact key in with-facts: {key}"),
                 item.span(),
             ));
         }
-        let key = parse_context_key(&pair[0])?;
-        let value = pair[1]
-            .as_atom()
-            .ok_or_else(|| RawError::new("context fact value must be a string", pair[1].span()))?;
-        facts.insert_scalar(key, value.to_string());
+        match value {
+            Some(value) => facts.insert_scalar(key, value),
+            None => facts.insert_present(key),
+        }
     }
 
     Ok(facts)
+}
+
+fn parse_check_items(
+    items: &[Sexpr],
+    context: &ContextFacts,
+    warnings: &mut Vec<ConfigWarning>,
+    check_span: Span,
+) -> Result<Vec<Check>, RawError> {
+    let mut checks = Vec::new();
+    let mut i = 0;
+
+    while i < items.len() {
+        if let Some(list) = items[i].as_list() {
+            match list.first().and_then(Sexpr::as_atom) {
+                Some("with-facts") => {
+                    checks.extend(parse_with_facts(list, context, warnings)?);
+                    i += 1;
+                    continue;
+                }
+                Some("facts") => {
+                    return Err(RawError::new(
+                        "inline check facts are no longer supported",
+                        items[i].span(),
+                    )
+                    .with_help(
+                        "wrap assertions in (with-facts [[:client/opencode] [:opencode/agent \"build\"]] :allow \"cmd\")",
+                    ));
+                }
+                _ => {}
+            }
+        }
+
+        let expected = match items[i].as_atom().ok_or_else(|| {
+            RawError::new(
+                "check entries must start with a decision keyword or with-facts",
+                items[i].span(),
+            )
+        })? {
+            ":allow" => Decision::Allow,
+            ":deny" => Decision::Deny,
+            ":ask" => Decision::Ask,
+            other => {
+                return Err(RawError::new(
+                    format!("unknown expected decision: {other}"),
+                    items[i].span(),
+                )
+                .with_label("not a valid decision")
+                .with_help("valid decisions: :allow, :deny, :ask"));
+            }
+        };
+        i += 1;
+
+        if i >= items.len() {
+            return Err(RawError::new(
+                "check must provide a command after each decision",
+                check_span,
+            )
+            .with_help(
+                "use :allow \"cmd\" or (with-facts [[:client/opencode] [:opencode/agent \"build\"]] :allow \"cmd\")",
+            ));
+        }
+
+        if let Some(list) = items[i].as_list()
+            && list.first().and_then(Sexpr::as_atom) == Some("facts")
+        {
+            return Err(RawError::new(
+                "inline check facts are no longer supported",
+                items[i].span(),
+            )
+            .with_help(
+                "wrap assertions in (with-facts [[:client/opencode] [:opencode/agent \"build\"]] :allow \"cmd\")",
+            ));
+        }
+
+        let cmd = items[i]
+            .as_atom()
+            .ok_or_else(|| RawError::new("check command must be a string", items[i].span()))?;
+        checks.push(Check {
+            command: cmd.to_string(),
+            expected,
+            context: context.clone(),
+            source_span: items[i].span(),
+        });
+        i += 1;
+    }
+
+    Ok(checks)
+}
+
+fn parse_with_facts(
+    list: &[Sexpr],
+    inherited: &ContextFacts,
+    warnings: &mut Vec<ConfigWarning>,
+) -> Result<Vec<Check>, RawError> {
+    if list.len() < 2 {
+        return Err(RawError::new(
+            "with-facts must have a fact vector",
+            list.first().map_or(Span::new(0, 0), Sexpr::span),
+        )
+        .with_help("use (with-facts [[:client/opencode]] :allow \"cmd\")"));
+    }
+
+    let facts = parse_fact_literal(&list[1], warnings)?;
+    let merged = inherited.merge(&facts);
+
+    if list.len() == 2 {
+        warnings.push(ConfigWarning {
+            message: "with-facts contains no assertions".to_string(),
+            span: Span::new(list[0].span().start, list[1].span().end),
+            help: Some("add at least one :allow/:deny/:ask assertion or nested with-facts block".to_string()),
+        });
+        return Ok(Vec::new());
+    }
+
+    parse_check_items(&list[2..], &merged, warnings, Span::new(list[0].span().start, list[list.len() - 1].span().end))
 }
 
 fn resolve_context_expr(
@@ -519,7 +663,11 @@ fn parse_matcher_unless_form(args: &[Sexpr], form_span: Span) -> Result<ArgMatch
     }))
 }
 
-fn parse_rule(parts: &[Sexpr], rule_span: Span) -> Result<Rule, RawError> {
+fn parse_rule(
+    parts: &[Sexpr],
+    rule_span: Span,
+    warnings: &mut Vec<ConfigWarning>,
+) -> Result<Rule, RawError> {
     let mut command = None;
     let mut context = None;
     let mut matcher = None;
@@ -568,60 +716,12 @@ fn parse_rule(parts: &[Sexpr], rule_span: Span) -> Result<Rule, RawError> {
                 effect = Some(parse_effect(list)?);
             }
             "check" => {
-                let mut i = 1;
-                while i < list.len() {
-                    let expected = match list[i].as_atom().ok_or_else(|| {
-                        RawError::new("check decision must be an atom", list[i].span())
-                    })? {
-                        ":allow" => Decision::Allow,
-                        ":deny" => Decision::Deny,
-                        ":ask" => Decision::Ask,
-                        other => {
-                            return Err(RawError::new(
-                                format!("unknown expected decision: {other}"),
-                                list[i].span(),
-                            )
-                            .with_label("not a valid decision")
-                            .with_help("valid decisions: :allow, :deny, :ask"));
-                        }
-                    };
-                    i += 1;
-
-                    if i >= list.len() {
-                        return Err(RawError::new(
-                            "check must provide a command after each decision",
-                            part.span(),
-                        )
-                        .with_help(
-                            "use :allow \"cmd\" or :allow (facts :client/opencode (:opencode/agent \"build\")) \"cmd\"",
-                        ));
-                    }
-
-                    let mut context = ContextFacts::default();
-                    if let Some(items) = list[i].as_list()
-                        && items.first().and_then(Sexpr::as_atom) == Some("facts")
-                    {
-                        context = parse_context_facts(&list[i])?;
-                        i += 1;
-                        if i >= list.len() {
-                            return Err(RawError::new(
-                                "check facts must be followed by a command string",
-                                part.span(),
-                            ));
-                        }
-                    }
-
-                    let cmd = list[i].as_atom().ok_or_else(|| {
-                        RawError::new("check command must be a string", list[i].span())
-                    })?;
-                    checks.push(Check {
-                        command: cmd.to_string(),
-                        expected,
-                        context,
-                        source_span: list[i].span(),
-                    });
-                    i += 1;
-                }
+                checks.extend(parse_check_items(
+                    &list[1..],
+                    &ContextFacts::default(),
+                    warnings,
+                    part.span(),
+                )?);
             }
             other => {
                 return Err(RawError::new(
@@ -1304,16 +1404,111 @@ mod tests {
     }
 
     #[test]
-    fn checks_can_include_context_facts() {
+    fn checks_can_scope_context_facts_with_with_facts() {
         let config = parse(
+            r#"(rule (command "git")
+                   (effect :allow)
+                   (check
+                     (with-facts [[:client/opencode]
+                                  [:opencode/agent "build"]]
+                       :allow "git status"
+                       :ask "git push")))"#,
+        )
+        .unwrap();
+        assert_eq!(config.rules[0].checks.len(), 2);
+        for check in &config.rules[0].checks {
+            assert!(check.context.has(":client/opencode"));
+            assert_eq!(check.context.get_scalar(":opencode/agent"), Some("build"));
+        }
+        assert_eq!(config.rules[0].checks[0].expected, Decision::Allow);
+        assert_eq!(config.rules[0].checks[1].expected, Decision::Ask);
+    }
+
+    #[test]
+    fn nested_with_facts_overrides_outer_keys() {
+        let config = parse(
+            r#"(rule (command "git")
+                   (effect :allow)
+                   (check
+                     (with-facts [[:client/opencode]
+                                  [:opencode/agent "build"]]
+                       :allow "git status"
+                       (with-facts [[:opencode/agent "plan"]]
+                         :ask "git add ."))))"#,
+        )
+        .unwrap();
+        assert_eq!(config.rules[0].checks.len(), 2);
+        assert_eq!(
+            config.rules[0].checks[0].context.get_scalar(":opencode/agent"),
+            Some("build")
+        );
+        assert_eq!(
+            config.rules[0].checks[1].context.get_scalar(":opencode/agent"),
+            Some("plan")
+        );
+    }
+
+    #[test]
+    fn with_facts_allows_multiple_via_keys() {
+        let config = parse(
+            r#"(rule (command "journalctl")
+                   (effect :allow)
+                   (check
+                     (with-facts [[:via/sudo] [:via/ssh] [:ssh/host "prod-1"]]
+                       :allow "journalctl -u nginx")))"#,
+        )
+        .unwrap();
+        let check = &config.rules[0].checks[0];
+        assert!(check.context.has(":via/sudo"));
+        assert!(check.context.has(":via/ssh"));
+        assert_eq!(check.context.get_scalar(":ssh/host"), Some("prod-1"));
+    }
+
+    #[test]
+    fn duplicate_fact_keys_in_with_facts_are_rejected() {
+        let err = parse(
+            r#"(rule (command "git")
+                   (effect :allow)
+                   (check
+                     (with-facts [[:opencode/agent "build"]
+                                  [:opencode/agent "plan"]]
+                       :allow "git status")))"#,
+        )
+        .unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("duplicate fact key"), "got: {msg}");
+    }
+
+    #[test]
+    fn with_facts_emits_warnings_for_empty_vector_and_body() {
+        let config = parse(
+            r#"(rule (command "git")
+                   (effect :allow)
+                   (check
+                     (with-facts [] :allow "git status")
+                     (with-facts [[:client/opencode]])))"#,
+        )
+        .unwrap();
+        assert_eq!(config.warnings.len(), 2);
+        assert!(config.warnings[0].message.contains("binds no facts"));
+        assert!(config.warnings[1].message.contains("no assertions"));
+    }
+
+    #[test]
+    fn legacy_inline_check_facts_are_rejected_with_migration_hint() {
+        let err = parse(
             r#"(rule (command "git")
                    (effect :allow)
                    (check :allow (facts :client/opencode (:opencode/agent "build")) "git status"))"#,
         )
-        .unwrap();
-        let check = &config.rules[0].checks[0];
-        assert!(check.context.has(":client/opencode"));
-        assert_eq!(check.context.get_scalar(":opencode/agent"), Some("build"));
+        .unwrap_err();
+        let handler = miette::GraphicalReportHandler::new_themed(
+            miette::GraphicalTheme::unicode_nocolor(),
+        );
+        let mut rendered = String::new();
+        handler.render_report(&mut rendered, err.as_ref()).unwrap();
+        assert!(rendered.contains("no longer supported"), "got: {rendered}");
+        assert!(rendered.contains("with-facts"), "got: {rendered}");
     }
 
     #[test]
