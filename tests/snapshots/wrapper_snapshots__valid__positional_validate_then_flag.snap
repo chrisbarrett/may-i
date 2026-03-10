@@ -1,6 +1,5 @@
 ---
 source: tests/wrapper_snapshots.rs
-assertion_line: 108
 expression: "parse_wrappers(r#\"(wrapper \"mise\" (positional \"exec\") (flag \"--\" :command+args))\"#)"
 ---
 [
@@ -9,9 +8,12 @@ expression: "parse_wrappers(r#\"(wrapper \"mise\" (positional \"exec\") (flag \"
         steps: [
             Positional {
                 patterns: [
-                    Literal(
-                        "exec",
-                    ),
+                    WrapperPattern {
+                        expr: Literal(
+                            "exec",
+                        ),
+                        bind_fact: None,
+                    },
                 ],
                 capture: false,
             },

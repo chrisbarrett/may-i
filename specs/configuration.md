@@ -20,11 +20,19 @@ No config file → built-in defaults only.
 
 ```
 file      = form*
-form      = rule | wrapper | security
+form      = rule | wrapper | defcontext | security
 
-rule      = "(" "rule" command args? decision? check* ")"
+rule      = "(" "rule" command context? args? decision? check* ")"
 command   = "(" "command" cmd-val ")"
 cmd-val   = STRING | "(" "or" STRING+ ")" | "(" "regex" STRING ")"
+context   = "(" "context" context-expr ")"
+context-expr = context-name
+             | "(" "and" context-expr+ ")"
+             | "(" "or" context-expr+ ")"
+             | "(" "not" context-expr ")"
+             | "(" "has" KEY ")"
+             | "(" "=" KEY STRING ")"
+             | "(" "matches" KEY STRING ")"
 args      = "(" "args" matcher ")"
 matcher   = pos | exact | any | forb | and | or | not | cond
 pos       = "(" "positional" pos-pat+ ")"
@@ -45,12 +53,16 @@ condition = "else" | matcher
 
 check     = "(" "check" (decision-kw STRING)+ ")"
 
+defcontext = "(" "defcontext" context-name context-expr ")"
+
 wrapper      = "(" "wrapper" STRING wrapper-body ")"
 wrapper-body = capture-kw
              | wrapper-step+
-wrapper-step = "(" "positional" pat* capture-kw? ")"
+wrapper-step = "(" "positional" wrapper-pat* capture-kw? ")"
              | "(" "flag" STRING capture-kw ")"
 capture-kw   = ":command+args" | ":command" | ":args"
+wrapper-pat  = pat | "[" KEY pat "]"
+KEY          = atom beginning with `:`
 
 STRING    = quoted string (double-quote, backslash escapes)
 ```
@@ -71,6 +83,16 @@ Comments: `;` to end of line.
 
 ;; Allow: simple read-only commands
 (rule (command (or "cat" "ls" "grep"))
+      (effect :allow))
+
+;; Reusable context aliases
+(defcontext remote-prod
+  (and (has :via/ssh)
+       (matches :ssh/host "^prod-")))
+
+;; Allow only in a specific Claude Code permission mode
+(rule (command "echo")
+      (context (= :claude-code/permission-mode "acceptEdits"))
       (effect :allow))
 
 ;; Allow: curl without mutating flags (defaults to GET)
@@ -116,9 +138,10 @@ Comments: `;` to end of line.
              :deny "tmux kill-server"))
 
 ;; Wrappers
-(wrapper "nohup" after-flags)
-(wrapper "mise" (positional "exec") (after "--"))
-(wrapper "nix" (positional "shell") (after "--command"))
+(wrapper "nohup" :command+args)
+(wrapper "mise" (positional "exec") (flag "--" :command+args))
+(wrapper "nix" (positional "shell") (flag "--command" :command+args))
+(wrapper "ssh" (positional [:ssh/host *] :command+args))
 
 ```
 

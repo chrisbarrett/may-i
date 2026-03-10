@@ -362,9 +362,43 @@ fn collect_annotations_inner(doc: &Doc<Option<EvalAnn>>, out: &mut Vec<(String, 
 fn format_annotation(doc: &Doc<Option<EvalAnn>>, ann: &EvalAnn) -> Option<(String, String)> {
     match ann {
         EvalAnn::CommandMatch(_) => None,
+        EvalAnn::ContextResult(_) => None,
         EvalAnn::ArgsResult(_) => None,
         EvalAnn::RuleEffect { .. } => None, // handled as outcome
         EvalAnn::DefaultAsk => None,
+        EvalAnn::ContextHas { key, matched } => {
+            let needle = node_text(doc);
+            let arrow = if *matched { "→ yes" } else { "→ no" };
+            Some((needle, format!("{key} present {arrow}")))
+        }
+        EvalAnn::ContextEquals {
+            key,
+            expected,
+            actual,
+            matched,
+        } => {
+            let needle = node_text(doc);
+            let actual = actual.as_deref().unwrap_or("<absent>");
+            let arrow = if *matched { "→ yes" } else { "→ no" };
+            Some((
+                needle,
+                format!("{key} = \"{actual}\" (expected \"{expected}\") {arrow}"),
+            ))
+        }
+        EvalAnn::ContextMatches {
+            key,
+            pattern,
+            actual,
+            matched,
+        } => {
+            let needle = node_text(doc);
+            let actual = actual.as_deref().unwrap_or("<absent>");
+            let arrow = if *matched { "→ yes" } else { "→ no" };
+            Some((
+                needle,
+                format!("\"{actual}\" ~ /{pattern}/ for {key} {arrow}"),
+            ))
+        }
 
         EvalAnn::ExprVsArg { arg, matched } => {
             let needle = node_text(doc);
@@ -635,7 +669,10 @@ fn has_any_visible_annotation(doc: &Doc<Option<EvalAnn>>) -> bool {
     if let Some(ann) = &doc.ann
         && !matches!(
             ann,
-            EvalAnn::CommandMatch(_) | EvalAnn::ArgsResult(_) | EvalAnn::RuleEffect { .. }
+            EvalAnn::CommandMatch(_)
+                | EvalAnn::ContextResult(_)
+                | EvalAnn::ArgsResult(_)
+                | EvalAnn::RuleEffect { .. }
         )
     {
         return true;
@@ -785,6 +822,39 @@ fn eval_ann_to_json(ann: &EvalAnn) -> serde_json::Value {
     match ann {
         EvalAnn::CommandMatch(matched) => serde_json::json!({
             "type": "command_match",
+            "matched": matched,
+        }),
+        EvalAnn::ContextResult(matched) => serde_json::json!({
+            "type": "context_result",
+            "matched": matched,
+        }),
+        EvalAnn::ContextHas { key, matched } => serde_json::json!({
+            "type": "context_has",
+            "key": key,
+            "matched": matched,
+        }),
+        EvalAnn::ContextEquals {
+            key,
+            expected,
+            actual,
+            matched,
+        } => serde_json::json!({
+            "type": "context_equals",
+            "key": key,
+            "expected": expected,
+            "actual": actual,
+            "matched": matched,
+        }),
+        EvalAnn::ContextMatches {
+            key,
+            pattern,
+            actual,
+            matched,
+        } => serde_json::json!({
+            "type": "context_matches",
+            "key": key,
+            "pattern": pattern,
+            "actual": actual,
             "matched": matched,
         }),
         EvalAnn::ExprVsArg { arg, matched } => serde_json::json!({

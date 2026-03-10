@@ -6,8 +6,8 @@
 // annotated trees to produce two-column trace output.
 
 use may_i_core::{
-    ArgMatcher, CommandMatcher, CondArm, Doc, DocF, Effect, EvalAnn, Expr, ExprBranch, LayoutHint,
-    PosExpr, Rule, RuleBody,
+    ArgMatcher, CommandMatcher, CondArm, ContextExpr, ContextFacts, Doc, DocF, Effect, EvalAnn,
+    Expr, ExprBranch, LayoutHint, PosExpr, Rule, RuleBody,
 };
 
 use crate::matcher::{
@@ -114,20 +114,54 @@ pub(crate) fn annotate_rule(
     rule: &Rule,
     cmd_name: &str,
     expanded_args: &[ResolvedArg],
+    context: &ContextFacts,
 ) -> (ADoc, Option<Effect>) {
     let cmd_matched = command_matches(cmd_name, &rule.command);
     let cmd_doc = annotate_command(&rule.command, cmd_name, cmd_matched);
 
     if !cmd_matched {
         let mut cs = vec![atom("rule"), cmd_doc];
+        if let Some(context_expr) = &rule.context {
+            cs.push(list(vec![
+                atom("context"),
+                unannotate(context_expr.to_doc()),
+            ]));
+        }
         for d in rule.body.to_doc() {
             cs.push(unannotate(d));
         }
         return (list(cs), None);
     }
 
+    let (context_doc, context_matched) = if let Some(context_expr) = &rule.context {
+        let (doc, matched) = annotate_context_expr(context_expr, context);
+        (
+            Some(ann_list(
+                EvalAnn::ContextResult(matched),
+                vec![atom("context"), doc],
+            )),
+            matched,
+        )
+    } else {
+        (None, true)
+    };
+
+    if !context_matched {
+        let mut cs = vec![atom("rule"), cmd_doc];
+        if let Some(doc) = context_doc {
+            cs.push(doc);
+        }
+        for d in rule.body.to_doc() {
+            cs.push(unannotate(d));
+        }
+        return (propagate_break_hints(list(cs)), None);
+    }
+
     let (body_docs, effect) = annotate_body(&rule.body, expanded_args);
     let mut cs = vec![atom("rule"), cmd_doc];
+    if let Some(doc) = context_doc {
+        cs.push(doc);
+    }
     cs.extend(body_docs);
 
     let ann = effect.as_ref().map(|e| EvalAnn::RuleEffect {
@@ -141,6 +175,123 @@ pub(crate) fn annotate_rule(
         dimmed: false,
     };
     (propagate_break_hints(doc), effect)
+}
+
+fn annotate_context_expr(expr: &ContextExpr, facts: &ContextFacts) -> (ADoc, bool) {
+    match expr {
+        ContextExpr::Alias(name) => {
+            let matched = false;
+            (
+                Doc {
+                    ann: Some(EvalAnn::ContextResult(matched)),
+                    node: DocF::Atom(name.clone()),
+                    layout: LayoutHint::Auto,
+                    dimmed: false,
+                },
+                matched,
+            )
+        }
+        ContextExpr::Has(key) => {
+            let matched = facts.has(key);
+            (
+                ann_list(
+                    EvalAnn::ContextHas {
+                        key: key.clone(),
+                        matched,
+                    },
+                    vec![atom("has"), atom(key.clone())],
+                ),
+                matched,
+            )
+        }
+        ContextExpr::Equals { key, value } => {
+            let actual = facts.get_scalar(key).map(ToString::to_string);
+            let matched = actual.as_deref().is_some_and(|actual| actual == value);
+            (
+                ann_list(
+                    EvalAnn::ContextEquals {
+                        key: key.clone(),
+                        expected: value.clone(),
+                        actual,
+                        matched,
+                    },
+                    vec![atom("="), atom(key.clone()), atom(format!("\"{value}\""))],
+                ),
+                matched,
+            )
+        }
+        ContextExpr::Matches { key, regex } => {
+            let actual = facts.get_scalar(key).map(ToString::to_string);
+            let matched = actual
+                .as_deref()
+                .is_some_and(|actual| regex.is_match(actual));
+            (
+                ann_list(
+                    EvalAnn::ContextMatches {
+                        key: key.clone(),
+                        pattern: regex.as_str().to_string(),
+                        actual,
+                        matched,
+                    },
+                    vec![
+                        atom("matches"),
+                        atom(key.clone()),
+                        atom(format!("\"{}\"", regex.as_str())),
+                    ],
+                ),
+                matched,
+            )
+        }
+        ContextExpr::And(exprs) => {
+            let mut matched = true;
+            let mut children = vec![atom("and")];
+            for expr in exprs {
+                let (doc, child_match) = annotate_context_expr(expr, facts);
+                matched &= child_match;
+                children.push(doc);
+            }
+            (
+                Doc {
+                    ann: Some(EvalAnn::ContextResult(matched)),
+                    node: DocF::List(children),
+                    layout: LayoutHint::Auto,
+                    dimmed: false,
+                },
+                matched,
+            )
+        }
+        ContextExpr::Or(exprs) => {
+            let mut matched = false;
+            let mut children = vec![atom("or")];
+            for expr in exprs {
+                let (doc, child_match) = annotate_context_expr(expr, facts);
+                matched |= child_match;
+                children.push(doc);
+            }
+            (
+                Doc {
+                    ann: Some(EvalAnn::ContextResult(matched)),
+                    node: DocF::List(children),
+                    layout: LayoutHint::Auto,
+                    dimmed: false,
+                },
+                matched,
+            )
+        }
+        ContextExpr::Not(expr) => {
+            let (doc, child_match) = annotate_context_expr(expr, facts);
+            let matched = !child_match;
+            (
+                Doc {
+                    ann: Some(EvalAnn::ContextResult(matched)),
+                    node: DocF::List(vec![atom("not"), doc]),
+                    layout: LayoutHint::Auto,
+                    dimmed: false,
+                },
+                matched,
+            )
+        }
+    }
 }
 
 fn annotate_command(matcher: &CommandMatcher, cmd_name: &str, matched: bool) -> ADoc {
@@ -715,12 +866,25 @@ mod tests {
         assert_eq!(ann_str, plain_str);
     }
 
+    fn empty_context() -> ContextFacts {
+        ContextFacts::default()
+    }
+
+    fn annotate_rule(
+        rule: &Rule,
+        cmd_name: &str,
+        expanded_args: &[ResolvedArg],
+    ) -> (ADoc, Option<Effect>) {
+        super::annotate_rule(rule, cmd_name, expanded_args, &empty_context())
+    }
+
     // ── Simple rule (no args) ───────────────────────────────────────
 
     #[test]
     fn simple_allow_rule() {
         let rule = Rule {
             command: CommandMatcher::Exact("ls".into()),
+            context: None,
             body: RuleBody::Effect {
                 matcher: None,
                 effect: Effect {
@@ -753,6 +917,7 @@ mod tests {
     fn command_no_match() {
         let rule = Rule {
             command: CommandMatcher::Exact("ls".into()),
+            context: None,
             body: RuleBody::Effect {
                 matcher: None,
                 effect: Effect {
@@ -779,6 +944,7 @@ mod tests {
     fn positional_match() {
         let rule = Rule {
             command: CommandMatcher::Exact("git".into()),
+            context: None,
             body: RuleBody::Effect {
                 matcher: Some(ArgMatcher::Positional(vec![PosExpr::one(Expr::Literal(
                     "push".into(),
@@ -807,6 +973,7 @@ mod tests {
     fn positional_no_match() {
         let rule = Rule {
             command: CommandMatcher::Exact("git".into()),
+            context: None,
             body: RuleBody::Effect {
                 matcher: Some(ArgMatcher::Positional(vec![PosExpr::one(Expr::Literal(
                     "push".into(),
@@ -835,6 +1002,7 @@ mod tests {
     fn positional_missing_arg() {
         let rule = Rule {
             command: CommandMatcher::Exact("git".into()),
+            context: None,
             body: RuleBody::Effect {
                 matcher: Some(ArgMatcher::Positional(vec![PosExpr::one(Expr::Literal(
                     "push".into(),
@@ -857,6 +1025,7 @@ mod tests {
     fn quantifier_match() {
         let rule = Rule {
             command: CommandMatcher::Exact("git".into()),
+            context: None,
             body: RuleBody::Effect {
                 matcher: Some(ArgMatcher::Positional(vec![
                     PosExpr::one(Expr::Literal("push".into())),
@@ -893,6 +1062,7 @@ mod tests {
     fn anywhere_match() {
         let rule = Rule {
             command: CommandMatcher::Exact("git".into()),
+            context: None,
             body: RuleBody::Effect {
                 matcher: Some(ArgMatcher::Anywhere(vec![Expr::Literal("--force".into())])),
                 effect: Effect {
@@ -921,6 +1091,7 @@ mod tests {
     fn branching_cond_match() {
         let rule = Rule {
             command: CommandMatcher::Exact("git".into()),
+            context: None,
             body: RuleBody::Branching(ArgMatcher::Cond(CondArm {
                 branches: vec![CondBranch {
                     matcher: ArgMatcher::Anywhere(vec![Expr::Literal("--force".into())]),
@@ -949,6 +1120,7 @@ mod tests {
     fn branching_cond_branch_match() {
         let rule = Rule {
             command: CommandMatcher::Exact("git".into()),
+            context: None,
             body: RuleBody::Branching(ArgMatcher::Cond(CondArm {
                 branches: vec![CondBranch {
                     matcher: ArgMatcher::Anywhere(vec![Expr::Literal("--force".into())]),
@@ -989,6 +1161,7 @@ mod tests {
         ]);
         let rule = Rule {
             command: CommandMatcher::Exact("cmd".into()),
+            context: None,
             body: RuleBody::Effect {
                 matcher: Some(ArgMatcher::Positional(vec![PosExpr::one(cond_expr)])),
                 effect: Effect {
@@ -1009,6 +1182,7 @@ mod tests {
     fn regex_command_match() {
         let rule = Rule {
             command: CommandMatcher::Regex(regex::Regex::new("^git").unwrap()),
+            context: None,
             body: RuleBody::Effect {
                 matcher: None,
                 effect: Effect {
@@ -1027,6 +1201,7 @@ mod tests {
     fn list_command_match() {
         let rule = Rule {
             command: CommandMatcher::List(vec!["cat".into(), "bat".into()]),
+            context: None,
             body: RuleBody::Effect {
                 matcher: None,
                 effect: Effect {
@@ -1047,6 +1222,7 @@ mod tests {
     fn or_matcher_match() {
         let rule = Rule {
             command: CommandMatcher::Exact("git".into()),
+            context: None,
             body: RuleBody::Effect {
                 matcher: Some(ArgMatcher::Or(vec![
                     ArgMatcher::Positional(vec![PosExpr::one(Expr::Literal("push".into()))]),
@@ -1068,6 +1244,7 @@ mod tests {
     fn not_matcher_inverts() {
         let rule = Rule {
             command: CommandMatcher::Exact("git".into()),
+            context: None,
             body: RuleBody::Effect {
                 matcher: Some(ArgMatcher::Not(Box::new(ArgMatcher::Anywhere(vec![
                     Expr::Literal("--force".into()),
@@ -1090,6 +1267,7 @@ mod tests {
     fn and_matcher_both_match() {
         let rule = Rule {
             command: CommandMatcher::Exact("git".into()),
+            context: None,
             body: RuleBody::Effect {
                 matcher: Some(ArgMatcher::And(vec![
                     ArgMatcher::Positional(vec![PosExpr::one(Expr::Literal("push".into()))]),
@@ -1111,6 +1289,7 @@ mod tests {
     fn and_matcher_first_fails() {
         let rule = Rule {
             command: CommandMatcher::Exact("git".into()),
+            context: None,
             body: RuleBody::Effect {
                 matcher: Some(ArgMatcher::And(vec![
                     ArgMatcher::Positional(vec![PosExpr::one(Expr::Literal("push".into()))]),
@@ -1134,6 +1313,7 @@ mod tests {
     fn exact_positional_extra_args() {
         let rule = Rule {
             command: CommandMatcher::Exact("git".into()),
+            context: None,
             body: RuleBody::Effect {
                 matcher: Some(ArgMatcher::ExactPositional(vec![PosExpr::one(
                     Expr::Literal("push".into()),
@@ -1163,6 +1343,7 @@ mod tests {
     fn optional_arg_present() {
         let rule = Rule {
             command: CommandMatcher::Exact("cmd".into()),
+            context: None,
             body: RuleBody::Effect {
                 matcher: Some(ArgMatcher::Positional(vec![
                     PosExpr {
@@ -1187,6 +1368,7 @@ mod tests {
     fn optional_arg_absent() {
         let rule = Rule {
             command: CommandMatcher::Exact("cmd".into()),
+            context: None,
             body: RuleBody::Effect {
                 matcher: Some(ArgMatcher::Positional(vec![
                     PosExpr {
@@ -1213,6 +1395,7 @@ mod tests {
     fn opaque_arg_matches_wildcard() {
         let rule = Rule {
             command: CommandMatcher::Exact("cmd".into()),
+            context: None,
             body: RuleBody::Effect {
                 matcher: Some(ArgMatcher::Positional(vec![PosExpr::one(Expr::Wildcard)])),
                 effect: Effect {
@@ -1231,6 +1414,7 @@ mod tests {
     fn opaque_arg_rejects_literal() {
         let rule = Rule {
             command: CommandMatcher::Exact("cmd".into()),
+            context: None,
             body: RuleBody::Effect {
                 matcher: Some(ArgMatcher::Positional(vec![PosExpr::one(Expr::Literal(
                     "specific".into(),
@@ -1253,6 +1437,7 @@ mod tests {
     fn expr_or_match() {
         let rule = Rule {
             command: CommandMatcher::Exact("cmd".into()),
+            context: None,
             body: RuleBody::Effect {
                 matcher: Some(ArgMatcher::Positional(vec![PosExpr::one(Expr::Or(vec![
                     Expr::Literal("a".into()),
@@ -1274,6 +1459,7 @@ mod tests {
     fn expr_not_match() {
         let rule = Rule {
             command: CommandMatcher::Exact("cmd".into()),
+            context: None,
             body: RuleBody::Effect {
                 matcher: Some(ArgMatcher::Positional(vec![PosExpr::one(Expr::Not(
                     Box::new(Expr::Literal("bad".into())),
@@ -1296,6 +1482,7 @@ mod tests {
     fn branching_no_match() {
         let rule = Rule {
             command: CommandMatcher::Exact("git".into()),
+            context: None,
             body: RuleBody::Branching(ArgMatcher::Cond(CondArm {
                 branches: vec![CondBranch {
                     matcher: ArgMatcher::Anywhere(vec![Expr::Literal("--force".into())]),
@@ -1320,6 +1507,7 @@ mod tests {
         }]);
         let rule = Rule {
             command: CommandMatcher::Exact("cmd".into()),
+            context: None,
             body: RuleBody::Effect {
                 matcher: Some(ArgMatcher::Positional(vec![PosExpr::one(cond_expr)])),
                 effect: Effect {
@@ -1340,6 +1528,7 @@ mod tests {
     fn structure_matches_to_doc() {
         let rule = Rule {
             command: CommandMatcher::Exact("git".into()),
+            context: None,
             body: RuleBody::Effect {
                 matcher: Some(ArgMatcher::Positional(vec![
                     PosExpr::one(Expr::Literal("push".into())),

@@ -3,6 +3,7 @@
 use std::io::Read;
 
 use may_i_config as config;
+use may_i_core::ContextFacts;
 use may_i_engine as engine;
 use miette::Context;
 
@@ -36,7 +37,21 @@ pub fn cmd_hook(config_path: Option<&std::path::Path>) -> miette::Result<()> {
 
     let config_file = config::resolve_path(config_path)?;
     let config = config::load(&config_file)?;
-    let result = engine::evaluate(command, &config);
+    let mut context = ContextFacts::default();
+    context.insert_present(":client/claude-code");
+    if let Some(permission_mode) = payload.get("permission_mode").and_then(|v| v.as_str()) {
+        context.insert_scalar(":claude-code/permission-mode", permission_mode);
+    }
+    if let Some(cwd) = payload.get("cwd").and_then(|v| v.as_str()) {
+        context.insert_scalar(":claude-code/cwd", cwd);
+    }
+    if let Some(tool_name) = payload.get("tool_name").and_then(|v| v.as_str()) {
+        context.insert_scalar(":claude-code/tool-name", tool_name);
+    }
+    if let Some(event_name) = payload.get("hook_event_name").and_then(|v| v.as_str()) {
+        context.insert_scalar(":claude-code/hook-event-name", event_name);
+    }
+    let result = engine::evaluate_with_context(command, &config, &context);
 
     let response = serde_json::json!({
         "hookSpecificOutput": {

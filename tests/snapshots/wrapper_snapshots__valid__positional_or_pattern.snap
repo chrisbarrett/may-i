@@ -1,6 +1,5 @@
 ---
 source: tests/wrapper_snapshots.rs
-assertion_line: 84
 expression: "parse_wrappers(r#\"(wrapper \"x\" (positional (or \"foo\" \"bar\") :command+args))\"#)"
 ---
 [
@@ -9,16 +8,19 @@ expression: "parse_wrappers(r#\"(wrapper \"x\" (positional (or \"foo\" \"bar\") 
         steps: [
             Positional {
                 patterns: [
-                    Or(
-                        [
-                            Literal(
-                                "foo",
-                            ),
-                            Literal(
-                                "bar",
-                            ),
-                        ],
-                    ),
+                    WrapperPattern {
+                        expr: Or(
+                            [
+                                Literal(
+                                    "foo",
+                                ),
+                                Literal(
+                                    "bar",
+                                ),
+                            ],
+                        ),
+                        bind_fact: None,
+                    },
                 ],
                 capture: true,
             },

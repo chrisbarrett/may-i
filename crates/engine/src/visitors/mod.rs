@@ -8,7 +8,7 @@ pub(crate) mod rule_match;
 pub(crate) mod wrapper_unwrap;
 
 use crate::var_env::VarEnv;
-use may_i_core::{Config, Decision, EvalResult};
+use may_i_core::{Config, ContextFacts, Decision, EvalResult};
 use may_i_shell_parser::{Command, SimpleCommand};
 
 /// Maximum recursion depth for command substitution / eval / bash -c evaluation.
@@ -43,12 +43,17 @@ pub(crate) enum VisitOutcome {
     Continue,
     /// Re-walk a different command (e.g. after unwrapping `eval`, `bash -c`,
     /// or wrapper commands). The walker will recursively walk the new command.
-    Recurse { command: Command, env: VarEnv },
+    Recurse {
+        command: Command,
+        env: VarEnv,
+        context: ContextFacts,
+    },
 }
 
 /// Context passed to visitors, providing read access to walker state.
 pub(crate) struct VisitorContext<'a> {
     pub config: &'a Config,
+    pub context: &'a ContextFacts,
     pub env: &'a VarEnv,
     pub depth: usize,
 }

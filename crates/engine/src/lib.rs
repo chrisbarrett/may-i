@@ -10,7 +10,7 @@ pub(crate) mod visitors;
 
 use visitors::{CommandVisitor, MAX_EVAL_DEPTH, VisitOutcome, VisitorContext, dynamic_ask};
 
-use may_i_core::{Config, Decision, EvalResult};
+use may_i_core::{Config, ContextFacts, Decision, EvalResult};
 use may_i_shell_parser::{self as parser, Command, SimpleCommand, Word};
 use var_env::{VarEnv, VarState, resolve_simple_command_with_var_env, resolve_word_with_var_env};
 
@@ -58,8 +58,8 @@ impl<'a> AstWalker<'a> {
         Self { config }
     }
 
-    fn walk(&self, cmd: &Command, env: &VarEnv) -> WalkResult {
-        self.walk_with_depth(cmd, env, 0)
+    fn walk(&self, cmd: &Command, env: &VarEnv, context: &ContextFacts) -> WalkResult {
+        self.walk_with_depth(cmd, env, context, 0)
     }
 
     /// Dispatch a single visitor on a resolved command.
@@ -73,9 +73,11 @@ impl<'a> AstWalker<'a> {
         match visitor.visit_simple_command(ctx, resolved) {
             VisitOutcome::Terminal { result, env } => Some(WalkResult { result, env }),
             VisitOutcome::Continue => None,
-            VisitOutcome::Recurse { command, env } => {
-                Some(self.walk_with_depth(&command, &env, ctx.depth + 1))
-            }
+            VisitOutcome::Recurse {
+                command,
+                env,
+                context,
+            } => Some(self.walk_with_depth(&command, &env, &context, ctx.depth + 1)),
         }
     }
 
@@ -98,13 +100,19 @@ impl<'a> AstWalker<'a> {
         None
     }
 
-    fn walk_with_depth(&self, cmd: &Command, env: &VarEnv, depth: usize) -> WalkResult {
+    fn walk_with_depth(
+        &self,
+        cmd: &Command,
+        env: &VarEnv,
+        context: &ContextFacts,
+        depth: usize,
+    ) -> WalkResult {
         match cmd {
-            Command::Simple(sc) => self.walk_simple_command(sc, env, depth),
+            Command::Simple(sc) => self.walk_simple_command(sc, env, context, depth),
 
             Command::Assignment(a) => {
                 let mut new_env = env.clone();
-                let state = self.evaluate_assignment_value(&a.value, env, depth);
+                let state = self.evaluate_assignment_value(&a.value, env, context, depth);
                 new_env.set(a.name.clone(), state);
                 WalkResult {
                     result: EvalResult::new(Decision::Allow, None),
@@ -116,7 +124,7 @@ impl<'a> AstWalker<'a> {
                 let mut current_env = env.clone();
                 let mut results = Vec::new();
                 for c in cmds {
-                    let walk = self.walk_with_depth(c, &current_env, depth);
+                    let walk = self.walk_with_depth(c, &current_env, context, depth);
                     if walk.result.decision == Decision::Deny {
                         return WalkResult {
                             result: walk.result,
@@ -133,11 +141,11 @@ impl<'a> AstWalker<'a> {
             }
 
             Command::And(a, b) | Command::Or(a, b) => {
-                let walk_a = self.walk_with_depth(a, env, depth);
+                let walk_a = self.walk_with_depth(a, env, context, depth);
                 if walk_a.result.decision == Decision::Deny {
                     return walk_a;
                 }
-                let walk_b = self.walk_with_depth(b, &walk_a.env, depth);
+                let walk_b = self.walk_with_depth(b, &walk_a.env, context, depth);
                 let merged = VarEnv::merge_branches(env, &[walk_a.env, walk_b.env.clone()]);
                 WalkResult {
                     result: aggregate_results(vec![walk_a.result, walk_b.result]),
@@ -148,7 +156,7 @@ impl<'a> AstWalker<'a> {
             Command::Pipeline(cmds) => {
                 let mut results = Vec::new();
                 for c in cmds {
-                    let walk = self.walk_with_depth(c, env, depth);
+                    let walk = self.walk_with_depth(c, env, context, depth);
                     if walk.result.decision == Decision::Deny {
                         return WalkResult::with_parent_env(walk.result, env);
                     }
@@ -163,24 +171,24 @@ impl<'a> AstWalker<'a> {
                 elif_branches,
                 else_branch,
             } => {
-                let walk_cond = self.walk_with_depth(condition, env, depth);
+                let walk_cond = self.walk_with_depth(condition, env, context, depth);
                 let mut results = vec![walk_cond.result];
                 let env_after_cond = &walk_cond.env;
 
-                let walk_then = self.walk_with_depth(then_branch, env_after_cond, depth);
+                let walk_then = self.walk_with_depth(then_branch, env_after_cond, context, depth);
                 results.push(walk_then.result);
                 let mut branch_envs = vec![walk_then.env];
 
                 for (elif_cond, elif_body) in elif_branches {
-                    let wc = self.walk_with_depth(elif_cond, env_after_cond, depth);
-                    let wb = self.walk_with_depth(elif_body, &wc.env, depth);
+                    let wc = self.walk_with_depth(elif_cond, env_after_cond, context, depth);
+                    let wb = self.walk_with_depth(elif_body, &wc.env, context, depth);
                     results.push(wc.result);
                     results.push(wb.result);
                     branch_envs.push(wb.env);
                 }
 
                 if let Some(else_b) = else_branch {
-                    let we = self.walk_with_depth(else_b, env_after_cond, depth);
+                    let we = self.walk_with_depth(else_b, env_after_cond, context, depth);
                     results.push(we.result);
                     branch_envs.push(we.env);
                 } else {
@@ -194,13 +202,15 @@ impl<'a> AstWalker<'a> {
                 }
             }
 
-            Command::For { var, words, body } => self.walk_for_loop(var, words, body, env, depth),
+            Command::For { var, words, body } => {
+                self.walk_for_loop(var, words, body, env, context, depth)
+            }
 
             Command::Loop {
                 condition, body, ..
             } => {
-                let walk_cond = self.walk_with_depth(condition, env, depth);
-                let walk_body = self.walk_with_depth(body, &walk_cond.env, depth);
+                let walk_cond = self.walk_with_depth(condition, env, context, depth);
+                let walk_body = self.walk_with_depth(body, &walk_cond.env, context, depth);
                 let merged = VarEnv::merge_branches(env, &[env.clone(), walk_body.env]);
                 WalkResult {
                     result: aggregate_results(vec![walk_cond.result, walk_body.result]),
@@ -209,14 +219,14 @@ impl<'a> AstWalker<'a> {
             }
 
             Command::Subshell(c) => {
-                let walk = self.walk_with_depth(c, env, depth);
+                let walk = self.walk_with_depth(c, env, context, depth);
                 WalkResult::with_parent_env(walk.result, env)
             }
 
-            Command::BraceGroup(c) => self.walk_with_depth(c, env, depth),
+            Command::BraceGroup(c) => self.walk_with_depth(c, env, context, depth),
 
             Command::Background(c) => {
-                let walk = self.walk_with_depth(c, env, depth);
+                let walk = self.walk_with_depth(c, env, context, depth);
                 WalkResult::with_parent_env(walk.result, env)
             }
 
@@ -236,7 +246,7 @@ impl<'a> AstWalker<'a> {
                 let mut branch_envs = Vec::new();
                 for arm in arms {
                     if let Some(body) = &arm.body {
-                        let walk = self.walk_with_depth(body, env, depth);
+                        let walk = self.walk_with_depth(body, env, context, depth);
                         results.push(walk.result);
                         branch_envs.push(walk.env);
                     }
@@ -258,7 +268,9 @@ impl<'a> AstWalker<'a> {
                 }
             }
 
-            Command::Redirected { command, .. } => self.walk_with_depth(command, env, depth),
+            Command::Redirected { command, .. } => {
+                self.walk_with_depth(command, env, context, depth)
+            }
         }
     }
 
@@ -268,6 +280,7 @@ impl<'a> AstWalker<'a> {
         words: &[Word],
         body: &Command,
         env: &VarEnv,
+        context: &ContextFacts,
         depth: usize,
     ) -> WalkResult {
         let resolved_words: Vec<Word> = words
@@ -289,7 +302,7 @@ impl<'a> AstWalker<'a> {
             for val in &literals {
                 let mut loop_env = env.clone();
                 loop_env.set(var.to_string(), VarState::Known(val.clone()));
-                let walk = self.walk_with_depth(body, &loop_env, depth);
+                let walk = self.walk_with_depth(body, &loop_env, context, depth);
                 if walk.result.decision == Decision::Deny {
                     return WalkResult {
                         result: walk.result,
@@ -311,7 +324,7 @@ impl<'a> AstWalker<'a> {
         if !resolved_words.iter().any(|w| w.has_dynamic_parts()) {
             let mut loop_env = env.clone();
             loop_env.set(var.to_string(), VarState::Opaque);
-            let walk = self.walk_with_depth(body, &loop_env, depth);
+            let walk = self.walk_with_depth(body, &loop_env, context, depth);
             let merged = VarEnv::merge_branches(env, &[env.clone(), walk.env]);
             return WalkResult {
                 result: walk.result,
@@ -329,9 +342,17 @@ impl<'a> AstWalker<'a> {
         }
     }
 
-    fn evaluate_assignment_value(&self, value: &Word, env: &VarEnv, depth: usize) -> VarState {
-        let resolved =
-            resolve_word_with_var_env(&self.resolve_command_substitutions(value, env, depth), env);
+    fn evaluate_assignment_value(
+        &self,
+        value: &Word,
+        env: &VarEnv,
+        context: &ContextFacts,
+        depth: usize,
+    ) -> VarState {
+        let resolved = resolve_word_with_var_env(
+            &self.resolve_command_substitutions(value, env, context, depth),
+            env,
+        );
         if resolved.has_dynamic_parts() {
             VarState::Unsafe
         } else if resolved.is_literal() {
@@ -341,9 +362,15 @@ impl<'a> AstWalker<'a> {
         }
     }
 
-    fn resolve_command_substitutions(&self, word: &Word, env: &VarEnv, depth: usize) -> Word {
+    fn resolve_command_substitutions(
+        &self,
+        word: &Word,
+        env: &VarEnv,
+        context: &ContextFacts,
+        depth: usize,
+    ) -> Word {
         Word {
-            parts: self.resolve_cmd_sub_parts(&word.parts, env, depth),
+            parts: self.resolve_cmd_sub_parts(&word.parts, env, context, depth),
         }
     }
 
@@ -351,6 +378,7 @@ impl<'a> AstWalker<'a> {
         &self,
         parts: &[parser::WordPart],
         env: &VarEnv,
+        context: &ContextFacts,
         depth: usize,
     ) -> Vec<parser::WordPart> {
         if depth >= MAX_EVAL_DEPTH {
@@ -362,7 +390,7 @@ impl<'a> AstWalker<'a> {
                 parser::WordPart::CommandSubstitution(cmd_str)
                 | parser::WordPart::Backtick(cmd_str) => {
                     let inner_ast = parser::parse(cmd_str);
-                    let inner_result = self.walk_with_depth(&inner_ast, env, depth + 1);
+                    let inner_result = self.walk_with_depth(&inner_ast, env, context, depth + 1);
                     if inner_result.result.decision == Decision::Allow {
                         parser::WordPart::Opaque(format!("$({})", parser::abbreviate(cmd_str)))
                     } else {
@@ -371,7 +399,7 @@ impl<'a> AstWalker<'a> {
                 }
                 parser::WordPart::ProcessSubstitution { direction, command } => {
                     let inner_ast = parser::parse(command);
-                    let inner_result = self.walk_with_depth(&inner_ast, env, depth + 1);
+                    let inner_result = self.walk_with_depth(&inner_ast, env, context, depth + 1);
                     if inner_result.result.decision == Decision::Allow {
                         let sigil = match direction {
                             parser::ProcessDirection::Input => '<',
@@ -393,20 +421,26 @@ impl<'a> AstWalker<'a> {
                         part.clone()
                     }
                 }
-                parser::WordPart::DoubleQuoted(inner) => {
-                    parser::WordPart::DoubleQuoted(self.resolve_cmd_sub_parts(inner, env, depth))
-                }
+                parser::WordPart::DoubleQuoted(inner) => parser::WordPart::DoubleQuoted(
+                    self.resolve_cmd_sub_parts(inner, env, context, depth),
+                ),
                 _ => part.clone(),
             })
             .collect()
     }
 
-    fn walk_simple_command(&self, sc: &SimpleCommand, env: &VarEnv, depth: usize) -> WalkResult {
+    fn walk_simple_command(
+        &self,
+        sc: &SimpleCommand,
+        env: &VarEnv,
+        context: &ContextFacts,
+        depth: usize,
+    ) -> WalkResult {
         let mut new_env = env.clone();
 
         // Process inline assignments (FOO=bar cmd args)
         for a in &sc.assignments {
-            let state = self.evaluate_assignment_value(&a.value, &new_env, depth);
+            let state = self.evaluate_assignment_value(&a.value, &new_env, context, depth);
             new_env.set(a.name.clone(), state);
         }
 
@@ -420,12 +454,13 @@ impl<'a> AstWalker<'a> {
 
         // Resolve command substitutions first, then resolve variables
         let with_cmd_subs =
-            sc.map_words(|w| self.resolve_command_substitutions(w, &new_env, depth));
+            sc.map_words(|w| self.resolve_command_substitutions(w, &new_env, context, depth));
         let resolved = resolve_simple_command_with_var_env(&with_cmd_subs, &new_env);
 
         // Run visitor chain (terminates with rule matching — always produces a result)
         let ctx = VisitorContext {
             config: self.config,
+            context,
             env: &new_env,
             depth,
         };
@@ -438,6 +473,10 @@ impl<'a> AstWalker<'a> {
 
 /// Evaluate a shell command string against the config.
 pub fn evaluate(input: &str, config: &Config) -> EvalResult {
+    evaluate_with_context(input, config, &ContextFacts::default())
+}
+
+pub fn evaluate_with_context(input: &str, config: &Config, context: &ContextFacts) -> EvalResult {
     let ast = parser::parse(input);
 
     // Seed environment from process, then ensure any vars listed in
@@ -451,14 +490,19 @@ pub fn evaluate(input: &str, config: &Config) -> EvalResult {
         }
     }
 
-    AstWalker::new(config).walk(&ast, &env).result
+    AstWalker::new(config).walk(&ast, &env, context).result
 }
 
 /// Evaluate with a specific VarEnv (for testing).
 #[cfg(test)]
-fn evaluate_with_env(input: &str, config: &Config, env: &VarEnv) -> EvalResult {
+fn evaluate_with_env(
+    input: &str,
+    config: &Config,
+    env: &VarEnv,
+    context: &ContextFacts,
+) -> EvalResult {
     let ast = parser::parse(input);
-    AstWalker::new(config).walk(&ast, env).result
+    AstWalker::new(config).walk(&ast, env, context).result
 }
 
 // ── Standalone helpers ─────────────────────────────────────────────

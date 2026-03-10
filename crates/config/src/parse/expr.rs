@@ -81,6 +81,10 @@ pub(super) fn parse_expr(sexpr: &Sexpr) -> Result<Expr, RawError> {
                 .with_help("valid expression forms: regex, or, and, not, cond, if, when, unless")),
             }
         }
+        Sexpr::Vector(_, span) => Err(RawError::new(
+            "expression forms do not support bracket syntax here",
+            *span,
+        )),
     }
 }
 

@@ -5,7 +5,7 @@ pub mod types;
 pub use doc::{Doc, DocF, LayoutHint};
 pub use span::{Span, offset_to_line_col};
 pub use types::{
-    ArgMatcher, Check, CommandMatcher, CondArm, CondBranch, Config, Decision, Effect, EvalAnn,
-    EvalResult, Expr, ExprBranch, PosExpr, Quantifier, Rule, RuleBody, SecurityConfig, SourceInfo,
-    TraceEntry, Wrapper, WrapperStep,
+    ArgMatcher, Check, CommandMatcher, CondArm, CondBranch, Config, ContextExpr, ContextFacts,
+    ContextValue, Decision, Effect, EvalAnn, EvalResult, Expr, ExprBranch, PosExpr, Quantifier,
+    Rule, RuleBody, SecurityConfig, SourceInfo, TraceEntry, Wrapper, WrapperPattern, WrapperStep,
 };

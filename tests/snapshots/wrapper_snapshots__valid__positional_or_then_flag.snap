@@ -1,6 +1,5 @@
 ---
 source: tests/wrapper_snapshots.rs
-assertion_line: 116
 expression: "parse_wrappers(r#\"(wrapper \"nix\" (positional (or \"shell\" \"develop\")) (flag \"--command\" :command+args))\"#)"
 ---
 [
@@ -9,16 +8,19 @@ expression: "parse_wrappers(r#\"(wrapper \"nix\" (positional (or \"shell\" \"dev
         steps: [
             Positional {
                 patterns: [
-                    Or(
-                        [
-                            Literal(
-                                "shell",
-                            ),
-                            Literal(
-                                "develop",
-                            ),
-                        ],
-                    ),
+                    WrapperPattern {
+                        expr: Or(
+                            [
+                                Literal(
+                                    "shell",
+                                ),
+                                Literal(
+                                    "develop",
+                                ),
+                            ],
+                        ),
+                        bind_fact: None,
+                    },
                 ],
                 capture: false,
             },

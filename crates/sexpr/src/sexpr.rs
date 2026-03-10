@@ -4,7 +4,7 @@
 // Quoted strings: "hello\nworld" (supports \\, \", \n, \t)
 // Bare atoms: letters, digits, - _ * . / ^ :
 // Comments: ; to end of line
-// Parentheses delimit lists.
+// Parentheses delimit lists. Square brackets delimit vector-style lists.
 
 use crate::span::{RawError, Span};
 
@@ -13,6 +13,7 @@ use crate::span::{RawError, Span};
 pub enum Sexpr {
     Atom(String, Span),
     List(Vec<Sexpr>, Span),
+    Vector(Vec<Sexpr>, Span),
 }
 
 /// PartialEq ignores spans so existing test assertions are preserved.
@@ -21,6 +22,7 @@ impl PartialEq for Sexpr {
         match (self, other) {
             (Sexpr::Atom(a, _), Sexpr::Atom(b, _)) => a == b,
             (Sexpr::List(a, _), Sexpr::List(b, _)) => a == b,
+            (Sexpr::Vector(a, _), Sexpr::Vector(b, _)) => a == b,
             _ => false,
         }
     }
@@ -31,7 +33,7 @@ impl Sexpr {
     pub fn as_atom(&self) -> Option<&str> {
         match self {
             Sexpr::Atom(s, _) => Some(s),
-            Sexpr::List(..) => None,
+            Sexpr::List(..) | Sexpr::Vector(..) => None,
         }
     }
 
@@ -39,14 +41,18 @@ impl Sexpr {
     pub fn as_list(&self) -> Option<&[Sexpr]> {
         match self {
             Sexpr::Atom(..) => None,
-            Sexpr::List(v, _) => Some(v),
+            Sexpr::List(v, _) | Sexpr::Vector(v, _) => Some(v),
         }
+    }
+
+    pub fn is_vector(&self) -> bool {
+        matches!(self, Sexpr::Vector(..))
     }
 
     /// Return the byte-offset span of this node.
     pub fn span(&self) -> Span {
         match self {
-            Sexpr::Atom(_, s) | Sexpr::List(_, s) => *s,
+            Sexpr::Atom(_, s) | Sexpr::List(_, s) | Sexpr::Vector(_, s) => *s,
         }
     }
 }
@@ -71,6 +77,16 @@ impl std::fmt::Display for Sexpr {
                 }
                 write!(f, ")")
             }
+            Sexpr::Vector(items, _) => {
+                write!(f, "[")?;
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, " ")?;
+                    }
+                    write!(f, "{item}")?;
+                }
+                write!(f, "]")
+            }
         }
     }
 }
@@ -79,7 +95,14 @@ impl std::fmt::Display for Sexpr {
 pub fn needs_quoting(s: &str) -> bool {
     s.is_empty()
         || s.contains(|c: char| {
-            c.is_whitespace() || c == '(' || c == ')' || c == '"' || c == ';' || c == '\\'
+            c.is_whitespace()
+                || c == '('
+                || c == ')'
+                || c == '['
+                || c == ']'
+                || c == '"'
+                || c == ';'
+                || c == '\\'
         })
 }
 
@@ -96,16 +119,19 @@ struct Token {
     span: Span,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 enum TokenKind {
     Open,
     Close,
+    OpenBracket,
+    CloseBracket,
     Atom(String),
     Str(String),
 }
 
 fn is_atom_char(c: char) -> bool {
-    c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '*' | '.' | '/' | '^' | ':' | '+' | '?')
+    c.is_ascii_alphanumeric()
+        || matches!(c, '-' | '_' | '*' | '.' | '/' | '^' | ':' | '+' | '?' | '=')
 }
 
 fn tokenize(input: &str) -> Result<Vec<Token>, RawError> {
@@ -136,6 +162,20 @@ fn tokenize(input: &str) -> Result<Vec<Token>, RawError> {
             ')' => {
                 tokens.push(Token {
                     kind: TokenKind::Close,
+                    span: Span::new(pos, pos + 1),
+                });
+                chars.next();
+            }
+            '[' => {
+                tokens.push(Token {
+                    kind: TokenKind::OpenBracket,
+                    span: Span::new(pos, pos + 1),
+                });
+                chars.next();
+            }
+            ']' => {
+                tokens.push(Token {
+                    kind: TokenKind::CloseBracket,
                     span: Span::new(pos, pos + 1),
                 });
                 chars.next();
@@ -240,15 +280,18 @@ pub fn parse(input: &str) -> (Vec<Sexpr>, Vec<RawError>) {
     let mut results: Vec<Sexpr> = Vec::new();
     let mut errors: Vec<RawError> = Vec::new();
     while pos < tokens.len() {
-        // Case C: extra ')' at top level — recover by skipping
-        if let Some(Token {
-            kind: TokenKind::Close,
-            span,
-        }) = tokens.get(pos)
+        // Case C: extra close at top level — recover by skipping
+        if let Some(Token { kind, span }) = tokens.get(pos)
+            && matches!(kind, TokenKind::Close | TokenKind::CloseBracket)
         {
-            let mut err = RawError::new("unexpected ')'", *span)
-                .with_label("no matching '('")
-                .with_help("remove this ')'");
+            let (closer, opener) = match kind {
+                TokenKind::Close => (")", "("),
+                TokenKind::CloseBracket => ("]", "["),
+                _ => unreachable!(),
+            };
+            let mut err = RawError::new(format!("unexpected '{closer}'"), *span)
+                .with_label(format!("no matching '{opener}'"))
+                .with_help(format!("remove this '{closer}'"));
             if let Some(prev) = results.last() {
                 let prev_span = prev.span();
                 err = err.with_secondary(
@@ -288,86 +331,118 @@ fn parse_one(
             (Sexpr::List(vec![], *span), pos + 1)
         }
         Some(Token {
+            kind: TokenKind::CloseBracket,
+            span,
+        }) => {
+            errors.push(RawError::new("unexpected ']'", *span));
+            (Sexpr::Vector(vec![], *span), pos + 1)
+        }
+        Some(Token {
             kind: TokenKind::Atom(s) | TokenKind::Str(s),
             span,
         }) => (Sexpr::Atom(s.clone(), *span), pos + 1),
         Some(Token {
             kind: TokenKind::Open,
             span: open_span,
-        }) => {
-            let opener_col = column_of(input, open_span.start);
-            let opener_line = line_of(input, open_span.start);
-            let mut items: Vec<Sexpr> = Vec::new();
-            let mut p = pos + 1;
-            loop {
-                match tokens.get(p) {
-                    None => {
-                        // Case A: unclosed '(' at EOF — fatal, nothing left to parse
-                        let label = match items.first().and_then(|s| s.as_atom()) {
-                            Some(name) => format!("the {name} starting here"),
-                            None => "starting here".to_string(),
-                        };
-                        let mut err = RawError::new("unclosed '('", *open_span)
-                            .with_label(label)
-                            .with_help("add a closing ')'");
-                        if let Some(last_item) = items.last() {
-                            let last_span = last_item.span();
-                            err = err.with_secondary(
-                                Span::new(last_span.end, last_span.end),
-                                "last item ends here",
-                            );
-                        }
-                        errors.push(err);
-                        let list_span = Span::new(
-                            open_span.start,
-                            items.last().map_or(open_span.end, |i| i.span().end),
-                        );
-                        return (Sexpr::List(items, list_span), p);
-                    }
-                    Some(Token {
-                        kind: TokenKind::Close,
-                        span: close_span,
-                    }) => {
-                        let list_span = Span::new(open_span.start, close_span.end);
-                        return (Sexpr::List(items, list_span), p + 1);
-                    }
-                    Some(Token {
-                        kind: TokenKind::Open,
-                        span: next_span,
-                    }) => {
-                        // Case B: indentation heuristic for sibling absorbed
-                        let next_col = column_of(input, next_span.start);
-                        let next_line = line_of(input, next_span.start);
-                        if !items.is_empty() && next_line > opener_line && next_col == opener_col {
-                            // Recover: implicitly close this list
-                            let insert_point = items.last().unwrap().span().end;
-                            let label = match items.first().and_then(|s| s.as_atom()) {
-                                Some(name) => format!("the {name} starting here"),
-                                None => "starting here".to_string(),
-                            };
-                            let mut err = RawError::new("unclosed '('", *open_span)
-                                .with_label(label)
-                                .with_help("add a closing ')'");
-                            err = err.with_secondary(
-                                Span::new(insert_point, insert_point),
-                                "insert ')' here",
-                            );
-                            errors.push(err);
-                            let list_span = Span::new(open_span.start, insert_point);
-                            return (Sexpr::List(items, list_span), p);
-                        }
-                        let (item, next) = parse_one(input, tokens, p, errors);
-                        items.push(item);
-                        p = next;
-                    }
-                    _ => {
-                        let (item, next) = parse_one(input, tokens, p, errors);
-                        items.push(item);
-                        p = next;
-                    }
+        }) => parse_delimited(input, tokens, pos, errors, *open_span, false),
+        Some(Token {
+            kind: TokenKind::OpenBracket,
+            span: open_span,
+        }) => parse_delimited(input, tokens, pos, errors, *open_span, true),
+    }
+}
+
+fn parse_delimited(
+    input: &str,
+    tokens: &[Token],
+    pos: usize,
+    errors: &mut Vec<RawError>,
+    open_span: Span,
+    vector: bool,
+) -> (Sexpr, usize) {
+    let opener_col = column_of(input, open_span.start);
+    let opener_line = line_of(input, open_span.start);
+    let opener = if vector { '[' } else { '(' };
+    let closer = if vector { ']' } else { ')' };
+    let mut items: Vec<Sexpr> = Vec::new();
+    let mut p = pos + 1;
+    loop {
+        match tokens.get(p) {
+            None => {
+                let label = match items.first().and_then(|s| s.as_atom()) {
+                    Some(name) => format!("the {name} starting here"),
+                    None => "starting here".to_string(),
+                };
+                let mut err = RawError::new(format!("unclosed '{opener}'"), open_span)
+                    .with_label(label)
+                    .with_help(format!("add a closing '{closer}'"));
+                if let Some(last_item) = items.last() {
+                    let last_span = last_item.span();
+                    err = err.with_secondary(
+                        Span::new(last_span.end, last_span.end),
+                        "last item ends here",
+                    );
                 }
+                errors.push(err);
+                let span = Span::new(
+                    open_span.start,
+                    items.last().map_or(open_span.end, |i| i.span().end),
+                );
+                return (make_delimited(items, span, vector), p);
+            }
+            Some(Token {
+                kind,
+                span: close_span,
+            }) if if vector {
+                matches!(kind, TokenKind::CloseBracket)
+            } else {
+                matches!(kind, TokenKind::Close)
+            } =>
+            {
+                let span = Span::new(open_span.start, close_span.end);
+                return (make_delimited(items, span, vector), p + 1);
+            }
+            Some(Token {
+                kind: TokenKind::Open | TokenKind::OpenBracket,
+                span: next_span,
+            }) => {
+                let next_col = column_of(input, next_span.start);
+                let next_line = line_of(input, next_span.start);
+                if !items.is_empty() && next_line > opener_line && next_col == opener_col {
+                    let insert_point = items.last().unwrap().span().end;
+                    let label = match items.first().and_then(|s| s.as_atom()) {
+                        Some(name) => format!("the {name} starting here"),
+                        None => "starting here".to_string(),
+                    };
+                    let mut err = RawError::new(format!("unclosed '{opener}'"), open_span)
+                        .with_label(label)
+                        .with_help(format!("add a closing '{closer}'"));
+                    err = err.with_secondary(
+                        Span::new(insert_point, insert_point),
+                        format!("insert '{closer}' here"),
+                    );
+                    errors.push(err);
+                    let span = Span::new(open_span.start, insert_point);
+                    return (make_delimited(items, span, vector), p);
+                }
+                let (item, next) = parse_one(input, tokens, p, errors);
+                items.push(item);
+                p = next;
+            }
+            _ => {
+                let (item, next) = parse_one(input, tokens, p, errors);
+                items.push(item);
+                p = next;
             }
         }
+    }
+}
+
+fn make_delimited(items: Vec<Sexpr>, span: Span, vector: bool) -> Sexpr {
+    if vector {
+        Sexpr::Vector(items, span)
+    } else {
+        Sexpr::List(items, span)
     }
 }
 

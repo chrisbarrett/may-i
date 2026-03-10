@@ -29,7 +29,7 @@ mod sexpr {
 
     #[test]
     fn unexpected_char() {
-        insta::assert_snapshot!(render_error("[rule]"));
+        insta::assert_snapshot!(render_error("{rule}"));
     }
 
     #[test]

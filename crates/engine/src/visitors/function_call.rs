@@ -40,6 +40,7 @@ impl CommandVisitor for FunctionCallVisitor {
         VisitOutcome::Recurse {
             command: body,
             env: fn_env,
+            context: ctx.context.clone(),
         }
     }
 }

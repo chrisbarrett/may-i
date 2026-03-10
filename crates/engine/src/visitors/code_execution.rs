@@ -94,6 +94,7 @@ impl CodeExecutionVisitor {
         VisitOutcome::Recurse {
             command: inner_ast,
             env: ctx.env.clone(),
+            context: ctx.context.clone(),
         }
     }
 
@@ -145,6 +146,7 @@ impl CodeExecutionVisitor {
         Some(VisitOutcome::Recurse {
             command: inner_ast,
             env: ctx.env.clone(),
+            context: ctx.context.clone(),
         })
     }
 }

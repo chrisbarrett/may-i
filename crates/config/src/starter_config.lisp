@@ -19,6 +19,20 @@
 ;;   (rule (command (regex "^git-.*"))                 ; match by regex
 ;;         (effect :allow))
 ;;
+;; CONTEXT MATCHERS (inside (context ...))
+;;
+;;   (defcontext remote-prod
+;;     (and (has :via/ssh)
+;;          (matches :ssh/host "^prod-")))
+;;
+;;   (rule (command "journalctl")
+;;         (context remote-prod)
+;;         (effect :allow))
+;;
+;;   (rule (command "echo")
+;;         (context (= :claude-code/permission-mode "acceptEdits"))
+;;         (effect :allow))
+;;
 ;; ARGUMENT MATCHERS (inside (args ...))
 ;;
 ;;   (positional "push" *)                  ; match by position (skip flags); * = any
@@ -69,8 +83,11 @@
 ;;
 ;;   (wrapper "nohup"      :command+args)              ; inner cmd after flags
 ;;   (wrapper "mise"       (positional "exec") (flag "--" :command+args))
-;;   (wrapper "ssh"        (positional * :command+args))
+;;   (wrapper "ssh"        (positional [:ssh/host *] :command+args))
 ;;   (wrapper "nix"        (positional (or "shell" "develop")) (flag "--command" :command+args))
+;;
+;;   ; matched wrappers automatically add :via/<wrapper-command>
+;;   ; bracket bindings add a scalar fact when the matched value is known
 ;;
 ;; ENV VAR RESOLUTION (allow static analysis to resolve these env vars)
 ;;

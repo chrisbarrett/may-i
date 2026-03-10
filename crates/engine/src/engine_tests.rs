@@ -1,9 +1,8 @@
 use crate::matcher::*;
-use crate::visitors::rule_match::match_against_rules;
 use crate::*;
 use may_i_core::{
-    ArgMatcher, CommandMatcher, CondArm, CondBranch, Config, Effect, Expr, PosExpr, Rule, RuleBody,
-    Wrapper, WrapperStep,
+    ArgMatcher, CommandMatcher, CondArm, CondBranch, Config, ContextExpr, ContextFacts, Effect,
+    Expr, PosExpr, Rule, RuleBody, Wrapper, WrapperPattern, WrapperStep,
 };
 
 /// Helper to wrap Expr values in PosExpr::one for tests.
@@ -24,6 +23,32 @@ fn config_with_rules(rules: Vec<Rule>) -> Config {
     }
 }
 
+fn empty_context() -> ContextFacts {
+    ContextFacts::default()
+}
+
+fn wp(expr: Expr) -> WrapperPattern {
+    WrapperPattern {
+        expr,
+        bind_fact: None,
+    }
+}
+
+fn bound_pattern(key: &str, expr: Expr) -> WrapperPattern {
+    WrapperPattern {
+        expr,
+        bind_fact: Some(key.into()),
+    }
+}
+
+fn evaluate_with_env(input: &str, config: &Config, env: &VarEnv) -> EvalResult {
+    super::evaluate_with_env(input, config, env, &empty_context())
+}
+
+fn match_against_rules(sc: &SimpleCommand, config: &Config) -> EvalResult {
+    crate::visitors::rule_match::match_against_rules(sc, config, &empty_context())
+}
+
 use may_i_core::Span;
 
 fn test_span() -> Span {
@@ -33,6 +58,7 @@ fn test_span() -> Span {
 fn allow_rule(cmd: &str) -> Rule {
     Rule {
         command: CommandMatcher::Exact(cmd.to_string()),
+        context: None,
         body: RuleBody::Effect {
             matcher: None,
             effect: Effect {
@@ -48,6 +74,7 @@ fn allow_rule(cmd: &str) -> Rule {
 fn deny_rule(cmd: &str) -> Rule {
     Rule {
         command: CommandMatcher::Exact(cmd.to_string()),
+        context: None,
         body: RuleBody::Effect {
             matcher: None,
             effect: Effect {
@@ -63,6 +90,7 @@ fn deny_rule(cmd: &str) -> Rule {
 fn ask_rule(cmd: &str) -> Rule {
     Rule {
         command: CommandMatcher::Exact(cmd.to_string()),
+        context: None,
         body: RuleBody::Effect {
             matcher: None,
             effect: Effect {
@@ -601,6 +629,7 @@ fn extract_positional_flags_before_double_dash_skipped() {
 fn rule_with_positional_matcher() {
     let rule = Rule {
         command: CommandMatcher::Exact("git".into()),
+        context: None,
         body: RuleBody::Effect {
             matcher: Some(ArgMatcher::Positional(pos(vec![Expr::Literal(
                 "status".into(),
@@ -622,6 +651,7 @@ fn rule_with_positional_matcher() {
 fn rule_with_positional_no_match() {
     let rule = Rule {
         command: CommandMatcher::Exact("git".into()),
+        context: None,
         body: RuleBody::Effect {
             matcher: Some(ArgMatcher::Positional(pos(vec![Expr::Literal(
                 "status".into(),
@@ -645,6 +675,7 @@ fn deny_rule_wins_over_allow() {
         allow_rule("rm"),
         Rule {
             command: CommandMatcher::Exact("rm".into()),
+            context: None,
             body: RuleBody::Effect {
                 matcher: Some(ArgMatcher::Anywhere(vec![Expr::Literal("-r".into())])),
                 effect: Effect {
@@ -666,6 +697,7 @@ fn first_matching_non_deny_rule_wins() {
     let rules = vec![
         Rule {
             command: CommandMatcher::Exact("git".into()),
+            context: None,
             body: RuleBody::Effect {
                 matcher: None,
                 effect: Effect {
@@ -678,6 +710,7 @@ fn first_matching_non_deny_rule_wins() {
         },
         Rule {
             command: CommandMatcher::Exact("git".into()),
+            context: None,
             body: RuleBody::Effect {
                 matcher: None,
                 effect: Effect {
@@ -699,6 +732,7 @@ fn first_matching_non_deny_rule_wins() {
 fn regex_command_matcher_in_rule() {
     let rule = Rule {
         command: CommandMatcher::Regex(regex::Regex::new("^(cat|bat|less)$").unwrap()),
+        context: None,
         body: RuleBody::Effect {
             matcher: None,
             effect: Effect {
@@ -720,6 +754,7 @@ fn regex_command_matcher_in_rule() {
 fn list_command_matcher_in_rule() {
     let rule = Rule {
         command: CommandMatcher::List(vec!["cat".into(), "bat".into()]),
+        context: None,
         body: RuleBody::Effect {
             matcher: None,
             effect: Effect {
@@ -796,7 +831,7 @@ fn wrapper_with_positional_args() {
         wrappers: vec![Wrapper {
             command: "docker".into(),
             steps: vec![WrapperStep::Positional {
-                patterns: vec![Expr::Literal("exec".into())],
+                patterns: vec![wp(Expr::Literal("exec".into()))],
                 capture: true,
             }],
         }],
@@ -813,7 +848,7 @@ fn wrapper_positional_mismatch_no_unwrap() {
         wrappers: vec![Wrapper {
             command: "docker".into(),
             steps: vec![WrapperStep::Positional {
-                patterns: vec![Expr::Literal("exec".into())],
+                patterns: vec![wp(Expr::Literal("exec".into()))],
                 capture: true,
             }],
         }],
@@ -842,7 +877,7 @@ fn wrapper_ssh_skips_hostname() {
         wrappers: vec![Wrapper {
             command: "ssh".into(),
             steps: vec![WrapperStep::Positional {
-                patterns: vec![Expr::Wildcard],
+                patterns: vec![wp(Expr::Wildcard)],
                 capture: true,
             }],
         }],
@@ -863,7 +898,7 @@ fn wrapper_ssh_no_inner_command() {
         wrappers: vec![Wrapper {
             command: "ssh".into(),
             steps: vec![WrapperStep::Positional {
-                patterns: vec![Expr::Wildcard],
+                patterns: vec![wp(Expr::Wildcard)],
                 capture: true,
             }],
         }],
@@ -882,10 +917,10 @@ fn wrapper_nix_shell_flag_command() {
             command: "nix".into(),
             steps: vec![
                 WrapperStep::Positional {
-                    patterns: vec![Expr::Or(vec![
+                    patterns: vec![wp(Expr::Or(vec![
                         Expr::Literal("shell".into()),
                         Expr::Literal("develop".into()),
-                    ])],
+                    ]))],
                     capture: false,
                 },
                 WrapperStep::Flag {
@@ -919,7 +954,7 @@ fn wrapper_mise_validate_then_delimiter() {
             command: "mise".into(),
             steps: vec![
                 WrapperStep::Positional {
-                    patterns: vec![Expr::Literal("exec".into())],
+                    patterns: vec![wp(Expr::Literal("exec".into()))],
                     capture: false,
                 },
                 WrapperStep::Flag { name: "--".into() },
@@ -933,6 +968,191 @@ fn wrapper_mise_validate_then_delimiter() {
     );
     // Wrong subcommand — wrapper doesn't apply
     assert_eq!(evaluate("mise run -- ls", &config).decision, Decision::Ask);
+}
+
+#[test]
+fn context_rule_matches_runtime_fact() {
+    let config = Config {
+        rules: vec![Rule {
+            command: CommandMatcher::Exact("echo".into()),
+            context: Some(ContextExpr::Equals {
+                key: ":claude-code/permission-mode".into(),
+                value: "acceptEdits".into(),
+            }),
+            body: RuleBody::Effect {
+                matcher: None,
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
+            },
+            checks: vec![],
+            source_span: test_span(),
+        }],
+        ..Config::default()
+    };
+    let mut facts = ContextFacts::default();
+    facts.insert_scalar(":claude-code/permission-mode", "acceptEdits");
+    assert_eq!(
+        evaluate_with_context("echo hi", &config, &facts).decision,
+        Decision::Allow
+    );
+}
+
+#[test]
+fn context_rule_skips_when_fact_absent() {
+    let config = Config {
+        rules: vec![Rule {
+            command: CommandMatcher::Exact("echo".into()),
+            context: Some(ContextExpr::Has(":via/ssh".into())),
+            body: RuleBody::Effect {
+                matcher: None,
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
+            },
+            checks: vec![],
+            source_span: test_span(),
+        }],
+        ..Config::default()
+    };
+    assert_eq!(evaluate("echo hi", &config).decision, Decision::Ask);
+}
+
+#[test]
+fn wrapper_derived_via_fact_matches_context_rule() {
+    let config = Config {
+        rules: vec![Rule {
+            command: CommandMatcher::Exact("ls".into()),
+            context: Some(ContextExpr::Has(":via/ssh".into())),
+            body: RuleBody::Effect {
+                matcher: None,
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
+            },
+            checks: vec![],
+            source_span: test_span(),
+        }],
+        wrappers: vec![Wrapper {
+            command: "ssh".into(),
+            steps: vec![WrapperStep::Positional {
+                patterns: vec![wp(Expr::Wildcard)],
+                capture: true,
+            }],
+        }],
+        ..Config::default()
+    };
+    assert_eq!(evaluate("ssh host ls", &config).decision, Decision::Allow);
+}
+
+#[test]
+fn wrapper_derived_scalar_fact_matches_context_rule() {
+    let config = Config {
+        rules: vec![Rule {
+            command: CommandMatcher::Exact("ls".into()),
+            context: Some(ContextExpr::Matches {
+                key: ":ssh/host".into(),
+                regex: regex::Regex::new("^prod-").unwrap(),
+            }),
+            body: RuleBody::Effect {
+                matcher: None,
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
+            },
+            checks: vec![],
+            source_span: test_span(),
+        }],
+        wrappers: vec![Wrapper {
+            command: "ssh".into(),
+            steps: vec![WrapperStep::Positional {
+                patterns: vec![bound_pattern(":ssh/host", Expr::Wildcard)],
+                capture: true,
+            }],
+        }],
+        ..Config::default()
+    };
+    assert_eq!(evaluate("ssh prod-1 ls", &config).decision, Decision::Allow);
+    assert_eq!(evaluate("ssh dev-1 ls", &config).decision, Decision::Ask);
+}
+
+#[test]
+fn nested_wrappers_accumulate_context_facts() {
+    let config = Config {
+        rules: vec![Rule {
+            command: CommandMatcher::Exact("ls".into()),
+            context: Some(ContextExpr::And(vec![
+                ContextExpr::Has(":via/sudo".into()),
+                ContextExpr::Matches {
+                    key: ":ssh/host".into(),
+                    regex: regex::Regex::new("^prod-").unwrap(),
+                },
+            ])),
+            body: RuleBody::Effect {
+                matcher: None,
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
+            },
+            checks: vec![],
+            source_span: test_span(),
+        }],
+        wrappers: vec![
+            after_flags_wrapper("sudo"),
+            Wrapper {
+                command: "ssh".into(),
+                steps: vec![WrapperStep::Positional {
+                    patterns: vec![bound_pattern(":ssh/host", Expr::Wildcard)],
+                    capture: true,
+                }],
+            },
+        ],
+        ..Config::default()
+    };
+    assert_eq!(
+        evaluate("sudo ssh prod-1 ls", &config).decision,
+        Decision::Allow
+    );
+}
+
+#[test]
+fn dynamic_wrapper_value_omits_scalar_fact() {
+    let config = Config {
+        rules: vec![Rule {
+            command: CommandMatcher::Exact("ls".into()),
+            context: Some(ContextExpr::Equals {
+                key: ":ssh/host".into(),
+                value: "prod-1".into(),
+            }),
+            body: RuleBody::Effect {
+                matcher: None,
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
+            },
+            checks: vec![],
+            source_span: test_span(),
+        }],
+        wrappers: vec![Wrapper {
+            command: "ssh".into(),
+            steps: vec![WrapperStep::Positional {
+                patterns: vec![bound_pattern(":ssh/host", Expr::Wildcard)],
+                capture: true,
+            }],
+        }],
+        security: may_i_core::SecurityConfig {
+            safe_env_vars: ["HOST".to_string()].into_iter().collect(),
+        },
+        ..Config::default()
+    };
+    let result = evaluate("ssh $HOST ls", &config);
+    assert_eq!(result.decision, Decision::Ask);
 }
 
 // ── Dynamic parts ────────────────────────────────────────────────
@@ -980,6 +1200,7 @@ fn evaluate_empty_command_name() {
 fn not_anywhere_denies_with_forbidden_flag() {
     let rule = Rule {
         command: CommandMatcher::Exact("git".into()),
+        context: None,
         body: RuleBody::Effect {
             matcher: Some(ArgMatcher::And(vec![
                 ArgMatcher::Positional(pos(vec![Expr::Literal("push".into())])),
@@ -1014,6 +1235,7 @@ fn not_anywhere_denies_with_forbidden_flag() {
 fn anywhere_matcher_regex_pattern() {
     let rule = Rule {
         command: CommandMatcher::Exact("grep".into()),
+        context: None,
         body: RuleBody::Effect {
             matcher: Some(ArgMatcher::Anywhere(vec![Expr::Regex(
                 regex::Regex::new("^-r$").unwrap(),
@@ -1452,6 +1674,7 @@ fn opaque_first_positional_no_match() {
     let env = env_with(&[("safe_opaque", VarState::Opaque)]);
     let rule = Rule {
         command: CommandMatcher::Exact("git".into()),
+        context: None,
         body: RuleBody::Effect {
             matcher: Some(ArgMatcher::Positional(vec![
                 PosExpr::one(Expr::Literal("push".into())),
@@ -1476,6 +1699,7 @@ fn opaque_second_positional_wildcard_matches() {
     let env = env_with(&[("safe_opaque", VarState::Opaque)]);
     let rule = Rule {
         command: CommandMatcher::Exact("git".into()),
+        context: None,
         body: RuleBody::Effect {
             matcher: Some(ArgMatcher::Positional(vec![
                 PosExpr::one(Expr::Literal("push".into())),
@@ -1500,6 +1724,7 @@ fn opaque_second_positional_literal_no_match() {
     let env = env_with(&[("safe_opaque", VarState::Opaque)]);
     let rule = Rule {
         command: CommandMatcher::Exact("git".into()),
+        context: None,
         body: RuleBody::Effect {
             matcher: Some(ArgMatcher::Positional(vec![
                 PosExpr::one(Expr::Literal("push".into())),
@@ -1524,6 +1749,7 @@ fn opaque_arg_anywhere_no_match() {
     let env = env_with(&[("safe_opaque", VarState::Opaque)]);
     let rule = Rule {
         command: CommandMatcher::Exact("cmd".into()),
+        context: None,
         body: RuleBody::Effect {
             matcher: Some(ArgMatcher::Anywhere(vec![Expr::Literal("--force".into())])),
             effect: Effect {
@@ -1563,6 +1789,7 @@ fn use_before_assignment_asks() {
 fn cond_first_branch_matches() {
     let rule = Rule {
         command: CommandMatcher::Exact("tmux".into()),
+        context: None,
         body: RuleBody::Branching(ArgMatcher::Cond(CondArm {
             branches: vec![CondBranch {
                 matcher: ArgMatcher::Positional(pos(vec![Expr::Literal("source-file".into())])),
@@ -1589,6 +1816,7 @@ fn cond_first_branch_matches() {
 fn cond_fallthrough_to_wildcard() {
     let rule = Rule {
         command: CommandMatcher::Exact("tmux".into()),
+        context: None,
         body: RuleBody::Branching(ArgMatcher::Cond(CondArm {
             branches: vec![CondBranch {
                 matcher: ArgMatcher::Positional(pos(vec![Expr::Literal("source-file".into())])),
@@ -1615,6 +1843,7 @@ fn cond_fallthrough_to_wildcard() {
 fn cond_no_wildcard_no_match_skips_rule() {
     let rule = Rule {
         command: CommandMatcher::Exact("tmux".into()),
+        context: None,
         body: RuleBody::Branching(ArgMatcher::Cond(CondArm {
             branches: vec![CondBranch {
                 matcher: ArgMatcher::Positional(pos(vec![Expr::Literal("source-file".into())])),
@@ -1638,6 +1867,7 @@ fn cond_deny_branch_wins_across_rules() {
     let rules = vec![
         Rule {
             command: CommandMatcher::Exact("tmux".into()),
+            context: None,
             body: RuleBody::Branching(ArgMatcher::Cond(CondArm {
                 branches: vec![CondBranch {
                     matcher: ArgMatcher::Positional(pos(vec![Expr::Literal("source-file".into())])),

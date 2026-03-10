@@ -9,8 +9,9 @@ use crate::errors::ConfigError;
 use may_i_core::Quantifier;
 use may_i_core::Span;
 use may_i_core::{
-    ArgMatcher, Check, CommandMatcher, CondArm, CondBranch, Config, Decision, Effect, Expr,
-    PosExpr, Rule, RuleBody, SecurityConfig, SourceInfo, Wrapper, WrapperStep,
+    ArgMatcher, Check, CommandMatcher, CondArm, CondBranch, Config, ContextExpr, Decision, Effect,
+    Expr, PosExpr, Rule, RuleBody, SecurityConfig, SourceInfo, Wrapper, WrapperPattern,
+    WrapperStep,
 };
 use may_i_sexpr::{RawError, Sexpr};
 
@@ -35,6 +36,7 @@ fn parse_raw(input: &str) -> Result<Config, RawError> {
     let mut rules = Vec::new();
     let mut wrappers = Vec::new();
     let mut security = SecurityConfig::default();
+    let mut context_defs = std::collections::BTreeMap::new();
 
     for form in &forms {
         let list = form.as_list().ok_or_else(|| {
@@ -50,6 +52,34 @@ fn parse_raw(input: &str) -> Result<Config, RawError> {
         match tag {
             "rule" => rules.push(parse_rule(&list[1..], form.span())?),
             "wrapper" => wrappers.push(parse_wrapper(&list[1..], form.span())?),
+            "defcontext" => {
+                if list.len() != 3 {
+                    return Err(RawError::new(
+                        "defcontext must have exactly a name and an expression",
+                        form.span(),
+                    ));
+                }
+                let name = list[1].as_atom().ok_or_else(|| {
+                    RawError::new("defcontext name must be an atom", list[1].span())
+                })?;
+                if is_reserved_context_name(name) {
+                    return Err(RawError::new(
+                        format!("reserved context name: {name}"),
+                        list[1].span(),
+                    )
+                    .with_help("choose another alias name"));
+                }
+                if context_defs.contains_key(name) {
+                    return Err(RawError::new(
+                        format!("duplicate defcontext: {name}"),
+                        list[1].span(),
+                    ));
+                }
+                context_defs.insert(
+                    name.to_string(),
+                    (parse_context_expr(&list[2])?, list[2].span()),
+                );
+            }
             "blocked-paths" => {
                 return Err(RawError::new(
                     "blocked-paths is no longer supported; use the filesystem sandbox system provided by your OS",
@@ -71,8 +101,19 @@ fn parse_raw(input: &str) -> Result<Config, RawError> {
                     list[0].span(),
                 )
                 .with_label("not a recognised form")
-                .with_help("valid top-level forms: rule, wrapper, safe-env-vars"));
+                .with_help("valid top-level forms: rule, wrapper, defcontext, safe-env-vars"));
             }
+        }
+    }
+
+    for rule in &mut rules {
+        if let Some(context) = &rule.context {
+            rule.context = Some(resolve_context_expr(
+                context,
+                &context_defs,
+                &mut Vec::new(),
+                rule.source_span,
+            )?);
         }
     }
 
@@ -81,6 +122,161 @@ fn parse_raw(input: &str) -> Result<Config, RawError> {
         wrappers,
         security,
         source_info: None,
+    })
+}
+
+fn is_reserved_context_name(name: &str) -> bool {
+    matches!(name, "and" | "or" | "not" | "has" | "=" | "matches")
+}
+
+fn parse_context_expr(sexpr: &Sexpr) -> Result<ContextExpr, RawError> {
+    if let Some(name) = sexpr.as_atom() {
+        return Ok(ContextExpr::Alias(name.to_string()));
+    }
+    let list = sexpr
+        .as_list()
+        .ok_or_else(|| RawError::new("context expression must be a list or alias", sexpr.span()))?;
+    if list.is_empty() {
+        return Err(RawError::new("empty context expression", sexpr.span()));
+    }
+    let tag = list[0]
+        .as_atom()
+        .ok_or_else(|| RawError::new("context expression tag must be an atom", list[0].span()))?;
+    match tag {
+        "and" => {
+            let exprs: Result<Vec<_>, _> = list[1..].iter().map(parse_context_expr).collect();
+            Ok(ContextExpr::And(exprs?))
+        }
+        "or" => {
+            let exprs: Result<Vec<_>, _> = list[1..].iter().map(parse_context_expr).collect();
+            Ok(ContextExpr::Or(exprs?))
+        }
+        "not" => {
+            if list.len() != 2 {
+                return Err(RawError::new(
+                    "not must have exactly one context expression",
+                    sexpr.span(),
+                ));
+            }
+            Ok(ContextExpr::Not(Box::new(parse_context_expr(&list[1])?)))
+        }
+        "has" => {
+            if list.len() != 2 {
+                return Err(RawError::new(
+                    "has must have exactly one fact key",
+                    sexpr.span(),
+                ));
+            }
+            let key = parse_context_key(&list[1])?;
+            Ok(ContextExpr::Has(key))
+        }
+        "=" => {
+            if list.len() != 3 {
+                return Err(RawError::new(
+                    "= must have exactly a fact key and a scalar value",
+                    sexpr.span(),
+                ));
+            }
+            let key = parse_context_key(&list[1])?;
+            let value = list[2]
+                .as_atom()
+                .ok_or_else(|| RawError::new("context value must be a string", list[2].span()))?
+                .to_string();
+            Ok(ContextExpr::Equals { key, value })
+        }
+        "matches" => {
+            if list.len() != 3 {
+                return Err(RawError::new(
+                    "matches must have exactly a fact key and a regex pattern",
+                    sexpr.span(),
+                ));
+            }
+            let key = parse_context_key(&list[1])?;
+            let pattern = list[2].as_atom().ok_or_else(|| {
+                RawError::new("context regex pattern must be a string", list[2].span())
+            })?;
+            let regex = regex::Regex::new(pattern).map_err(|err| {
+                RawError::new(
+                    format!("invalid context regex '{pattern}': {err}"),
+                    list[2].span(),
+                )
+            })?;
+            Ok(ContextExpr::Matches { key, regex })
+        }
+        other => Err(RawError::new(
+            format!("unknown context expression: {other}"),
+            list[0].span(),
+        )
+        .with_label("not a recognised context expression")
+        .with_help("valid context expressions: and, or, not, has, =, matches, <alias>")),
+    }
+}
+
+fn parse_context_key(sexpr: &Sexpr) -> Result<String, RawError> {
+    let key = sexpr
+        .as_atom()
+        .ok_or_else(|| RawError::new("context fact key must be an atom", sexpr.span()))?;
+    if !key.starts_with(':') {
+        return Err(RawError::new(
+            format!("context fact key must be namespaced: {key}"),
+            sexpr.span(),
+        )
+        .with_help("use a namespaced key like :via/ssh or :claude-code/permission-mode"));
+    }
+    Ok(key.to_string())
+}
+
+fn resolve_context_expr(
+    expr: &ContextExpr,
+    defs: &std::collections::BTreeMap<String, (ContextExpr, Span)>,
+    resolving: &mut Vec<String>,
+    span: Span,
+) -> Result<ContextExpr, RawError> {
+    Ok(match expr {
+        ContextExpr::Alias(name) => {
+            let Some((inner, inner_span)) = defs.get(name) else {
+                return Err(RawError::new(
+                    format!("unknown context alias: {name}"),
+                    span,
+                ));
+            };
+            if resolving.iter().any(|active| active == name) {
+                let mut cycle = resolving.clone();
+                cycle.push(name.clone());
+                return Err(RawError::new(
+                    format!("cyclic context alias: {}", cycle.join(" -> ")),
+                    *inner_span,
+                ));
+            }
+            resolving.push(name.clone());
+            let resolved = resolve_context_expr(inner, defs, resolving, *inner_span)?;
+            resolving.pop();
+            resolved
+        }
+        ContextExpr::Has(key) => ContextExpr::Has(key.clone()),
+        ContextExpr::Equals { key, value } => ContextExpr::Equals {
+            key: key.clone(),
+            value: value.clone(),
+        },
+        ContextExpr::Matches { key, regex } => ContextExpr::Matches {
+            key: key.clone(),
+            regex: regex.clone(),
+        },
+        ContextExpr::And(exprs) => ContextExpr::And(
+            exprs
+                .iter()
+                .map(|expr| resolve_context_expr(expr, defs, resolving, span))
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+        ContextExpr::Or(exprs) => ContextExpr::Or(
+            exprs
+                .iter()
+                .map(|expr| resolve_context_expr(expr, defs, resolving, span))
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+        ContextExpr::Not(expr) => {
+            ContextExpr::Not(Box::new(resolve_context_expr(expr, defs, resolving, span)?))
+        }
     })
 }
 
@@ -284,6 +480,7 @@ fn parse_matcher_unless_form(args: &[Sexpr], form_span: Span) -> Result<ArgMatch
 
 fn parse_rule(parts: &[Sexpr], rule_span: Span) -> Result<Rule, RawError> {
     let mut command = None;
+    let mut context = None;
     let mut matcher = None;
     let mut effect = None;
     let mut checks = Vec::new();
@@ -316,6 +513,15 @@ fn parse_rule(parts: &[Sexpr], rule_span: Span) -> Result<Rule, RawError> {
                     ));
                 }
                 matcher = Some(parse_matcher(&list[1])?);
+            }
+            "context" => {
+                if list.len() != 2 {
+                    return Err(RawError::new(
+                        "context must have exactly one expression",
+                        part.span(),
+                    ));
+                }
+                context = Some(parse_context_expr(&list[1])?);
             }
             "effect" => {
                 effect = Some(parse_effect(list)?);
@@ -360,7 +566,7 @@ fn parse_rule(parts: &[Sexpr], rule_span: Span) -> Result<Rule, RawError> {
                     list[0].span(),
                 )
                 .with_label("not a recognised rule element")
-                .with_help("valid rule elements: command, args, effect, check"));
+                .with_help("valid rule elements: command, context, args, effect, check"));
             }
         }
     }
@@ -388,6 +594,7 @@ fn parse_rule(parts: &[Sexpr], rule_span: Span) -> Result<Rule, RawError> {
 
     Ok(Rule {
         command: command.ok_or_else(|| RawError::new("rule must have a command", rule_span))?,
+        context,
         body,
         checks,
         source_span: rule_span,
@@ -436,6 +643,10 @@ fn parse_command(sexpr: &Sexpr) -> Result<CommandMatcher, RawError> {
                 .with_help("valid command forms: or, regex")),
             }
         }
+        Sexpr::Vector(_, span) => Err(RawError::new(
+            "command matcher does not support bracket forms",
+            *span,
+        )),
     }
 }
 
@@ -506,6 +717,28 @@ fn parse_matcher(sexpr: &Sexpr) -> Result<ArgMatcher, RawError> {
 
 fn is_capture_keyword(s: &str) -> bool {
     matches!(s, ":command+args" | ":command" | ":args")
+}
+
+fn parse_wrapper_pattern(sexpr: &Sexpr) -> Result<WrapperPattern, RawError> {
+    match sexpr {
+        Sexpr::Vector(items, span) => {
+            if items.len() != 2 {
+                return Err(RawError::new(
+                    "wrapper fact binding must have exactly a key and a pattern",
+                    *span,
+                ));
+            }
+            let key = parse_context_key(&items[0])?;
+            Ok(WrapperPattern {
+                expr: parse_expr(&items[1])?,
+                bind_fact: Some(key),
+            })
+        }
+        _ => Ok(WrapperPattern {
+            expr: parse_expr(sexpr)?,
+            bind_fact: None,
+        }),
+    }
 }
 
 fn parse_wrapper(parts: &[Sexpr], wrapper_span: Span) -> Result<Wrapper, RawError> {
@@ -590,7 +823,7 @@ fn parse_wrapper(parts: &[Sexpr], wrapper_span: Span) -> Result<Wrapper, RawErro
                         }
                         let mut patterns = Vec::new();
                         for item in pattern_items {
-                            patterns.push(parse_expr(item)?);
+                            patterns.push(parse_wrapper_pattern(item)?);
                         }
                         steps.push(WrapperStep::Positional { patterns, capture });
                     }
@@ -686,6 +919,74 @@ mod tests {
             }
             _ => panic!("expected Effect"),
         }
+    }
+
+    #[test]
+    fn rule_context_parses() {
+        let config = parse(
+            r#"(rule (command "echo")
+                  (context (and (has :via/ssh)
+                                (= :claude-code/permission-mode "acceptEdits")
+                                (matches :ssh/host "^prod-")))
+                  (effect :allow))"#,
+        )
+        .unwrap();
+        match config.rules[0].context.as_ref().expect("context") {
+            ContextExpr::And(exprs) => assert_eq!(exprs.len(), 3),
+            other => panic!("expected And context expr, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn defcontext_resolves_in_rule() {
+        let config = parse(
+            r#"(defcontext remote-prod (and (has :via/ssh)
+                                            (matches :ssh/host "^prod-")))
+               (rule (command "ls")
+                     (context (or remote-prod (has :client/claude-code)))
+                     (effect :allow))"#,
+        )
+        .unwrap();
+        match config.rules[0].context.as_ref().expect("context") {
+            ContextExpr::Or(exprs) => {
+                assert_eq!(exprs.len(), 2);
+                assert!(matches!(exprs[0], ContextExpr::And(_)));
+                assert!(matches!(exprs[1], ContextExpr::Has(_)));
+            }
+            other => panic!("expected resolved Or context expr, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn wrapper_fact_binding_parses() {
+        let config = parse(r#"(wrapper "ssh" (positional [:ssh/host *] :command+args))"#).unwrap();
+        match &config.wrappers[0].steps[0] {
+            WrapperStep::Positional { patterns, capture } => {
+                assert_eq!(patterns.len(), 1);
+                assert_eq!(patterns[0].bind_fact.as_deref(), Some(":ssh/host"));
+                assert!(patterns[0].is_wildcard());
+                assert!(*capture);
+            }
+            other => panic!("expected Positional step, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unknown_context_alias_is_error() {
+        let err = parse(r#"(rule (command "ls") (context remote-prod) (effect :allow))"#)
+            .expect_err("expected error");
+        assert!(format!("{err}").contains("unknown context alias"));
+    }
+
+    #[test]
+    fn cyclic_context_alias_is_error() {
+        let err = parse(
+            r#"(defcontext a b)
+               (defcontext b a)
+               (rule (command "ls") (context a) (effect :allow))"#,
+        )
+        .expect_err("expected error");
+        assert!(format!("{err}").contains("cyclic context alias"));
     }
 
     #[test]

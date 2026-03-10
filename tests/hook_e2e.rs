@@ -35,6 +35,12 @@ fn write_config() -> NamedTempFile {
     f
 }
 
+fn write_custom_config(contents: &str) -> NamedTempFile {
+    let mut f = NamedTempFile::new().expect("create temp config");
+    f.write_all(contents.as_bytes()).expect("write temp config");
+    f
+}
+
 /// Build a PreToolUse hook payload for a Bash command.
 fn bash_payload(command: &str) -> String {
     serde_json::json!({
@@ -305,6 +311,38 @@ fn hook_handles_real_bash_payload() {
 
     let resp: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
     assert_eq!(resp["hookSpecificOutput"]["permissionDecision"], "allow");
+}
+
+#[test]
+fn hook_exposes_runtime_context_facts() {
+    let cfg = write_custom_config(
+        r#"
+(rule (command "echo")
+      (context (= :claude-code/permission-mode "acceptEdits"))
+      (effect :allow "Hook context matched"))
+"#,
+    );
+    let payload = serde_json::json!({
+        "hook_event_name": "PreToolUse",
+        "session_id": "ctx-test",
+        "transcript_path": "/tmp/t.jsonl",
+        "cwd": "/tmp",
+        "permission_mode": "acceptEdits",
+        "tool_name": "Bash",
+        "tool_input": { "command": "echo hi" },
+        "tool_use_id": "toolu_ctx"
+    })
+    .to_string();
+
+    let output = may_i(&cfg).write_stdin(payload).output().expect("run");
+    assert!(output.status.success());
+
+    let resp: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    assert_eq!(resp["hookSpecificOutput"]["permissionDecision"], "allow");
+    assert_eq!(
+        resp["hookSpecificOutput"]["permissionDecisionReason"],
+        "Hook context matched"
+    );
 }
 
 #[test]

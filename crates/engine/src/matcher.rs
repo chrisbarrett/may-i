@@ -1,7 +1,7 @@
 // Rule matching — given a resolved command and config, find the applicable rule.
 // Pure matching logic: no AST walking, no variable resolution.
 
-use may_i_core::{CommandMatcher, Config, Effect, Expr, WrapperStep};
+use may_i_core::{CommandMatcher, Config, ContextFacts, Effect, Expr, WrapperStep};
 use may_i_shell_parser::{SimpleCommand, Word};
 
 /// A resolved argument that may be a known literal or an opaque (safe but unknown) value.
@@ -728,8 +728,13 @@ pub(crate) fn expand_flags(args: &[Word]) -> Vec<ResolvedArg> {
     result
 }
 
+pub(crate) struct UnwrappedCommand {
+    pub command: SimpleCommand,
+    pub facts: ContextFacts,
+}
+
 /// R9: Attempt to unwrap a wrapper command, returning the inner command.
-pub(crate) fn unwrap_wrapper(sc: &SimpleCommand, config: &Config) -> Option<SimpleCommand> {
+pub(crate) fn unwrap_wrapper(sc: &SimpleCommand, config: &Config) -> Option<UnwrappedCommand> {
     let cmd_name = sc.command_name()?;
 
     'wrapper: for wrapper in &config.wrappers {
@@ -738,22 +743,29 @@ pub(crate) fn unwrap_wrapper(sc: &SimpleCommand, config: &Config) -> Option<Simp
         }
 
         // Positional args (non-flag words) paired with their index in sc.words[1..].
-        let positionals: Vec<(usize, String)> = sc.words[1..]
+        let positionals: Vec<(usize, &Word)> = sc.words[1..]
             .iter()
             .enumerate()
             .filter(|(_, w)| !w.to_str().starts_with('-'))
-            .map(|(i, w)| (i, w.to_str()))
             .collect();
 
         let mut pos_cursor = 0; // index into `positionals`
         let mut inner_start: Option<usize> = None; // index into sc.words[1..]
+        let mut facts = ContextFacts::default();
 
         for step in &wrapper.steps {
             match step {
                 WrapperStep::Positional { patterns, capture } => {
                     for pat in patterns {
                         match positionals.get(pos_cursor) {
-                            Some((_, arg)) if pat.is_match(arg) => pos_cursor += 1,
+                            Some((_, word)) if pat.is_match(&word.to_str()) => {
+                                if let Some(key) = &pat.bind_fact
+                                    && word.is_literal()
+                                {
+                                    facts.insert_scalar(key.clone(), word.to_str());
+                                }
+                                pos_cursor += 1;
+                            }
                             _ => continue 'wrapper, // pattern mismatch
                         }
                     }
@@ -780,10 +792,14 @@ pub(crate) fn unwrap_wrapper(sc: &SimpleCommand, config: &Config) -> Option<Simp
             // `start` is an index into sc.words[1..]; add 1 to get index into sc.words.
             let words_start = start + 1;
             if words_start < sc.words.len() {
-                return Some(SimpleCommand {
-                    assignments: vec![],
-                    words: sc.words[words_start..].to_vec(),
-                    redirections: sc.redirections.clone(),
+                facts.insert_present(format!(":via/{}", wrapper.command));
+                return Some(UnwrappedCommand {
+                    command: SimpleCommand {
+                        assignments: vec![],
+                        words: sc.words[words_start..].to_vec(),
+                        redirections: sc.redirections.clone(),
+                    },
+                    facts,
                 });
             }
         }

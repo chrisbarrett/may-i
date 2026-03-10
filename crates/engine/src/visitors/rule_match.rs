@@ -4,7 +4,7 @@
 use super::{CommandVisitor, VisitOutcome, VisitorContext};
 use crate::annotate::annotate_rule;
 use crate::matcher::*;
-use may_i_core::{Config, Decision, Effect, EvalResult, TraceEntry};
+use may_i_core::{Config, ContextFacts, Decision, Effect, EvalResult, TraceEntry};
 use may_i_shell_parser::SimpleCommand;
 
 /// Terminal visitor: matches the resolved command against config rules.
@@ -13,7 +13,7 @@ pub(crate) struct RuleMatchVisitor;
 
 impl CommandVisitor for RuleMatchVisitor {
     fn visit_simple_command(&self, ctx: &VisitorContext, resolved: &SimpleCommand) -> VisitOutcome {
-        let result = match_against_rules(resolved, ctx.config);
+        let result = match_against_rules(resolved, ctx.config, ctx.context);
         VisitOutcome::Terminal {
             result,
             env: ctx.env.clone(),
@@ -22,7 +22,11 @@ impl CommandVisitor for RuleMatchVisitor {
 }
 
 /// Pure rule-matching logic: expand flags, iterate rules, return first match.
-pub(crate) fn match_against_rules(resolved: &SimpleCommand, config: &Config) -> EvalResult {
+pub(crate) fn match_against_rules(
+    resolved: &SimpleCommand,
+    config: &Config,
+    context: &ContextFacts,
+) -> EvalResult {
     let cmd_name = match resolved.nonempty_command_name() {
         Some(name) => name,
         None => {
@@ -48,7 +52,7 @@ pub(crate) fn match_against_rules(resolved: &SimpleCommand, config: &Config) -> 
             .source_info
             .as_ref()
             .map(|si| si.line_of(rule.source_span));
-        let (doc, effect) = annotate_rule(rule, cmd_name, &expanded_args);
+        let (doc, effect) = annotate_rule(rule, cmd_name, &expanded_args, context);
         trace.push(TraceEntry::Rule {
             doc,
             line: line_num,
@@ -75,7 +79,9 @@ pub(crate) fn match_against_rules(resolved: &SimpleCommand, config: &Config) -> 
 
     first_match.unwrap_or_else(|| {
         let reason = if had_command_match {
-            format!("Rules for `{cmd_name}` exist but arguments did not match any patterns")
+            format!(
+                "Rules for `{cmd_name}` exist but context or arguments did not match any patterns"
+            )
         } else {
             format!("No rule for command `{cmd_name}`")
         };

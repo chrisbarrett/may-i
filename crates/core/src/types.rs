@@ -3,6 +3,135 @@
 use crate::doc::Doc;
 use crate::span::{Span, offset_to_line_col};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContextValue {
+    Present,
+    Scalar(String),
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ContextFacts {
+    values: std::collections::BTreeMap<String, ContextValue>,
+}
+
+impl ContextFacts {
+    pub fn has(&self, key: &str) -> bool {
+        self.values.contains_key(key)
+    }
+
+    pub fn get_scalar(&self, key: &str) -> Option<&str> {
+        match self.values.get(key) {
+            Some(ContextValue::Scalar(value)) => Some(value.as_str()),
+            Some(ContextValue::Present) | None => None,
+        }
+    }
+
+    pub fn insert_present(&mut self, key: impl Into<String>) {
+        self.values.insert(key.into(), ContextValue::Present);
+    }
+
+    pub fn insert_scalar(&mut self, key: impl Into<String>, value: impl Into<String>) {
+        self.values
+            .insert(key.into(), ContextValue::Scalar(value.into()));
+    }
+
+    pub fn merge(&self, other: &Self) -> Self {
+        let mut merged = self.clone();
+        merged.values.extend(other.values.clone());
+        merged
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &ContextValue)> {
+        self.values.iter().map(|(k, v)| (k.as_str(), v))
+    }
+}
+
+#[derive(Clone)]
+pub enum ContextExpr {
+    Alias(String),
+    Has(String),
+    Equals { key: String, value: String },
+    Matches { key: String, regex: regex::Regex },
+    And(Vec<ContextExpr>),
+    Or(Vec<ContextExpr>),
+    Not(Box<ContextExpr>),
+}
+
+impl ContextExpr {
+    pub fn to_doc(&self) -> Doc {
+        match self {
+            ContextExpr::Alias(name) => Doc::atom(name.clone()),
+            ContextExpr::Has(key) => Doc::list(vec![Doc::atom("has"), Doc::atom(key.clone())]),
+            ContextExpr::Equals { key, value } => Doc::list(vec![
+                Doc::atom("="),
+                Doc::atom(key.clone()),
+                Doc::atom(format!("\"{value}\"")),
+            ]),
+            ContextExpr::Matches { key, regex } => Doc::list(vec![
+                Doc::atom("matches"),
+                Doc::atom(key.clone()),
+                Doc::atom(format!("\"{}\"", regex.as_str())),
+            ]),
+            ContextExpr::And(exprs) => {
+                let mut cs = vec![Doc::atom("and")];
+                cs.extend(exprs.iter().map(|expr| expr.to_doc()));
+                Doc::list(cs)
+            }
+            ContextExpr::Or(exprs) => {
+                let mut cs = vec![Doc::atom("or")];
+                cs.extend(exprs.iter().map(|expr| expr.to_doc()));
+                Doc::list(cs)
+            }
+            ContextExpr::Not(expr) => Doc::list(vec![Doc::atom("not"), expr.to_doc()]),
+        }
+    }
+}
+
+impl std::fmt::Debug for ContextExpr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ContextExpr::Alias(name) => f.debug_tuple("Alias").field(name).finish(),
+            ContextExpr::Has(key) => f.debug_tuple("Has").field(key).finish(),
+            ContextExpr::Equals { key, value } => f
+                .debug_struct("Equals")
+                .field("key", key)
+                .field("value", value)
+                .finish(),
+            ContextExpr::Matches { key, regex } => f
+                .debug_struct("Matches")
+                .field("key", key)
+                .field("regex", &regex.as_str())
+                .finish(),
+            ContextExpr::And(exprs) => f.debug_tuple("And").field(exprs).finish(),
+            ContextExpr::Or(exprs) => f.debug_tuple("Or").field(exprs).finish(),
+            ContextExpr::Not(expr) => f.debug_tuple("Not").field(expr).finish(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct WrapperPattern {
+    pub expr: Expr,
+    pub bind_fact: Option<String>,
+}
+
+impl WrapperPattern {
+    pub fn is_match(&self, text: &str) -> bool {
+        self.expr.is_match(text)
+    }
+
+    pub fn is_wildcard(&self) -> bool {
+        self.expr.is_wildcard()
+    }
+
+    pub fn to_doc(&self) -> Doc {
+        match &self.bind_fact {
+            Some(key) => Doc::atom(format!("[{key} {}]", self.expr)),
+            None => self.expr.to_doc(),
+        }
+    }
+}
+
 /// The three possible authorization decisions.
 /// Ordered from least to most restrictive: Allow < Ask < Deny.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -239,6 +368,7 @@ pub struct SecurityConfig {
 #[derive(Debug, Clone)]
 pub struct Rule {
     pub command: CommandMatcher,
+    pub context: Option<ContextExpr>,
     pub body: RuleBody,
     pub checks: Vec<Check>,
     pub source_span: Span,
@@ -284,6 +414,9 @@ impl RuleBody {
 impl Rule {
     pub fn to_doc(&self) -> Doc {
         let mut cs = vec![Doc::atom("rule"), self.command.to_doc()];
+        if let Some(context) = &self.context {
+            cs.push(Doc::list(vec![Doc::atom("context"), context.to_doc()]));
+        }
         cs.extend(self.body.to_doc());
         Doc::list(cs)
     }
@@ -482,7 +615,10 @@ pub enum WrapperStep {
     /// Validate positional (non-flag) args match patterns in order.
     /// If `capture` is true, the inner command starts immediately after
     /// the last matched positional in the original arg list.
-    Positional { patterns: Vec<Expr>, capture: bool },
+    Positional {
+        patterns: Vec<WrapperPattern>,
+        capture: bool,
+    },
     /// Find a named flag or delimiter; the inner command starts after it.
     Flag { name: String },
 }
@@ -496,17 +632,47 @@ pub enum EvalAnn {
     /// Command name matched or didn't.
     CommandMatch(bool),
     /// Expression was tested against a resolved argument.
-    ExprVsArg { arg: String, matched: bool },
+    ExprVsArg {
+        arg: String,
+        matched: bool,
+    },
     /// Quantified pattern consumed some arguments.
-    Quantifier { count: usize, matched: bool },
+    Quantifier {
+        count: usize,
+        matched: bool,
+    },
     /// Required positional argument was missing.
     Missing,
     /// Token-anywhere search against all args.
-    Anywhere { args: Vec<String>, matched: bool },
+    Anywhere {
+        args: Vec<String>,
+        matched: bool,
+    },
+    ContextResult(bool),
+    ContextHas {
+        key: String,
+        matched: bool,
+    },
+    ContextEquals {
+        key: String,
+        expected: String,
+        actual: Option<String>,
+        matched: bool,
+    },
+    ContextMatches {
+        key: String,
+        pattern: String,
+        actual: Option<String>,
+        matched: bool,
+    },
     /// A conditional branch was selected (expr-level or matcher-level).
-    CondBranch { decision: Decision },
+    CondBranch {
+        decision: Decision,
+    },
     /// A conditional else/fallback was selected.
-    CondElse { decision: Decision },
+    CondElse {
+        decision: Decision,
+    },
     /// Exact positional vector equality: patterns vs actual args.
     ExactArgs {
         patterns: Vec<String>,
@@ -514,7 +680,9 @@ pub enum EvalAnn {
         matched: bool,
     },
     /// Exact positional had leftover arguments.
-    ExactRemainder { count: usize },
+    ExactRemainder {
+        count: usize,
+    },
     /// Overall args match result.
     ArgsResult(bool),
     /// The effect produced by this rule.
@@ -1176,6 +1344,7 @@ mod tests {
     fn rule_to_doc_full() {
         let rule = Rule {
             command: CommandMatcher::Exact("git".into()),
+            context: None,
             body: RuleBody::Effect {
                 matcher: None,
                 effect: Effect {

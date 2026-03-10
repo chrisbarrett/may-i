@@ -21,7 +21,9 @@ fn doc_from_sexpr(sexpr: &may_i_sexpr::Sexpr) -> Doc {
             };
             Doc::atom(text)
         }
-        may_i_sexpr::Sexpr::List(items, _) => Doc::list(items.iter().map(doc_from_sexpr).collect()),
+        may_i_sexpr::Sexpr::List(items, _) | may_i_sexpr::Sexpr::Vector(items, _) => {
+            Doc::list(items.iter().map(doc_from_sexpr).collect())
+        }
     }
 }
 

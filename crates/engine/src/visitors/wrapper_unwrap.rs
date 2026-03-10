@@ -22,10 +22,11 @@ impl CommandVisitor for WrapperUnwrapVisitor {
             Some(inner) => inner,
             None => return VisitOutcome::Continue,
         };
+        let next_context = ctx.context.merge(&inner.facts);
 
         // Single-word inner command may contain spaces (e.g. from variable expansion)
-        if inner.words.len() == 1 {
-            let word = &inner.words[0];
+        if inner.command.words.len() == 1 {
+            let word = &inner.command.words[0];
             if word.has_opaque_parts() {
                 return VisitOutcome::Terminal {
                     result: EvalResult::new(
@@ -44,13 +45,15 @@ impl CommandVisitor for WrapperUnwrapVisitor {
                 return VisitOutcome::Recurse {
                     command: inner_ast,
                     env: ctx.env.clone(),
+                    context: next_context,
                 };
             }
         }
 
         VisitOutcome::Recurse {
-            command: Command::Simple(inner),
+            command: Command::Simple(inner.command),
             env: ctx.env.clone(),
+            context: next_context,
         }
     }
 }

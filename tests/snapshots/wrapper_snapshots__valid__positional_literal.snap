@@ -1,6 +1,5 @@
 ---
 source: tests/wrapper_snapshots.rs
-assertion_line: 69
 expression: "parse_wrappers(r#\"(wrapper \"docker\" (positional \"exec\" :command+args))\"#)"
 ---
 [
@@ -9,9 +8,12 @@ expression: "parse_wrappers(r#\"(wrapper \"docker\" (positional \"exec\" :comman
         steps: [
             Positional {
                 patterns: [
-                    Literal(
-                        "exec",
-                    ),
+                    WrapperPattern {
+                        expr: Literal(
+                            "exec",
+                        ),
+                        bind_fact: None,
+                    },
                 ],
                 capture: true,
             },

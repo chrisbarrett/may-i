@@ -29,6 +29,23 @@ lot more done without needing your approval.
 You can use `(check ...)` forms to define inline unit tests, helping you check
 your work and avoid accidental breakages as your rules grow in complexity.
 
+You can also scope rules to runtime or wrapper-derived context facts. For
+example, this only allows `journalctl` when the command was unwrapped from an
+`ssh` invocation targeting a production host:
+
+```scheme
+(defcontext remote-prod
+  (and (has :via/ssh)
+       (matches :ssh/host "^prod-")))
+
+(wrapper "ssh"
+  (positional [:ssh/host *] :command+args))
+
+(rule (command "journalctl")
+      (context remote-prod)
+      (effect :allow "Read-only prod inspection over ssh"))
+```
+
 ## Installation
 
 1. Grab the latest `may-i` build from the GitHub releases, and put it on your

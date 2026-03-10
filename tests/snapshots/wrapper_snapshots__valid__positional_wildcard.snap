@@ -1,6 +1,5 @@
 ---
 source: tests/wrapper_snapshots.rs
-assertion_line: 61
 expression: "parse_wrappers(r#\"(wrapper \"ssh\" (positional * :command+args))\"#)"
 ---
 [
@@ -9,7 +8,10 @@ expression: "parse_wrappers(r#\"(wrapper \"ssh\" (positional * :command+args))\"
         steps: [
             Positional {
                 patterns: [
-                    Wildcard,
+                    WrapperPattern {
+                        expr: Wildcard,
+                        bind_fact: None,
+                    },
                 ],
                 capture: true,
             },

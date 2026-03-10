@@ -51,6 +51,7 @@ mod tests {
         let config = Config {
             rules: vec![Rule {
                 command: CommandMatcher::Exact("ls".into()),
+                context: None,
                 body: RuleBody::Effect {
                     matcher: None,
                     effect: Effect {
@@ -79,6 +80,7 @@ mod tests {
         let config = Config {
             rules: vec![Rule {
                 command: CommandMatcher::Exact("ls".into()),
+                context: None,
                 body: RuleBody::Effect {
                     matcher: None,
                     effect: Effect {
@@ -113,6 +115,7 @@ mod tests {
             rules: vec![
                 Rule {
                     command: CommandMatcher::Exact("ls".into()),
+                    context: None,
                     body: RuleBody::Effect {
                         matcher: None,
                         effect: Effect {
@@ -129,6 +132,7 @@ mod tests {
                 },
                 Rule {
                     command: CommandMatcher::Exact("rm".into()),
+                    context: None,
                     body: RuleBody::Effect {
                         matcher: None,
                         effect: Effect {
