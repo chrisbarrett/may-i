@@ -29,6 +29,17 @@ lot more done without needing your approval.
 You can use `(check ...)` forms to define inline unit tests, helping you check
 your work and avoid accidental breakages as your rules grow in complexity.
 
+Checks can also supply runtime context facts explicitly when a rule depends on
+client-specific state:
+
+```scheme
+(rule (command "git")
+      (context (= :opencode/agent "build"))
+      (effect :allow)
+      (check :allow (facts :client/opencode (:opencode/agent "build")) "git add ."
+             :ask   (facts :client/opencode (:opencode/agent "plan"))  "git add ."))
+```
+
 You can also scope rules to runtime or wrapper-derived context facts. For
 example, this only allows `journalctl` when the command was unwrapped from an
 `ssh` invocation targeting a production host:

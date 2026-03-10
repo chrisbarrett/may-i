@@ -771,6 +771,7 @@ impl std::fmt::Debug for CommandMatcher {
 pub struct Check {
     pub command: String,
     pub expected: Decision,
+    pub context: ContextFacts,
     pub source_span: Span,
 }
 

@@ -83,6 +83,9 @@
 ;;   (check :allow "curl -I https://example.com"
 ;;          :ask "curl -d data https://example.com")
 ;;
+;;   (check :allow (facts :client/opencode (:opencode/agent "build")) "git add ."
+;;          :ask   (facts :client/opencode (:opencode/agent "plan"))  "git add .")
+;;
 ;; WRAPPERS (unwrap to evaluate the inner command)
 ;;
 ;;   (wrapper "nohup"      :command+args)              ; inner cmd after flags

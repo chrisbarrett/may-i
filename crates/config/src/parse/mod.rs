@@ -9,9 +9,9 @@ use crate::errors::ConfigError;
 use may_i_core::Quantifier;
 use may_i_core::Span;
 use may_i_core::{
-    ArgMatcher, Check, CommandMatcher, CondArm, CondBranch, Config, ContextExpr, Decision, Effect,
-    Expr, PosExpr, Rule, RuleBody, SecurityConfig, SourceInfo, Wrapper, WrapperPattern,
-    WrapperStep,
+    ArgMatcher, Check, CommandMatcher, CondArm, CondBranch, Config, ContextExpr, ContextFacts,
+    Decision, Effect, Expr, PosExpr, Rule, RuleBody, SecurityConfig, SourceInfo, Wrapper,
+    WrapperPattern, WrapperStep,
 };
 use may_i_sexpr::{RawError, Sexpr};
 
@@ -224,6 +224,47 @@ fn parse_context_key(sexpr: &Sexpr) -> Result<String, RawError> {
         .with_help("use a namespaced key like :via/ssh or :claude-code/permission-mode"));
     }
     Ok(key.to_string())
+}
+
+fn parse_context_facts(sexpr: &Sexpr) -> Result<ContextFacts, RawError> {
+    let list = sexpr
+        .as_list()
+        .ok_or_else(|| RawError::new("check facts must be a list", sexpr.span()))?;
+    if list.is_empty() || list[0].as_atom() != Some("facts") {
+        return Err(RawError::new(
+            "check facts must start with 'facts'",
+            sexpr.span(),
+        ));
+    }
+
+    let mut facts = ContextFacts::default();
+    for item in &list[1..] {
+        if item.as_atom().is_some() {
+            let key = parse_context_key(item)?;
+            facts.insert_present(key);
+            continue;
+        }
+
+        let pair = item.as_list().ok_or_else(|| {
+            RawError::new(
+                "check facts entries must be a namespaced key or (:key \"value\") pair",
+                item.span(),
+            )
+        })?;
+        if pair.len() != 2 {
+            return Err(RawError::new(
+                "scalar context facts must have exactly a key and a value",
+                item.span(),
+            ));
+        }
+        let key = parse_context_key(&pair[0])?;
+        let value = pair[1]
+            .as_atom()
+            .ok_or_else(|| RawError::new("context fact value must be a string", pair[1].span()))?;
+        facts.insert_scalar(key, value.to_string());
+    }
+
+    Ok(facts)
 }
 
 fn resolve_context_expr(
@@ -527,16 +568,10 @@ fn parse_rule(parts: &[Sexpr], rule_span: Span) -> Result<Rule, RawError> {
                 effect = Some(parse_effect(list)?);
             }
             "check" => {
-                let pairs = &list[1..];
-                if pairs.len() < 2 || pairs.len() % 2 != 0 {
-                    return Err(RawError::new(
-                        "check must have 1+ paired :decision \"command\" entries",
-                        part.span(),
-                    ));
-                }
-                for pair in pairs.chunks(2) {
-                    let expected = match pair[0].as_atom().ok_or_else(|| {
-                        RawError::new("check decision must be an atom", pair[0].span())
+                let mut i = 1;
+                while i < list.len() {
+                    let expected = match list[i].as_atom().ok_or_else(|| {
+                        RawError::new("check decision must be an atom", list[i].span())
                     })? {
                         ":allow" => Decision::Allow,
                         ":deny" => Decision::Deny,
@@ -544,20 +579,48 @@ fn parse_rule(parts: &[Sexpr], rule_span: Span) -> Result<Rule, RawError> {
                         other => {
                             return Err(RawError::new(
                                 format!("unknown expected decision: {other}"),
-                                pair[0].span(),
+                                list[i].span(),
                             )
                             .with_label("not a valid decision")
                             .with_help("valid decisions: :allow, :deny, :ask"));
                         }
                     };
-                    let cmd = pair[1].as_atom().ok_or_else(|| {
-                        RawError::new("check command must be a string", pair[1].span())
+                    i += 1;
+
+                    if i >= list.len() {
+                        return Err(RawError::new(
+                            "check must provide a command after each decision",
+                            part.span(),
+                        )
+                        .with_help(
+                            "use :allow \"cmd\" or :allow (facts :client/opencode (:opencode/agent \"build\")) \"cmd\"",
+                        ));
+                    }
+
+                    let mut context = ContextFacts::default();
+                    if let Some(items) = list[i].as_list()
+                        && items.first().and_then(Sexpr::as_atom) == Some("facts")
+                    {
+                        context = parse_context_facts(&list[i])?;
+                        i += 1;
+                        if i >= list.len() {
+                            return Err(RawError::new(
+                                "check facts must be followed by a command string",
+                                part.span(),
+                            ));
+                        }
+                    }
+
+                    let cmd = list[i].as_atom().ok_or_else(|| {
+                        RawError::new("check command must be a string", list[i].span())
                     })?;
                     checks.push(Check {
                         command: cmd.to_string(),
                         expected,
-                        source_span: pair[1].span(),
+                        context,
+                        source_span: list[i].span(),
                     });
+                    i += 1;
                 }
             }
             other => {
@@ -1238,6 +1301,19 @@ mod tests {
         );
         assert_eq!(config.rules[0].checks[0].expected, Decision::Allow);
         assert_eq!(config.rules[0].checks[1].expected, Decision::Allow);
+    }
+
+    #[test]
+    fn checks_can_include_context_facts() {
+        let config = parse(
+            r#"(rule (command "git")
+                   (effect :allow)
+                   (check :allow (facts :client/opencode (:opencode/agent "build")) "git status"))"#,
+        )
+        .unwrap();
+        let check = &config.rules[0].checks[0];
+        assert!(check.context.has(":client/opencode"));
+        assert_eq!(check.context.get_scalar(":opencode/agent"), Some("build"));
     }
 
     #[test]

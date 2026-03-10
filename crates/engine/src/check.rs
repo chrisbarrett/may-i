@@ -1,6 +1,6 @@
 // Config validation — run embedded checks against the engine.
 
-use may_i_core::{Config, Decision, TraceEntry};
+use may_i_core::{Config, ContextFacts, Decision, TraceEntry};
 
 /// Result of evaluating a single embedded check.
 #[derive(Debug)]
@@ -9,6 +9,7 @@ pub struct CheckResult {
     pub expected: Decision,
     pub actual: Decision,
     pub passed: bool,
+    pub context: ContextFacts,
     pub reason: Option<String>,
     pub trace: Vec<TraceEntry>,
     pub location: Option<String>,
@@ -20,7 +21,7 @@ pub fn run_checks(config: &Config) -> Vec<CheckResult> {
 
     for rule in &config.rules {
         for check in &rule.checks {
-            let eval = crate::evaluate(&check.command, config);
+            let eval = crate::evaluate_with_context(&check.command, config, &check.context);
             let location = config
                 .source_info
                 .as_ref()
@@ -30,6 +31,7 @@ pub fn run_checks(config: &Config) -> Vec<CheckResult> {
                 expected: check.expected,
                 actual: eval.decision,
                 passed: eval.decision == check.expected,
+                context: check.context.clone(),
                 reason: eval.reason,
                 trace: eval.trace,
                 location,
@@ -62,6 +64,7 @@ mod tests {
                 checks: vec![Check {
                     command: "ls".into(),
                     expected: Decision::Allow,
+                    context: ContextFacts::default(),
                     source_span: Span::new(0, 0),
                 }],
                 source_span: Span::new(0, 0),
@@ -91,6 +94,7 @@ mod tests {
                 checks: vec![Check {
                     command: "ls".into(),
                     expected: Decision::Deny, // wrong expectation
+                    context: ContextFacts::default(),
                     source_span: Span::new(0, 0),
                 }],
                 source_span: Span::new(0, 0),
@@ -126,6 +130,7 @@ mod tests {
                     checks: vec![Check {
                         command: "ls".into(),
                         expected: Decision::Allow,
+                        context: ContextFacts::default(),
                         source_span: Span::new(0, 0),
                     }],
                     source_span: Span::new(0, 0),
@@ -143,6 +148,7 @@ mod tests {
                     checks: vec![Check {
                         command: "rm foo".into(),
                         expected: Decision::Deny,
+                        context: ContextFacts::default(),
                         source_span: Span::new(0, 0),
                     }],
                     source_span: Span::new(0, 0),
@@ -154,5 +160,45 @@ mod tests {
         assert_eq!(results.len(), 2);
         assert!(results[0].passed);
         assert!(results[1].passed);
+    }
+
+    #[test]
+    fn run_checks_uses_supplied_context_facts() {
+        let mut context = ContextFacts::default();
+        context.insert_present(":client/opencode");
+        context.insert_scalar(":opencode/agent", "build");
+
+        let config = Config {
+            rules: vec![Rule {
+                command: CommandMatcher::Exact("git".into()),
+                context: Some(may_i_core::ContextExpr::Equals {
+                    key: ":opencode/agent".into(),
+                    value: "build".into(),
+                }),
+                body: RuleBody::Effect {
+                    matcher: None,
+                    effect: Effect {
+                        decision: Decision::Allow,
+                        reason: Some("build agent".into()),
+                    },
+                },
+                checks: vec![Check {
+                    command: "git status".into(),
+                    expected: Decision::Allow,
+                    context,
+                    source_span: Span::new(0, 0),
+                }],
+                source_span: Span::new(0, 0),
+            }],
+            ..Config::default()
+        };
+
+        let results = run_checks(&config);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].passed);
+        assert_eq!(
+            results[0].context.get_scalar(":opencode/agent"),
+            Some("build")
+        );
     }
 }

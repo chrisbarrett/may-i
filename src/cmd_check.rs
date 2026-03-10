@@ -1,6 +1,7 @@
 // Check subcommand — validate config and run checks.
 
 use colored::Colorize;
+use may_i_core::{ContextFacts, ContextValue};
 use may_i_pp::colorize_atom;
 
 use may_i_config as config;
@@ -30,6 +31,7 @@ pub fn cmd_check(
                     "expected": r.expected.to_string(),
                     "actual": r.actual.to_string(),
                     "passed": r.passed,
+                    "context": context_to_json(&r.context),
                     "location": r.location,
                     "reason": r.reason,
                     "trace": trace_to_json(&r.trace),
@@ -99,6 +101,9 @@ pub fn cmd_check(
                 output::Row::kv("expected", output::colorize_decision_keyword(&expected_kw)),
                 output::Row::kv("actual", output::colorize_decision_keyword(&actual_kw)),
             ];
+            if r.context.iter().next().is_some() {
+                rows.push(output::Row::kv("context", render_context(&r.context)));
+            }
             if let Some(reason) = &r.reason {
                 let quoted = format!("\"{reason}\"");
                 rows.push(output::Row::kv("reason", colorize_atom(&quoted, true)));
@@ -137,4 +142,27 @@ pub fn cmd_check(
     }
 
     Ok(())
+}
+
+fn context_to_json(context: &ContextFacts) -> serde_json::Value {
+    let mut obj = serde_json::Map::new();
+    for (key, value) in context.iter() {
+        let value = match value {
+            ContextValue::Present => serde_json::Value::Bool(true),
+            ContextValue::Scalar(value) => serde_json::Value::String(value.clone()),
+        };
+        obj.insert(key.to_string(), value);
+    }
+    serde_json::Value::Object(obj)
+}
+
+fn render_context(context: &ContextFacts) -> String {
+    context
+        .iter()
+        .map(|(key, value)| match value {
+            ContextValue::Present => key.to_string(),
+            ContextValue::Scalar(value) => format!("{key}={value}"),
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
