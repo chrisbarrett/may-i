@@ -86,6 +86,50 @@ come from wrappers while `may-i` unwraps a command. Exact syntax and semantics
 live in the generated config and starter config comments, but the important idea
 is simple: facts let policy follow intent and provenance, not just text.
 
+## In action
+
+Here `may-i` evaluates a compound command, unwraps `ssh`, then `sudo`, carries
+the derived context facts through evaluation, and blocks the inner `rm -rf /`
+because the target production host is treated as immutable:
+
+![may-i trace showing ssh plus sudo unwrapping and a denied prod mutation](docs/assets/ssh-sudo-prod-deny.png)
+
+<details>
+<summary>Policy used for this demo ([`examples/ssh-sudo-prod-demo.lisp`](examples/ssh-sudo-prod-demo.lisp))</summary>
+
+```scheme
+;;; demo config for README screencasts
+
+(wrapper "ssh" (positional [:ssh/host *] :command+args))
+(wrapper "sudo" :command+args)
+
+(defcontext immutable
+  (and (has :via/ssh)
+       (has [:ssh/host (regex "(^|@).*prod.*")])))
+
+(rule (command "echo")
+      (effect :allow "Local echo is always fine"))
+
+(rule (command "rm")
+      (context immutable)
+      (effect :deny "Production hosts are immutable"))
+
+(rule (command (or "touch" "mkdir" "cp" "mv" "tee" "chmod" "chown"))
+      (context (and immutable
+                    (has :via/sudo)))
+      (effect :deny "Production hosts are immutable, even through ssh + sudo"))
+
+(rule (command (or "journalctl" "cat" "less" "tail" "head" "grep" "rg"))
+      (context immutable)
+      (effect :allow "Read-only inspection on production hosts is allowed"))
+
+(rule (command (or "rm" "touch" "mkdir" "cp" "mv" "tee" "chmod" "chown"
+                   "journalctl" "cat" "less" "tail" "head" "grep" "rg"))
+      (effect :allow))
+```
+
+</details>
+
 ## Installation
 
 Install `may-i` and put it on your `PATH`.
