@@ -40,8 +40,13 @@
 ;; Facts are queried inside (context ...) with:
 ;;
 ;;   (has :via/ssh)                              ; presence check
+;;   (has [:via/ssh])                            ; same as (has :via/ssh)
 ;;   (has [:opencode/agent "build"])            ; exact string value
+;;   (has [:ssh/host *])                         ; any scalar value is set
 ;;   (has [:ssh/host (regex "^prod-")])         ; regex value match
+;;   (has [:opencode/agent (or "build" "plan")])
+;;   (has [:ssh/host (and (regex "^prod-")
+;;                        (not "prod-test"))])
 ;;   (and (has :via/ssh) (has [:opencode/agent "build"]))
 ;;
 ;; CONTEXT MATCHERS (inside (context ...))
