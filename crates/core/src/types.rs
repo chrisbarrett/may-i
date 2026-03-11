@@ -1,7 +1,7 @@
 // Shared domain types for authorization rules and configuration.
 
 use crate::doc::Doc;
-use crate::span::{offset_to_line_col, Span};
+use crate::span::{Span, offset_to_line_col};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContextValue {
@@ -1209,11 +1209,13 @@ mod tests {
 
     #[test]
     fn pos_expr_is_wildcard_delegates() {
-        assert!(PosExpr {
-            quantifier: Quantifier::ZeroOrMore,
-            expr: Expr::Wildcard
-        }
-        .is_wildcard());
+        assert!(
+            PosExpr {
+                quantifier: Quantifier::ZeroOrMore,
+                expr: Expr::Wildcard
+            }
+            .is_wildcard()
+        );
         assert!(!PosExpr::one(Expr::Literal("x".into())).is_wildcard());
     }
 

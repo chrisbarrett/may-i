@@ -390,7 +390,11 @@ fn format_annotation(doc: &Doc<Option<EvalAnn>>, ann: &EvalAnn) -> Option<(Strin
         } => Some((
             search_needle.clone(),
             if let Some(actual) = actual {
-                format!("{} -> {}", render_observed_value(actual), if *matched { "yes" } else { "no" })
+                format!(
+                    "{} -> {}",
+                    render_observed_value(actual),
+                    if *matched { "yes" } else { "no" }
+                )
             } else {
                 "no".into()
             },
@@ -471,11 +475,7 @@ fn render_observed_value(value: &str) -> String {
     if char_count <= 40 {
         escaped
     } else {
-        let inner = escaped
-            .chars()
-            .skip(1)
-            .take(35)
-            .collect::<String>();
+        let inner = escaped.chars().skip(1).take(35).collect::<String>();
         let mut truncated = String::from("\"");
         truncated.push_str(&inner);
         truncated.push('…');
@@ -1136,12 +1136,18 @@ mod tests {
             source: "(has :via/ssh)".into(),
             matched: true,
         };
-        assert_eq!(format_annotation(&doc, &ann), Some(("(has :via/ssh)".into(), "yes".into())));
+        assert_eq!(
+            format_annotation(&doc, &ann),
+            Some(("(has :via/ssh)".into(), "yes".into()))
+        );
     }
 
     #[test]
     fn format_exact_context_annotation_reports_observed_value() {
-        let doc = list_doc(vec![atom_doc("has"), atom_doc("[:opencode/agent \"build\"]")]);
+        let doc = list_doc(vec![
+            atom_doc("has"),
+            atom_doc("[:opencode/agent \"build\"]"),
+        ]);
         let ann = EvalAnn::ContextHasExact {
             key: ":opencode/agent".into(),
             source: "(has [:opencode/agent \"build\"])".into(),

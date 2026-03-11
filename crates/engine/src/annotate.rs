@@ -7,8 +7,8 @@
 
 use may_i_core::{
     ArgMatcher, CommandMatcher, CondArm, ContextExpr, ContextFacts, ContextFailureReason,
-    ContextValue, Doc, DocF, Effect, EvalAnn, FactPattern, FactPatternEval, FactQuery, Expr,
-    ExprBranch, LayoutHint, PosExpr, Rule, RuleBody,
+    ContextValue, Doc, DocF, Effect, EvalAnn, Expr, ExprBranch, FactPattern, FactPatternEval,
+    FactQuery, LayoutHint, PosExpr, Rule, RuleBody,
 };
 
 use crate::matcher::{

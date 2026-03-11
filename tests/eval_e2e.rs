@@ -1,5 +1,5 @@
-use assert_cmd::cargo::cargo_bin_cmd;
 use assert_cmd::Command;
+use assert_cmd::cargo::cargo_bin_cmd;
 use predicates::prelude::*;
 use std::io::Write;
 use tempfile::NamedTempFile;

@@ -229,10 +229,7 @@ fn parse_fact_pattern(sexpr: &Sexpr) -> Result<FactPattern, RawError> {
             match tag {
                 "regex" => {
                     if list.len() != 2 {
-                        return Err(RawError::new(
-                            "regex must have exactly one pattern",
-                            *span,
-                        ));
+                        return Err(RawError::new("regex must have exactly one pattern", *span));
                     }
                     let pat = list[1].as_atom().ok_or_else(|| {
                         RawError::new("regex pattern must be a string", list[1].span())
@@ -331,7 +328,9 @@ fn parse_fact_entry(entry: &Sexpr) -> Result<(String, Option<String>), RawError>
         Some(
             items[1]
                 .as_atom()
-                .ok_or_else(|| RawError::new("context fact value must be a string", items[1].span()))?
+                .ok_or_else(|| {
+                    RawError::new("context fact value must be a string", items[1].span())
+                })?
                 .to_string(),
         )
     } else {
@@ -347,14 +346,22 @@ fn parse_fact_literal(
 ) -> Result<ContextFacts, RawError> {
     let items = match sexpr {
         Sexpr::Vector(items, _) => items,
-        _ => return Err(RawError::new("with-facts requires a fact vector", sexpr.span())),
+        _ => {
+            return Err(RawError::new(
+                "with-facts requires a fact vector",
+                sexpr.span(),
+            ));
+        }
     };
 
     if items.is_empty() {
         warnings.push(ConfigWarning {
             message: "with-facts fact vector binds no facts".to_string(),
             span: sexpr.span(),
-            help: Some("add at least one fact entry like [[:client/opencode]] or remove the empty vector".to_string()),
+            help: Some(
+                "add at least one fact entry like [[:client/opencode]] or remove the empty vector"
+                    .to_string(),
+            ),
         });
     }
 
@@ -483,12 +490,20 @@ fn parse_with_facts(
         warnings.push(ConfigWarning {
             message: "with-facts contains no assertions".to_string(),
             span: Span::new(list[0].span().start, list[1].span().end),
-            help: Some("add at least one :allow/:deny/:ask assertion or nested with-facts block".to_string()),
+            help: Some(
+                "add at least one :allow/:deny/:ask assertion or nested with-facts block"
+                    .to_string(),
+            ),
         });
         return Ok(Vec::new());
     }
 
-    parse_check_items(&list[2..], &merged, warnings, Span::new(list[0].span().start, list[list.len() - 1].span().end))
+    parse_check_items(
+        &list[2..],
+        &merged,
+        warnings,
+        Span::new(list[0].span().start, list[list.len() - 1].span().end),
+    )
 }
 
 fn resolve_context_expr(
@@ -1556,11 +1571,15 @@ mod tests {
         .unwrap();
         assert_eq!(config.rules[0].checks.len(), 2);
         assert_eq!(
-            config.rules[0].checks[0].context.get_scalar(":opencode/agent"),
+            config.rules[0].checks[0]
+                .context
+                .get_scalar(":opencode/agent"),
             Some("build")
         );
         assert_eq!(
-            config.rules[0].checks[1].context.get_scalar(":opencode/agent"),
+            config.rules[0].checks[1]
+                .context
+                .get_scalar(":opencode/agent"),
             Some("plan")
         );
     }
@@ -1619,9 +1638,8 @@ mod tests {
                    (check :allow (facts :client/opencode (:opencode/agent "build")) "git status"))"#,
         )
         .unwrap_err();
-        let handler = miette::GraphicalReportHandler::new_themed(
-            miette::GraphicalTheme::unicode_nocolor(),
-        );
+        let handler =
+            miette::GraphicalReportHandler::new_themed(miette::GraphicalTheme::unicode_nocolor());
         let mut rendered = String::new();
         handler.render_report(&mut rendered, err.as_ref()).unwrap();
         assert!(rendered.contains("no longer supported"), "got: {rendered}");

@@ -3,7 +3,7 @@ pub mod span;
 pub mod types;
 
 pub use doc::{Doc, DocF, LayoutHint};
-pub use span::{offset_to_line_col, Span};
+pub use span::{Span, offset_to_line_col};
 pub use types::{
     ArgMatcher, Check, CommandMatcher, CondArm, CondBranch, Config, ConfigWarning, ContextExpr,
     ContextFacts, ContextFailureReason, ContextValue, Decision, Effect, EvalAnn, EvalResult, Expr,
