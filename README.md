@@ -1,18 +1,65 @@
 # may-i
 
-`may-i` is a helper for Claude Code that dramatically reduces the number of
-permission prompts you get nagged with. It gives you an experience much closer
-to running under `--dangerously-skip-permissions` without giving up the safety
-of a permission system.
+`may-i` is a policy engine for agent shell access. It lets Claude Code, and
+other agent harnesses, run more commands without stopping to ask you every few
+seconds, while still keeping a real permission boundary in place.
 
-`may-i` is pretty smart, and it knows how to parse Bash accurately before
-checking your rules. This means you don't get unnecessarily nagged for
-permission just because a command was wrapped in a for-loop. 🎉
+The goal is simple: get much closer to the convenience of
+`--dangerously-skip-permissions` without giving up control.
 
-## A simple example
+## Why use it?
 
-For example, you might like to allow Claude to run `mv` whenever it chooses, so
-long as it doesn't use `--force`, which could inadvertently delete files.
+Without `may-i`, agent permission systems tend to be noisy. Safe, routine
+commands still trigger prompts, which interrupts the flow and trains you to
+click through approvals.
+
+`may-i` lets you describe your own policy for what an agent may do
+automatically, what should still ask, and what should be blocked outright.
+
+## How it works
+
+When an agent wants to run a shell command, `may-i` evaluates that command
+against your policy and returns one of three decisions:
+
+- `allow` - run it without asking
+- `ask` - escalate to the harness's normal permission prompt
+- `deny` - block it
+
+`may-i` parses shell accurately before applying rules, so policy decisions are
+based on the real command structure rather than brittle string matching.
+
+## Core concepts
+
+### Rules
+
+Rules match commands and decide what should happen. This is the core of the
+system: "allow these", "ask for those", "never permit these".
+
+### Checks
+
+Checks are inline tests for your policy. They help keep your config predictable
+as it grows, and make it much easier to refactor rules without changing their
+behavior by accident.
+
+### Wrappers
+
+Wrappers let `may-i` understand commands that are hidden behind other commands,
+such as `ssh`, `nix`, `mise`, or `nohup`. That means you can make decisions
+about the inner command instead of treating every wrapper invocation as opaque.
+
+### Facts
+
+Facts are bits of runtime context attached to command evaluation. They let your
+policy care about more than the literal command line, such as whether a command
+came through `ssh`, which host it targeted, or which agent is running it.
+
+This makes policy much more precise: the same command can be allowed in one
+context and escalated in another.
+
+## A small example
+
+For example, you might want to allow `mv` by default, but still require
+approval when it uses `--force`.
 
 ```scheme
 (rule (command "mv")
@@ -23,210 +70,87 @@ long as it doesn't use `--force`, which could inadvertently delete files.
              :ask "mv -f foo bar"))
 ```
 
-Stack enough of these simple rules up and suddenly you'll find Claude can get a
-lot more done without needing your approval.
+Stack enough rules like this together and the agent can get much more done
+without bothering you for routine work.
 
-You can use `(check ...)` forms to define inline unit tests, helping you check
-your work and avoid accidental breakages as your rules grow in complexity.
+## Context-aware decisions
 
-Facts are the runtime context attached to a command evaluation. They are always
-namespaced keys like `:via/ssh` or `:opencode/agent`, and they come in two
-shapes:
+The most useful policies usually depend on context, not just command names.
 
-- presence facts: the key is present, like `:via/ssh`
-- scalar facts: the key has a string value, like `:opencode/agent = "build"`
+For example, you might allow `journalctl` only when it is reached through `ssh`
+to a production host, or allow routine `git` commands for an implementation
+agent while requiring approval for the same commands in a planning agent.
 
-Facts can come from integrations at runtime or from wrappers while unwrapping a
-command. Rules query them in `(context ...)` with `(has :key)` for presence,
-`(has [:key "value"])` for exact scalar matches, and `(has [:key (regex
-"regex")])` for regex scalar matches.
-
-Checks can also simulate runtime facts explicitly when a rule depends on
-client-specific state:
-
-```scheme
-(rule (command "git")
-      (context (has [:opencode/agent "build"]))
-      (effect :allow)
-      (check
-        (with-facts [[:client/opencode]
-                     [:opencode/agent "build"]]
-          :allow "git add .")
-        (with-facts [[:client/opencode]
-                     [:opencode/agent "plan"]]
-          :ask "git add .")))
-```
-
-`with-facts` takes a vector of fact-entry vectors. Use `[[:key]]` for a
-presence fact and `[[:key "value"]]` for a scalar fact. Nested `with-facts`
-scopes inherit outer facts, and inner bindings override outer bindings with the
-same key.
-
-You can also scope rules to runtime or wrapper-derived context facts. For
-example, this only allows `journalctl` when the command was unwrapped from an
-`ssh` invocation targeting a production host:
-
-```scheme
-(defcontext remote-prod
-  (and (has :via/ssh)
-       (has [:ssh/host (regex "^prod-")])))
-
-(wrapper "ssh"
-  (positional [:ssh/host *] :command+args))
-
-(rule (command "journalctl")
-      (context remote-prod)
-      (effect :allow "Read-only prod inspection over ssh"))
-```
-
-OpenCode integrations can also pass the active agent explicitly so policies can
-distinguish planning from implementation work:
-
-```scheme
-(rule (command "git")
-      (context (has [:opencode/agent "plan"]))
-      (effect :ask "Git commands in the plan agent need approval"))
-```
-
-Pass runtime facts explicitly when you call `eval`:
-
-```bash
-may-i eval --fact :client/opencode --fact :opencode/agent=plan 'git add .'
-```
-
-OpenCode currently integrates by invoking `may-i eval` with explicit `--fact`
-flags from a custom bash tool. Bare stdin hook mode remains the Claude Code
-entrypoint and is organized so additional harnesses can be added later.
-
-## OpenCode Integration
-
-You can integrate may-i with OpenCode by creating a custom bash tool that
-replaces the built-in bash tool with may-i authorization checks.
-
-### How It Works
-
-The approach is to replace OpenCode's built-in bash tool with a custom
-implementation that:
-
-1. **Calls `may-i eval`** before executing any command, passing runtime facts
-   about the OpenCode session (e.g., the active agent)
-2. **Interprets the decision**:
-   - `:deny` — Returns immediately without executing the command
-   - `:ask` — Falls through to OpenCode's native permission system with context
-   - `:allow` — Executes the command normally
-3. **Passes context** — Includes `:client/opencode` and `:opencode/agent` facts
-   so your rules can distinguish planning from implementation work
-
-### Agent-Based Construction Pattern
-
-Rather than distributing a pre-built tool, the recommended approach is to have
-your agent construct a custom bash tool tailored to your specific needs. Here's
-the pattern:
-
-1. **Create a custom tool file** (e.g., `~/.config/opencode/tools/bash.ts`)
-
-2. **Import OpenCode's plugin API** and implement the tool interface:
-
-   ```typescript
-   import { tool } from "@opencode-ai/plugin";
-   import { spawn } from "child_process";
-
-   const evaluateWithMayI = async (
-     command: string,
-     agent?: string,
-   ) => {
-     const args = ["eval", "--json", "--fact", ":client/opencode"];
-     if (agent) {
-       args.push("--fact", `:opencode/agent=${agent}`);
-     }
-     args.push(command);
-
-     // Spawn may-i and parse JSON result
-     // Return { decision: "allow" | "ask" | "deny", reason?: string }
-   };
-   ```
-
-3. **Handle the three decision states**:
-
-   - **Deny**: Return early with the denial reason
-   - **Ask**: Call `ctx.ask()` to trigger OpenCode's permission UI with context
-   - **Allow**: Execute the bash command normally
-
-4. **Register the tool** in your OpenCode configuration to override the built-in
-   bash tool.
-
-### Why This Pattern?
-
-- **Customizable**: You control exactly how may-i integrates with your workflow
-- **Maintainable**: The tool lives in your config, not a dependency
-- **Transparent**: You can inspect and modify the integration logic
-- **Future-proof**: Works until OpenCode provides a native extension mechanism
-  for permission checks
-
-### Example Rules for OpenCode
-
-Once integrated, you can write context-aware rules:
-
-```scheme
-;; Allow routine git operations during implementation
-(rule (command "git")
-      (context (has [:opencode/agent "build"]))
-      (args (or (positional "add")
-                (positional "commit")
-                (positional "checkout")))
-      (effect :allow))
-
-;; Require approval for git operations during planning
-(rule (command "git")
-      (context (has [:opencode/agent "plan"]))
-      (effect :ask "Git commands in planning mode need approval"))
-```
-
-Pass the active agent explicitly when calling eval:
-
-```bash
-may-i eval --fact :client/opencode --fact :opencode/agent=plan 'git add .'
-```
+That is what facts are for. Some facts come from runtime integrations; others
+come from wrappers while `may-i` unwraps a command. Exact syntax and semantics
+live in the generated config and starter config comments, but the important idea
+is simple: facts let policy follow intent and provenance, not just text.
 
 ## Installation
 
-1. Grab the latest `may-i` build from the GitHub releases, and put it on your
-   PATH.
+Install `may-i` and put it on your `PATH`.
 
-2. tell Claude Code to use `may-i` as a bash tool pre-authorizer in your
-   `.claude/settings.json`:
+When `may-i` runs for the first time, it will create a starter config at
+`~/.config/may-i/config.lisp` if one does not already exist.
 
-   ```json
-   {
-     "hooks": {
-       "PreToolUse": [
-         {
-           "matcher": "Bash",
-           "hooks": [
-             {
-               "type": "command",
-               "command": "may-i"
-             }
-           ]
-         }
-       ]
-     }
-   }
-   ```
+## Using with Claude Code
 
-That's it! `may-i` will create a starter config for you at
-`~/.config/may-i/config.lisp` if it doesn't already exist yet--customise it to
-your heart's content.
+Tell Claude Code to use `may-i` as a Bash pre-tool hook in
+`.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "may-i"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+## Using with OpenCode
+
+OpenCode does not currently expose the same hook mechanism, so the practical
+approach is to replace the built-in bash tool with a custom one that calls
+`may-i eval --json` before execution.
+
+The recommended workflow is to have your agent generate that replacement tool
+for your own environment. In broad strokes, it should:
+
+1. call `may-i eval --json` with the pending command
+2. pass OpenCode facts such as `:client/opencode` and `:opencode/agent`
+3. stop on `deny`
+4. fall through to OpenCode's normal approval flow on `ask`
+5. execute normally on `allow`
+
+This keeps the integration local and editable, and avoids treating one specific
+tool implementation as the canonical solution before OpenCode provides a proper
+extension mechanism.
+
+For example, an OpenCode integration can pass facts that let policy distinguish
+planning from implementation work:
+
+```bash
+may-i eval --fact :client/opencode --fact :opencode/agent=plan 'git add .'
+```
 
 ## Usage
 
 `may-i` stays out of your way--most of the time it just chugs away, using the
-rules you define to make sure Claude behaves.
+rules you define to make sure your agent behaves.
 
-Keep an eye on the commands you're asked for permission to run by Claude; if you
-think it's safe, you can add a rule to `~/.config/may-i/config.lisp` (or ask
-Claude to do it for you). After playing this whack-a-mole for a while you will
-start to notice fewer prompts.
+Keep an eye on the commands you're asked for permission to run; if something is
+consistently safe, you can add a rule to `~/.config/may-i/config.lisp` (or ask
+your agent to do it for you). After playing this whack-a-mole for a while you
+will start to notice fewer prompts.
 
 ### Validation & Testing
 
@@ -260,4 +184,6 @@ may-i eval --fact :client/opencode --fact :opencode/agent=build 'git status'
 
 ## Configuration
 
-See the documentation in your generated `~/.config/may-i/config.lisp`.
+For exact DSL syntax and semantics, see your generated
+`~/.config/may-i/config.lisp`. The starter config comments are the best
+reference.
