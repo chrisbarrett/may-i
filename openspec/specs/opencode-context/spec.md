@@ -1,23 +1,23 @@
 ### Requirement: Eval ingests explicit OpenCode agent context
-When `may-i eval` is invoked with explicit OpenCode runtime metadata, the evaluator SHALL expose that metadata as namespaced context facts during rule matching.
+When `may-i eval` is invoked with explicit OpenCode runtime facts, the evaluator SHALL expose those facts as namespaced context facts during rule matching.
 
-#### Scenario: OpenCode agent is exposed as context facts
+#### Scenario: Explicit OpenCode facts are exposed as context facts
 - **WHEN** `may-i eval` runs with `--fact :client/opencode --fact :opencode/agent=plan`
 - **THEN** the evaluation context includes `:client/opencode`
 - **AND** the evaluation context includes `:opencode/agent = "plan"`
 
-#### Scenario: Missing OpenCode metadata produces no OpenCode facts
+#### Scenario: Missing explicit OpenCode metadata produces no OpenCode facts
 - **WHEN** `may-i eval` runs without OpenCode `--fact` flags
 - **THEN** the evaluation context does not include `:client/opencode`
 - **AND** the evaluation context does not include `:opencode/agent`
 
-#### Scenario: Ambient OpenCode environment is ignored on eval
+#### Scenario: Ambient environment does not synthesize OpenCode facts
 - **WHEN** `may-i eval` runs without OpenCode `--fact` flags and the shell environment contains `MAYI_OPENCODE_AGENT=plan` or `OPENCODE=1`
 - **THEN** the evaluation context does not include `:client/opencode`
 - **AND** the evaluation context does not include `:opencode/agent`
 
 ### Requirement: OpenCode context can gate rule evaluation
-Rules SHALL be able to use existing `(context ...)` expressions to match against OpenCode runtime facts supplied on the `eval` path.
+Rules SHALL be able to use existing `(context ...)` expressions to match against OpenCode runtime facts supplied explicitly on the `eval` path.
 
 #### Scenario: Rule matches a specific OpenCode agent
 - **WHEN** a rule includes `(context (= :opencode/agent "plan"))` and `may-i eval` runs with `--fact :client/opencode --fact :opencode/agent=plan`
@@ -28,12 +28,12 @@ Rules SHALL be able to use existing `(context ...)` expressions to match against
 - **THEN** that rule is skipped as though its context clause did not match
 
 ### Requirement: OpenCode context remains inspectable in eval output
-`may-i eval` SHALL preserve traceability for OpenCode-gated decisions so users can understand when OpenCode runtime facts affected the result.
+`may-i eval` SHALL preserve traceability for OpenCode-gated decisions so users can understand when explicit OpenCode runtime facts affected the result.
 
 #### Scenario: JSON eval includes context-aware trace details
-- **WHEN** `may-i --json eval` matches or skips a rule because of `:opencode/agent`
+- **WHEN** `may-i --json eval` matches or skips a rule because of `:opencode/agent` supplied via explicit `--fact` flags
 - **THEN** the JSON response includes trace data that reflects the context-based evaluation
 
 #### Scenario: Human-readable eval reflects the same decision
-- **WHEN** `may-i eval` is run with OpenCode context that changes which rule matches
+- **WHEN** `may-i eval` is run with explicit OpenCode facts that change which rule matches
 - **THEN** the reported decision and trace output reflect the same OpenCode-aware evaluation as JSON mode
