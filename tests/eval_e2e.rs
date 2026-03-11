@@ -43,8 +43,15 @@ fn trace_annotations(resp: &serde_json::Value) -> Vec<&serde_json::Value> {
 fn json_eval_matches_opencode_agent_context() {
     let cfg = write_config();
     let output = may_i(&cfg)
-        .env("MAYI_OPENCODE_AGENT", "plan")
-        .args(["--json", "eval", "echo hi"])
+        .args([
+            "--json",
+            "eval",
+            "--fact",
+            ":client/opencode",
+            "--fact",
+            ":opencode/agent=plan",
+            "echo hi",
+        ])
         .output()
         .expect("run");
 
@@ -72,8 +79,15 @@ fn json_eval_matches_opencode_agent_context() {
 fn json_eval_skips_different_opencode_agent() {
     let cfg = write_config();
     let output = may_i(&cfg)
-        .env("MAYI_OPENCODE_AGENT", "build")
-        .args(["--json", "eval", "echo hi"])
+        .args([
+            "--json",
+            "eval",
+            "--fact",
+            ":client/opencode",
+            "--fact",
+            ":opencode/agent=build",
+            "echo hi",
+        ])
         .output()
         .expect("run");
 
@@ -121,11 +135,58 @@ fn json_eval_omits_opencode_context_when_env_missing() {
 }
 
 #[test]
+fn json_eval_ignores_ambient_opencode_environment_without_fact_flags() {
+    let cfg = write_config();
+    let output = may_i(&cfg)
+        .env("MAYI_OPENCODE_AGENT", "plan")
+        .env("OPENCODE", "1")
+        .args(["--json", "eval", "echo hi"])
+        .output()
+        .expect("run");
+
+    assert!(output.status.success(), "exit 0 expected");
+
+    let resp: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("valid JSON stdout");
+
+    assert_eq!(resp["decision"], "ask");
+
+    let annotations = trace_annotations(&resp);
+    assert!(annotations.iter().any(|ann| {
+        ann["type"] == "context_has" && ann["key"] == ":client/opencode" && ann["matched"] == false
+    }));
+    assert!(annotations.iter().any(|ann| {
+        ann["type"] == "context_equals"
+            && ann["key"] == ":opencode/agent"
+            && ann["actual"].is_null()
+            && ann["matched"] == false
+    }));
+}
+
+#[test]
+fn eval_rejects_malformed_fact_flags() {
+    let cfg = write_config();
+    may_i(&cfg)
+        .args(["eval", "--fact", "opencode/agent=plan", "echo hi"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "context fact key must be namespaced",
+        ));
+}
+
+#[test]
 fn plain_eval_trace_reflects_opencode_context() {
     let cfg = write_config();
     may_i(&cfg)
-        .env("MAYI_OPENCODE_AGENT", "plan")
-        .args(["eval", "echo hi"])
+        .args([
+            "eval",
+            "--fact",
+            ":client/opencode",
+            "--fact",
+            ":opencode/agent=plan",
+            "echo hi",
+        ])
         .assert()
         .success()
         .stdout(predicate::str::contains(":client/opencode"))

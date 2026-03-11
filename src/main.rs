@@ -8,7 +8,9 @@ mod cmd_check;
 mod cmd_eval;
 mod cmd_hook;
 mod cmd_parse;
+mod hook_harness;
 mod output;
+mod runtime_facts;
 
 #[derive(Parser)]
 #[command(
@@ -32,7 +34,12 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Evaluate a shell command against the loaded config
-    Eval { command: String },
+    Eval {
+        /// Add a runtime fact as :key or :key=value
+        #[arg(long = "fact", value_name = "FACT")]
+        facts: Vec<String>,
+        command: String,
+    },
     /// Validate config and run all embedded checks
     Check {
         /// Show passing checks (not just failures)
@@ -71,8 +78,8 @@ fn run() -> miette::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Command::Eval { command }) => {
-            cmd_eval::cmd_eval(&command, cli.json, cli.config.as_deref())?
+        Some(Command::Eval { command, facts }) => {
+            cmd_eval::cmd_eval(&command, &facts, cli.json, cli.config.as_deref())?
         }
         Some(Command::Check { verbose }) => {
             cmd_check::cmd_check(cli.json, verbose, cli.config.as_deref())?

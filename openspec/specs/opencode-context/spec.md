@@ -2,12 +2,17 @@
 When `may-i eval` is invoked with explicit OpenCode runtime metadata, the evaluator SHALL expose that metadata as namespaced context facts during rule matching.
 
 #### Scenario: OpenCode agent is exposed as context facts
-- **WHEN** `may-i eval` runs with `MAYI_OPENCODE_AGENT=plan`
+- **WHEN** `may-i eval` runs with `--fact :client/opencode --fact :opencode/agent=plan`
 - **THEN** the evaluation context includes `:client/opencode`
 - **AND** the evaluation context includes `:opencode/agent = "plan"`
 
 #### Scenario: Missing OpenCode metadata produces no OpenCode facts
-- **WHEN** `may-i eval` runs without `MAYI_OPENCODE_AGENT`
+- **WHEN** `may-i eval` runs without OpenCode `--fact` flags
+- **THEN** the evaluation context does not include `:client/opencode`
+- **AND** the evaluation context does not include `:opencode/agent`
+
+#### Scenario: Ambient OpenCode environment is ignored on eval
+- **WHEN** `may-i eval` runs without OpenCode `--fact` flags and the shell environment contains `MAYI_OPENCODE_AGENT=plan` or `OPENCODE=1`
 - **THEN** the evaluation context does not include `:client/opencode`
 - **AND** the evaluation context does not include `:opencode/agent`
 
@@ -15,11 +20,11 @@ When `may-i eval` is invoked with explicit OpenCode runtime metadata, the evalua
 Rules SHALL be able to use existing `(context ...)` expressions to match against OpenCode runtime facts supplied on the `eval` path.
 
 #### Scenario: Rule matches a specific OpenCode agent
-- **WHEN** a rule includes `(context (= :opencode/agent "plan"))` and `may-i eval` runs with `MAYI_OPENCODE_AGENT=plan`
+- **WHEN** a rule includes `(context (= :opencode/agent "plan"))` and `may-i eval` runs with `--fact :client/opencode --fact :opencode/agent=plan`
 - **THEN** that rule's context clause matches
 
 #### Scenario: Rule does not match a different OpenCode agent
-- **WHEN** a rule includes `(context (= :opencode/agent "plan"))` and `may-i eval` runs with `MAYI_OPENCODE_AGENT=build`
+- **WHEN** a rule includes `(context (= :opencode/agent "plan"))` and `may-i eval` runs with `--fact :client/opencode --fact :opencode/agent=build`
 - **THEN** that rule is skipped as though its context clause did not match
 
 ### Requirement: OpenCode context remains inspectable in eval output

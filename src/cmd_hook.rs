@@ -3,9 +3,10 @@
 use std::io::Read;
 
 use may_i_config as config;
-use may_i_core::ContextFacts;
 use may_i_engine as engine;
 use miette::Context;
+
+use crate::hook_harness::{HookRoute, route_hook};
 
 pub fn cmd_hook(config_path: Option<&std::path::Path>) -> miette::Result<()> {
     let mut input = String::new();
@@ -19,51 +20,24 @@ pub fn cmd_hook(config_path: Option<&std::path::Path>) -> miette::Result<()> {
         .map_err(|e| miette::miette!("{e}"))
         .wrap_err("Invalid JSON")?;
 
-    // If tool is not "Bash", exit silently (allow the call)
-    let tool_name = payload
-        .get("tool_name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-
-    if tool_name != "Bash" {
-        return Ok(());
-    }
-
-    let command = payload
-        .get("tool_input")
-        .and_then(|v| v.get("command"))
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| miette::miette!("Missing tool_input.command"))?;
-
     let config_file = config::resolve_path(config_path)?;
     let config = config::load(&config_file)?;
-    let mut context = ContextFacts::default();
-    context.insert_present(":client/claude-code");
-    if let Some(permission_mode) = payload.get("permission_mode").and_then(|v| v.as_str()) {
-        context.insert_scalar(":claude-code/permission-mode", permission_mode);
-    }
-    if let Some(cwd) = payload.get("cwd").and_then(|v| v.as_str()) {
-        context.insert_scalar(":claude-code/cwd", cwd);
-    }
-    if let Some(tool_name) = payload.get("tool_name").and_then(|v| v.as_str()) {
-        context.insert_scalar(":claude-code/tool-name", tool_name);
-    }
-    if let Some(event_name) = payload.get("hook_event_name").and_then(|v| v.as_str()) {
-        context.insert_scalar(":claude-code/hook-event-name", event_name);
-    }
-    let result = engine::evaluate_with_context(command, &config, &context);
 
-    let response = serde_json::json!({
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": result.decision.to_string(),
-            "permissionDecisionReason": result.reason.unwrap_or_default()
+    match route_hook(&payload)? {
+        HookRoute::Silent => Ok(()),
+        HookRoute::Evaluate {
+            command,
+            context,
+            harness,
+        } => {
+            let result = engine::evaluate_with_context(&command, &config, &context);
+            let response = harness.render_response(result);
+
+            println!(
+                "{}",
+                serde_json::to_string(&response).expect("response serialization is infallible")
+            );
+            Ok(())
         }
-    });
-
-    println!(
-        "{}",
-        serde_json::to_string(&response).expect("response serialization is infallible")
-    );
-    Ok(())
+    }
 }

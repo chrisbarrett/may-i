@@ -1,7 +1,8 @@
 # Hook Protocol
 
-JSON interface between may-i and Claude Code. When stdin is a pipe, may-i
-reads a hook payload, evaluates the command, and writes a response.
+JSON interface between `may-i` and hook-capable harnesses. When stdin is a
+pipe, `may-i` reads a hook payload, selects the matching registered harness,
+evaluates the command, and writes the corresponding response.
 
 ---
 
@@ -18,17 +19,21 @@ reads a hook payload, evaluates the command, and writes a response.
 }
 ```
 
-**When** `tool_name` is `"Bash"` **Then** evaluate `tool_input.command` against
-config and return a decision.
+**When** the payload matches the Claude Code shape and `tool_name` is `"Bash"`
+**Then** evaluate `tool_input.command` against config and return a decision.
 
-**When** `tool_name` is anything other than `"Bash"` **Then** exit silently with
-code 0 (implicit allow). Non-Bash tools are outside scope.
+**When** the payload matches the Claude Code shape and `tool_name` is anything
+other than `"Bash"` **Then** exit silently with code 0 (implicit allow).
+
+**When** the payload matches no registered harness **Then** exit non-zero with
+a diagnostic instead of guessing.
 
 **Verify:** `cargo test -- hook`
 
 ## R13: Response format
 
-**Given** evaluation produces a decision **Then** write to stdout:
+**Given** a Claude Code payload and evaluation produces a decision **Then**
+write to stdout:
 
 ```json
 {

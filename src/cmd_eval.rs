@@ -9,17 +9,17 @@ use may_i_shell_parser as parser;
 
 use crate::output;
 use crate::output::print_trace;
-
-const OPENCODE_AGENT_ENV: &str = "MAYI_OPENCODE_AGENT";
+use crate::runtime_facts::parse_cli_facts;
 
 pub fn cmd_eval(
     command: &str,
+    raw_facts: &[String],
     json_mode: bool,
     config_path: Option<&std::path::Path>,
 ) -> miette::Result<()> {
     let config_file = config::resolve_path(config_path)?;
     let config = config::load(&config_file)?;
-    let context = eval_context_from_env();
+    let context = parse_cli_facts(raw_facts)?;
 
     if json_mode {
         let result = engine::evaluate_with_context(command, &config, &context);
@@ -66,20 +66,6 @@ pub fn cmd_eval(
     }
 
     Ok(())
-}
-
-fn eval_context_from_env() -> ContextFacts {
-    let mut context = ContextFacts::default();
-
-    if let Ok(agent) = std::env::var(OPENCODE_AGENT_ENV) {
-        let agent = agent.trim();
-        if !agent.is_empty() {
-            context.insert_present(":client/opencode");
-            context.insert_scalar(":opencode/agent", agent);
-        }
-    }
-
-    context
 }
 
 /// Evaluate each segment of a command, returning the aggregate result and a
