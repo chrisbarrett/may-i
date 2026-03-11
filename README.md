@@ -98,6 +98,96 @@ OpenCode currently integrates by invoking `may-i eval` with explicit `--fact`
 flags from a custom bash tool. Bare stdin hook mode remains the Claude Code
 entrypoint and is organized so additional harnesses can be added later.
 
+## OpenCode Integration
+
+You can integrate may-i with OpenCode by creating a custom bash tool that wraps
+the built-in bash tool with may-i authorization checks.
+
+### How It Works
+
+The approach is to replace OpenCode's built-in bash tool with a custom
+implementation that:
+
+1. **Calls `may-i eval`** before executing any command, passing runtime facts
+   about the OpenCode session (e.g., the active agent)
+2. **Interprets the decision**:
+   - `:deny` — Returns immediately without executing the command
+   - `:ask` — Falls through to OpenCode's native permission system with context
+   - `:allow` — Executes the command normally
+3. **Passes context** — Includes `:client/opencode` and `:opencode/agent` facts
+   so your rules can distinguish planning from implementation work
+
+### Agent-Based Construction Pattern
+
+Rather than distributing a pre-built tool, the recommended approach is to have
+your agent construct a custom bash tool tailored to your specific needs. Here's
+the pattern:
+
+1. **Create a custom tool file** (e.g., `~/.config/opencode/tools/bash.ts`)
+
+2. **Import OpenCode's plugin API** and implement the tool interface:
+
+   ```typescript
+   import { tool } from "@opencode-ai/plugin";
+   import { spawn } from "child_process";
+
+   const evaluateWithMayI = async (
+     command: string,
+     agent?: string,
+   ) => {
+     const args = ["eval", "--json", "--fact", ":client/opencode"];
+     if (agent) {
+       args.push("--fact", `:opencode/agent=${agent}`);
+     }
+     args.push(command);
+
+     // Spawn may-i and parse JSON result
+     // Return { decision: "allow" | "ask" | "deny", reason?: string }
+   };
+   ```
+
+3. **Handle the three decision states**:
+
+   - **Deny**: Return early with the denial reason
+   - **Ask**: Call `ctx.ask()` to trigger OpenCode's permission UI with context
+   - **Allow**: Execute the bash command normally
+
+4. **Register the tool** in your OpenCode configuration to override the built-in
+   bash tool.
+
+### Why This Pattern?
+
+- **Customizable**: You control exactly how may-i integrates with your workflow
+- **Maintainable**: The tool lives in your config, not a dependency
+- **Transparent**: You can inspect and modify the integration logic
+- **Future-proof**: Works until OpenCode provides a native extension mechanism
+  for permission checks
+
+### Example Rules for OpenCode
+
+Once integrated, you can write context-aware rules:
+
+```scheme
+;; Allow routine git operations during implementation
+(rule (command "git")
+      (context (has [:opencode/agent "build"]))
+      (args (or (positional "add")
+                (positional "commit")
+                (positional "checkout")))
+      (effect :allow))
+
+;; Require approval for git operations during planning
+(rule (command "git")
+      (context (has [:opencode/agent "plan"]))
+      (effect :ask "Git commands in planning mode need approval"))
+```
+
+Pass the active agent explicitly when calling eval:
+
+```bash
+may-i eval --fact :client/opencode --fact :opencode/agent=plan 'git add .'
+```
+
 ## Installation
 
 1. Grab the latest `may-i` build from the GitHub releases, and put it on your
