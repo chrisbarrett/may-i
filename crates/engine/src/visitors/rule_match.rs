@@ -54,7 +54,7 @@ pub(crate) fn match_against_rules(
             .map(|si| si.line_of(rule.source_span));
         let (doc, effect) = annotate_rule(rule, cmd_name, &expanded_args, context);
         trace.push(TraceEntry::Rule {
-            doc,
+            doc: Box::new(doc),
             line: line_num,
         });
 

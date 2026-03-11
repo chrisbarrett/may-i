@@ -171,10 +171,10 @@ mod tests {
         let config = Config {
             rules: vec![Rule {
                 command: CommandMatcher::Exact("git".into()),
-                context: Some(may_i_core::ContextExpr::Equals {
+                context: Some(may_i_core::ContextExpr::Has(may_i_core::FactQuery::Value {
                     key: ":opencode/agent".into(),
-                    value: "build".into(),
-                }),
+                    pattern: may_i_core::FactPattern::Literal("build".into()),
+                })),
                 body: RuleBody::Effect {
                     matcher: None,
                     effect: Effect {
@@ -206,7 +206,7 @@ mod tests {
     fn run_checks_supports_nested_with_facts_scopes() {
         let config = may_i_config::parse::parse(
             r#"(rule (command "git")
-                   (context (= :opencode/agent "build"))
+                   (context (has [:opencode/agent "build"]))
                    (effect :allow "build agent")
                    (check
                      (with-facts [[:client/opencode]]

@@ -1,5 +1,5 @@
-use assert_cmd::Command;
 use assert_cmd::cargo::cargo_bin_cmd;
+use assert_cmd::Command;
 use predicates::prelude::*;
 use std::io::Write;
 use tempfile::NamedTempFile;
@@ -7,7 +7,7 @@ use tempfile::NamedTempFile;
 const TEST_CONFIG: &str = r#"
 (rule (command "echo")
       (context (and (has :client/opencode)
-                    (= :opencode/agent "plan")))
+                    (has [:opencode/agent "plan"])))
       (effect :allow "OpenCode plan agent"))
 "#;
 
@@ -65,10 +65,12 @@ fn json_eval_matches_opencode_agent_context() {
 
     let annotations = trace_annotations(&resp);
     assert!(annotations.iter().any(|ann| {
-        ann["type"] == "context_has" && ann["key"] == ":client/opencode" && ann["matched"] == true
+        ann["type"] == "context_has_presence"
+            && ann["key"] == ":client/opencode"
+            && ann["matched"] == true
     }));
     assert!(annotations.iter().any(|ann| {
-        ann["type"] == "context_equals"
+        ann["type"] == "context_has_exact"
             && ann["key"] == ":opencode/agent"
             && ann["actual"] == "plan"
             && ann["matched"] == true
@@ -100,7 +102,7 @@ fn json_eval_skips_different_opencode_agent() {
 
     let annotations = trace_annotations(&resp);
     assert!(annotations.iter().any(|ann| {
-        ann["type"] == "context_equals"
+        ann["type"] == "context_has_exact"
             && ann["key"] == ":opencode/agent"
             && ann["actual"] == "build"
             && ann["matched"] == false
@@ -124,13 +126,16 @@ fn json_eval_omits_opencode_context_when_env_missing() {
 
     let annotations = trace_annotations(&resp);
     assert!(annotations.iter().any(|ann| {
-        ann["type"] == "context_has" && ann["key"] == ":client/opencode" && ann["matched"] == false
+        ann["type"] == "context_has_presence"
+            && ann["key"] == ":client/opencode"
+            && ann["matched"] == false
     }));
     assert!(annotations.iter().any(|ann| {
-        ann["type"] == "context_equals"
+        ann["type"] == "context_has_exact"
             && ann["key"] == ":opencode/agent"
             && ann["actual"].is_null()
             && ann["matched"] == false
+            && ann["reason"] == "absent"
     }));
 }
 
@@ -153,13 +158,16 @@ fn json_eval_ignores_ambient_opencode_environment_without_fact_flags() {
 
     let annotations = trace_annotations(&resp);
     assert!(annotations.iter().any(|ann| {
-        ann["type"] == "context_has" && ann["key"] == ":client/opencode" && ann["matched"] == false
+        ann["type"] == "context_has_presence"
+            && ann["key"] == ":client/opencode"
+            && ann["matched"] == false
     }));
     assert!(annotations.iter().any(|ann| {
-        ann["type"] == "context_equals"
+        ann["type"] == "context_has_exact"
             && ann["key"] == ":opencode/agent"
             && ann["actual"].is_null()
             && ann["matched"] == false
+            && ann["reason"] == "absent"
     }));
 }
 

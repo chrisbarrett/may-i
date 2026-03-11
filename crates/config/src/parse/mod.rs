@@ -10,8 +10,8 @@ use may_i_core::Quantifier;
 use may_i_core::Span;
 use may_i_core::{
     ArgMatcher, Check, CommandMatcher, CondArm, CondBranch, Config, ConfigWarning, ContextExpr,
-    ContextFacts, Decision, Effect, Expr, PosExpr, Rule, RuleBody, SecurityConfig, SourceInfo,
-    Wrapper, WrapperPattern, WrapperStep,
+    ContextFacts, Decision, Effect, Expr, FactPattern, FactQuery, PosExpr, Rule, RuleBody,
+    SecurityConfig, SourceInfo, Wrapper, WrapperPattern, WrapperStep,
 };
 use may_i_sexpr::{RawError, Sexpr};
 
@@ -128,7 +128,7 @@ fn parse_raw(input: &str) -> Result<Config, RawError> {
 }
 
 fn is_reserved_context_name(name: &str) -> bool {
-    matches!(name, "and" | "or" | "not" | "has" | "=" | "matches")
+    matches!(name, "and" | "or" | "not" | "has")
 }
 
 fn parse_context_expr(sexpr: &Sexpr) -> Result<ContextExpr, RawError> {
@@ -165,52 +165,132 @@ fn parse_context_expr(sexpr: &Sexpr) -> Result<ContextExpr, RawError> {
         "has" => {
             if list.len() != 2 {
                 return Err(RawError::new(
-                    "has must have exactly one fact key",
+                    "has must have exactly one fact query",
                     sexpr.span(),
                 ));
             }
-            let key = parse_context_key(&list[1])?;
-            Ok(ContextExpr::Has(key))
-        }
-        "=" => {
-            if list.len() != 3 {
-                return Err(RawError::new(
-                    "= must have exactly a fact key and a scalar value",
-                    sexpr.span(),
-                ));
-            }
-            let key = parse_context_key(&list[1])?;
-            let value = list[2]
-                .as_atom()
-                .ok_or_else(|| RawError::new("context value must be a string", list[2].span()))?
-                .to_string();
-            Ok(ContextExpr::Equals { key, value })
-        }
-        "matches" => {
-            if list.len() != 3 {
-                return Err(RawError::new(
-                    "matches must have exactly a fact key and a regex pattern",
-                    sexpr.span(),
-                ));
-            }
-            let key = parse_context_key(&list[1])?;
-            let pattern = list[2].as_atom().ok_or_else(|| {
-                RawError::new("context regex pattern must be a string", list[2].span())
-            })?;
-            let regex = regex::Regex::new(pattern).map_err(|err| {
-                RawError::new(
-                    format!("invalid context regex '{pattern}': {err}"),
-                    list[2].span(),
-                )
-            })?;
-            Ok(ContextExpr::Matches { key, regex })
+            let query = parse_context_fact_query(&list[1])?;
+            Ok(ContextExpr::Has(query))
         }
         other => Err(RawError::new(
             format!("unknown context expression: {other}"),
             list[0].span(),
         )
         .with_label("not a recognised context expression")
-        .with_help("valid context expressions: and, or, not, has, =, matches, <alias>")),
+        .with_help("valid context expressions: and, or, not, has, <alias>")),
+    }
+}
+
+fn parse_context_fact_query(sexpr: &Sexpr) -> Result<FactQuery, RawError> {
+    if sexpr.as_atom().is_some() {
+        return Ok(FactQuery::Presence {
+            key: parse_context_key(sexpr)?,
+            vector_syntax: false,
+        });
+    }
+
+    let items = match sexpr {
+        Sexpr::Vector(items, _) => items,
+        _ => {
+            return Err(RawError::new(
+                "fact query must be a namespaced key or vector like [:key] or [:key pattern]",
+                sexpr.span(),
+            ));
+        }
+    };
+
+    match items.len() {
+        1 => Ok(FactQuery::Presence {
+            key: parse_context_key(&items[0])?,
+            vector_syntax: true,
+        }),
+        2 => Ok(FactQuery::Value {
+            key: parse_context_key(&items[0])?,
+            pattern: parse_fact_pattern(&items[1])?,
+        }),
+        _ => Err(RawError::new(
+            "fact query vectors must contain a key or a key and value pattern",
+            sexpr.span(),
+        )),
+    }
+}
+
+fn parse_fact_pattern(sexpr: &Sexpr) -> Result<FactPattern, RawError> {
+    match sexpr {
+        Sexpr::Atom(s, _) if s == "*" => Ok(FactPattern::Wildcard),
+        Sexpr::Atom(s, _) => Ok(FactPattern::Literal(s.clone())),
+        Sexpr::List(list, span) => {
+            if list.is_empty() {
+                return Err(RawError::new("empty fact value pattern", *span));
+            }
+            let tag = list[0].as_atom().ok_or_else(|| {
+                RawError::new("fact value pattern tag must be an atom", list[0].span())
+            })?;
+            match tag {
+                "regex" => {
+                    if list.len() != 2 {
+                        return Err(RawError::new(
+                            "regex must have exactly one pattern",
+                            *span,
+                        ));
+                    }
+                    let pat = list[1].as_atom().ok_or_else(|| {
+                        RawError::new("regex pattern must be a string", list[1].span())
+                    })?;
+                    let re = regex::Regex::new(pat).map_err(|err| {
+                        RawError::new(format!("invalid regex '{pat}': {err}"), list[1].span())
+                    })?;
+                    Ok(FactPattern::Regex(re))
+                }
+                "and" => {
+                    if list.len() < 2 {
+                        return Err(RawError::new(
+                            "and must have at least one fact value pattern",
+                            *span,
+                        ));
+                    }
+                    Ok(FactPattern::And(
+                        list[1..]
+                            .iter()
+                            .map(parse_fact_pattern)
+                            .collect::<Result<Vec<_>, _>>()?,
+                    ))
+                }
+                "or" => {
+                    if list.len() < 2 {
+                        return Err(RawError::new(
+                            "or must have at least one fact value pattern",
+                            *span,
+                        ));
+                    }
+                    Ok(FactPattern::Or(
+                        list[1..]
+                            .iter()
+                            .map(parse_fact_pattern)
+                            .collect::<Result<Vec<_>, _>>()?,
+                    ))
+                }
+                "not" => {
+                    if list.len() != 2 {
+                        return Err(RawError::new(
+                            "not must have exactly one fact value pattern",
+                            *span,
+                        ));
+                    }
+                    Ok(FactPattern::Not(Box::new(parse_fact_pattern(&list[1])?)))
+                }
+                other => Err(RawError::new(
+                    format!("unknown fact value pattern: {other}"),
+                    list[0].span(),
+                )
+                .with_label("not a recognised fact value pattern")
+                .with_help("valid fact value patterns: string, *, regex, and, or, not")),
+            }
+        }
+        Sexpr::Vector(_, span) => Err(RawError::new(
+            "fact value patterns do not support nested vector syntax",
+            *span,
+        )),
     }
 }
 
@@ -438,15 +518,7 @@ fn resolve_context_expr(
             resolving.pop();
             resolved
         }
-        ContextExpr::Has(key) => ContextExpr::Has(key.clone()),
-        ContextExpr::Equals { key, value } => ContextExpr::Equals {
-            key: key.clone(),
-            value: value.clone(),
-        },
-        ContextExpr::Matches { key, regex } => ContextExpr::Matches {
-            key: key.clone(),
-            regex: regex.clone(),
-        },
+        ContextExpr::Has(query) => ContextExpr::Has(query.clone()),
         ContextExpr::And(exprs) => ContextExpr::And(
             exprs
                 .iter()
@@ -1089,8 +1161,8 @@ mod tests {
         let config = parse(
             r#"(rule (command "echo")
                   (context (and (has :via/ssh)
-                                (= :claude-code/permission-mode "acceptEdits")
-                                (matches :ssh/host "^prod-")))
+                                (has [:claude-code/permission-mode "acceptEdits"])
+                                (has [:ssh/host (regex "^prod-")])))
                   (effect :allow))"#,
         )
         .unwrap();
@@ -1104,7 +1176,7 @@ mod tests {
     fn defcontext_resolves_in_rule() {
         let config = parse(
             r#"(defcontext remote-prod (and (has :via/ssh)
-                                            (matches :ssh/host "^prod-")))
+                                            (has [:ssh/host (regex "^prod-")])))
                (rule (command "ls")
                      (context (or remote-prod (has :client/claude-code)))
                      (effect :allow))"#,
@@ -1118,6 +1190,51 @@ mod tests {
             }
             other => panic!("expected resolved Or context expr, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn context_has_vector_presence_parses() {
+        let config = parse(
+            r#"(rule (command "echo")
+                  (context (has [:via/ssh]))
+                  (effect :allow))"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            config.rules[0].context.as_ref().unwrap(),
+            ContextExpr::Has(FactQuery::Presence {
+                key,
+                vector_syntax: true,
+            }) if key == ":via/ssh"
+        ));
+    }
+
+    #[test]
+    fn context_has_pattern_parses_boolean_fact_patterns() {
+        let config = parse(
+            r#"(rule (command "echo")
+                  (context (has [:opencode/agent (or "build" (not (regex "^plan-")))]))
+                  (effect :allow))"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            config.rules[0].context.as_ref().unwrap(),
+            ContextExpr::Has(FactQuery::Value {
+                key,
+                pattern: FactPattern::Or(_),
+            }) if key == ":opencode/agent"
+        ));
+    }
+
+    #[test]
+    fn context_has_pattern_rejects_nested_vectors() {
+        let err = parse(
+            r#"(rule (command "echo")
+                  (context (has [:opencode/agent [:bad]]))
+                  (effect :allow))"#,
+        )
+        .expect_err("expected error");
+        assert!(format!("{err}").contains("nested vector"));
     }
 
     #[test]

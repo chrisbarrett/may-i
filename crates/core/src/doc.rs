@@ -9,6 +9,7 @@
 pub enum DocF<R> {
     Atom(String),
     List(Vec<R>),
+    Vector(Vec<R>),
 }
 
 impl<R> DocF<R> {
@@ -17,6 +18,7 @@ impl<R> DocF<R> {
         match self {
             DocF::Atom(s) => DocF::Atom(s),
             DocF::List(rs) => DocF::List(rs.into_iter().map(&mut f).collect()),
+            DocF::Vector(rs) => DocF::Vector(rs.into_iter().map(&mut f).collect()),
         }
     }
 
@@ -25,6 +27,7 @@ impl<R> DocF<R> {
         match self {
             DocF::Atom(s) => DocF::Atom(s.clone()),
             DocF::List(rs) => DocF::List(rs.iter().map(&mut f).collect()),
+            DocF::Vector(rs) => DocF::Vector(rs.iter().map(&mut f).collect()),
         }
     }
 
@@ -37,7 +40,7 @@ impl<R> DocF<R> {
 
     pub fn children(&self) -> Option<&[R]> {
         match self {
-            DocF::List(cs) => Some(cs),
+            DocF::List(cs) | DocF::Vector(cs) => Some(cs),
             _ => None,
         }
     }
@@ -82,6 +85,15 @@ impl Doc<()> {
         Doc {
             ann: (),
             node: DocF::List(children),
+            layout: LayoutHint::Auto,
+            dimmed: false,
+        }
+    }
+
+    pub fn vector(children: Vec<Doc<()>>) -> Self {
+        Doc {
+            ann: (),
+            node: DocF::Vector(children),
             layout: LayoutHint::Auto,
             dimmed: false,
         }

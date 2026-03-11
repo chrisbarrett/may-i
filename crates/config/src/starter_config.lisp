@@ -40,26 +40,26 @@
 ;; Facts are queried inside (context ...) with:
 ;;
 ;;   (has :via/ssh)                              ; presence check
-;;   (= :opencode/agent "build")                ; exact string value
-;;   (matches :ssh/host "^prod-")               ; regex value match
-;;   (and (has :via/ssh) (= :opencode/agent "build"))
+;;   (has [:opencode/agent "build"])            ; exact string value
+;;   (has [:ssh/host (regex "^prod-")])         ; regex value match
+;;   (and (has :via/ssh) (has [:opencode/agent "build"]))
 ;;
 ;; CONTEXT MATCHERS (inside (context ...))
 ;;
 ;;   (defcontext remote-prod
 ;;     (and (has :via/ssh)
-;;          (matches :ssh/host "^prod-")))
+;;          (has [:ssh/host (regex "^prod-")])))
 ;;
 ;;   (rule (command "journalctl")
 ;;         (context remote-prod)
 ;;         (effect :allow))
 ;;
 ;;   (rule (command "echo")
-;;         (context (= :claude-code/permission-mode "acceptEdits"))
+;;         (context (has [:claude-code/permission-mode "acceptEdits"]))
 ;;         (effect :allow))
 ;;
 ;;   (rule (command "git")
-;;         (context (= :opencode/agent "plan"))
+;;         (context (has [:opencode/agent "plan"]))
 ;;         (effect :ask "Git commands in the plan agent need approval"))
 ;;
 ;; ARGUMENT MATCHERS (inside (args ...))

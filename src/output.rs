@@ -366,39 +366,35 @@ fn format_annotation(doc: &Doc<Option<EvalAnn>>, ann: &EvalAnn) -> Option<(Strin
         EvalAnn::ArgsResult(_) => None,
         EvalAnn::RuleEffect { .. } => None, // handled as outcome
         EvalAnn::DefaultAsk => None,
-        EvalAnn::ContextHas { key, matched } => {
-            let needle = node_text(doc);
-            let arrow = if *matched { "→ yes" } else { "→ no" };
-            Some((needle, format!("{key} present {arrow}")))
-        }
-        EvalAnn::ContextEquals {
-            key,
-            expected,
+        EvalAnn::ContextHasPresence { matched, .. } => Some((node_text(doc), verdict(*matched))),
+        EvalAnn::ContextHasExact {
             actual,
             matched,
-        } => {
-            let needle = node_text(doc);
-            let actual = actual.as_deref().unwrap_or("<absent>");
-            let arrow = if *matched { "→ yes" } else { "→ no" };
-            Some((
-                needle,
-                format!("{key} = \"{actual}\" (expected \"{expected}\") {arrow}"),
-            ))
-        }
-        EvalAnn::ContextMatches {
-            key,
-            pattern,
+            search_needle,
+            ..
+        } => Some((
+            search_needle.clone(),
+            if *matched {
+                "yes".into()
+            } else if let Some(actual) = actual {
+                format!("{} -> no", render_observed_value(actual))
+            } else {
+                "no".into()
+            },
+        )),
+        EvalAnn::ContextHasPattern {
             actual,
             matched,
-        } => {
-            let needle = node_text(doc);
-            let actual = actual.as_deref().unwrap_or("<absent>");
-            let arrow = if *matched { "→ yes" } else { "→ no" };
-            Some((
-                needle,
-                format!("\"{actual}\" ~ /{pattern}/ for {key} {arrow}"),
-            ))
-        }
+            search_needle,
+            ..
+        } => Some((
+            search_needle.clone(),
+            if let Some(actual) = actual {
+                format!("{} -> {}", render_observed_value(actual), if *matched { "yes" } else { "no" })
+            } else {
+                "no".into()
+            },
+        )),
 
         EvalAnn::ExprVsArg { arg, matched } => {
             let needle = node_text(doc);
@@ -452,11 +448,48 @@ fn format_annotation(doc: &Doc<Option<EvalAnn>>, ann: &EvalAnn) -> Option<(Strin
     }
 }
 
+fn verdict(matched: bool) -> String {
+    if matched { "yes".into() } else { "no".into() }
+}
+
+fn render_observed_value(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len() + 2);
+    escaped.push('"');
+    for ch in value.chars() {
+        match ch {
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\\""),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            other => escaped.push(other),
+        }
+    }
+    escaped.push('"');
+
+    let char_count = escaped.chars().count();
+    if char_count <= 40 {
+        escaped
+    } else {
+        let inner = escaped
+            .chars()
+            .skip(1)
+            .take(35)
+            .collect::<String>();
+        let mut truncated = String::from("\"");
+        truncated.push_str(&inner);
+        truncated.push('…');
+        truncated.push('"');
+        truncated
+    }
+}
+
 /// Get the plain text of a Doc node (for search needle matching).
 fn node_text(doc: &Doc<Option<EvalAnn>>) -> String {
     doc.fold(&|node, _ann: &Option<EvalAnn>| match node {
         DocF::Atom(s) => s,
         DocF::List(cs) => format!("({})", cs.join(" ")),
+        DocF::Vector(cs) => format!("[{}]", cs.join(" ")),
     })
 }
 
@@ -487,7 +520,7 @@ fn has_args_match(doc: &Doc<Option<EvalAnn>>) -> bool {
             return true;
         }
         match node {
-            DocF::List(children) => children.iter().any(|c| *c),
+            DocF::List(children) | DocF::Vector(children) => children.iter().any(|c| *c),
             DocF::Atom(_) => false,
         }
     })
@@ -609,6 +642,17 @@ fn truncate_unevaluated(doc: &Doc<Option<EvalAnn>>, keep: usize) -> Doc<Option<E
                 }
             }
         }
+        DocF::Vector(children) => Doc {
+            ann: doc.ann.clone(),
+            node: DocF::Vector(
+                children
+                    .iter()
+                    .map(|c| truncate_unevaluated(c, keep))
+                    .collect(),
+            ),
+            layout: doc.layout,
+            dimmed: doc.dimmed,
+        },
     }
 }
 
@@ -647,6 +691,27 @@ fn dim_unevaluated_inner(doc: Doc<Option<EvalAnn>>) -> (Doc<Option<EvalAnn>>, us
                 total,
             )
         }
+        DocF::Vector(children) => {
+            let mut total = self_score;
+            let children: Vec<_> = children
+                .into_iter()
+                .map(|c| {
+                    let (c, n) = dim_unevaluated_inner(c);
+                    total += n;
+                    c
+                })
+                .collect();
+            let dimmed = doc.dimmed || total == 0;
+            (
+                Doc {
+                    ann: doc.ann,
+                    node: DocF::Vector(children),
+                    layout: doc.layout,
+                    dimmed,
+                },
+                total,
+            )
+        }
     }
 }
 
@@ -656,7 +721,7 @@ fn has_any_annotation(doc: &Doc<Option<EvalAnn>>) -> bool {
     if doc.ann.is_some() {
         return true;
     }
-    if let DocF::List(children) = &doc.node {
+    if let DocF::List(children) | DocF::Vector(children) = &doc.node {
         children.iter().any(has_any_annotation)
     } else {
         false
@@ -677,7 +742,7 @@ fn has_any_visible_annotation(doc: &Doc<Option<EvalAnn>>) -> bool {
     {
         return true;
     }
-    if let DocF::List(children) = &doc.node {
+    if let DocF::List(children) | DocF::Vector(children) = &doc.node {
         children.iter().any(has_any_visible_annotation)
     } else {
         false
@@ -714,6 +779,13 @@ fn truncate_list(items: &[String], max: usize) -> String {
 fn colorize_right(s: &str) -> String {
     if s.starts_with("(effect ") || s.starts_with("(default ") {
         return colorize_effect_sexpr(s);
+    }
+
+    if s == "yes" {
+        return "yes".green().bold().to_string();
+    }
+    if s == "no" {
+        return "no".yellow().to_string();
     }
 
     // Split at "→" to colorize the result portion.
@@ -828,34 +900,53 @@ fn eval_ann_to_json(ann: &EvalAnn) -> serde_json::Value {
             "type": "context_result",
             "matched": matched,
         }),
-        EvalAnn::ContextHas { key, matched } => serde_json::json!({
-            "type": "context_has",
+        EvalAnn::ContextHasPresence {
+            key,
+            source,
+            matched,
+        } => serde_json::json!({
+            "type": "context_has_presence",
             "key": key,
+            "source": source,
             "matched": matched,
         }),
-        EvalAnn::ContextEquals {
+        EvalAnn::ContextHasExact {
             key,
+            source,
             expected,
             actual,
             matched,
+            reason,
+            ..
         } => serde_json::json!({
-            "type": "context_equals",
+            "type": "context_has_exact",
             "key": key,
+            "source": source,
             "expected": expected,
             "actual": actual,
             "matched": matched,
+            "reason": reason.as_ref().map(|reason| reason.as_str()),
         }),
-        EvalAnn::ContextMatches {
+        EvalAnn::ContextHasPattern {
             key,
+            source,
+            pattern_source,
             pattern,
+            pattern_eval,
             actual,
             matched,
+            reason,
+            ..
         } => serde_json::json!({
-            "type": "context_matches",
+            "type": "context_has_pattern",
             "key": key,
-            "pattern": pattern,
+            "source": source,
+            "pattern_source": pattern_source,
+            "pattern": fact_pattern_to_json(pattern),
+            "pattern_eval": fact_pattern_eval_to_json(pattern_eval),
             "actual": actual,
             "matched": matched,
+            "reason": reason.as_ref().map(|reason| reason.as_str()),
         }),
         EvalAnn::ExprVsArg { arg, matched } => serde_json::json!({
             "type": "expr_vs_arg",
@@ -912,6 +1003,94 @@ fn eval_ann_to_json(ann: &EvalAnn) -> serde_json::Value {
     }
 }
 
+fn fact_pattern_to_json(pattern: &may_i_core::FactPattern) -> serde_json::Value {
+    match pattern {
+        may_i_core::FactPattern::Literal(value) => serde_json::json!({
+            "type": "literal",
+            "value": value,
+        }),
+        may_i_core::FactPattern::Wildcard => serde_json::json!({
+            "type": "wildcard",
+        }),
+        may_i_core::FactPattern::Regex(regex) => serde_json::json!({
+            "type": "regex",
+            "pattern": regex.as_str(),
+        }),
+        may_i_core::FactPattern::And(children) => serde_json::json!({
+            "type": "and",
+            "children": children.iter().map(fact_pattern_to_json).collect::<Vec<_>>(),
+        }),
+        may_i_core::FactPattern::Or(children) => serde_json::json!({
+            "type": "or",
+            "children": children.iter().map(fact_pattern_to_json).collect::<Vec<_>>(),
+        }),
+        may_i_core::FactPattern::Not(child) => serde_json::json!({
+            "type": "not",
+            "child": fact_pattern_to_json(child),
+        }),
+    }
+}
+
+fn fact_pattern_eval_to_json(eval: &may_i_core::FactPatternEval) -> serde_json::Value {
+    match eval {
+        may_i_core::FactPatternEval::Literal {
+            value,
+            evaluated,
+            matched,
+        } => serde_json::json!({
+            "type": "literal",
+            "value": value,
+            "evaluated": evaluated,
+            "matched": matched,
+        }),
+        may_i_core::FactPatternEval::Wildcard { evaluated, matched } => serde_json::json!({
+            "type": "wildcard",
+            "evaluated": evaluated,
+            "matched": matched,
+        }),
+        may_i_core::FactPatternEval::Regex {
+            pattern,
+            evaluated,
+            matched,
+        } => serde_json::json!({
+            "type": "regex",
+            "pattern": pattern,
+            "evaluated": evaluated,
+            "matched": matched,
+        }),
+        may_i_core::FactPatternEval::And {
+            evaluated,
+            matched,
+            children,
+        } => serde_json::json!({
+            "type": "and",
+            "evaluated": evaluated,
+            "matched": matched,
+            "children": children.iter().map(fact_pattern_eval_to_json).collect::<Vec<_>>(),
+        }),
+        may_i_core::FactPatternEval::Or {
+            evaluated,
+            matched,
+            children,
+        } => serde_json::json!({
+            "type": "or",
+            "evaluated": evaluated,
+            "matched": matched,
+            "children": children.iter().map(fact_pattern_eval_to_json).collect::<Vec<_>>(),
+        }),
+        may_i_core::FactPatternEval::Not {
+            evaluated,
+            matched,
+            child,
+        } => serde_json::json!({
+            "type": "not",
+            "evaluated": evaluated,
+            "matched": matched,
+            "child": fact_pattern_eval_to_json(child),
+        }),
+    }
+}
+
 /// Serialize a Doc tree to JSON.
 fn doc_to_json(doc: &Doc<Option<EvalAnn>>) -> serde_json::Value {
     match &doc.node {
@@ -919,5 +1098,130 @@ fn doc_to_json(doc: &Doc<Option<EvalAnn>>) -> serde_json::Value {
         DocF::List(children) => {
             serde_json::json!(children.iter().map(doc_to_json).collect::<Vec<_>>())
         }
+        DocF::Vector(children) => serde_json::json!({
+            "type": "vector",
+            "children": children.iter().map(doc_to_json).collect::<Vec<_>>(),
+        }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use may_i_core::{ContextFailureReason, FactPattern, FactPatternEval};
+
+    fn atom_doc(text: &str) -> Doc<Option<EvalAnn>> {
+        Doc {
+            ann: None,
+            node: DocF::Atom(text.into()),
+            layout: LayoutHint::Auto,
+            dimmed: false,
+        }
+    }
+
+    fn list_doc(children: Vec<Doc<Option<EvalAnn>>>) -> Doc<Option<EvalAnn>> {
+        Doc {
+            ann: None,
+            node: DocF::List(children),
+            layout: LayoutHint::Auto,
+            dimmed: false,
+        }
+    }
+
+    #[test]
+    fn format_presence_context_annotation_is_plain_verdict() {
+        let doc = list_doc(vec![atom_doc("has"), atom_doc(":via/ssh")]);
+        let ann = EvalAnn::ContextHasPresence {
+            key: ":via/ssh".into(),
+            source: "(has :via/ssh)".into(),
+            matched: true,
+        };
+        assert_eq!(format_annotation(&doc, &ann), Some(("(has :via/ssh)".into(), "yes".into())));
+    }
+
+    #[test]
+    fn format_exact_context_annotation_reports_observed_value() {
+        let doc = list_doc(vec![atom_doc("has"), atom_doc("[:opencode/agent \"build\"]")]);
+        let ann = EvalAnn::ContextHasExact {
+            key: ":opencode/agent".into(),
+            source: "(has [:opencode/agent \"build\"])".into(),
+            expected: "build".into(),
+            actual: Some("plan".into()),
+            matched: false,
+            reason: Some(ContextFailureReason::ValueMismatch),
+            search_needle: "\"build\"".into(),
+        };
+        assert_eq!(
+            format_annotation(&doc, &ann),
+            Some(("\"build\"".into(), "\"plan\" -> no".into()))
+        );
+    }
+
+    #[test]
+    fn format_pattern_context_annotation_reports_actual_value() {
+        let doc = list_doc(vec![atom_doc("has"), atom_doc("[:ssh/host *]")]);
+        let ann = EvalAnn::ContextHasPattern {
+            key: ":ssh/host".into(),
+            source: "(has [:ssh/host *])".into(),
+            pattern_source: "*".into(),
+            pattern: FactPattern::Wildcard,
+            pattern_eval: FactPatternEval::Wildcard {
+                evaluated: true,
+                matched: true,
+            },
+            actual: Some("prod-1".into()),
+            matched: true,
+            reason: None,
+            search_needle: "*".into(),
+        };
+        assert_eq!(
+            format_annotation(&doc, &ann),
+            Some(("*".into(), "\"prod-1\" -> yes".into()))
+        );
+    }
+
+    #[test]
+    fn trace_json_serializes_pattern_annotations_with_reason() {
+        let doc = Doc {
+            ann: Some(EvalAnn::ContextHasPattern {
+                key: ":ssh/host".into(),
+                source: "(has [:ssh/host (or \"prod-1\" \"prod-2\")])".into(),
+                pattern_source: "(or \"prod-1\" \"prod-2\")".into(),
+                pattern: FactPattern::Or(vec![
+                    FactPattern::Literal("prod-1".into()),
+                    FactPattern::Literal("prod-2".into()),
+                ]),
+                pattern_eval: FactPatternEval::Or {
+                    evaluated: false,
+                    matched: false,
+                    children: vec![
+                        FactPatternEval::Literal {
+                            value: "prod-1".into(),
+                            evaluated: false,
+                            matched: false,
+                        },
+                        FactPatternEval::Literal {
+                            value: "prod-2".into(),
+                            evaluated: false,
+                            matched: false,
+                        },
+                    ],
+                },
+                actual: None,
+                matched: false,
+                reason: Some(ContextFailureReason::PresentWithoutScalar),
+                search_needle: ":ssh/host".into(),
+            }),
+            node: DocF::Atom("test".into()),
+            layout: LayoutHint::Auto,
+            dimmed: false,
+        };
+        let json = trace_to_json(&[TraceEntry::Rule {
+            doc: Box::new(doc),
+            line: Some(1),
+        }]);
+        let annotations = json[0]["annotations"].as_array().unwrap();
+        assert_eq!(annotations[0]["type"], "context_has_pattern");
+        assert_eq!(annotations[0]["reason"], "present_without_scalar");
     }
 }

@@ -975,10 +975,10 @@ fn context_rule_matches_runtime_fact() {
     let config = Config {
         rules: vec![Rule {
             command: CommandMatcher::Exact("echo".into()),
-            context: Some(ContextExpr::Equals {
+            context: Some(ContextExpr::Has(may_i_core::FactQuery::Value {
                 key: ":claude-code/permission-mode".into(),
-                value: "acceptEdits".into(),
-            }),
+                pattern: may_i_core::FactPattern::Literal("acceptEdits".into()),
+            })),
             body: RuleBody::Effect {
                 matcher: None,
                 effect: Effect {
@@ -1004,7 +1004,10 @@ fn context_rule_skips_when_fact_absent() {
     let config = Config {
         rules: vec![Rule {
             command: CommandMatcher::Exact("echo".into()),
-            context: Some(ContextExpr::Has(":via/ssh".into())),
+            context: Some(ContextExpr::Has(may_i_core::FactQuery::Presence {
+                key: ":via/ssh".into(),
+                vector_syntax: false,
+            })),
             body: RuleBody::Effect {
                 matcher: None,
                 effect: Effect {
@@ -1025,7 +1028,10 @@ fn wrapper_derived_via_fact_matches_context_rule() {
     let config = Config {
         rules: vec![Rule {
             command: CommandMatcher::Exact("ls".into()),
-            context: Some(ContextExpr::Has(":via/ssh".into())),
+            context: Some(ContextExpr::Has(may_i_core::FactQuery::Presence {
+                key: ":via/ssh".into(),
+                vector_syntax: false,
+            })),
             body: RuleBody::Effect {
                 matcher: None,
                 effect: Effect {
@@ -1053,10 +1059,10 @@ fn wrapper_derived_scalar_fact_matches_context_rule() {
     let config = Config {
         rules: vec![Rule {
             command: CommandMatcher::Exact("ls".into()),
-            context: Some(ContextExpr::Matches {
+            context: Some(ContextExpr::Has(may_i_core::FactQuery::Value {
                 key: ":ssh/host".into(),
-                regex: regex::Regex::new("^prod-").unwrap(),
-            }),
+                pattern: may_i_core::FactPattern::Regex(regex::Regex::new("^prod-").unwrap()),
+            })),
             body: RuleBody::Effect {
                 matcher: None,
                 effect: Effect {
@@ -1086,11 +1092,14 @@ fn nested_wrappers_accumulate_context_facts() {
         rules: vec![Rule {
             command: CommandMatcher::Exact("ls".into()),
             context: Some(ContextExpr::And(vec![
-                ContextExpr::Has(":via/sudo".into()),
-                ContextExpr::Matches {
+                ContextExpr::Has(may_i_core::FactQuery::Presence {
+                    key: ":via/sudo".into(),
+                    vector_syntax: false,
+                }),
+                ContextExpr::Has(may_i_core::FactQuery::Value {
                     key: ":ssh/host".into(),
-                    regex: regex::Regex::new("^prod-").unwrap(),
-                },
+                    pattern: may_i_core::FactPattern::Regex(regex::Regex::new("^prod-").unwrap()),
+                }),
             ])),
             body: RuleBody::Effect {
                 matcher: None,
@@ -1125,10 +1134,10 @@ fn dynamic_wrapper_value_omits_scalar_fact() {
     let config = Config {
         rules: vec![Rule {
             command: CommandMatcher::Exact("ls".into()),
-            context: Some(ContextExpr::Equals {
+            context: Some(ContextExpr::Has(may_i_core::FactQuery::Value {
                 key: ":ssh/host".into(),
-                value: "prod-1".into(),
-            }),
+                pattern: may_i_core::FactPattern::Literal("prod-1".into()),
+            })),
             body: RuleBody::Effect {
                 matcher: None,
                 effect: Effect {

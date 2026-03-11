@@ -19,6 +19,10 @@ impl ContextFacts {
         self.values.contains_key(key)
     }
 
+    pub fn get(&self, key: &str) -> Option<&ContextValue> {
+        self.values.get(key)
+    }
+
     pub fn get_scalar(&self, key: &str) -> Option<&str> {
         match self.values.get(key) {
             Some(ContextValue::Scalar(value)) => Some(value.as_str()),
@@ -53,12 +57,145 @@ pub struct ConfigWarning {
     pub help: Option<String>,
 }
 
+fn quote_string(value: &str) -> String {
+    let mut quoted = String::with_capacity(value.len() + 2);
+    quoted.push('"');
+    for ch in value.chars() {
+        match ch {
+            '\\' => quoted.push_str("\\\\"),
+            '"' => quoted.push_str("\\\""),
+            '\n' => quoted.push_str("\\n"),
+            '\r' => quoted.push_str("\\r"),
+            '\t' => quoted.push_str("\\t"),
+            other => quoted.push(other),
+        }
+    }
+    quoted.push('"');
+    quoted
+}
+
+#[derive(Clone)]
+pub enum FactPattern {
+    Literal(String),
+    Wildcard,
+    Regex(regex::Regex),
+    And(Vec<FactPattern>),
+    Or(Vec<FactPattern>),
+    Not(Box<FactPattern>),
+}
+
+impl FactPattern {
+    pub fn to_doc(&self) -> Doc {
+        match self {
+            FactPattern::Literal(value) => Doc::atom(quote_string(value)),
+            FactPattern::Wildcard => Doc::atom("*"),
+            FactPattern::Regex(regex) => Doc::list(vec![
+                Doc::atom("regex"),
+                Doc::atom(quote_string(regex.as_str())),
+            ]),
+            FactPattern::And(patterns) => {
+                let mut cs = vec![Doc::atom("and")];
+                cs.extend(patterns.iter().map(FactPattern::to_doc));
+                Doc::list(cs)
+            }
+            FactPattern::Or(patterns) => {
+                let mut cs = vec![Doc::atom("or")];
+                cs.extend(patterns.iter().map(FactPattern::to_doc));
+                Doc::list(cs)
+            }
+            FactPattern::Not(pattern) => Doc::list(vec![Doc::atom("not"), pattern.to_doc()]),
+        }
+    }
+
+    pub fn to_source(&self) -> String {
+        match self {
+            FactPattern::Literal(value) => quote_string(value),
+            FactPattern::Wildcard => "*".into(),
+            FactPattern::Regex(regex) => format!("(regex {})", quote_string(regex.as_str())),
+            FactPattern::And(patterns) => {
+                let parts = patterns
+                    .iter()
+                    .map(FactPattern::to_source)
+                    .collect::<Vec<_>>();
+                format!("(and {})", parts.join(" "))
+            }
+            FactPattern::Or(patterns) => {
+                let parts = patterns
+                    .iter()
+                    .map(FactPattern::to_source)
+                    .collect::<Vec<_>>();
+                format!("(or {})", parts.join(" "))
+            }
+            FactPattern::Not(pattern) => format!("(not {})", pattern.to_source()),
+        }
+    }
+
+    pub fn is_literal(&self) -> bool {
+        matches!(self, FactPattern::Literal(_))
+    }
+}
+
+impl std::fmt::Debug for FactPattern {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FactPattern::Literal(value) => f.debug_tuple("Literal").field(value).finish(),
+            FactPattern::Wildcard => f.write_str("Wildcard"),
+            FactPattern::Regex(regex) => f.debug_tuple("Regex").field(&regex.as_str()).finish(),
+            FactPattern::And(patterns) => f.debug_tuple("And").field(patterns).finish(),
+            FactPattern::Or(patterns) => f.debug_tuple("Or").field(patterns).finish(),
+            FactPattern::Not(pattern) => f.debug_tuple("Not").field(pattern).finish(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum FactQuery {
+    Presence { key: String, vector_syntax: bool },
+    Value { key: String, pattern: FactPattern },
+}
+
+impl FactQuery {
+    pub fn key(&self) -> &str {
+        match self {
+            FactQuery::Presence { key, .. } | FactQuery::Value { key, .. } => key,
+        }
+    }
+
+    pub fn to_doc(&self) -> Doc {
+        match self {
+            FactQuery::Presence {
+                key,
+                vector_syntax: false,
+            } => Doc::atom(key.clone()),
+            FactQuery::Presence {
+                key,
+                vector_syntax: true,
+            } => Doc::vector(vec![Doc::atom(key.clone())]),
+            FactQuery::Value { key, pattern } => {
+                Doc::vector(vec![Doc::atom(key.clone()), pattern.to_doc()])
+            }
+        }
+    }
+
+    pub fn to_source(&self) -> String {
+        match self {
+            FactQuery::Presence {
+                key,
+                vector_syntax: false,
+            } => key.clone(),
+            FactQuery::Presence {
+                key,
+                vector_syntax: true,
+            } => format!("[{key}]"),
+            FactQuery::Value { key, pattern } => format!("[{key} {}]", pattern.to_source()),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub enum ContextExpr {
     Alias(String),
-    Has(String),
-    Equals { key: String, value: String },
-    Matches { key: String, regex: regex::Regex },
+    Has(FactQuery),
     And(Vec<ContextExpr>),
     Or(Vec<ContextExpr>),
     Not(Box<ContextExpr>),
@@ -68,17 +205,7 @@ impl ContextExpr {
     pub fn to_doc(&self) -> Doc {
         match self {
             ContextExpr::Alias(name) => Doc::atom(name.clone()),
-            ContextExpr::Has(key) => Doc::list(vec![Doc::atom("has"), Doc::atom(key.clone())]),
-            ContextExpr::Equals { key, value } => Doc::list(vec![
-                Doc::atom("="),
-                Doc::atom(key.clone()),
-                Doc::atom(format!("\"{value}\"")),
-            ]),
-            ContextExpr::Matches { key, regex } => Doc::list(vec![
-                Doc::atom("matches"),
-                Doc::atom(key.clone()),
-                Doc::atom(format!("\"{}\"", regex.as_str())),
-            ]),
+            ContextExpr::Has(query) => Doc::list(vec![Doc::atom("has"), query.to_doc()]),
             ContextExpr::And(exprs) => {
                 let mut cs = vec![Doc::atom("and")];
                 cs.extend(exprs.iter().map(|expr| expr.to_doc()));
@@ -98,17 +225,7 @@ impl std::fmt::Debug for ContextExpr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ContextExpr::Alias(name) => f.debug_tuple("Alias").field(name).finish(),
-            ContextExpr::Has(key) => f.debug_tuple("Has").field(key).finish(),
-            ContextExpr::Equals { key, value } => f
-                .debug_struct("Equals")
-                .field("key", key)
-                .field("value", value)
-                .finish(),
-            ContextExpr::Matches { key, regex } => f
-                .debug_struct("Matches")
-                .field("key", key)
-                .field("regex", &regex.as_str())
-                .finish(),
+            ContextExpr::Has(query) => f.debug_tuple("Has").field(query).finish(),
             ContextExpr::And(exprs) => f.debug_tuple("And").field(exprs).finish(),
             ContextExpr::Or(exprs) => f.debug_tuple("Or").field(exprs).finish(),
             ContextExpr::Not(expr) => f.debug_tuple("Not").field(expr).finish(),
@@ -617,6 +734,58 @@ pub struct Wrapper {
     pub steps: Vec<WrapperStep>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContextFailureReason {
+    Absent,
+    PresentWithoutScalar,
+    ValueMismatch,
+    PatternMismatch,
+}
+
+impl ContextFailureReason {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ContextFailureReason::Absent => "absent",
+            ContextFailureReason::PresentWithoutScalar => "present_without_scalar",
+            ContextFailureReason::ValueMismatch => "value_mismatch",
+            ContextFailureReason::PatternMismatch => "pattern_mismatch",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum FactPatternEval {
+    Literal {
+        value: String,
+        evaluated: bool,
+        matched: bool,
+    },
+    Wildcard {
+        evaluated: bool,
+        matched: bool,
+    },
+    Regex {
+        pattern: String,
+        evaluated: bool,
+        matched: bool,
+    },
+    And {
+        evaluated: bool,
+        matched: bool,
+        children: Vec<FactPatternEval>,
+    },
+    Or {
+        evaluated: bool,
+        matched: bool,
+        children: Vec<FactPatternEval>,
+    },
+    Not {
+        evaluated: bool,
+        matched: bool,
+        child: Box<FactPatternEval>,
+    },
+}
+
 /// A single step in a wrapper definition.
 #[derive(Debug, Clone)]
 pub enum WrapperStep {
@@ -657,21 +826,30 @@ pub enum EvalAnn {
         matched: bool,
     },
     ContextResult(bool),
-    ContextHas {
+    ContextHasPresence {
         key: String,
+        source: String,
         matched: bool,
     },
-    ContextEquals {
+    ContextHasExact {
         key: String,
+        source: String,
         expected: String,
         actual: Option<String>,
         matched: bool,
+        reason: Option<ContextFailureReason>,
+        search_needle: String,
     },
-    ContextMatches {
+    ContextHasPattern {
         key: String,
-        pattern: String,
+        source: String,
+        pattern_source: String,
+        pattern: FactPattern,
+        pattern_eval: FactPatternEval,
         actual: Option<String>,
         matched: bool,
+        reason: Option<ContextFailureReason>,
+        search_needle: String,
     },
     /// A conditional branch was selected (expr-level or matcher-level).
     CondBranch {
@@ -708,7 +886,7 @@ pub enum TraceEntry {
     /// An annotated rule evaluation. The doc tree carries eval annotations
     /// on each node that was visited by the evaluator.
     Rule {
-        doc: Doc<Option<EvalAnn>>,
+        doc: Box<Doc<Option<EvalAnn>>>,
         line: Option<usize>,
     },
     /// Segment boundary for compound commands.
@@ -1124,7 +1302,79 @@ mod tests {
         doc.fold(&|node, _ann| match node {
             crate::doc::DocF::Atom(s) => s,
             crate::doc::DocF::List(cs) => format!("({})", cs.join(" ")),
+            crate::doc::DocF::Vector(cs) => format!("[{}]", cs.join(" ")),
         })
+    }
+
+    #[test]
+    fn fact_pattern_to_doc_regex() {
+        let pattern = FactPattern::Regex(regex::Regex::new("^prod-").unwrap());
+        assert_eq!(doc_text(&pattern.to_doc()), r#"(regex "^prod-")"#);
+    }
+
+    #[test]
+    fn fact_query_to_doc_preserves_presence_sugar() {
+        let bare = FactQuery::Presence {
+            key: ":via/ssh".into(),
+            vector_syntax: false,
+        };
+        let vector = FactQuery::Presence {
+            key: ":via/ssh".into(),
+            vector_syntax: true,
+        };
+        assert_eq!(doc_text(&bare.to_doc()), ":via/ssh");
+        assert_eq!(doc_text(&vector.to_doc()), "[:via/ssh]");
+    }
+
+    #[test]
+    fn context_has_to_doc_uses_vector_queries() {
+        let expr = ContextExpr::Has(FactQuery::Value {
+            key: ":opencode/agent".into(),
+            pattern: FactPattern::Literal("build".into()),
+        });
+        assert_eq!(
+            doc_text(&expr.to_doc()),
+            r#"(has [:opencode/agent "build"])"#
+        );
+    }
+
+    #[test]
+    fn fact_pattern_to_source_handles_boolean_forms() {
+        let pattern = FactPattern::And(vec![
+            FactPattern::Wildcard,
+            FactPattern::Not(Box::new(FactPattern::Literal("build".into()))),
+        ]);
+        assert_eq!(pattern.to_source(), r#"(and * (not "build"))"#);
+    }
+
+    #[test]
+    fn fact_query_to_source_and_key_for_value_query() {
+        let query = FactQuery::Value {
+            key: ":ssh/host".into(),
+            pattern: FactPattern::Regex(regex::Regex::new("^prod-").unwrap()),
+        };
+        assert_eq!(query.key(), ":ssh/host");
+        assert_eq!(query.to_source(), r#"[:ssh/host (regex "^prod-")]"#);
+    }
+
+    #[test]
+    fn fact_pattern_literal_to_doc_escapes_special_chars() {
+        let pattern = FactPattern::Literal("line1\n\t\"two\"".into());
+        assert_eq!(doc_text(&pattern.to_doc()), r#""line1\n\t\"two\"""#);
+    }
+
+    #[test]
+    fn fact_query_presence_to_source_preserves_bare_and_vector_forms() {
+        let bare = FactQuery::Presence {
+            key: ":client/opencode".into(),
+            vector_syntax: false,
+        };
+        let vector = FactQuery::Presence {
+            key: ":client/opencode".into(),
+            vector_syntax: true,
+        };
+        assert_eq!(bare.to_source(), ":client/opencode");
+        assert_eq!(vector.to_source(), "[:client/opencode]");
     }
 
     #[test]

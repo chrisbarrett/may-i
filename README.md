@@ -37,15 +37,16 @@ shapes:
 - scalar facts: the key has a string value, like `:opencode/agent = "build"`
 
 Facts can come from integrations at runtime or from wrappers while unwrapping a
-command. Rules query them in `(context ...)` with `(has :key)`, `(= :key
-"value")`, and `(matches :key "regex")`.
+command. Rules query them in `(context ...)` with `(has :key)` for presence,
+`(has [:key "value"])` for exact scalar matches, and `(has [:key (regex
+"regex")])` for regex scalar matches.
 
 Checks can also simulate runtime facts explicitly when a rule depends on
 client-specific state:
 
 ```scheme
 (rule (command "git")
-      (context (= :opencode/agent "build"))
+      (context (has [:opencode/agent "build"]))
       (effect :allow)
       (check
         (with-facts [[:client/opencode]
@@ -68,7 +69,7 @@ example, this only allows `journalctl` when the command was unwrapped from an
 ```scheme
 (defcontext remote-prod
   (and (has :via/ssh)
-       (matches :ssh/host "^prod-")))
+       (has [:ssh/host (regex "^prod-")])))
 
 (wrapper "ssh"
   (positional [:ssh/host *] :command+args))
@@ -83,7 +84,7 @@ distinguish planning from implementation work:
 
 ```scheme
 (rule (command "git")
-      (context (= :opencode/agent "plan"))
+      (context (has [:opencode/agent "plan"]))
       (effect :ask "Git commands in the plan agent need approval"))
 ```
 

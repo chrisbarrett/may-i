@@ -6,8 +6,9 @@
 // annotated trees to produce two-column trace output.
 
 use may_i_core::{
-    ArgMatcher, CommandMatcher, CondArm, ContextExpr, ContextFacts, Doc, DocF, Effect, EvalAnn,
-    Expr, ExprBranch, LayoutHint, PosExpr, Rule, RuleBody,
+    ArgMatcher, CommandMatcher, CondArm, ContextExpr, ContextFacts, ContextFailureReason,
+    ContextValue, Doc, DocF, Effect, EvalAnn, FactPattern, FactPatternEval, FactQuery, Expr,
+    ExprBranch, LayoutHint, PosExpr, Rule, RuleBody,
 };
 
 use crate::matcher::{
@@ -37,6 +38,15 @@ fn list(children: Vec<ADoc>) -> ADoc {
     }
 }
 
+fn vector(children: Vec<ADoc>) -> ADoc {
+    Doc {
+        ann: None,
+        node: DocF::Vector(children),
+        layout: LayoutHint::Auto,
+        dimmed: false,
+    }
+}
+
 fn ann_list(ann: EvalAnn, children: Vec<ADoc>) -> ADoc {
     Doc {
         ann: Some(ann),
@@ -55,8 +65,15 @@ fn unannotate(doc: Doc<()>) -> ADoc {
 /// when multiple children (or their subtrees) carry visible annotations,
 /// so the pp keeps each annotated subtree on its own line for trace alignment.
 fn propagate_break_hints(doc: ADoc) -> ADoc {
+    let ann = doc.ann;
+    let layout_hint = doc.layout;
     match doc.node {
-        DocF::Atom(_) => doc,
+        DocF::Atom(text) => Doc {
+            ann,
+            node: DocF::Atom(text),
+            layout: layout_hint,
+            dimmed: false,
+        },
         DocF::List(children) => {
             let children: Vec<ADoc> = children.into_iter().map(propagate_break_hints).collect();
             let visible_ann_count = children
@@ -66,11 +83,29 @@ fn propagate_break_hints(doc: ADoc) -> ADoc {
             let layout = if visible_ann_count > 1 {
                 LayoutHint::AlwaysBreak
             } else {
-                doc.layout
+                layout_hint
             };
             Doc {
-                ann: doc.ann,
+                ann,
                 node: DocF::List(children),
+                layout,
+                dimmed: false,
+            }
+        }
+        DocF::Vector(children) => {
+            let children: Vec<ADoc> = children.into_iter().map(propagate_break_hints).collect();
+            let visible_ann_count = children
+                .iter()
+                .filter(|c| subtree_has_visible_annotation(c))
+                .count();
+            let layout = if visible_ann_count > 1 {
+                LayoutHint::AlwaysBreak
+            } else {
+                layout_hint
+            };
+            Doc {
+                ann,
+                node: DocF::Vector(children),
                 layout,
                 dimmed: false,
             }
@@ -91,7 +126,7 @@ fn subtree_has_visible_annotation(doc: &ADoc) -> bool {
     if doc.ann.as_ref().is_some_and(is_visible_annotation) {
         return true;
     }
-    if let DocF::List(children) = &doc.node {
+    if let DocF::List(children) | DocF::Vector(children) = &doc.node {
         children.iter().any(subtree_has_visible_annotation)
     } else {
         false
@@ -102,6 +137,188 @@ fn arg_to_string(a: &ResolvedArg) -> String {
     match a {
         ResolvedArg::Literal(s) => format!("\"{s}\""),
         ResolvedArg::Opaque => "<opaque>".into(),
+    }
+}
+
+fn dim_doc(doc: ADoc) -> ADoc {
+    let children = match doc.node {
+        DocF::Atom(text) => {
+            return Doc {
+                ann: doc.ann,
+                node: DocF::Atom(text),
+                layout: doc.layout,
+                dimmed: true,
+            };
+        }
+        DocF::List(children) => DocF::List(children.into_iter().map(dim_doc).collect()),
+        DocF::Vector(children) => DocF::Vector(children.into_iter().map(dim_doc).collect()),
+    };
+
+    Doc {
+        ann: doc.ann,
+        node: children,
+        layout: doc.layout,
+        dimmed: true,
+    }
+}
+
+fn fact_pattern_doc(pattern: &FactPattern) -> ADoc {
+    unannotate(pattern.to_doc())
+}
+
+fn unevaluated_pattern_eval(pattern: &FactPattern) -> FactPatternEval {
+    match pattern {
+        FactPattern::Literal(value) => FactPatternEval::Literal {
+            value: value.clone(),
+            evaluated: false,
+            matched: false,
+        },
+        FactPattern::Wildcard => FactPatternEval::Wildcard {
+            evaluated: false,
+            matched: false,
+        },
+        FactPattern::Regex(regex) => FactPatternEval::Regex {
+            pattern: regex.as_str().to_string(),
+            evaluated: false,
+            matched: false,
+        },
+        FactPattern::And(patterns) => FactPatternEval::And {
+            evaluated: false,
+            matched: false,
+            children: patterns.iter().map(unevaluated_pattern_eval).collect(),
+        },
+        FactPattern::Or(patterns) => FactPatternEval::Or {
+            evaluated: false,
+            matched: false,
+            children: patterns.iter().map(unevaluated_pattern_eval).collect(),
+        },
+        FactPattern::Not(pattern) => FactPatternEval::Not {
+            evaluated: false,
+            matched: false,
+            child: Box::new(unevaluated_pattern_eval(pattern)),
+        },
+    }
+}
+
+struct PatternOutcome {
+    doc: ADoc,
+    eval: FactPatternEval,
+    matched: bool,
+    decisive_source: String,
+}
+
+fn annotate_fact_pattern(pattern: &FactPattern, actual: &str) -> PatternOutcome {
+    match pattern {
+        FactPattern::Literal(value) => PatternOutcome {
+            doc: fact_pattern_doc(pattern),
+            eval: FactPatternEval::Literal {
+                value: value.clone(),
+                evaluated: true,
+                matched: actual == value,
+            },
+            matched: actual == value,
+            decisive_source: pattern.to_source(),
+        },
+        FactPattern::Wildcard => PatternOutcome {
+            doc: fact_pattern_doc(pattern),
+            eval: FactPatternEval::Wildcard {
+                evaluated: true,
+                matched: true,
+            },
+            matched: true,
+            decisive_source: pattern.to_source(),
+        },
+        FactPattern::Regex(regex) => PatternOutcome {
+            doc: fact_pattern_doc(pattern),
+            eval: FactPatternEval::Regex {
+                pattern: regex.as_str().to_string(),
+                evaluated: true,
+                matched: regex.is_match(actual),
+            },
+            matched: regex.is_match(actual),
+            decisive_source: pattern.to_source(),
+        },
+        FactPattern::And(patterns) => {
+            let mut docs = vec![atom("and")];
+            let mut evals = Vec::with_capacity(patterns.len());
+            let mut decisive = String::new();
+            let mut matched = true;
+
+            for (idx, child) in patterns.iter().enumerate() {
+                if matched {
+                    let outcome = annotate_fact_pattern(child, actual);
+                    matched = outcome.matched;
+                    decisive = outcome.decisive_source.clone();
+                    docs.push(outcome.doc);
+                    evals.push(outcome.eval);
+                    if !matched {
+                        for remaining in &patterns[idx + 1..] {
+                            docs.push(dim_doc(fact_pattern_doc(remaining)));
+                            evals.push(unevaluated_pattern_eval(remaining));
+                        }
+                        break;
+                    }
+                }
+            }
+
+            PatternOutcome {
+                doc: list(docs),
+                eval: FactPatternEval::And {
+                    evaluated: true,
+                    matched,
+                    children: evals,
+                },
+                matched,
+                decisive_source: decisive,
+            }
+        }
+        FactPattern::Or(patterns) => {
+            let mut docs = vec![atom("or")];
+            let mut evals = Vec::with_capacity(patterns.len());
+            let mut decisive = String::new();
+            let mut matched = false;
+
+            for (idx, child) in patterns.iter().enumerate() {
+                if !matched {
+                    let outcome = annotate_fact_pattern(child, actual);
+                    matched = outcome.matched;
+                    decisive = outcome.decisive_source.clone();
+                    docs.push(outcome.doc);
+                    evals.push(outcome.eval);
+                    if matched {
+                        for remaining in &patterns[idx + 1..] {
+                            docs.push(dim_doc(fact_pattern_doc(remaining)));
+                            evals.push(unevaluated_pattern_eval(remaining));
+                        }
+                        break;
+                    }
+                }
+            }
+
+            PatternOutcome {
+                doc: list(docs),
+                eval: FactPatternEval::Or {
+                    evaluated: true,
+                    matched,
+                    children: evals,
+                },
+                matched,
+                decisive_source: decisive,
+            }
+        }
+        FactPattern::Not(child) => {
+            let outcome = annotate_fact_pattern(child, actual);
+            PatternOutcome {
+                doc: list(vec![atom("not"), outcome.doc]),
+                eval: FactPatternEval::Not {
+                    evaluated: true,
+                    matched: !outcome.matched,
+                    child: Box::new(outcome.eval),
+                },
+                matched: !outcome.matched,
+                decisive_source: outcome.decisive_source,
+            }
+        }
     }
 }
 
@@ -191,57 +408,7 @@ fn annotate_context_expr(expr: &ContextExpr, facts: &ContextFacts) -> (ADoc, boo
                 matched,
             )
         }
-        ContextExpr::Has(key) => {
-            let matched = facts.has(key);
-            (
-                ann_list(
-                    EvalAnn::ContextHas {
-                        key: key.clone(),
-                        matched,
-                    },
-                    vec![atom("has"), atom(key.clone())],
-                ),
-                matched,
-            )
-        }
-        ContextExpr::Equals { key, value } => {
-            let actual = facts.get_scalar(key).map(ToString::to_string);
-            let matched = actual.as_deref().is_some_and(|actual| actual == value);
-            (
-                ann_list(
-                    EvalAnn::ContextEquals {
-                        key: key.clone(),
-                        expected: value.clone(),
-                        actual,
-                        matched,
-                    },
-                    vec![atom("="), atom(key.clone()), atom(format!("\"{value}\""))],
-                ),
-                matched,
-            )
-        }
-        ContextExpr::Matches { key, regex } => {
-            let actual = facts.get_scalar(key).map(ToString::to_string);
-            let matched = actual
-                .as_deref()
-                .is_some_and(|actual| regex.is_match(actual));
-            (
-                ann_list(
-                    EvalAnn::ContextMatches {
-                        key: key.clone(),
-                        pattern: regex.as_str().to_string(),
-                        actual,
-                        matched,
-                    },
-                    vec![
-                        atom("matches"),
-                        atom(key.clone()),
-                        atom(format!("\"{}\"", regex.as_str())),
-                    ],
-                ),
-                matched,
-            )
-        }
+        ContextExpr::Has(query) => annotate_context_has(query, facts),
         ContextExpr::And(exprs) => {
             let mut matched = true;
             let mut children = vec![atom("and")];
@@ -290,6 +457,138 @@ fn annotate_context_expr(expr: &ContextExpr, facts: &ContextFacts) -> (ADoc, boo
                 },
                 matched,
             )
+        }
+    }
+}
+
+fn annotate_context_has(query: &FactQuery, facts: &ContextFacts) -> (ADoc, bool) {
+    let source = format!("(has {})", query.to_source());
+    match query {
+        FactQuery::Presence { key, vector_syntax } => {
+            let matched = facts.has(key);
+            let query_doc = if *vector_syntax {
+                vector(vec![atom(key.clone())])
+            } else {
+                atom(key.clone())
+            };
+            (
+                ann_list(
+                    EvalAnn::ContextHasPresence {
+                        key: key.clone(),
+                        source,
+                        matched,
+                    },
+                    vec![atom("has"), query_doc],
+                ),
+                matched,
+            )
+        }
+        FactQuery::Value { key, pattern } => {
+            let fact = facts.get(key);
+            match fact {
+                Some(ContextValue::Scalar(actual)) => {
+                    if pattern.is_literal() {
+                        let expected = match pattern {
+                            FactPattern::Literal(value) => value.clone(),
+                            _ => unreachable!(),
+                        };
+                        let matched = actual == &expected;
+                        (
+                            ann_list(
+                                EvalAnn::ContextHasExact {
+                                    key: key.clone(),
+                                    source,
+                                    expected: expected.clone(),
+                                    actual: Some(actual.clone()),
+                                    matched,
+                                    reason: (!matched)
+                                        .then_some(ContextFailureReason::ValueMismatch),
+                                    search_needle: format!("\"{expected}\""),
+                                },
+                                vec![
+                                    atom("has"),
+                                    vector(vec![
+                                        atom(key.clone()),
+                                        atom(format!("\"{expected}\"")),
+                                    ]),
+                                ],
+                            ),
+                            matched,
+                        )
+                    } else {
+                        let outcome = annotate_fact_pattern(pattern, actual);
+                        (
+                            ann_list(
+                                EvalAnn::ContextHasPattern {
+                                    key: key.clone(),
+                                    source,
+                                    pattern_source: pattern.to_source(),
+                                    pattern: pattern.clone(),
+                                    pattern_eval: outcome.eval,
+                                    actual: Some(actual.clone()),
+                                    matched: outcome.matched,
+                                    reason: (!outcome.matched)
+                                        .then_some(ContextFailureReason::PatternMismatch),
+                                    search_needle: outcome.decisive_source,
+                                },
+                                vec![atom("has"), vector(vec![atom(key.clone()), outcome.doc])],
+                            ),
+                            outcome.matched,
+                        )
+                    }
+                }
+                Some(ContextValue::Present) | None => {
+                    let reason = match fact {
+                        Some(ContextValue::Present) => ContextFailureReason::PresentWithoutScalar,
+                        None => ContextFailureReason::Absent,
+                        Some(ContextValue::Scalar(_)) => unreachable!(),
+                    };
+                    let pattern_doc = if pattern.is_literal() {
+                        atom(format!(
+                            "\"{}\"",
+                            match pattern {
+                                FactPattern::Literal(value) => value,
+                                _ => unreachable!(),
+                            }
+                        ))
+                    } else {
+                        dim_doc(fact_pattern_doc(pattern))
+                    };
+                    let ann = if pattern.is_literal() {
+                        EvalAnn::ContextHasExact {
+                            key: key.clone(),
+                            source,
+                            expected: match pattern {
+                                FactPattern::Literal(value) => value.clone(),
+                                _ => unreachable!(),
+                            },
+                            actual: None,
+                            matched: false,
+                            reason: Some(reason),
+                            search_needle: key.clone(),
+                        }
+                    } else {
+                        EvalAnn::ContextHasPattern {
+                            key: key.clone(),
+                            source,
+                            pattern_source: pattern.to_source(),
+                            pattern: pattern.clone(),
+                            pattern_eval: unevaluated_pattern_eval(pattern),
+                            actual: None,
+                            matched: false,
+                            reason: Some(reason),
+                            search_needle: key.clone(),
+                        }
+                    };
+                    (
+                        ann_list(
+                            ann,
+                            vec![atom("has"), vector(vec![atom(key.clone()), pattern_doc])],
+                        ),
+                        false,
+                    )
+                }
+            }
         }
     }
 }
@@ -844,7 +1143,7 @@ mod tests {
             if let Some(a) = ann {
                 result.push(a.clone());
             }
-            if let DocF::List(children) = node {
+            if let DocF::List(children) | DocF::Vector(children) = node {
                 for child_anns in children {
                     result.extend(child_anns);
                 }
@@ -858,10 +1157,12 @@ mod tests {
         let ann_str = annotated.fold(&|node, _ann: &Option<EvalAnn>| match node {
             DocF::Atom(s) => s,
             DocF::List(cs) => format!("({})", cs.join(" ")),
+            DocF::Vector(cs) => format!("[{}]", cs.join(" ")),
         });
         let plain_str = plain.fold(&|node, _: &()| match node {
             DocF::Atom(s) => s,
             DocF::List(cs) => format!("({})", cs.join(" ")),
+            DocF::Vector(cs) => format!("[{}]", cs.join(" ")),
         });
         assert_eq!(ann_str, plain_str);
     }
@@ -876,6 +1177,15 @@ mod tests {
         expanded_args: &[ResolvedArg],
     ) -> (ADoc, Option<Effect>) {
         super::annotate_rule(rule, cmd_name, expanded_args, &empty_context())
+    }
+
+    fn annotate_rule_with_context(
+        rule: &Rule,
+        cmd_name: &str,
+        expanded_args: &[ResolvedArg],
+        context: &ContextFacts,
+    ) -> (ADoc, Option<Effect>) {
+        super::annotate_rule(rule, cmd_name, expanded_args, context)
     }
 
     // ── Simple rule (no args) ───────────────────────────────────────
@@ -936,6 +1246,283 @@ mod tests {
             anns.iter()
                 .any(|a| matches!(a, EvalAnn::CommandMatch(false)))
         );
+    }
+
+    #[test]
+    fn context_presence_query_annotation() {
+        let rule = Rule {
+            command: CommandMatcher::Exact("echo".into()),
+            context: Some(ContextExpr::Has(FactQuery::Presence {
+                key: ":via/ssh".into(),
+                vector_syntax: true,
+            })),
+            body: RuleBody::Effect {
+                matcher: None,
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
+            },
+            checks: vec![],
+            source_span: Span::new(0, 0),
+        };
+        let mut facts = ContextFacts::default();
+        facts.insert_present(":via/ssh");
+        let (doc, effect) = annotate_rule_with_context(&rule, "echo", &[], &facts);
+        assert!(effect.is_some());
+        let anns = collect_annotations(&doc);
+        assert!(anns.iter().any(|ann| matches!(
+            ann,
+            EvalAnn::ContextHasPresence {
+                key,
+                matched: true,
+                ..
+            } if key == ":via/ssh"
+        )));
+    }
+
+    #[test]
+    fn context_exact_query_marks_absent_reason() {
+        let rule = Rule {
+            command: CommandMatcher::Exact("echo".into()),
+            context: Some(ContextExpr::Has(FactQuery::Value {
+                key: ":opencode/agent".into(),
+                pattern: FactPattern::Literal("build".into()),
+            })),
+            body: RuleBody::Effect {
+                matcher: None,
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
+            },
+            checks: vec![],
+            source_span: Span::new(0, 0),
+        };
+        let (doc, effect) = annotate_rule(&rule, "echo", &[]);
+        assert!(effect.is_none());
+        let anns = collect_annotations(&doc);
+        assert!(anns.iter().any(|ann| matches!(
+            ann,
+            EvalAnn::ContextHasExact {
+                reason: Some(ContextFailureReason::Absent),
+                matched: false,
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn context_pattern_query_marks_present_without_scalar() {
+        let rule = Rule {
+            command: CommandMatcher::Exact("echo".into()),
+            context: Some(ContextExpr::Has(FactQuery::Value {
+                key: ":ssh/host".into(),
+                pattern: FactPattern::Regex(regex::Regex::new("^prod-").unwrap()),
+            })),
+            body: RuleBody::Effect {
+                matcher: None,
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
+            },
+            checks: vec![],
+            source_span: Span::new(0, 0),
+        };
+        let mut facts = ContextFacts::default();
+        facts.insert_present(":ssh/host");
+        let (doc, effect) = annotate_rule_with_context(&rule, "echo", &[], &facts);
+        assert!(effect.is_none());
+        let anns = collect_annotations(&doc);
+        assert!(anns.iter().any(|ann| matches!(
+            ann,
+            EvalAnn::ContextHasPattern {
+                reason: Some(ContextFailureReason::PresentWithoutScalar),
+                matched: false,
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn context_pattern_query_short_circuits_or_children() {
+        let rule = Rule {
+            command: CommandMatcher::Exact("echo".into()),
+            context: Some(ContextExpr::Has(FactQuery::Value {
+                key: ":opencode/agent".into(),
+                pattern: FactPattern::Or(vec![
+                    FactPattern::Literal("build".into()),
+                    FactPattern::Regex(regex::Regex::new("^plan-").unwrap()),
+                ]),
+            })),
+            body: RuleBody::Effect {
+                matcher: None,
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
+            },
+            checks: vec![],
+            source_span: Span::new(0, 0),
+        };
+        let mut facts = ContextFacts::default();
+        facts.insert_scalar(":opencode/agent", "build");
+        let (doc, effect) = annotate_rule_with_context(&rule, "echo", &[], &facts);
+        assert!(effect.is_some());
+        let anns = collect_annotations(&doc);
+        assert!(anns.iter().any(|ann| matches!(
+            ann,
+            EvalAnn::ContextHasPattern {
+                pattern_eval: FactPatternEval::Or { children, .. },
+                search_needle,
+                matched: true,
+                ..
+            } if children.len() == 2
+                && matches!(children[1], FactPatternEval::Regex { evaluated: false, .. })
+                && search_needle == "\"build\""
+        )));
+    }
+
+    #[test]
+    fn context_exact_query_matches_scalar_value() {
+        let rule = Rule {
+            command: CommandMatcher::Exact("echo".into()),
+            context: Some(ContextExpr::Has(FactQuery::Value {
+                key: ":opencode/agent".into(),
+                pattern: FactPattern::Literal("build".into()),
+            })),
+            body: RuleBody::Effect {
+                matcher: None,
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
+            },
+            checks: vec![],
+            source_span: Span::new(0, 0),
+        };
+        let mut facts = ContextFacts::default();
+        facts.insert_scalar(":opencode/agent", "build");
+        let (doc, effect) = annotate_rule_with_context(&rule, "echo", &[], &facts);
+        assert!(effect.is_some());
+        let anns = collect_annotations(&doc);
+        assert!(anns.iter().any(|ann| matches!(
+            ann,
+            EvalAnn::ContextHasExact {
+                actual: Some(actual),
+                matched: true,
+                search_needle,
+                ..
+            } if actual == "build" && search_needle == "\"build\""
+        )));
+    }
+
+    #[test]
+    fn context_pattern_and_short_circuits_after_failure() {
+        let rule = Rule {
+            command: CommandMatcher::Exact("echo".into()),
+            context: Some(ContextExpr::Has(FactQuery::Value {
+                key: ":ssh/host".into(),
+                pattern: FactPattern::And(vec![
+                    FactPattern::Regex(regex::Regex::new("^prod-").unwrap()),
+                    FactPattern::Literal("prod-1".into()),
+                ]),
+            })),
+            body: RuleBody::Effect {
+                matcher: None,
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
+            },
+            checks: vec![],
+            source_span: Span::new(0, 0),
+        };
+        let mut facts = ContextFacts::default();
+        facts.insert_scalar(":ssh/host", "dev-1");
+        let (doc, effect) = annotate_rule_with_context(&rule, "echo", &[], &facts);
+        assert!(effect.is_none());
+        let anns = collect_annotations(&doc);
+        assert!(anns.iter().any(|ann| matches!(
+            ann,
+            EvalAnn::ContextHasPattern {
+                pattern_eval: FactPatternEval::And { children, .. },
+                search_needle,
+                matched: false,
+                ..
+            } if children.len() == 2
+                && matches!(children[1], FactPatternEval::Literal { evaluated: false, .. })
+                && search_needle == "(regex \"^prod-\")"
+        )));
+    }
+
+    #[test]
+    fn context_pattern_not_inverts_match() {
+        let rule = Rule {
+            command: CommandMatcher::Exact("echo".into()),
+            context: Some(ContextExpr::Has(FactQuery::Value {
+                key: ":opencode/agent".into(),
+                pattern: FactPattern::Not(Box::new(FactPattern::Literal("build".into()))),
+            })),
+            body: RuleBody::Effect {
+                matcher: None,
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
+            },
+            checks: vec![],
+            source_span: Span::new(0, 0),
+        };
+        let mut facts = ContextFacts::default();
+        facts.insert_scalar(":opencode/agent", "plan");
+        let (doc, effect) = annotate_rule_with_context(&rule, "echo", &[], &facts);
+        assert!(effect.is_some());
+        let anns = collect_annotations(&doc);
+        assert!(anns.iter().any(|ann| matches!(
+            ann,
+            EvalAnn::ContextHasPattern {
+                pattern_eval: FactPatternEval::Not { matched: true, .. },
+                search_needle,
+                matched: true,
+                ..
+            } if search_needle == "\"build\""
+        )));
+    }
+
+    #[test]
+    fn context_pattern_wildcard_matches_any_scalar() {
+        let rule = Rule {
+            command: CommandMatcher::Exact("echo".into()),
+            context: Some(ContextExpr::Has(FactQuery::Value {
+                key: ":ssh/host".into(),
+                pattern: FactPattern::Wildcard,
+            })),
+            body: RuleBody::Effect {
+                matcher: None,
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
+            },
+            checks: vec![],
+            source_span: Span::new(0, 0),
+        };
+        let mut facts = ContextFacts::default();
+        facts.insert_scalar(":ssh/host", "prod-9");
+        let (doc, effect) = annotate_rule_with_context(&rule, "echo", &[], &facts);
+        assert!(effect.is_some());
+        let anns = collect_annotations(&doc);
+        assert!(anns.iter().any(|ann| matches!(
+            ann,
+            EvalAnn::ContextHasPattern {
+                pattern_eval: FactPatternEval::Wildcard { matched: true, .. },
+                matched: true,
+                search_needle,
+                ..
+            } if search_needle == "*"
+        )));
     }
 
     // ── Positional matching ─────────────────────────────────────────

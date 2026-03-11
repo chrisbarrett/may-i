@@ -331,7 +331,7 @@ fn hook_exposes_runtime_context_facts() {
     let cfg = write_custom_config(
         r#"
 (rule (command "echo")
-      (context (= :claude-code/permission-mode "acceptEdits"))
+      (context (has [:claude-code/permission-mode "acceptEdits"]))
       (effect :allow "Hook context matched"))
 "#,
     );

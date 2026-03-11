@@ -92,11 +92,11 @@ Comments: `;` to end of line.
 ;; Reusable context aliases
 (defcontext remote-prod
   (and (has :via/ssh)
-       (matches :ssh/host "^prod-")))
+       (has [:ssh/host (regex "^prod-")])))
 
 ;; Allow only in a specific Claude Code permission mode
 (rule (command "echo")
-      (context (= :claude-code/permission-mode "acceptEdits"))
+      (context (has [:claude-code/permission-mode "acceptEdits"]))
       (effect :allow))
 
 ;; Allow: curl without mutating flags (defaults to GET)
@@ -220,14 +220,14 @@ integrations at runtime or by wrappers during command unwrapping.
 Rules query facts inside `(context ...)` with:
 
 - `(has :key)` for presence
-- `(= :key "value")` for exact scalar matches
-- `(matches :key "regex")` for regex scalar matches
+- `(has [:key "value"])` for exact scalar matches
+- `(has [:key (regex "regex")])` for regex scalar matches
 
 Context-aware assertions use scoped fact blocks:
 
 ```scheme
 (rule (command "git")
-      (context (= :opencode/agent "build"))
+      (context (has [:opencode/agent "build"]))
       (effect :allow)
       (check
         (with-facts [[:client/opencode]

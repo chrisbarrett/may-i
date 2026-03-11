@@ -146,6 +146,17 @@ pub fn truncate_long_lists(doc: &Doc, keep: usize) -> Doc {
                 }
             }
         }
+        DocF::Vector(children) => Doc {
+            ann: (),
+            node: DocF::Vector(
+                children
+                    .iter()
+                    .map(|c| truncate_long_lists(c, keep))
+                    .collect(),
+            ),
+            layout: doc.layout,
+            dimmed: false,
+        },
     }
 }
 
@@ -292,6 +303,28 @@ fn render<A>(doc: &Doc<A>, indent: usize, width: usize, color: bool, dimmed: boo
             // render_body_indent above and never reach here.)
             render_all_drop(children, indent, width, color, dimmed)
         }
+        DocF::Vector(children) if children.is_empty() => {
+            if color {
+                format!("{}{}", "[".dimmed(), "]".dimmed())
+            } else {
+                "[]".into()
+            }
+        }
+        DocF::Vector(children) => {
+            let must_break = doc.layout == LayoutHint::AlwaysBreak
+                || children.iter().any(|c| c.layout == LayoutHint::AlwaysBreak);
+            if !must_break {
+                let flat = render_flat_delim(children, color, dimmed, '[', ']');
+                if !flat.contains('\n') && indent + visible_len(&flat) <= width {
+                    return flat;
+                }
+            }
+            let broken = render_broken_delim(children, indent, width, color, dimmed, '[', ']');
+            if max_line_width(&broken, indent) <= width {
+                return broken;
+            }
+            render_all_drop_delim(children, indent, width, color, dimmed, '[', ']')
+        }
     }
 }
 
@@ -305,17 +338,25 @@ fn render_atom(s: &str, color: bool, dimmed: bool) -> String {
     }
 }
 
-fn render_flat<A>(children: &[Doc<A>], color: bool, dimmed: bool) -> String {
-    let open = if color {
-        "(".dimmed().to_string()
+fn delim_pair(color: bool, open: char, close: char) -> (String, String) {
+    if color {
+        (
+            open.to_string().dimmed().to_string(),
+            close.to_string().dimmed().to_string(),
+        )
     } else {
-        "(".into()
-    };
-    let close = if color {
-        ")".dimmed().to_string()
-    } else {
-        ")".into()
-    };
+        (open.to_string(), close.to_string())
+    }
+}
+
+fn render_flat_delim<A>(
+    children: &[Doc<A>],
+    color: bool,
+    dimmed: bool,
+    open: char,
+    close: char,
+) -> String {
+    let (open, close) = delim_pair(color, open, close);
     let parts: Vec<String> = children
         .iter()
         .map(|c| render(c, 0, usize::MAX, color, dimmed))
@@ -323,23 +364,16 @@ fn render_flat<A>(children: &[Doc<A>], color: bool, dimmed: bool) -> String {
     format!("{open}{}{close}", parts.join(" "))
 }
 
-fn render_broken<A>(
+fn render_broken_delim<A>(
     children: &[Doc<A>],
     indent: usize,
     width: usize,
     color: bool,
     dimmed: bool,
+    open: char,
+    close: char,
 ) -> String {
-    let open = if color {
-        "(".dimmed().to_string()
-    } else {
-        "(".into()
-    };
-    let close = if color {
-        ")".dimmed().to_string()
-    } else {
-        ")".into()
-    };
+    let (open, close) = delim_pair(color, open, close);
 
     let head = render(&children[0], indent + 1, width, color, dimmed);
     let align = indent + visible_len(&head) + 2;
@@ -364,25 +398,16 @@ fn render_broken<A>(
     lines.join("\n")
 }
 
-/// Render with all children dropped to new lines at indent+2.
-/// Used for AlwaysBreak nodes where uniform child alignment is wanted.
-fn render_all_drop<A>(
+fn render_all_drop_delim<A>(
     children: &[Doc<A>],
     indent: usize,
     width: usize,
     color: bool,
     dimmed: bool,
+    open: char,
+    close: char,
 ) -> String {
-    let open = if color {
-        "(".dimmed().to_string()
-    } else {
-        "(".into()
-    };
-    let close = if color {
-        ")".dimmed().to_string()
-    } else {
-        ")".into()
-    };
+    let (open, close) = delim_pair(color, open, close);
 
     let head = render(&children[0], indent + 1, width, color, dimmed);
     let child_indent = indent + 2;
@@ -403,6 +428,32 @@ fn render_all_drop<A>(
     }
 
     lines.join("\n")
+}
+
+fn render_flat<A>(children: &[Doc<A>], color: bool, dimmed: bool) -> String {
+    render_flat_delim(children, color, dimmed, '(', ')')
+}
+
+fn render_broken<A>(
+    children: &[Doc<A>],
+    indent: usize,
+    width: usize,
+    color: bool,
+    dimmed: bool,
+) -> String {
+    render_broken_delim(children, indent, width, color, dimmed, '(', ')')
+}
+
+/// Render with all children dropped to new lines at indent+2.
+/// Used for AlwaysBreak nodes where uniform child alignment is wanted.
+fn render_all_drop<A>(
+    children: &[Doc<A>],
+    indent: usize,
+    width: usize,
+    color: bool,
+    dimmed: bool,
+) -> String {
+    render_all_drop_delim(children, indent, width, color, dimmed, '(', ')')
 }
 
 fn render_cond<A>(
@@ -619,6 +670,10 @@ mod tests {
         Doc::list(children)
     }
 
+    fn v(children: Vec<Doc>) -> Doc {
+        Doc::vector(children)
+    }
+
     fn pp(doc: &Doc, width: usize) -> String {
         pretty(
             doc,
@@ -655,6 +710,25 @@ mod tests {
             pp(&l(vec![a("command"), a("\"rm\"")]), 80),
             "(command \"rm\")"
         );
+    }
+
+    #[test]
+    fn flat_vector() {
+        assert_eq!(pp(&v(vec![a(":via/ssh")]), 80), "[:via/ssh]");
+    }
+
+    #[test]
+    fn empty_vector() {
+        assert_eq!(pp(&v(vec![]), 80), "[]");
+    }
+
+    #[test]
+    fn vector_wraps_when_long() {
+        let doc = v(vec![a(":ssh/host"), l(vec![a("regex"), a("\"^prod-\"")])]);
+        let rendered = pp(&doc, 18);
+        assert!(rendered.starts_with("[:ssh/host"));
+        assert!(rendered.contains("(regex \"^prod-\")"));
+        assert!(rendered.ends_with(']'));
     }
 
     #[test]
@@ -927,7 +1001,7 @@ mod tests {
         let doc = l(vec![a("a"), l(vec![a("b"), a("c")])]);
         let count: usize = doc.fold(&|node, _ann| match node {
             DocF::Atom(_) => 1,
-            DocF::List(children) => 1 + children.iter().sum::<usize>(),
+            DocF::List(children) | DocF::Vector(children) => 1 + children.iter().sum::<usize>(),
         });
         assert_eq!(count, 5); // list + a + list + b + c
     }
@@ -937,7 +1011,9 @@ mod tests {
         let doc = l(vec![a("rule"), a("foo"), l(vec![a("bar")])]);
         let atoms: Vec<String> = doc.fold(&|node, _ann| match node {
             DocF::Atom(s) => vec![s],
-            DocF::List(children) => children.into_iter().flatten().collect(),
+            DocF::List(children) | DocF::Vector(children) => {
+                children.into_iter().flatten().collect()
+            }
         });
         assert_eq!(atoms, vec!["rule", "foo", "bar"]);
     }
@@ -952,6 +1028,7 @@ mod tests {
                 Doc::atom(t)
             }
             DocF::List(children) => Doc::list(children),
+            DocF::Vector(children) => Doc::vector(children),
         });
         assert_eq!(pp(&truncated, 80), "(hello short)");
     }
@@ -1197,7 +1274,7 @@ mod prop_tests {
             let max_atom_len = doc.fold(&|node, _ann: &()| -> usize {
                 match node {
                     DocF::Atom(s) => s.len(),
-                    DocF::List(cs) => cs.into_iter().max().unwrap_or(0),
+                    DocF::List(cs) | DocF::Vector(cs) => cs.into_iter().max().unwrap_or(0),
                 }
             });
             let slack = max_atom_len + 10; // parens + spaces
