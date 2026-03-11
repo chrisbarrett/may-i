@@ -30,7 +30,7 @@
 ;; Facts are introduced in a few ways:
 ;;
 ;;   runtime integrations
-;;     - OpenCode adds :client/opencode and :opencode/agent
+;;     - OpenCode can pass :client/opencode and :opencode/agent to `may-i eval --fact`
 ;;     - Claude Code adds :client/claude-code and related metadata
 ;;
 ;;   wrappers

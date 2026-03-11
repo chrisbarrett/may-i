@@ -87,8 +87,15 @@ distinguish planning from implementation work:
       (effect :ask "Git commands in the plan agent need approval"))
 ```
 
-The current integration contract uses `MAYI_OPENCODE_AGENT=<agent>` to populate
-`:client/opencode` and `:opencode/agent` during `may-i eval`.
+Pass runtime facts explicitly when you call `eval`:
+
+```bash
+may-i eval --fact :client/opencode --fact :opencode/agent=plan 'git add .'
+```
+
+OpenCode currently integrates by invoking `may-i eval` with explicit `--fact`
+flags from a custom bash tool. Bare stdin hook mode remains the Claude Code
+entrypoint and is organized so additional harnesses can be added later.
 
 ## Installation
 
@@ -147,6 +154,12 @@ inputs.
 
 ```bash
 may-i eval 'rm -rf /'
+```
+
+You can repeat `--fact` to simulate runtime context:
+
+```bash
+may-i eval --fact :client/opencode --fact :opencode/agent=build 'git status'
 ```
 
 ### Global Flags

@@ -24,7 +24,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    Eval { command: String },
+    Eval {
+        #[arg(long = "fact", value_name = "FACT")]
+        facts: Vec<String>,
+        command: String,
+    },
     Check,
     Parse {
         command: Option<String>,
@@ -74,11 +78,13 @@ output format for all subcommands that produce structured output.
 
 ```
 may-i eval '<command>'
+may-i eval --fact :client/opencode --fact :opencode/agent=plan '<command>'
 may-i --json eval '<command>'
 ```
 
 Evaluate a shell command against the loaded config. Print human-readable or JSON
-result depending on `--json`.
+result depending on `--json`. Repeat `--fact` with `:key` for presence facts or
+`:key=value` for scalar facts.
 
 ### check
 

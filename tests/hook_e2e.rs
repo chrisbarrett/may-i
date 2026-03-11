@@ -4,8 +4,8 @@
 // exactly as Claude Code does in production, and verify stdout JSON, stderr,
 // and exit codes.
 
-use assert_cmd::Command;
 use assert_cmd::cargo::cargo_bin_cmd;
+use assert_cmd::Command;
 use predicates::prelude::*;
 use std::io::Write;
 use tempfile::NamedTempFile;
@@ -184,11 +184,11 @@ fn hook_silent_for_edit_tool() {
 }
 
 // ---------------------------------------------------------------------------
-// Hook protocol: missing tool_name field treated as non-Bash
+// Hook protocol: malformed Claude-style payloads fail clearly
 // ---------------------------------------------------------------------------
 
 #[test]
-fn hook_silent_when_tool_name_absent() {
+fn hook_exits_2_when_claude_payload_lacks_tool_name() {
     let cfg = write_config();
     let payload = serde_json::json!({
         "hook_event_name": "PreToolUse",
@@ -199,10 +199,11 @@ fn hook_silent_when_tool_name_absent() {
     })
     .to_string();
 
-    let output = may_i(&cfg).write_stdin(payload).output().expect("run");
-
-    assert!(output.status.success());
-    assert!(output.stdout.is_empty());
+    may_i(&cfg)
+        .write_stdin(payload)
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("Unrecognized hook payload"));
 }
 
 // ---------------------------------------------------------------------------
@@ -247,6 +248,18 @@ fn hook_exits_2_on_bad_config() {
         .assert()
         .code(2)
         .stderr(predicate::str::is_empty().not());
+}
+
+#[test]
+fn hook_exits_2_on_unrecognized_payload() {
+    let cfg = write_config();
+    may_i(&cfg)
+        .write_stdin(serde_json::json!({ "foo": true }).to_string())
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "Unrecognized hook payload; no registered harness matched the input",
+        ));
 }
 
 // ---------------------------------------------------------------------------
