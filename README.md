@@ -1,26 +1,24 @@
 # may-i
 
-`may-i` is a policy engine for agent shell access. It lets Claude Code, and
-other agent harnesses, run more commands without stopping to ask you every few
-seconds, while still keeping a real permission boundary in place.
+`may-i` is a permissions check system for agents that can call shell commands
+via tools. You write expressive rules describing what's safe for your agents to
+run without prompting you, and block them from executing the really bad stuff.
 
-The goal is simple: get much closer to the convenience of
-`--dangerously-skip-permissions` without giving up control.
+The goal is giving you the convenience of `--dangerously-skip-permissions`, but
+with way more safety.
 
-## In action
-
-Here `may-i` evaluates a compound command, unwraps `ssh`, then `sudo`, carries
-the derived context facts through evaluation, and blocks the inner `rm -rf /`
-because the target production host is treated as immutable:
+Here you can see `may-i` in action: we have a config that defines prod servers
+as 'immutable', and a dodgy command that breaks the rules is blocked.
 
 ![may-i trace showing ssh plus sudo unwrapping and a denied prod mutation](docs/assets/ssh-sudo-prod-deny.png)
 
 <details>
 <summary>Policy used for this demo</summary>
 
-```scheme
-;;; demo config for README screencasts
+This policy teaches `may-i` that `sudo` and `ssh` interpret their arguments as
+commands. `rm` is denied on immutable hosts, even when snuck in via `sudo`.
 
+```scheme
 (wrapper "ssh" (positional [:ssh/host *] :command+args))
 (wrapper "sudo" :command+args)
 
@@ -34,19 +32,6 @@ because the target production host is treated as immutable:
 (rule (command "rm")
       (context immutable)
       (effect :deny "Production hosts are immutable"))
-
-(rule (command (or "touch" "mkdir" "cp" "mv" "tee" "chmod" "chown"))
-      (context (and immutable
-                    (has :via/sudo)))
-      (effect :deny "Production hosts are immutable, even through ssh + sudo"))
-
-(rule (command (or "journalctl" "cat" "less" "tail" "head" "grep" "rg"))
-      (context immutable)
-      (effect :allow "Read-only inspection on production hosts is allowed"))
-
-(rule (command (or "rm" "touch" "mkdir" "cp" "mv" "tee" "chmod" "chown"
-                   "journalctl" "cat" "less" "tail" "head" "grep" "rg"))
-      (effect :allow))
 ```
 
 </details>
@@ -102,8 +87,8 @@ context and escalated in another.
 
 ## A small example
 
-For example, you might want to allow `mv` by default, but still require
-approval when it uses `--force`.
+For example, you might want to allow `mv` by default, but still require approval
+when it uses `--force`.
 
 ```scheme
 (rule (command "mv")
