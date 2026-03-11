@@ -100,8 +100,8 @@ entrypoint and is organized so additional harnesses can be added later.
 
 ## OpenCode Integration
 
-You can integrate may-i with OpenCode by creating a custom bash tool that wraps
-the built-in bash tool with may-i authorization checks.
+You can integrate may-i with OpenCode by creating a custom bash tool that
+replaces the built-in bash tool with may-i authorization checks.
 
 ### How It Works
 
