@@ -84,7 +84,7 @@ fn run() -> miette::Result<()> {
         Some(Command::Check { verbose }) => {
             cmd_check::cmd_check(cli.json, verbose, cli.config.as_deref())?
         }
-        Some(Command::Parse { command, file }) => cmd_parse::cmd_parse(command, file)?,
+        Some(Command::Parse { command, file }) => cmd_parse::cmd_parse(command, file, cli.json)?,
         None => {
             if std::io::stdin().is_terminal() {
                 Cli::command()

@@ -1,5 +1,8 @@
+use serde::Serialize;
+
 /// A complete parsed shell command (may contain compound structures).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Command {
     Simple(SimpleCommand),
     Pipeline(Vec<Command>),
@@ -40,46 +43,49 @@ pub enum Command {
     Assignment(Assignment),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum LoopKind {
     While,
     Until,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CaseArm {
     pub patterns: Vec<Word>,
     pub body: Option<Command>,
     pub terminator: CaseTerminator,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum CaseTerminator {
     Break,       // ;;
     Fallthrough, // ;&
     Continue,    // ;;&
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SimpleCommand {
     pub assignments: Vec<Assignment>,
     pub words: Vec<Word>,
     pub redirections: Vec<Redirection>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Assignment {
     pub name: String,
     pub value: Word,
 }
 
 /// A word is a sequence of word parts that get concatenated.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Word {
     pub parts: Vec<WordPart>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum WordPart {
     Literal(String),
     SingleQuoted(String),
@@ -105,14 +111,16 @@ pub enum WordPart {
     Opaque(String),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ProcessDirection {
     Input,  // <(cmd)
     Output, // >(cmd)
 }
 
 /// Structured representation of parameter expansion operators.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum ParameterOperator {
     Length, // ${#VAR}
     StripPrefix {
@@ -156,14 +164,15 @@ pub enum ParameterOperator {
     }, // ${VAR,} / ${VAR,,}
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Redirection {
     pub fd: Option<i32>,
     pub kind: RedirectionKind,
     pub target: RedirectionTarget,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RedirectionKind {
     Input,        // <
     Output,       // >
@@ -176,7 +185,8 @@ pub enum RedirectionKind {
     Herestring,   // <<<
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RedirectionTarget {
     File(Word),
     Fd(i32),

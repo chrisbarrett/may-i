@@ -4,7 +4,7 @@ use std::io::Read;
 
 use may_i_shell_parser as parser;
 
-pub fn cmd_parse(command: Option<String>, file: Option<String>) -> miette::Result<()> {
+pub fn cmd_parse(command: Option<String>, file: Option<String>, json: bool) -> miette::Result<()> {
     let input = if let Some(path) = file {
         if path == "-" {
             let mut buf = String::new();
@@ -25,6 +25,14 @@ pub fn cmd_parse(command: Option<String>, file: Option<String>) -> miette::Resul
     };
 
     let ast = parser::parse(&input);
-    println!("{ast:#?}");
+
+    if json {
+        let json_output =
+            serde_json::to_string_pretty(&ast).map_err(|e| miette::miette!("JSON error: {e}"))?;
+        println!("{json_output}");
+    } else {
+        println!("{ast:#?}");
+    }
+
     Ok(())
 }
