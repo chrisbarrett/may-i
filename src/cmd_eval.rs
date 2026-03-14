@@ -11,6 +11,63 @@ use crate::output;
 use crate::output::print_trace;
 use crate::runtime_facts::parse_cli_facts;
 
+/// A span of source text with its permission level
+#[derive(Debug, Clone, serde::Serialize)]
+struct PermissionSpan {
+    /// The exact source text for this span
+    text: String,
+    /// The permission level: "allow", "ask", "deny", or "ignore"
+    permission: String,
+}
+
+/// Build permission spans from command segments and their evaluation decisions.
+/// Handles gaps between segments (whitespace) and maps operators to "ignore".
+fn build_spans(
+    command: &str,
+    segments: &[parser::Segment],
+    decisions: &[Decision],
+) -> Vec<PermissionSpan> {
+    let mut spans = Vec::new();
+    let mut last_end = 0;
+    let mut decision_iter = decisions.iter();
+
+    for seg in segments {
+        // Handle gap before this segment (whitespace)
+        if seg.start > last_end {
+            spans.push(PermissionSpan {
+                text: command[last_end..seg.start].to_string(),
+                permission: "ignore".to_string(),
+            });
+        }
+
+        let text = &command[seg.start..seg.end];
+        let permission = if seg.is_operator {
+            "ignore".to_string()
+        } else {
+            decision_iter
+                .next()
+                .map_or("ignore".to_string(), |d| d.to_string().to_lowercase())
+        };
+
+        spans.push(PermissionSpan {
+            text: text.to_string(),
+            permission,
+        });
+
+        last_end = seg.end;
+    }
+
+    // Handle trailing whitespace
+    if last_end < command.len() {
+        spans.push(PermissionSpan {
+            text: command[last_end..].to_string(),
+            permission: "ignore".to_string(),
+        });
+    }
+
+    spans
+}
+
 pub fn cmd_eval(
     command: &str,
     raw_facts: &[String],
@@ -22,10 +79,11 @@ pub fn cmd_eval(
     let context = parse_cli_facts(raw_facts)?;
 
     if json_mode {
-        let result = engine::evaluate_with_context(command, &config, &context);
+        let (result, spans) = evaluate_segments_json(command, &config, &context);
         let json = serde_json::json!({
             "decision": result.decision.to_string(),
             "reason": result.reason.unwrap_or_default(),
+            "spans": spans,
             "trace": crate::output::trace_to_json(&result.trace),
         });
         println!(
@@ -66,6 +124,72 @@ pub fn cmd_eval(
     }
 
     Ok(())
+}
+
+/// Evaluate each segment of a command for JSON output, returning the aggregate
+/// result and permission spans for each segment.
+fn evaluate_segments_json(
+    command: &str,
+    config: &may_i_core::Config,
+    context: &ContextFacts,
+) -> (may_i_core::EvalResult, Vec<PermissionSpan>) {
+    let segments = parser::segment(command);
+
+    if segments.is_empty() {
+        let result = engine::evaluate_with_context(command, config, context);
+        let spans = vec![PermissionSpan {
+            text: command.to_string(),
+            permission: result.decision.to_string().to_lowercase(),
+        }];
+        return (result, spans);
+    }
+
+    // Evaluate each non-operator segment, collecting results
+    let mut segment_decisions: Vec<Decision> = Vec::new();
+    let mut cmd_evals: Vec<(&str, may_i_core::EvalResult)> = Vec::new();
+
+    for seg in &segments {
+        let text = &command[seg.start..seg.end];
+        if !seg.is_operator {
+            let seg_result = engine::evaluate_with_context(text, config, context);
+            segment_decisions.push(seg_result.decision);
+            cmd_evals.push((text, seg_result));
+        }
+    }
+
+    // Build spans using the decisions
+    let spans = build_spans(command, &segments, &segment_decisions);
+
+    // Build aggregate result
+    let mut trace = Vec::new();
+    let mut aggregate_decision = Decision::Allow;
+    let mut aggregate_reason = None;
+    let multi_segment = cmd_evals.len() > 1;
+
+    for (idx, (text, eval)) in cmd_evals.iter().enumerate() {
+        // Only add segment headers for multi-segment commands
+        if multi_segment {
+            trace.push(may_i_core::TraceEntry::SegmentHeader {
+                command: text.to_string(),
+                decision: eval.decision,
+            });
+        }
+        trace.extend(eval.trace.iter().cloned());
+
+        // Set reason for first segment, or update when finding higher decision
+        if idx == 0 || eval.decision > aggregate_decision {
+            aggregate_decision = eval.decision;
+            aggregate_reason = eval.reason.clone();
+        }
+    }
+
+    let result = may_i_core::EvalResult {
+        decision: aggregate_decision,
+        reason: aggregate_reason,
+        trace,
+    };
+
+    (result, spans)
 }
 
 /// Evaluate each segment of a command, returning the aggregate result and a
@@ -131,4 +255,167 @@ fn evaluate_segments(
     };
 
     (result, display_parts.concat())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_spans_empty_command() {
+        let segments: Vec<parser::Segment> = vec![];
+        let decisions: Vec<Decision> = vec![];
+        let spans = build_spans("", &segments, &decisions);
+        assert!(spans.is_empty());
+    }
+
+    #[test]
+    fn test_build_spans_single_command() {
+        let command = "ls";
+        let segments = vec![parser::Segment {
+            start: 0,
+            end: 2,
+            is_operator: false,
+        }];
+        let decisions = vec![Decision::Allow];
+        let spans = build_spans(command, &segments, &decisions);
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].text, "ls");
+        assert_eq!(spans[0].permission, "allow");
+    }
+
+    #[test]
+    fn test_build_spans_with_operator() {
+        let command = "true && curl";
+        let segments = vec![
+            parser::Segment {
+                start: 0,
+                end: 4,
+                is_operator: false,
+            },
+            parser::Segment {
+                start: 5,
+                end: 7,
+                is_operator: true,
+            },
+            parser::Segment {
+                start: 8,
+                end: 12,
+                is_operator: false,
+            },
+        ];
+        let decisions = vec![Decision::Allow, Decision::Ask];
+        let spans = build_spans(command, &segments, &decisions);
+        // Spans: "true", " ", "&&", " ", "curl"
+        assert_eq!(spans.len(), 5);
+        assert_eq!(spans[0].text, "true");
+        assert_eq!(spans[0].permission, "allow");
+        assert_eq!(spans[1].text, " ");
+        assert_eq!(spans[1].permission, "ignore");
+        assert_eq!(spans[2].text, "&&");
+        assert_eq!(spans[2].permission, "ignore");
+        assert_eq!(spans[3].text, " ");
+        assert_eq!(spans[3].permission, "ignore");
+        assert_eq!(spans[4].text, "curl");
+        assert_eq!(spans[4].permission, "ask");
+    }
+
+    #[test]
+    fn test_build_spans_leading_trailing_whitespace() {
+        let command = "  ls  ";
+        let segments = vec![parser::Segment {
+            start: 2,
+            end: 4,
+            is_operator: false,
+        }];
+        let decisions = vec![Decision::Allow];
+        let spans = build_spans(command, &segments, &decisions);
+        assert_eq!(spans.len(), 3);
+        assert_eq!(spans[0].text, "  ");
+        assert_eq!(spans[0].permission, "ignore");
+        assert_eq!(spans[1].text, "ls");
+        assert_eq!(spans[1].permission, "allow");
+        assert_eq!(spans[2].text, "  ");
+        assert_eq!(spans[2].permission, "ignore");
+    }
+
+    #[test]
+    fn test_build_spans_multiple_operators() {
+        let command = "a && b || c";
+        let segments = vec![
+            parser::Segment {
+                start: 0,
+                end: 1,
+                is_operator: false,
+            },
+            parser::Segment {
+                start: 2,
+                end: 4,
+                is_operator: true,
+            },
+            parser::Segment {
+                start: 5,
+                end: 6,
+                is_operator: false,
+            },
+            parser::Segment {
+                start: 7,
+                end: 9,
+                is_operator: true,
+            },
+            parser::Segment {
+                start: 10,
+                end: 11,
+                is_operator: false,
+            },
+        ];
+        let decisions = vec![Decision::Allow, Decision::Deny, Decision::Ask];
+        let spans = build_spans(command, &segments, &decisions);
+        // Spans: "a", " ", "&&", " ", "b", " ", "||", " ", "c"
+        assert_eq!(spans.len(), 9);
+        assert_eq!(spans[0].text, "a");
+        assert_eq!(spans[0].permission, "allow");
+        assert_eq!(spans[1].text, " ");
+        assert_eq!(spans[1].permission, "ignore");
+        assert_eq!(spans[2].text, "&&");
+        assert_eq!(spans[2].permission, "ignore");
+        assert_eq!(spans[3].text, " ");
+        assert_eq!(spans[3].permission, "ignore");
+        assert_eq!(spans[4].text, "b");
+        assert_eq!(spans[4].permission, "deny");
+        assert_eq!(spans[5].text, " ");
+        assert_eq!(spans[5].permission, "ignore");
+        assert_eq!(spans[6].text, "||");
+        assert_eq!(spans[6].permission, "ignore");
+        assert_eq!(spans[7].text, " ");
+        assert_eq!(spans[7].permission, "ignore");
+        assert_eq!(spans[8].text, "c");
+        assert_eq!(spans[8].permission, "ask");
+    }
+
+    #[test]
+    fn test_build_spans_reproduces_original_command() {
+        let command = "  true && curl example.com  ";
+        let segments = vec![
+            parser::Segment {
+                start: 2,
+                end: 6,
+                is_operator: false,
+            },
+            parser::Segment {
+                start: 7,
+                end: 9,
+                is_operator: true,
+            },
+            parser::Segment {
+                start: 10,
+                end: 27,
+                is_operator: false,
+            },
+        ];
+        let decisions = vec![Decision::Allow, Decision::Ask];
+        let spans = build_spans(command, &segments, &decisions);
+        let reconstructed: String = spans.iter().map(|s| &s.text[..]).collect();
+        assert_eq!(reconstructed, command);
+    }
 }
