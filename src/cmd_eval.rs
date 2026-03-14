@@ -20,6 +20,47 @@ struct PermissionSpan {
     permission: String,
 }
 
+/// Coalesce consecutive spans with "ignore" permission.
+/// Merges adjacent ignore spans while preserving all other spans.
+fn coalesce_spans(spans: Vec<PermissionSpan>) -> Vec<PermissionSpan> {
+    if spans.is_empty() {
+        return spans;
+    }
+
+    let mut result = Vec::with_capacity(spans.len());
+    let mut current_ignore: Option<String> = None;
+
+    for span in spans {
+        if span.permission == "ignore" {
+            // Accumulate ignore spans
+            match current_ignore {
+                Some(ref mut text) => text.push_str(&span.text),
+                None => current_ignore = Some(span.text),
+            }
+        } else {
+            // Flush any accumulated ignore span first
+            if let Some(text) = current_ignore.take() {
+                result.push(PermissionSpan {
+                    text,
+                    permission: "ignore".to_string(),
+                });
+            }
+            // Add the non-ignore span
+            result.push(span);
+        }
+    }
+
+    // Flush trailing ignore span
+    if let Some(text) = current_ignore {
+        result.push(PermissionSpan {
+            text,
+            permission: "ignore".to_string(),
+        });
+    }
+
+    result
+}
+
 /// Build permission spans from command segments and their evaluation decisions.
 /// Handles gaps between segments (whitespace) and maps operators to "ignore".
 fn build_spans(
@@ -159,6 +200,9 @@ fn evaluate_segments_json(
 
     // Build spans using the decisions
     let spans = build_spans(command, &segments, &segment_decisions);
+
+    // Coalesce adjacent ignore spans for cleaner JSON output
+    let spans = coalesce_spans(spans);
 
     // Build aggregate result
     let mut trace = Vec::new();
@@ -391,6 +435,20 @@ mod tests {
         assert_eq!(spans[7].permission, "ignore");
         assert_eq!(spans[8].text, "c");
         assert_eq!(spans[8].permission, "ask");
+
+        // Verify coalescing works correctly
+        let coalesced = coalesce_spans(spans);
+        assert_eq!(coalesced.len(), 5);
+        assert_eq!(coalesced[0].text, "a");
+        assert_eq!(coalesced[0].permission, "allow");
+        assert_eq!(coalesced[1].text, " && ");
+        assert_eq!(coalesced[1].permission, "ignore");
+        assert_eq!(coalesced[2].text, "b");
+        assert_eq!(coalesced[2].permission, "deny");
+        assert_eq!(coalesced[3].text, " || ");
+        assert_eq!(coalesced[3].permission, "ignore");
+        assert_eq!(coalesced[4].text, "c");
+        assert_eq!(coalesced[4].permission, "ask");
     }
 
     #[test]
@@ -417,5 +475,187 @@ mod tests {
         let spans = build_spans(command, &segments, &decisions);
         let reconstructed: String = spans.iter().map(|s| &s.text[..]).collect();
         assert_eq!(reconstructed, command);
+    }
+
+    // Tests for coalesce_spans function
+
+    #[test]
+    fn test_coalesce_spans_empty() {
+        let spans: Vec<PermissionSpan> = vec![];
+        let result = coalesce_spans(spans);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_coalesce_spans_single() {
+        let spans = vec![PermissionSpan {
+            text: "ls".to_string(),
+            permission: "allow".to_string(),
+        }];
+        let result = coalesce_spans(spans.clone());
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].text, "ls");
+        assert_eq!(result[0].permission, "allow");
+    }
+
+    #[test]
+    fn test_coalesce_spans_two_consecutive_ignore() {
+        let spans = vec![
+            PermissionSpan {
+                text: " ".to_string(),
+                permission: "ignore".to_string(),
+            },
+            PermissionSpan {
+                text: "&&".to_string(),
+                permission: "ignore".to_string(),
+            },
+        ];
+        let result = coalesce_spans(spans);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].text, " &&");
+        assert_eq!(result[0].permission, "ignore");
+    }
+
+    #[test]
+    fn test_coalesce_spans_ignore_allow_ignore() {
+        let spans = vec![
+            PermissionSpan {
+                text: " ".to_string(),
+                permission: "ignore".to_string(),
+            },
+            PermissionSpan {
+                text: "ls".to_string(),
+                permission: "allow".to_string(),
+            },
+            PermissionSpan {
+                text: " ".to_string(),
+                permission: "ignore".to_string(),
+            },
+        ];
+        let result = coalesce_spans(spans);
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0].text, " ");
+        assert_eq!(result[0].permission, "ignore");
+        assert_eq!(result[1].text, "ls");
+        assert_eq!(result[1].permission, "allow");
+        assert_eq!(result[2].text, " ");
+        assert_eq!(result[2].permission, "ignore");
+    }
+
+    #[test]
+    fn test_coalesce_spans_multiple_ignore() {
+        let spans = vec![
+            PermissionSpan {
+                text: " ".to_string(),
+                permission: "ignore".to_string(),
+            },
+            PermissionSpan {
+                text: "&&".to_string(),
+                permission: "ignore".to_string(),
+            },
+            PermissionSpan {
+                text: " ".to_string(),
+                permission: "ignore".to_string(),
+            },
+            PermissionSpan {
+                text: "||".to_string(),
+                permission: "ignore".to_string(),
+            },
+        ];
+        let result = coalesce_spans(spans);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].text, " && ||");
+        assert_eq!(result[0].permission, "ignore");
+    }
+
+    #[test]
+    fn test_coalesce_spans_no_ignore() {
+        let spans = vec![
+            PermissionSpan {
+                text: "true".to_string(),
+                permission: "allow".to_string(),
+            },
+            PermissionSpan {
+                text: "curl".to_string(),
+                permission: "ask".to_string(),
+            },
+            PermissionSpan {
+                text: "rm".to_string(),
+                permission: "deny".to_string(),
+            },
+        ];
+        let result = coalesce_spans(spans.clone());
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0].text, "true");
+        assert_eq!(result[0].permission, "allow");
+        assert_eq!(result[1].text, "curl");
+        assert_eq!(result[1].permission, "ask");
+        assert_eq!(result[2].text, "rm");
+        assert_eq!(result[2].permission, "deny");
+    }
+
+    #[test]
+    fn test_coalesce_spans_mixed_permissions() {
+        let spans = vec![
+            PermissionSpan {
+                text: "true".to_string(),
+                permission: "allow".to_string(),
+            },
+            PermissionSpan {
+                text: " ".to_string(),
+                permission: "ignore".to_string(),
+            },
+            PermissionSpan {
+                text: "sudo".to_string(),
+                permission: "ask".to_string(),
+            },
+            PermissionSpan {
+                text: " ".to_string(),
+                permission: "ignore".to_string(),
+            },
+            PermissionSpan {
+                text: "rm -rf".to_string(),
+                permission: "deny".to_string(),
+            },
+        ];
+        let result = coalesce_spans(spans);
+        assert_eq!(result.len(), 5);
+        assert_eq!(result[0].permission, "allow");
+        assert_eq!(result[1].permission, "ignore");
+        assert_eq!(result[2].permission, "ask");
+        assert_eq!(result[3].permission, "ignore");
+        assert_eq!(result[4].permission, "deny");
+    }
+
+    #[test]
+    fn test_coalesce_spans_preserves_reconstruction() {
+        // Simulate spans from "true && curl"
+        let spans = vec![
+            PermissionSpan {
+                text: "true".to_string(),
+                permission: "allow".to_string(),
+            },
+            PermissionSpan {
+                text: " ".to_string(),
+                permission: "ignore".to_string(),
+            },
+            PermissionSpan {
+                text: "&&".to_string(),
+                permission: "ignore".to_string(),
+            },
+            PermissionSpan {
+                text: " ".to_string(),
+                permission: "ignore".to_string(),
+            },
+            PermissionSpan {
+                text: "curl".to_string(),
+                permission: "ask".to_string(),
+            },
+        ];
+        let original: String = spans.iter().map(|s| &s.text[..]).collect();
+        let coalesced = coalesce_spans(spans);
+        let reconstructed: String = coalesced.iter().map(|s| &s.text[..]).collect();
+        assert_eq!(reconstructed, original);
+        assert_eq!(reconstructed, "true && curl");
     }
 }
