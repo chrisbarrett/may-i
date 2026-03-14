@@ -60,11 +60,7 @@ pub fn cmd_check(
             println!("\n{}\n", "Warnings".yellow().bold());
             for warning in &config.warnings {
                 let location = warning_location(warning, &config);
-                println!(
-                    "  {} {}",
-                    "WARN".yellow().bold(),
-                    warning.message.truecolor(255, 215, 0)
-                );
+                println!("  {} {}", "WARN".yellow().bold(), warning.message.yellow());
                 println!("       {}", location.dimmed());
                 if let Some(help) = &warning.help {
                     println!("       {} {}", "help:".dimmed(), help.dimmed());
@@ -86,8 +82,7 @@ pub fn cmd_check(
                     println!(
                         "  {} {}",
                         "FAIL".red().bold(),
-                        format!("{} → {} (expected {})", r.command, r.actual, r.expected)
-                            .truecolor(255, 165, 0)
+                        format!("{} → {} (expected {})", r.command, r.actual, r.expected).red()
                     );
                 }
             }
