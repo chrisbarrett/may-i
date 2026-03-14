@@ -57,11 +57,7 @@ enum Command {
 
 fn main() {
     miette::set_hook(Box::new(|_| {
-        Box::new(
-            miette::MietteHandlerOpts::new()
-                .terminal_links(false)
-                .build(),
-        )
+        Box::new(miette::MietteHandlerOpts::new().build())
     }))
     .ok();
 
