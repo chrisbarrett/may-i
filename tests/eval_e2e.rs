@@ -201,3 +201,149 @@ fn plain_eval_trace_reflects_opencode_context() {
         .stdout(predicate::str::contains(":opencode/agent"))
         .stdout(predicate::str::contains("OpenCode plan agent"));
 }
+
+#[test]
+fn json_eval_includes_spans_array() {
+    let cfg = write_config();
+    let output = may_i(&cfg)
+        .args(["--json", "eval", "echo hi"])
+        .output()
+        .expect("run");
+
+    assert!(output.status.success(), "exit 0 expected");
+
+    let resp: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("valid JSON stdout");
+
+    assert!(resp["spans"].is_array(), "spans field should be an array");
+}
+
+#[test]
+fn json_eval_spans_have_expected_fields() {
+    let cfg = write_config();
+    let output = may_i(&cfg)
+        .args(["--json", "eval", "ls"])
+        .output()
+        .expect("run");
+
+    assert!(output.status.success(), "exit 0 expected");
+
+    let resp: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("valid JSON stdout");
+
+    let spans = resp["spans"].as_array().expect("spans array");
+    assert!(!spans.is_empty(), "should have at least one span");
+
+    for span in spans {
+        assert!(
+            span["text"].is_string(),
+            "each span should have a text field"
+        );
+        assert!(
+            span["permission"].is_string(),
+            "each span should have a permission field"
+        );
+        let perm = span["permission"].as_str().unwrap();
+        assert!(
+            ["allow", "ask", "deny", "ignore"].contains(&perm),
+            "permission should be one of allow/ask/deny/ignore, got {}",
+            perm
+        );
+    }
+}
+
+#[test]
+fn json_eval_spans_with_operator_have_ignore_permission() {
+    let cfg = write_config();
+    let output = may_i(&cfg)
+        .args(["--json", "eval", "true && ls"])
+        .output()
+        .expect("run");
+
+    assert!(output.status.success(), "exit 0 expected");
+
+    let resp: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("valid JSON stdout");
+
+    let spans = resp["spans"].as_array().expect("spans array");
+    // Should have at least 3 spans: "true", " && ", "ls"
+    assert!(
+        spans.len() >= 3,
+        "should have at least 3 spans for operator command"
+    );
+
+    // Find the operator span and verify it has "ignore" permission
+    let operator_span = spans
+        .iter()
+        .find(|s| s["text"].as_str().map_or(false, |t| t.contains("&&")));
+    assert!(
+        operator_span.is_some(),
+        "should have an operator span containing &&"
+    );
+    assert_eq!(
+        operator_span.unwrap()["permission"],
+        "ignore",
+        "operator span should have ignore permission"
+    );
+}
+
+#[test]
+fn json_eval_spans_concatenate_to_original_command() {
+    let cfg = write_config();
+    let command = "  true && echo hello  ";
+    let output = may_i(&cfg)
+        .args(["--json", "eval", command])
+        .output()
+        .expect("run");
+
+    assert!(output.status.success(), "exit 0 expected");
+
+    let resp: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("valid JSON stdout");
+
+    let spans = resp["spans"].as_array().expect("spans array");
+    let reconstructed: String = spans
+        .iter()
+        .map(|s| s["text"].as_str().unwrap_or(""))
+        .collect();
+
+    assert_eq!(
+        reconstructed, command,
+        "concatenating span texts should reproduce original command exactly"
+    );
+}
+
+#[test]
+fn json_eval_complex_command_with_spans() {
+    let cfg = write_config();
+    let output = may_i(&cfg)
+        .args(["--json", "eval", "ls && echo a || echo b"])
+        .output()
+        .expect("run");
+
+    assert!(output.status.success(), "exit 0 expected");
+
+    let resp: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("valid JSON stdout");
+
+    assert!(resp["spans"].is_array(), "spans field should be an array");
+    let spans = resp["spans"].as_array().unwrap();
+    assert!(
+        spans.len() >= 5,
+        "complex command should have multiple spans"
+    );
+
+    // Verify we have operator spans with ignore permission
+    let operator_count = spans
+        .iter()
+        .filter(|s| {
+            s["permission"] == "ignore"
+                && (s["text"].as_str().unwrap_or("").contains("&&")
+                    || s["text"].as_str().unwrap_or("").contains("||"))
+        })
+        .count();
+    assert_eq!(
+        operator_count, 2,
+        "should have 2 operator spans with ignore permission"
+    );
+}
