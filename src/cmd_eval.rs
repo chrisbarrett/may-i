@@ -297,6 +297,7 @@ fn coalesce_spans(spans: Vec<PermissionSpan>) -> Vec<PermissionSpan> {
 
 /// Build permission spans from command segments and their evaluation decisions.
 /// Handles gaps between segments (whitespace) and maps operators to "ignore".
+#[cfg(test)]
 fn build_spans(
     command: &str,
     segments: &[parser::Segment],
