@@ -12,7 +12,7 @@ repos:
 
       - id: cargo-build-affected
         name: cargo build (affected)
-        entry: cargo affected build --staged
+        entry: cargo affected --staged build
         language: system
         types: [rust]
         pass_filenames: false
@@ -20,7 +20,7 @@ repos:
 
       - id: cargo-clippy-affected
         name: cargo clippy (affected)
-        entry: cargo affected clippy --staged -- -D warnings
+        entry: cargo affected --verbose --staged clippy -- -D warnings
         language: system
         types: [rust]
         pass_filenames: false
@@ -28,7 +28,7 @@ repos:
 
       - id: cargo-test-affected
         name: cargo test (affected)
-        entry: cargo affected test --staged
+        entry: cargo affected --staged test
         language: system
         types: [rust]
         pass_filenames: false
@@ -36,7 +36,7 @@ repos:
 
       - id: cargo-tarpaulin-affected
         name: cargo tarpaulin (affected)
-        entry: cargo affected test --staged -- --lib --fail-under 90
+        entry: cargo affected --staged test --lib --fail-under 90
         language: system
         types: [rust]
         pass_filenames: false
