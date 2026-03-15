@@ -36,7 +36,7 @@ repos:
 
       - id: cargo-tarpaulin-affected
         name: cargo tarpaulin (affected)
-        entry: cargo affected --staged test --lib --fail-under 90
+        entry: cargo affected --staged tarpaulin --fail-under 90
         language: system
         types: [rust]
         pass_filenames: false
@@ -69,7 +69,7 @@ repos:
 
       - id: cargo-tarpaulin-full
         name: cargo tarpaulin (full)
-        entry: cargo tarpaulin --lib --fail-under 90
+        entry: cargo tarpaulin --fail-under 90
         language: system
         types: [rust]
         pass_filenames: false
