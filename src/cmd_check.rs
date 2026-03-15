@@ -1,14 +1,273 @@
 // Check subcommand — validate config and run checks.
 
 use colored::Colorize;
-use may_i_core::{ConfigWarning, ContextFacts, ContextValue};
+use may_i_core::{ContextFacts, ContextValue, TraceEntry};
 use may_i_pp::colorize_atom;
 
 use may_i_config as config;
 use may_i_engine as engine;
 
 use crate::output;
-use crate::output::{print_trace, trace_to_json};
+use crate::output::trace_to_json;
+
+// =============================================================================
+// CheckReport Builder
+// =============================================================================
+
+/// Display representation of a single check result.
+#[derive(Debug, Clone)]
+struct CheckResultDisplay {
+    command: String,
+    expected: String,
+    actual: String,
+    passed: bool,
+    facts: ContextFacts,
+    reason: Option<String>,
+    trace: Vec<TraceEntry>,
+    location: Option<String>,
+}
+
+/// Summary statistics for check results.
+#[derive(Debug, Clone)]
+struct CheckSummary {
+    passed: usize,
+    failed: usize,
+}
+
+/// A warning to display.
+#[derive(Debug, Clone)]
+struct CheckWarning {
+    message: String,
+    location: String,
+    help: Option<String>,
+}
+
+/// Builder for check command output.
+/// Separates data extraction from rendering.
+#[derive(Debug, Clone)]
+struct CheckReport {
+    warnings: Vec<CheckWarning>,
+    results: Vec<CheckResultDisplay>,
+    summary: CheckSummary,
+    config_path: std::path::PathBuf,
+}
+
+impl CheckReport {
+    /// Extract data from engine results and config into a structured report.
+    fn from_engine_results(
+        results: &[engine::CheckResult],
+        config: &may_i_core::Config,
+        config_path: &std::path::Path,
+    ) -> Self {
+        let warnings: Vec<CheckWarning> = config
+            .warnings
+            .iter()
+            .map(|w| CheckWarning {
+                message: w.message.clone(),
+                location: config
+                    .source_info
+                    .as_ref()
+                    .map(|si| si.location_of(w.span))
+                    .unwrap_or_else(|| "<unknown>".to_string()),
+                help: w.help.clone(),
+            })
+            .collect();
+
+        let results: Vec<CheckResultDisplay> = results
+            .iter()
+            .map(|r| CheckResultDisplay {
+                command: r.command.clone(),
+                expected: r.expected.to_string(),
+                actual: r.actual.to_string(),
+                passed: r.passed,
+                facts: r.context.clone(),
+                reason: r.reason.clone(),
+                trace: r.trace.clone(),
+                location: r.location.clone(),
+            })
+            .collect();
+
+        let passed = results.iter().filter(|r| r.passed).count();
+        let failed = results.len() - passed;
+
+        Self {
+            warnings,
+            results,
+            summary: CheckSummary { passed, failed },
+            config_path: config_path.to_path_buf(),
+        }
+    }
+
+    /// Returns true if any checks failed.
+    fn has_failures(&self) -> bool {
+        self.summary.failed > 0
+    }
+
+    /// Get the exit code (0 for success, 1 for failure).
+    fn exit_code(&self) -> i32 {
+        if self.has_failures() { 1 } else { 0 }
+    }
+
+    /// Render the report as human-readable text.
+    fn render_text(&self, verbose: bool) -> String {
+        let mut output = String::new();
+
+        // Render warnings
+        if !self.warnings.is_empty() {
+            output.push_str(&format!("\n{}\n\n", "Warnings".yellow().bold()));
+            for warning in &self.warnings {
+                output.push_str(&format!(
+                    "  {} {}\n",
+                    "WARN".yellow().bold(),
+                    warning.message.yellow()
+                ));
+                output.push_str(&format!("       {}\n", warning.location.dimmed()));
+                if let Some(help) = &warning.help {
+                    output.push_str(&format!("       {} {}\n", "help:".dimmed(), help.dimmed()));
+                }
+            }
+        }
+
+        // Collect failures for detailed output
+        let failures: Vec<_> = self.results.iter().filter(|r| !r.passed).collect();
+
+        // Render verbose output (all results)
+        if verbose {
+            for r in &self.results {
+                if r.passed {
+                    output.push_str(&format!(
+                        "  {} {}\n",
+                        "PASS".green().bold(),
+                        format!("{} → {}", r.command, r.actual).dimmed()
+                    ));
+                } else {
+                    output.push_str(&format!(
+                        "  {} {}\n",
+                        "FAIL".red().bold(),
+                        format!("{} → {} (expected {})", r.command, r.actual, r.expected).red()
+                    ));
+                }
+            }
+        }
+
+        // Render failure details
+        for (i, r) in failures.iter().enumerate() {
+            if i > 0 || verbose {
+                output.push('\n');
+            }
+
+            output.push('\n');
+            let icon = "✗".red().bold().to_string();
+            let label = format!("{icon} {}", r.command.bold());
+            let label_width = 2 + r.command.len();
+            output.push_str(&output::render_separator_str(
+                "",
+                Some((&label, label_width)),
+            ));
+            output.push('\n');
+
+            // Location
+            let loc = r.location.as_deref().unwrap_or("<unknown>");
+            let (file, line_col) = loc.split_once(':').unwrap_or((loc, ""));
+            let short_file = output::shorten_home(std::path::Path::new(file));
+            output.push_str(&short_file.dimmed().to_string());
+            if !line_col.is_empty() {
+                output.push_str(&format!("{}", format!(":{line_col}").dimmed()));
+            }
+            output.push('\n');
+
+            let expected_kw = format!(":{}", r.expected);
+            let actual_kw = format!(":{}", r.actual);
+            let mut rows = vec![
+                output::Row::kv("expected", output::colorize_decision_keyword(&expected_kw)),
+                output::Row::kv("actual", output::colorize_decision_keyword(&actual_kw)),
+            ];
+            if r.facts.iter().next().is_some() {
+                rows.push(output::Row::kv("context", render_context(&r.facts)));
+            }
+            if let Some(reason) = &r.reason {
+                let quoted = format!("\"{reason}\"");
+                rows.push(output::Row::kv("reason", colorize_atom(&quoted, true)));
+            }
+            output.push_str(&output::render_elements_str(
+                "  ",
+                &[output::Element::Table(rows)],
+            ));
+
+            // Trace
+            if !r.trace.is_empty() {
+                output.push_str(&format!("\n  {}\n\n", "Trace".bold()));
+                output.push_str(&output::format_trace(&r.trace, "  "));
+            }
+        }
+
+        if !failures.is_empty() {
+            output.push('\n');
+            output.push_str(&output::render_separator_str("", None));
+        }
+
+        // Render summary
+        output.push_str(&format!("\n{}\n\n", "Summary".bold()));
+        let icon = if self.summary.failed > 0 {
+            "✗".red()
+        } else {
+            "✓".green()
+        };
+        output.push_str(&format!(
+            "  {icon} {} passed, {} failed\n",
+            self.summary.passed.to_string().bold(),
+            self.summary.failed.to_string().bold()
+        ));
+        output.push('\n');
+        let display_path = output::shorten_home(&self.config_path);
+        output.push_str(&format!(
+            "  {} {}\n",
+            "config:".dimmed(),
+            display_path.dimmed()
+        ));
+
+        output
+    }
+
+    /// Render the report as JSON.
+    fn to_json(&self) -> serde_json::Value {
+        let json_results: Vec<serde_json::Value> = self
+            .results
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "command": r.command,
+                    "expected": r.expected,
+                    "actual": r.actual,
+                    "passed": r.passed,
+                    "facts": context_to_json(&r.facts),
+                    "location": r.location,
+                    "reason": r.reason,
+                    "trace": trace_to_json(&r.trace),
+                })
+            })
+            .collect();
+
+        let json_warnings: Vec<serde_json::Value> = self
+            .warnings
+            .iter()
+            .map(|w| {
+                serde_json::json!({
+                    "message": w.message,
+                    "location": w.location,
+                    "help": w.help,
+                })
+            })
+            .collect();
+
+        serde_json::json!({
+            "passed": self.summary.passed,
+            "failed": self.summary.failed,
+            "warnings": json_warnings,
+            "results": json_results
+        })
+    }
+}
 
 pub fn cmd_check(
     json_mode: bool,
@@ -19,147 +278,22 @@ pub fn cmd_check(
     let config = config::load(&config_file)?;
     let results = engine::run_checks(&config);
 
-    let passed = results.iter().filter(|r| r.passed).count();
-    let failed = results.len() - passed;
+    // Build the report
+    let report = CheckReport::from_engine_results(&results, &config, &config_file);
 
     if json_mode {
-        let json_results: Vec<serde_json::Value> = results
-            .iter()
-            .map(|r| {
-                serde_json::json!({
-                    "command": r.command,
-                    "expected": r.expected.to_string(),
-                    "actual": r.actual.to_string(),
-                    "passed": r.passed,
-                    "context": context_to_json(&r.context),
-                    "location": r.location,
-                    "reason": r.reason,
-                    "trace": trace_to_json(&r.trace),
-                })
-            })
-            .collect();
-
-        let json_warnings: Vec<serde_json::Value> = config
-            .warnings
-            .iter()
-            .map(|warning| warning_to_json(warning, &config))
-            .collect();
-
-        let output = serde_json::json!({
-            "passed": passed,
-            "failed": failed,
-            "warnings": json_warnings,
-            "results": json_results
-        });
+        let output = report.to_json();
         println!(
             "{}",
             serde_json::to_string(&output).expect("response serialization is infallible")
         );
     } else {
-        if !config.warnings.is_empty() {
-            println!("\n{}\n", "Warnings".yellow().bold());
-            for warning in &config.warnings {
-                let location = warning_location(warning, &config);
-                println!("  {} {}", "WARN".yellow().bold(), warning.message.yellow());
-                println!("       {}", location.dimmed());
-                if let Some(help) = &warning.help {
-                    println!("       {} {}", "help:".dimmed(), help.dimmed());
-                }
-            }
-        }
-
-        let mut failures = Vec::new();
-
-        for r in &results {
-            if verbose {
-                if r.passed {
-                    println!(
-                        "  {} {}",
-                        "PASS".green().bold(),
-                        format!("{} → {}", r.command, r.actual).dimmed()
-                    );
-                } else {
-                    println!(
-                        "  {} {}",
-                        "FAIL".red().bold(),
-                        format!("{} → {} (expected {})", r.command, r.actual, r.expected).red()
-                    );
-                }
-            }
-            if !r.passed {
-                failures.push(r);
-            }
-        }
-
-        for (i, r) in failures.iter().enumerate() {
-            if i > 0 {
-                println!();
-            }
-
-            println!();
-            let icon = "✗".red().bold().to_string();
-            let label = format!("{icon} {}", r.command.bold());
-            let label_width = 2 + r.command.len();
-            output::print_separator("", Some((&label, label_width)));
-            println!();
-
-            // Location
-            let loc = r.location.as_deref().unwrap_or("<unknown>");
-            let (file, line_col) = loc.split_once(':').unwrap_or((loc, ""));
-            let short_file = output::shorten_home(std::path::Path::new(file));
-            print!("{}", short_file.dimmed());
-            if !line_col.is_empty() {
-                print!("{}", format!(":{line_col}").dimmed());
-            }
-            println!();
-
-            let expected_kw = format!(":{}", r.expected);
-            let actual_kw = format!(":{}", r.actual);
-            let mut rows = vec![
-                output::Row::kv("expected", output::colorize_decision_keyword(&expected_kw)),
-                output::Row::kv("actual", output::colorize_decision_keyword(&actual_kw)),
-            ];
-            if r.context.iter().next().is_some() {
-                rows.push(output::Row::kv("context", render_context(&r.context)));
-            }
-            if let Some(reason) = &r.reason {
-                let quoted = format!("\"{reason}\"");
-                rows.push(output::Row::kv("reason", colorize_atom(&quoted, true)));
-            }
-            output::render_elements("  ", &[output::Element::Table(rows)]);
-
-            // Trace
-            if !r.trace.is_empty() {
-                println!("\n  {}\n", "Trace".bold());
-                print_trace(&r.trace, "  ");
-            }
-        }
-
-        if !failures.is_empty() {
-            println!();
-            output::print_separator("", None);
-        }
-        println!("\n{}\n", "Summary".bold());
-        let icon = if failed > 0 {
-            "✗".red()
-        } else {
-            "✓".green()
-        };
-        println!(
-            "  {icon} {} passed, {} failed",
-            passed.to_string().bold(),
-            failed.to_string().bold()
-        );
-        println!();
-        let display_path = output::shorten_home(&config_file);
-        println!("  {} {}", "config:".dimmed(), display_path.dimmed());
+        let output = report.render_text(verbose);
+        print!("{}", output);
     }
 
-    if failed > 0 {
-        std::process::exit(1);
-    }
-
-    Ok(())
+    // Exit with appropriate code
+    std::process::exit(report.exit_code());
 }
 
 fn context_to_json(context: &ContextFacts) -> serde_json::Value {
@@ -183,20 +317,4 @@ fn render_context(context: &ContextFacts) -> String {
         })
         .collect::<Vec<_>>()
         .join(", ")
-}
-
-fn warning_location(warning: &ConfigWarning, config: &may_i_core::Config) -> String {
-    config
-        .source_info
-        .as_ref()
-        .map(|info| info.location_of(warning.span))
-        .unwrap_or_else(|| "<unknown>".to_string())
-}
-
-fn warning_to_json(warning: &ConfigWarning, config: &may_i_core::Config) -> serde_json::Value {
-    serde_json::json!({
-        "message": warning.message,
-        "location": warning_location(warning, config),
-        "help": warning.help,
-    })
 }

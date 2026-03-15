@@ -131,6 +131,60 @@ pub fn render_elements(indent: &str, elements: &[Element]) {
     }
 }
 
+/// Render elements as a string (for builder pattern).
+pub fn render_elements_str(indent: &str, elements: &[Element]) -> String {
+    let mut output = String::new();
+    for element in elements {
+        match element {
+            Element::Blank => output.push('\n'),
+            Element::Separator { label } => {
+                output.push_str(&render_separator_str(
+                    indent,
+                    label.as_ref().map(|(s, w)| (s.as_str(), *w)),
+                ));
+            }
+            Element::Table(rows) => {
+                let divider_col = compute_divider_col(rows);
+                for row in rows {
+                    output.push_str(&format_row_str(indent, row, divider_col));
+                    output.push('\n');
+                }
+            }
+        }
+    }
+    output
+}
+
+fn format_row_str(indent: &str, row: &Row, divider_col: usize) -> String {
+    if row.left.content.is_empty() && row.right.content.is_empty() {
+        return String::new();
+    }
+
+    let gap = divider_col.saturating_sub(row.left.visible_width);
+
+    let (lead, trail) = match row.left.align {
+        Align::Right => (gap.saturating_sub(1), 1),
+        Align::Left => (0, gap),
+    };
+
+    let right = if row.right.content.is_empty() {
+        String::new()
+    } else if row.right.precolored {
+        format!(" {}", row.right.content)
+    } else {
+        format!(" {}", colorize_right(&row.right.content))
+    };
+
+    format!(
+        "{indent}{:lead$}{}{:trail$}{}{}",
+        "",
+        row.left.content,
+        "",
+        DIVIDER.dimmed(),
+        right,
+    )
+}
+
 fn compute_divider_col(rows: &[Row]) -> usize {
     let max_left = rows
         .iter()
@@ -199,6 +253,32 @@ pub fn print_separator(indent: &str, label: Option<(&str, usize)>) {
     }
 }
 
+/// Render a separator as a string, optionally embedding a label.
+pub fn render_separator_str(indent: &str, label: Option<(&str, usize)>) -> String {
+    let usable = term_width().saturating_sub(indent.len());
+
+    match label {
+        Some((colored_label, label_width)) => {
+            let prefix = "─── ";
+            let mid = " ";
+            let used = visible_len(prefix) + label_width + visible_len(mid);
+            let remaining = usable.saturating_sub(used);
+            let suffix = "─".repeat(remaining);
+            format!(
+                "{indent}{}{}{}{}\n",
+                prefix.dimmed(),
+                colored_label,
+                mid.dimmed(),
+                suffix.dimmed(),
+            )
+        }
+        None => {
+            let rule = "─".repeat(usable);
+            format!("{indent}{}\n", rule.dimmed())
+        }
+    }
+}
+
 // ── Trace rendering ────────────────────────────────────────────────
 
 /// Render a trace as two-column output: left = rule structure, right = eval.
@@ -242,6 +322,49 @@ pub fn print_trace(entries: &[TraceEntry], indent: &str) {
     }
 
     render_elements(indent, &elements);
+}
+
+/// Format a trace as a string (for builder pattern).
+pub fn format_trace(entries: &[TraceEntry], indent: &str) -> String {
+    let layout = detect_layout();
+    let mut elements: Vec<Element> = Vec::new();
+    let mut first = true;
+
+    for entry in entries {
+        match entry {
+            TraceEntry::SegmentHeader { command, decision } => {
+                if !first {
+                    elements.push(Element::Blank);
+                    elements.push(Element::Blank);
+                }
+                elements.push(segment_header_element(command, *decision));
+            }
+            TraceEntry::Rule { doc, line } => {
+                if !first {
+                    elements.push(Element::Blank);
+                }
+                let rows = render_annotated_rule(doc, *line, &layout);
+                if !rows.is_empty() {
+                    elements.push(Element::Table(rows));
+                }
+            }
+            TraceEntry::DefaultAsk { .. } => {
+                let label = "No matching rule".italic().yellow().to_string();
+                let label_visible = "No matching rule".len();
+                let mut row = Row::trace(label, label_visible, "→ :ask (default)");
+                row.left.align = Align::Right;
+                // Append to the previous table if possible, else new table.
+                if let Some(Element::Table(rows)) = elements.last_mut() {
+                    rows.push(row);
+                } else {
+                    elements.push(Element::Table(vec![row]));
+                }
+            }
+        }
+        first = false;
+    }
+
+    render_elements_str(indent, &elements)
 }
 
 fn segment_header_element(command: &str, decision: may_i_core::Decision) -> Element {

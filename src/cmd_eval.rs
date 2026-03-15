@@ -3,13 +3,247 @@
 use colored::Colorize;
 
 use may_i_config as config;
-use may_i_core::{ContextFacts, Decision};
+use may_i_core::{ContextFacts, Decision, EvalResult, TraceEntry};
 use may_i_engine as engine;
 use may_i_shell_parser as parser;
 
 use crate::output;
-use crate::output::print_trace;
+use crate::output::format_trace;
 use crate::runtime_facts::parse_cli_facts;
+
+// =============================================================================
+// EvalReport Builder
+// =============================================================================
+
+/// A segment of a command with its permission level.
+#[derive(Debug, Clone)]
+struct EvalSegment {
+    text: String,
+    decision: Decision,
+}
+
+/// Builder for eval command output.
+/// Separates data extraction from rendering.
+#[derive(Debug, Clone)]
+struct EvalReport {
+    command: String,
+    segments: Vec<EvalSegment>,
+    aggregate_result: EvalResult,
+    config_path: std::path::PathBuf,
+}
+
+impl EvalReport {
+    /// Evaluate a command and build a structured report.
+    fn from_command(
+        command: &str,
+        config: &may_i_core::Config,
+        context: &ContextFacts,
+        config_path: &std::path::Path,
+    ) -> Self {
+        let segments = parser::segment(command);
+
+        if segments.is_empty() {
+            // Single command, no operators
+            let result = engine::evaluate_with_context(command, config, context);
+            return Self {
+                command: command.to_string(),
+                segments: vec![EvalSegment {
+                    text: command.to_string(),
+                    decision: result.decision,
+                }],
+                aggregate_result: result,
+                config_path: config_path.to_path_buf(),
+            };
+        }
+
+        // Evaluate each segment and build colored display
+        let mut segment_results: Vec<EvalSegment> = Vec::new();
+        let mut cmd_evals: Vec<(&str, EvalResult)> = Vec::new();
+
+        for seg in &segments {
+            let text = &command[seg.start..seg.end];
+            if seg.is_operator {
+                segment_results.push(EvalSegment {
+                    text: text.to_string(),
+                    decision: Decision::Allow, // Operators don't have a decision
+                });
+            } else {
+                let seg_result = engine::evaluate_with_context(text, config, context);
+                segment_results.push(EvalSegment {
+                    text: text.to_string(),
+                    decision: seg_result.decision,
+                });
+                cmd_evals.push((text, seg_result));
+            }
+        }
+
+        // Build aggregate result
+        let multi_segment = cmd_evals.len() > 1;
+        let mut trace = Vec::new();
+        let mut aggregate_decision = Decision::Allow;
+        let mut aggregate_reason = None;
+
+        for (idx, (text, eval)) in cmd_evals.iter().enumerate() {
+            if multi_segment {
+                trace.push(TraceEntry::SegmentHeader {
+                    command: text.to_string(),
+                    decision: eval.decision,
+                });
+            }
+            trace.extend(eval.trace.iter().cloned());
+            // Set reason for first segment, or update when finding higher decision
+            if idx == 0 || eval.decision > aggregate_decision {
+                aggregate_decision = eval.decision;
+                aggregate_reason = eval.reason.clone();
+            }
+        }
+
+        let aggregate_result = EvalResult {
+            decision: aggregate_decision,
+            reason: aggregate_reason,
+            trace,
+        };
+
+        Self {
+            command: command.to_string(),
+            segments: segment_results,
+            aggregate_result,
+            config_path: config_path.to_path_buf(),
+        }
+    }
+
+    /// Render the report as human-readable text.
+    fn render_text(&self) -> String {
+        let mut output = String::new();
+
+        // Render trace
+        if !self.aggregate_result.trace.is_empty() {
+            output.push_str(&format!("\n{}\n\n", "Trace".bold()));
+            output.push_str(&format_trace(&self.aggregate_result.trace, "  "));
+        }
+
+        // Render result with colored command
+        output.push_str(&format!("\n{}\n\n", "Result".bold()));
+        let colored_command = self.render_colored_command();
+        output.push_str(&format!("  {}\n\n", colored_command));
+
+        // Render decision
+        {
+            use may_i_pp::colorize_atom;
+            let keyword = format!(":{}", self.aggregate_result.decision);
+            let colored_keyword = output::colorize_decision_keyword(&keyword);
+            match &self.aggregate_result.reason {
+                Some(reason) => {
+                    let quoted = format!("\"{reason}\"");
+                    output.push_str(&format!(
+                        "  {} {colored_keyword} {}\n",
+                        "→".dimmed(),
+                        colorize_atom(&quoted, true)
+                    ));
+                }
+                None => output.push_str(&format!("  {} {colored_keyword}\n", "→".dimmed())),
+            }
+        }
+
+        output.push('\n');
+        let display_path = output::shorten_home(&self.config_path);
+        output.push_str(&format!(
+            "  {} {}\n",
+            "config:".dimmed(),
+            display_path.dimmed()
+        ));
+
+        output
+    }
+
+    /// Render the command with colored segments.
+    fn render_colored_command(&self) -> String {
+        self.segments
+            .iter()
+            .map(|seg| {
+                if seg.text.trim().is_empty()
+                    || seg.text == "&&"
+                    || seg.text == "||"
+                    || seg.text == ";"
+                {
+                    // Whitespace and operators - no color
+                    seg.text.clone()
+                } else {
+                    match seg.decision {
+                        Decision::Allow => seg.text.green().underline().to_string(),
+                        Decision::Ask => seg.text.yellow().underline().to_string(),
+                        Decision::Deny => seg.text.red().underline().to_string(),
+                    }
+                }
+            })
+            .collect()
+    }
+
+    /// Build permission spans for JSON output using the original command string.
+    /// This ensures whitespace is preserved exactly as in the original command.
+    fn build_spans(&self, command: &str) -> Vec<PermissionSpan> {
+        let parser_segments = parser::segment(command);
+
+        if parser_segments.is_empty() {
+            // Single command, no operators
+            return vec![PermissionSpan {
+                text: command.to_string(),
+                permission: self.aggregate_result.decision.to_string().to_lowercase(),
+            }];
+        }
+
+        let mut spans = Vec::new();
+        let mut last_end = 0;
+        let mut segment_iter = self.segments.iter();
+
+        for seg in &parser_segments {
+            // Handle gap before this segment (whitespace)
+            if seg.start > last_end {
+                spans.push(PermissionSpan {
+                    text: command[last_end..seg.start].to_string(),
+                    permission: "ignore".to_string(),
+                });
+            }
+
+            let text = &command[seg.start..seg.end];
+            let permission = if seg.is_operator {
+                "ignore".to_string()
+            } else if let Some(eval_seg) = segment_iter.next() {
+                eval_seg.decision.to_string().to_lowercase()
+            } else {
+                "ignore".to_string()
+            };
+
+            spans.push(PermissionSpan {
+                text: text.to_string(),
+                permission,
+            });
+
+            last_end = seg.end;
+        }
+
+        // Handle trailing whitespace
+        if last_end < command.len() {
+            spans.push(PermissionSpan {
+                text: command[last_end..].to_string(),
+                permission: "ignore".to_string(),
+            });
+        }
+
+        coalesce_spans(spans)
+    }
+
+    /// Render the report as JSON.
+    fn to_json(&self) -> serde_json::Value {
+        let spans = self.build_spans(&self.command);
+        serde_json::json!({
+            "decision": self.aggregate_result.decision.to_string(),
+            "reason": self.aggregate_result.reason.clone().unwrap_or_default(),
+            "spans": spans,
+            "trace": output::trace_to_json(&self.aggregate_result.trace),
+        })
+    }
+}
 
 /// A span of source text with its permission level
 #[derive(Debug, Clone, serde::Serialize)]
@@ -119,186 +353,21 @@ pub fn cmd_eval(
     let config = config::load(&config_file)?;
     let context = parse_cli_facts(raw_facts)?;
 
+    // Build the report
+    let report = EvalReport::from_command(command, &config, &context, &config_file);
+
     if json_mode {
-        let (result, spans) = evaluate_segments_json(command, &config, &context);
-        let json = serde_json::json!({
-            "decision": result.decision.to_string(),
-            "reason": result.reason.unwrap_or_default(),
-            "spans": spans,
-            "trace": crate::output::trace_to_json(&result.trace),
-        });
+        let json = report.to_json();
         println!(
             "{}",
             serde_json::to_string(&json).expect("response serialization is infallible")
         );
     } else {
-        // Evaluate per-segment so we can both colorize and derive the aggregate result.
-        let (result, colored_command) = evaluate_segments(command, &config, &context);
-
-        if !result.trace.is_empty() {
-            println!("\n{}\n", "Trace".bold());
-            print_trace(&result.trace, "  ");
-        }
-
-        println!("\n{}\n", "Result".bold());
-        println!("  {colored_command}");
-        println!();
-        {
-            use may_i_pp::colorize_atom;
-            let keyword = format!(":{}", result.decision);
-            let colored_keyword = output::colorize_decision_keyword(&keyword);
-            match &result.reason {
-                Some(reason) => {
-                    let quoted = format!("\"{reason}\"");
-                    println!(
-                        "  {} {colored_keyword} {}",
-                        "→".dimmed(),
-                        colorize_atom(&quoted, true)
-                    );
-                }
-                None => println!("  {} {colored_keyword}", "→".dimmed()),
-            }
-        }
-        println!();
-        let display_path = output::shorten_home(&config_file);
-        println!("  {} {}", "config:".dimmed(), display_path.dimmed());
+        let output = report.render_text();
+        print!("{}", output);
     }
 
     Ok(())
-}
-
-/// Evaluate each segment of a command for JSON output, returning the aggregate
-/// result and permission spans for each segment.
-fn evaluate_segments_json(
-    command: &str,
-    config: &may_i_core::Config,
-    context: &ContextFacts,
-) -> (may_i_core::EvalResult, Vec<PermissionSpan>) {
-    let segments = parser::segment(command);
-
-    if segments.is_empty() {
-        let result = engine::evaluate_with_context(command, config, context);
-        let spans = vec![PermissionSpan {
-            text: command.to_string(),
-            permission: result.decision.to_string().to_lowercase(),
-        }];
-        return (result, spans);
-    }
-
-    // Evaluate each non-operator segment, collecting results
-    let mut segment_decisions: Vec<Decision> = Vec::new();
-    let mut cmd_evals: Vec<(&str, may_i_core::EvalResult)> = Vec::new();
-
-    for seg in &segments {
-        let text = &command[seg.start..seg.end];
-        if !seg.is_operator {
-            let seg_result = engine::evaluate_with_context(text, config, context);
-            segment_decisions.push(seg_result.decision);
-            cmd_evals.push((text, seg_result));
-        }
-    }
-
-    // Build spans using the decisions
-    let spans = build_spans(command, &segments, &segment_decisions);
-
-    // Coalesce adjacent ignore spans for cleaner JSON output
-    let spans = coalesce_spans(spans);
-
-    // Build aggregate result
-    let mut trace = Vec::new();
-    let mut aggregate_decision = Decision::Allow;
-    let mut aggregate_reason = None;
-    let multi_segment = cmd_evals.len() > 1;
-
-    for (idx, (text, eval)) in cmd_evals.iter().enumerate() {
-        // Only add segment headers for multi-segment commands
-        if multi_segment {
-            trace.push(may_i_core::TraceEntry::SegmentHeader {
-                command: text.to_string(),
-                decision: eval.decision,
-            });
-        }
-        trace.extend(eval.trace.iter().cloned());
-
-        // Set reason for first segment, or update when finding higher decision
-        if idx == 0 || eval.decision > aggregate_decision {
-            aggregate_decision = eval.decision;
-            aggregate_reason = eval.reason.clone();
-        }
-    }
-
-    let result = may_i_core::EvalResult {
-        decision: aggregate_decision,
-        reason: aggregate_reason,
-        trace,
-    };
-
-    (result, spans)
-}
-
-/// Evaluate each segment of a command, returning the aggregate result and a
-/// colorized display string. This avoids evaluating the entire command twice.
-fn evaluate_segments(
-    command: &str,
-    config: &may_i_core::Config,
-    context: &ContextFacts,
-) -> (may_i_core::EvalResult, String) {
-    let segments = parser::segment(command);
-
-    if segments.is_empty() {
-        return (
-            engine::evaluate_with_context(command, config, context),
-            command.to_string(),
-        );
-    }
-
-    // Evaluate each command segment, collecting (text, result) pairs.
-    let mut display_parts = Vec::new();
-    let mut cmd_evals: Vec<(&str, may_i_core::EvalResult)> = Vec::new();
-    for seg in &segments {
-        let text = &command[seg.start..seg.end];
-        if seg.is_operator {
-            display_parts.push(format!(" {text} "));
-        } else {
-            let seg_result = engine::evaluate_with_context(text, config, context);
-            let colored = match seg_result.decision {
-                Decision::Allow => text.green().underline().to_string(),
-                Decision::Ask => text.yellow().underline().to_string(),
-                Decision::Deny => text.red().underline().to_string(),
-            };
-            display_parts.push(colored);
-            cmd_evals.push((text, seg_result));
-        }
-    }
-
-    let multi_segment = cmd_evals.len() > 1;
-
-    // Build aggregate trace with segment headers for compound commands.
-    let mut trace = Vec::new();
-    let mut aggregate_decision = Decision::Allow;
-    let mut aggregate_reason = None;
-
-    for (text, eval) in &cmd_evals {
-        if multi_segment {
-            trace.push(may_i_core::TraceEntry::SegmentHeader {
-                command: text.to_string(),
-                decision: eval.decision,
-            });
-        }
-        trace.extend(eval.trace.iter().cloned());
-        if eval.decision > aggregate_decision {
-            aggregate_decision = eval.decision;
-            aggregate_reason = eval.reason.clone();
-        }
-    }
-
-    let result = may_i_core::EvalResult {
-        decision: aggregate_decision,
-        reason: aggregate_reason,
-        trace,
-    };
-
-    (result, display_parts.concat())
 }
 
 #[cfg(test)]
