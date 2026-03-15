@@ -5,10 +5,9 @@ use std::io::IsTerminal;
 use clap::{CommandFactory, Parser, Subcommand};
 
 mod cmd_check;
+mod cmd_claude_code_hook;
 mod cmd_eval;
-mod cmd_hook;
 mod cmd_parse;
-mod hook_harness;
 mod output;
 mod runtime_facts;
 
@@ -88,7 +87,7 @@ fn run() -> miette::Result<()> {
                     .map_err(|e| miette::miette!("Failed to print help: {e}"))?;
                 println!();
             } else {
-                cmd_hook::cmd_hook(cli.config.as_deref())?;
+                cmd_claude_code_hook::cmd_claude_code_hook(cli.config.as_deref())?;
             }
         }
     }
