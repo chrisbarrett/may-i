@@ -8,12 +8,16 @@
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    cargo-affected = {
+      url = "github:chrisbarrett/cargo-affected";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { nixpkgs, flake-utils, rust-overlay, ... }:
+  outputs = { nixpkgs, flake-utils, rust-overlay, cargo-affected, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        overlays = [ rust-overlay.overlays.default ];
+        overlays = [ rust-overlay.overlays.default cargo-affected.overlays.default ];
         pkgs = import nixpkgs { inherit system overlays; };
         rustToolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
       in
@@ -23,6 +27,7 @@
             rustToolchain
             pkgs.cargo-tarpaulin
             pkgs.prek
+            pkgs.cargo-affected
           ];
 
           shellHook = ''
