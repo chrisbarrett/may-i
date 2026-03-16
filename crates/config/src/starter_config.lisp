@@ -92,6 +92,21 @@
 ;;   (or "create" "delete" "fork")     ; match any of these strings
 ;;   (and (regex "^/") (not "/tmp"))   ; combine with and/not
 ;;
+;; FACT PREDICATES IN ARGS (NEW - check runtime context within argument matching)
+;;
+;;   (has :via/ssh)                       ; presence check in args context
+;;   (has [:env "prod"])                  ; exact value match
+;;   (has [:env (regex "^prod-")])       ; regex value match
+;;   (and (positional "delete") (has [:env "prod"]))  ; combine arg + fact checks
+;;   (or (has :via/ssh) (has :via/mosh))  ; either wrapper fact present
+;;
+;;   (rule (command "kubectl")
+;;         (args (cond
+;;                 ((has [:env "prod"])
+;;                  (effect :deny "No kubectl in production"))
+;;                 (else
+;;                  (effect :allow)))))
+;;
 ;; COND (branch on args within a single rule; first matching branch wins)
 ;;
 ;;   (rule (command "tmux")
@@ -101,12 +116,22 @@
 ;;                 (else
 ;;                  (effect :deny "Unknown tmux command")))))
 ;;
-;; SUGAR FORMS (desugar to cond; also work at expression level)
+;; SUGAR FORMS (work at the args level; use cond with else for fallthrough)
 ;;
 ;;   (if MATCHER THEN-EFFECT)             ; one-branch conditional
 ;;   (if MATCHER THEN-EFFECT ELSE-EFFECT) ; two-branch conditional
-;;   (when MATCHER EFFECT)                ; same as (if MATCHER EFFECT)
-;;   (unless MATCHER EFFECT)              ; same as (if (not MATCHER) EFFECT)
+;;   (when MATCHER EFFECT)                ; use (cond ((TEST EFFECT)) (else FALLBACK))
+;;   (unless MATCHER EFFECT)              ; use (cond ((TEST EFFECT)) (else FALLBACK))
+;;
+;; NOTE: Embedded effects in args (cond/if/when/unless) and rule-level (effect ...)
+;; are mutually exclusive. Use cond with an explicit else branch for fallthrough:
+;;
+;;   ; Correct: cond with else for fallback
+;;   (args (cond ((has [:env "prod"]) (effect :deny))
+;;               (else (effect :allow))))
+;;
+;;   ; Incorrect: embedded effect + rule-level effect
+;;   (args (when (has [:env "prod"]) (effect :deny)))  ; when + rule-level effect = error
 ;;
 ;; INLINE CHECKS (validated by `may-i check`)
 ;;
@@ -157,6 +182,29 @@
 
 (rule (command (or "iptables" "nft" "pfctl"))
       (effect :deny "Firewall manipulation"))
+
+;;; -- Context-aware rules using fact predicates  -------------------------
+
+; Example: Block kubectl in production environment
+; (requires passing --fact :env=prod to may-i eval)
+(rule (command "kubectl")
+      (args (cond
+              ((has [:env "prod"])
+               (effect :deny "No kubectl in production environment"))
+              (else
+               (effect :allow)))))
+
+; Example: Different handling based on SSH host pattern
+; (works with ssh wrapper that captures host as :ssh/host fact)
+(wrapper "ssh" (positional [:ssh/host *] :command+args))
+
+(rule (command "rm")
+      (args (cond
+              ((and (anywhere "-r" "--recursive")
+                    (has [:ssh/host (regex "^prod-")]))
+               (effect :deny "Recursive delete on production hosts"))
+              (else
+               (effect :ask "Confirm recursive deletion")))))
 
 ;;; -- Allow: read-only operations ---------------------------------------------
 

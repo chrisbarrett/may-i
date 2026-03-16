@@ -233,6 +233,39 @@ impl std::fmt::Debug for ContextExpr {
     }
 }
 
+/// Boolean expression for fact predicates within argument matching.
+/// Unlike ContextExpr, BoolExpr is used within ArgMatcher for runtime fact checks.
+#[derive(Debug, Clone)]
+pub enum BoolExpr {
+    /// Check if a fact exists or matches a pattern.
+    Has(FactQuery),
+    /// All sub-expressions must be true.
+    And(Vec<BoolExpr>),
+    /// Any sub-expression must be true.
+    Or(Vec<BoolExpr>),
+    /// Inverts the result.
+    Not(Box<BoolExpr>),
+}
+
+impl BoolExpr {
+    pub fn to_doc(&self) -> Doc {
+        match self {
+            BoolExpr::Has(query) => Doc::list(vec![Doc::atom("has"), query.to_doc()]),
+            BoolExpr::And(exprs) => {
+                let mut cs = vec![Doc::atom("and")];
+                cs.extend(exprs.iter().map(|e| e.to_doc()));
+                Doc::list(cs)
+            }
+            BoolExpr::Or(exprs) => {
+                let mut cs = vec![Doc::atom("or")];
+                cs.extend(exprs.iter().map(|e| e.to_doc()));
+                Doc::list(cs)
+            }
+            BoolExpr::Not(expr) => Doc::list(vec![Doc::atom("not"), expr.to_doc()]),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct WrapperPattern {
     pub expr: Expr,
@@ -575,6 +608,55 @@ impl CondArm {
     }
 }
 
+/// Polymorphic predicate for conditional branches in ArgMatcher.
+/// Allows mixing matchers, string expressions, and fact predicates.
+#[derive(Debug, Clone)]
+pub enum MatcherCondPredicate {
+    /// Full ArgMatcher for complex matching.
+    Matcher(Box<ArgMatcher>),
+    /// String expression for simple value testing.
+    Expr(Expr),
+    /// Boolean expression for fact checking.
+    BoolExpr(BoolExpr),
+}
+
+impl MatcherCondPredicate {
+    pub fn to_doc(&self) -> Doc {
+        match self {
+            MatcherCondPredicate::Matcher(m) => m.to_doc(),
+            MatcherCondPredicate::Expr(e) => e.to_doc(),
+            MatcherCondPredicate::BoolExpr(b) => b.to_doc(),
+        }
+    }
+}
+
+/// A branch in a polymorphic conditional (cond/when/unless/if).
+#[derive(Debug, Clone)]
+pub struct PolymorphicCondBranch {
+    pub predicate: MatcherCondPredicate,
+    pub effect: Effect,
+}
+
+/// The arms and optional fallback of a polymorphic conditional.
+#[derive(Debug, Clone)]
+pub struct PolymorphicCondArm {
+    pub branches: Vec<PolymorphicCondBranch>,
+    pub fallback: Option<Effect>,
+}
+
+impl PolymorphicCondArm {
+    pub fn to_doc(&self, keyword: &str) -> Doc {
+        let mut cs = vec![Doc::atom(keyword)];
+        for b in &self.branches {
+            cs.push(Doc::list(vec![b.predicate.to_doc(), b.effect.to_doc()]));
+        }
+        if let Some(fb) = &self.fallback {
+            cs.push(Doc::list(vec![Doc::atom("else"), fb.to_doc()]));
+        }
+        Doc::list(cs)
+    }
+}
+
 /// How many arguments a positional expression consumes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Quantifier {
@@ -667,6 +749,18 @@ pub enum ArgMatcher {
     Not(Box<ArgMatcher>),
     /// Branch on args; first matching branch wins, with optional else fallback.
     Cond(CondArm),
+    /// Fact predicate check - evaluates BoolExpr against context facts.
+    Has(BoolExpr),
+    /// When form: first matching polymorphic branch wins, with optional else fallback.
+    When(PolymorphicCondArm),
+    /// Unless form: branches match when predicate is false.
+    Unless(PolymorphicCondArm),
+    /// If form: single branch with test and optional else.
+    If {
+        test: Box<MatcherCondPredicate>,
+        then_effect: Effect,
+        else_effect: Option<Effect>,
+    },
 }
 
 impl ArgMatcher {
@@ -699,6 +793,20 @@ impl ArgMatcher {
             }
             ArgMatcher::Not(inner) => Doc::list(vec![Doc::atom("not"), inner.to_doc()]),
             ArgMatcher::Cond(arm) => arm.to_doc(),
+            ArgMatcher::Has(expr) => expr.to_doc(),
+            ArgMatcher::When(arm) => arm.to_doc("when"),
+            ArgMatcher::Unless(arm) => arm.to_doc("unless"),
+            ArgMatcher::If {
+                test,
+                then_effect,
+                else_effect,
+            } => {
+                let mut cs = vec![Doc::atom("if"), test.to_doc(), then_effect.to_doc()];
+                if let Some(else_eff) = else_effect {
+                    cs.push(else_eff.to_doc());
+                }
+                Doc::list(cs)
+            }
         }
     }
 
@@ -714,6 +822,12 @@ impl ArgMatcher {
             }
             ArgMatcher::Not(inner) => inner.has_effect(),
             ArgMatcher::Cond(arm) => arm.branches.iter().any(|b| b.matcher.has_effect()),
+            // Has doesn't carry effects - it's just a boolean check
+            ArgMatcher::Has(_) => false,
+            // When/Unless/If all carry effects in their branches
+            ArgMatcher::When(_arm) => true,
+            ArgMatcher::Unless(_arm) => true,
+            ArgMatcher::If { .. } => true,
         }
     }
 }

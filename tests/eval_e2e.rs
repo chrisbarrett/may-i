@@ -347,3 +347,235 @@ fn json_eval_complex_command_with_spans() {
         "should have 2 operator spans with ignore permission"
     );
 }
+
+// ── Fact predicates in args (new feature) ───────────────────────────
+
+const FACT_PREDICATE_CONFIG: &str = r#"
+; Use cond with else for rules that need fallthrough behavior
+(rule (command "kubectl")
+      (args (cond
+              ((has [:env "prod"]) (effect :deny "No kubectl in production"))
+              (else (effect :allow)))))
+
+(rule (command "ssh")
+      (args (cond
+              ((has :via/mosh) (effect :ask "SSH with mosh needs confirmation"))
+              (else (effect :allow "SSH without mosh")))))
+
+(rule (command "deploy")
+      (args (if (has [:env "prod"])
+                (effect :deny "No prod deploys")
+                (effect :allow "Non-prod deploy ok"))))
+"#;
+
+fn write_fact_predicate_config() -> NamedTempFile {
+    let mut f = NamedTempFile::new().expect("create temp config");
+    f.write_all(FACT_PREDICATE_CONFIG.as_bytes())
+        .expect("write temp config");
+    f
+}
+
+#[test]
+fn json_eval_fact_predicate_cond_has_matches() {
+    let cfg = write_fact_predicate_config();
+    let output = may_i(&cfg)
+        .args(["--json", "eval", "--fact", ":env=prod", "kubectl get pods"])
+        .output()
+        .expect("run");
+
+    assert!(output.status.success(), "exit 0 expected");
+
+    let resp: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("valid JSON stdout");
+
+    // Has predicate matches, cond takes first branch
+    assert_eq!(resp["decision"], "deny");
+    assert!(resp["reason"].as_str().unwrap().contains("production"));
+}
+
+#[test]
+fn json_eval_fact_predicate_cond_has_no_match() {
+    let cfg = write_fact_predicate_config();
+    let output = may_i(&cfg)
+        .args(["--json", "eval", "--fact", ":env=dev", "kubectl get pods"])
+        .output()
+        .expect("run");
+
+    assert!(output.status.success(), "exit 0 expected");
+
+    let resp: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("valid JSON stdout");
+
+    // Has predicate doesn't match, cond takes else branch
+    assert_eq!(resp["decision"], "allow");
+}
+
+#[test]
+fn json_eval_fact_predicate_cond_presence_matches() {
+    let cfg = write_fact_predicate_config();
+    // With :via/mosh fact, the cond should match the first branch
+    let output = may_i(&cfg)
+        .args(["--json", "eval", "--fact", ":via/mosh", "ssh server"])
+        .output()
+        .expect("run");
+
+    assert!(output.status.success(), "exit 0 expected");
+
+    let resp: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("valid JSON stdout");
+
+    // Presence check matches
+    assert_eq!(resp["decision"], "ask");
+}
+
+#[test]
+fn json_eval_fact_predicate_cond_presence_no_match() {
+    let cfg = write_fact_predicate_config();
+    // Without :via/mosh fact, the cond should take else branch
+    let output = may_i(&cfg)
+        .args(["--json", "eval", "ssh server"])
+        .output()
+        .expect("run");
+
+    assert!(output.status.success(), "exit 0 expected");
+
+    let resp: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("valid JSON stdout");
+
+    // Presence check doesn't match, takes else branch
+    assert_eq!(resp["decision"], "allow");
+}
+
+#[test]
+fn json_eval_fact_predicate_if_then_branch() {
+    let cfg = write_fact_predicate_config();
+    let output = may_i(&cfg)
+        .args(["--json", "eval", "--fact", ":env=prod", "deploy app"])
+        .output()
+        .expect("run");
+
+    assert!(output.status.success(), "exit 0 expected");
+
+    let resp: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("valid JSON stdout");
+
+    // If condition is true, takes then branch
+    assert_eq!(resp["decision"], "deny");
+    assert!(resp["reason"].as_str().unwrap().contains("prod deploys"));
+}
+
+#[test]
+fn json_eval_fact_predicate_if_else_branch() {
+    let cfg = write_fact_predicate_config();
+    let output = may_i(&cfg)
+        .args(["--json", "eval", "--fact", ":env=staging", "deploy app"])
+        .output()
+        .expect("run");
+
+    assert!(output.status.success(), "exit 0 expected");
+
+    let resp: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("valid JSON stdout");
+
+    // If condition is false, takes else branch
+    assert_eq!(resp["decision"], "allow");
+    assert!(resp["reason"].as_str().unwrap().contains("Non-prod"));
+}
+
+// ── Wrapper facts integration ──────────────────────────────────────
+
+const WRAPPER_FACTS_CONFIG: &str = r#"
+(wrapper "ssh" (positional [:ssh/host *] :command+args))
+
+; Deny dangerous commands on production hosts via SSH
+(rule (command "kubectl")
+      (args (cond
+              ((has [:ssh/host (regex "^prod-")])
+               (effect :deny "No kubectl on production SSH hosts"))
+              (else (effect :allow)))))
+
+; Special handling for staging hosts
+(rule (command "deploy")
+      (args (cond
+              ((has [:ssh/host (regex "^staging-")])
+               (effect :ask "Confirm staging deployment"))
+              (else (effect :allow "Non-SSH or non-staging deployment")))))
+"#;
+
+fn write_wrapper_facts_config() -> NamedTempFile {
+    let mut f = NamedTempFile::new().expect("create temp config");
+    f.write_all(WRAPPER_FACTS_CONFIG.as_bytes())
+        .expect("write temp config");
+    f
+}
+
+#[test]
+fn json_eval_wrapper_fact_has_regex_matches() {
+    let cfg = write_wrapper_facts_config();
+    let output = may_i(&cfg)
+        .args(["--json", "eval", "ssh prod-01 kubectl get pods"])
+        .output()
+        .expect("run");
+
+    assert!(output.status.success(), "exit 0 expected");
+
+    let resp: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("valid JSON stdout");
+
+    // SSH wrapper adds :ssh/host fact, which matches the regex
+    assert_eq!(resp["decision"], "deny");
+    assert!(resp["reason"].as_str().unwrap().contains("production"));
+}
+
+#[test]
+fn json_eval_wrapper_fact_has_regex_no_match() {
+    let cfg = write_wrapper_facts_config();
+    let output = may_i(&cfg)
+        .args(["--json", "eval", "ssh dev-01 kubectl get pods"])
+        .output()
+        .expect("run");
+
+    assert!(output.status.success(), "exit 0 expected");
+
+    let resp: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("valid JSON stdout");
+
+    // SSH wrapper adds :ssh/host fact, but it doesn't match prod regex
+    assert_eq!(resp["decision"], "allow");
+}
+
+#[test]
+fn json_eval_wrapper_fact_cond_staging() {
+    let cfg = write_wrapper_facts_config();
+    let output = may_i(&cfg)
+        .args(["--json", "eval", "ssh staging-01 deploy app"])
+        .output()
+        .expect("run");
+
+    assert!(output.status.success(), "exit 0 expected");
+
+    let resp: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("valid JSON stdout");
+
+    // Staging host matches regex, triggers ask
+    assert_eq!(resp["decision"], "ask");
+    assert!(resp["reason"].as_str().unwrap().contains("staging"));
+}
+
+#[test]
+fn json_eval_wrapper_fact_cond_non_ssh() {
+    let cfg = write_wrapper_facts_config();
+    let output = may_i(&cfg)
+        .args(["--json", "eval", "deploy app"])
+        .output()
+        .expect("run");
+
+    assert!(output.status.success(), "exit 0 expected");
+
+    let resp: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("valid JSON stdout");
+
+    // No SSH wrapper, so :ssh/host fact is not present
+    // Falls through to else branch
+    assert_eq!(resp["decision"], "allow");
+}

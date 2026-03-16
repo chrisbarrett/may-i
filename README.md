@@ -115,6 +115,34 @@ come from wrappers while `may-i` unwraps a command. Exact syntax and semantics
 live in the generated config and starter config comments, but the important idea
 is simple: facts let policy follow intent and provenance, not just text.
 
+### Fact predicates in argument matching
+
+You can use fact predicates directly within `(args ...)` matchers. This lets
+you make fine-grained decisions based on both the command arguments AND runtime
+context:
+
+```scheme
+; Block kubectl in production environment
+(rule (command "kubectl")
+      (args (cond
+              ((has [:env "prod"])
+               (effect :deny "No kubectl in production"))
+              (else
+               (effect :allow)))))
+
+; Combine arg patterns with fact checks
+(rule (command "rm")
+      (args (cond
+              ((and (anywhere "-r" "--recursive")
+                    (has [:ssh/host (regex "^prod-")]))
+               (effect :deny "Recursive delete on production hosts"))
+              (else
+               (effect :ask "Confirm recursive deletion")))))
+```
+
+The `(has ...)` predicate works just like in `(context ...)`, but inside args
+you can combine it with positional matching, anywhere checks, and boolean logic.
+
 ## Installation
 
 Install `may-i` and put it on your `PATH`.

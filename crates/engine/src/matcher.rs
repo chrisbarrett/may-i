@@ -102,7 +102,7 @@ pub(crate) fn extract_positional_args(args: &[ResolvedArg]) -> Vec<ResolvedArg> 
 /// Delegates to the annotated matcher and discards the Doc tree.
 #[cfg(test)]
 pub(crate) fn matcher_matches(matcher: &may_i_core::ArgMatcher, args: &[ResolvedArg]) -> bool {
-    crate::annotate::annotate_matcher(matcher, args)
+    crate::annotate::annotate_matcher(matcher, args, &may_i_core::ContextFacts::default())
         .1
         .is_match()
 }
@@ -141,7 +141,7 @@ mod tests {
 
     /// Match args via the annotated matcher (single source of matching logic).
     fn match_args(matcher: &ArgMatcher, args: &[ResolvedArg]) -> MatchOutcome {
-        crate::annotate::annotate_matcher(matcher, args).1
+        crate::annotate::annotate_matcher(matcher, args, &may_i_core::ContextFacts::default()).1
     }
 
     /// Match a single expr against a single arg via the annotated matcher.
@@ -568,6 +568,260 @@ mod tests {
         let matcher = ArgMatcher::Anywhere(vec![Expr::Literal("--force".into())]);
         assert!(!match_args(&matcher, &[lit("push")]).is_match());
     }
+
+    // ── BoolExpr and ArgMatcher::Has ─────────────────────────────────
+
+    use may_i_core::{BoolExpr, ContextFacts, FactQuery};
+
+    fn ctx_with_facts(facts: &[(&str, Option<&str>)]) -> ContextFacts {
+        let mut ctx = ContextFacts::default();
+        for (key, value) in facts {
+            if let Some(v) = value {
+                ctx.insert_scalar(key.to_string(), v.to_string());
+            } else {
+                ctx.insert_present(key.to_string());
+            }
+        }
+        ctx
+    }
+
+    /// Helper to match with context facts.
+    fn match_args_with_facts(
+        matcher: &ArgMatcher,
+        args: &[ResolvedArg],
+        facts: &ContextFacts,
+    ) -> MatchOutcome {
+        crate::annotate::annotate_matcher(matcher, args, facts).1
+    }
+
+    #[test]
+    fn bool_expr_has_presence_matches_when_fact_present() {
+        let facts = ctx_with_facts(&[(":via/ssh", None)]);
+        let matcher = ArgMatcher::Has(BoolExpr::Has(FactQuery::Presence {
+            key: ":via/ssh".into(),
+            vector_syntax: false,
+        }));
+        assert!(match_args_with_facts(&matcher, &[], &facts).is_match());
+    }
+
+    #[test]
+    fn bool_expr_has_presence_no_match_when_fact_absent() {
+        let facts = ContextFacts::default();
+        let matcher = ArgMatcher::Has(BoolExpr::Has(FactQuery::Presence {
+            key: ":via/ssh".into(),
+            vector_syntax: false,
+        }));
+        assert!(!match_args_with_facts(&matcher, &[], &facts).is_match());
+    }
+
+    #[test]
+    fn bool_expr_has_value_literal_matches() {
+        let facts = ctx_with_facts(&[(":env", Some("prod"))]);
+        let matcher = ArgMatcher::Has(BoolExpr::Has(FactQuery::Value {
+            key: ":env".into(),
+            pattern: may_i_core::FactPattern::Literal("prod".into()),
+        }));
+        assert!(match_args_with_facts(&matcher, &[], &facts).is_match());
+    }
+
+    #[test]
+    fn bool_expr_has_value_literal_no_match() {
+        let facts = ctx_with_facts(&[(":env", Some("dev"))]);
+        let matcher = ArgMatcher::Has(BoolExpr::Has(FactQuery::Value {
+            key: ":env".into(),
+            pattern: may_i_core::FactPattern::Literal("prod".into()),
+        }));
+        assert!(!match_args_with_facts(&matcher, &[], &facts).is_match());
+    }
+
+    #[test]
+    fn bool_expr_has_value_wildcard_matches() {
+        let facts = ctx_with_facts(&[(":env", Some("anything"))]);
+        let matcher = ArgMatcher::Has(BoolExpr::Has(FactQuery::Value {
+            key: ":env".into(),
+            pattern: may_i_core::FactPattern::Wildcard,
+        }));
+        assert!(match_args_with_facts(&matcher, &[], &facts).is_match());
+    }
+
+    #[test]
+    fn bool_expr_has_value_regex_matches() {
+        let facts = ctx_with_facts(&[(":env", Some("prod-1"))]);
+        let matcher = ArgMatcher::Has(BoolExpr::Has(FactQuery::Value {
+            key: ":env".into(),
+            pattern: may_i_core::FactPattern::Regex(regex::Regex::new("^prod-").unwrap()),
+        }));
+        assert!(match_args_with_facts(&matcher, &[], &facts).is_match());
+    }
+
+    #[test]
+    fn bool_expr_and_all_true_matches() {
+        let facts = ctx_with_facts(&[(":via/ssh", None), (":env", Some("prod"))]);
+        let matcher = ArgMatcher::Has(BoolExpr::And(vec![
+            BoolExpr::Has(FactQuery::Presence {
+                key: ":via/ssh".into(),
+                vector_syntax: false,
+            }),
+            BoolExpr::Has(FactQuery::Value {
+                key: ":env".into(),
+                pattern: may_i_core::FactPattern::Literal("prod".into()),
+            }),
+        ]));
+        assert!(match_args_with_facts(&matcher, &[], &facts).is_match());
+    }
+
+    #[test]
+    fn bool_expr_and_one_false_no_match() {
+        let facts = ctx_with_facts(&[(":via/ssh", None), (":env", Some("dev"))]);
+        let matcher = ArgMatcher::Has(BoolExpr::And(vec![
+            BoolExpr::Has(FactQuery::Presence {
+                key: ":via/ssh".into(),
+                vector_syntax: false,
+            }),
+            BoolExpr::Has(FactQuery::Value {
+                key: ":env".into(),
+                pattern: may_i_core::FactPattern::Literal("prod".into()),
+            }),
+        ]));
+        assert!(!match_args_with_facts(&matcher, &[], &facts).is_match());
+    }
+
+    #[test]
+    fn bool_expr_or_one_true_matches() {
+        let facts = ctx_with_facts(&[(":env", Some("staging"))]);
+        let matcher = ArgMatcher::Has(BoolExpr::Or(vec![
+            BoolExpr::Has(FactQuery::Value {
+                key: ":env".into(),
+                pattern: may_i_core::FactPattern::Literal("prod".into()),
+            }),
+            BoolExpr::Has(FactQuery::Value {
+                key: ":env".into(),
+                pattern: may_i_core::FactPattern::Literal("staging".into()),
+            }),
+        ]));
+        assert!(match_args_with_facts(&matcher, &[], &facts).is_match());
+    }
+
+    #[test]
+    fn bool_expr_or_all_false_no_match() {
+        let facts = ctx_with_facts(&[(":env", Some("dev"))]);
+        let matcher = ArgMatcher::Has(BoolExpr::Or(vec![
+            BoolExpr::Has(FactQuery::Value {
+                key: ":env".into(),
+                pattern: may_i_core::FactPattern::Literal("prod".into()),
+            }),
+            BoolExpr::Has(FactQuery::Value {
+                key: ":env".into(),
+                pattern: may_i_core::FactPattern::Literal("staging".into()),
+            }),
+        ]));
+        assert!(!match_args_with_facts(&matcher, &[], &facts).is_match());
+    }
+
+    #[test]
+    fn bool_expr_not_inverts_true() {
+        let facts = ContextFacts::default();
+        let matcher = ArgMatcher::Has(BoolExpr::Not(Box::new(BoolExpr::Has(
+            FactQuery::Presence {
+                key: ":via/ssh".into(),
+                vector_syntax: false,
+            },
+        ))));
+        assert!(match_args_with_facts(&matcher, &[], &facts).is_match());
+    }
+
+    #[test]
+    fn bool_expr_not_inverts_false() {
+        let facts = ctx_with_facts(&[(":via/ssh", None)]);
+        let matcher = ArgMatcher::Has(BoolExpr::Not(Box::new(BoolExpr::Has(
+            FactQuery::Presence {
+                key: ":via/ssh".into(),
+                vector_syntax: false,
+            },
+        ))));
+        assert!(!match_args_with_facts(&matcher, &[], &facts).is_match());
+    }
+
+    // ── Mixed predicate scenarios ────────────────────────────────────
+
+    #[test]
+    fn mixed_positional_and_has_predicate() {
+        let facts = ctx_with_facts(&[(":env", Some("prod"))]);
+        let matcher = ArgMatcher::And(vec![
+            ArgMatcher::Positional(vec![PosExpr::one(Expr::Literal("delete".into()))]),
+            ArgMatcher::Has(BoolExpr::Has(FactQuery::Value {
+                key: ":env".into(),
+                pattern: may_i_core::FactPattern::Literal("prod".into()),
+            })),
+        ]);
+        // Should match when both positional matches AND has predicate matches
+        assert!(match_args_with_facts(&matcher, &[lit("delete")], &facts).is_match());
+    }
+
+    #[test]
+    fn mixed_positional_and_has_predicate_fails_when_arg_wrong() {
+        let facts = ctx_with_facts(&[(":env", Some("prod"))]);
+        let matcher = ArgMatcher::And(vec![
+            ArgMatcher::Positional(vec![PosExpr::one(Expr::Literal("delete".into()))]),
+            ArgMatcher::Has(BoolExpr::Has(FactQuery::Value {
+                key: ":env".into(),
+                pattern: may_i_core::FactPattern::Literal("prod".into()),
+            })),
+        ]);
+        // Should NOT match when positional doesn't match
+        assert!(!match_args_with_facts(&matcher, &[lit("create")], &facts).is_match());
+    }
+
+    #[test]
+    fn mixed_positional_and_has_predicate_fails_when_fact_wrong() {
+        let facts = ctx_with_facts(&[(":env", Some("dev"))]);
+        let matcher = ArgMatcher::And(vec![
+            ArgMatcher::Positional(vec![PosExpr::one(Expr::Literal("delete".into()))]),
+            ArgMatcher::Has(BoolExpr::Has(FactQuery::Value {
+                key: ":env".into(),
+                pattern: may_i_core::FactPattern::Literal("prod".into()),
+            })),
+        ]);
+        // Should NOT match when fact doesn't match
+        assert!(!match_args_with_facts(&matcher, &[lit("delete")], &facts).is_match());
+    }
+
+    #[test]
+    fn mixed_anywhere_and_has_in_or() {
+        let facts = ctx_with_facts(&[(":via/ssh", None)]);
+        let matcher = ArgMatcher::Or(vec![
+            ArgMatcher::Anywhere(vec![Expr::Literal("--force".into())]),
+            ArgMatcher::Has(BoolExpr::Has(FactQuery::Presence {
+                key: ":via/ssh".into(),
+                vector_syntax: false,
+            })),
+        ]);
+        // Should match via has predicate even when anywhere doesn't match
+        assert!(match_args_with_facts(&matcher, &[lit("push")], &facts).is_match());
+    }
+
+    #[test]
+    fn mixed_complex_nested_predicates() {
+        let facts = ctx_with_facts(&[(":via/ssh", None), (":env", Some("prod"))]);
+        let matcher = ArgMatcher::And(vec![
+            ArgMatcher::Positional(vec![PosExpr::one(Expr::Literal("kubectl".into()))]),
+            ArgMatcher::Or(vec![
+                ArgMatcher::Has(BoolExpr::And(vec![
+                    BoolExpr::Has(FactQuery::Presence {
+                        key: ":via/ssh".into(),
+                        vector_syntax: false,
+                    }),
+                    BoolExpr::Has(FactQuery::Value {
+                        key: ":env".into(),
+                        pattern: may_i_core::FactPattern::Literal("prod".into()),
+                    }),
+                ])),
+                ArgMatcher::Anywhere(vec![Expr::Literal("--dry-run".into())]),
+            ]),
+        ]);
+        // Should match when positional matches AND (has predicate matches OR anywhere matches)
+        assert!(match_args_with_facts(&matcher, &[lit("kubectl")], &facts).is_match());
+    }
 }
 
 // ── Property-based tests ────────────────────────────────────────────
@@ -683,7 +937,7 @@ mod prop_tests {
         fn arg_matcher_not_drops_effects(m in arb_matcher(), args in arb_args()) {
             // Not should never produce a Matched(effect), only MatchedNoEffect or NoMatch.
             let negated = ArgMatcher::Not(Box::new(m));
-            let outcome = crate::annotate::annotate_matcher(&negated, &args).1;
+            let outcome = crate::annotate::annotate_matcher(&negated, &args, &may_i_core::ContextFacts::default()).1;
             match outcome {
                 MatchOutcome::Matched(_) => prop_assert!(false, "Not should not propagate effects"),
                 _ => {}

@@ -6,9 +6,9 @@
 // annotated trees to produce two-column trace output.
 
 use may_i_core::{
-    ArgMatcher, CommandMatcher, CondArm, ContextExpr, ContextFacts, ContextFailureReason,
+    ArgMatcher, BoolExpr, CommandMatcher, CondArm, ContextExpr, ContextFacts, ContextFailureReason,
     ContextValue, Doc, DocF, Effect, EvalAnn, Expr, ExprBranch, FactPattern, FactPatternEval,
-    FactQuery, LayoutHint, PosExpr, Rule, RuleBody,
+    FactQuery, LayoutHint, MatcherCondPredicate, PolymorphicCondArm, PosExpr, Rule, RuleBody,
 };
 
 use crate::matcher::{
@@ -374,7 +374,7 @@ pub(crate) fn annotate_rule(
         return (propagate_break_hints(list(cs)), None);
     }
 
-    let (body_docs, effect) = annotate_body(&rule.body, expanded_args);
+    let (body_docs, effect) = annotate_body(&rule.body, expanded_args, context);
     let mut cs = vec![atom("rule"), cmd_doc];
     if let Some(doc) = context_doc {
         cs.push(doc);
@@ -629,7 +629,11 @@ fn annotate_command(matcher: &CommandMatcher, cmd_name: &str, matched: bool) -> 
     ann_list(ann, children)
 }
 
-fn annotate_body(body: &RuleBody, args: &[ResolvedArg]) -> (Vec<ADoc>, Option<Effect>) {
+fn annotate_body(
+    body: &RuleBody,
+    args: &[ResolvedArg],
+    facts: &ContextFacts,
+) -> (Vec<ADoc>, Option<Effect>) {
     match body {
         RuleBody::Effect {
             matcher: None,
@@ -642,7 +646,7 @@ fn annotate_body(body: &RuleBody, args: &[ResolvedArg]) -> (Vec<ADoc>, Option<Ef
             matcher: Some(m),
             effect,
         } => {
-            let (matcher_doc, outcome) = annotate_matcher(m, args);
+            let (matcher_doc, outcome) = annotate_matcher(m, args, facts);
             let matched = outcome.is_match();
             let args_doc = ann_list(
                 EvalAnn::ArgsResult(matched),
@@ -661,7 +665,7 @@ fn annotate_body(body: &RuleBody, args: &[ResolvedArg]) -> (Vec<ADoc>, Option<Ef
             (vec![args_doc, effect_doc], final_effect)
         }
         RuleBody::Branching(m) => {
-            let (matcher_doc, outcome) = annotate_matcher(m, args);
+            let (matcher_doc, outcome) = annotate_matcher(m, args, facts);
             let matched = outcome.is_match();
             let effect = if let MatchOutcome::Matched(eff) = outcome {
                 Some(eff)
@@ -702,26 +706,42 @@ fn unannotate_effect(effect: &Effect) -> ADoc {
 
 // ── Matcher annotation ────────────────────────────────────────────
 
-pub(crate) fn annotate_matcher(matcher: &ArgMatcher, args: &[ResolvedArg]) -> (ADoc, MatchOutcome) {
+pub(crate) fn annotate_matcher(
+    matcher: &ArgMatcher,
+    args: &[ResolvedArg],
+    facts: &ContextFacts,
+) -> (ADoc, MatchOutcome) {
     match matcher {
         ArgMatcher::Positional(patterns) => annotate_positional(patterns, args, false),
         ArgMatcher::ExactPositional(patterns) => annotate_positional(patterns, args, true),
         ArgMatcher::Anywhere(tokens) => annotate_anywhere(tokens, args),
-        ArgMatcher::And(matchers) => annotate_matcher_and(matchers, args),
-        ArgMatcher::Or(matchers) => annotate_matcher_or(matchers, args),
-        ArgMatcher::Not(inner) => annotate_matcher_not(inner, args),
-        ArgMatcher::Cond(arm) => annotate_matcher_cond(arm, args),
+        ArgMatcher::And(matchers) => annotate_matcher_and(matchers, args, facts),
+        ArgMatcher::Or(matchers) => annotate_matcher_or(matchers, args, facts),
+        ArgMatcher::Not(inner) => annotate_matcher_not(inner, args, facts),
+        ArgMatcher::Cond(arm) => annotate_matcher_cond(arm, args, facts),
+        ArgMatcher::Has(bool_expr) => annotate_matcher_has(bool_expr, facts),
+        ArgMatcher::When(arm) => annotate_matcher_when(arm, args, facts),
+        ArgMatcher::Unless(arm) => annotate_matcher_unless(arm, args, facts),
+        ArgMatcher::If {
+            test,
+            then_effect,
+            else_effect,
+        } => annotate_matcher_if(test, then_effect, else_effect.as_ref(), args, facts),
     }
 }
 
-fn annotate_matcher_and(matchers: &[ArgMatcher], args: &[ResolvedArg]) -> (ADoc, MatchOutcome) {
+fn annotate_matcher_and(
+    matchers: &[ArgMatcher],
+    args: &[ResolvedArg],
+    facts: &ContextFacts,
+) -> (ADoc, MatchOutcome) {
     let mut cs = vec![atom("and")];
     let mut first_effect: Option<Effect> = None;
     let mut all_matched = true;
 
     for m in matchers {
         if all_matched {
-            let (doc, outcome) = annotate_matcher(m, args);
+            let (doc, outcome) = annotate_matcher(m, args, facts);
             cs.push(doc);
             match outcome {
                 MatchOutcome::NoMatch => {
@@ -748,14 +768,18 @@ fn annotate_matcher_and(matchers: &[ArgMatcher], args: &[ResolvedArg]) -> (ADoc,
     (list(cs), outcome)
 }
 
-fn annotate_matcher_or(matchers: &[ArgMatcher], args: &[ResolvedArg]) -> (ADoc, MatchOutcome) {
+fn annotate_matcher_or(
+    matchers: &[ArgMatcher],
+    args: &[ResolvedArg],
+    facts: &ContextFacts,
+) -> (ADoc, MatchOutcome) {
     let mut cs = vec![atom("or")];
     let mut result = MatchOutcome::NoMatch;
     let mut found = false;
 
     for m in matchers {
         if !found {
-            let (doc, outcome) = annotate_matcher(m, args);
+            let (doc, outcome) = annotate_matcher(m, args, facts);
             cs.push(doc);
             if outcome.is_match() {
                 result = outcome;
@@ -768,8 +792,12 @@ fn annotate_matcher_or(matchers: &[ArgMatcher], args: &[ResolvedArg]) -> (ADoc, 
     (list(cs), result)
 }
 
-fn annotate_matcher_not(inner: &ArgMatcher, args: &[ResolvedArg]) -> (ADoc, MatchOutcome) {
-    let (inner_doc, inner_outcome) = annotate_matcher(inner, args);
+fn annotate_matcher_not(
+    inner: &ArgMatcher,
+    args: &[ResolvedArg],
+    facts: &ContextFacts,
+) -> (ADoc, MatchOutcome) {
+    let (inner_doc, inner_outcome) = annotate_matcher(inner, args, facts);
     let outcome = if inner_outcome.is_match() {
         MatchOutcome::NoMatch
     } else {
@@ -778,11 +806,15 @@ fn annotate_matcher_not(inner: &ArgMatcher, args: &[ResolvedArg]) -> (ADoc, Matc
     (list(vec![atom("not"), inner_doc]), outcome)
 }
 
-fn annotate_matcher_cond(arm: &CondArm, args: &[ResolvedArg]) -> (ADoc, MatchOutcome) {
+fn annotate_matcher_cond(
+    arm: &CondArm,
+    args: &[ResolvedArg],
+    facts: &ContextFacts,
+) -> (ADoc, MatchOutcome) {
     let mut cs = vec![atom("cond")];
 
     for branch in &arm.branches {
-        let (matcher_doc, outcome) = annotate_matcher(&branch.matcher, args);
+        let (matcher_doc, outcome) = annotate_matcher(&branch.matcher, args, facts);
         let matched = outcome.is_match();
         let effect_doc = annotate_effect(&branch.effect);
         let branch_ann = if matched {
@@ -816,6 +848,181 @@ fn annotate_matcher_cond(arm: &CondArm, args: &[ResolvedArg]) -> (ADoc, MatchOut
     }
 
     (list(cs), MatchOutcome::NoMatch)
+}
+
+/// Evaluate a BoolExpr against context facts.
+fn bool_expr_matches(expr: &BoolExpr, facts: &ContextFacts) -> bool {
+    match expr {
+        BoolExpr::Has(query) => match query {
+            FactQuery::Presence { key, .. } => facts.has(key),
+            FactQuery::Value { key, pattern } => {
+                if let Some(ContextValue::Scalar(value)) = facts.get(key) {
+                    match pattern {
+                        FactPattern::Literal(s) => value == s,
+                        FactPattern::Wildcard => true,
+                        FactPattern::Regex(re) => re.is_match(value),
+                        _ => false, // And/Or/Not patterns not supported in BoolExpr context
+                    }
+                } else {
+                    false
+                }
+            }
+        },
+        BoolExpr::And(exprs) => exprs.iter().all(|e| bool_expr_matches(e, facts)),
+        BoolExpr::Or(exprs) => exprs.iter().any(|e| bool_expr_matches(e, facts)),
+        BoolExpr::Not(expr) => !bool_expr_matches(expr, facts),
+    }
+}
+
+fn annotate_matcher_has(bool_expr: &BoolExpr, facts: &ContextFacts) -> (ADoc, MatchOutcome) {
+    let matched = bool_expr_matches(bool_expr, facts);
+    // BoolExpr::Has already renders as (has ...), so don't wrap it again
+    let doc = unannotate(bool_expr.to_doc());
+    // Has doesn't carry an effect - it's just a boolean check
+    let outcome = if matched {
+        MatchOutcome::MatchedNoEffect
+    } else {
+        MatchOutcome::NoMatch
+    };
+    (doc, outcome)
+}
+
+fn annotate_matcher_when(
+    arm: &PolymorphicCondArm,
+    args: &[ResolvedArg],
+    facts: &ContextFacts,
+) -> (ADoc, MatchOutcome) {
+    let mut cs = vec![atom("when")];
+
+    for branch in &arm.branches {
+        let (pred_doc, matched) = annotate_polymorphic_predicate(&branch.predicate, args, facts);
+        let effect_doc = annotate_effect(&branch.effect);
+        let branch_ann = if matched {
+            Some(EvalAnn::CondBranch {
+                decision: branch.effect.decision,
+            })
+        } else {
+            None
+        };
+        cs.push(Doc {
+            ann: branch_ann,
+            node: DocF::List(vec![pred_doc, effect_doc]),
+            layout: LayoutHint::Auto,
+            dimmed: false,
+        });
+        if matched {
+            return (list(cs), MatchOutcome::Matched(branch.effect.clone()));
+        }
+    }
+
+    if let Some(fallback) = &arm.fallback {
+        let effect_doc = annotate_effect(fallback);
+        cs.push(ann_list(
+            EvalAnn::CondElse {
+                decision: fallback.decision,
+            },
+            vec![atom("else"), effect_doc],
+        ));
+        return (list(cs), MatchOutcome::Matched(fallback.clone()));
+    }
+
+    (list(cs), MatchOutcome::NoMatch)
+}
+
+fn annotate_matcher_unless(
+    arm: &PolymorphicCondArm,
+    args: &[ResolvedArg],
+    facts: &ContextFacts,
+) -> (ADoc, MatchOutcome) {
+    let mut cs = vec![atom("unless")];
+
+    for branch in &arm.branches {
+        let (pred_doc, matched) = annotate_polymorphic_predicate(&branch.predicate, args, facts);
+        let effect_doc = annotate_effect(&branch.effect);
+        // Unless matches when predicate is FALSE
+        let branch_matched = !matched;
+        let branch_ann = if branch_matched {
+            Some(EvalAnn::CondBranch {
+                decision: branch.effect.decision,
+            })
+        } else {
+            None
+        };
+        cs.push(Doc {
+            ann: branch_ann,
+            node: DocF::List(vec![pred_doc, effect_doc]),
+            layout: LayoutHint::Auto,
+            dimmed: false,
+        });
+        if branch_matched {
+            return (list(cs), MatchOutcome::Matched(branch.effect.clone()));
+        }
+    }
+
+    if let Some(fallback) = &arm.fallback {
+        let effect_doc = annotate_effect(fallback);
+        cs.push(ann_list(
+            EvalAnn::CondElse {
+                decision: fallback.decision,
+            },
+            vec![atom("else"), effect_doc],
+        ));
+        return (list(cs), MatchOutcome::Matched(fallback.clone()));
+    }
+
+    (list(cs), MatchOutcome::NoMatch)
+}
+
+fn annotate_matcher_if(
+    test: &MatcherCondPredicate,
+    then_effect: &Effect,
+    else_effect: Option<&Effect>,
+    args: &[ResolvedArg],
+    facts: &ContextFacts,
+) -> (ADoc, MatchOutcome) {
+    let (test_doc, test_matched) = annotate_polymorphic_predicate(test, args, facts);
+    let then_doc = annotate_effect(then_effect);
+
+    let mut cs = vec![atom("if"), test_doc, then_doc];
+
+    if test_matched {
+        (list(cs), MatchOutcome::Matched(then_effect.clone()))
+    } else if let Some(else_eff) = else_effect {
+        let else_doc = annotate_effect(else_eff);
+        cs.push(else_doc);
+        (list(cs), MatchOutcome::Matched(else_eff.clone()))
+    } else {
+        (list(cs), MatchOutcome::NoMatch)
+    }
+}
+
+/// Annotate a polymorphic predicate and return whether it matched.
+fn annotate_polymorphic_predicate(
+    predicate: &MatcherCondPredicate,
+    args: &[ResolvedArg],
+    facts: &ContextFacts,
+) -> (ADoc, bool) {
+    match predicate {
+        MatcherCondPredicate::Matcher(m) => {
+            let (doc, outcome) = annotate_matcher(m, args, facts);
+            (doc, outcome.is_match())
+        }
+        MatcherCondPredicate::Expr(e) => {
+            // For Expr predicates in matcher context, we check if any arg matches
+            // This is a bit ambiguous - for now, check if any arg matches the expression
+            let matched = args.iter().any(|arg| match arg {
+                ResolvedArg::Literal(s) => e.is_match(s),
+                ResolvedArg::Opaque => e.is_wildcard(),
+            });
+            let doc = unannotate(e.to_doc());
+            (doc, matched)
+        }
+        MatcherCondPredicate::BoolExpr(b) => {
+            let matched = bool_expr_matches(b, facts);
+            let doc = unannotate(b.to_doc());
+            (doc, matched)
+        }
+    }
 }
 
 // ── Positional annotation ─────────────────────────────────────────
@@ -1119,7 +1326,9 @@ fn annotate_expr_cond(branches: &[ExprBranch], arg: &ResolvedArg) -> (ADoc, Matc
 #[cfg(test)]
 mod tests {
     use super::*;
-    use may_i_core::{CondBranch, Decision, Quantifier, Span};
+    use may_i_core::{
+        CondBranch, Decision, MatcherCondPredicate, PolymorphicCondBranch, Quantifier, Span,
+    };
 
     fn lit(s: &str) -> ResolvedArg {
         ResolvedArg::Literal(s.into())
@@ -2168,5 +2377,320 @@ mod tests {
 
         // The annotated doc should have the same structure as the plain to_doc
         assert_same_structure(&annotated, &rule.to_doc());
+    }
+
+    // ── BoolExpr annotation ─────────────────────────────────────────
+
+    #[test]
+    fn bool_expr_has_presence_annotation() {
+        let rule = Rule {
+            command: CommandMatcher::Exact("kubectl".into()),
+            context: None,
+            body: RuleBody::Effect {
+                matcher: Some(ArgMatcher::Has(BoolExpr::Has(FactQuery::Presence {
+                    key: ":via/ssh".into(),
+                    vector_syntax: false,
+                }))),
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: Some("SSH session".into()),
+                },
+            },
+            checks: vec![],
+            source_span: Span::new(0, 0),
+        };
+        let mut facts = ContextFacts::default();
+        facts.insert_present(":via/ssh");
+        let (doc, effect) = annotate_rule_with_context(&rule, "kubectl", &[], &facts);
+        assert!(effect.is_some());
+        assert_eq!(effect.unwrap().decision, Decision::Allow);
+
+        // Verify structure is preserved
+        assert_same_structure(&doc, &rule.to_doc());
+    }
+
+    #[test]
+    fn bool_expr_has_presence_no_match() {
+        let rule = Rule {
+            command: CommandMatcher::Exact("kubectl".into()),
+            context: None,
+            body: RuleBody::Effect {
+                matcher: Some(ArgMatcher::Has(BoolExpr::Has(FactQuery::Presence {
+                    key: ":via/ssh".into(),
+                    vector_syntax: false,
+                }))),
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: Some("SSH session".into()),
+                },
+            },
+            checks: vec![],
+            source_span: Span::new(0, 0),
+        };
+        let facts = ContextFacts::default();
+        let (_, effect) = annotate_rule_with_context(&rule, "kubectl", &[], &facts);
+        // Should not match when fact is absent
+        assert!(effect.is_none());
+    }
+
+    #[test]
+    fn bool_expr_has_value_annotation() {
+        let rule = Rule {
+            command: CommandMatcher::Exact("deploy".into()),
+            context: None,
+            body: RuleBody::Effect {
+                matcher: Some(ArgMatcher::Has(BoolExpr::Has(FactQuery::Value {
+                    key: ":env".into(),
+                    pattern: FactPattern::Literal("prod".into()),
+                }))),
+                effect: Effect {
+                    decision: Decision::Deny,
+                    reason: Some("No prod deploys".into()),
+                },
+            },
+            checks: vec![],
+            source_span: Span::new(0, 0),
+        };
+        let mut facts = ContextFacts::default();
+        facts.insert_scalar(":env", "prod");
+        let (doc, effect) = annotate_rule_with_context(&rule, "deploy", &[], &facts);
+        assert!(effect.is_some());
+        assert_eq!(effect.unwrap().decision, Decision::Deny);
+
+        // Verify structure is preserved
+        assert_same_structure(&doc, &rule.to_doc());
+    }
+
+    #[test]
+    fn bool_expr_and_annotation() {
+        let rule = Rule {
+            command: CommandMatcher::Exact("cmd".into()),
+            context: None,
+            body: RuleBody::Effect {
+                matcher: Some(ArgMatcher::Has(BoolExpr::And(vec![
+                    BoolExpr::Has(FactQuery::Presence {
+                        key: ":via/ssh".into(),
+                        vector_syntax: false,
+                    }),
+                    BoolExpr::Has(FactQuery::Value {
+                        key: ":env".into(),
+                        pattern: FactPattern::Literal("prod".into()),
+                    }),
+                ]))),
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
+            },
+            checks: vec![],
+            source_span: Span::new(0, 0),
+        };
+        let mut facts = ContextFacts::default();
+        facts.insert_present(":via/ssh");
+        facts.insert_scalar(":env", "prod");
+        let (_, effect) = annotate_rule_with_context(&rule, "cmd", &[], &facts);
+        // Should match when both conditions in the And are true
+        assert!(effect.is_some());
+    }
+
+    // ── Polymorphic cond annotation (when/unless/if) ─────────────────
+
+    #[test]
+    fn when_matcher_annotation() {
+        let rule = Rule {
+            command: CommandMatcher::Exact("git".into()),
+            context: None,
+            body: RuleBody::Effect {
+                matcher: Some(ArgMatcher::When(PolymorphicCondArm {
+                    branches: vec![PolymorphicCondBranch {
+                        predicate: MatcherCondPredicate::Matcher(Box::new(ArgMatcher::Positional(
+                            vec![PosExpr::one(Expr::Literal("push".into()))],
+                        ))),
+                        effect: allow("push allowed"),
+                    }],
+                    fallback: None,
+                })),
+                effect: Effect {
+                    decision: Decision::Ask,
+                    reason: None,
+                },
+            },
+            checks: vec![],
+            source_span: Span::new(0, 0),
+        };
+        let (doc, effect) = annotate_rule(&rule, "git", &[lit("push")]);
+        assert!(effect.is_some());
+
+        let anns = collect_annotations(&doc);
+        assert!(anns.iter().any(|a| matches!(
+            a,
+            EvalAnn::CondBranch {
+                decision: Decision::Allow
+            }
+        )));
+    }
+
+    #[test]
+    fn when_boolexpr_annotation() {
+        let rule = Rule {
+            command: CommandMatcher::Exact("kubectl".into()),
+            context: None,
+            body: RuleBody::Effect {
+                matcher: Some(ArgMatcher::When(PolymorphicCondArm {
+                    branches: vec![PolymorphicCondBranch {
+                        predicate: MatcherCondPredicate::BoolExpr(BoolExpr::Has(
+                            FactQuery::Presence {
+                                key: ":via/ssh".into(),
+                                vector_syntax: false,
+                            },
+                        )),
+                        effect: deny("no kubectl via ssh"),
+                    }],
+                    fallback: None,
+                })),
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
+            },
+            checks: vec![],
+            source_span: Span::new(0, 0),
+        };
+        let mut facts = ContextFacts::default();
+        facts.insert_present(":via/ssh");
+        let (doc, effect) = annotate_rule_with_context(&rule, "kubectl", &[], &facts);
+        assert!(effect.is_some());
+
+        let anns = collect_annotations(&doc);
+        assert!(anns.iter().any(|a| matches!(
+            a,
+            EvalAnn::CondBranch {
+                decision: Decision::Deny
+            }
+        )));
+    }
+
+    #[test]
+    fn unless_matcher_annotation() {
+        let rule = Rule {
+            command: CommandMatcher::Exact("rm".into()),
+            context: None,
+            body: RuleBody::Effect {
+                matcher: Some(ArgMatcher::Unless(PolymorphicCondArm {
+                    branches: vec![PolymorphicCondBranch {
+                        predicate: MatcherCondPredicate::Matcher(Box::new(ArgMatcher::Anywhere(
+                            vec![Expr::Literal("-rf".into())],
+                        ))),
+                        effect: deny("dangerous"),
+                    }],
+                    fallback: None,
+                })),
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
+            },
+            checks: vec![],
+            source_span: Span::new(0, 0),
+        };
+        // Without -rf, the unless matches (predicate fails, so unless succeeds)
+        let (_, effect) = annotate_rule(&rule, "rm", &[lit("file.txt")]);
+        // The unless matched since -rf is not present, so it should apply its effect
+        assert!(effect.is_some());
+    }
+
+    #[test]
+    fn if_matcher_annotation() {
+        let rule = Rule {
+            command: CommandMatcher::Exact("git".into()),
+            context: None,
+            body: RuleBody::Effect {
+                matcher: Some(ArgMatcher::If {
+                    test: Box::new(MatcherCondPredicate::Matcher(Box::new(
+                        ArgMatcher::Positional(vec![PosExpr::one(Expr::Literal("push".into()))]),
+                    ))),
+                    then_effect: allow("pushing"),
+                    else_effect: None,
+                }),
+                effect: Effect {
+                    decision: Decision::Ask,
+                    reason: None,
+                },
+            },
+            checks: vec![],
+            source_span: Span::new(0, 0),
+        };
+        // Should match the then branch
+        let (_, effect) = annotate_rule(&rule, "git", &[lit("push")]);
+        assert!(effect.is_some());
+    }
+
+    #[test]
+    fn if_with_else_annotation() {
+        let rule = Rule {
+            command: CommandMatcher::Exact("git".into()),
+            context: None,
+            body: RuleBody::Effect {
+                matcher: Some(ArgMatcher::If {
+                    test: Box::new(MatcherCondPredicate::Matcher(Box::new(
+                        ArgMatcher::Positional(vec![PosExpr::one(Expr::Literal("push".into()))]),
+                    ))),
+                    then_effect: allow("pushing"),
+                    else_effect: Some(deny("not pushing")),
+                }),
+                effect: Effect {
+                    decision: Decision::Ask,
+                    reason: None,
+                },
+            },
+            checks: vec![],
+            source_span: Span::new(0, 0),
+        };
+        // Test else branch - doesn't match "push"
+        let (_, effect) = annotate_rule(&rule, "git", &[lit("pull")]);
+        // Should match the else branch
+        assert!(effect.is_some());
+    }
+
+    #[test]
+    fn mixed_predicate_when_annotation() {
+        let rule = Rule {
+            command: CommandMatcher::Exact("deploy".into()),
+            context: None,
+            body: RuleBody::Effect {
+                matcher: Some(ArgMatcher::When(PolymorphicCondArm {
+                    branches: vec![
+                        // First branch: BoolExpr predicate
+                        PolymorphicCondBranch {
+                            predicate: MatcherCondPredicate::BoolExpr(BoolExpr::Has(
+                                FactQuery::Value {
+                                    key: ":env".into(),
+                                    pattern: FactPattern::Literal("prod".into()),
+                                },
+                            )),
+                            effect: deny("no prod deploys"),
+                        },
+                        // Second branch: Matcher predicate (using Anywhere to match flags)
+                        PolymorphicCondBranch {
+                            predicate: MatcherCondPredicate::Matcher(Box::new(
+                                ArgMatcher::Anywhere(vec![Expr::Literal("--dry-run".into())]),
+                            )),
+                            effect: allow("dry run ok"),
+                        },
+                    ],
+                    fallback: None,
+                })),
+                effect: Effect {
+                    decision: Decision::Ask,
+                    reason: None,
+                },
+            },
+            checks: vec![],
+            source_span: Span::new(0, 0),
+        };
+        // Should match second branch via positional matcher
+        let (_, effect) = annotate_rule(&rule, "deploy", &[lit("--dry-run")]);
+        // Second branch should match and produce an effect
+        assert!(effect.is_some());
     }
 }

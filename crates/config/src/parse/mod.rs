@@ -9,8 +9,9 @@ use crate::errors::ConfigError;
 use may_i_core::Quantifier;
 use may_i_core::Span;
 use may_i_core::{
-    ArgMatcher, Check, CommandMatcher, CondArm, CondBranch, Config, ConfigWarning, ContextExpr,
-    ContextFacts, Decision, Effect, Expr, FactPattern, FactQuery, PosExpr, Rule, RuleBody,
+    ArgMatcher, BoolExpr, Check, CommandMatcher, CondArm, CondBranch, Config, ConfigWarning,
+    ContextExpr, ContextFacts, Decision, Effect, Expr, FactPattern, FactQuery,
+    MatcherCondPredicate, PolymorphicCondArm, PolymorphicCondBranch, PosExpr, Rule, RuleBody,
     SecurityConfig, SourceInfo, Wrapper, WrapperPattern, WrapperStep,
 };
 use may_i_sexpr::{RawError, Sexpr};
@@ -190,6 +191,63 @@ fn parse_context_expr(sexpr: &Sexpr) -> Result<ContextExpr, RawError> {
         )
         .with_label("not a recognised context expression")
         .with_help("valid context expressions: and, or, not, has, <alias>")),
+    }
+}
+
+/// Parse a BoolExpr for fact predicates within argument matching.
+/// BoolExpr supports has, and, or, not - but NOT aliases (unlike ContextExpr).
+fn parse_bool_expr(sexpr: &Sexpr) -> Result<BoolExpr, RawError> {
+    if let Some(name) = sexpr.as_atom() {
+        // BoolExpr doesn't support aliases - atoms are not valid BoolExpr
+        return Err(RawError::new(
+            format!("'{name}' is not a valid boolean expression"),
+            sexpr.span(),
+        )
+        .with_help("boolean expressions must use has, and, or, not forms"));
+    }
+    let list = sexpr
+        .as_list()
+        .ok_or_else(|| RawError::new("boolean expression must be a list", sexpr.span()))?;
+    if list.is_empty() {
+        return Err(RawError::new("empty boolean expression", sexpr.span()));
+    }
+    let tag = list[0]
+        .as_atom()
+        .ok_or_else(|| RawError::new("boolean expression tag must be an atom", list[0].span()))?;
+    match tag {
+        "and" => {
+            let exprs: Result<Vec<_>, _> = list[1..].iter().map(parse_bool_expr).collect();
+            Ok(BoolExpr::And(exprs?))
+        }
+        "or" => {
+            let exprs: Result<Vec<_>, _> = list[1..].iter().map(parse_bool_expr).collect();
+            Ok(BoolExpr::Or(exprs?))
+        }
+        "not" => {
+            if list.len() != 2 {
+                return Err(RawError::new(
+                    "not must have exactly one boolean expression",
+                    sexpr.span(),
+                ));
+            }
+            Ok(BoolExpr::Not(Box::new(parse_bool_expr(&list[1])?)))
+        }
+        "has" => {
+            if list.len() != 2 {
+                return Err(RawError::new(
+                    "has must have exactly one fact query",
+                    sexpr.span(),
+                ));
+            }
+            let query = parse_context_fact_query(&list[1])?;
+            Ok(BoolExpr::Has(query))
+        }
+        other => Err(RawError::new(
+            format!("unknown boolean expression: {other}"),
+            list[0].span(),
+        )
+        .with_label("not a recognised boolean expression")
+        .with_help("valid boolean expressions: and, or, not, has")),
     }
 }
 
@@ -673,6 +731,35 @@ fn parse_cond_branches(list: &[Sexpr]) -> Result<CondArm, RawError> {
     Ok(CondArm { branches, fallback })
 }
 
+/// Parse a polymorphic condition predicate that can be:
+/// - A BoolExpr (fact predicate) - starts with has/and/or/not
+/// - An Expr (string predicate) - literals, wildcards, etc.
+/// - An ArgMatcher (full matcher) - starts with positional/exact/anywhere/etc.
+fn parse_polymorphic_predicate(sexpr: &Sexpr) -> Result<MatcherCondPredicate, RawError> {
+    // Check if it's a list form that indicates the type
+    if let Some(list) = sexpr.as_list()
+        && !list.is_empty()
+        && let Some(tag) = list[0].as_atom()
+    {
+        match tag {
+            // BoolExpr forms
+            "has" | "and" | "or" | "not" => {
+                return Ok(MatcherCondPredicate::BoolExpr(parse_bool_expr(sexpr)?));
+            }
+            // ArgMatcher forms
+            "positional" | "exact" | "anywhere" | "forbidden" | "cond" => {
+                return Ok(MatcherCondPredicate::Matcher(Box::new(parse_matcher(
+                    sexpr,
+                )?)));
+            }
+            _ => {}
+        }
+    }
+
+    // Default: try as Expr (string predicate)
+    Ok(MatcherCondPredicate::Expr(parse_expr(sexpr)?))
+}
+
 /// Shared helper: parse `(if TEST EFFECT EFFECT?)` sugar.
 /// `parse_test` parses the test expression from an s-expression.
 /// Returns pairs of (test, effect) where the else branch has `None` for its test.
@@ -730,21 +817,20 @@ fn parse_unary_sugar<T>(
 }
 
 fn parse_matcher_if_form(args: &[Sexpr], form_span: Span) -> Result<ArgMatcher, RawError> {
-    let (test, then_effect, else_effect) = parse_if_sugar(args, form_span, parse_matcher)?;
-    Ok(ArgMatcher::Cond(CondArm {
-        branches: vec![CondBranch {
-            matcher: test,
-            effect: then_effect,
-        }],
-        fallback: else_effect,
-    }))
+    let (test, then_effect, else_effect) =
+        parse_if_sugar(args, form_span, parse_polymorphic_predicate)?;
+    Ok(ArgMatcher::If {
+        test: Box::new(test),
+        then_effect,
+        else_effect,
+    })
 }
 
 fn parse_matcher_when_form(args: &[Sexpr], form_span: Span) -> Result<ArgMatcher, RawError> {
-    let (test, effect) = parse_unary_sugar("when", args, form_span, parse_matcher)?;
-    Ok(ArgMatcher::Cond(CondArm {
-        branches: vec![CondBranch {
-            matcher: test,
+    let (test, effect) = parse_unary_sugar("when", args, form_span, parse_polymorphic_predicate)?;
+    Ok(ArgMatcher::When(PolymorphicCondArm {
+        branches: vec![PolymorphicCondBranch {
+            predicate: test,
             effect,
         }],
         fallback: None,
@@ -752,10 +838,10 @@ fn parse_matcher_when_form(args: &[Sexpr], form_span: Span) -> Result<ArgMatcher
 }
 
 fn parse_matcher_unless_form(args: &[Sexpr], form_span: Span) -> Result<ArgMatcher, RawError> {
-    let (test, effect) = parse_unary_sugar("unless", args, form_span, parse_matcher)?;
-    Ok(ArgMatcher::Cond(CondArm {
-        branches: vec![CondBranch {
-            matcher: ArgMatcher::Not(Box::new(test)),
+    let (test, effect) = parse_unary_sugar("unless", args, form_span, parse_polymorphic_predicate)?;
+    Ok(ArgMatcher::Unless(PolymorphicCondArm {
+        branches: vec![PolymorphicCondBranch {
+            predicate: test,
             effect,
         }],
         fallback: None,
@@ -962,6 +1048,16 @@ fn parse_matcher(sexpr: &Sexpr) -> Result<ArgMatcher, RawError> {
             }
             Ok(ArgMatcher::Not(Box::new(parse_matcher(&list[1])?)))
         }
+        "has" => {
+            if list.len() != 2 {
+                return Err(RawError::new(
+                    "has must have exactly one fact query",
+                    sexpr.span(),
+                ));
+            }
+            let query = parse_context_fact_query(&list[1])?;
+            Ok(ArgMatcher::Has(BoolExpr::Has(query)))
+        }
         "cond" => Ok(ArgMatcher::Cond(parse_cond_branches(list)?)),
         "if" => parse_matcher_if_form(&list[1..], sexpr.span()),
         "when" => parse_matcher_when_form(&list[1..], sexpr.span()),
@@ -972,7 +1068,7 @@ fn parse_matcher(sexpr: &Sexpr) -> Result<ArgMatcher, RawError> {
         )
         .with_label("not a recognised matcher type")
         .with_help(
-            "valid matchers: positional, exact, anywhere, forbidden, and, or, not, cond, if, when, unless",
+            "valid matchers: positional, exact, anywhere, forbidden, and, or, not, has, cond, if, when, unless",
         )),
     }
 }
@@ -2315,13 +2411,16 @@ mod tests {
         )
         .unwrap();
         match &config.rules[0].body {
-            RuleBody::Branching(ArgMatcher::Cond(arm)) => {
-                assert_eq!(arm.branches.len(), 1);
-                assert_eq!(arm.branches[0].effect.decision, Decision::Ask);
-                assert!(arm.fallback.is_some()); // else
-                assert_eq!(arm.fallback.as_ref().unwrap().decision, Decision::Allow);
+            RuleBody::Branching(ArgMatcher::If {
+                test,
+                then_effect,
+                else_effect,
+            }) => {
+                assert_eq!(then_effect.decision, Decision::Ask);
+                assert!(else_effect.is_some());
+                assert_eq!(else_effect.as_ref().unwrap().decision, Decision::Allow);
             }
-            _ => panic!("expected Branching(Cond) from if"),
+            _ => panic!("expected Branching(If) from if"),
         }
     }
 
@@ -2334,11 +2433,15 @@ mod tests {
         )
         .unwrap();
         match &config.rules[0].body {
-            RuleBody::Branching(ArgMatcher::Cond(arm)) => {
-                assert_eq!(arm.branches.len(), 1);
-                assert_eq!(arm.branches[0].effect.decision, Decision::Ask);
+            RuleBody::Branching(ArgMatcher::If {
+                test,
+                then_effect,
+                else_effect,
+            }) => {
+                assert_eq!(then_effect.decision, Decision::Ask);
+                assert!(else_effect.is_none());
             }
-            _ => panic!("expected Branching(Cond) from if"),
+            _ => panic!("expected Branching(If) from if"),
         }
     }
 
@@ -2351,11 +2454,11 @@ mod tests {
         )
         .unwrap();
         match &config.rules[0].body {
-            RuleBody::Branching(ArgMatcher::Cond(arm)) => {
+            RuleBody::Branching(ArgMatcher::When(arm)) => {
                 assert_eq!(arm.branches.len(), 1);
                 assert_eq!(arm.branches[0].effect.decision, Decision::Allow);
             }
-            _ => panic!("expected Branching(Cond) from when"),
+            _ => panic!("expected Branching(When) from when"),
         }
     }
 
@@ -2368,12 +2471,11 @@ mod tests {
         )
         .unwrap();
         match &config.rules[0].body {
-            RuleBody::Branching(ArgMatcher::Cond(arm)) => {
+            RuleBody::Branching(ArgMatcher::Unless(arm)) => {
                 assert_eq!(arm.branches.len(), 1);
-                assert!(matches!(&arm.branches[0].matcher, ArgMatcher::Not(_)));
                 assert_eq!(arm.branches[0].effect.decision, Decision::Allow);
             }
-            _ => panic!("expected Branching(Cond) from unless"),
+            _ => panic!("expected Branching(Unless) from unless"),
         }
     }
 
@@ -3003,5 +3105,209 @@ mod tests {
         assert_eq!(config.checks.len(), 1);
         assert_eq!(config.rules[0].checks[0].command, "ls");
         assert_eq!(config.checks[0].command, "rm");
+    }
+
+    // ── Error handling: invalid predicate mixing ────────────────────────
+
+    #[test]
+    fn error_has_in_positional_context() {
+        // `has` is a BoolExpr operator and cannot be used in Expr contexts
+        let err = parse(
+            r#"
+            (rule (command "ls")
+                  (args (positional (has :via/ssh)))
+                  (effect :allow))
+            "#,
+        )
+        .expect_err("should fail to parse has in positional context");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("unknown expression form"),
+            "error should indicate has is not valid in expr context: {msg}"
+        );
+    }
+
+    #[test]
+    fn error_nested_has_in_expr_and() {
+        // `has` inside an Expr::and is not valid
+        let err = parse(
+            r#"
+            (rule (command "ls")
+                  (args (positional (and "a" (has :via/ssh))))
+                  (effect :allow))
+            "#,
+        )
+        .expect_err("should fail to parse has nested in expr and");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("unknown expression form"),
+            "error should indicate has is not valid in expr context: {msg}"
+        );
+    }
+
+    #[test]
+    fn error_nested_has_in_expr_or() {
+        // `has` inside an Expr::or is not valid
+        let err = parse(
+            r#"
+            (rule (command "ls")
+                  (args (positional (or "a" (has :via/ssh))))
+                  (effect :allow))
+            "#,
+        )
+        .expect_err("should fail to parse has nested in expr or");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("unknown expression form"),
+            "error should indicate has is not valid in expr context: {msg}"
+        );
+    }
+
+    #[test]
+    fn error_nested_has_in_expr_not() {
+        // `has` inside an Expr::not is not valid
+        let err = parse(
+            r#"
+            (rule (command "ls")
+                  (args (positional (not (has :via/ssh))))
+                  (effect :allow))
+            "#,
+        )
+        .expect_err("should fail to parse not in positional context");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("unknown expression form"),
+            "error should indicate not is not valid in expr context: {msg}"
+        );
+    }
+
+    #[test]
+    fn error_has_in_anywhere_context() {
+        // `has` cannot be used in anywhere patterns
+        let err = parse(
+            r#"
+            (rule (command "ls")
+                  (args (anywhere (has :via/ssh)))
+                  (effect :allow))
+            "#,
+        )
+        .expect_err("should fail to parse has in anywhere context");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("unknown expression form"),
+            "error should indicate has is not valid in expr context: {msg}"
+        );
+    }
+
+    #[test]
+    fn error_has_in_regex_context() {
+        // `has` cannot be nested inside regex
+        let err = parse(
+            r#"
+            (rule (command "ls")
+                  (args (positional (regex (has :via/ssh))))
+                  (effect :allow))
+            "#,
+        )
+        .expect_err("should fail to parse has in regex context");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("must be a string"),
+            "error should indicate has is not valid in regex context: {msg}"
+        );
+    }
+
+    #[test]
+    fn error_matcher_when_with_rule_level_effect() {
+        // when with effect + rule-level effect are mutually exclusive
+        let err = parse(
+            r#"
+            (rule (command "kubectl")
+                  (args (when (anywhere "--force") (effect :deny)))
+                  (effect :allow))
+            "#,
+        )
+        .expect_err("should fail due to mutually exclusive effects");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("mutually exclusive"),
+            "error should indicate when with effect conflicts with rule-level effect: {msg}"
+        );
+    }
+
+    #[test]
+    fn valid_has_in_args_matcher_context() {
+        // `has` IS valid when used directly in args as a boolean check (no rule-level effect)
+        // Note: has produces MatchOutcome::MatchedNoEffect, so it needs cond/if/when/unless
+        // with explicit effects. Using has directly in args without cond is valid
+        // but the rule must use cond/if/when/unless for effects.
+        let config = parse(
+            r#"
+            (rule (command "kubectl")
+                  (args (cond
+                          ((has :via/ssh) (effect :deny))
+                          (else (effect :allow)))))
+            "#,
+        )
+        .expect("should parse has in cond context");
+        assert_eq!(config.rules.len(), 1);
+    }
+
+    #[test]
+    fn valid_has_in_cond_context() {
+        // `has` IS valid in cond branches (polymorphic predicate)
+        let config = parse(
+            r#"
+            (rule (command "kubectl")
+                  (args (cond
+                          ((has [:env "prod"]) (effect :deny))
+                          (else (effect :allow)))))
+            "#,
+        )
+        .expect("should parse has in cond context");
+        assert_eq!(config.rules.len(), 1);
+    }
+
+    #[test]
+    fn valid_has_in_when_context() {
+        // `has` IS valid in when (polymorphic predicate)
+        let config = parse(
+            r#"
+            (rule (command "kubectl")
+                  (args (when (has [:env "prod"])
+                             (effect :deny))))
+            "#,
+        )
+        .expect("should parse has in when context");
+        assert_eq!(config.rules.len(), 1);
+    }
+
+    #[test]
+    fn valid_has_in_unless_context() {
+        // `has` IS valid in unless (polymorphic predicate)
+        let config = parse(
+            r#"
+            (rule (command "kubectl")
+                  (args (unless (has [:env "prod"])
+                              (effect :allow))))
+            "#,
+        )
+        .expect("should parse has in unless context");
+        assert_eq!(config.rules.len(), 1);
+    }
+
+    #[test]
+    fn valid_has_in_if_context() {
+        // `has` IS valid in if (polymorphic predicate)
+        let config = parse(
+            r#"
+            (rule (command "kubectl")
+                  (args (if (has [:env "prod"])
+                            (effect :deny)
+                            (effect :allow))))
+            "#,
+        )
+        .expect("should parse has in if context");
+        assert_eq!(config.rules.len(), 1);
     }
 }
