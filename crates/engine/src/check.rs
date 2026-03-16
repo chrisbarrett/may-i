@@ -39,6 +39,24 @@ pub fn run_checks(config: &Config) -> Vec<CheckResult> {
         }
     }
 
+    for check in &config.checks {
+        let eval = crate::evaluate_with_context(&check.command, config, &check.context);
+        let location = config
+            .source_info
+            .as_ref()
+            .map(|si| si.location_of(check.source_span));
+        results.push(CheckResult {
+            command: check.command.clone(),
+            expected: check.expected,
+            actual: eval.decision,
+            passed: eval.decision == check.expected,
+            context: check.context.clone(),
+            reason: eval.reason,
+            trace: eval.trace,
+            location,
+        });
+    }
+
     results
 }
 

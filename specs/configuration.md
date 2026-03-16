@@ -20,55 +20,7 @@ No config file → built-in defaults only.
 
 ```
 file      = form*
-form      = rule | wrapper | defcontext | security
-
-rule      = "(" "rule" command context? args? decision? check* ")"
-command   = "(" "command" cmd-val ")"
-cmd-val   = STRING | "(" "or" STRING+ ")" | "(" "regex" STRING ")"
-context   = "(" "context" context-expr ")"
-context-expr = context-name
-             | "(" "and" context-expr+ ")"
-             | "(" "or" context-expr+ ")"
-             | "(" "not" context-expr ")"
-             | "(" "has" KEY ")"
-             | "(" "=" KEY STRING ")"
-             | "(" "matches" KEY STRING ")"
-args      = "(" "args" matcher ")"
-matcher   = pos | exact | any | forb | and | or | not | cond
-pos       = "(" "positional" pos-pat+ ")"
-exact     = "(" "exact" pos-pat+ ")"
-any       = "(" "anywhere" pat+ ")"
-forb      = "(" "forbidden" pat+ ")"
-and       = "(" "and" matcher matcher+ ")"
-or        = "(" "or" matcher matcher+ ")"
-not       = "(" "not" matcher ")"
-pos-pat   = pat | "(" "?" pat ")" | "(" "+" pat ")" | "(" "*" pat ")"
-pat       = STRING | "*" | "(" "regex" STRING ")" | "(" "or" STRING+ ")"
-decision  = "(" "effect" decision-kw reason? ")"
-decision-kw = ":allow" | ":deny" | ":ask"
-reason    = STRING
-cond      = "(" "cond" branch+ ")"
-branch    = "(" condition decision ")"
-condition = "else" | matcher
-
-check     = "(" "check" check-item+ ")"
-check-item = decision-kw STRING | with-facts
-with-facts = "(" "with-facts" fact-literal check-item* ")"
-fact-literal = "[" fact-entry* "]"
-fact-entry = "[" KEY "]" | "[" KEY STRING "]"
-
-defcontext = "(" "defcontext" context-name context-expr ")"
-
-wrapper      = "(" "wrapper" STRING wrapper-body ")"
-wrapper-body = capture-kw
-             | wrapper-step+
-wrapper-step = "(" "positional" wrapper-pat* capture-kw? ")"
-             | "(" "flag" STRING capture-kw ")"
-capture-kw   = ":command+args" | ":command" | ":args"
-wrapper-pat  = pat | "[" KEY pat "]"
-KEY          = atom beginning with `:`
-
-STRING    = quoted string (double-quote, backslash escapes)
+form      = rule | wrapper | defcontext | security | check
 ```
 
 Comments: `;` to end of line.
@@ -247,7 +199,35 @@ outer facts, and inner bindings override outer bindings for the same key.
 
 **Verify:** `may-i check`
 
-## R10e: Built-in defaults
+## R10e: Top-level checks
+
+Checks may also appear at the top level of config files, outside of any rule:
+
+```scheme
+;; Integration tests that evaluate against the complete rule set
+(check :allow "ls -la")
+(check :deny "rm -rf /")
+(check :ask "curl https://example.com")
+
+;; With context facts for context-aware testing
+(check
+  (with-facts [[:client/opencode]
+               [:opencode/agent "build"]]
+    :allow "git status"
+    :allow "git add ."))
+```
+
+Top-level checks are useful for:
+- Integration testing across multiple rules
+- Security invariants (e.g., ensuring dangerous commands are denied)
+- Better test organization (tests in one section, rules in another)
+
+Like inline checks, top-level checks support `with-facts` for scoped context. They
+are executed by `may-i check` alongside inline checks.
+
+**Verify:** `may-i check`
+
+## R10f: Built-in defaults
 
 The binary ships with defaults matching the [reference implementation][ref]:
 
