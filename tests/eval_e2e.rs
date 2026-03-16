@@ -275,7 +275,7 @@ fn json_eval_spans_with_operator_have_ignore_permission() {
     // Find the operator span and verify it has "ignore" permission
     let operator_span = spans
         .iter()
-        .find(|s| s["text"].as_str().map_or(false, |t| t.contains("&&")));
+        .find(|s| s["text"].as_str().is_some_and(|t| t.contains("&&")));
     assert!(
         operator_span.is_some(),
         "should have an operator span containing &&"

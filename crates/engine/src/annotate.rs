@@ -397,6 +397,9 @@ pub(crate) fn annotate_rule(
 fn annotate_context_expr(expr: &ContextExpr, facts: &ContextFacts) -> (ADoc, bool) {
     match expr {
         ContextExpr::Alias(name) => {
+            // Aliases should be resolved during parsing (see parse/mod.rs:resolve_context_expr).
+            // Reaching here indicates the config was constructed programmatically without
+            // resolution, or there's a bug in the parser. We treat it as non-matching.
             let matched = false;
             (
                 Doc {
@@ -1279,6 +1282,34 @@ mod tests {
                 ..
             } if key == ":via/ssh"
         )));
+    }
+
+    #[test]
+    fn context_alias_returns_not_matched() {
+        // Aliases should be resolved during parsing. If we encounter one here,
+        // it means the config was constructed programmatically without resolution.
+        let rule = Rule {
+            command: CommandMatcher::Exact("echo".into()),
+            context: Some(ContextExpr::Alias("unresolved-alias".into())),
+            body: RuleBody::Effect {
+                matcher: None,
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
+            },
+            checks: vec![],
+            source_span: Span::new(0, 0),
+        };
+        let (doc, effect) = annotate_rule(&rule, "echo", &[]);
+        // Alias context should not match, so rule evaluation should fail
+        assert!(effect.is_none());
+        // Check the annotation shows matched: false
+        let anns = collect_annotations(&doc);
+        assert!(
+            anns.iter()
+                .any(|ann| matches!(ann, EvalAnn::ContextResult(false)))
+        );
     }
 
     #[test]
