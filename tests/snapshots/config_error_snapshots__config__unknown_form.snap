@@ -9,4 +9,4 @@ expression: "render_error(\"(bogus \\\"x\\\")\")"
    ·  ──┬──
    ·    ╰── not a recognised form
    ╰────
-  help: valid top-level forms: rule, wrapper, defcontext, safe-env-vars
+  help: valid top-level forms: rule, wrapper, defcontext, safe-env-vars, check

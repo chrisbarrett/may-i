@@ -479,6 +479,7 @@ pub struct Config {
     pub rules: Vec<Rule>,
     pub wrappers: Vec<Wrapper>,
     pub security: SecurityConfig,
+    pub checks: Vec<Check>,
     pub warnings: Vec<ConfigWarning>,
     pub source_info: Option<SourceInfo>,
 }

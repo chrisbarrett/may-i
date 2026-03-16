@@ -36,6 +36,7 @@ fn parse_raw(input: &str) -> Result<Config, RawError> {
     let mut rules = Vec::new();
     let mut wrappers = Vec::new();
     let mut security = SecurityConfig::default();
+    let mut checks = Vec::new();
     let mut warnings = Vec::new();
     let mut context_defs = std::collections::BTreeMap::new();
 
@@ -96,13 +97,23 @@ fn parse_raw(input: &str) -> Result<Config, RawError> {
                     security.safe_env_vars.insert(s.to_string());
                 }
             }
+            "check" => {
+                checks.extend(parse_check_items(
+                    &list[1..],
+                    &ContextFacts::default(),
+                    &mut warnings,
+                    form.span(),
+                )?);
+            }
             other => {
                 return Err(RawError::new(
                     format!("unknown top-level form: {other}"),
                     list[0].span(),
                 )
                 .with_label("not a recognised form")
-                .with_help("valid top-level forms: rule, wrapper, defcontext, safe-env-vars"));
+                .with_help(
+                    "valid top-level forms: rule, wrapper, defcontext, safe-env-vars, check",
+                ));
             }
         }
     }
@@ -122,6 +133,7 @@ fn parse_raw(input: &str) -> Result<Config, RawError> {
         rules,
         wrappers,
         security,
+        checks,
         warnings,
         source_info: None,
     })
@@ -2937,5 +2949,59 @@ mod tests {
             engine::evaluate("kubectl get pods mypod", &config).decision,
             Decision::Allow
         );
+    }
+
+    #[test]
+    fn top_level_check_parses() {
+        let config = parse(r#"(check :allow "ls")"#).unwrap();
+        assert_eq!(config.checks.len(), 1);
+        assert_eq!(config.checks[0].command, "ls");
+        assert_eq!(config.checks[0].expected, Decision::Allow);
+    }
+
+    #[test]
+    fn top_level_check_with_facts_parses() {
+        let config =
+            parse(r#"(check (with-facts [[:client/opencode]] :allow "git status"))"#).unwrap();
+        assert_eq!(config.checks.len(), 1);
+        assert_eq!(config.checks[0].command, "git status");
+        assert_eq!(config.checks[0].expected, Decision::Allow);
+        assert!(config.checks[0].context.has(":client/opencode"));
+    }
+
+    #[test]
+    fn multiple_top_level_checks_parse() {
+        let config = parse(
+            r#"
+            (check :allow "ls")
+            (check :deny "rm")
+            (check :ask "curl")
+            "#,
+        )
+        .unwrap();
+        assert_eq!(config.checks.len(), 3);
+        assert_eq!(config.checks[0].command, "ls");
+        assert_eq!(config.checks[0].expected, Decision::Allow);
+        assert_eq!(config.checks[1].command, "rm");
+        assert_eq!(config.checks[1].expected, Decision::Deny);
+        assert_eq!(config.checks[2].command, "curl");
+        assert_eq!(config.checks[2].expected, Decision::Ask);
+    }
+
+    #[test]
+    fn top_level_and_embedded_checks_coexist() {
+        let config = parse(
+            r#"
+            (rule (command "ls")
+                  (effect :allow)
+                  (check :allow "ls"))
+            (check :deny "rm")
+            "#,
+        )
+        .unwrap();
+        assert_eq!(config.rules[0].checks.len(), 1);
+        assert_eq!(config.checks.len(), 1);
+        assert_eq!(config.rules[0].checks[0].command, "ls");
+        assert_eq!(config.checks[0].command, "rm");
     }
 }
