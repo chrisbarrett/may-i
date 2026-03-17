@@ -1183,3 +1183,28 @@ fn is_word_char(ch: char) -> bool {
 pub(super) fn is_redirect_start(ch: char) -> bool {
     ch == '<' || ch == '>'
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lexer_empty_word_from_empty_parts() {
+        // Test the Word::literal("") branch in read_word_value
+        let mut lex = Lexer::new("");
+        // When read_word_parts returns empty, we get Word::literal("")
+        let word = lex.read_word_value();
+        // Word::literal creates a single Literal part with empty string
+        assert_eq!(word.parts.len(), 1);
+        assert!(matches!(&word.parts[0], WordPart::Literal(s) if s.is_empty()));
+    }
+
+    #[test]
+    fn lexer_bracket_appends_to_literal() {
+        // Test the branch where '[' is appended to existing literal
+        let mut lex = Lexer::new("a[");
+        let word = lex.read_word_value();
+        assert_eq!(word.parts.len(), 1);
+        assert!(matches!(&word.parts[0], WordPart::Literal(s) if s == "a["));
+    }
+}

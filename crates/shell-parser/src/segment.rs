@@ -114,3 +114,270 @@ fn trim_end_offset(input: &str, start: usize, operator_start: usize) -> usize {
     let between = &input[start..operator_start];
     start + between.trim_end().len()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn segment_empty_input() {
+        let segs = segment("");
+        assert!(segs.is_empty());
+    }
+
+    #[test]
+    fn segment_whitespace_only() {
+        let segs = segment("   \t  ");
+        assert!(segs.is_empty());
+    }
+
+    #[test]
+    fn segment_single_command() {
+        let segs = segment("ls -la");
+        assert_eq!(segs.len(), 1);
+        assert!(!segs[0].is_operator);
+        assert_eq!(segs[0].start, 0);
+        assert_eq!(segs[0].end, 6);
+    }
+
+    #[test]
+    fn segment_simple_pipe() {
+        let input = "cat file | grep foo";
+        let segs = segment(input);
+        assert_eq!(segs.len(), 3);
+        // "cat file"
+        assert!(!segs[0].is_operator);
+        assert_eq!(&input[segs[0].start..segs[0].end], "cat file");
+        // "|"
+        assert!(segs[1].is_operator);
+        assert_eq!(segs[1].end - segs[1].start, 1);
+        // "grep foo"
+        assert!(!segs[2].is_operator);
+        assert_eq!(&input[segs[2].start..segs[2].end], "grep foo");
+    }
+
+    #[test]
+    fn segment_and_operator() {
+        let segs = segment("make && make install");
+        assert_eq!(segs.len(), 3);
+        // "make"
+        assert!(!segs[0].is_operator);
+        // "&&" (2 chars)
+        assert!(segs[1].is_operator);
+        assert_eq!(segs[1].end - segs[1].start, 2);
+        // "make install"
+        assert!(!segs[2].is_operator);
+    }
+
+    #[test]
+    fn segment_or_operator() {
+        let segs = segment("test -f file || echo missing");
+        assert_eq!(segs.len(), 3);
+        assert!(segs[1].is_operator);
+        assert_eq!(segs[1].end - segs[1].start, 2);
+    }
+
+    #[test]
+    fn segment_semicolon() {
+        let segs = segment("echo a; echo b");
+        assert_eq!(segs.len(), 3);
+        assert!(segs[1].is_operator);
+        assert_eq!(segs[1].end - segs[1].start, 1);
+    }
+
+    #[test]
+    fn segment_ampersand_background() {
+        let segs = segment("sleep 10 &");
+        assert_eq!(segs.len(), 2);
+        assert!(!segs[0].is_operator);
+        assert!(segs[1].is_operator);
+        assert_eq!(segs[1].end - segs[1].start, 1);
+    }
+
+    #[test]
+    fn segment_multiple_operators() {
+        let segs = segment("a && b || c");
+        assert_eq!(segs.len(), 5);
+        assert!(!segs[0].is_operator); // "a"
+        assert!(segs[1].is_operator); // "&&"
+        assert!(!segs[2].is_operator); // "b"
+        assert!(segs[3].is_operator); // "||"
+        assert!(!segs[4].is_operator); // "c"
+    }
+
+    #[test]
+    fn segment_parens_not_split() {
+        // Parenthesized commands should NOT be split at operators inside
+        let segs = segment("(echo a && echo b)");
+        assert_eq!(segs.len(), 1);
+        assert!(!segs[0].is_operator);
+    }
+
+    #[test]
+    fn segment_braces_not_split() {
+        // Brace groups should NOT be split at operators inside
+        let segs = segment("{ echo a; echo b; }");
+        assert_eq!(segs.len(), 1);
+        assert!(!segs[0].is_operator);
+    }
+
+    #[test]
+    fn segment_if_statement_not_split() {
+        let segs = segment("if true; then echo yes; fi");
+        assert_eq!(segs.len(), 1);
+        assert!(!segs[0].is_operator);
+    }
+
+    #[test]
+    fn segment_for_loop_not_split() {
+        let segs = segment("for x in a b; do echo $x; done");
+        assert_eq!(segs.len(), 1);
+        assert!(!segs[0].is_operator);
+    }
+
+    #[test]
+    fn segment_while_loop_not_split() {
+        let segs = segment("while read line; do echo $line; done");
+        assert_eq!(segs.len(), 1);
+        assert!(!segs[0].is_operator);
+    }
+
+    #[test]
+    fn segment_case_statement_not_split() {
+        let segs = segment("case $x in a) echo A;; esac");
+        assert_eq!(segs.len(), 1);
+        assert!(!segs[0].is_operator);
+    }
+
+    #[test]
+    fn segment_mixed_parens_and_operators() {
+        // Parens don't prevent splitting at top level
+        let segs = segment("(echo a) | cat");
+        assert_eq!(segs.len(), 3);
+        assert!(!segs[0].is_operator);
+        assert!(segs[1].is_operator);
+        assert!(!segs[2].is_operator);
+    }
+
+    #[test]
+    fn segment_newline_treated_as_separator() {
+        let segs = segment("echo a\necho b");
+        assert_eq!(segs.len(), 2);
+        assert!(!segs[0].is_operator);
+        assert!(!segs[1].is_operator);
+    }
+
+    #[test]
+    fn segment_trims_trailing_whitespace() {
+        let segs = segment("ls   ");
+        assert_eq!(segs.len(), 1);
+        assert_eq!(segs[0].end, 2); // "ls" not "ls   "
+    }
+
+    #[test]
+    fn segment_leading_whitespace_preserved_in_output() {
+        let segs = segment("  ls");
+        assert_eq!(segs.len(), 1);
+        assert_eq!(segs[0].start, 2); // starts at first non-whitespace
+        assert_eq!(segs[0].end, 4); // "ls"
+    }
+
+    #[test]
+    fn segment_trim_end_offset_basic() {
+        assert_eq!(trim_end_offset("hello world", 0, 11), 11);
+    }
+
+    #[test]
+    fn segment_trim_end_offset_trims_space() {
+        assert_eq!(trim_end_offset("hello   ", 0, 8), 5);
+    }
+
+    #[test]
+    fn segment_trim_end_offset_middle() {
+        assert_eq!(trim_end_offset("a && b", 0, 1), 1); // "a" at start
+    }
+
+    #[test]
+    fn segment_complex_pipeline() {
+        let segs = segment("cat file | sort | uniq -c");
+        assert_eq!(segs.len(), 5);
+        assert!(!segs[0].is_operator);
+        assert!(segs[1].is_operator);
+        assert!(!segs[2].is_operator);
+        assert!(segs[3].is_operator);
+        assert!(!segs[4].is_operator);
+    }
+
+    #[test]
+    fn segment_quotes_and_escapes() {
+        // Quotes should be part of the command
+        let segs = segment("echo 'hello world' | cat");
+        assert_eq!(segs.len(), 3);
+        assert!(!segs[0].is_operator);
+        assert!(segs[1].is_operator);
+        assert!(!segs[2].is_operator);
+    }
+
+    #[test]
+    fn segment_redirections() {
+        // Redirections should be part of the command segment
+        let segs = segment("cat < input.txt > output.txt");
+        assert_eq!(segs.len(), 1);
+        assert!(!segs[0].is_operator);
+    }
+
+    #[test]
+    fn segment_empty_between_operators() {
+        // Edge case: what happens with empty command?
+        let segs = segment("&& ls");
+        assert_eq!(segs.len(), 2);
+        assert!(segs[0].is_operator);
+        assert!(!segs[1].is_operator);
+    }
+
+    #[test]
+    fn segment_only_operators() {
+        let segs = segment("&& ||");
+        assert_eq!(segs.len(), 2);
+        assert!(segs[0].is_operator);
+        assert!(segs[1].is_operator);
+    }
+
+    #[test]
+    fn segment_closing_token_starts_command() {
+        // When a closing token is encountered and cmd_start is None,
+        // it should start a new command segment
+        let segs = segment(") echo hi");
+        assert_eq!(segs.len(), 1);
+        assert!(!segs[0].is_operator);
+        assert_eq!(segs[0].start, 0);
+    }
+
+    #[test]
+    fn segment_done_starts_command() {
+        let segs = segment("done echo hi");
+        assert_eq!(segs.len(), 1);
+        assert!(!segs[0].is_operator);
+    }
+
+    #[test]
+    fn segment_fi_starts_command() {
+        let segs = segment("fi echo hi");
+        assert_eq!(segs.len(), 1);
+        assert!(!segs[0].is_operator);
+    }
+
+    #[test]
+    fn segment_esac_starts_command() {
+        let segs = segment("esac echo hi");
+        assert_eq!(segs.len(), 1);
+        assert!(!segs[0].is_operator);
+    }
+
+    #[test]
+    fn segment_rbrace_starts_command() {
+        let segs = segment("} echo hi");
+        assert_eq!(segs.len(), 1);
+        assert!(!segs[0].is_operator);
+    }
+}

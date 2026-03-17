@@ -1236,4 +1236,51 @@ mod tests {
         assert_eq!(annotations[0]["type"], "context_has_pattern");
         assert_eq!(annotations[0]["reason"], "present_without_scalar");
     }
+
+    // Tests for Cell, Row, and Element constructors
+
+    #[test]
+    fn cell_new_creates_cell_with_defaults() {
+        let cell = Cell::new("hello", 5);
+        assert_eq!(cell.content, "hello");
+        assert_eq!(cell.visible_width, 5);
+        assert!(matches!(cell.align, Align::Left));
+        assert!(!cell.precolored);
+    }
+
+    #[test]
+    fn cell_is_elision_detects_ellipsis() {
+        let elision = Cell {
+            content: "…".to_string(),
+            visible_width: 1,
+            align: Align::Left,
+            precolored: false,
+        };
+        assert!(elision.is_elision());
+
+        let normal = Cell::new("hello", 5);
+        assert!(!normal.is_elision());
+    }
+
+    #[test]
+    fn row_trace_creates_row_with_auto_colorization() {
+        let row = Row::trace("left", 4, "right");
+        assert_eq!(row.left.content, "left");
+        assert_eq!(row.left.visible_width, 4);
+        assert!(!row.left.precolored);
+        assert_eq!(row.right.content, "right");
+        assert_eq!(row.right.visible_width, 0);
+        assert!(!row.right.precolored);
+    }
+
+    #[test]
+    fn row_kv_creates_row_with_precolored_value() {
+        let row = Row::kv("key", "value");
+        assert_eq!(row.left.content, "key");
+        assert_eq!(row.left.visible_width, 3);
+        assert!(!row.left.precolored);
+        assert_eq!(row.right.content, "value");
+        assert_eq!(row.right.visible_width, 0);
+        assert!(row.right.precolored);
+    }
 }

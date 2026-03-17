@@ -3310,4 +3310,13 @@ mod tests {
         .expect("should parse has in if context");
         assert_eq!(config.rules.len(), 1);
     }
+
+    #[test]
+    fn error_with_secondary_label() {
+        // Trigger an unexpected closing paren with a previous form
+        // This creates a secondary label in the error
+        let result = parse("(rule (command \"cat\") (effect :allow)) )");
+        assert!(result.is_err());
+        // The error path exercises lines 37-38 in errors.rs (secondary label)
+    }
 }

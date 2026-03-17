@@ -46,3 +46,27 @@ impl std::fmt::Display for RawError {
         write!(f, "{}", self.message)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn raw_error_display_shows_message() {
+        let err = RawError::new("test error message", Span::new(0, 5));
+        assert_eq!(format!("{}", err), "test error message");
+    }
+
+    #[test]
+    fn raw_error_display_with_label() {
+        let err = RawError::new("parse error", Span::new(0, 5)).with_label("expected identifier");
+        assert_eq!(format!("{}", err), "parse error");
+    }
+
+    #[test]
+    fn raw_error_display_with_help() {
+        let err =
+            RawError::new("invalid syntax", Span::new(0, 5)).with_help("try using parentheses");
+        assert_eq!(format!("{}", err), "invalid syntax");
+    }
+}
