@@ -1,0 +1,17 @@
+---
+source: src/cmd_eval.rs
+assertion_line: 781
+expression: output
+---
+
+Trace
+
+  ─── ✓ ls ─────────────────────────────────────────────────────────────────────
+
+Result
+
+  ls
+
+  → :allow "Test reason"
+
+  config: /test/config.yaml

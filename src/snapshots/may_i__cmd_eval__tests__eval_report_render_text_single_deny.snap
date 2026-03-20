@@ -1,0 +1,17 @@
+---
+source: src/cmd_eval.rs
+assertion_line: 795
+expression: output
+---
+
+Trace
+
+  ─── ✗ rm -rf / ───────────────────────────────────────────────────────────────
+
+Result
+
+  rm -rf /
+
+  → :deny "Test reason"
+
+  config: /test/config.yaml

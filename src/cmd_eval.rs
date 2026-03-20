@@ -728,4 +728,104 @@ mod tests {
         assert_eq!(reconstructed, original);
         assert_eq!(reconstructed, "true && curl");
     }
+
+    // Snapshot tests for EvalReport
+
+    fn create_test_eval_report(command: &str, decisions: Vec<Decision>) -> EvalReport {
+        use may_i_core::{EvalResult, TraceEntry};
+
+        let segments: Vec<EvalSegment> = command
+            .split("&&")
+            .enumerate()
+            .flat_map(|(i, part)| {
+                let mut result = Vec::new();
+                if i > 0 {
+                    result.push(EvalSegment {
+                        text: "&&".to_string(),
+                        decision: Decision::Allow,
+                    });
+                }
+                let trimmed = part.trim();
+                if !trimmed.is_empty() {
+                    let decision = decisions.get(i).copied().unwrap_or(Decision::Allow);
+                    result.push(EvalSegment {
+                        text: trimmed.to_string(),
+                        decision,
+                    });
+                }
+                result
+            })
+            .collect();
+
+        let aggregate_decision = decisions.iter().copied().max().unwrap_or(Decision::Allow);
+
+        EvalReport {
+            command: command.to_string(),
+            segments,
+            aggregate_result: EvalResult {
+                decision: aggregate_decision,
+                reason: Some("Test reason".to_string()),
+                trace: vec![TraceEntry::SegmentHeader {
+                    command: command.to_string(),
+                    decision: aggregate_decision,
+                }],
+            },
+            config_path: std::path::PathBuf::from("/test/config.yaml"),
+        }
+    }
+
+    #[test]
+    fn test_eval_report_render_text_single_allow() {
+        let report = create_test_eval_report("ls", vec![Decision::Allow]);
+        let output = report.render_text();
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn test_eval_report_render_text_single_ask() {
+        let report = create_test_eval_report("sudo apt install", vec![Decision::Ask]);
+        let output = report.render_text();
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn test_eval_report_render_text_single_deny() {
+        let report = create_test_eval_report("rm -rf /", vec![Decision::Deny]);
+        let output = report.render_text();
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn test_eval_report_render_text_compound() {
+        let report = create_test_eval_report(
+            "true && curl example.com",
+            vec![Decision::Allow, Decision::Ask],
+        );
+        let output = report.render_text();
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn test_eval_report_to_json_single() {
+        let report = create_test_eval_report("ls -la", vec![Decision::Allow]);
+        let json = report.to_json();
+        let json_str = serde_json::to_string_pretty(&json).unwrap();
+        insta::assert_snapshot!(json_str);
+    }
+
+    #[test]
+    fn test_eval_report_to_json_compound() {
+        let report = create_test_eval_report("true && curl", vec![Decision::Allow, Decision::Ask]);
+        let json = report.to_json();
+        let json_str = serde_json::to_string_pretty(&json).unwrap();
+        insta::assert_snapshot!(json_str);
+    }
+
+    #[test]
+    fn test_eval_report_to_json_with_deny() {
+        let report = create_test_eval_report("rm -rf /", vec![Decision::Deny]);
+        let json = report.to_json();
+        let json_str = serde_json::to_string_pretty(&json).unwrap();
+        insta::assert_snapshot!(json_str);
+    }
 }

@@ -1,0 +1,17 @@
+---
+source: src/cmd_eval.rs
+assertion_line: 788
+expression: output
+---
+
+Trace
+
+  ─── ? sudo apt install ───────────────────────────────────────────────────────
+
+Result
+
+  sudo apt install
+
+  → :ask "Test reason"
+
+  config: /test/config.yaml

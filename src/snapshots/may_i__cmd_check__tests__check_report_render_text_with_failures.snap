@@ -1,0 +1,31 @@
+---
+source: src/cmd_check.rs
+assertion_line: 384
+expression: output
+---
+
+Warnings
+
+  WARN Test warning
+       /test/config.yaml:5
+       help: This is a test
+
+─── ✗ rm -rf / ─────────────────────────────────────────────────────────────────
+
+/test/config.yaml:20
+  expected │ :allow
+  actual   │ :deny
+  context  │ interactive, user=test
+  reason   │ "Dangerous command"
+
+  Trace
+
+  ─── ✗ rm -rf / ───────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Summary
+
+  ✗ 1 passed, 1 failed
+
+  config: /test/config.yaml

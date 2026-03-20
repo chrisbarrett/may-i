@@ -1,0 +1,22 @@
+---
+source: src/cmd_eval.rs
+assertion_line: 813
+expression: json_str
+---
+{
+  "decision": "allow",
+  "reason": "Test reason",
+  "spans": [
+    {
+      "permission": "allow",
+      "text": "ls -la"
+    }
+  ],
+  "trace": [
+    {
+      "command": "ls -la",
+      "decision": "allow",
+      "type": "segment_header"
+    }
+  ]
+}

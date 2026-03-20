@@ -1,0 +1,56 @@
+---
+source: src/cmd_check.rs
+assertion_line: 414
+expression: json_str
+---
+{
+  "failed": 0,
+  "passed": 2,
+  "results": [
+    {
+      "actual": "allow",
+      "command": "ls",
+      "expected": "allow",
+      "facts": {
+        "interactive": true,
+        "user": "test"
+      },
+      "location": "/test/config.yaml:10",
+      "passed": true,
+      "reason": null,
+      "trace": [
+        {
+          "command": "ls",
+          "decision": "allow",
+          "type": "segment_header"
+        }
+      ]
+    },
+    {
+      "actual": "deny",
+      "command": "rm -rf /",
+      "expected": "deny",
+      "facts": {
+        "interactive": true,
+        "user": "test"
+      },
+      "location": "/test/config.yaml:20",
+      "passed": true,
+      "reason": "Dangerous command",
+      "trace": [
+        {
+          "command": "rm -rf /",
+          "decision": "deny",
+          "type": "segment_header"
+        }
+      ]
+    }
+  ],
+  "warnings": [
+    {
+      "help": "This is a test",
+      "location": "/test/config.yaml:5",
+      "message": "Test warning"
+    }
+  ]
+}

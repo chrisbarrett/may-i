@@ -1,0 +1,30 @@
+---
+source: src/cmd_eval.rs
+assertion_line: 821
+expression: json_str
+---
+{
+  "decision": "ask",
+  "reason": "Test reason",
+  "spans": [
+    {
+      "permission": "allow",
+      "text": "true"
+    },
+    {
+      "permission": "ignore",
+      "text": " && "
+    },
+    {
+      "permission": "allow",
+      "text": "curl"
+    }
+  ],
+  "trace": [
+    {
+      "command": "true && curl",
+      "decision": "ask",
+      "type": "segment_header"
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+---
+source: src/cmd_check.rs
+assertion_line: 398
+expression: output
+---
+
+Warnings
+
+  WARN Test warning
+       /test/config.yaml:5
+       help: This is a test
+
+Summary
+
+  ✓ 2 passed, 0 failed
+
+  config: /test/config.yaml

@@ -1,0 +1,22 @@
+---
+source: src/cmd_eval.rs
+assertion_line: 829
+expression: json_str
+---
+{
+  "decision": "deny",
+  "reason": "Test reason",
+  "spans": [
+    {
+      "permission": "deny",
+      "text": "rm -rf /"
+    }
+  ],
+  "trace": [
+    {
+      "command": "rm -rf /",
+      "decision": "deny",
+      "type": "segment_header"
+    }
+  ]
+}

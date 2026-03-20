@@ -6,8 +6,8 @@
 - [x] 1.4 Implement `CheckReport::render_text()` for human-readable output
 - [x] 1.5 Implement `CheckReport::to_json()` for JSON output (rename `context` to `facts`)
 - [x] 1.6 Implement `CheckReport::exit_code()` method returning 0 or 1
-- [ ] 1.7 Add `insta` snapshot tests for `render_text()` output (optional)
-- [ ] 1.8 Add `insta` snapshot tests for `to_json()` output (optional)
+- [x] 1.7 Add `insta` snapshot tests for `render_text()` output (optional)
+- [x] 1.8 Add `insta` snapshot tests for `to_json()` output (optional)
 
 ## 2. Refactor cmd_check
 
@@ -24,8 +24,8 @@
 - [x] 3.3 Implement `EvalReport::from_command()` to parse and evaluate command segments
 - [x] 3.4 Implement `EvalReport::render_text()` with colored output
 - [x] 3.5 Implement `EvalReport::to_json()` for JSON output
-- [ ] 3.6 Add `insta` snapshot tests for text output with colored spans (optional)
-- [ ] 3.7 Add `insta` snapshot tests for JSON output with permission spans (optional)
+- [x] 3.6 Add `insta` snapshot tests for text output with colored spans (optional)
+- [x] 3.7 Add `insta` snapshot tests for JSON output with permission spans (optional)
 
 ## 4. Refactor cmd_eval
 

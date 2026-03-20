@@ -318,3 +318,99 @@ fn render_context(context: &ContextFacts) -> String {
         .collect::<Vec<_>>()
         .join(", ")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use may_i_core::{Decision, TraceEntry};
+
+    fn create_test_check_report(all_passed: bool) -> CheckReport {
+        let mut facts = ContextFacts::default();
+        facts.insert_scalar("user", "test");
+        facts.insert_present("interactive");
+
+        let results = vec![
+            CheckResultDisplay {
+                command: "ls".to_string(),
+                expected: "allow".to_string(),
+                actual: "allow".to_string(),
+                passed: true,
+                facts: facts.clone(),
+                reason: None,
+                trace: vec![TraceEntry::SegmentHeader {
+                    command: "ls".to_string(),
+                    decision: Decision::Allow,
+                }],
+                location: Some("/test/config.yaml:10".to_string()),
+            },
+            CheckResultDisplay {
+                command: "rm -rf /".to_string(),
+                expected: if all_passed {
+                    "deny".to_string()
+                } else {
+                    "allow".to_string()
+                },
+                actual: "deny".to_string(),
+                passed: all_passed,
+                facts: facts.clone(),
+                reason: Some("Dangerous command".to_string()),
+                trace: vec![TraceEntry::SegmentHeader {
+                    command: "rm -rf /".to_string(),
+                    decision: Decision::Deny,
+                }],
+                location: Some("/test/config.yaml:20".to_string()),
+            },
+        ];
+
+        CheckReport {
+            warnings: vec![CheckWarning {
+                message: "Test warning".to_string(),
+                location: "/test/config.yaml:5".to_string(),
+                help: Some("This is a test".to_string()),
+            }],
+            results,
+            summary: CheckSummary {
+                passed: if all_passed { 2 } else { 1 },
+                failed: if all_passed { 0 } else { 1 },
+            },
+            config_path: std::path::PathBuf::from("/test/config.yaml"),
+        }
+    }
+
+    #[test]
+    fn test_check_report_render_text_with_failures() {
+        let report = create_test_check_report(false);
+        let output = report.render_text(false);
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn test_check_report_render_text_verbose() {
+        let report = create_test_check_report(false);
+        let output = report.render_text(true);
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn test_check_report_render_text_all_passed() {
+        let report = create_test_check_report(true);
+        let output = report.render_text(false);
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn test_check_report_to_json() {
+        let report = create_test_check_report(false);
+        let json = report.to_json();
+        let json_str = serde_json::to_string_pretty(&json).unwrap();
+        insta::assert_snapshot!(json_str);
+    }
+
+    #[test]
+    fn test_check_report_to_json_all_passed() {
+        let report = create_test_check_report(true);
+        let json = report.to_json();
+        let json_str = serde_json::to_string_pretty(&json).unwrap();
+        insta::assert_snapshot!(json_str);
+    }
+}

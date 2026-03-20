@@ -1,0 +1,17 @@
+---
+source: src/cmd_eval.rs
+assertion_line: 805
+expression: output
+---
+
+Trace
+
+  ─── ? true && curl example.com ───────────────────────────────────────────────
+
+Result
+
+  true&&curl example.com
+
+  → :ask "Test reason"
+
+  config: /test/config.yaml
