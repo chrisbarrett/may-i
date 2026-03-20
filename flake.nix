@@ -22,7 +22,7 @@
     };
   };
 
-  outputs = inputs@{ advisory-db, flake-parts, ... }: flake-parts.lib.mkFlake { inherit inputs; } {
+  outputs = inputs@{ advisory-db, flake-parts, self, ... }: flake-parts.lib.mkFlake { inherit inputs; } {
     systems = [
       "aarch64-darwin"
       "aarch64-linux"
@@ -68,6 +68,8 @@
         });
       in
       {
+        formatter = pkgs.nixpkgs-fmt;
+
         apps.default = {
           type = "app";
           program = "${may-i}/bin/may-i";
@@ -107,5 +109,9 @@
           '';
         };
       };
+
+    flake.overlays.default = final: prev: {
+      may-i = self.packages.${prev.system}.default;
+    };
   };
 }
