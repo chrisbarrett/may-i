@@ -22,7 +22,7 @@
     };
   };
 
-  outputs = inputs@{ advisory-db, flake-parts, self, ... }:
+  outputs = inputs@{ flake-parts, self, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } {
       systems = [
         "aarch64-darwin"
@@ -30,86 +30,7 @@
         "x86_64-linux"
       ];
 
-      perSystem = { self', system, ... }:
-        let
-          pkgs = import inputs.nixpkgs {
-            inherit system;
-            overlays = [
-              inputs.rust-overlay.overlays.default
-              inputs.cargo-affected.overlays.default
-            ];
-          };
-
-          craneLib = (inputs.crane.mkLib pkgs).overrideToolchain (p:
-            p.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml
-          );
-
-          # Include non-Rust files needed for the build
-          extraFileFilter = path: type:
-            (pkgs.lib.hasSuffix ".lisp" path) ||
-            (pkgs.lib.hasSuffix ".snap" path);
-
-          src = pkgs.lib.cleanSourceWith {
-            src = ./.;
-            filter = path: type:
-              (extraFileFilter path type) ||
-              (craneLib.filterCargoSources path type);
-          };
-
-          commonArgs = {
-            inherit src;
-            strictDeps = true;
-          };
-
-          cargoArtifacts = craneLib.buildDepsOnly commonArgs;
-
-          may-i = craneLib.buildPackage (commonArgs // {
-            inherit cargoArtifacts;
-            doCheck = false; # Run via cargo-nextest checks.
-          });
-        in
-        {
-          formatter = pkgs.nixpkgs-fmt;
-
-          apps.default = {
-            type = "app";
-            program = "${may-i}/bin/may-i";
-          };
-          packages.default = may-i;
-
-          checks = {
-            inherit may-i;
-
-            clippy = craneLib.cargoClippy (commonArgs // {
-              inherit cargoArtifacts;
-              cargoClippyExtraArgs = "--all-targets -- --deny warnings";
-            });
-
-            fmt = craneLib.cargoFmt { inherit src; };
-            audit = craneLib.cargoAudit { inherit src advisory-db; };
-
-            nextest = craneLib.cargoNextest (commonArgs // {
-              inherit cargoArtifacts;
-              partitions = 1;
-              partitionType = "count";
-              cargoNextestPartitionsExtraArgs = "--no-tests=pass";
-            });
-          };
-
-          devShells.default = craneLib.devShell {
-            checks = self'.checks;
-
-            packages = with pkgs; [
-              cargo-affected
-              cargo-tarpaulin
-              prek
-            ];
-
-            shellHook = ''
-              prek install
-            '';
-          };
-        };
+      perSystem = import ./builder.nix inputs;
 
       flake.overlays.default = final: prev: {
         may-i = self.packages.${prev.system}.default;
