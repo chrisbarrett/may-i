@@ -150,3 +150,159 @@ impl CodeExecutionVisitor {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::var_env::VarEnv;
+    use may_i_core::Config;
+    use may_i_shell_parser::{self as parser, Command};
+
+    fn test_context() -> VisitorContext<'static> {
+        let config = Box::leak(Box::new(Config::default()));
+        let context = Box::leak(Box::new(may_i_core::ContextFacts::default()));
+        let env = Box::leak(Box::new(VarEnv::from_process_env()));
+        VisitorContext {
+            config,
+            context,
+            env,
+            depth: 0,
+        }
+    }
+
+    fn simple_cmd(cmd: &str) -> SimpleCommand {
+        match parser::parse(cmd) {
+            Command::Simple(sc) => sc,
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn source_command_returns_ask() {
+        let ctx = test_context();
+        let cmd = simple_cmd("source file.sh");
+        let visitor = CodeExecutionVisitor;
+
+        let outcome = visitor.visit_simple_command(&ctx, &cmd);
+
+        match outcome {
+            VisitOutcome::Terminal { result, .. } => {
+                assert_eq!(result.decision, Decision::Ask);
+                assert!(result.reason.unwrap().contains("source"));
+            }
+            _ => panic!("Expected terminal outcome"),
+        }
+    }
+
+    #[test]
+    fn dot_command_returns_ask() {
+        let ctx = test_context();
+        let cmd = simple_cmd(". file.sh");
+        let visitor = CodeExecutionVisitor;
+
+        let outcome = visitor.visit_simple_command(&ctx, &cmd);
+
+        match outcome {
+            VisitOutcome::Terminal { result, .. } => {
+                assert_eq!(result.decision, Decision::Ask);
+                assert!(result.reason.unwrap().contains("."));
+            }
+            _ => panic!("Expected terminal outcome"),
+        }
+    }
+
+    #[test]
+    fn bash_without_c_flag_continues() {
+        let ctx = test_context();
+        let cmd = simple_cmd("bash script.sh");
+        let visitor = CodeExecutionVisitor;
+
+        let outcome = visitor.visit_simple_command(&ctx, &cmd);
+
+        match outcome {
+            VisitOutcome::Continue => {
+                // Correctly continues to next visitor
+            }
+            _ => panic!("Expected continue outcome"),
+        }
+    }
+
+    #[test]
+    fn regular_command_continues() {
+        let ctx = test_context();
+        let cmd = simple_cmd("ls -la");
+        let visitor = CodeExecutionVisitor;
+
+        let outcome = visitor.visit_simple_command(&ctx, &cmd);
+
+        match outcome {
+            VisitOutcome::Continue => {
+                // Correctly continues
+            }
+            _ => panic!("Expected continue outcome"),
+        }
+    }
+
+    #[test]
+    fn eval_at_max_depth_continues() {
+        let ctx = VisitorContext {
+            config: test_context().config,
+            context: test_context().context,
+            env: &VarEnv::from_process_env(),
+            depth: MAX_EVAL_DEPTH,
+        };
+        let cmd = simple_cmd("eval echo hello");
+        let visitor = CodeExecutionVisitor;
+
+        let outcome = visitor.visit_simple_command(&ctx, &cmd);
+
+        match outcome {
+            VisitOutcome::Continue => {
+                // Correctly continues at max depth
+            }
+            _ => panic!("Expected continue outcome at max depth"),
+        }
+    }
+
+    #[test]
+    fn bash_c_at_max_depth_continues() {
+        let ctx = VisitorContext {
+            config: test_context().config,
+            context: test_context().context,
+            env: &VarEnv::from_process_env(),
+            depth: MAX_EVAL_DEPTH,
+        };
+        let cmd = simple_cmd("bash -c 'echo hello'");
+        let visitor = CodeExecutionVisitor;
+
+        let outcome = visitor.visit_simple_command(&ctx, &cmd);
+
+        match outcome {
+            VisitOutcome::Continue => {
+                // Correctly continues at max depth
+            }
+            _ => panic!("Expected continue outcome at max depth"),
+        }
+    }
+
+    #[test]
+    fn eval_concatenates_multiple_args() {
+        let ctx = test_context();
+        let cmd = simple_cmd("eval echo hello world");
+        let visitor = CodeExecutionVisitor;
+
+        let outcome = visitor.visit_simple_command(&ctx, &cmd);
+
+        match outcome {
+            VisitOutcome::Recurse { command, .. } => {
+                // The inner command should have multiple words
+                if let Command::Simple(sc) = command {
+                    assert_eq!(sc.words.len(), 3); // echo, hello, world
+                } else {
+                    panic!("Expected simple command");
+                }
+            }
+            _ => panic!("Expected recurse outcome"),
+        }
+    }
+}

@@ -79,3 +79,226 @@ impl CommandVisitor for ReadBuiltinVisitor {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::var_env::{VarEnv, VarState};
+    use may_i_core::Config;
+    use may_i_shell_parser::{self as parser, Command};
+
+    fn test_context() -> VisitorContext<'static> {
+        let config = Box::leak(Box::new(Config::default()));
+        let context = Box::leak(Box::new(may_i_core::ContextFacts::default()));
+        let env = Box::leak(Box::new(VarEnv::from_process_env()));
+        VisitorContext {
+            config,
+            context,
+            env,
+            depth: 0,
+        }
+    }
+
+    fn simple_cmd(cmd: &str) -> SimpleCommand {
+        match parser::parse(cmd) {
+            Command::Simple(sc) => sc,
+            _ => panic!("Expected simple command"),
+        }
+    }
+
+    #[test]
+    fn read_with_varname_sets_opaque() {
+        let ctx = test_context();
+        let cmd = simple_cmd("read varname");
+        let visitor = ReadBuiltinVisitor;
+
+        let outcome = visitor.visit_simple_command(&ctx, &cmd);
+
+        match outcome {
+            VisitOutcome::Terminal { env, result } => {
+                assert_eq!(result.decision, Decision::Allow);
+                let state = env.get("varname");
+                assert!(matches!(state, Some(VarState::Opaque)));
+            }
+            _ => panic!("Expected terminal outcome"),
+        }
+    }
+
+    #[test]
+    fn read_without_args_sets_reply() {
+        let ctx = test_context();
+        let cmd = simple_cmd("read");
+        let visitor = ReadBuiltinVisitor;
+
+        let outcome = visitor.visit_simple_command(&ctx, &cmd);
+
+        match outcome {
+            VisitOutcome::Terminal { env, .. } => {
+                let state = env.get("REPLY");
+                assert!(matches!(state, Some(VarState::Opaque)));
+            }
+            _ => panic!("Expected terminal outcome"),
+        }
+    }
+
+    #[test]
+    fn read_with_herestring_sets_known_value() {
+        let ctx = test_context();
+        let cmd = simple_cmd("read varname <<< 'hello world'");
+        let visitor = ReadBuiltinVisitor;
+
+        let outcome = visitor.visit_simple_command(&ctx, &cmd);
+
+        match outcome {
+            VisitOutcome::Terminal { env, .. } => {
+                let state = env.get("varname");
+                assert!(matches!(state, Some(VarState::Known(v)) if v == "hello world"));
+            }
+            _ => panic!("Expected terminal outcome"),
+        }
+    }
+
+    #[test]
+    fn readarray_sets_opaque() {
+        let ctx = test_context();
+        let cmd = simple_cmd("readarray arr");
+        let visitor = ReadBuiltinVisitor;
+
+        let outcome = visitor.visit_simple_command(&ctx, &cmd);
+
+        match outcome {
+            VisitOutcome::Terminal { env, .. } => {
+                let state = env.get("arr");
+                assert!(matches!(state, Some(VarState::Opaque)));
+            }
+            _ => panic!("Expected terminal outcome"),
+        }
+    }
+
+    #[test]
+    fn mapfile_sets_opaque() {
+        let ctx = test_context();
+        let cmd = simple_cmd("mapfile arr");
+        let visitor = ReadBuiltinVisitor;
+
+        let outcome = visitor.visit_simple_command(&ctx, &cmd);
+
+        match outcome {
+            VisitOutcome::Terminal { env, .. } => {
+                let state = env.get("arr");
+                assert!(matches!(state, Some(VarState::Opaque)));
+            }
+            _ => panic!("Expected terminal outcome"),
+        }
+    }
+
+    #[test]
+    fn read_with_flags_skips_flag_values() {
+        let ctx = test_context();
+        let cmd = simple_cmd("read -p 'prompt: ' -t 5 varname");
+        let visitor = ReadBuiltinVisitor;
+
+        let outcome = visitor.visit_simple_command(&ctx, &cmd);
+
+        match outcome {
+            VisitOutcome::Terminal { env, .. } => {
+                // Should only set varname, not -p or -t values
+                let state = env.get("varname");
+                assert!(matches!(state, Some(VarState::Opaque)));
+                assert!(env.get("prompt:").is_none());
+                assert!(env.get("5").is_none());
+            }
+            _ => panic!("Expected terminal outcome"),
+        }
+    }
+
+    #[test]
+    fn readarray_with_flags_skips_flag_values() {
+        let ctx = test_context();
+        let cmd = simple_cmd("readarray -d ':' -n 5 arr");
+        let visitor = ReadBuiltinVisitor;
+
+        let outcome = visitor.visit_simple_command(&ctx, &cmd);
+
+        match outcome {
+            VisitOutcome::Terminal { env, .. } => {
+                // Should only set arr, not -d or -n values
+                let state = env.get("arr");
+                assert!(matches!(state, Some(VarState::Opaque)));
+                assert!(env.get(":").is_none());
+                assert!(env.get("5").is_none());
+            }
+            _ => panic!("Expected terminal outcome"),
+        }
+    }
+
+    #[test]
+    fn non_read_builtin_continues() {
+        let ctx = test_context();
+        let cmd = simple_cmd("echo hello");
+        let visitor = ReadBuiltinVisitor;
+
+        let outcome = visitor.visit_simple_command(&ctx, &cmd);
+
+        match outcome {
+            VisitOutcome::Continue => {
+                // Correctly continues
+            }
+            _ => panic!("Expected continue outcome"),
+        }
+    }
+
+    #[test]
+    fn read_with_multiple_vars_sets_all_opaque() {
+        let ctx = test_context();
+        let cmd = simple_cmd("read var1 var2 var3");
+        let visitor = ReadBuiltinVisitor;
+
+        let outcome = visitor.visit_simple_command(&ctx, &cmd);
+
+        match outcome {
+            VisitOutcome::Terminal { env, .. } => {
+                assert!(matches!(env.get("var1"), Some(VarState::Opaque)));
+                assert!(matches!(env.get("var2"), Some(VarState::Opaque)));
+                assert!(matches!(env.get("var3"), Some(VarState::Opaque)));
+            }
+            _ => panic!("Expected terminal outcome"),
+        }
+    }
+
+    #[test]
+    fn read_with_herestring_and_multiple_vars_all_opaque() {
+        let ctx = test_context();
+        let cmd = simple_cmd("read var1 var2 <<< 'hello world'");
+        let visitor = ReadBuiltinVisitor;
+
+        let outcome = visitor.visit_simple_command(&ctx, &cmd);
+
+        match outcome {
+            VisitOutcome::Terminal { env, .. } => {
+                // With multiple vars, all should be opaque even with herestring
+                assert!(matches!(env.get("var1"), Some(VarState::Opaque)));
+                assert!(matches!(env.get("var2"), Some(VarState::Opaque)));
+            }
+            _ => panic!("Expected terminal outcome"),
+        }
+    }
+
+    #[test]
+    fn mapfile_with_all_flag_types() {
+        let ctx = test_context();
+        // Test all flag types that take arguments for mapfile
+        let cmd = simple_cmd("mapfile -d ':' -n 5 -O 0 -t -u 0 -C cmd -c 1 arr");
+        let visitor = ReadBuiltinVisitor;
+
+        let outcome = visitor.visit_simple_command(&ctx, &cmd);
+
+        match outcome {
+            VisitOutcome::Terminal { env, .. } => {
+                // Should only set arr
+                assert!(matches!(env.get("arr"), Some(VarState::Opaque)));
+            }
+            _ => panic!("Expected terminal outcome"),
+        }
+    }
+}

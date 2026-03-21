@@ -35,6 +35,7 @@ pub(crate) fn dynamic_ask(dynamic: &[String], context: &str) -> EvalResult {
 }
 
 /// Outcome of a visitor inspecting a resolved simple command.
+#[derive(Debug)]
 pub(crate) enum VisitOutcome {
     /// Terminal: return this result, skip remaining visitors.
     /// The `env` may differ from the input (e.g. `read` builtin updates variables).

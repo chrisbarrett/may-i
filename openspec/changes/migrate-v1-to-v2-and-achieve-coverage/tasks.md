@@ -35,9 +35,9 @@
 - [x] 5.1 Add tests for `crates/engine/src/v2/eval.rs` uncovered lines
 - [x] 5.2 Add tests for `crates/engine/src/lib.rs` AstWalker and helpers (+49 tests)
 - [x] 5.3 Add tests for `crates/engine/src/var_env.rs` (covered via lib.rs tests)
-- [ ] 5.4 Add tests for visitor modules in `crates/engine/src/visitors/` (code_execution, read_builtin, wrapper_unwrap have low coverage)
-- [ ] 5.5 Add tests for `crates/engine/src/check.rs` (13 uncovered lines)
-- [ ] 5.6 Add tests for `crates/engine/src/v2/trace.rs` (26 uncovered lines)
+- [x] 5.4 Add tests for visitor modules in `crates/engine/src/visitors/` (code_execution, read_builtin, wrapper_unwrap have low coverage)
+- [x] 5.5 Add tests for `crates/engine/src/check.rs` (13 uncovered lines)
+- [x] 5.6 Add tests for `crates/engine/src/v2/trace.rs` (26 uncovered lines)
 - [ ] 5.7 Run coverage and verify engine crate ≥90%
 
 ## 6. Config Test Coverage (CURRENT: ~76%, TARGET: 90%)

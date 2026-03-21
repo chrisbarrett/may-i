@@ -274,4 +274,251 @@ mod tests {
         assert_eq!(parent.children.len(), 1);
         assert_eq!(parent.result, PredicateResult::Match);
     }
+
+    #[test]
+    fn trace_builder_add_recursive_evaluation() {
+        let mut builder = TraceBuilder::new();
+        let result = EvalResult::new(Decision::Allow, Some("allowed".into()));
+        builder.add_recursive_evaluation("echo".into(), vec!["hello".into()], 1, result, vec![]);
+
+        let trace = builder.build();
+        assert_eq!(trace.len(), 1);
+        match &trace[0] {
+            TraceEntry::RecursiveEvaluation {
+                command,
+                args,
+                depth,
+                ..
+            } => {
+                assert_eq!(command, "echo");
+                assert_eq!(args, &["hello"]);
+                assert_eq!(*depth, 1);
+            }
+            _ => panic!("Expected RecursiveEvaluation"),
+        }
+    }
+
+    #[test]
+    fn trace_builder_add_depth_limit_exceeded() {
+        let mut builder = TraceBuilder::new();
+        builder.add_depth_limit_exceeded(10);
+
+        let trace = builder.build();
+        assert_eq!(trace.len(), 1);
+        match &trace[0] {
+            TraceEntry::DepthLimitExceeded { limit } => {
+                assert_eq!(*limit, 10);
+            }
+            _ => panic!("Expected DepthLimitExceeded"),
+        }
+    }
+
+    #[test]
+    fn trace_builder_inspection_methods() {
+        let mut builder = TraceBuilder::new();
+        assert!(builder.is_empty());
+
+        builder.add_decision(Decision::Allow, None);
+        assert!(!builder.is_empty());
+        assert_eq!(builder.entries().len(), 1);
+    }
+
+    #[test]
+    fn effect_trace_terminal() {
+        let trace = EffectTrace::Terminal {
+            effect: Effect::Allow(None),
+            decision: Decision::Allow,
+            reason: Some("test".into()),
+        };
+
+        match trace {
+            EffectTrace::Terminal {
+                effect,
+                decision,
+                reason,
+            } => {
+                assert!(matches!(effect, Effect::Allow(None)));
+                assert_eq!(decision, Decision::Allow);
+                assert_eq!(reason, Some("test".into()));
+            }
+            _ => panic!("Expected Terminal"),
+        }
+    }
+
+    #[test]
+    fn effect_trace_recursive() {
+        let result = EvalResult::new(Decision::Deny, Some("denied".into()));
+        let trace = EffectTrace::Recursive {
+            pattern: ArgPattern::exact(vec![]),
+            command: "ls".into(),
+            args: vec!["-la".into()],
+            depth: 2,
+            result,
+            nested: vec![],
+        };
+
+        match trace {
+            EffectTrace::Recursive {
+                command,
+                args,
+                depth,
+                ..
+            } => {
+                assert_eq!(command, "ls");
+                assert_eq!(args, &["-la"]);
+                assert_eq!(depth, 2);
+            }
+            _ => panic!("Expected Recursive"),
+        }
+    }
+
+    #[test]
+    fn effect_trace_case() {
+        let trace = EffectTrace::Case {
+            branches: vec![],
+            fallback: None,
+            decision: Decision::Ask,
+            reason: Some("asked".into()),
+        };
+
+        match trace {
+            EffectTrace::Case {
+                decision, reason, ..
+            } => {
+                assert_eq!(decision, Decision::Ask);
+                assert_eq!(reason, Some("asked".into()));
+            }
+            _ => panic!("Expected Case"),
+        }
+    }
+
+    #[test]
+    fn effect_trace_when() {
+        let trace = EffectTrace::When {
+            predicate: Predicate::has_presence(":test"),
+            predicate_result: PredicateResult::Match,
+            effect: Box::new(EffectTrace::Terminal {
+                effect: Effect::Allow(None),
+                decision: Decision::Allow,
+                reason: None,
+            }),
+            decision: Decision::Allow,
+            reason: None,
+        };
+
+        match trace {
+            EffectTrace::When {
+                predicate_result,
+                decision,
+                ..
+            } => {
+                assert_eq!(predicate_result, PredicateResult::Match);
+                assert_eq!(decision, Decision::Allow);
+            }
+            _ => panic!("Expected When"),
+        }
+    }
+
+    #[test]
+    fn effect_trace_unless() {
+        let trace = EffectTrace::Unless {
+            predicate: Predicate::has_presence(":test"),
+            predicate_result: PredicateResult::NoMatch,
+            effect: Box::new(EffectTrace::Terminal {
+                effect: Effect::Deny(Some("test".into())),
+                decision: Decision::Deny,
+                reason: Some("denied".into()),
+            }),
+            decision: Decision::Deny,
+            reason: Some("denied".into()),
+        };
+
+        match trace {
+            EffectTrace::Unless {
+                predicate_result,
+                decision,
+                ..
+            } => {
+                assert_eq!(predicate_result, PredicateResult::NoMatch);
+                assert_eq!(decision, Decision::Deny);
+            }
+            _ => panic!("Expected Unless"),
+        }
+    }
+
+    #[test]
+    fn effect_trace_if() {
+        let trace = EffectTrace::If {
+            predicate: Predicate::has_presence(":test"),
+            predicate_result: PredicateResult::Match,
+            then_effect: Box::new(EffectTrace::Terminal {
+                effect: Effect::Allow(None),
+                decision: Decision::Allow,
+                reason: None,
+            }),
+            else_effect: Some(Box::new(EffectTrace::Terminal {
+                effect: Effect::Deny(Some("else".into())),
+                decision: Decision::Deny,
+                reason: Some("else".into()),
+            })),
+            decision: Decision::Allow,
+            reason: None,
+        };
+
+        match trace {
+            EffectTrace::If {
+                predicate_result,
+                else_effect,
+                decision,
+                ..
+            } => {
+                assert_eq!(predicate_result, PredicateResult::Match);
+                assert!(else_effect.is_some());
+                assert_eq!(decision, Decision::Allow);
+            }
+            _ => panic!("Expected If"),
+        }
+    }
+
+    #[test]
+    fn trace_entry_decision() {
+        let entry = TraceEntry::Decision {
+            decision: Decision::Deny,
+            reason: Some("reason".into()),
+        };
+
+        match entry {
+            TraceEntry::Decision { decision, reason } => {
+                assert_eq!(decision, Decision::Deny);
+                assert_eq!(reason, Some("reason".into()));
+            }
+            _ => panic!("Expected Decision"),
+        }
+    }
+
+    #[test]
+    fn trace_entry_default_ask() {
+        let entry = TraceEntry::DefaultAsk {
+            reason: "no rules matched".into(),
+        };
+
+        match entry {
+            TraceEntry::DefaultAsk { reason } => {
+                assert_eq!(reason, "no rules matched");
+            }
+            _ => panic!("Expected DefaultAsk"),
+        }
+    }
+
+    #[test]
+    fn to_trace_result_converts_match() {
+        let result = to_trace_result(crate::v2::eval::PredicateResult::Match);
+        assert_eq!(result, PredicateResult::Match);
+    }
+
+    #[test]
+    fn to_trace_result_converts_no_match() {
+        let result = to_trace_result(crate::v2::eval::PredicateResult::NoMatch);
+        assert_eq!(result, PredicateResult::NoMatch);
+    }
 }
