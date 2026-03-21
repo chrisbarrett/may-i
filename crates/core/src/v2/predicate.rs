@@ -81,3 +81,74 @@ impl Predicate {
 
 /// A predicate with source span tracking.
 pub type SpannedPredicate = crate::v2::ast::Spanned<Predicate>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{FactPattern, FactQuery};
+
+    #[test]
+    fn predicate_has_presence_creates_correctly() {
+        let pred = Predicate::has_presence(":via/ssh");
+        assert!(matches!(
+            pred,
+            Predicate::Has(FactQuery::Presence { key, vector_syntax: false })
+            if key == ":via/ssh"
+        ));
+    }
+
+    #[test]
+    fn predicate_has_value_creates_correctly() {
+        let pred = Predicate::has_value(":opencode/agent", "build");
+        assert!(matches!(
+            pred,
+            Predicate::Has(FactQuery::Value { key, pattern: FactPattern::Literal(val) })
+            if key == ":opencode/agent" && val == "build"
+        ));
+    }
+
+    #[test]
+    fn predicate_arg_creates_correctly() {
+        use crate::v2::pattern::ArgPattern;
+        let pattern = ArgPattern::positional(vec![]);
+        let pred = Predicate::arg(pattern);
+        assert!(matches!(pred, Predicate::Arg(ArgPattern::Positional(_))));
+    }
+
+    #[test]
+    fn predicate_and_with_single_returns_unwrapped() {
+        let pred = Predicate::has_presence("test");
+        let result = Predicate::and(vec![pred]);
+        assert!(matches!(result, Predicate::Has(_)));
+    }
+
+    #[test]
+    fn predicate_and_with_multiple_creates_and() {
+        let preds = vec![Predicate::has_presence("a"), Predicate::has_presence("b")];
+        let result = Predicate::and(preds);
+        assert!(matches!(result, Predicate::And(children) if children.len() == 2));
+    }
+
+    #[test]
+    fn predicate_or_with_single_returns_unwrapped() {
+        let pred = Predicate::has_presence("test");
+        let result = Predicate::or(vec![pred]);
+        assert!(matches!(result, Predicate::Has(_)));
+    }
+
+    #[test]
+    fn predicate_or_with_multiple_creates_or() {
+        let preds = vec![Predicate::has_presence("a"), Predicate::has_presence("b")];
+        let result = Predicate::or(preds);
+        assert!(matches!(result, Predicate::Or(children) if children.len() == 2));
+    }
+
+    #[test]
+    fn predicate_negate_creates_not() {
+        let inner = Predicate::has_presence("test");
+        let result = Predicate::negate(inner);
+        assert!(
+            matches!(result, Predicate::Not(boxed) if matches!(boxed.as_ref(), Predicate::Has(_)))
+        );
+    }
+}

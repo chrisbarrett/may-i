@@ -153,3 +153,143 @@ impl<A> Doc<A> {
         alg(reduced, &self.ann)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn docf_map_transforms_children() {
+        let docf = DocF::List(vec![1, 2, 3]);
+        let mapped = docf.map(|n| n * 2);
+        assert!(matches!(mapped, DocF::List(v) if v == vec![2, 4, 6]));
+    }
+
+    #[test]
+    fn docf_map_preserves_atom() {
+        let docf = DocF::Atom("test".into());
+        let mapped = docf.map(|n: String| n.to_uppercase());
+        assert!(matches!(mapped, DocF::Atom(s) if s == "test"));
+    }
+
+    #[test]
+    fn docf_map_ref_by_reference() {
+        let docf: DocF<&str> = DocF::Vector(vec!["a", "b"]);
+        let mapped: DocF<String> = docf.map_ref(|s| s.to_string());
+        assert!(matches!(mapped, DocF::Vector(v) if v == vec!["a".to_string(), "b".to_string()]));
+    }
+
+    #[test]
+    fn docf_as_atom_returns_some_for_atom() {
+        let docf: DocF<Doc> = DocF::Atom("hello".into());
+        assert_eq!(docf.as_atom(), Some("hello"));
+    }
+
+    #[test]
+    fn docf_as_atom_returns_none_for_list() {
+        let docf = DocF::List::<Doc>(vec![]);
+        assert_eq!(docf.as_atom(), None);
+    }
+
+    #[test]
+    fn docf_children_returns_some_for_list() {
+        let children = vec![Doc::atom("a"), Doc::atom("b")];
+        let docf = DocF::List(children);
+        assert_eq!(docf.children().map(|c| c.len()), Some(2));
+    }
+
+    #[test]
+    fn docf_children_returns_some_for_vector() {
+        let children = vec![Doc::atom("x")];
+        let docf = DocF::Vector(children);
+        assert_eq!(docf.children().map(|c| c.len()), Some(1));
+    }
+
+    #[test]
+    fn docf_children_returns_none_for_atom() {
+        let docf: DocF<Doc> = DocF::Atom("test".into());
+        assert!(docf.children().is_none());
+    }
+
+    #[test]
+    fn doc_atom_creates_unannotated() {
+        let doc = Doc::atom("test");
+        assert!(matches!(doc.node, DocF::Atom(s) if s == "test"));
+        assert_eq!(doc.layout, LayoutHint::Auto);
+        assert!(!doc.dimmed);
+    }
+
+    #[test]
+    fn doc_list_creates_unannotated() {
+        let children = vec![Doc::atom("a"), Doc::atom("b")];
+        let doc = Doc::list(children);
+        assert!(matches!(doc.node, DocF::List(cs) if cs.len() == 2));
+    }
+
+    #[test]
+    fn doc_vector_creates_unannotated() {
+        let children = vec![Doc::atom("x")];
+        let doc = Doc::vector(children);
+        assert!(matches!(doc.node, DocF::Vector(cs) if cs.len() == 1));
+    }
+
+    #[test]
+    fn doc_broken_list_sets_layout() {
+        let doc = Doc::broken_list(vec![]);
+        assert_eq!(doc.layout, LayoutHint::AlwaysBreak);
+    }
+
+    #[test]
+    fn doc_as_atom_delegates_to_node() {
+        let doc = Doc::atom("hello");
+        assert_eq!(doc.as_atom(), Some("hello"));
+    }
+
+    #[test]
+    fn doc_children_delegates_to_node() {
+        let doc = Doc::list(vec![Doc::atom("a"), Doc::atom("b")]);
+        assert_eq!(doc.children().map(|c| c.len()), Some(2));
+    }
+
+    #[test]
+    fn doc_head_atom_returns_first_atom() {
+        let doc = Doc::list(vec![Doc::atom("head"), Doc::atom("tail")]);
+        assert_eq!(doc.head_atom(), Some("head"));
+    }
+
+    #[test]
+    fn doc_head_atom_returns_none_for_empty_list() {
+        let doc = Doc::list(vec![]);
+        assert_eq!(doc.head_atom(), None);
+    }
+
+    #[test]
+    fn doc_head_atom_returns_none_for_atom() {
+        let doc = Doc::atom("just-atom");
+        assert_eq!(doc.head_atom(), None);
+    }
+
+    #[test]
+    fn doc_map_transforms_annotation() {
+        let doc = Doc {
+            ann: 42,
+            node: DocF::Atom("test".into()),
+            layout: LayoutHint::Auto,
+            dimmed: false,
+        };
+        let mapped = doc.map(&|n| n.to_string());
+        assert_eq!(mapped.ann, "42");
+    }
+
+    #[test]
+    fn doc_fold_reduces_bottom_up() {
+        // Count total atoms in tree
+        let doc = Doc::list(vec![Doc::atom("a"), Doc::atom("b"), Doc::atom("c")]);
+        let count = doc.fold(&|node, _ann| match node {
+            DocF::Atom(_) => 1,
+            DocF::List(cs) => cs.iter().sum::<i32>(),
+            DocF::Vector(cs) => cs.iter().sum::<i32>(),
+        });
+        assert_eq!(count, 3);
+    }
+}

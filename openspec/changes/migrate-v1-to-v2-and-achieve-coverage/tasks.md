@@ -56,11 +56,11 @@
 ## 8. Core Test Coverage (CURRENT: 74%, TARGET: 90%)
 
 - [ ] 8.1 Add tests for `crates/core/src/types.rs` uncovered lines
-- [ ] 8.2 Add tests for `crates/core/src/v2/ast.rs`
-- [ ] 8.3 Add tests for `crates/core/src/v2/pattern.rs`
-- [ ] 8.4 Add tests for `crates/core/src/v2/predicate.rs`
-- [ ] 8.5 Add tests for `crates/core/src/doc.rs`
-- [ ] 8.6 Run coverage and verify core crate ≥90%
+- [x] 8.2 Add tests for `crates/core/src/v2/ast.rs`
+- [x] 8.3 Add tests for `crates/core/src/v2/pattern.rs`
+- [x] 8.4 Add tests for `crates/core/src/v2/predicate.rs`
+- [x] 8.5 Add tests for `crates/core/src/doc.rs`
+- [ ] 8.6 Run coverage and verify core crate ≥90% (v2/ module at 100%, types.rs still needs work)
 
 ## 9. Sexpr Test Coverage (CURRENT: 89%, TARGET: 90%)
 

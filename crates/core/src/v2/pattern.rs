@@ -112,3 +112,85 @@ impl ArgPattern {
         ArgPattern::At { position, pattern }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::Expr;
+
+    #[test]
+    fn command_pattern_literal_matches_exactly() {
+        let pattern = CommandPattern::Literal("git".into());
+        assert!(pattern.is_match("git"));
+        assert!(!pattern.is_match("hub"));
+    }
+
+    #[test]
+    fn command_pattern_regex_matches_pattern() {
+        let pattern = CommandPattern::Regex(regex::Regex::new("^git.*").unwrap());
+        assert!(pattern.is_match("git"));
+        assert!(pattern.is_match("github"));
+        assert!(!pattern.is_match("hub"));
+    }
+
+    #[test]
+    fn command_pattern_or_matches_any() {
+        let pattern = CommandPattern::Or(vec![
+            CommandPattern::Literal("git".into()),
+            CommandPattern::Literal("hub".into()),
+        ]);
+        assert!(pattern.is_match("git"));
+        assert!(pattern.is_match("hub"));
+        assert!(!pattern.is_match("svn"));
+    }
+
+    #[test]
+    fn positional_arg_one_creates_required() {
+        let arg = PositionalArg::one(Expr::Literal("test".into()));
+        assert!(matches!(arg.quantifier, Quantifier::One));
+        assert!(!arg.recursive);
+    }
+
+    #[test]
+    fn positional_arg_with_quantifier_sets_correctly() {
+        let arg = PositionalArg::with_quantifier(Expr::Wildcard, Quantifier::Optional);
+        assert!(matches!(arg.quantifier, Quantifier::Optional));
+    }
+
+    #[test]
+    fn positional_arg_recursive_marks_correctly() {
+        let arg = PositionalArg::one(Expr::Wildcard).recursive();
+        assert!(arg.recursive);
+    }
+
+    #[test]
+    fn arg_pattern_positional_creates_correctly() {
+        let pattern =
+            ArgPattern::positional(vec![Expr::Literal("a".into()), Expr::Literal("b".into())]);
+        assert!(matches!(pattern, ArgPattern::Positional(args) if args.len() == 2));
+    }
+
+    #[test]
+    fn arg_pattern_exact_creates_correctly() {
+        let pattern = ArgPattern::exact(vec![Expr::Literal("x".into())]);
+        assert!(matches!(pattern, ArgPattern::Exact(args) if args.len() == 1));
+    }
+
+    #[test]
+    fn arg_pattern_anywhere_creates_correctly() {
+        let pattern = ArgPattern::anywhere(vec![Expr::Literal("--flag".into())]);
+        assert!(matches!(pattern, ArgPattern::Anywhere(exprs) if exprs.len() == 1));
+    }
+
+    #[test]
+    fn arg_pattern_forbidden_creates_correctly() {
+        let pattern = ArgPattern::forbidden(vec![Expr::Literal("--dangerous".into())]);
+        assert!(matches!(pattern, ArgPattern::Forbidden(exprs) if exprs.len() == 1));
+    }
+
+    #[test]
+    fn arg_pattern_at_creates_correctly() {
+        let pattern = ArgPattern::at(2, Expr::Literal("file.txt".into()));
+        assert!(matches!(pattern, ArgPattern::At { position: 2, .. }));
+    }
+}

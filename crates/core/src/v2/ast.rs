@@ -221,3 +221,145 @@ pub struct Check {
     /// Source span for error reporting.
     pub span: Span,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::span::Span;
+    use crate::v2::pattern::{ArgPattern, CommandPattern};
+    use crate::v2::predicate::Predicate;
+
+    #[test]
+    fn spanned_new_creates_correctly() {
+        let span = Span { start: 0, end: 5 };
+        let spanned = Spanned::new("test", span);
+        assert_eq!(spanned.value, "test");
+        assert_eq!(spanned.span, span);
+    }
+
+    #[test]
+    fn spanned_map_preserves_span() {
+        let span = Span { start: 0, end: 5 };
+        let spanned = Spanned::new(42, span);
+        let mapped = spanned.map(|n| n.to_string());
+        assert_eq!(mapped.value, "42");
+        assert_eq!(mapped.span, span);
+    }
+
+    #[test]
+    fn effect_allow_creates_correctly() {
+        let effect = Effect::allow(Some("reason".into()));
+        assert!(matches!(effect, Effect::Allow(Some(r)) if r == "reason"));
+    }
+
+    #[test]
+    fn effect_ask_creates_correctly() {
+        let effect = Effect::ask(None);
+        assert!(matches!(effect, Effect::Ask(None)));
+    }
+
+    #[test]
+    fn effect_deny_creates_correctly() {
+        let effect = Effect::deny(Some("blocked".into()));
+        assert!(matches!(effect, Effect::Deny(Some(r)) if r == "blocked"));
+    }
+
+    #[test]
+    fn effect_evaluate_creates_correctly() {
+        let pattern = ArgPattern::positional(vec![]);
+        let effect = Effect::evaluate(pattern.clone());
+        assert!(matches!(effect, Effect::Evaluate(p) if matches!(p, ArgPattern::Positional(_))));
+    }
+
+    #[test]
+    fn effect_terminal_decision_returns_correct_value() {
+        assert_eq!(
+            Effect::Allow(None).terminal_decision(),
+            Some(Decision::Allow)
+        );
+        assert_eq!(Effect::Ask(None).terminal_decision(), Some(Decision::Ask));
+        assert_eq!(Effect::Deny(None).terminal_decision(), Some(Decision::Deny));
+        assert_eq!(
+            Effect::Evaluate(ArgPattern::positional(vec![])).terminal_decision(),
+            None
+        );
+    }
+
+    #[test]
+    fn effect_is_terminal_returns_correct_value() {
+        assert!(Effect::Allow(None).is_terminal());
+        assert!(Effect::Ask(None).is_terminal());
+        assert!(Effect::Deny(None).is_terminal());
+        assert!(!Effect::Evaluate(ArgPattern::positional(vec![])).is_terminal());
+    }
+
+    #[test]
+    fn effect_is_sugar_returns_correct_value() {
+        let span = Span { start: 0, end: 1 };
+        let pred = Spanned::new(Predicate::has_presence("test"), span);
+        let effect = Spanned::new(Effect::Allow(None), span);
+
+        assert!(
+            Effect::When {
+                predicate: pred.clone(),
+                effect: Box::new(effect.clone()),
+            }
+            .is_sugar()
+        );
+
+        assert!(
+            Effect::Unless {
+                predicate: pred.clone(),
+                effect: Box::new(effect.clone()),
+            }
+            .is_sugar()
+        );
+
+        assert!(
+            Effect::If {
+                predicate: pred.clone(),
+                then_effect: Box::new(effect.clone()),
+                else_effect: None,
+            }
+            .is_sugar()
+        );
+
+        assert!(!Effect::Allow(None).is_sugar());
+    }
+
+    #[test]
+    fn define_new_creates_correctly() {
+        let span = Span { start: 0, end: 10 };
+        let pred = Spanned::new(Predicate::has_presence("test"), span);
+        let define = Define::new("my-pred", pred, span);
+
+        assert_eq!(define.name, "my-pred");
+        assert_eq!(define.span, span);
+    }
+
+    #[test]
+    fn rule_new_creates_correctly() {
+        let span = Span { start: 0, end: 20 };
+        let cmd = Spanned::new(CommandPattern::Literal("git".into()), span);
+        let effect = Spanned::new(Effect::Allow(None), span);
+        let rule = Rule::new(cmd, vec![], effect, span);
+
+        assert!(matches!(rule.command.value, CommandPattern::Literal(s) if s == "git"));
+        assert_eq!(rule.span, span);
+    }
+
+    #[test]
+    fn security_config_default_is_empty() {
+        let config = SecurityConfig::default();
+        assert!(config.safe_env_vars.is_empty());
+    }
+
+    #[test]
+    fn config_default_is_empty() {
+        let config = Config::default();
+        assert!(config.defines.is_empty());
+        assert!(config.rules.is_empty());
+        assert!(config.checks.is_empty());
+        assert!(config.security.safe_env_vars.is_empty());
+    }
+}
