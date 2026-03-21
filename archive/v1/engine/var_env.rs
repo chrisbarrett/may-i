@@ -34,6 +34,14 @@ impl VarEnv {
         }
     }
 
+    #[cfg(test)]
+    pub fn empty() -> Self {
+        VarEnv {
+            vars: std::collections::HashMap::new(),
+            fns: std::collections::HashMap::new(),
+        }
+    }
+
     pub fn get(&self, name: &str) -> Option<&VarState> {
         self.vars.get(name)
     }

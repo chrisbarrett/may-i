@@ -5,10 +5,10 @@ use std::io::Write;
 use tempfile::NamedTempFile;
 
 const TEST_CONFIG: &str = r#"
-(rule (command "echo")
-      (context (and (has :client/opencode)
-                    (has [:opencode/agent "plan"])))
-      (effect :allow "OpenCode plan agent"))
+(rule "echo"
+  (and (has :client/opencode)
+       (has [:opencode/agent "plan"]))
+  (effect :allow "OpenCode plan agent"))
 "#;
 
 fn write_config() -> NamedTempFile {
@@ -21,6 +21,7 @@ fn write_config() -> NamedTempFile {
 fn may_i(config: &NamedTempFile) -> Command {
     let mut cmd = cargo_bin_cmd!("may-i");
     cmd.env("MAYI_CONFIG", config.path());
+    cmd.arg("--v2");
     cmd
 }
 

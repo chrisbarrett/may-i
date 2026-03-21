@@ -1,6 +1,6 @@
-// Rule engine — supports both v1 and v2 evaluators
-// v1: Evaluates parsed commands against legacy rules with wrappers
-// v2: Evaluates against unified rule DSL with recursive evaluation
+// Rule engine — R7, R8, R9
+// Evaluates parsed commands against rules, handles wrappers and flag expansion.
+// Walks the AST with a VarEnv to track variable safety through shell constructs.
 
 pub(crate) mod annotate;
 pub(crate) mod check;
@@ -18,12 +18,6 @@ use may_i_shell_parser::{self as parser, Command, SimpleCommand, Word};
 use var_env::{VarEnv, VarState, resolve_simple_command_with_var_env, resolve_word_with_var_env};
 
 pub use check::{CheckResult, run_checks};
-
-// Re-export v2 items
-pub use v2::{
-    DEFAULT_RECURSION_LIMIT, EvalContext, Evaluator, PredicateResult, TraceBuilder, TraceEntry,
-    evaluate_v2,
-};
 
 /// Result of walking an AST node: the evaluation result and the updated VarEnv.
 struct WalkResult {
@@ -502,6 +496,18 @@ pub fn evaluate_with_context(input: &str, config: &Config, context: &ContextFact
     AstWalker::new(config).walk(&ast, &env, context).result
 }
 
+/// Evaluate with a specific VarEnv (for testing).
+#[cfg(test)]
+fn evaluate_with_env(
+    input: &str,
+    config: &Config,
+    env: &VarEnv,
+    context: &ContextFacts,
+) -> EvalResult {
+    let ast = parser::parse(input);
+    AstWalker::new(config).walk(&ast, env, context).result
+}
+
 // ── Standalone helpers ─────────────────────────────────────────────
 
 /// Check if an arithmetic expression is safe: all variable references resolve to safe vars.
@@ -549,3 +555,6 @@ fn is_arithmetic_safe(expr: &str, env: &VarEnv) -> bool {
     }
     true
 }
+
+#[cfg(test)]
+mod engine_tests;

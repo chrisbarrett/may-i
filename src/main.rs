@@ -7,6 +7,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 mod cmd_check;
 mod cmd_claude_code_hook;
 mod cmd_eval;
+mod cmd_migrate;
 mod cmd_parse;
 mod output;
 mod runtime_facts;
@@ -21,6 +22,10 @@ struct Cli {
     /// Output as JSON
     #[arg(long, global = true)]
     json: bool,
+
+    /// Use v2 unified rule DSL (experimental)
+    #[arg(long, global = true)]
+    v2: bool,
 
     /// Path to config file (overrides $MAYI_CONFIG and default location)
     #[arg(long, global = true, value_name = "FILE")]
@@ -52,6 +57,21 @@ enum Command {
         #[arg(short = 'f', long = "file")]
         file: Option<String>,
     },
+    /// Migrate v1 config to v2 syntax
+    Migrate {
+        /// Output file (defaults to stdout, use same as input for in-place)
+        #[arg(short, long)]
+        output: Option<String>,
+        /// Show what would be changed without writing
+        #[arg(long)]
+        dry_run: bool,
+        /// Show diff of changes
+        #[arg(long)]
+        diff: bool,
+        /// Skip validation of migrated output
+        #[arg(long)]
+        no_validate: bool,
+    },
 }
 
 fn main() {
@@ -74,12 +94,24 @@ fn run() -> miette::Result<()> {
 
     match cli.command {
         Some(Command::Eval { command, facts }) => {
-            cmd_eval::cmd_eval(&command, &facts, cli.json, cli.config.as_deref())?
+            cmd_eval::cmd_eval(&command, &facts, cli.json, cli.v2, cli.config.as_deref())?
         }
         Some(Command::Check { verbose }) => {
-            cmd_check::cmd_check(cli.json, verbose, cli.config.as_deref())?
+            cmd_check::cmd_check(cli.json, verbose, cli.v2, cli.config.as_deref())?
         }
         Some(Command::Parse { command, file }) => cmd_parse::cmd_parse(command, file, cli.json)?,
+        Some(Command::Migrate {
+            output,
+            dry_run,
+            diff,
+            no_validate,
+        }) => cmd_migrate::cmd_migrate(
+            cli.config.as_deref(),
+            output.as_deref(),
+            dry_run,
+            diff,
+            no_validate,
+        )?,
         None => {
             if std::io::stdin().is_terminal() {
                 Cli::command()
@@ -87,7 +119,7 @@ fn run() -> miette::Result<()> {
                     .map_err(|e| miette::miette!("Failed to print help: {e}"))?;
                 println!();
             } else {
-                cmd_claude_code_hook::cmd_claude_code_hook(cli.config.as_deref())?;
+                cmd_claude_code_hook::cmd_claude_code_hook(cli.v2, cli.config.as_deref())?;
             }
         }
     }

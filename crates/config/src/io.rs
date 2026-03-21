@@ -5,6 +5,15 @@ use std::path::{Path, PathBuf};
 use may_i_core::Config;
 use miette::{Context, IntoDiagnostic};
 
+/// Load and parse a v2 config file at the given path.
+pub fn load_v2(path: &Path) -> miette::Result<may_i_core::v2::ast::Config> {
+    let content = std::fs::read_to_string(path)
+        .into_diagnostic()
+        .wrap_err_with(|| format!("Failed to read {}", path.display()))?;
+
+    crate::v2::parse_config(&content).map_err(|e| miette::miette!("{e}"))
+}
+
 /// Resolve the config file path.
 ///
 /// If `override_path` is provided it takes precedence, then `$MAYI_CONFIG`,
@@ -38,14 +47,15 @@ pub fn resolve_path(override_path: Option<&Path>) -> miette::Result<PathBuf> {
     }
 }
 
-/// Load and parse a config file at the given path.
-pub fn load(path: &Path) -> miette::Result<Config> {
-    let content = std::fs::read_to_string(path)
-        .into_diagnostic()
-        .wrap_err_with(|| format!("Failed to read {}", path.display()))?;
-
-    let filename = path.display().to_string();
-    crate::parse::parse(&content, &filename).map_err(|e| (*e).into())
+/// Load and parse a legacy v1 config file at the given path.
+///
+/// **DEPRECATED**: v1 configuration format is no longer supported.
+/// Use `load_v2` for new configs or run `may-i migrate` to convert.
+pub fn load(_path: &Path) -> miette::Result<Config> {
+    miette::bail!(
+        "v1 configuration format is no longer supported. \
+         Run `may-i migrate <config-file>` to convert to v2 format."
+    )
 }
 
 /// Find an existing config file: `$MAYI_CONFIG` then XDG/default.

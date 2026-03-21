@@ -348,24 +348,52 @@ pub fn cmd_eval(
     command: &str,
     raw_facts: &[String],
     json_mode: bool,
+    use_v2: bool,
     config_path: Option<&std::path::Path>,
 ) -> miette::Result<()> {
     let config_file = config::resolve_path(config_path)?;
-    let config = config::load(&config_file)?;
     let context = parse_cli_facts(raw_facts)?;
 
-    // Build the report
-    let report = EvalReport::from_command(command, &config, &context, &config_file);
+    if use_v2 {
+        // Task 7.3: Use v2 parser and evaluator
+        let v2_config = config::load_v2(&config_file)?;
+        let args: Vec<String> = command
+            .split_whitespace()
+            .skip(1)
+            .map(String::from)
+            .collect();
+        let cmd = command.split_whitespace().next().unwrap_or(command);
+        let result = may_i_engine::v2::evaluate_v2(cmd, &args, &v2_config, &context);
 
-    if json_mode {
-        let json = report.to_json();
-        println!(
-            "{}",
-            serde_json::to_string(&json).expect("response serialization is infallible")
-        );
+        if json_mode {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "decision": result.decision.to_string(),
+                    "reason": result.reason.clone().unwrap_or_default(),
+                })
+            );
+        } else {
+            println!("{}: {:?}", "Decision".bold(), result.decision);
+            if let Some(reason) = &result.reason {
+                println!("{}: {}", "Reason".bold(), reason);
+            }
+        }
     } else {
-        let output = report.render_text();
-        print!("{}", output);
+        let config = config::load(&config_file)?;
+        // Build the report
+        let report = EvalReport::from_command(command, &config, &context, &config_file);
+
+        if json_mode {
+            let json = report.to_json();
+            println!(
+                "{}",
+                serde_json::to_string(&json).expect("response serialization is infallible")
+            );
+        } else {
+            let output = report.render_text();
+            print!("{}", output);
+        }
     }
 
     Ok(())

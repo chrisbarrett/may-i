@@ -1247,6 +1247,11 @@ fn parse_wrapper(parts: &[Sexpr], wrapper_span: Span) -> Result<Wrapper, RawErro
     Ok(Wrapper { command, steps })
 }
 
+/// Public wrapper for parse_expr for use by v2 parser.
+pub fn parse_expr_for_testing(sexpr: &Sexpr) -> Result<Expr, RawError> {
+    expr::parse_expr(sexpr)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

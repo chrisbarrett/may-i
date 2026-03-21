@@ -272,9 +272,18 @@ impl CheckReport {
 pub fn cmd_check(
     json_mode: bool,
     verbose: bool,
+    use_v2: bool,
     config_path: Option<&std::path::Path>,
 ) -> miette::Result<()> {
     let config_file = config::resolve_path(config_path)?;
+
+    if use_v2 {
+        // Task 7.3: v2 check support - for now just validate the config parses
+        let _v2_config = config::load_v2(&config_file)?;
+        println!("{}: v2 config valid", "Check".bold().green());
+        return Ok(());
+    }
+
     let config = config::load(&config_file)?;
     let results = engine::run_checks(&config);
 

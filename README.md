@@ -19,19 +19,26 @@ This policy teaches `may-i` that `sudo` and `ssh` interpret their arguments as
 commands. `rm` is denied on immutable hosts, even when snuck in via `sudo`.
 
 ```scheme
-(wrapper "ssh" (positional [:ssh/host *] :command+args))
-(wrapper "sudo" :command+args)
-
-(defcontext immutable
+; Define a reusable predicate for immutable production hosts
+(define immutable
   (and (has :via/ssh)
        (has [:ssh/host (regex "(^|@).*prod.*")])))
 
-(rule (command "echo")
-      (effect :allow "Local echo is always fine"))
+; Allow echo always
+(rule "echo" (effect :allow "Local echo is always fine"))
 
-(rule (command "rm")
-      (context immutable)
-      (effect :deny "Production hosts are immutable"))
+; Deny rm on immutable hosts using the defined predicate
+(rule "rm"
+  immutable
+  (effect :deny "Production hosts are immutable"))
+
+; SSH unwraps to evaluate the inner command
+(rule "ssh"
+  (positional [:ssh/host *] . (may-i *)))
+
+; Sudo unwraps to evaluate the inner command  
+(rule "sudo"
+  (positional . (may-i *)))
 ```
 
 </details>
@@ -64,39 +71,126 @@ based on the real command structure rather than brittle string matching.
 Rules match commands and decide what should happen. This is the core of the
 system: "allow these", "ask for those", "never permit these".
 
+Rules use a simplified syntax where the first argument is always the command:
+
+```scheme
+; Simple rule: allow cat
+(rule "cat" (effect :allow))
+
+; Rule with predicate: ask for rm -rf
+(rule "rm"
+  (anywhere "-rf" "--recursive")
+  (effect :ask "Recursive deletion requires confirmation"))
+```
+
+### Predicates
+
+Predicates test whether a rule applies. They can query:
+- **Facts** with `(has ...)` - runtime context like `:via/ssh` or `:client/opencode`
+- **Arguments** with patterns like `(positional ...)`, `(anywhere ...)`, `(exact ...)`
+- **Combined** with `(and ...)`, `(or ...)`, `(not ...)`
+
+```scheme
+; Fact predicate
+(has :via/ssh)
+(has [:ssh/host "prod-server-01"])
+
+; Argument predicates  
+(positional "git" "push")
+(anywhere "--force" "-f")
+(exact "ls" "-la")
+
+; Combined
+(and (has :via/ssh) (positional "rm" "-rf"))
+(or (positional "git" "push") (positional "git" "pull"))
+```
+
+### Effects
+
+Effects decide what happens when a rule matches:
+
+```scheme
+(effect :allow)
+(effect :ask "Reason for asking")
+(effect :deny "Why this is blocked")
+(may-i PATTERN)                    ; Recursively evaluate inner command
+(case ((PREDICATE) EFFECT) ...)    ; Conditional effects
+(when PREDICATE EFFECT)            ; Conditional effect sugar
+(unless PREDICATE EFFECT)          ; Negated conditional
+(if PREDICATE THEN ELSE)           ; If-then-else
+```
+
+Effects combine with "most restrictive wins": `Deny > Ask > Allow`.
+
+### Named Predicates
+
+Define reusable predicates with `(define ...)`:
+
+```scheme
+(define prod-host
+  (and (has :via/ssh)
+       (has [:ssh/host (regex "^prod-")])))
+
+(define dangerous-rm
+  (and (positional "rm")
+       (anywhere "-r" "--recursive")))
+
+; Use the defined predicates
+(rule "rm"
+  (and prod-host dangerous-rm)
+  (effect :deny "Recursive delete on production hosts"))
+```
+
+### Recursive Evaluation
+
+The `(may-i ...)` effect enables unwrapping commands like `ssh`, `sudo`, `nix`,
+and `mise` to evaluate the inner command:
+
+```scheme
+; SSH unwrap: capture host as fact, evaluate inner command
+(rule "ssh"
+  (positional [:ssh/host *] . (may-i *)))
+
+; Sudo unwrap: evaluate inner command directly
+(rule "sudo"
+  (positional . (may-i *)))
+
+; Mise exec unwrap: skip "exec", evaluate rest
+(rule "mise"
+  (positional "exec" . (may-i *)))
+```
+
+The dot (`.`) syntax explicitly marks where remaining arguments become the
+recursive evaluation target.
+
 ### Checks
 
 Checks are inline tests for your policy. They help keep your config predictable
-as it grows, and make it much easier to refactor rules without changing their
-behavior by accident.
+as it grows:
 
-### Wrappers
+```scheme
+(rule "mv"
+  (if (anywhere "-f" "--force")
+      (effect :ask "Force moves can be destructive")
+      (effect :allow))
+  (check :allow "mv foo bar"
+         :ask "mv -f foo bar"))
+```
 
-Wrappers let `may-i` understand commands that are hidden behind other commands,
-such as `ssh`, `nix`, `mise`, or `nohup`. That means you can make decisions
-about the inner command instead of treating every wrapper invocation as opaque.
-
-### Facts
-
-Facts are bits of runtime context attached to command evaluation. They let your
-policy care about more than the literal command line, such as whether a command
-came through `ssh`, which host it targeted, or which agent is running it.
-
-This makes policy much more precise: the same command can be allowed in one
-context and escalated in another.
+Run `may-i check` to verify all checks pass.
 
 ## A small example
 
 For example, you might want to allow `mv` by default, but still require approval
-when it uses `--force`.
+when it uses `--force`:
 
 ```scheme
-(rule (command "mv")
-      (args (if (anywhere "-f" "--force")
-                (effect :ask "File moves with -f/--force can be destructive")
-                (effect :allow)))
-      (check :allow "mv foo bar"
-             :ask "mv -f foo bar"))
+(rule "mv"
+  (if (anywhere "-f" "--force")
+      (effect :ask "File moves with -f/--force can be destructive")
+      (effect :allow))
+  (check :allow "mv foo bar"
+         :ask "mv -f foo bar"))
 ```
 
 Stack enough rules like this together and the agent can get much more done
@@ -110,38 +204,22 @@ For example, you might allow `journalctl` only when it is reached through `ssh`
 to a production host, or allow routine `git` commands for an implementation
 agent while requiring approval for the same commands in a planning agent.
 
-That is what facts are for. Some facts come from runtime integrations; others
-come from wrappers while `may-i` unwraps a command. Exact syntax and semantics
-live in the generated config and starter config comments, but the important idea
-is simple: facts let policy follow intent and provenance, not just text.
-
-### Fact predicates in argument matching
-
-You can use fact predicates directly within `(args ...)` matchers. This lets
-you make fine-grained decisions based on both the command arguments AND runtime
-context:
+That is what facts are for. Facts are bits of runtime context attached to
+command evaluation. Some facts come from runtime integrations; others come from
+recursive evaluation while `may-i` unwraps a command.
 
 ```scheme
 ; Block kubectl in production environment
-(rule (command "kubectl")
-      (args (cond
-              ((has [:env "prod"])
-               (effect :deny "No kubectl in production"))
-              (else
-               (effect :allow)))))
+(rule "kubectl"
+  (has [:env "prod"])
+  (effect :deny "No kubectl in production"))
 
 ; Combine arg patterns with fact checks
-(rule (command "rm")
-      (args (cond
-              ((and (anywhere "-r" "--recursive")
-                    (has [:ssh/host (regex "^prod-")]))
-               (effect :deny "Recursive delete on production hosts"))
-              (else
-               (effect :ask "Confirm recursive deletion")))))
+(rule "rm"
+  (and (anywhere "-r" "--recursive")
+       (has [:ssh/host (regex "^prod-")]))
+  (effect :deny "Recursive delete on production hosts"))
 ```
-
-The `(has ...)` predicate works just like in `(context ...)`, but inside args
-you can combine it with positional matching, anywhere checks, and boolean logic.
 
 ## Installation
 
@@ -233,6 +311,17 @@ You can repeat `--fact` to simulate runtime context:
 ```bash
 may-i eval --fact :client/opencode --fact :opencode/agent=build 'git status'
 ```
+
+### Migration from v1
+
+If you have existing v1 configuration files, use the migration tool to convert
+them to v2 syntax:
+
+```bash
+may-i migrate ~/.config/may-i/config.lisp
+```
+
+Add `--dry-run` to preview changes without modifying the file.
 
 ### Global Flags
 

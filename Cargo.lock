@@ -465,6 +465,7 @@ dependencies = [
  "may-i-core",
  "may-i-engine",
  "may-i-pp",
+ "may-i-sexpr",
  "may-i-shell-parser",
  "miette",
  "predicates",
