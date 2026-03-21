@@ -197,6 +197,12 @@ fn wrapper_to_rule(node: &CstNode) -> Option<Box<CstNode>> {
         if step.is_tagged("positional") {
             let pos_children = step.as_list()?;
             for pat in &pos_children[1..] {
+                // Check for capture markers inside positional
+                if let Some(atom) = pat.as_atom()
+                    && (atom == ":command+args" || atom == ":command" || atom == ":args")
+                {
+                    has_capture = true;
+                }
                 patterns.push(pat.clone());
             }
         } else if step.is_tagged("flag") {

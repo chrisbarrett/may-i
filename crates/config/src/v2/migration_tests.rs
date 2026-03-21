@@ -231,7 +231,7 @@ fn migration_complex_real_world_config() {
 
     // All v1 forms should be migrated
     assert!(!output.contains("defcontext"));
-    assert!(!output.contains("wrapper"));
+    assert!(!output.contains("(wrapper"));
     assert!(!output.contains("(context"));
     assert!(!output.contains("(args"));
 
@@ -265,12 +265,10 @@ fn migration_rule_with_regex_command() {
 
 #[test]
 fn migration_args_with_cond() {
-    let input = r#"
-        (rule (command "git")
-              (args (cond
-                      ((positional "push") (effect :ask))
-                      (else (effect :allow))))
-    "#;
+    let input = r#"(rule (command "git")
+      (args (cond
+              ((positional "push") (effect :ask))
+              (else (effect :allow)))))"#;
 
     let node = parse_single(input);
     let result = migrate(node);

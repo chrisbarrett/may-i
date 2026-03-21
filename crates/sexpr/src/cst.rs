@@ -128,7 +128,15 @@ impl CstNode {
     fn write_to(&self, output: &mut String) {
         // Write leading trivia
         for trivia in &self.annotation.leading {
-            output.push_str(trivia.as_str());
+            match trivia {
+                Trivia::Whitespace(s) => output.push_str(s),
+                Trivia::Comment { text, has_newline } => {
+                    output.push_str(text);
+                    if *has_newline {
+                        output.push('\n');
+                    }
+                }
+            }
         }
 
         // Write the shape
@@ -164,32 +172,73 @@ impl CstNode {
 
         // Write trailing trivia
         for trivia in &self.annotation.trailing {
-            output.push_str(trivia.as_str());
+            match trivia {
+                Trivia::Whitespace(s) => output.push_str(s),
+                Trivia::Comment { text, has_newline } => {
+                    output.push_str(text);
+                    if *has_newline {
+                        output.push('\n');
+                    }
+                }
+            }
         }
     }
 
     /// Apply a transformation to this node and all children (cata-like).
-    pub fn transform<F>(&self, f: &mut F) -> Box<CstNode>
+    /// Returns Some(node) if a transformation occurred, None otherwise.
+    pub fn transform<F>(&self, f: &mut F) -> Option<Box<CstNode>>
     where
         F: FnMut(&CstNode) -> Option<Box<CstNode>>,
     {
+        // First try to apply the transformation to this node
         if let Some(replacement) = f(self) {
-            return replacement;
+            return Some(replacement);
         }
 
-        // Transform children
-        let new_shape = match &self.shape {
-            Shape::Atom(s) => Shape::Atom(s.clone()),
-            Shape::List(children) => Shape::List(children.iter().map(|c| c.transform(f)).collect()),
-            Shape::Vector(children) => {
-                Shape::Vector(children.iter().map(|c| c.transform(f)).collect())
+        // If no transformation at this node, try children
+        match &self.shape {
+            Shape::Atom(_) => None,
+            Shape::List(children) => {
+                let mut new_children = Vec::new();
+                let mut changed = false;
+                for c in children {
+                    if let Some(new_c) = c.transform(f) {
+                        new_children.push(new_c);
+                        changed = true;
+                    } else {
+                        new_children.push(c.clone());
+                    }
+                }
+                if changed {
+                    Some(Box::new(CstNode {
+                        annotation: self.annotation.clone(),
+                        shape: Shape::List(new_children),
+                    }))
+                } else {
+                    None
+                }
             }
-        };
-
-        Box::new(CstNode {
-            annotation: self.annotation.clone(),
-            shape: new_shape,
-        })
+            Shape::Vector(children) => {
+                let mut new_children = Vec::new();
+                let mut changed = false;
+                for c in children {
+                    if let Some(new_c) = c.transform(f) {
+                        new_children.push(new_c);
+                        changed = true;
+                    } else {
+                        new_children.push(c.clone());
+                    }
+                }
+                if changed {
+                    Some(Box::new(CstNode {
+                        annotation: self.annotation.clone(),
+                        shape: Shape::Vector(new_children),
+                    }))
+                } else {
+                    None
+                }
+            }
+        }
     }
 }
 
@@ -479,20 +528,19 @@ where
 
         if !changed {
             // Also transform children
-            let new_current = current.transform(&mut |n| {
+            if let Some(new_current) = current.transform(&mut |n| {
                 for rule in rules {
                     if let Some(r) = rule(n) {
                         return Some(r);
                     }
                 }
                 None
-            });
-
-            if std::ptr::eq(new_current.as_ref(), current.as_ref()) {
+            }) {
+                current = new_current;
+            } else {
                 // No changes to children either
                 break;
             }
-            current = new_current;
         }
     }
 
@@ -521,7 +569,17 @@ mod tests {
         // Define a simple rewrite rule
         let rule = |n: &CstNode| {
             if n.is_tagged("old-syntax") {
-                let children = n.as_list()?.iter().skip(1).cloned().collect();
+                // Strip leading whitespace from children (it was separator space after the tag)
+                let children: Vec<Box<CstNode>> = n
+                    .as_list()?
+                    .iter()
+                    .skip(1)
+                    .map(|c| {
+                        let mut new_c = (**c).clone();
+                        new_c.annotation.leading.clear();
+                        Box::new(new_c)
+                    })
+                    .collect();
                 Some(Box::new(CstNode::list(
                     children,
                     TriviaAnn {
@@ -537,5 +595,214 @@ mod tests {
 
         let rewritten = rewrite_until_convergence(node, &[rule]);
         assert_eq!(rewritten.serialize(), "(x)");
+    }
+
+    #[test]
+    fn test_trivia_has_newline() {
+        let ws_no_newline = Trivia::Whitespace("   ".to_string());
+        let ws_with_newline = Trivia::Whitespace("  \n  ".to_string());
+        let comment_no_newline = Trivia::Comment {
+            text: "; comment".to_string(),
+            has_newline: false,
+        };
+        let comment_with_newline = Trivia::Comment {
+            text: "; comment".to_string(),
+            has_newline: true,
+        };
+
+        assert!(!ws_no_newline.has_newline());
+        assert!(ws_with_newline.has_newline());
+        assert!(!comment_no_newline.has_newline());
+        assert!(comment_with_newline.has_newline());
+    }
+
+    #[test]
+    fn test_trivia_as_str() {
+        let ws = Trivia::Whitespace("   ".to_string());
+        let comment = Trivia::Comment {
+            text: "; comment".to_string(),
+            has_newline: false,
+        };
+
+        assert_eq!(ws.as_str(), "   ");
+        assert_eq!(comment.as_str(), "; comment");
+    }
+
+    #[test]
+    fn test_vector_creation_and_access() {
+        let vec_node = CstNode::vector(
+            vec![
+                Box::new(CstNode::atom("a", Default::default())),
+                Box::new(CstNode::atom("b", Default::default())),
+            ],
+            Default::default(),
+        );
+
+        assert_eq!(vec_node.serialize(), "[a b]");
+    }
+
+    #[test]
+    fn test_vector_with_comments() {
+        let input = "[a ;; comment\nb]";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].serialize(), input);
+    }
+
+    #[test]
+    fn test_transform_with_direct_replacement() {
+        let input = "(old x)";
+        let (nodes, _) = parse(input);
+        let node = nodes.into_iter().next().unwrap();
+
+        // Rule that replaces the root node directly
+        let rule = |n: &CstNode| {
+            if n.is_tagged("old") {
+                Some(Box::new(CstNode::atom("new", Default::default())))
+            } else {
+                None
+            }
+        };
+
+        let result = node.transform(&mut { rule }).unwrap();
+        assert_eq!(result.serialize(), "new");
+    }
+
+    #[test]
+    fn test_transform_vector_children() {
+        let input = "[old1 old2]";
+        let (nodes, _) = parse(input);
+        let node = nodes.into_iter().next().unwrap();
+
+        let rule = |n: &CstNode| {
+            if n.as_atom() == Some("old1") {
+                Some(Box::new(CstNode::atom("new1", Default::default())))
+            } else {
+                None
+            }
+        };
+
+        let result = node.transform(&mut { rule }).unwrap();
+        assert_eq!(result.serialize(), "[new1 old2]");
+    }
+
+    #[test]
+    fn test_no_transform_when_no_changes() {
+        let input = "(a b c)";
+        let (nodes, _) = parse(input);
+        let node = nodes.into_iter().next().unwrap();
+
+        let rule = |_n: &CstNode| None;
+
+        let result = node.transform(&mut { rule });
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_unclosed_list() {
+        let input = "(foo bar";
+        let (nodes, errors) = parse(input);
+        assert!(!errors.is_empty());
+        assert_eq!(errors[0].message, "unclosed list, expected ')'");
+        // Should still return partial node
+        assert_eq!(nodes.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_unterminated_string() {
+        let input = "\"foo";
+        let (nodes, errors) = parse(input);
+        assert!(!errors.is_empty());
+        assert_eq!(errors[0].message, "unterminated string");
+        assert!(nodes.is_empty());
+    }
+
+    #[test]
+    fn test_parse_unknown_escape() {
+        let input = "\"\\x\"";
+        let (nodes, errors) = parse(input);
+        assert!(!errors.is_empty());
+        assert!(errors[0].message.contains("unknown escape"));
+        // Should still return the node with partial string
+        assert_eq!(nodes.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_unterminated_escape() {
+        let input = "\"\\";
+        let (nodes, errors) = parse(input);
+        assert!(!errors.is_empty());
+        assert_eq!(errors[0].message, "unterminated escape");
+        assert!(nodes.is_empty());
+    }
+
+    #[test]
+    fn test_trivia_between_forms() {
+        // Test that trivia between forms gets attached correctly
+        let input = "(a)   ;; comment\n(b)";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+        assert_eq!(nodes.len(), 2);
+        // The comment should be attached to the second node's leading trivia
+        // or the first node's trailing trivia
+        let first = &nodes[0];
+        let second = &nodes[1];
+        let has_comment = first.annotation.trailing.iter().any(|t| matches!(t, Trivia::Comment { .. }))
+            || second.annotation.leading.iter().any(|t| matches!(t, Trivia::Comment { .. }));
+        assert!(has_comment, "Comment should be attached to either first node's trailing or second node's leading trivia");
+    }
+
+    #[test]
+    fn test_rewrite_until_convergence_multiple_changes() {
+        let input = "(outer (inner x))";
+        let (nodes, _) = parse(input);
+        let node = nodes.into_iter().next().unwrap();
+
+        // Rule that renames 'inner' to 'middle', then 'middle' to 'innermost'
+        let rule = |n: &CstNode| {
+            if n.is_tagged("inner") {
+                let children: Vec<_> = n.as_list()?.iter().skip(1).cloned().collect();
+                Some(Box::new(CstNode::list(
+                    vec![
+                        Box::new(CstNode::atom("middle", Default::default())),
+                        children.into_iter().next().unwrap(),
+                    ],
+                    Default::default(),
+                )))
+            } else if n.is_tagged("middle") {
+                let children: Vec<_> = n.as_list()?.iter().skip(1).cloned().collect();
+                Some(Box::new(CstNode::list(
+                    vec![
+                        Box::new(CstNode::atom("innermost", Default::default())),
+                        children.into_iter().next().unwrap(),
+                    ],
+                    Default::default(),
+                )))
+            } else {
+                None
+            }
+        };
+
+        let result = rewrite_until_convergence(node, &[rule]);
+        assert!(result.serialize().contains("innermost"));
+    }
+
+    #[test]
+    fn test_parse_vector_empty() {
+        let input = "[]";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].serialize(), "[]");
+    }
+
+    #[test]
+    fn test_parse_vector_with_nested_list() {
+        let input = "[a (b c) d]";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].serialize(), "[a (b c) d]");
     }
 }
