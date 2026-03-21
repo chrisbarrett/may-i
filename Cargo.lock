@@ -485,6 +485,7 @@ dependencies = [
  "may-i-sexpr",
  "miette",
  "regex",
+ "tempfile",
  "thiserror",
 ]
 

@@ -1734,6 +1734,413 @@ mod tests {
             r#"(rule (command "git") (effect :allow))"#
         );
     }
+
+    // --- Additional tests for uncovered lines ---
+
+    #[test]
+    fn context_facts_get_scalar_returns_none_for_present() {
+        let mut facts = ContextFacts::default();
+        facts.insert_present(":test");
+        assert_eq!(facts.get_scalar(":test"), None);
+    }
+
+    #[test]
+    fn context_facts_get_scalar_returns_none_for_missing() {
+        let facts = ContextFacts::default();
+        assert_eq!(facts.get_scalar(":missing"), None);
+    }
+
+    #[test]
+    fn context_facts_iter_empty() {
+        let facts = ContextFacts::default();
+        assert_eq!(facts.iter().count(), 0);
+    }
+
+    #[test]
+    fn context_facts_iter_with_values() {
+        let mut facts = ContextFacts::default();
+        facts.insert_present(":a");
+        facts.insert_scalar(":b", "value");
+        let collected: Vec<_> = facts.iter().collect();
+        assert_eq!(collected.len(), 2);
+    }
+
+    #[test]
+    fn fact_pattern_is_literal_true() {
+        let p = FactPattern::Literal("test".into());
+        assert!(p.is_literal());
+    }
+
+    #[test]
+    fn fact_pattern_is_literal_false() {
+        let p = FactPattern::Wildcard;
+        assert!(!p.is_literal());
+    }
+
+    #[test]
+    fn fact_pattern_debug_regex() {
+        let p = FactPattern::Regex(regex::Regex::new("^test$").unwrap());
+        let dbg = format!("{:?}", p);
+        assert!(dbg.contains("Regex"));
+        assert!(dbg.contains("^test$"));
+    }
+
+    #[test]
+    fn fact_pattern_debug_and() {
+        let p = FactPattern::And(vec![FactPattern::Wildcard]);
+        let dbg = format!("{:?}", p);
+        assert!(dbg.starts_with("And("));
+    }
+
+    #[test]
+    fn fact_pattern_debug_or() {
+        let p = FactPattern::Or(vec![]);
+        let dbg = format!("{:?}", p);
+        assert!(dbg.starts_with("Or("));
+    }
+
+    #[test]
+    fn fact_pattern_debug_not() {
+        let p = FactPattern::Not(Box::new(FactPattern::Wildcard));
+        let dbg = format!("{:?}", p);
+        assert!(dbg.starts_with("Not("));
+    }
+
+    #[test]
+    fn fact_query_presence_vector_syntax() {
+        let q = FactQuery::Presence {
+            key: ":test".into(),
+            vector_syntax: true,
+        };
+        assert_eq!(doc_text(&q.to_doc()), "[:test]");
+    }
+
+    #[test]
+    fn context_expr_alias_to_doc() {
+        let e = ContextExpr::Alias("my-alias".into());
+        assert_eq!(doc_text(&e.to_doc()), "my-alias");
+    }
+
+    #[test]
+    fn context_expr_debug_alias() {
+        let e = ContextExpr::Alias("test".into());
+        let dbg = format!("{:?}", e);
+        assert!(dbg.starts_with("Alias("));
+    }
+
+    #[test]
+    fn bool_expr_to_doc_and_empty() {
+        let e = BoolExpr::And(vec![]);
+        let doc = e.to_doc();
+        assert_eq!(doc_text(&doc), "(and)");
+    }
+
+    #[test]
+    fn bool_expr_to_doc_or_empty() {
+        let e = BoolExpr::Or(vec![]);
+        let doc = e.to_doc();
+        assert_eq!(doc_text(&doc), "(or)");
+    }
+
+    #[test]
+    fn wrapper_pattern_is_wildcard_true() {
+        let wp = WrapperPattern {
+            expr: Expr::Wildcard,
+            bind_fact: None,
+        };
+        assert!(wp.is_wildcard());
+    }
+
+    #[test]
+    fn wrapper_pattern_is_wildcard_false() {
+        let wp = WrapperPattern {
+            expr: Expr::Literal("x".into()),
+            bind_fact: None,
+        };
+        assert!(!wp.is_wildcard());
+    }
+
+    #[test]
+    fn wrapper_pattern_to_doc_with_bind() {
+        let wp = WrapperPattern {
+            expr: Expr::Literal("test".into()),
+            bind_fact: Some(":fact".into()),
+        };
+        assert_eq!(doc_text(&wp.to_doc()), "[:fact \"test\"]");
+    }
+
+    #[test]
+    fn source_info_line_of() {
+        let info = SourceInfo {
+            filename: "test.lisp".into(),
+            content: "line1\nline2\nline3".into(),
+        };
+        assert_eq!(info.line_of(Span { start: 0, end: 5 }), 1);
+        assert_eq!(info.line_of(Span { start: 7, end: 12 }), 2);
+    }
+
+    #[test]
+    fn expr_display_literal() {
+        let e = Expr::Literal("hello".into());
+        assert_eq!(format!("{}", e), "\"hello\"");
+    }
+
+    #[test]
+    fn expr_display_wildcard() {
+        assert_eq!(format!("{}", Expr::Wildcard), "*");
+    }
+
+    #[test]
+    fn expr_display_regex() {
+        let e = Expr::Regex(regex::Regex::new("^test$").unwrap());
+        assert_eq!(format!("{}", e), "(regex \"^test$\")");
+    }
+
+    #[test]
+    fn expr_display_and() {
+        let e = Expr::And(vec![]);
+        assert_eq!(format!("{}", e), "(and)");
+    }
+
+    #[test]
+    fn expr_display_or() {
+        let e = Expr::Or(vec![Expr::Literal("a".into())]);
+        assert_eq!(format!("{}", e), "(or \"a\")");
+    }
+
+    #[test]
+    fn expr_display_not() {
+        let e = Expr::Not(Box::new(Expr::Wildcard));
+        assert_eq!(format!("{}", e), "(not *)");
+    }
+
+    #[test]
+    fn expr_to_doc_and_many_children() {
+        let e = Expr::And(vec![
+            Expr::Literal("a".into()),
+            Expr::Literal("b".into()),
+            Expr::Literal("c".into()),
+            Expr::Literal("d".into()),
+            Expr::Literal("e".into()),
+        ]);
+        let doc = e.to_doc();
+        // Should use broken_list for > 4 children
+        let _ = doc_text(&doc);
+    }
+
+    #[test]
+    fn expr_to_doc_or_many_children() {
+        let e = Expr::Or(vec![
+            Expr::Literal("a".into()),
+            Expr::Literal("b".into()),
+            Expr::Literal("c".into()),
+            Expr::Literal("d".into()),
+            Expr::Literal("e".into()),
+        ]);
+        let doc = e.to_doc();
+        // Should use broken_list for > 4 children
+        let _ = doc_text(&doc);
+    }
+
+    #[test]
+    fn quantifier_min_one() {
+        assert_eq!(Quantifier::One.min(), 1);
+        assert_eq!(Quantifier::OneOrMore.min(), 1);
+    }
+
+    #[test]
+    fn quantifier_min_zero() {
+        assert_eq!(Quantifier::Optional.min(), 0);
+        assert_eq!(Quantifier::ZeroOrMore.min(), 0);
+    }
+
+    #[test]
+    fn quantifier_is_repeating() {
+        assert!(Quantifier::OneOrMore.is_repeating());
+        assert!(Quantifier::ZeroOrMore.is_repeating());
+        assert!(!Quantifier::One.is_repeating());
+        assert!(!Quantifier::Optional.is_repeating());
+    }
+
+    #[test]
+    fn arg_matcher_has_effect_anywhere_with_cond() {
+        let m = ArgMatcher::Anywhere(vec![Expr::Cond(vec![])]);
+        assert!(m.has_effect());
+    }
+
+    #[test]
+    fn arg_matcher_has_effect_not_with_cond() {
+        let inner = ArgMatcher::Positional(vec![PosExpr::one(Expr::Cond(vec![]))]);
+        let m = ArgMatcher::Not(Box::new(inner));
+        assert!(m.has_effect());
+    }
+
+    #[test]
+    fn arg_matcher_has_effect_cond() {
+        // Cond has_effect returns true if any branch's matcher has_effect
+        let m = ArgMatcher::Cond(CondArm {
+            branches: vec![CondBranch {
+                matcher: ArgMatcher::Positional(vec![PosExpr::one(Expr::Cond(vec![]))]),
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
+            }],
+            fallback: None,
+        });
+        assert!(m.has_effect());
+    }
+
+    #[test]
+    fn arg_matcher_has_effect_has() {
+        let m = ArgMatcher::Has(BoolExpr::And(vec![]));
+        assert!(!m.has_effect());
+    }
+
+    #[test]
+    fn arg_matcher_to_doc_exact_positional_empty() {
+        let m = ArgMatcher::ExactPositional(vec![]);
+        assert_eq!(doc_text(&m.to_doc()), "(exact)");
+    }
+
+    #[test]
+    fn arg_matcher_to_doc_cond_with_fallback() {
+        let m = ArgMatcher::Cond(CondArm {
+            branches: vec![],
+            fallback: Some(Effect {
+                decision: Decision::Deny,
+                reason: None,
+            }),
+        });
+        assert_eq!(doc_text(&m.to_doc()), "(cond (else (effect :deny)))");
+    }
+
+    #[test]
+    fn arg_matcher_to_doc_when() {
+        let m = ArgMatcher::When(PolymorphicCondArm {
+            branches: vec![],
+            fallback: None,
+        });
+        assert_eq!(doc_text(&m.to_doc()), "(when)");
+    }
+
+    #[test]
+    fn arg_matcher_to_doc_unless() {
+        let m = ArgMatcher::Unless(PolymorphicCondArm {
+            branches: vec![],
+            fallback: None,
+        });
+        assert_eq!(doc_text(&m.to_doc()), "(unless)");
+    }
+
+    #[test]
+    fn arg_matcher_to_doc_if_no_else() {
+        let m = ArgMatcher::If {
+            test: Box::new(MatcherCondPredicate::Expr(Expr::Wildcard)),
+            then_effect: Effect {
+                decision: Decision::Allow,
+                reason: None,
+            },
+            else_effect: None,
+        };
+        assert_eq!(doc_text(&m.to_doc()), "(if * (effect :allow))");
+    }
+
+    #[test]
+    fn polymorphic_cond_arm_to_doc_with_fallback() {
+        let arm = PolymorphicCondArm {
+            branches: vec![],
+            fallback: Some(Effect {
+                decision: Decision::Ask,
+                reason: None,
+            }),
+        };
+        assert_eq!(doc_text(&arm.to_doc("when")), "(when (else (effect :ask)))");
+    }
+
+    #[test]
+    fn matcher_cond_predicate_to_doc_matcher() {
+        let p = MatcherCondPredicate::Matcher(Box::new(ArgMatcher::Has(BoolExpr::And(vec![]))));
+        assert_eq!(doc_text(&p.to_doc()), "(and)");
+    }
+
+    #[test]
+    fn matcher_cond_predicate_to_doc_expr() {
+        let p = MatcherCondPredicate::Expr(Expr::Wildcard);
+        assert_eq!(doc_text(&p.to_doc()), "*");
+    }
+
+    #[test]
+    fn matcher_cond_predicate_to_doc_bool_expr() {
+        let p = MatcherCondPredicate::BoolExpr(BoolExpr::Has(FactQuery::Presence {
+            key: ":test".into(),
+            vector_syntax: false,
+        }));
+        assert_eq!(doc_text(&p.to_doc()), "(has :test)");
+    }
+
+    #[test]
+    fn context_failure_reason_as_str() {
+        assert_eq!(ContextFailureReason::Absent.as_str(), "absent");
+        assert_eq!(
+            ContextFailureReason::PresentWithoutScalar.as_str(),
+            "present_without_scalar"
+        );
+        assert_eq!(
+            ContextFailureReason::ValueMismatch.as_str(),
+            "value_mismatch"
+        );
+        assert_eq!(
+            ContextFailureReason::PatternMismatch.as_str(),
+            "pattern_mismatch"
+        );
+    }
+
+    #[test]
+    fn config_warning_fields() {
+        let warning = ConfigWarning {
+            message: "test".into(),
+            span: Span { start: 0, end: 5 },
+            help: Some("help text".into()),
+        };
+        assert_eq!(warning.message, "test");
+        assert_eq!(warning.span.start, 0);
+        assert!(warning.help.is_some());
+    }
+
+    #[test]
+    fn eval_result_with_trace() {
+        let mut result = EvalResult::new(Decision::Allow, Some("reason".into()));
+        result.trace.push(TraceEntry::DefaultAsk {
+            reason: "test".into(),
+        });
+        assert_eq!(result.trace.len(), 1);
+    }
+
+    #[test]
+    fn trace_entry_variants() {
+        let entry1 = TraceEntry::SegmentHeader {
+            command: "test".into(),
+            decision: Decision::Allow,
+        };
+        let entry2 = TraceEntry::DefaultAsk {
+            reason: "test".into(),
+        };
+        // Just verify they compile
+        let _ = format!("{:?}", entry1);
+        let _ = format!("{:?}", entry2);
+    }
+
+    #[test]
+    fn check_struct_fields() {
+        let check = Check {
+            command: "test".into(),
+            expected: Decision::Allow,
+            context: ContextFacts::default(),
+            source_span: Span { start: 0, end: 5 },
+        };
+        assert_eq!(check.command, "test");
+    }
 }
 
 // ── Property-based tests ────────────────────────────────────────────

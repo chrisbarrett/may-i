@@ -38,15 +38,15 @@
 - [x] 5.4 Add tests for visitor modules in `crates/engine/src/visitors/` (code_execution, read_builtin, wrapper_unwrap have low coverage)
 - [x] 5.5 Add tests for `crates/engine/src/check.rs` (13 uncovered lines)
 - [x] 5.6 Add tests for `crates/engine/src/v2/trace.rs` (26 uncovered lines)
-- [ ] 5.7 Run coverage and verify engine crate ≥90%
+- [x] 5.7 Run coverage and verify engine crate ≥90%
 
 ## 6. Config Test Coverage (CURRENT: ~76%, TARGET: 90%)
 
-- [ ] 6.1 Add tests for `crates/config/src/v2/config.rs` uncovered lines (35 lines)
+- [x] 6.1 Add tests for `crates/config/src/v2/config.rs` uncovered lines (35 lines)
 - [x] 6.2 Add tests for `crates/config/src/v2/pattern.rs` uncovered lines (+8 tests, 72% coverage)
 - [x] 6.3 Add tests for `crates/config/src/v2/predicate.rs` uncovered lines (+7 tests)
-- [ ] 6.4 Add tests for `crates/config/src/v2/migrate.rs` uncovered lines (25 lines)
-- [ ] 6.5 Add tests for `crates/config/src/io.rs`
+- [x] 6.4 Add tests for `crates/config/src/v2/migrate.rs` uncovered lines (25 lines)
+- [x] 6.5 Add tests for `crates/config/src/io.rs`
 - [ ] 6.6 Run coverage and verify config crate ≥90%
 
 ## 7. Shell-Parser Test Coverage (CURRENT: 100%, TARGET: 90%)
@@ -55,7 +55,7 @@
 
 ## 8. Core Test Coverage (CURRENT: 74%, TARGET: 90%)
 
-- [ ] 8.1 Add tests for `crates/core/src/types.rs` uncovered lines
+- [x] 8.1 Add tests for `crates/core/src/types.rs` uncovered lines
 - [x] 8.2 Add tests for `crates/core/src/v2/ast.rs`
 - [x] 8.3 Add tests for `crates/core/src/v2/pattern.rs`
 - [x] 8.4 Add tests for `crates/core/src/v2/predicate.rs`
@@ -64,13 +64,13 @@
 
 ## 9. Sexpr Test Coverage (CURRENT: 89%, TARGET: 90%)
 
-- [ ] 9.1 Add tests for `crates/sexpr/src/lib.rs` uncovered lines
-- [ ] 9.2 Run coverage and verify sexpr crate ≥90%
+- [x] 9.1 Add tests for `crates/sexpr/src/lib.rs` uncovered lines
+- [x] 9.2 Run coverage and verify sexpr crate ≥90%
 
 ## 10. PP Test Coverage (CURRENT: 84%, TARGET: 90%)
 
-- [ ] 10.1 Add tests for `crates/pp/src/lib.rs` uncovered lines
-- [ ] 10.2 Run coverage and verify pp crate ≥90%
+- [x] 10.1 Add tests for `crates/pp/src/lib.rs` uncovered lines
+- [x] 10.2 Run coverage and verify pp crate ≥90%
 
 ## 11. Dead Code Elimination
 
@@ -82,9 +82,9 @@
 
 ## 12. Final Verification
 
-- [ ] 12.1 Run `cargo test --workspace` - all tests must pass
+- [x] 12.1 Run `cargo test --workspace` - all tests must pass
 - [ ] 12.2 Run `cargo tarpaulin --workspace` - verify ≥90% for all crates
-- [ ] 12.3 Run `cargo clippy --workspace` - no warnings
-- [ ] 12.4 Run `cargo fmt --check` - verify formatting
-- [ ] 12.5 Verify `cargo build --release` succeeds
+- [x] 12.3 Run `cargo clippy --workspace` - no warnings
+- [x] 12.4 Run `cargo fmt --check` - verify formatting
+- [x] 12.5 Verify `cargo build --release` succeeds
 - [ ] 12.6 Commit changes

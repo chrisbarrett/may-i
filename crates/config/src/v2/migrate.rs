@@ -504,4 +504,247 @@ mod tests {
         let result = defcontext_to_define(&node).unwrap();
         assert_eq!(result.serialize(), "(define ssh (has :via/ssh))");
     }
+
+    // --- Additional tests for uncovered lines ---
+
+    #[test]
+    fn test_rule_simplify_command_not_rule() {
+        let input = "(other (command git))";
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let node = nodes.into_iter().next().unwrap();
+        let result = rule_simplify_command(&node);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_rule_simplify_command_too_short() {
+        let input = "(rule)";
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let node = nodes.into_iter().next().unwrap();
+        let result = rule_simplify_command(&node);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_rule_simplify_command_not_command_tag() {
+        let input = "(rule git (effect :allow))";
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let node = nodes.into_iter().next().unwrap();
+        let result = rule_simplify_command(&node);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_rule_simplify_command_wrong_size() {
+        let input = "(rule (command git extra) (effect :allow))";
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let node = nodes.into_iter().next().unwrap();
+        let result = rule_simplify_command(&node);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_rule_inline_context_not_rule() {
+        let input = "(other (context x))";
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let node = nodes.into_iter().next().unwrap();
+        let result = rule_inline_context(&node);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_rule_inline_context_no_context() {
+        let input = "(rule git (effect :allow))";
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let node = nodes.into_iter().next().unwrap();
+        let result = rule_inline_context(&node);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_rule_inline_context_wrong_size() {
+        let input = "(rule git (context) (effect :allow))";
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let node = nodes.into_iter().next().unwrap();
+        let result = rule_inline_context(&node);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_rule_inline_args_not_rule() {
+        let input = "(other (args x))";
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let node = nodes.into_iter().next().unwrap();
+        let result = rule_inline_args(&node);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_rule_inline_args_no_args() {
+        let input = "(rule git (effect :allow))";
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let node = nodes.into_iter().next().unwrap();
+        let result = rule_inline_args(&node);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_rule_inline_args_with_cond() {
+        let input = "(rule git (args (cond (x :allow))) (effect :allow))";
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let node = nodes.into_iter().next().unwrap();
+        let result = rule_inline_args(&node);
+        // Should return None since cond is handled by args_cond_to_case
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_wrapper_to_rule_not_wrapper() {
+        let input = "(other cmd)";
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let node = nodes.into_iter().next().unwrap();
+        let result = wrapper_to_rule(&node);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_wrapper_to_rule_too_short() {
+        let input = "(wrapper)";
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let node = nodes.into_iter().next().unwrap();
+        let result = wrapper_to_rule(&node);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_wrapper_to_rule_with_capture() {
+        let input = "(wrapper docker (positional run :command))";
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let node = nodes.into_iter().next().unwrap();
+        let result = wrapper_to_rule(&node).unwrap();
+        let serialized = result.serialize();
+        assert!(serialized.contains("rule"));
+        assert!(serialized.contains("may-i") || serialized.contains("effect"));
+    }
+
+    #[test]
+    fn test_defcontext_to_define_not_defcontext() {
+        let input = "(define x y)";
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let node = nodes.into_iter().next().unwrap();
+        let result = defcontext_to_define(&node);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_defcontext_to_define_wrong_size() {
+        let input = "(defcontext x)";
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let node = nodes.into_iter().next().unwrap();
+        let result = defcontext_to_define(&node);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_args_cond_to_case_not_rule() {
+        let input = "(other (args (cond)))";
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let node = nodes.into_iter().next().unwrap();
+        let result = args_cond_to_case(&node);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_args_cond_to_case_no_cond() {
+        let input = "(rule git (args (positional)) (effect :allow))";
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let node = nodes.into_iter().next().unwrap();
+        let result = args_cond_to_case(&node);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_migrate_top_level() {
+        let input = "(rule (command git) (effect :allow))";
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let node = nodes.into_iter().next().unwrap();
+        let result = migrate(node);
+        assert_eq!(result.serialize(), "(rule git (effect :allow))");
+    }
+
+    #[test]
+    fn test_migrate_forms() {
+        let input = "(rule (command git) (effect :allow))\n(defcontext ssh (has :via/ssh))";
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let results = migrate_forms(nodes);
+        assert_eq!(results.len(), 2);
+        // Use contains to ignore potential whitespace/newline differences
+        assert!(
+            results[0]
+                .serialize()
+                .contains("(rule git (effect :allow))")
+        );
+        assert!(
+            results[1]
+                .serialize()
+                .contains("(define ssh (has :via/ssh))")
+        );
+    }
+
+    #[test]
+    fn test_validate_migration_success() {
+        let input = "(rule git (effect :allow))";
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let migrated = migrate(nodes.into_iter().next().unwrap());
+        let result = validate_migration(&migrated.serialize());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_migration_failure() {
+        let result = validate_migration("(invalid");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_check_unhandled_cases_wrapper() {
+        let input = "(wrapper docker :command)";
+        let warnings = check_unhandled_cases(input);
+        assert!(!warnings.is_empty());
+        assert!(warnings[0].description.contains("wrapper"));
+    }
+
+    #[test]
+    fn test_check_unhandled_cases_defcontext() {
+        let input = "(defcontext x y)";
+        let warnings = check_unhandled_cases(input);
+        assert!(!warnings.is_empty());
+        assert!(warnings[0].description.contains("defcontext"));
+    }
+
+    #[test]
+    fn test_check_unhandled_cases_context() {
+        let input = "(rule x (context y) (effect :allow))";
+        let warnings = check_unhandled_cases(input);
+        assert!(!warnings.is_empty());
+        assert!(warnings[0].description.contains("context"));
+    }
+
+    #[test]
+    fn test_check_unhandled_cases_args_cond() {
+        // The check looks for args where the inner element is directly the atom "cond"
+        // This would be malformed input but tests the detection logic
+        let input = "(args cond)";
+        let warnings = check_unhandled_cases(input);
+        assert!(!warnings.is_empty());
+        assert!(warnings[0].description.contains("args with cond"));
+    }
+
+    #[test]
+    fn test_check_unhandled_cases_legacy_types() {
+        let input = "(MatcherCondPredicate x)";
+        let warnings = check_unhandled_cases(input);
+        assert!(!warnings.is_empty());
+        assert!(warnings[0].description.contains("internal type"));
+    }
 }

@@ -469,4 +469,160 @@ mod tests {
         assert_eq!(config.rules.len(), 2);
         assert_eq!(config.checks.len(), 3);
     }
+
+    // --- Error handling tests for uncovered lines ---
+
+    #[test]
+    fn parse_config_with_parse_error() {
+        let err = parse_config("(") // Unclosed paren
+            .expect_err("expected error");
+        // The error could be various things, just verify it fails
+        assert!(format!("{err}").len() > 0);
+    }
+
+    #[test]
+    fn parse_config_empty_top_level_form() {
+        let err = parse_config("()").expect_err("expected error");
+        assert!(format!("{err}").contains("empty"));
+    }
+
+    #[test]
+    fn parse_config_non_list_top_level() {
+        let err = parse_config("atom").expect_err("expected error");
+        assert!(format!("{err}").contains("top-level form must be a list"));
+    }
+
+    #[test]
+    fn parse_config_non_atom_tag() {
+        let err = parse_config("((not-an-atom))").expect_err("expected error");
+        assert!(format!("{err}").contains("form tag must be an atom"));
+    }
+
+    #[test]
+    fn parse_config_unknown_form() {
+        let err = parse_config("(unknown-form)").expect_err("expected error");
+        assert!(format!("{err}").contains("unknown top-level form"));
+    }
+
+    #[test]
+    fn safe_env_vars_non_atom() {
+        let err = parse_config(r#"(safe-env-vars (not-a-string))"#).expect_err("expected error");
+        assert!(format!("{err}").contains("safe-env-vars entry must be a string"));
+    }
+
+    #[test]
+    fn check_invalid_decision_in_items() {
+        let err = parse_config(
+            r#"
+            (check
+                (with-facts [[:client/opencode]]
+                    :invalid "cmd"))
+        "#,
+        )
+        .expect_err("expected error");
+        assert!(format!("{err}").contains("unknown expected decision"));
+    }
+
+    #[test]
+    fn check_missing_command_in_items() {
+        let err = parse_config(
+            r#"
+            (check
+                (with-facts [[:client/opencode]]
+                    :allow))
+        "#,
+        )
+        .expect_err("expected error");
+        assert!(format!("{err}").contains("provide a command"));
+    }
+
+    #[test]
+    fn check_non_atom_command_in_items() {
+        let err = parse_config(
+            r#"
+            (check
+                (with-facts [[:client/opencode]]
+                    :allow (not-a-string)))
+        "#,
+        )
+        .expect_err("expected error");
+        assert!(format!("{err}").contains("check command must be a string"));
+    }
+
+    #[test]
+    fn parse_with_facts_missing_fact_vector() {
+        let err = parse_config(
+            r#"
+            (check
+                (with-facts))
+        "#,
+        )
+        .expect_err("expected error");
+        assert!(format!("{err}").contains("fact vector"));
+    }
+
+    #[test]
+    fn parse_fact_entry_not_vector() {
+        let err = parse_config(
+            r#"
+            (check
+                (with-facts [not-a-vector]
+                    :allow "cmd"))
+        "#,
+        )
+        .expect_err("expected error");
+        assert!(format!("{err}").contains("fact entries must be vectors"));
+    }
+
+    #[test]
+    fn parse_fact_entry_empty_vector() {
+        let err = parse_config(
+            r#"
+            (check
+                (with-facts [[]]
+                    :allow "cmd"))
+        "#,
+        )
+        .expect_err("expected error");
+        assert!(format!("{err}").contains("fact entries must have exactly"));
+    }
+
+    #[test]
+    fn parse_fact_entry_too_many_items() {
+        let err = parse_config(
+            r#"
+            (check
+                (with-facts [[:key "value" "extra"]]
+                    :allow "cmd"))
+        "#,
+        )
+        .expect_err("expected error");
+        assert!(format!("{err}").contains("fact entries must have exactly"));
+    }
+
+    #[test]
+    fn parse_fact_value_not_string() {
+        let err = parse_config(
+            r#"
+            (check
+                (with-facts [[:key (not-a-string)]]
+                    :allow "cmd"))
+        "#,
+        )
+        .expect_err("expected error");
+        assert!(format!("{err}").contains("context fact value must be a string"));
+    }
+
+    #[test]
+    fn parse_check_items_non_atom_decision() {
+        let err = parse_config(
+            r#"
+            (check
+                (with-facts [[:client/opencode]]
+                    (not-an-atom) "cmd"))
+        "#,
+        )
+        .expect_err("expected error");
+        assert!(format!("{err}").contains("decision keyword"));
+    }
 }
