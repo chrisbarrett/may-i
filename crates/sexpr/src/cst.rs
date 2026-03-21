@@ -748,9 +748,20 @@ mod tests {
         // or the first node's trailing trivia
         let first = &nodes[0];
         let second = &nodes[1];
-        let has_comment = first.annotation.trailing.iter().any(|t| matches!(t, Trivia::Comment { .. }))
-            || second.annotation.leading.iter().any(|t| matches!(t, Trivia::Comment { .. }));
-        assert!(has_comment, "Comment should be attached to either first node's trailing or second node's leading trivia");
+        let has_comment = first
+            .annotation
+            .trailing
+            .iter()
+            .any(|t| matches!(t, Trivia::Comment { .. }))
+            || second
+                .annotation
+                .leading
+                .iter()
+                .any(|t| matches!(t, Trivia::Comment { .. }));
+        assert!(
+            has_comment,
+            "Comment should be attached to either first node's trailing or second node's leading trivia"
+        );
     }
 
     #[test]

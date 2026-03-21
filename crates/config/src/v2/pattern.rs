@@ -328,4 +328,52 @@ mod tests {
         let err = parse_arg(r#"(= 0 "test")"#).expect_err("expected error");
         assert!(format!("{err}").contains("1 or greater"));
     }
+
+    #[test]
+    fn parse_empty_expr_form_error() {
+        let err = parse_arg(r#"(positional (regex))"#).expect_err("expected error");
+        assert!(format!("{err}").contains("regex must have exactly one pattern"));
+    }
+
+    #[test]
+    fn parse_not_without_arg_error() {
+        let err = parse_arg(r#"(positional (not))"#).expect_err("expected error");
+        assert!(format!("{err}").contains("not must have exactly one expression"));
+    }
+
+    #[test]
+    fn parse_unknown_expr_form_error() {
+        let err = parse_arg(r#"(positional (unknown "test"))"#).expect_err("expected error");
+        assert!(format!("{err}").contains("unknown expression form"));
+    }
+
+    #[test]
+    fn parse_bracket_syntax_error() {
+        let err = parse_arg(r#"(positional ["test"])"#).expect_err("expected error");
+        assert!(format!("{err}").contains("bracket syntax"));
+    }
+
+    #[test]
+    fn parse_empty_list_error() {
+        let err = parse_arg(r#"()"#).expect_err("expected error");
+        assert!(format!("{err}").contains("empty argument pattern"));
+    }
+
+    #[test]
+    fn parse_invalid_position_type_error() {
+        let err = parse_arg(r#"(= "one" "test")"#).expect_err("expected error");
+        assert!(format!("{err}").contains("position must be a positive integer"));
+    }
+
+    #[test]
+    fn parse_invalid_regex_error() {
+        let err = parse_arg(r#"(positional (regex "[invalid"))"#).expect_err("expected error");
+        assert!(format!("{err}").contains("invalid regex"));
+    }
+
+    #[test]
+    fn parse_non_atom_tag_error() {
+        let err = parse_arg(r#"(("not an atom") "test")"#).expect_err("expected error");
+        assert!(format!("{err}").contains("must be an atom"));
+    }
 }

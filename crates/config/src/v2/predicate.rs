@@ -459,4 +459,40 @@ mod tests {
             _ => panic!("expected Arg with Forbidden"),
         }
     }
+
+    #[test]
+    fn parse_empty_predicate_error() {
+        let err = parse_pred(r#"()"#).expect_err("expected error");
+        assert!(format!("{err}").contains("empty predicate"));
+    }
+
+    #[test]
+    fn parse_has_without_args_error() {
+        let err = parse_pred(r#"(has)"#).expect_err("expected error");
+        assert!(format!("{err}").contains("has must have"));
+    }
+
+    #[test]
+    fn parse_has_with_too_many_args_error() {
+        let err = parse_pred(r#"(has :a :b :c)"#).expect_err("expected error");
+        assert!(format!("{err}").contains("has must have"));
+    }
+
+    #[test]
+    fn parse_not_without_arg_error() {
+        let err = parse_pred(r#"(not)"#).expect_err("expected error");
+        assert!(format!("{err}").contains("not must have exactly one predicate"));
+    }
+
+    #[test]
+    fn parse_non_namespaced_key_in_has_error() {
+        let err = parse_pred(r#"(has "plain-key")"#).expect_err("expected error");
+        assert!(format!("{err}").contains("namespaced"));
+    }
+
+    #[test]
+    fn parse_unknown_predicate_error() {
+        let err = parse_pred(r#"(unknown "test")"#).expect_err("expected error");
+        assert!(format!("{err}").contains("unknown predicate"));
+    }
 }
