@@ -240,14 +240,13 @@ fn wrapper_to_rule(node: &CstNode) -> Option<Box<CstNode>> {
     // Add positional pattern if we have any
     if !patterns.is_empty() {
         // Build (positional PATTERN PATTERN ...) directly - don't wrap in extra list
-        let mut positional_children = vec![
-            Box::new(CstNode::atom("positional", Default::default())),
-        ];
-        
+        let mut positional_children =
+            vec![Box::new(CstNode::atom("positional", Default::default()))];
+
         // Add each pattern as a direct child with proper spacing
         for (i, pat) in patterns.iter().enumerate() {
             let mut pat = pat.clone();
-            
+
             // Convert v1 bracket capture patterns [:key *] to just * for v2
             // The capture functionality is handled by the wrapper mechanism
             if let Some(vector) = pat.as_vector() {
@@ -262,7 +261,7 @@ fn wrapper_to_rule(node: &CstNode) -> Option<Box<CstNode>> {
                     }
                 }
             }
-            
+
             // Add leading whitespace for spacing between patterns
             if i == 0 {
                 pat.ann.leading = vec![may_i_sexpr::cst::Trivia::Whitespace(" ".to_string())];
@@ -270,10 +269,7 @@ fn wrapper_to_rule(node: &CstNode) -> Option<Box<CstNode>> {
             positional_children.push(pat);
         }
 
-        let positional = CstNode::list(
-            positional_children,
-            Default::default(),
-        );
+        let positional = CstNode::list(positional_children, Default::default());
         new_children.push(Box::new(positional));
     }
 
@@ -470,10 +466,10 @@ fn args_cond_to_case(node: &CstNode) -> Option<Box<CstNode>> {
     }
 
     let case_source = found_case_source?;
-    
+
     // Build case expression based on source type
     let mut case_children = vec![Box::new(CstNode::atom("case", Default::default()))];
-    
+
     if case_source.is_tagged("cond") {
         let cond_children = case_source.as_list()?;
         for branch in &cond_children[1..] {
@@ -495,7 +491,7 @@ fn args_cond_to_case(node: &CstNode) -> Option<Box<CstNode>> {
                 Default::default(),
             );
             case_children.push(Box::new(branch));
-            
+
             // Else branch: (else ELSE)
             let else_eff = &if_children[3];
             let else_branch = CstNode::list(

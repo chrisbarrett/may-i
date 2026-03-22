@@ -143,9 +143,11 @@ fn check_unhandled_defcontext() {
     let unhandled = check_unhandled_cases(input);
 
     assert!(!unhandled.is_empty());
-    assert!(unhandled
-        .iter()
-        .any(|u| u.description.contains("defcontext")));
+    assert!(
+        unhandled
+            .iter()
+            .any(|u| u.description.contains("defcontext"))
+    );
 }
 
 #[test]
