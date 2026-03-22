@@ -1,7 +1,21 @@
-// Migration tool for converting v1 configs to v2 syntax using rewrite rules.
-//
-// This module provides rewrite rules that transform v1 s-expression syntax
-// into v2 syntax. The rules are applied iteratively until convergence.
+//! Migration tool for converting v1 configs to v2 syntax using rewrite rules.
+//!
+//! This module provides rewrite rules that transform v1 s-expression syntax
+//! into v2 syntax. The rules are applied iteratively until convergence.
+//!
+//! # Migration Pipeline
+//!
+//! 1. **Parse**: CST parses source, preserving trivia (comments/whitespace)
+//! 2. **Analyze**: Compare original vs migrated forms to create diff
+//! 3. **Migrate**: Apply rewrite rules until convergence
+//! 4. **Validate**: Parse output with v2 parser to ensure validity
+//!
+//! # String Type Preservation
+//!
+//! A critical implementation detail is distinguishing string literals from bare atoms.
+//! The CST represents `"~/.config"` as `Shape::Str` and `bare-atom` as `Shape::Atom`.
+//! During serialization, `Shape::Str` is always quoted while `Shape::Atom` is not.
+//! Without this distinction, valid v1 quoted paths produce invalid v2 unquoted output.
 
 use may_i_sexpr::cst::{CstNode, Shape, TriviaAnn};
 

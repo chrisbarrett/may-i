@@ -1,4 +1,25 @@
-// Migration command for converting v1 configs to v2 syntax.
+//! Migration command for converting v1 configs to v2 syntax.
+//!
+//! This module implements the `may-i migrate` subcommand with interactive
+//! prompting and detailed diff display.
+//!
+//! # Interactive Mode
+//!
+//! When running in a TTY, the command shows a form-by-form diff and prompts
+//! for confirmation before applying changes. Use `--yes` to skip the prompt
+//! for non-interactive usage (required in CI/CD).
+//!
+//! # Diff Layout
+//!
+//! The diff display adapts to terminal width:
+//! - ≥80 columns: Side-by-side layout showing before/after
+//! - <80 columns: Vertical layout showing before then after
+//!
+//! # Error Handling
+//!
+//! Parse errors in the input file are returned with miette formatting,
+//! showing line numbers and source context. Validation errors from the
+//! v2 parser are similarly displayed with context from the output.
 
 use std::io::{self, IsTerminal, Write};
 use std::path::Path;

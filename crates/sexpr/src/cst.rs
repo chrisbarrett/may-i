@@ -16,9 +16,15 @@ use crate::span::Span;
 /// The shape of an s-expression node (structure without annotations).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Shape {
+    /// A bare atom identifier (e.g., `rule`, `git`, `:allow`).
+    /// Serialized without quotes.
     Atom(String),
+    /// A string literal (e.g., `"~/.config"`).
+    /// Always serialized with quotes to preserve the distinction from bare atoms.
     Str(String),
+    /// A list expression: `(children...)`
     List(Vec<Box<CstNode>>),
+    /// A vector expression: `[children...]`
     Vector(Vec<Box<CstNode>>),
 }
 
