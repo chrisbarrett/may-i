@@ -1,10 +1,13 @@
 pub mod cst;
+pub mod diff;
 mod sexpr;
 mod span;
 
 pub use cst::{
-    CstNode, RewriteRule, Trivia, TriviaAnn, parse as parse_cst, rewrite_until_convergence,
+    CstNode, RewriteRule, Shape, ShapeF, Trivia, TriviaAnn, parse as parse_cst,
+    rewrite_until_convergence,
 };
+pub use diff::{ChangeType, DiffAnn, DiffCst, PlainCst, compute_diff};
 pub use sexpr::{Sexpr, needs_quoting, quote_atom};
 pub use span::RawError;
 

@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 6fd50127cb1eba81f9a10b19365777a80893b97df87a3429b715b5a3760b49bf # shrinks to original = CstNode { ann: TriviaAnn { leading: [], trailing: [], span: Span { start: 0, end: 1 } }, shape: Atom("a") }
+cc 9a73a003cff240820fe5be363d947d598ca011d8d6c33082196b465e5ddec52a # shrinks to original = CstNode { ann: TriviaAnn { leading: [], trailing: [], span: Span { start: 0, end: 1 } }, shape: Atom("a") }

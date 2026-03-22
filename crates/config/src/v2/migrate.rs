@@ -71,8 +71,8 @@ fn rule_simplify_command(node: &CstNode) -> Option<Box<CstNode>> {
 
     // New command value with combined trivia
     let mut new_cmd = (**cmd_value).clone();
-    new_cmd.annotation.leading = second.annotation.leading.clone();
-    new_cmd.annotation.trailing = second.annotation.trailing.clone();
+    new_cmd.ann.leading = second.ann.leading.clone();
+    new_cmd.ann.trailing = second.ann.trailing.clone();
     new_children.push(Box::new(new_cmd));
 
     // Rest of children
@@ -81,7 +81,7 @@ fn rule_simplify_command(node: &CstNode) -> Option<Box<CstNode>> {
     }
 
     Some(Box::new(CstNode {
-        annotation: node.annotation.clone(),
+        ann: node.ann.clone(),
         shape: Shape::List(new_children),
     }))
 }
@@ -107,8 +107,8 @@ fn rule_inline_context(node: &CstNode) -> Option<Box<CstNode>> {
                 let expr = &ctx_children[1];
                 let mut inlined = (**expr).clone();
                 // Combine trivia
-                inlined.annotation.leading = child.annotation.leading.clone();
-                inlined.annotation.trailing = child.annotation.trailing.clone();
+                inlined.ann.leading = child.ann.leading.clone();
+                inlined.ann.trailing = child.ann.trailing.clone();
                 new_children.push(Box::new(inlined));
                 changed = true;
                 continue;
@@ -122,7 +122,7 @@ fn rule_inline_context(node: &CstNode) -> Option<Box<CstNode>> {
     }
 
     Some(Box::new(CstNode {
-        annotation: node.annotation.clone(),
+        ann: node.ann.clone(),
         shape: Shape::List(new_children),
     }))
 }
@@ -154,8 +154,8 @@ fn rule_inline_args(node: &CstNode) -> Option<Box<CstNode>> {
 
                 // For simple matchers, inline them
                 let mut inlined = (**matcher).clone();
-                inlined.annotation.leading = child.annotation.leading.clone();
-                inlined.annotation.trailing = child.annotation.trailing.clone();
+                inlined.ann.leading = child.ann.leading.clone();
+                inlined.ann.trailing = child.ann.trailing.clone();
                 new_children.push(Box::new(inlined));
                 changed = true;
                 continue;
@@ -169,7 +169,7 @@ fn rule_inline_args(node: &CstNode) -> Option<Box<CstNode>> {
     }
 
     Some(Box::new(CstNode {
-        annotation: node.annotation.clone(),
+        ann: node.ann.clone(),
         shape: Shape::List(new_children),
     }))
 }
@@ -195,7 +195,7 @@ fn wrapper_to_rule(node: &CstNode) -> Option<Box<CstNode>> {
     new_children.push(Box::new(CstNode::atom(
         "rule",
         TriviaAnn {
-            leading: node.annotation.leading.clone(),
+            leading: node.ann.leading.clone(),
             ..Default::default()
         },
     )));
@@ -274,7 +274,7 @@ fn wrapper_to_rule(node: &CstNode) -> Option<Box<CstNode>> {
             let mut new_last_children = list_children.to_vec();
             new_last_children.push(Box::new(dot));
             new_last_children.push(Box::new(may_i));
-            **last = CstNode::list(new_last_children, last.annotation.clone());
+            **last = CstNode::list(new_last_children, last.ann.clone());
         }
     }
 
@@ -294,7 +294,7 @@ fn wrapper_to_rule(node: &CstNode) -> Option<Box<CstNode>> {
     Some(Box::new(CstNode::list(
         new_children,
         TriviaAnn {
-            trailing: node.annotation.trailing.clone(),
+            trailing: node.ann.trailing.clone(),
             ..Default::default()
         },
     )))
@@ -316,7 +316,7 @@ fn defcontext_to_define(node: &CstNode) -> Option<Box<CstNode>> {
         Box::new(CstNode::atom(
             "define",
             TriviaAnn {
-                leading: node.annotation.leading.clone(),
+                leading: node.ann.leading.clone(),
                 ..Default::default()
             },
         )),
@@ -327,7 +327,7 @@ fn defcontext_to_define(node: &CstNode) -> Option<Box<CstNode>> {
     Some(Box::new(CstNode::list(
         new_children,
         TriviaAnn {
-            trailing: node.annotation.trailing.clone(),
+            trailing: node.ann.trailing.clone(),
             ..Default::default()
         },
     )))
@@ -388,10 +388,7 @@ fn args_cond_to_case(node: &CstNode) -> Option<Box<CstNode>> {
         new_children.insert(cond_index, case_node);
     }
 
-    Some(Box::new(CstNode::list(
-        new_children,
-        node.annotation.clone(),
-    )))
+    Some(Box::new(CstNode::list(new_children, node.ann.clone())))
 }
 
 /// Apply all migration rules to a CST until convergence.
@@ -481,12 +478,12 @@ pub struct MigrationAnalysis {
 
 /// Extract trivia context (up to N lines) from a node's leading trivia.
 pub fn extract_leading_context(node: &CstNode, max_lines: usize) -> Vec<String> {
-    extract_context_from_trivia(&node.annotation.leading, max_lines)
+    extract_context_from_trivia(&node.ann.leading, max_lines)
 }
 
 /// Extract trivia context (up to N lines) from a node's trailing trivia.
 pub fn extract_trailing_context(node: &CstNode, max_lines: usize) -> Vec<String> {
-    extract_context_from_trivia(&node.annotation.trailing, max_lines)
+    extract_context_from_trivia(&node.ann.trailing, max_lines)
 }
 
 /// Extract context from trivia items, up to max_lines lines.
@@ -542,8 +539,8 @@ pub fn analyze_migration(source: &str) -> MigrationAnalysis {
                 context_before: extract_leading_context(form, 2),
                 context_after: extract_trailing_context(form, 2),
                 span: Span {
-                    start: form.annotation.span.start,
-                    end: form.annotation.span.end,
+                    start: form.ann.span.start,
+                    end: form.ann.span.end,
                 },
             });
         } else {

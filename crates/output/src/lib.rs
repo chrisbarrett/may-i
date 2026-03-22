@@ -1,5 +1,7 @@
 // Shared display helpers for trace output.
 
+pub mod diff_renderer;
+
 use colored::Colorize;
 use may_i_core::{Doc, DocF, EvalAnn, LayoutHint, TraceEntry};
 use may_i_pp::{Format, colorize_atom, pretty, visible_len};

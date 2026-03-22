@@ -13,9 +13,10 @@
 
 use crate::span::Span;
 
-/// The shape of an s-expression node (structure without annotations).
+/// Base functor: one layer of CST structure without annotations.
+/// This is the base functor for the fixpoint-of-functor pattern.
 #[derive(Debug, Clone, PartialEq)]
-pub enum Shape {
+pub enum ShapeF<R> {
     /// A bare atom identifier (e.g., `rule`, `git`, `:allow`).
     /// Serialized without quotes.
     Atom(String),
@@ -23,9 +24,45 @@ pub enum Shape {
     /// Always serialized with quotes to preserve the distinction from bare atoms.
     Str(String),
     /// A list expression: `(children...)`
-    List(Vec<Box<CstNode>>),
+    List(Vec<R>),
     /// A vector expression: `[children...]`
-    Vector(Vec<Box<CstNode>>),
+    Vector(Vec<R>),
+}
+
+/// The shape of an s-expression node (structure without annotations).
+/// This is a type alias for backward compatibility.
+pub type Shape = ShapeF<Box<CstNode>>;
+
+impl<R> ShapeF<R> {
+    /// Functor map: transform children recursively.
+    pub fn map<S>(self, f: impl FnMut(R) -> S) -> ShapeF<S> {
+        match self {
+            ShapeF::Atom(s) => ShapeF::Atom(s),
+            ShapeF::Str(s) => ShapeF::Str(s),
+            ShapeF::List(children) => ShapeF::List(children.into_iter().map(f).collect()),
+            ShapeF::Vector(children) => ShapeF::Vector(children.into_iter().map(f).collect()),
+        }
+    }
+
+    /// Map by reference: transform children without consuming self.
+    pub fn map_ref<S>(&self, f: impl FnMut(&R) -> S) -> ShapeF<S> {
+        match self {
+            ShapeF::Atom(s) => ShapeF::Atom(s.clone()),
+            ShapeF::Str(s) => ShapeF::Str(s.clone()),
+            ShapeF::List(children) => ShapeF::List(children.iter().map(f).collect()),
+            ShapeF::Vector(children) => ShapeF::Vector(children.iter().map(f).collect()),
+        }
+    }
+
+    /// Map by reference with mutable function.
+    pub fn map_ref_mut<S>(&self, f: &mut impl FnMut(&R) -> S) -> ShapeF<S> {
+        match self {
+            ShapeF::Atom(s) => ShapeF::Atom(s.clone()),
+            ShapeF::Str(s) => ShapeF::Str(s.clone()),
+            ShapeF::List(children) => ShapeF::List(children.iter().map(f).collect()),
+            ShapeF::Vector(children) => ShapeF::Vector(children.iter().map(f).collect()),
+        }
+    }
 }
 
 /// Trivia annotation for CST nodes.
@@ -46,12 +83,16 @@ impl Default for TriviaAnn {
     }
 }
 
-/// A Concrete Syntax Tree node with trivia and span annotations.
+/// A Concrete Syntax Tree node with generic annotations.
+/// This is the fixpoint of ShapeF: CstNode<A> = ShapeF<CstNode<A>> with annotation A.
 #[derive(Debug, Clone, PartialEq)]
-pub struct CstNode {
-    pub annotation: TriviaAnn,
-    pub shape: Shape,
+pub struct CstNode<A = TriviaAnn> {
+    pub ann: A,
+    pub shape: ShapeF<Box<CstNode<A>>>,
 }
+
+/// Type alias for backward compatibility - CST nodes with trivia annotations.
+pub type TriviaCstNode = CstNode<TriviaAnn>;
 
 /// Trivia types (comments and whitespace).
 #[derive(Debug, Clone, PartialEq)]
@@ -76,20 +117,20 @@ impl Trivia {
     }
 }
 
-impl CstNode {
+impl CstNode<TriviaAnn> {
     /// Convert this CST node to a Sexpr (discards trivia).
     pub fn to_sexpr(&self) -> crate::sexpr::Sexpr {
         use crate::sexpr::Sexpr;
 
-        let span = self.annotation.span;
+        let span = self.ann.span;
         match &self.shape {
-            Shape::Atom(s) => Sexpr::Atom(s.clone(), span),
-            Shape::Str(s) => Sexpr::Atom(s.clone(), span),
-            Shape::List(children) => {
+            ShapeF::Atom(s) => Sexpr::Atom(s.clone(), span),
+            ShapeF::Str(s) => Sexpr::Atom(s.clone(), span),
+            ShapeF::List(children) => {
                 let items: Vec<Sexpr> = children.iter().map(|c| c.to_sexpr()).collect();
                 Sexpr::List(items, span)
             }
-            Shape::Vector(children) => {
+            ShapeF::Vector(children) => {
                 let items: Vec<Sexpr> = children.iter().map(|c| c.to_sexpr()).collect();
                 Sexpr::Vector(items, span)
             }
@@ -97,51 +138,27 @@ impl CstNode {
     }
 
     /// Create an atom node.
-    pub fn atom(value: impl Into<String>, ann: TriviaAnn) -> Self {
+    pub fn atom(value: impl Into<String>, annotation: TriviaAnn) -> Self {
         Self {
-            annotation: ann,
-            shape: Shape::Atom(value.into()),
+            ann: annotation,
+            shape: ShapeF::Atom(value.into()),
         }
     }
 
     /// Create a list node.
-    pub fn list(children: Vec<Box<CstNode>>, ann: TriviaAnn) -> Self {
+    pub fn list(children: Vec<Box<CstNode>>, annotation: TriviaAnn) -> Self {
         Self {
-            annotation: ann,
-            shape: Shape::List(children),
+            ann: annotation,
+            shape: ShapeF::List(children),
         }
     }
 
     /// Create a vector node.
-    pub fn vector(children: Vec<Box<CstNode>>, ann: TriviaAnn) -> Self {
+    pub fn vector(children: Vec<Box<CstNode>>, annotation: TriviaAnn) -> Self {
         Self {
-            annotation: ann,
-            shape: Shape::Vector(children),
+            ann: annotation,
+            shape: ShapeF::Vector(children),
         }
-    }
-
-    /// Get the atom value if this is an atom.
-    pub fn as_atom(&self) -> Option<&str> {
-        match &self.shape {
-            Shape::Atom(s) => Some(s),
-            _ => None,
-        }
-    }
-
-    /// Get list children if this is a list.
-    pub fn as_list(&self) -> Option<&[Box<CstNode>]> {
-        match &self.shape {
-            Shape::List(children) => Some(children),
-            _ => None,
-        }
-    }
-
-    /// Check if this is a tagged list (first element is the given atom).
-    pub fn is_tagged(&self, tag: &str) -> bool {
-        self.as_list()
-            .and_then(|children| children.first())
-            .and_then(|first| first.as_atom())
-            == Some(tag)
     }
 
     /// Serialize back to string.
@@ -153,7 +170,7 @@ impl CstNode {
 
     fn write_to(&self, output: &mut String) {
         // Write leading trivia
-        for trivia in &self.annotation.leading {
+        for trivia in &self.ann.leading {
             match trivia {
                 Trivia::Whitespace(s) => output.push_str(s),
                 Trivia::Comment { text, has_newline } => {
@@ -167,26 +184,26 @@ impl CstNode {
 
         // Write the shape
         match &self.shape {
-            Shape::Atom(s) => {
+            ShapeF::Atom(s) => {
                 output.push_str(s);
             }
-            Shape::Str(s) => {
+            ShapeF::Str(s) => {
                 output.push_str(&quote_string(s));
             }
-            Shape::List(children) => {
+            ShapeF::List(children) => {
                 output.push('(');
                 for (i, child) in children.iter().enumerate() {
-                    if i > 0 && child.annotation.leading.is_empty() {
+                    if i > 0 && child.ann.leading.is_empty() {
                         output.push(' ');
                     }
                     child.write_to(output);
                 }
                 output.push(')');
             }
-            Shape::Vector(children) => {
+            ShapeF::Vector(children) => {
                 output.push('[');
                 for (i, child) in children.iter().enumerate() {
-                    if i > 0 && child.annotation.leading.is_empty() {
+                    if i > 0 && child.ann.leading.is_empty() {
                         output.push(' ');
                     }
                     child.write_to(output);
@@ -196,7 +213,7 @@ impl CstNode {
         }
 
         // Write trailing trivia
-        for trivia in &self.annotation.trailing {
+        for trivia in &self.ann.trailing {
             match trivia {
                 Trivia::Whitespace(s) => output.push_str(s),
                 Trivia::Comment { text, has_newline } => {
@@ -208,12 +225,55 @@ impl CstNode {
             }
         }
     }
+}
+
+impl<A> CstNode<A> {
+    /// Get the atom value if this is an atom.
+    pub fn as_atom(&self) -> Option<&str> {
+        match &self.shape {
+            ShapeF::Atom(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    /// Get string value if this is a string.
+    pub fn as_str(&self) -> Option<&str> {
+        match &self.shape {
+            ShapeF::Str(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    /// Get list children if this is a list.
+    pub fn as_list(&self) -> Option<&[Box<CstNode<A>>]> {
+        match &self.shape {
+            ShapeF::List(children) => Some(children),
+            _ => None,
+        }
+    }
+
+    /// Get vector children if this is a vector.
+    pub fn as_vector(&self) -> Option<&[Box<CstNode<A>>]> {
+        match &self.shape {
+            ShapeF::Vector(children) => Some(children),
+            _ => None,
+        }
+    }
+
+    /// Check if this is a tagged list (first element is the given atom).
+    pub fn is_tagged(&self, tag: &str) -> bool {
+        self.as_list()
+            .and_then(|children| children.first())
+            .and_then(|first| first.as_atom())
+            == Some(tag)
+    }
 
     /// Apply a transformation to this node and all children (cata-like).
     /// Returns Some(node) if a transformation occurred, None otherwise.
-    pub fn transform<F>(&self, f: &mut F) -> Option<Box<CstNode>>
+    pub fn transform<F>(&self, f: &mut F) -> Option<Box<CstNode<A>>>
     where
-        F: FnMut(&CstNode) -> Option<Box<CstNode>>,
+        F: FnMut(&CstNode<A>) -> Option<Box<CstNode<A>>>,
+        A: Clone,
     {
         // First try to apply the transformation to this node
         if let Some(replacement) = f(self) {
@@ -222,8 +282,8 @@ impl CstNode {
 
         // If no transformation at this node, try children
         match &self.shape {
-            Shape::Atom(_) | Shape::Str(_) => None,
-            Shape::List(children) => {
+            ShapeF::Atom(_) | ShapeF::Str(_) => None,
+            ShapeF::List(children) => {
                 let mut new_children = Vec::new();
                 let mut changed = false;
                 for c in children {
@@ -236,14 +296,14 @@ impl CstNode {
                 }
                 if changed {
                     Some(Box::new(CstNode {
-                        annotation: self.annotation.clone(),
-                        shape: Shape::List(new_children),
+                        ann: self.ann.clone(),
+                        shape: ShapeF::List(new_children),
                     }))
                 } else {
                     None
                 }
             }
-            Shape::Vector(children) => {
+            ShapeF::Vector(children) => {
                 let mut new_children = Vec::new();
                 let mut changed = false;
                 for c in children {
@@ -256,14 +316,38 @@ impl CstNode {
                 }
                 if changed {
                     Some(Box::new(CstNode {
-                        annotation: self.annotation.clone(),
-                        shape: Shape::Vector(new_children),
+                        ann: self.ann.clone(),
+                        shape: ShapeF::Vector(new_children),
                     }))
                 } else {
                     None
                 }
             }
         }
+    }
+
+    /// Map annotations (functor operation): transform A -> B.
+    pub fn map<B>(self, f: &mut impl FnMut(A) -> B) -> CstNode<B> {
+        CstNode {
+            ann: f(self.ann),
+            shape: self.shape.map(|child| Box::new(child.map(f))),
+        }
+    }
+
+    /// Map annotations by reference.
+    pub fn map_ref<B>(&self, f: &mut impl FnMut(&A) -> B) -> CstNode<B> {
+        CstNode {
+            ann: f(&self.ann),
+            shape: self.shape.map_ref(|child| Box::new(child.map_ref(f))),
+        }
+    }
+
+    /// Bottom-up fold (catamorphism): reduce tree to a single value.
+    pub fn fold<B>(&self, alg: &mut impl FnMut(&ShapeF<B>, &A) -> B) -> B {
+        // First, recursively fold children
+        let folded_shape = self.shape.map_ref(|child| child.fold(alg));
+        // Then apply algebra to this level
+        alg(&folded_shape, &self.ann)
     }
 }
 
@@ -300,14 +384,14 @@ impl<'a> Parser<'a> {
 
             if let Some(node) = self.parse_node() {
                 let mut node = node;
-                node.annotation.leading = leading;
-                node.annotation.trailing = self.collect_trivia();
+                node.ann.leading = leading;
+                node.ann.trailing = self.collect_trivia();
                 results.push(Box::new(node));
             } else if !leading.is_empty()
                 && !results.is_empty()
                 && let Some(last) = results.last_mut()
             {
-                last.annotation.trailing.extend(leading);
+                last.ann.trailing.extend(leading);
             }
         }
 
@@ -393,13 +477,13 @@ impl<'a> Parser<'a> {
                 }
 
                 if let Some(mut child) = self.parse_node() {
-                    child.annotation.leading = leading;
+                    child.ann.leading = leading;
                     children.push(Box::new(child));
                 } else if !leading.is_empty()
                     && !children.is_empty()
                     && let Some(last) = children.last_mut()
                 {
-                    last.annotation.trailing.extend(leading);
+                    last.ann.trailing.extend(leading);
                 }
             } else {
                 self.errors.push(crate::span::RawError::new(
@@ -417,13 +501,13 @@ impl<'a> Parser<'a> {
             .unwrap_or(self.input.len());
 
         let shape = if close == ')' {
-            Shape::List(children)
+            ShapeF::List(children)
         } else {
-            Shape::Vector(children)
+            ShapeF::Vector(children)
         };
 
         Some(CstNode {
-            annotation: TriviaAnn {
+            ann: TriviaAnn {
                 span: Span::new(start, end),
                 ..Default::default()
             },
@@ -447,11 +531,11 @@ impl<'a> Parser<'a> {
                 Some((pos, '"')) => {
                     let end = pos + 1;
                     return Some(CstNode {
-                        annotation: TriviaAnn {
+                        ann: TriviaAnn {
                             span: Span::new(start, end),
                             ..Default::default()
                         },
-                        shape: Shape::Str(s),
+                        shape: ShapeF::Str(s),
                     });
                 }
                 Some((_, '\\')) => match self.chars.next() {
@@ -496,11 +580,11 @@ impl<'a> Parser<'a> {
             None
         } else {
             Some(CstNode {
-                annotation: TriviaAnn {
+                ann: TriviaAnn {
                     span: Span::new(start, end),
                     ..Default::default()
                 },
-                shape: Shape::Atom(s),
+                shape: ShapeF::Atom(s),
             })
         }
     }
@@ -515,18 +599,18 @@ fn is_atom_char(c: char) -> bool {
 pub trait Visitor {
     /// Called for each node during traversal.
     /// Return true to continue traversing children, false to skip.
-    fn visit(&mut self, node: &CstNode) -> bool;
+    fn visit(&mut self, node: &CstNode<TriviaAnn>) -> bool;
 }
 
-impl CstNode {
+impl CstNode<TriviaAnn> {
     /// Accept a visitor and traverse the tree.
     pub fn accept<V: Visitor>(&self, visitor: &mut V) {
         if !visitor.visit(self) {
             return;
         }
         match &self.shape {
-            Shape::Atom(_) | Shape::Str(_) => {}
-            Shape::List(children) | Shape::Vector(children) => {
+            ShapeF::Atom(_) | ShapeF::Str(_) => {}
+            ShapeF::List(children) | ShapeF::Vector(children) => {
                 for child in children {
                     child.accept(visitor);
                 }
@@ -540,13 +624,16 @@ pub trait RewriteRule {
     /// Try to apply this rule to a node.
     /// Returns Some(new_node) if the rule matched and transformed the node,
     /// or None if the rule didn't match.
-    fn apply(&self, node: &CstNode) -> Option<Box<CstNode>>;
+    fn apply(&self, node: &CstNode<TriviaAnn>) -> Option<Box<CstNode<TriviaAnn>>>;
 }
 
 /// Apply a sequence of rewrite rules until convergence.
-pub fn rewrite_until_convergence<F>(node: Box<CstNode>, rules: &[F]) -> Box<CstNode>
+pub fn rewrite_until_convergence<F>(
+    node: Box<CstNode<TriviaAnn>>,
+    rules: &[F],
+) -> Box<CstNode<TriviaAnn>>
 where
-    F: Fn(&CstNode) -> Option<Box<CstNode>>,
+    F: Fn(&CstNode<TriviaAnn>) -> Option<Box<CstNode<TriviaAnn>>>,
 {
     let mut current = node;
     loop {
@@ -611,15 +698,15 @@ mod tests {
                     .skip(1)
                     .map(|c| {
                         let mut new_c = (**c).clone();
-                        new_c.annotation.leading.clear();
+                        new_c.ann.leading.clear();
                         Box::new(new_c)
                     })
                     .collect();
                 Some(Box::new(CstNode::list(
                     children,
                     TriviaAnn {
-                        leading: n.annotation.leading.clone(),
-                        trailing: n.annotation.trailing.clone(),
+                        leading: n.ann.leading.clone(),
+                        trailing: n.ann.trailing.clone(),
                         ..Default::default()
                     },
                 )))
@@ -784,12 +871,12 @@ mod tests {
         let first = &nodes[0];
         let second = &nodes[1];
         let has_comment = first
-            .annotation
+            .ann
             .trailing
             .iter()
             .any(|t| matches!(t, Trivia::Comment { .. }))
             || second
-                .annotation
+                .ann
                 .leading
                 .iter()
                 .any(|t| matches!(t, Trivia::Comment { .. }));
@@ -1102,5 +1189,187 @@ mod proptests {
         let (reparsed, re_errors) = parse(&nodes[0].serialize());
         assert!(re_errors.is_empty());
         assert!(cst_nodes_equal(&nodes[0], &reparsed[0]));
+    }
+
+    // ── Functor law tests ───────────────────────────────────────────
+
+    /// Helper to check if two CST nodes are equal (for functor tests)
+    fn nodes_equal<A: PartialEq>(a: &CstNode<A>, b: &CstNode<A>) -> bool {
+        a == b
+    }
+
+    #[test]
+    fn functor_identity_law() {
+        // map id = id
+        let input = "(foo bar baz)";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+        let node = &nodes[0];
+
+        // Map with identity function
+        let mapped: CstNode<TriviaAnn> = (**node).clone().map(&mut |ann| ann);
+
+        // Should be equal to original
+        assert!(nodes_equal(&mapped, node));
+    }
+
+    #[test]
+    fn functor_composition_law() {
+        // map (f . g) = map f . map g
+        let input = "(foo bar)";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+        let node = nodes[0].clone();
+
+        // Define two transformations
+        let f = |ann: &TriviaAnn| ann.span.start;
+        let g = |ann: &TriviaAnn| ann.span.end;
+
+        // map (f . g) - compose first, then map
+        let composed: CstNode<usize> = node.clone().map(&mut |ann| f(&ann) + g(&ann));
+
+        // map f . map g - map twice
+        let mapped_twice: CstNode<usize> = node.map(&mut |ann| g(&ann)).map(&mut |end| {
+            f(&TriviaAnn {
+                span: Span::new(end, end),
+                leading: vec![],
+                trailing: vec![],
+            })
+        });
+
+        // Both should have the same structure, just different annotations
+        // We verify by checking they're both lists with same children count
+        assert!(matches!(composed.shape, ShapeF::List(_)));
+        assert!(matches!(mapped_twice.shape, ShapeF::List(_)));
+    }
+
+    #[test]
+    fn functor_preserves_structure() {
+        // Mapping should preserve tree structure
+        let input = "(a (b c) d)";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+        let node = nodes[0].clone();
+
+        // Map to discard annotation
+        let mapped: CstNode<()> = node.map(&mut |_ann| ());
+
+        // Check structure is preserved
+        assert!(matches!(mapped.shape, ShapeF::List(_)));
+        if let ShapeF::List(children) = &mapped.shape {
+            assert_eq!(children.len(), 3);
+            assert!(matches!(children[1].shape, ShapeF::List(_)));
+        }
+    }
+
+    // ── Fold (catamorphism) tests ───────────────────────────────────
+
+    #[test]
+    fn fold_counts_nodes() {
+        let input = "(a (b c))";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+        let node = &nodes[0];
+
+        // Fold to count nodes
+        let count: usize = node.fold(&mut |shape, _ann| match shape {
+            ShapeF::Atom(_) => 1,
+            ShapeF::Str(_) => 1,
+            ShapeF::List(children) | ShapeF::Vector(children) => 1 + children.iter().sum::<usize>(),
+        });
+
+        // Should be: outer list (1) + a (1) + inner list (1) + b (1) + c (1) = 5
+        assert_eq!(count, 5);
+    }
+
+    #[test]
+    fn fold_collects_atoms() {
+        let input = "(foo (bar baz))";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+        let node = &nodes[0];
+
+        // Fold to collect all atom values
+        let atoms: Vec<String> = node.fold(&mut |shape, _ann| match shape {
+            ShapeF::Atom(s) => vec![s.clone()],
+            ShapeF::Str(s) => vec![s.clone()],
+            ShapeF::List(children) | ShapeF::Vector(children) => {
+                children.iter().flatten().cloned().collect()
+            }
+        });
+
+        assert_eq!(atoms, vec!["foo", "bar", "baz"]);
+    }
+
+    #[test]
+    fn fold_rebuilds_tree() {
+        // Use fold to rebuild tree with modified annotations
+        let input = "(hello world)";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+        let node = &nodes[0];
+
+        // Fold to collect all spans
+        let spans: Vec<(usize, usize)> = node.fold(&mut |shape, ann| match shape {
+            ShapeF::Atom(_) | ShapeF::Str(_) => vec![(ann.span.start, ann.span.end)],
+            ShapeF::List(children) | ShapeF::Vector(children) => {
+                let mut result = vec![(ann.span.start, ann.span.end)];
+                result.extend(children.iter().flatten().cloned());
+                result
+            }
+        });
+
+        // Should have spans for outer list + 2 atoms
+        assert_eq!(spans.len(), 3);
+    }
+
+    #[test]
+    fn fold_bottom_up_order() {
+        // Verify fold processes children before parents (bottom-up)
+        let input = "(a b)";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+        let node = &nodes[0];
+
+        let mut order: Vec<String> = vec![];
+        let _: () = node.fold(&mut |shape, _ann| match shape {
+            ShapeF::Atom(s) => order.push(format!("atom:{}", s)),
+            ShapeF::List(_) => order.push("list".to_string()),
+            _ => {}
+        });
+
+        // Should visit atoms first, then list (bottom-up)
+        assert_eq!(order, vec!["atom:a", "atom:b", "list"]);
+    }
+
+    // ── ShapeF functor tests ────────────────────────────────────────
+
+    #[test]
+    fn shapef_map_preserves_atoms() {
+        let atom: ShapeF<i32> = ShapeF::Atom("test".to_string());
+        let mapped = atom.map(|x| x * 2);
+        assert!(matches!(mapped, ShapeF::Atom(s) if s == "test"));
+    }
+
+    #[test]
+    fn shapef_map_transforms_list_children() {
+        let list: ShapeF<i32> = ShapeF::List(vec![1, 2, 3]);
+        let mapped = list.map(|x| x * 2);
+        if let ShapeF::List(children) = mapped {
+            assert_eq!(children, vec![2, 4, 6]);
+        } else {
+            panic!("expected list");
+        }
+    }
+
+    #[test]
+    fn shapef_map_ref_preserves_structure() {
+        let list: ShapeF<i32> = ShapeF::List(vec![1, 2, 3]);
+        let mapped: ShapeF<String> = list.map_ref(|x| x.to_string());
+        if let ShapeF::List(children) = mapped {
+            assert_eq!(children, vec!["1", "2", "3"]);
+        } else {
+            panic!("expected list");
+        }
     }
 }

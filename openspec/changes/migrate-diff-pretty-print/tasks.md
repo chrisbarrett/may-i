@@ -2,32 +2,32 @@
 
 ## Phase 1: CST Refactor
 
-- [ ] Create `ShapeF<R>` base functor with `map`/`map_ref`
-- [ ] Refactor `CstNode` to `CstNode<A>` with generic annotation
-- [ ] Implement `map` (functor) for `CstNode<A>`
-- [ ] Implement `fold` (catamorphism) for `CstNode<A>`
-- [ ] Migrate existing CST code to new structure
-- [ ] Add tests for functor laws
-- [ ] Add tests for fold correctness
+- [x] Create `ShapeF<R>` base functor with `map`/`map_ref`
+- [x] Refactor `CstNode` to `CstNode<A>` with generic annotation
+- [x] Implement `map` (functor) for `CstNode<A>`
+- [x] Implement `fold` (catamorphism) for `CstNode<A>`
+- [x] Migrate existing CST code to new structure
+- [x] Add tests for functor laws
+- [x] Add tests for fold correctness
 
 ## Phase 2: Diff Module
 
-- [ ] Create `ChangeType` enum
-- [ ] Create `DiffAnn` struct
-- [ ] Define `PlainCst` and `DiffCst` type aliases
-- [ ] Implement `compute_diff` function
-- [ ] Add property tests for diff computation
-- [ ] Handle edge cases (insertions, deletions, moves)
+- [x] Create `ChangeType` enum
+- [x] Create `DiffAnn` struct
+- [x] Define `PlainCst` and `DiffCst` type aliases
+- [x] Implement `compute_diff` function
+- [x] Add property tests for diff computation
+- [x] Handle edge cases (insertions, deletions, moves)
 
 ## Phase 3: Diff Rendering
 
-- [ ] Create `DiffConfig` struct
-- [ ] Implement `render_diff` function
-- [ ] Add two-column layout logic
-- [ ] Add inline diff fallback (<80 cols)
-- [ ] Add fold markers for unchanged sections
-- [ ] Pretty-print via pp crate
-- [ ] Add tests for rendering
+- [x] Create `DiffConfig` struct
+- [x] Implement `render_diff` function
+- [x] Add two-column layout logic
+- [x] Add inline diff fallback (<80 cols)
+- [x] Add fold markers for unchanged sections
+- [x] Pretty-print via pp crate
+- [x] Add tests for rendering
 
 ## Phase 4: Pager Integration
 

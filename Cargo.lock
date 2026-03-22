@@ -516,6 +516,7 @@ dependencies = [
  "colored",
  "may-i-core",
  "may-i-pp",
+ "may-i-sexpr",
  "serde",
  "serde_json",
  "terminal_size",
