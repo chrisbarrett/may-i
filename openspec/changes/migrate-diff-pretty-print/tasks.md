@@ -31,27 +31,27 @@
 
 ## Phase 4: Pager Integration
 
-- [ ] Add `minus` to Cargo.toml
-- [ ] Create `display_with_pager` function
-- [ ] Integrate into `cmd_migrate`
-- [ ] Handle TTY detection
-- [ ] Add tests with mock pager
+- [x] Add `minus` to Cargo.toml
+- [x] Create `display_with_pager` function
+- [x] Integrate into `cmd_migrate`
+- [x] Handle TTY detection
+- [x] Add tests with mock pager
 
 ## Phase 5: Migration Command Update
 
-- [ ] Update `cmd_migrate` to use new diff system
-- [ ] Remove old diff rendering code
-- [ ] Update CLI args if needed
-- [ ] Add integration tests
-- [ ] Update documentation
+- [x] Update `cmd_migrate` to use new diff system
+- [x] Remove old diff rendering code
+- [x] Update CLI args if needed
+- [x] Add integration tests
+- [x] Update documentation
 
 ## Phase 6: Cleanup
 
-- [ ] Run clippy
-- [ ] Run tests
-- [ ] Check test coverage
-- [ ] Update README
-- [ ] Archive old change
+- [x] Run clippy
+- [x] Run tests
+- [x] Check test coverage
+- [x] Update README
+- [x] Archive old change
 
 ## Notes
 

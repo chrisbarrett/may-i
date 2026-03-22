@@ -98,12 +98,19 @@ pub fn compute_diff(original: Vec<PlainCst>, migrated: Vec<PlainCst>) -> Vec<Dif
     // Handle insertions: any remaining migrated nodes are insertions
     // We represent insertions as new nodes with empty trivia and Modified status
     for mig in mig_iter {
+        // Create a placeholder "before" node that's empty
+        let placeholder = CstNode {
+            ann: TriviaAnn::default(),
+            shape: ShapeF::Atom("".to_string()), // Empty atom as placeholder
+        };
         result.push(CstNode {
             ann: DiffAnn {
                 trivia: TriviaAnn::default(),
                 change: ChangeType::Modified { after: mig },
             },
-            shape: ShapeF::List(vec![]), // Placeholder, will be replaced
+            shape: placeholder
+                .shape
+                .map_ref(|child| Box::new(annotate_child(child, &ChangeType::Unchanged))),
         });
     }
 

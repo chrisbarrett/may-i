@@ -3,6 +3,8 @@
 //! This module provides pretty-printed diff display with two-column layout,
 //! fold markers for unchanged sections, and terminal width adaptation.
 
+use std::io::IsTerminal;
+
 use colored::Colorize;
 use may_i_core::Doc;
 use may_i_pp::{Format, pretty};
@@ -405,6 +407,54 @@ fn get_term_width() -> usize {
         .unwrap_or(80)
 }
 
+/// Display content using an interactive pager when appropriate.
+///
+/// # Arguments
+///
+/// * `content` - The content to display
+/// * `use_pager` - Whether to use the pager (only if stdout is a TTY)
+///
+/// # Returns
+///
+/// Returns `Ok(())` on success, or an error if the pager fails.
+pub fn display_with_pager(
+    content: &str,
+    use_pager: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let stdout = std::io::stdout();
+    let is_tty = stdout.is_terminal();
+
+    if use_pager && is_tty {
+        // Use minus pager for interactive display
+        let pager = minus::Pager::new();
+        pager.set_text(content)?;
+        minus::page_all(pager)?;
+    } else {
+        // Direct output for piping or when pager is disabled
+        println!("{}", content);
+    }
+
+    Ok(())
+}
+
+/// Check if the output should use a pager based on content length.
+///
+/// Returns true if the content exceeds terminal height and we're in a TTY.
+pub fn should_use_pager(content_lines: usize) -> bool {
+    let stdout = std::io::stdout();
+    if !stdout.is_terminal() {
+        return false;
+    }
+
+    // Get terminal height
+    let term_height = terminal_size::terminal_size()
+        .map(|(_, h)| h.0 as usize)
+        .unwrap_or(24);
+
+    // Use pager if content exceeds terminal height
+    content_lines > term_height
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -429,5 +479,25 @@ mod tests {
         assert_eq!(config.fold_marker, "⋮");
         assert_eq!(config.show_context_lines, 2);
         assert!(config.color);
+    }
+
+    #[test]
+    fn test_display_with_pager_direct_output() {
+        // Test that display_with_pager works in non-pager mode
+        let result = display_with_pager("test content", false);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_should_use_pager_small_content() {
+        // Small content should not use pager
+        assert!(!should_use_pager(5));
+    }
+
+    #[test]
+    fn test_should_use_pager_large_content() {
+        // Large content might use pager (depends on terminal)
+        // This test mainly ensures the function doesn't panic
+        let _ = should_use_pager(1000);
     }
 }

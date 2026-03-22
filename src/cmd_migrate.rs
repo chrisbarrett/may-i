@@ -25,6 +25,8 @@ use std::io::{self, IsTerminal, Write};
 use std::path::Path;
 
 use may_i_config::v2::migrate::{migrate_forms, validate_migration};
+use may_i_output::diff_renderer::{DiffConfig, display_with_pager, render_diff, should_use_pager};
+use may_i_sexpr::diff::compute_diff;
 use may_i_sexpr::parse_cst;
 
 /// Abstract terminal interaction behind a trait for testability.
@@ -88,160 +90,6 @@ impl PromptHandler for MockPromptHandler {
     }
 }
 
-/// Render migration diffs with side-by-side or vertical layout.
-fn render_diff(
-    analysis: &may_i_config::v2::migrate::MigrationAnalysis,
-    term_width: usize,
-) -> String {
-    use colored::Colorize;
-
-    let mut output = String::new();
-
-    // Render errors first if any
-    if !analysis.errors.is_empty() {
-        output.push_str(&format!("\n{}", "Parse Errors:".bold().red()));
-        output.push_str(&format!("\n{}", "─".repeat(term_width.min(80)).dimmed()));
-
-        for error in &analysis.errors {
-            output.push_str(&format!("\n{}: {}", "Error".red().bold(), error.message));
-
-            // Show context before
-            for ctx in &error.context_before {
-                output.push_str(&format!("  {}\n", ctx.dimmed()));
-            }
-
-            // Show error indicator
-            if error.span.start > 0 || error.span.end > 0 {
-                output.push_str(&format!(
-                    "  {}\n",
-                    "^".repeat(error.span.end.saturating_sub(error.span.start))
-                        .red()
-                ));
-            }
-
-            // Show context after
-            for ctx in &error.context_after {
-                output.push_str(&format!("  {}\n", ctx.dimmed()));
-            }
-        }
-
-        output.push_str(&format!("\n{}", "─".repeat(term_width.min(80)).dimmed()));
-    }
-
-    if analysis.diffs.is_empty() {
-        output.push_str("\nNo changes needed.\n");
-        return output;
-    }
-
-    output.push_str(&format!("\n{}", "Migration Diff:".bold()));
-    output.push_str(&format!("\n{}", "─".repeat(term_width.min(80)).dimmed()));
-
-    for (i, diff) in analysis.diffs.iter().enumerate() {
-        if i > 0 {
-            output.push_str("\n\n");
-        }
-
-        // Render context before
-        for ctx in &diff.context_before {
-            output.push_str(&format!("{}", ctx.dimmed()));
-        }
-
-        // Render the form change
-        if term_width >= 80 {
-            // Side-by-side layout
-            render_side_by_side(&mut output, diff, term_width);
-        } else {
-            // Vertical layout
-            render_vertical(&mut output, diff);
-        }
-
-        // Render context after
-        for ctx in &diff.context_after {
-            output.push_str(&format!("{}", ctx.dimmed()));
-        }
-    }
-
-    output.push_str(&format!("\n{}", "─".repeat(term_width.min(80)).dimmed()));
-    output.push_str(&format!(
-        "\n{} forms will change, {} unchanged\n",
-        analysis.diffs.len().to_string().yellow(),
-        analysis.unchanged_count.to_string().dimmed()
-    ));
-
-    output
-}
-
-/// Render diff in side-by-side layout.
-fn render_side_by_side(
-    output: &mut String,
-    diff: &may_i_config::v2::migrate::MigrationDiff,
-    term_width: usize,
-) {
-    use colored::Colorize;
-
-    let separator = " │ ";
-    let available_width = term_width.saturating_sub(separator.len() + 2);
-    let column_width = available_width / 2;
-
-    let before_lines: Vec<_> = diff.before.lines().collect();
-    let after_lines: Vec<_> = diff.after.lines().collect();
-    let max_lines = before_lines.len().max(after_lines.len());
-
-    for i in 0..max_lines {
-        let before = before_lines.get(i).unwrap_or(&"");
-        let after = after_lines.get(i).unwrap_or(&"");
-
-        let before_trunc = truncate_visible(before, column_width);
-        let after_trunc = truncate_visible(after, column_width);
-
-        let before_colored = if before != after {
-            before_trunc.red().to_string()
-        } else {
-            before_trunc.to_string()
-        };
-
-        let after_colored = if before != after {
-            after_trunc.green().to_string()
-        } else {
-            after_trunc.to_string()
-        };
-
-        output.push_str(&format!(
-            "\n{:width$}{}{}",
-            before_colored,
-            separator,
-            after_colored,
-            width = column_width + 10 // Account for ANSI codes
-        ));
-    }
-}
-
-/// Render diff in vertical layout.
-fn render_vertical(output: &mut String, diff: &may_i_config::v2::migrate::MigrationDiff) {
-    use colored::Colorize;
-
-    output.push_str(&format!("\n{}\n", "BEFORE:".red()));
-    for line in diff.before.lines() {
-        output.push_str(&format!("  {}\n", line.red()));
-    }
-
-    output.push_str(&format!("{}\n", "AFTER:".green()));
-    for line in diff.after.lines() {
-        output.push_str(&format!("  {}\n", line.green()));
-    }
-}
-
-/// Truncate a string to a visible width, accounting for ANSI codes.
-fn truncate_visible(s: &str, max_width: usize) -> String {
-    let visible_len = s.chars().count();
-    if visible_len <= max_width {
-        s.to_string()
-    } else {
-        let truncated: String = s.chars().take(max_width.saturating_sub(1)).collect();
-        format!("{}…", truncated)
-    }
-}
-
 /// Run the migration command.
 pub fn cmd_migrate(
     config_path: Option<&Path>,
@@ -280,83 +128,84 @@ pub fn cmd_migrate_with_handler(
     let source = std::fs::read_to_string(&config_file)
         .map_err(|e| miette::miette!("Failed to read config file: {e}"))?;
 
-    // Analyze the migration
-    let analysis = may_i_config::v2::migrate::analyze_migration(&source);
+    // Parse the source into CST nodes
+    let (original_forms, parse_errors) = parse_cst(&source);
 
-    // Handle parse errors - cannot proceed with migration if source has syntax errors
-    if !analysis.errors.is_empty() {
-        // Return the first error with full miette formatting against the input file
-        if let Some(err) = analysis.errors.first() {
-            return Err(may_i_config::ConfigError::from_raw(
-                may_i_sexpr::RawError::new(
-                    &err.message,
-                    may_i_core::Span::new(err.span.start, err.span.end),
-                ),
-                &source,
-                &config_file.display().to_string(),
-            )
-            .into());
-        }
+    // Handle parse errors
+    if !parse_errors.is_empty()
+        && let Some(err) = parse_errors.first()
+    {
+        return Err(may_i_config::ConfigError::from_raw(
+            err.clone(),
+            &source,
+            &config_file.display().to_string(),
+        )
+        .into());
     }
 
-    // Check for unhandled v1 constructs
-    let unhandled = may_i_config::v2::migrate::check_unhandled_cases(&source);
-    if !unhandled.is_empty() {
-        eprintln!(
-            "\nWarning: Found {} unhandled v1 construct(s) that may need manual attention:",
-            unhandled.len()
-        );
-        for case in &unhandled {
-            eprintln!("\n  {}:", case.description);
-            eprintln!("    Source: {}", case.source.trim());
-            eprintln!("    Suggestion: {}", case.suggestion);
-        }
-        eprintln!();
-    }
+    // Serialize original forms for comparison (before migration)
+    let original_text: String = original_forms
+        .iter()
+        .map(|f| f.serialize())
+        .collect::<Vec<_>>()
+        .join("");
 
-    // Generate migrated output
-    let output_text = if analysis.diffs.is_empty() {
-        source.clone() // No changes needed
-    } else {
-        // Re-parse and migrate to get the output
-        let (forms, _) = parse_cst(&source);
-        let migrated = migrate_forms(forms);
-        migrated
-            .iter()
-            .map(|f| f.serialize())
-            .collect::<Vec<_>>()
-            .join("")
-    };
+    // Migrate the forms
+    let migrated_forms = migrate_forms(original_forms.clone());
+
+    // Generate output text
+    let output_text = migrated_forms
+        .iter()
+        .map(|f| f.serialize())
+        .collect::<Vec<_>>()
+        .join("");
 
     // Validate migration output parses with v2 parser
-    if !no_validate && let Err(validation_errors) = validate_migration(&output_text) {
-        // The migrated output cannot be parsed by the v2 parser.
-        // Return the validation error with context from the output.
-        if let Some(raw_err) = validation_errors.first() {
-            return Err(may_i_config::ConfigError::from_raw(
-                raw_err.clone(),
-                &output_text,
-                "<migrated-output>",
-            )
-            .into());
-        }
+    if !no_validate
+        && let Err(validation_errors) = validate_migration(&output_text)
+        && let Some(raw_err) = validation_errors.first()
+    {
+        return Err(may_i_config::ConfigError::from_raw(
+            raw_err.clone(),
+            &output_text,
+            "<migrated-output>",
+        )
+        .into());
     }
 
-    // Get terminal width for rendering
-    let term_width = get_term_width();
+    // Compute diff between original and migrated
+    let original_flat: Vec<_> = original_forms.into_iter().map(|b| *b).collect();
+    let migrated_flat: Vec<_> = migrated_forms.into_iter().map(|b| *b).collect();
+    let diff_nodes = compute_diff(original_flat, migrated_flat);
 
-    // Show diff if requested or if changes exist
-    if diff || (!analysis.diffs.is_empty() && !yes) {
-        let diff_output = render_diff(&analysis, term_width);
-        println!("{}", diff_output);
+    // Check if there are any changes by comparing serialized output
+    // This avoids showing diffs for formatting-only changes
+    let has_changes = original_text != output_text;
+
+    // Show diff if requested or if changes exist and not auto-confirmed
+    if diff || (has_changes && !yes) {
+        let config = DiffConfig::default();
+        let diff_output = render_diff(&diff_nodes, &config);
+
+        // Determine if we should use the pager
+        let use_pager = should_use_pager(diff_output.lines().count());
+
+        // Display with pager if appropriate
+        if let Err(e) = display_with_pager(&diff_output, use_pager) {
+            eprintln!("Warning: Failed to display with pager: {e}");
+            println!("{}", diff_output);
+        }
     }
 
     // Check if we need to prompt for confirmation
-    if !analysis.diffs.is_empty() && !dry_run && !yes {
+    if has_changes && !dry_run && !yes {
         if !handler.is_tty() {
             return Err(miette::miette!(
                 "Migration would modify {} form(s). Use --yes to confirm non-interactive execution.",
-                analysis.diffs.len()
+                diff_nodes
+                    .iter()
+                    .filter(|n| !n.ann.change.is_unchanged())
+                    .count()
             ));
         }
 
@@ -370,12 +219,12 @@ pub fn cmd_migrate_with_handler(
         }
     }
 
-    // Determine output path: use provided output, or default to the input config file for in-place migration
+    // Determine output path
     let output_path = output.map(Path::new);
 
     // Write output or print
     if dry_run {
-        if analysis.diffs.is_empty() {
+        if !has_changes {
             println!("\nDry run - no changes needed.");
         } else {
             println!("\nDry run - would produce:");
@@ -385,8 +234,8 @@ pub fn cmd_migrate_with_handler(
         std::fs::write(path, output_text)
             .map_err(|e| miette::miette!("Failed to write output file: {e}"))?;
         println!("Migrated config written to {}", path.display());
-    } else if !analysis.diffs.is_empty() {
-        // In-place migration: write back to the source config file
+    } else if has_changes {
+        // In-place migration
         std::fs::write(&config_file, output_text)
             .map_err(|e| miette::miette!("Failed to write config file: {e}"))?;
         println!(
@@ -400,11 +249,25 @@ pub fn cmd_migrate_with_handler(
     Ok(())
 }
 
-/// Get terminal width, with fallback to 80.
-fn get_term_width() -> usize {
-    std::env::var("COLUMNS")
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok())
-        .or_else(|| terminal_size::terminal_size().map(|(w, _)| w.0 as usize))
-        .unwrap_or(80)
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_real_prompt_handler_is_tty() {
+        // This test just ensures the handler compiles and basic behavior works
+        let handler = RealPromptHandler;
+        // Can't reliably test is_tty in tests, but we can verify it doesn't panic
+        let _ = handler.is_tty();
+    }
+
+    #[test]
+    fn test_mock_prompt_handler() {
+        let handler = MockPromptHandler::new(vec!["yes".to_string(), "no".to_string()], true);
+
+        assert!(handler.is_tty());
+        assert_eq!(handler.prompt("Test: ").unwrap(), "yes");
+        assert_eq!(handler.prompt("Test: ").unwrap(), "no");
+        assert_eq!(handler.prompt("Test: ").unwrap(), ""); // Exhausted responses
+    }
 }

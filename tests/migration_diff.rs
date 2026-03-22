@@ -156,7 +156,7 @@ fn test_check_unhandled_cases_real_issues() {
 (wrapper)
 "#;
 
-    let warnings = check_unhandled_cases(source);
+    let _warnings = check_unhandled_cases(source);
     // Malformed wrapper might be flagged since it can't migrate
     // This is expected behavior
 }
@@ -211,7 +211,7 @@ fn test_terminal_width_detection() {
 
 #[test]
 fn test_side_by_side_vs_vertical_layout() {
-    use may_i_config::v2::migrate::{MigrationAnalysis, MigrationDiff, MigrationError, Span};
+    use may_i_config::v2::migrate::{MigrationAnalysis, MigrationDiff, Span};
 
     let analysis = MigrationAnalysis {
         diffs: vec![MigrationDiff {

@@ -54,7 +54,7 @@ pub fn resolve_path(override_path: Option<&Path>) -> miette::Result<PathBuf> {
 /// Use `load_v2` for new configs or run `may-i migrate` to convert.
 pub fn load(_path: &Path) -> miette::Result<Config> {
     miette::bail!(
-        "Legacy configuration format detected. \
+        "Legacy configuration format is no longer supported. \
          Run `may-i migrate` to update your configuration to the current format."
     )
 }

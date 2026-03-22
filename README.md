@@ -329,8 +329,10 @@ may-i migrate ~/.config/may-i/config.lisp
 
 **Interactive Mode:**
 
-When running in a terminal, `may-i migrate` shows a diff of the changes and
-prompts for confirmation before applying them:
+When running in a terminal, `may-i migrate` shows a pretty-printed diff of the
+changes and prompts for confirmation before applying them. The diff uses a
+two-column layout showing before/after forms with fold markers for unchanged
+sections:
 
 ```
 Migration Diff:
@@ -343,6 +345,15 @@ Migration Diff:
 
 Apply migration? [Y/n]
 ```
+
+**Features:**
+
+- **Two-column layout** — Side-by-side view on terminals ≥80 columns
+- **Inline fallback** — Vertical layout for narrow terminals
+- **Fold markers** — Collapsed unchanged sections with ⋮ indicator
+- **Pretty-printing** — Consistent formatting via the pp crate
+- **Built-in pager** — Interactive scrolling for long diffs (arrow keys, / to search)
+- **TTY detection** — Automatically disables pager when piping output
 
 For automated scripts or CI/CD pipelines, use `--yes` to skip the prompt:
 

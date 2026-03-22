@@ -29,14 +29,15 @@ pub fn migration_rules() -> Vec<RewriteFn> {
         Box::new(rule_simplify_command),
         // Rule: (rule ... (context EXPR) ...) → (rule ... EXPR ...)
         Box::new(rule_inline_context),
+        // Rule: (args (cond/if ...)) → (case ...) in effect position
+        // MUST run before rule_inline_args which removes the args tag
+        Box::new(args_cond_to_case),
         // Rule: (rule ... (args MATCHER) ...) → (rule ... MATCHER ...)
         Box::new(rule_inline_args),
         // Rule: (wrapper CMD ...) → (rule CMD ... . (may-i *))
         Box::new(wrapper_to_rule),
         // Rule: (defcontext NAME EXPR) → (define NAME EXPR)
         Box::new(defcontext_to_define),
-        // Rule: (args (cond ...)) → (case ...) in effect position
-        Box::new(args_cond_to_case),
     ]
 }
 
@@ -238,19 +239,39 @@ fn wrapper_to_rule(node: &CstNode) -> Option<Box<CstNode>> {
 
     // Add positional pattern if we have any
     if !patterns.is_empty() {
-        let pos_list = CstNode::list(
-            patterns,
-            TriviaAnn {
-                leading: vec![may_i_sexpr::cst::Trivia::Whitespace(" ".to_string())],
-                ..Default::default()
-            },
-        );
+        // Build (positional PATTERN PATTERN ...) directly - don't wrap in extra list
+        let mut positional_children = vec![
+            Box::new(CstNode::atom("positional", Default::default())),
+        ];
+        
+        // Add each pattern as a direct child with proper spacing
+        for (i, pat) in patterns.iter().enumerate() {
+            let mut pat = pat.clone();
+            
+            // Convert v1 bracket capture patterns [:key *] to just * for v2
+            // The capture functionality is handled by the wrapper mechanism
+            if let Some(vector) = pat.as_vector() {
+                // Check if this is a capture pattern like [:key *] or [:key]
+                if vector.len() == 2 {
+                    if let Some(second) = vector.get(1)
+                        && let Some(atom) = second.as_atom()
+                        && atom == "*"
+                    {
+                        // Replace [:key *] with just *
+                        pat = Box::new(CstNode::atom("*", pat.ann.clone()));
+                    }
+                }
+            }
+            
+            // Add leading whitespace for spacing between patterns
+            if i == 0 {
+                pat.ann.leading = vec![may_i_sexpr::cst::Trivia::Whitespace(" ".to_string())];
+            }
+            positional_children.push(pat);
+        }
 
         let positional = CstNode::list(
-            vec![
-                Box::new(CstNode::atom("positional", Default::default())),
-                Box::new(pos_list),
-            ],
+            positional_children,
             Default::default(),
         );
         new_children.push(Box::new(positional));
@@ -301,6 +322,7 @@ fn wrapper_to_rule(node: &CstNode) -> Option<Box<CstNode>> {
 }
 
 /// Convert (defcontext NAME EXPR) to (define NAME EXPR)
+/// Also transforms v1 has expressions: (has :key "value") → (has [:key "value"])
 fn defcontext_to_define(node: &CstNode) -> Option<Box<CstNode>> {
     if !node.is_tagged("defcontext") {
         return None;
@@ -310,6 +332,9 @@ fn defcontext_to_define(node: &CstNode) -> Option<Box<CstNode>> {
     if children.len() != 3 {
         return None;
     }
+
+    // Transform the expression to handle v1 has syntax
+    let transformed_expr = transform_has_expression(&children[2]);
 
     // Build (define NAME EXPR)
     let new_children = vec![
@@ -321,7 +346,7 @@ fn defcontext_to_define(node: &CstNode) -> Option<Box<CstNode>> {
             },
         )),
         children[1].clone(), // NAME
-        children[2].clone(), // EXPR
+        transformed_expr,
     ];
 
     Some(Box::new(CstNode::list(
@@ -333,7 +358,83 @@ fn defcontext_to_define(node: &CstNode) -> Option<Box<CstNode>> {
     )))
 }
 
-/// Convert (args (cond ...)) in rule to (case ...) as effect
+/// Transform v1 has expressions to v2 syntax.
+/// Converts (has :key "value") to (has [:key "value"])
+fn transform_has_expression(expr: &CstNode) -> Box<CstNode> {
+    // Check if this is a (has ...) expression
+    if let Some(list) = expr.as_list()
+        && !list.is_empty()
+        && list[0].as_atom() == Some("has")
+        && list.len() == 3
+    {
+        // This is (has KEY VALUE) - convert to (has [KEY VALUE])
+        let key = &list[1];
+        let value = &list[2];
+
+        // Create the vector [key value]
+        let vector_node = CstNode {
+            ann: TriviaAnn {
+                leading: vec![],
+                trailing: vec![],
+                span: key.ann.span, // Use key's span as approximation
+            },
+            shape: Shape::Vector(vec![key.clone(), value.clone()]),
+        };
+
+        // Create (has [key value])
+        let new_children = vec![
+            list[0].clone(), // "has" tag
+            Box::new(vector_node),
+        ];
+
+        Box::new(CstNode::list(
+            new_children,
+            TriviaAnn {
+                leading: expr.ann.leading.clone(),
+                trailing: expr.ann.trailing.clone(),
+                span: expr.ann.span,
+            },
+        ))
+    } else if let Some(list) = expr.as_list()
+        && !list.is_empty()
+        && list[0].as_atom() == Some("has")
+        && list.len() == 2
+    {
+        // This is (has KEY) - presence check, keep as-is
+        Box::new(expr.clone())
+    } else if let Some(list) = expr.as_list() {
+        // Recursively transform children
+        let mut new_children = Vec::new();
+        let mut changed = false;
+
+        for child in list {
+            let transformed = transform_has_expression(child);
+            // Check if transformation actually changed anything by comparing serialized output
+            if transformed.serialize() != child.serialize() {
+                changed = true;
+            }
+            new_children.push(transformed);
+        }
+
+        if changed {
+            Box::new(CstNode::list(
+                new_children,
+                TriviaAnn {
+                    leading: expr.ann.leading.clone(),
+                    trailing: expr.ann.trailing.clone(),
+                    span: expr.ann.span,
+                },
+            ))
+        } else {
+            Box::new(expr.clone())
+        }
+    } else {
+        // Atom or string - return as-is
+        Box::new(expr.clone())
+    }
+}
+
+/// Convert (args (cond ...)) or (args (if ...)) in rule to (case ...) as effect
 fn args_cond_to_case(node: &CstNode) -> Option<Box<CstNode>> {
     if !node.is_tagged("rule") {
         return None;
@@ -341,52 +442,76 @@ fn args_cond_to_case(node: &CstNode) -> Option<Box<CstNode>> {
 
     let children = node.as_list()?;
     let mut new_children = Vec::new();
-    let mut found_cond = None;
-    let mut cond_index = 0;
+    let mut found_case_source = None;
 
     new_children.push(children[0].clone()); // "rule" tag
 
-    // First pass: collect non-args children and find cond
-    for (i, child) in children[1..].iter().enumerate() {
+    // First pass: collect non-args children and find cond/if
+    for child in &children[1..] {
         if child.is_tagged("args") {
             let args_children = child.as_list()?;
             if args_children.len() == 2 {
                 let matcher = &args_children[1];
                 if matcher.is_tagged("cond") {
-                    found_cond = Some(matcher.clone());
-                    cond_index = i + 1;
+                    found_case_source = Some(matcher.clone());
                     continue;
+                }
+                if matcher.is_tagged("if") {
+                    // Convert (if PRED THEN ELSE) to case form
+                    let if_children = matcher.as_list()?;
+                    if if_children.len() == 4 {
+                        found_case_source = Some(matcher.clone());
+                        continue;
+                    }
                 }
             }
         }
         new_children.push(child.clone());
     }
 
-    let cond = found_cond?;
-    let cond_children = cond.as_list()?;
-
-    // Build case expression from cond branches
+    let case_source = found_case_source?;
+    
+    // Build case expression based on source type
     let mut case_children = vec![Box::new(CstNode::atom("case", Default::default()))];
-
-    for branch in &cond_children[1..] {
-        if branch.is_tagged("else") {
-            // (else EFFECT) → (else EFFECT)
-            case_children.push(branch.clone());
-        } else {
-            // (PREDICATE EFFECT) pair
-            case_children.push(branch.clone());
+    
+    if case_source.is_tagged("cond") {
+        let cond_children = case_source.as_list()?;
+        for branch in &cond_children[1..] {
+            if branch.is_tagged("else") {
+                case_children.push(branch.clone());
+            } else {
+                case_children.push(branch.clone());
+            }
+        }
+    } else if case_source.is_tagged("if") {
+        // Convert (if PRED THEN ELSE) to case branches
+        let if_children = case_source.as_list()?;
+        if if_children.len() == 4 {
+            // First branch: (PRED THEN)
+            let pred = &if_children[1];
+            let then_eff = &if_children[2];
+            let branch = CstNode::list(
+                vec![Box::new((**pred).clone()), Box::new((**then_eff).clone())],
+                Default::default(),
+            );
+            case_children.push(Box::new(branch));
+            
+            // Else branch: (else ELSE)
+            let else_eff = &if_children[3];
+            let else_branch = CstNode::list(
+                vec![
+                    Box::new(CstNode::atom("else", Default::default())),
+                    Box::new((**else_eff).clone()),
+                ],
+                Default::default(),
+            );
+            case_children.push(Box::new(else_branch));
         }
     }
 
-    // Insert case at the position where args was
+    // Insert case at the END as it's an effect, not a predicate
     let case_node = Box::new(CstNode::list(case_children, Default::default()));
-
-    // Find where to insert - after the last predicate or at end
-    if cond_index >= new_children.len() {
-        new_children.push(case_node);
-    } else {
-        new_children.insert(cond_index, case_node);
-    }
+    new_children.push(case_node);
 
     Some(Box::new(CstNode::list(new_children, node.ann.clone())))
 }
@@ -645,6 +770,17 @@ mod tests {
         assert_eq!(result.serialize(), "(define ssh (has :via/ssh))");
     }
 
+    #[test]
+    fn test_defcontext_to_define_with_has_value() {
+        // Test that (has :key "value") gets converted to (has [:key "value"])
+        let input = r#"(defcontext prod (has :env "prod"))"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let node = nodes.into_iter().next().unwrap();
+        let result = defcontext_to_define(&node).unwrap();
+        // Note: serialization adds a space after [ for formatting
+        assert_eq!(result.serialize(), r#"(define prod (has [ :env "prod"]))"#);
+    }
+
     // --- Additional tests for uncovered lines ---
 
     #[test]
@@ -886,5 +1022,75 @@ mod tests {
         let warnings = check_unhandled_cases(input);
         assert!(!warnings.is_empty());
         assert!(warnings[0].description.contains("internal type"));
+    }
+
+    #[test]
+    fn test_transform_has_expression_simple() {
+        // Test (has :key "value") -> (has [:key "value"])
+        let input = r#"(has :env "prod")"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let node = nodes.into_iter().next().unwrap();
+        let result = transform_has_expression(&node);
+        assert!(result.serialize().contains("[ :env \"prod\"]"));
+    }
+
+    #[test]
+    fn test_transform_has_expression_presence() {
+        // Test (has :key) stays as-is
+        let input = "(has :env)";
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let node = nodes.into_iter().next().unwrap();
+        let result = transform_has_expression(&node);
+        assert_eq!(result.serialize(), "(has :env)");
+    }
+
+    #[test]
+    fn test_transform_has_expression_nested() {
+        // Test nested has expressions
+        let input = r#"(and (has :env "prod") (has :region "us-east"))"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let node = nodes.into_iter().next().unwrap();
+        let result = transform_has_expression(&node);
+        let serialized = result.serialize();
+        assert!(serialized.contains("[ :env \"prod\"]"));
+        assert!(serialized.contains("[ :region \"us-east\"]"));
+    }
+
+    #[test]
+    fn test_args_cond_to_case_with_if() {
+        // Test (args (if PRED THEN ELSE)) -> (case ...)
+        let input = r#"(rule "mv" (args (if (anywhere "-f") (effect :ask) (effect :allow))) (effect :allow))"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let node = nodes.into_iter().next().unwrap();
+        let result = args_cond_to_case(&node).unwrap();
+        let serialized = result.serialize();
+        assert!(serialized.contains("case"));
+        assert!(!serialized.contains("args"));
+    }
+
+    #[test]
+    fn test_wrapper_to_rule_with_capture_pattern() {
+        // Test wrapper with [:key *] capture pattern
+        let input = r#"(wrapper "ssh" (positional [:host *] :command+args))"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let node = nodes.into_iter().next().unwrap();
+        let result = wrapper_to_rule(&node).unwrap();
+        let serialized = result.serialize();
+        // Should convert [:host *] to just *
+        assert!(serialized.contains("positional *"));
+        assert!(serialized.contains(":command+args"));
+    }
+
+    #[test]
+    fn test_wrapper_to_rule_with_flag() {
+        // Test wrapper with flag step
+        let input = r#"(wrapper "docker" (flag "--rm" :command))"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let node = nodes.into_iter().next().unwrap();
+        let result = wrapper_to_rule(&node).unwrap();
+        let serialized = result.serialize();
+        // Should include the flag pattern
+        assert!(serialized.contains("positional"));
+        assert!(serialized.contains("\"--rm\""));
     }
 }
