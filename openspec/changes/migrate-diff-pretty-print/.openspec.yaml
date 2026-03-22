@@ -1,0 +1,4 @@
+change:
+  name: migrate-diff-pretty-print
+  schema: default
+  status: active
