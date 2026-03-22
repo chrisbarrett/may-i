@@ -1,6 +1,6 @@
 // Span is re-exported at module level for internal crate use (e.g. sexpr.rs),
 // but not from the crate root — consumers should import Span from may_i_core.
-pub use may_i_core::{Span, offset_to_line_col};
+pub use may_i_core::Span;
 
 /// Internal error carrying a span but no source text.
 /// Used inside the sexpr and config_parse modules; converted to a diagnostic

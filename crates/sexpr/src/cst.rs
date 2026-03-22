@@ -77,6 +77,25 @@ impl Trivia {
 }
 
 impl CstNode {
+    /// Convert this CST node to a Sexpr (discards trivia).
+    pub fn to_sexpr(&self) -> crate::sexpr::Sexpr {
+        use crate::sexpr::Sexpr;
+
+        let span = self.annotation.span;
+        match &self.shape {
+            Shape::Atom(s) => Sexpr::Atom(s.clone(), span),
+            Shape::Str(s) => Sexpr::Atom(s.clone(), span),
+            Shape::List(children) => {
+                let items: Vec<Sexpr> = children.iter().map(|c| c.to_sexpr()).collect();
+                Sexpr::List(items, span)
+            }
+            Shape::Vector(children) => {
+                let items: Vec<Sexpr> = children.iter().map(|c| c.to_sexpr()).collect();
+                Sexpr::Vector(items, span)
+            }
+        }
+    }
+
     /// Create an atom node.
     pub fn atom(value: impl Into<String>, ann: TriviaAnn) -> Self {
         Self {
@@ -816,6 +835,68 @@ mod tests {
     }
 
     #[test]
+    fn test_to_sexpr_atom() {
+        let input = "foo";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+        assert_eq!(nodes.len(), 1);
+        let sexpr = nodes[0].to_sexpr();
+        assert_eq!(sexpr.as_atom(), Some("foo"));
+    }
+
+    #[test]
+    fn test_to_sexpr_list() {
+        let input = "(foo bar baz)";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+        assert_eq!(nodes.len(), 1);
+        let sexpr = nodes[0].to_sexpr();
+        let items = sexpr.as_list().unwrap();
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0].as_atom(), Some("foo"));
+        assert_eq!(items[1].as_atom(), Some("bar"));
+        assert_eq!(items[2].as_atom(), Some("baz"));
+    }
+
+    #[test]
+    fn test_to_sexpr_vector() {
+        let input = "[foo bar]";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+        assert_eq!(nodes.len(), 1);
+        let sexpr = nodes[0].to_sexpr();
+        assert!(sexpr.is_vector());
+        let items = sexpr.as_list().unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].as_atom(), Some("foo"));
+        assert_eq!(items[1].as_atom(), Some("bar"));
+    }
+
+    #[test]
+    fn test_to_sexpr_nested() {
+        let input = "(foo (bar baz))";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+        let sexpr = nodes[0].to_sexpr();
+        let items = sexpr.as_list().unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].as_atom(), Some("foo"));
+        let nested = items[1].as_list().unwrap();
+        assert_eq!(nested.len(), 2);
+        assert_eq!(nested[0].as_atom(), Some("bar"));
+        assert_eq!(nested[1].as_atom(), Some("baz"));
+    }
+
+    #[test]
+    fn test_to_sexpr_string() {
+        let input = r#""hello world""#;
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+        let sexpr = nodes[0].to_sexpr();
+        assert_eq!(sexpr.as_atom(), Some("hello world"));
+    }
+
+    #[test]
     fn test_parse_vector_empty() {
         let input = "[]";
         let (nodes, errors) = parse(input);
@@ -831,5 +912,195 @@ mod tests {
         assert!(errors.is_empty());
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].serialize(), "[a (b c) d]");
+    }
+}
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+    use proptest::strategy::BoxedStrategy;
+
+    /// Helper function to check if two CST nodes are structurally equal
+    /// (ignoring span information which may differ)
+    fn cst_nodes_equal(a: &CstNode, b: &CstNode) -> bool {
+        match (&a.shape, &b.shape) {
+            (Shape::Atom(a_str), Shape::Atom(b_str)) => a_str == b_str,
+            (Shape::Str(a_str), Shape::Str(b_str)) => a_str == b_str,
+            (Shape::List(a_children), Shape::List(b_children)) => {
+                a_children.len() == b_children.len()
+                    && a_children
+                        .iter()
+                        .zip(b_children.iter())
+                        .all(|(a, b)| cst_nodes_equal(a, b))
+            }
+            (Shape::Vector(a_children), Shape::Vector(b_children)) => {
+                a_children.len() == b_children.len()
+                    && a_children
+                        .iter()
+                        .zip(b_children.iter())
+                        .all(|(a, b)| cst_nodes_equal(a, b))
+            }
+            _ => false,
+        }
+    }
+
+    /// Strategy for generating valid atom characters
+    fn atom_char() -> impl Strategy<Value = char> {
+        prop_oneof!(
+            (b'a'..=b'z').prop_map(|c| c as char),
+            (b'A'..=b'Z').prop_map(|c| c as char),
+            (b'0'..=b'9').prop_map(|c| c as char),
+            Just('-'),
+            Just('_'),
+            Just('*'),
+            Just('.'),
+            Just('/'),
+            Just('^'),
+            Just(':'),
+            Just('+'),
+            Just('?'),
+            Just('=')
+        )
+    }
+
+    /// Strategy for generating atom strings
+    fn atom_string() -> impl Strategy<Value = String> {
+        prop::string::string_regex("[a-zA-Z0-9-_*/.^:+?=]+").unwrap()
+    }
+
+    /// Strategy for generating string literals (without quotes)
+    fn string_content() -> impl Strategy<Value = String> {
+        "[a-zA-Z0-9 ]*".prop_map(|s| s.replace('"', ""))
+    }
+
+    /// Recursive strategy for generating s-expression shapes
+    fn sexpr_shape(depth: u32) -> BoxedStrategy<String> {
+        let leaf: BoxedStrategy<String> = prop_oneof!(
+            atom_string(),
+            string_content().prop_map(|s| format!("\"{}\"", s)),
+        )
+        .boxed();
+
+        if depth == 0 {
+            leaf
+        } else {
+            let child = sexpr_shape(depth - 1);
+            prop_oneof!(
+                leaf,
+                prop::collection::vec(child.clone(), 0..5)
+                    .prop_map(|items: Vec<String>| format!("({})", items.join(" "))),
+                prop::collection::vec(child, 0..5)
+                    .prop_map(|items: Vec<String>| format!("[{}]", items.join(" "))),
+            )
+            .boxed()
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn roundtrip_simple_atoms(input in atom_string()) {
+            let (nodes, errors) = parse(&input);
+            prop_assert!(errors.is_empty(), "Parsing should not fail: {:?}", errors);
+            prop_assert_eq!(nodes.len(), 1, "Should parse exactly one node");
+
+            let serialized = nodes[0].serialize();
+            let (reparsed, re_errors) = parse(&serialized);
+            prop_assert!(re_errors.is_empty(), "Reparsing should not fail: {:?}", re_errors);
+            prop_assert_eq!(reparsed.len(), 1);
+            prop_assert!(cst_nodes_equal(&nodes[0], &reparsed[0]),
+                "Roundtrip should preserve structure: original={:?}, reparsed={:?}", nodes[0], reparsed[0]);
+        }
+
+        #[test]
+        fn roundtrip_sexprs(input in sexpr_shape(3)) {
+            let (nodes, errors) = parse(&input);
+            prop_assume!(errors.is_empty());
+
+            let serialized = nodes.iter().map(|n| n.serialize()).collect::<String>();
+            let (reparsed, re_errors) = parse(&serialized);
+            prop_assert!(re_errors.is_empty(), "Reparsing should not fail: {:?}", re_errors);
+            prop_assert_eq!(nodes.len(), reparsed.len());
+
+            for (orig, rep) in nodes.iter().zip(reparsed.iter()) {
+                prop_assert!(cst_nodes_equal(orig, rep),
+                    "Roundtrip should preserve structure: original={:?}, reparsed={:?}", orig, rep);
+            }
+        }
+    }
+
+    #[test]
+    fn edge_case_multiline_list_roundtrip() {
+        let input = "(rule\n  (command \"git\")\n  (effect :allow))";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+        assert_eq!(nodes.len(), 1);
+
+        let serialized = nodes[0].serialize();
+        let (reparsed, re_errors) = parse(&serialized);
+        assert!(re_errors.is_empty());
+        assert_eq!(reparsed.len(), 1);
+        assert!(cst_nodes_equal(&nodes[0], &reparsed[0]));
+    }
+
+    #[test]
+    fn edge_case_deeply_nested_roundtrip() {
+        let input = "((((((((((deep))))))))))";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+        assert_eq!(nodes.len(), 1);
+
+        let serialized = nodes[0].serialize();
+        let (reparsed, re_errors) = parse(&serialized);
+        assert!(re_errors.is_empty());
+        assert!(cst_nodes_equal(&nodes[0], &reparsed[0]));
+    }
+
+    #[test]
+    fn edge_case_empty_list_roundtrip() {
+        let input = "()";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+        assert_eq!(nodes[0].serialize(), "()");
+
+        let (reparsed, re_errors) = parse("()");
+        assert!(re_errors.is_empty());
+        assert!(cst_nodes_equal(&nodes[0], &reparsed[0]));
+    }
+
+    #[test]
+    fn edge_case_empty_vector_roundtrip() {
+        let input = "[]";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+        assert_eq!(nodes[0].serialize(), "[]");
+
+        let (reparsed, re_errors) = parse("[]");
+        assert!(re_errors.is_empty());
+        assert!(cst_nodes_equal(&nodes[0], &reparsed[0]));
+    }
+
+    #[test]
+    fn edge_case_mixed_list_vector() {
+        let input = "[(a b) (c [d e])]";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+
+        let serialized = nodes[0].serialize();
+        let (reparsed, re_errors) = parse(&serialized);
+        assert!(re_errors.is_empty());
+        assert!(cst_nodes_equal(&nodes[0], &reparsed[0]));
+    }
+
+    #[test]
+    fn edge_case_comments_preserved() {
+        let input = "(foo ;; comment\nbar)";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+        assert_eq!(nodes[0].serialize(), input);
+
+        let (reparsed, re_errors) = parse(&nodes[0].serialize());
+        assert!(re_errors.is_empty());
+        assert!(cst_nodes_equal(&nodes[0], &reparsed[0]));
     }
 }

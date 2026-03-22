@@ -5,3 +5,6 @@ edition = "2024"
 
 [dependencies]
 may-i-core = { path = "../core" }
+
+[dev-dependencies]
+proptest = "1.6.0"
