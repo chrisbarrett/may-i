@@ -483,4 +483,181 @@ mod tests {
         let resolved = resolve_predicates(&rules, &defines, &define_map).unwrap();
         assert!(matches!(resolved[0].predicates[0].value, Predicate::And(_)));
     }
+
+    #[test]
+    fn resolution_error_display_without_help() {
+        let err = ResolutionError::new("test error", dummy_span());
+        let display = format!("{}", err);
+        assert_eq!(display, "test error");
+    }
+
+    #[test]
+    fn resolution_error_display_with_help() {
+        let err = ResolutionError::new("test error", dummy_span()).with_help("try this");
+        let display = format!("{}", err);
+        assert!(display.contains("test error"));
+        assert!(display.contains("help: try this"));
+    }
+
+    #[test]
+    fn define_map_contains_name() {
+        let defines = vec![create_define("foo", Predicate::has_presence(":x"))];
+        let map = DefineMap::from_defines(&defines).unwrap();
+        assert!(map.contains("foo"));
+        assert!(!map.contains("bar"));
+    }
+
+    #[test]
+    fn define_map_get_returns_index_and_span() {
+        let defines = vec![create_define("foo", Predicate::has_presence(":x"))];
+        let map = DefineMap::from_defines(&defines).unwrap();
+        assert!(map.get("foo").is_some());
+        assert!(map.get("bar").is_none());
+    }
+
+    #[test]
+    fn define_map_names_returns_all_names() {
+        let defines = vec![
+            create_define("foo", Predicate::has_presence(":x")),
+            create_define("bar", Predicate::has_presence(":y")),
+        ];
+        let map = DefineMap::from_defines(&defines).unwrap();
+        let names: Vec<_> = map.names().collect();
+        assert_eq!(names.len(), 2);
+        assert!(names.contains(&&"foo".to_string()));
+        assert!(names.contains(&&"bar".to_string()));
+    }
+
+    #[test]
+    fn detect_undefined_in_define() {
+        let defines = vec![create_define(
+            "foo",
+            Predicate::And(vec![
+                Predicate::has_presence(":x"),
+                Predicate::Named("undefined".to_string()),
+            ]),
+        )];
+        let rules = vec![];
+        let define_map = DefineMap::from_defines(&defines).unwrap();
+
+        let result = check_undefined_refs(&rules, &defines, &define_map);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("undefined"));
+    }
+
+    #[test]
+    fn detect_undefined_in_or_predicate() {
+        let defines = vec![];
+        let rules = vec![create_rule(vec![Predicate::Or(vec![
+            Predicate::has_presence(":x"),
+            Predicate::Named("undefined".to_string()),
+        ])])];
+        let define_map = DefineMap::default();
+
+        let result = check_undefined_refs(&rules, &defines, &define_map);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn detect_undefined_in_not_predicate() {
+        let defines = vec![];
+        let rules = vec![create_rule(vec![Predicate::Not(Box::new(
+            Predicate::Named("undefined".to_string()),
+        ))])];
+        let define_map = DefineMap::default();
+
+        let result = check_undefined_refs(&rules, &defines, &define_map);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn collect_named_refs_finds_all_refs() {
+        let predicate = Predicate::And(vec![
+            Predicate::Named("a".to_string()),
+            Predicate::Or(vec![
+                Predicate::Named("b".to_string()),
+                Predicate::Not(Box::new(Predicate::Named("c".to_string()))),
+            ]),
+        ]);
+        let spanned = Spanned::new(predicate, dummy_span());
+        let refs = collect_named_refs(&spanned);
+        assert_eq!(refs.len(), 3);
+    }
+
+    #[test]
+    fn resolve_not_predicate() {
+        let defines = vec![create_define("safe", Predicate::has_presence(":safe"))];
+        let rules = vec![create_rule(vec![Predicate::Not(Box::new(
+            Predicate::Named("safe".to_string()),
+        ))])];
+        let define_map = DefineMap::from_defines(&defines).unwrap();
+
+        let resolved = resolve_predicates(&rules, &defines, &define_map).unwrap();
+        assert!(matches!(resolved[0].predicates[0].value, Predicate::Not(_)));
+    }
+
+    #[test]
+    fn validate_and_resolve_full_pipeline() {
+        let defines = vec![create_define("safe", Predicate::has_presence(":safe"))];
+        let rules = vec![create_rule(vec![Predicate::Named("safe".to_string())])];
+
+        let result = validate_and_resolve(&rules, &defines);
+        assert!(result.is_ok());
+        let (resolved_rules, map) = result.unwrap();
+        assert_eq!(resolved_rules.len(), 1);
+        assert!(map.contains("safe"));
+    }
+
+    #[test]
+    fn validate_and_resolve_detects_duplicate() {
+        let defines = vec![
+            create_define("safe", Predicate::has_presence(":safe")),
+            create_define("safe", Predicate::has_presence(":other")),
+        ];
+        let rules = vec![];
+
+        let result = validate_and_resolve(&rules, &defines);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().len(), 1);
+    }
+
+    #[test]
+    fn validate_and_resolve_detects_undefined() {
+        let defines = vec![];
+        let rules = vec![create_rule(vec![Predicate::Named("undefined".to_string())])];
+
+        let result = validate_and_resolve(&rules, &defines);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_and_resolve_detects_cycle() {
+        let defines = vec![
+            create_define("a", Predicate::Named("b".to_string())),
+            create_define("b", Predicate::Named("a".to_string())),
+        ];
+        let rules = vec![];
+
+        let result = validate_and_resolve(&rules, &defines);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn format_command_pattern_handles_regex() {
+        use may_i_core::v2::pattern::CommandPattern;
+        let pattern = CommandPattern::Regex(regex::Regex::new("^git").unwrap());
+        let formatted = format_command_pattern(&pattern);
+        assert_eq!(formatted, "(regex ...)");
+    }
+
+    #[test]
+    fn format_command_pattern_handles_or() {
+        use may_i_core::v2::pattern::CommandPattern;
+        let pattern = CommandPattern::Or(vec![
+            CommandPattern::Literal("git".to_string()),
+            CommandPattern::Literal("gh".to_string()),
+        ]);
+        let formatted = format_command_pattern(&pattern);
+        assert_eq!(formatted, "(or ...)");
+    }
 }

@@ -495,4 +495,89 @@ mod tests {
         let err = parse_pred(r#"(unknown "test")"#).expect_err("expected error");
         assert!(format!("{err}").contains("unknown predicate"));
     }
+
+    #[test]
+    fn parse_and_without_args_error() {
+        let err = parse_pred(r#"(and)"#).expect_err("expected error");
+        assert!(format!("{err}").contains("and must have"));
+    }
+
+    #[test]
+    fn parse_or_without_args_error() {
+        let err = parse_pred(r#"(or)"#).expect_err("expected error");
+        assert!(format!("{err}").contains("or must have"));
+    }
+
+    #[test]
+    fn parse_not_with_too_many_args_error() {
+        let err = parse_pred(r#"(not (has :a) (has :b))"#).expect_err("expected error");
+        assert!(format!("{err}").contains("not must have exactly one predicate"));
+    }
+
+    #[test]
+    fn parse_fact_query_with_three_items_error() {
+        let err = parse_pred(r#"(has [:key a b c])"#).expect_err("expected error");
+        assert!(format!("{err}").contains("fact query vectors must contain"));
+    }
+
+    #[test]
+    fn parse_invalid_regex_in_fact_pattern_error() {
+        let err = parse_pred(r#"(has [:key (regex "[invalid")])"#).expect_err("expected error");
+        assert!(format!("{err}").contains("invalid regex"));
+    }
+
+    #[test]
+    fn parse_empty_fact_pattern_error() {
+        let err = parse_pred(r#"(has [:key ()])"#).expect_err("expected error");
+        assert!(format!("{err}").contains("empty fact pattern"));
+    }
+
+    #[test]
+    fn parse_unknown_fact_pattern_error() {
+        let err = parse_pred(r#"(has [:key (unknown "test")])"#).expect_err("expected error");
+        assert!(format!("{err}").contains("unknown fact pattern"));
+    }
+
+    #[test]
+    fn parse_and_in_fact_pattern_error() {
+        let err = parse_pred(r#"(has [:key (and)])"#).expect_err("expected error");
+        assert!(format!("{err}").contains("and must have at least one pattern"));
+    }
+
+    #[test]
+    fn parse_or_in_fact_pattern_error() {
+        let err = parse_pred(r#"(has [:key (or)])"#).expect_err("expected error");
+        assert!(format!("{err}").contains("or must have at least one pattern"));
+    }
+
+    #[test]
+    fn parse_not_in_fact_pattern_error() {
+        let err = parse_pred(r#"(has [:key (not)])"#).expect_err("expected error");
+        assert!(format!("{err}").contains("not must have exactly one pattern"));
+    }
+
+    #[test]
+    fn parse_not_in_fact_pattern_with_too_many_args_error() {
+        let err = parse_pred(r#"(has [:key (not a b)])"#).expect_err("expected error");
+        assert!(format!("{err}").contains("not must have exactly one pattern"));
+    }
+
+    #[test]
+    fn parse_nested_vector_syntax_error() {
+        let err = parse_pred(r#"(has [:key [:nested]])"#).expect_err("expected error");
+        assert!(format!("{err}").contains("nested vector syntax"));
+    }
+
+    #[test]
+    fn parse_non_atom_tag_in_fact_pattern_error() {
+        // Use a list as the tag (not an atom) - the inner (1 2) is a list, not an atom
+        let err = parse_pred(r#"(has [:key ((1 2) "arg")])"#).expect_err("expected error");
+        assert!(format!("{err}").contains("fact pattern tag must be an atom"));
+    }
+
+    #[test]
+    fn parse_non_atom_predicate_tag_error() {
+        let err = parse_pred(r#"(("not an atom") "test")"#).expect_err("expected error");
+        assert!(format!("{err}").contains("predicate tag must be an atom"));
+    }
 }

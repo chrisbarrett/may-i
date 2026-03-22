@@ -410,4 +410,114 @@ mod tests {
         let err = parse_effect_str(r#"(may-i)"#).expect_err("expected error");
         assert!(format!("{err}").contains("pattern"));
     }
+
+    #[test]
+    fn empty_effect_error() {
+        let err = parse_effect_str(r#"()"#).expect_err("expected error");
+        assert!(format!("{err}").contains("empty effect"));
+    }
+
+    #[test]
+    fn non_list_effect_error() {
+        let err = parse_effect_str(r#":effect"#).expect_err("expected error");
+        assert!(format!("{err}").contains("effect must be a list"));
+    }
+
+    #[test]
+    fn unknown_effect_form_error() {
+        let err = parse_effect_str(r#"(unknown)"#).expect_err("expected error");
+        assert!(format!("{err}").contains("unknown effect form"));
+    }
+
+    #[test]
+    fn effect_without_keyword_error() {
+        let err = parse_effect_str(r#"(effect)"#).expect_err("expected error");
+        assert!(format!("{err}").contains("effect must have a keyword"));
+    }
+
+    #[test]
+    fn effect_non_atom_keyword_error() {
+        let err = parse_effect_str(r#"(effect ("not an atom"))"#).expect_err("expected error");
+        assert!(format!("{err}").contains("effect keyword must be an atom"));
+    }
+
+    #[test]
+    fn effect_with_non_atom_reason_error() {
+        let err =
+            parse_effect_str(r#"(effect :allow ("not an atom"))"#).expect_err("expected error");
+        assert!(format!("{err}").contains("effect reason must be a string"));
+    }
+
+    #[test]
+    fn may_i_with_too_many_args_error() {
+        let err = parse_effect_str(r#"(may-i (positional *) (positional *))"#)
+            .expect_err("expected error");
+        assert!(format!("{err}").contains("may-i must have exactly one"));
+    }
+
+    #[test]
+    fn case_empty_error() {
+        let err = parse_effect_str(r#"(case)"#).expect_err("expected error");
+        assert!(format!("{err}").contains("case must have at least one branch"));
+    }
+
+    #[test]
+    fn case_non_list_branch_error() {
+        let err = parse_effect_str(r#"(case :not-a-list)"#).expect_err("expected error");
+        assert!(format!("{err}").contains("case branch must be a list"));
+    }
+
+    #[test]
+    fn case_empty_branch_error() {
+        let err = parse_effect_str(r#"(case ())"#).expect_err("expected error");
+        assert!(format!("{err}").contains("empty case branch"));
+    }
+
+    #[test]
+    fn case_else_with_too_many_effects_error() {
+        let err = parse_effect_str(r#"(case [else (effect :allow) (effect :deny)])"#)
+            .expect_err("expected error");
+        assert!(format!("{err}").contains("else branch must have exactly one effect"));
+    }
+
+    #[test]
+    fn case_branch_with_wrong_arg_count_error() {
+        let err = parse_effect_str(r#"(case [(has :via/ssh)])"#).expect_err("expected error");
+        assert!(
+            format!("{err}").contains("case branch must have exactly a predicate and an effect")
+        );
+    }
+
+    #[test]
+    fn when_with_wrong_arg_count_error() {
+        let err = parse_effect_str(r#"(when (has :via/ssh))"#).expect_err("expected error");
+        assert!(format!("{err}").contains("when must have exactly"));
+    }
+
+    #[test]
+    fn when_with_too_many_args_error() {
+        let err = parse_effect_str(r#"(when (has :via/ssh) (effect :allow) (effect :deny))"#)
+            .expect_err("expected error");
+        assert!(format!("{err}").contains("when must have exactly"));
+    }
+
+    #[test]
+    fn unless_with_wrong_arg_count_error() {
+        let err = parse_effect_str(r#"(unless (has :via/ssh))"#).expect_err("expected error");
+        assert!(format!("{err}").contains("unless must have exactly"));
+    }
+
+    #[test]
+    fn if_with_too_few_args_error() {
+        let err = parse_effect_str(r#"(if (has :via/ssh))"#).expect_err("expected error");
+        assert!(format!("{err}").contains("if must have 2 or 3 arguments"));
+    }
+
+    #[test]
+    fn if_with_too_many_args_error() {
+        let err =
+            parse_effect_str(r#"(if (has :via/ssh) (effect :allow) (effect :deny) (effect :ask))"#)
+                .expect_err("expected error");
+        assert!(format!("{err}").contains("if must have 2 or 3 arguments"));
+    }
 }

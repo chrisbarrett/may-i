@@ -9,7 +9,6 @@ mod cmd_claude_code_hook;
 mod cmd_eval;
 mod cmd_migrate;
 mod cmd_parse;
-mod output;
 mod runtime_facts;
 
 #[derive(Parser)]

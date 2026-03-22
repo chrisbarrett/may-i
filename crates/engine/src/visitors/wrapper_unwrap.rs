@@ -238,4 +238,26 @@ mod tests {
             _ => panic!("Expected Recurse with facts"),
         }
     }
+
+    #[test]
+    fn wrapper_with_empty_command_name_continues() {
+        let wrapper = Wrapper {
+            command: "sudo".to_string(),
+            steps: vec![WrapperStep::Positional {
+                patterns: vec![],
+                capture: true,
+            }],
+        };
+        let ctx = context_with_wrappers(vec![wrapper]);
+        // Command with only whitespace
+        let cmd = simple_cmd("");
+        let visitor = WrapperUnwrapVisitor;
+
+        let outcome = visitor.visit_simple_command(&ctx, &cmd);
+
+        match outcome {
+            VisitOutcome::Continue => {}
+            _ => panic!("Expected Continue for empty command"),
+        }
+    }
 }

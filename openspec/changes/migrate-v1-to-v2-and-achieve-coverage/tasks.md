@@ -87,4 +87,4 @@
 - [x] 12.3 Run `cargo clippy --workspace` - no warnings
 - [x] 12.4 Run `cargo fmt --check` - verify formatting
 - [x] 12.5 Verify `cargo build --release` succeeds
-- [ ] 12.6 Commit changes
+- [x] 12.6 Commit changes

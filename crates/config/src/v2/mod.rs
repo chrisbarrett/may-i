@@ -53,3 +53,120 @@ pub fn is_reserved_keyword(atom: &str) -> bool {
             | "check"
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use may_i_sexpr::Sexpr;
+
+    #[test]
+    fn spanned_creates_spanned_value() {
+        let sexpr = Sexpr::Atom("test".to_string(), may_i_core::Span::new(5, 10));
+        let spanned = spanned(42, &sexpr);
+        assert_eq!(spanned.value, 42);
+        assert_eq!(spanned.span.start, 5);
+        assert_eq!(spanned.span.end, 10);
+    }
+
+    #[test]
+    fn is_reserved_keyword_matches_rule() {
+        assert!(is_reserved_keyword("rule"));
+    }
+
+    #[test]
+    fn is_reserved_keyword_matches_define() {
+        assert!(is_reserved_keyword("define"));
+    }
+
+    #[test]
+    fn is_reserved_keyword_matches_has() {
+        assert!(is_reserved_keyword("has"));
+    }
+
+    #[test]
+    fn is_reserved_keyword_matches_and() {
+        assert!(is_reserved_keyword("and"));
+    }
+
+    #[test]
+    fn is_reserved_keyword_matches_or() {
+        assert!(is_reserved_keyword("or"));
+    }
+
+    #[test]
+    fn is_reserved_keyword_matches_not() {
+        assert!(is_reserved_keyword("not"));
+    }
+
+    #[test]
+    fn is_reserved_keyword_matches_positional() {
+        assert!(is_reserved_keyword("positional"));
+    }
+
+    #[test]
+    fn is_reserved_keyword_matches_exact() {
+        assert!(is_reserved_keyword("exact"));
+    }
+
+    #[test]
+    fn is_reserved_keyword_matches_anywhere() {
+        assert!(is_reserved_keyword("anywhere"));
+    }
+
+    #[test]
+    fn is_reserved_keyword_matches_forbidden() {
+        assert!(is_reserved_keyword("forbidden"));
+    }
+
+    #[test]
+    fn is_reserved_keyword_matches_equals() {
+        assert!(is_reserved_keyword("="));
+    }
+
+    #[test]
+    fn is_reserved_keyword_matches_effect() {
+        assert!(is_reserved_keyword("effect"));
+    }
+
+    #[test]
+    fn is_reserved_keyword_matches_may_i() {
+        assert!(is_reserved_keyword("may-i"));
+    }
+
+    #[test]
+    fn is_reserved_keyword_matches_case() {
+        assert!(is_reserved_keyword("case"));
+    }
+
+    #[test]
+    fn is_reserved_keyword_matches_when() {
+        assert!(is_reserved_keyword("when"));
+    }
+
+    #[test]
+    fn is_reserved_keyword_matches_unless() {
+        assert!(is_reserved_keyword("unless"));
+    }
+
+    #[test]
+    fn is_reserved_keyword_matches_if() {
+        assert!(is_reserved_keyword("if"));
+    }
+
+    #[test]
+    fn is_reserved_keyword_matches_safe_env_vars() {
+        assert!(is_reserved_keyword("safe-env-vars"));
+    }
+
+    #[test]
+    fn is_reserved_keyword_matches_check() {
+        assert!(is_reserved_keyword("check"));
+    }
+
+    #[test]
+    fn is_reserved_keyword_does_not_match_custom() {
+        assert!(!is_reserved_keyword("custom"));
+        assert!(!is_reserved_keyword("git"));
+        assert!(!is_reserved_keyword("push"));
+    }
+}

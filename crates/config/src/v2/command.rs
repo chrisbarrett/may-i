@@ -141,4 +141,52 @@ mod tests {
         let err = parse(r#"(regex "[invalid")"#).expect_err("expected error");
         assert!(format!("{err}").contains("invalid regex"));
     }
+
+    #[test]
+    fn parse_empty_command_pattern_error() {
+        let err = parse(r#"()"#).expect_err("expected error");
+        assert!(format!("{err}").contains("empty command pattern"));
+    }
+
+    #[test]
+    fn parse_or_without_patterns_error() {
+        let err = parse(r#"(or)"#).expect_err("expected error");
+        assert!(format!("{err}").contains("or must have at least one pattern"));
+    }
+
+    #[test]
+    fn parse_regex_without_pattern_error() {
+        let err = parse(r#"(regex)"#).expect_err("expected error");
+        assert!(format!("{err}").contains("regex must have exactly one pattern string"));
+    }
+
+    #[test]
+    fn parse_regex_with_too_many_args_error() {
+        let err = parse(r#"(regex "a" "b")"#).expect_err("expected error");
+        assert!(format!("{err}").contains("regex must have exactly one pattern string"));
+    }
+
+    #[test]
+    fn parse_regex_with_non_atom_pattern_error() {
+        let err = parse(r#"(regex ("not an atom"))"#).expect_err("expected error");
+        assert!(format!("{err}").contains("regex pattern must be a string"));
+    }
+
+    #[test]
+    fn parse_unknown_command_pattern_error() {
+        let err = parse(r#"(unknown "test")"#).expect_err("expected error");
+        assert!(format!("{err}").contains("unknown command pattern form"));
+    }
+
+    #[test]
+    fn parse_non_atom_tag_error() {
+        let err = parse(r#"(("not an atom") "test")"#).expect_err("expected error");
+        assert!(format!("{err}").contains("command pattern tag must be an atom"));
+    }
+
+    #[test]
+    fn parse_vector_syntax_error() {
+        let err = parse(r#"["test"]"#).expect_err("expected error");
+        assert!(format!("{err}").contains("command pattern does not support vector syntax"));
+    }
 }

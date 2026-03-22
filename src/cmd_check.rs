@@ -7,8 +7,7 @@ use may_i_pp::colorize_atom;
 use may_i_config as config;
 use may_i_engine as engine;
 
-use crate::output;
-use crate::output::trace_to_json;
+use may_i_output::{self as output, trace_to_json};
 
 // =============================================================================
 // CheckReport Builder

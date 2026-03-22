@@ -464,6 +464,7 @@ dependencies = [
  "may-i-config",
  "may-i-core",
  "may-i-engine",
+ "may-i-output",
  "may-i-pp",
  "may-i-sexpr",
  "may-i-shell-parser",
@@ -472,7 +473,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "terminal_size",
 ]
 
 [[package]]
@@ -506,6 +506,18 @@ dependencies = [
  "may-i-shell-parser",
  "proptest",
  "regex",
+]
+
+[[package]]
+name = "may-i-output"
+version = "0.1.0"
+dependencies = [
+ "colored",
+ "may-i-core",
+ "may-i-pp",
+ "serde",
+ "serde_json",
+ "terminal_size",
 ]
 
 [[package]]

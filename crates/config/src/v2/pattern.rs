@@ -376,4 +376,100 @@ mod tests {
         let err = parse_arg(r#"(("not an atom") "test")"#).expect_err("expected error");
         assert!(format!("{err}").contains("must be an atom"));
     }
+
+    #[test]
+    fn parse_positional_with_or_expression() {
+        let pattern = parse_arg(r#"(positional (or "a" "b"))"#).unwrap();
+        match pattern {
+            ArgPattern::Positional(pargs) => {
+                assert_eq!(pargs.len(), 1);
+                assert!(matches!(pargs[0].pattern, Expr::Or(_)));
+            }
+            _ => panic!("expected Positional"),
+        }
+    }
+
+    #[test]
+    fn parse_positional_with_and_expression() {
+        let pattern = parse_arg(r#"(positional (and "a" "b"))"#).unwrap();
+        match pattern {
+            ArgPattern::Positional(pargs) => {
+                assert_eq!(pargs.len(), 1);
+                assert!(matches!(pargs[0].pattern, Expr::And(_)));
+            }
+            _ => panic!("expected Positional"),
+        }
+    }
+
+    #[test]
+    fn parse_positional_with_not_expression() {
+        let pattern = parse_arg(r#"(positional (not "a"))"#).unwrap();
+        match pattern {
+            ArgPattern::Positional(pargs) => {
+                assert_eq!(pargs.len(), 1);
+                assert!(matches!(pargs[0].pattern, Expr::Not(_)));
+            }
+            _ => panic!("expected Positional"),
+        }
+    }
+
+    #[test]
+    fn parse_positional_with_optional_quantifier() {
+        let pattern = parse_arg(r#"(positional (? "arg"))"#).unwrap();
+        match pattern {
+            ArgPattern::Positional(pargs) => {
+                assert_eq!(pargs.len(), 1);
+                assert!(matches!(pargs[0].quantifier, Quantifier::Optional));
+            }
+            _ => panic!("expected Positional"),
+        }
+    }
+
+    #[test]
+    fn parse_positional_with_zero_or_more_quantifier() {
+        let pattern = parse_arg(r#"(positional (* "arg"))"#).unwrap();
+        match pattern {
+            ArgPattern::Positional(pargs) => {
+                assert_eq!(pargs.len(), 1);
+                assert!(matches!(pargs[0].quantifier, Quantifier::ZeroOrMore));
+            }
+            _ => panic!("expected Positional"),
+        }
+    }
+
+    #[test]
+    fn parse_positional_with_one_or_more_quantifier() {
+        let pattern = parse_arg(r#"(positional (+ "arg"))"#).unwrap();
+        match pattern {
+            ArgPattern::Positional(pargs) => {
+                assert_eq!(pargs.len(), 1);
+                assert!(matches!(pargs[0].quantifier, Quantifier::OneOrMore));
+            }
+            _ => panic!("expected Positional"),
+        }
+    }
+
+    #[test]
+    fn parse_unknown_arg_pattern_error() {
+        let err = parse_arg(r#"(unknown "test")"#).expect_err("expected error");
+        assert!(format!("{err}").contains("unknown argument pattern"));
+    }
+
+    #[test]
+    fn parse_with_too_many_args_error() {
+        let err = parse_arg(r#"(= 1 "a" "b")"#).expect_err("expected error");
+        assert!(format!("{err}").contains("= must have exactly"));
+    }
+
+    #[test]
+    fn parse_empty_expression_form_error() {
+        let err = parse_arg(r#"(positional ())"#).expect_err("expected error");
+        assert!(format!("{err}").contains("empty expression form"));
+    }
+
+    #[test]
+    fn parse_non_atom_expr_tag_error() {
+        let err = parse_arg(r#"(positional (("not an atom")))"#).expect_err("expected error");
+        assert!(format!("{err}").contains("tag must be an atom"));
+    }
 }

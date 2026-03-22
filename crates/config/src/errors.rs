@@ -45,3 +45,51 @@ impl ConfigError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_error_from_raw_with_primary_label() {
+        let raw = RawError::new("test error", Span::new(5, 10)).with_label("primary label");
+        let err = ConfigError::from_raw(raw, "source code here", "test.lisp");
+        assert!(err.message.contains("test error"));
+        assert_eq!(err.labels.len(), 1);
+    }
+
+    #[test]
+    fn config_error_from_raw_with_default_label() {
+        let raw = RawError::new("test error", Span::new(5, 10));
+        let err = ConfigError::from_raw(raw, "source code here", "test.lisp");
+        assert!(err.message.contains("test error"));
+        assert_eq!(err.labels.len(), 1);
+    }
+
+    #[test]
+    fn config_error_from_raw_with_secondary_label() {
+        let raw = RawError::new("test error", Span::new(5, 10))
+            .with_label("primary")
+            .with_secondary(Span::new(15, 20), "secondary label");
+        let err = ConfigError::from_raw(raw, "source code here", "test.lisp");
+        assert_eq!(err.labels.len(), 2);
+    }
+
+    #[test]
+    fn config_error_from_raw_with_help() {
+        let raw = RawError::new("test error", Span::new(5, 10))
+            .with_label("primary")
+            .with_help("try this instead");
+        let err = ConfigError::from_raw(raw, "source code here", "test.lisp");
+        assert!(err.help.is_some());
+        assert!(err.help.unwrap().contains("try this"));
+    }
+
+    #[test]
+    fn config_error_display_includes_message() {
+        let raw = RawError::new("test error message", Span::new(0, 5));
+        let err = ConfigError::from_raw(raw, "source", "test.lisp");
+        let display = format!("{}", err);
+        assert!(display.contains("test error message"));
+    }
+}

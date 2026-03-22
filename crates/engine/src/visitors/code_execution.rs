@@ -305,4 +305,61 @@ mod tests {
             _ => panic!("Expected recurse outcome"),
         }
     }
+
+    #[test]
+    fn eval_with_no_args_returns_allow() {
+        let ctx = test_context();
+        let cmd = simple_cmd("eval");
+        let visitor = CodeExecutionVisitor;
+
+        let outcome = visitor.visit_simple_command(&ctx, &cmd);
+
+        match outcome {
+            VisitOutcome::Terminal { result, .. } => {
+                assert_eq!(result.decision, Decision::Allow);
+                assert!(result.reason.is_none());
+            }
+            _ => panic!("Expected terminal outcome"),
+        }
+    }
+
+    #[test]
+    fn sh_c_command_recurses() {
+        let ctx = test_context();
+        let cmd = simple_cmd("sh -c 'echo hello'");
+        let visitor = CodeExecutionVisitor;
+
+        let outcome = visitor.visit_simple_command(&ctx, &cmd);
+
+        match outcome {
+            VisitOutcome::Recurse { command, .. } => {
+                if let Command::Simple(sc) = command {
+                    assert_eq!(sc.nonempty_command_name().unwrap(), "echo");
+                } else {
+                    panic!("Expected simple command");
+                }
+            }
+            _ => panic!("Expected recurse outcome"),
+        }
+    }
+
+    #[test]
+    fn zsh_c_command_recurses() {
+        let ctx = test_context();
+        let cmd = simple_cmd("zsh -c 'ls -la'");
+        let visitor = CodeExecutionVisitor;
+
+        let outcome = visitor.visit_simple_command(&ctx, &cmd);
+
+        match outcome {
+            VisitOutcome::Recurse { command, .. } => {
+                if let Command::Simple(sc) = command {
+                    assert_eq!(sc.nonempty_command_name().unwrap(), "ls");
+                } else {
+                    panic!("Expected simple command");
+                }
+            }
+            _ => panic!("Expected recurse outcome"),
+        }
+    }
 }

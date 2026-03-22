@@ -7,9 +7,8 @@ use may_i_core::{ContextFacts, Decision, EvalResult, TraceEntry};
 use may_i_engine as engine;
 use may_i_shell_parser as parser;
 
-use crate::output;
-use crate::output::format_trace;
 use crate::runtime_facts::parse_cli_facts;
+use may_i_output::{self as output, format_trace};
 
 // =============================================================================
 // EvalReport Builder

@@ -625,4 +625,16 @@ mod tests {
         .expect_err("expected error");
         assert!(format!("{err}").contains("decision keyword"));
     }
+
+    #[test]
+    fn parse_check_non_atom_decision() {
+        let err = parse_config(r#"(check ("not-an-atom") "cmd")"#).expect_err("expected error");
+        assert!(format!("{err}").contains("check entries must start with a decision keyword"));
+    }
+
+    #[test]
+    fn parse_check_with_non_list_with_facts() {
+        let err = parse_config(r#"(check (with-facts :not-a-list))"#).expect_err("expected error");
+        assert!(format!("{err}").contains("with-facts requires a fact vector"));
+    }
 }

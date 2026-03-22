@@ -1283,4 +1283,779 @@ mod tests {
         assert_eq!(row.right.visible_width, 0);
         assert!(row.right.precolored);
     }
+
+    #[test]
+    fn term_width_returns_reasonable_value() {
+        let width = term_width();
+        assert!(width >= 40);
+        assert!(width <= 300);
+    }
+
+    #[test]
+    fn detect_layout_creates_layout() {
+        let layout = detect_layout();
+        assert!(layout.left_width > 0);
+    }
+
+    #[test]
+    fn render_separator_str_without_label() {
+        let result = render_separator_str("", None);
+        assert!(!result.is_empty());
+        assert!(result.contains('\n'));
+    }
+
+    #[test]
+    fn render_separator_str_with_label() {
+        let label = "test".to_string();
+        let result = render_separator_str("", Some(("test", 4)));
+        assert!(!result.is_empty());
+        assert!(result.contains(&label));
+    }
+
+    #[test]
+    fn format_row_str_with_empty_cells() {
+        let row = Row {
+            left: Cell::new("", 0),
+            right: Cell::new("", 0),
+        };
+        let result = format_row_str("", &row, 0);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn compute_divider_col_calculates_max() {
+        let rows = vec![
+            Row::trace("short", 5, "right"),
+            Row::trace("longer text", 11, "right"),
+        ];
+        let col = compute_divider_col(&rows);
+        assert_eq!(col, 12);
+    }
+
+    #[test]
+    fn render_elements_str_blank() {
+        let elements = vec![Element::Blank];
+        let result = render_elements_str("", &elements);
+        assert_eq!(result, "\n");
+    }
+
+    #[test]
+    fn colorize_decision_keyword_allow() {
+        let result = colorize_decision_keyword(":allow");
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn colorize_decision_keyword_ask() {
+        let result = colorize_decision_keyword(":ask");
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn colorize_decision_keyword_deny() {
+        let result = colorize_decision_keyword(":deny");
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn colorize_decision_keyword_other() {
+        let result = colorize_decision_keyword(":other");
+        assert_eq!(result, ":other");
+    }
+
+    #[test]
+    fn shorten_home_with_home_dir() {
+        if let Ok(home) = std::env::var("HOME") {
+            let path = std::path::Path::new(&home).join("test/path");
+            let shortened = shorten_home(&path);
+            assert!(shortened.starts_with("~/"));
+        }
+    }
+
+    #[test]
+    fn shorten_home_without_home_dir() {
+        let path = std::path::Path::new("/usr/local/bin");
+        let shortened = shorten_home(path);
+        assert!(shortened.contains("/usr/local/bin"));
+    }
+
+    #[test]
+    fn format_trace_empty_entries() {
+        let entries: Vec<TraceEntry> = vec![];
+        let result = format_trace(&entries, "");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn format_trace_with_segment_header() {
+        let entries = vec![TraceEntry::SegmentHeader {
+            command: "git push".to_string(),
+            decision: may_i_core::Decision::Allow,
+        }];
+        let result = format_trace(&entries, "");
+        assert!(result.contains("git push"));
+    }
+
+    #[test]
+    fn format_trace_with_default_ask() {
+        let entries = vec![TraceEntry::DefaultAsk {
+            reason: "no matching rule".to_string(),
+        }];
+        let result = format_trace(&entries, "");
+        assert!(result.contains("No matching rule") || result.contains(":ask"));
+    }
+
+    #[test]
+    fn format_trace_with_indent() {
+        let entries = vec![TraceEntry::SegmentHeader {
+            command: "test".to_string(),
+            decision: may_i_core::Decision::Allow,
+        }];
+        let result = format_trace(&entries, "  ");
+        assert!(result.starts_with("  ") || result.contains("  "));
+    }
+
+    #[test]
+    fn render_elements_str_with_separator() {
+        let elements = vec![Element::Separator {
+            label: Some(("test".to_string(), 4)),
+        }];
+        let result = render_elements_str("", &elements);
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn render_elements_str_with_table() {
+        let rows = vec![Row::trace("left", 4, "right")];
+        let elements = vec![Element::Table(rows)];
+        let result = render_elements_str("", &elements);
+        assert!(result.contains("left"));
+        assert!(result.contains("right"));
+    }
+
+    #[test]
+    fn trace_to_json_empty() {
+        let entries: Vec<TraceEntry> = vec![];
+        let json = trace_to_json(&entries);
+        assert!(json.is_empty());
+    }
+
+    #[test]
+    fn trace_to_json_with_segment_header() {
+        let entries = vec![TraceEntry::SegmentHeader {
+            command: "git push".to_string(),
+            decision: may_i_core::Decision::Allow,
+        }];
+        let json = trace_to_json(&entries);
+        assert_eq!(json.len(), 1);
+        assert_eq!(json[0]["type"], "segment_header");
+        assert_eq!(json[0]["command"], "git push");
+    }
+
+    #[test]
+    fn trace_to_json_with_default_ask() {
+        let entries = vec![TraceEntry::DefaultAsk {
+            reason: "test reason".to_string(),
+        }];
+        let json = trace_to_json(&entries);
+        assert_eq!(json.len(), 1);
+        assert_eq!(json[0]["type"], "default_ask");
+        assert_eq!(json[0]["reason"], "test reason");
+    }
+
+    #[test]
+    fn trace_to_json_with_rule() {
+        let doc = Doc {
+            ann: None,
+            node: DocF::Atom("test".into()),
+            layout: LayoutHint::Auto,
+            dimmed: false,
+        };
+        let entries = vec![TraceEntry::Rule {
+            doc: Box::new(doc),
+            line: Some(42),
+        }];
+        let json = trace_to_json(&entries);
+        assert_eq!(json.len(), 1);
+        assert_eq!(json[0]["type"], "rule");
+        assert_eq!(json[0]["line"], 42);
+    }
+
+    #[test]
+    fn colorize_right_with_yes() {
+        let result = colorize_right("test → yes");
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn colorize_right_with_no() {
+        let result = colorize_right("test → no");
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn colorize_right_with_missing() {
+        let result = colorize_right("test → missing");
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn colorize_right_with_allow_keyword() {
+        let result = colorize_right("test → :allow");
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn colorize_right_with_ask_keyword() {
+        let result = colorize_right("test → :ask");
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn colorize_right_with_deny_keyword() {
+        let result = colorize_right("test → :deny");
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn colorize_right_without_arrow() {
+        let result = colorize_right("just some text");
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn format_row_str_with_precolored() {
+        let row = Row {
+            left: Cell::new("key", 3),
+            right: Cell {
+                content: "value".to_string(),
+                visible_width: 0,
+                align: Align::Left,
+                precolored: true,
+            },
+        };
+        let result = format_row_str("", &row, 5);
+        assert!(result.contains("key"));
+        assert!(result.contains("value"));
+    }
+
+    #[test]
+    fn format_row_str_right_aligned() {
+        let mut row = Row::trace("label", 5, "content");
+        row.left.align = Align::Right;
+        let result = format_row_str("", &row, 10);
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn compute_divider_col_with_right_aligned() {
+        let mut row1 = Row::trace("short", 5, "right");
+        row1.left.align = Align::Right;
+        let row2 = Row::trace("longer text", 11, "right");
+        let rows = vec![row1, row2];
+        let col = compute_divider_col(&rows);
+        assert_eq!(col, 12);
+    }
+
+    #[test]
+    fn compute_divider_col_with_elision() {
+        let row = Row {
+            left: Cell {
+                content: "…".to_string(),
+                visible_width: 1,
+                align: Align::Left,
+                precolored: false,
+            },
+            right: Cell::new("", 0),
+        };
+        let rows = vec![row];
+        let col = compute_divider_col(&rows);
+        assert_eq!(col, 1);
+    }
+
+    #[test]
+    fn format_annotation_command_match_returns_none() {
+        let doc = atom_doc("test");
+        let ann = EvalAnn::CommandMatch(true);
+        assert!(format_annotation(&doc, &ann).is_none());
+    }
+
+    #[test]
+    fn format_annotation_context_result_returns_none() {
+        let doc = atom_doc("test");
+        let ann = EvalAnn::ContextResult(true);
+        assert!(format_annotation(&doc, &ann).is_none());
+    }
+
+    #[test]
+    fn format_annotation_args_result_returns_none() {
+        let doc = atom_doc("test");
+        let ann = EvalAnn::ArgsResult(true);
+        assert!(format_annotation(&doc, &ann).is_none());
+    }
+
+    #[test]
+    fn format_annotation_rule_effect_returns_none() {
+        let doc = atom_doc("test");
+        let ann = EvalAnn::RuleEffect {
+            decision: may_i_core::Decision::Allow,
+            reason: None,
+        };
+        assert!(format_annotation(&doc, &ann).is_none());
+    }
+
+    #[test]
+    fn format_annotation_default_ask_returns_none() {
+        let doc = atom_doc("test");
+        let ann = EvalAnn::DefaultAsk;
+        assert!(format_annotation(&doc, &ann).is_none());
+    }
+
+    #[test]
+    fn format_annotation_expr_vs_arg() {
+        let doc = list_doc(vec![atom_doc("regex"), atom_doc("pattern")]);
+        let ann = EvalAnn::ExprVsArg {
+            arg: "test".to_string(),
+            matched: true,
+        };
+        let result = format_annotation(&doc, &ann);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn format_annotation_expr_vs_arg_not_regex() {
+        let doc = list_doc(vec![atom_doc("="), atom_doc("value")]);
+        let ann = EvalAnn::ExprVsArg {
+            arg: "test".to_string(),
+            matched: false,
+        };
+        let result = format_annotation(&doc, &ann);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn format_annotation_quantifier_matched() {
+        let doc = atom_doc("*");
+        let ann = EvalAnn::Quantifier {
+            count: 5,
+            matched: true,
+        };
+        let result = format_annotation(&doc, &ann);
+        assert!(result.is_some());
+        assert!(result.unwrap().1.contains("5 matched"));
+    }
+
+    #[test]
+    fn format_annotation_quantifier_not_matched() {
+        let doc = atom_doc("+");
+        let ann = EvalAnn::Quantifier {
+            count: 0,
+            matched: false,
+        };
+        let result = format_annotation(&doc, &ann);
+        assert!(result.is_some());
+        assert!(result.unwrap().1.contains("→ no"));
+    }
+
+    #[test]
+    fn format_annotation_missing() {
+        let doc = atom_doc("arg");
+        let ann = EvalAnn::Missing;
+        let result = format_annotation(&doc, &ann);
+        assert!(result.is_some());
+        assert!(result.unwrap().1.contains("missing"));
+    }
+
+    #[test]
+    fn format_annotation_anywhere() {
+        let doc = atom_doc("pattern");
+        let ann = EvalAnn::Anywhere {
+            args: vec!["a".to_string(), "b".to_string()],
+            matched: true,
+        };
+        let result = format_annotation(&doc, &ann);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn format_annotation_anywhere_not_matched() {
+        let doc = atom_doc("pattern");
+        let ann = EvalAnn::Anywhere {
+            args: vec!["x".to_string(), "y".to_string()],
+            matched: false,
+        };
+        let result = format_annotation(&doc, &ann);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn format_annotation_cond_branch() {
+        let doc = atom_doc("when");
+        let ann = EvalAnn::CondBranch {
+            decision: may_i_core::Decision::Allow,
+        };
+        let result = format_annotation(&doc, &ann);
+        assert!(result.is_some());
+        assert!(result.unwrap().1.contains(":allow"));
+    }
+
+    #[test]
+    fn format_annotation_cond_else() {
+        let doc = atom_doc("else");
+        let ann = EvalAnn::CondElse {
+            decision: may_i_core::Decision::Deny,
+        };
+        let result = format_annotation(&doc, &ann);
+        assert!(result.is_some());
+        assert!(result.unwrap().0.contains("else"));
+    }
+
+    #[test]
+    fn format_annotation_exact_args_matched() {
+        let doc = list_doc(vec![atom_doc("exact"), atom_doc("a"), atom_doc("b")]);
+        let ann = EvalAnn::ExactArgs {
+            patterns: vec!["a".to_string(), "b".to_string()],
+            args: vec!["a".to_string(), "b".to_string()],
+            matched: true,
+        };
+        let result = format_annotation(&doc, &ann);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn format_annotation_exact_args_mismatch() {
+        let doc = list_doc(vec![atom_doc("exact"), atom_doc("x"), atom_doc("y")]);
+        let ann = EvalAnn::ExactArgs {
+            patterns: vec!["a".to_string(), "b".to_string()],
+            args: vec!["x".to_string(), "y".to_string()],
+            matched: false,
+        };
+        let result = format_annotation(&doc, &ann);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn format_annotation_exact_remainder() {
+        let doc = atom_doc("remainder");
+        let ann = EvalAnn::ExactRemainder { count: 3 };
+        let result = format_annotation(&doc, &ann);
+        assert!(result.is_some());
+        assert!(result.unwrap().1.contains("3 extra args"));
+    }
+
+    #[test]
+    fn render_observed_value_escapes_quotes() {
+        let value = r#"say "hello""#;
+        let result = render_observed_value(value);
+        assert!(result.contains("\\\""));
+    }
+
+    #[test]
+    fn render_observed_value_escapes_backslash() {
+        let value = r#"path\to\file"#;
+        let result = render_observed_value(value);
+        assert!(result.contains("\\\\"));
+    }
+
+    #[test]
+    fn render_observed_value_escapes_newline() {
+        let value = "line1\nline2";
+        let result = render_observed_value(value);
+        assert!(result.contains("\\n"));
+    }
+
+    #[test]
+    fn render_observed_value_truncates_long() {
+        let value = "a".repeat(100);
+        let result = render_observed_value(&value);
+        assert!(result.contains('…'));
+    }
+
+    #[test]
+    fn node_text_atom() {
+        let doc = atom_doc("test");
+        assert_eq!(node_text(&doc), "test");
+    }
+
+    #[test]
+    fn node_text_list() {
+        let doc = list_doc(vec![atom_doc("a"), atom_doc("b")]);
+        assert_eq!(node_text(&doc), "(a b)");
+    }
+
+    #[test]
+    fn node_text_vector() {
+        let doc = Doc {
+            ann: None,
+            node: DocF::Vector(vec![atom_doc("x"), atom_doc("y")]),
+            layout: LayoutHint::Auto,
+            dimmed: false,
+        };
+        assert_eq!(node_text(&doc), "[x y]");
+    }
+
+    #[test]
+    fn is_regex_node_with_regex() {
+        let doc = list_doc(vec![atom_doc("regex"), atom_doc("pattern")]);
+        assert!(is_regex_node(&doc));
+    }
+
+    #[test]
+    fn is_regex_node_without_regex() {
+        let doc = list_doc(vec![atom_doc("="), atom_doc("value")]);
+        assert!(!is_regex_node(&doc));
+    }
+
+    #[test]
+    fn extract_outcome_with_reason() {
+        let doc = Doc {
+            ann: Some(EvalAnn::RuleEffect {
+                decision: may_i_core::Decision::Allow,
+                reason: Some("safe command".to_string()),
+            }),
+            node: DocF::Atom("test".into()),
+            layout: LayoutHint::Auto,
+            dimmed: false,
+        };
+        let result = extract_outcome(&doc);
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("safe command"));
+    }
+
+    #[test]
+    fn extract_outcome_without_reason() {
+        let doc = Doc {
+            ann: Some(EvalAnn::RuleEffect {
+                decision: may_i_core::Decision::Deny,
+                reason: None,
+            }),
+            node: DocF::Atom("test".into()),
+            layout: LayoutHint::Auto,
+            dimmed: false,
+        };
+        let result = extract_outcome(&doc);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn extract_outcome_no_effect() {
+        let doc = atom_doc("test");
+        let result = extract_outcome(&doc);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn has_args_match_with_true_result() {
+        let doc = Doc {
+            ann: Some(EvalAnn::ArgsResult(true)),
+            node: DocF::Atom("test".into()),
+            layout: LayoutHint::Auto,
+            dimmed: false,
+        };
+        assert!(has_args_match(&doc));
+    }
+
+    #[test]
+    fn has_args_match_with_rule_effect() {
+        let doc = Doc {
+            ann: Some(EvalAnn::RuleEffect {
+                decision: may_i_core::Decision::Allow,
+                reason: None,
+            }),
+            node: DocF::Atom("test".into()),
+            layout: LayoutHint::Auto,
+            dimmed: false,
+        };
+        assert!(has_args_match(&doc));
+    }
+
+    #[test]
+    fn has_args_match_without_match() {
+        let doc = atom_doc("test");
+        assert!(!has_args_match(&doc));
+    }
+
+    #[test]
+    fn find_line_exact_match() {
+        let lines = vec!["first line".to_string(), "second line".to_string()];
+        let mut search_from = 0;
+        let result = find_line(&lines, "second", &mut search_from);
+        assert_eq!(result, Some(1));
+        assert_eq!(search_from, 2);
+    }
+
+    #[test]
+    fn find_line_no_match() {
+        let lines = vec!["first".to_string(), "second".to_string()];
+        let mut search_from = 0;
+        let result = find_line(&lines, "third", &mut search_from);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn find_line_first_token_fallback() {
+        let lines = vec!["(effect :allow)".to_string()];
+        let mut search_from = 0;
+        let result = find_line(&lines, "(effect :allow something)", &mut search_from);
+        assert_eq!(result, Some(0));
+    }
+
+    #[test]
+    fn strip_ansi_with_codes() {
+        let input = "\x1b[32mgreen\x1b[0m text";
+        let result = strip_ansi(input);
+        assert_eq!(result, "green text");
+    }
+
+    #[test]
+    fn strip_ansi_without_codes() {
+        let input = "plain text";
+        let result = strip_ansi(input);
+        assert_eq!(result, "plain text");
+    }
+
+    #[test]
+    fn ellipsize_after_at_end() {
+        let items = vec!["a".to_string(), "b".to_string()];
+        let result = ellipsize_after(&items, 1);
+        assert!(!result.contains('…'));
+    }
+
+    #[test]
+    fn ellipsize_after_before_end() {
+        let items = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let result = ellipsize_after(&items, 0);
+        assert!(result.contains('…'));
+    }
+
+    #[test]
+    fn truncate_list_short() {
+        let items = vec!["a".to_string(), "b".to_string()];
+        let result = truncate_list(&items, 5);
+        assert_eq!(result, "a, b");
+    }
+
+    #[test]
+    fn truncate_list_long() {
+        let items = vec![
+            "a".to_string(),
+            "b".to_string(),
+            "c".to_string(),
+            "d".to_string(),
+            "e".to_string(),
+        ];
+        let result = truncate_list(&items, 3);
+        assert!(result.contains('…'));
+    }
+
+    #[test]
+    fn colorize_effect_sexpr_replaces_keywords() {
+        let input = "(effect :allow) then (effect :ask) then (effect :deny)";
+        let result = colorize_effect_sexpr(input);
+        assert!(!result.is_empty());
+    }
+
+    // Tests for internal helper functions
+
+    #[test]
+    fn verdict_true_returns_yes() {
+        assert_eq!(verdict(true), "yes");
+    }
+
+    #[test]
+    fn verdict_false_returns_no() {
+        assert_eq!(verdict(false), "no");
+    }
+
+    #[test]
+    fn collect_annotations_returns_pairs() {
+        let doc = Doc {
+            ann: Some(EvalAnn::ContextHasPresence {
+                key: ":test".into(),
+                source: "(has :test)".into(),
+                matched: true,
+            }),
+            node: DocF::Atom("test".into()),
+            layout: LayoutHint::Auto,
+            dimmed: false,
+        };
+        let result = collect_annotations(&doc);
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn collect_annotations_skips_none_annotations() {
+        let doc = atom_doc("test");
+        let result = collect_annotations(&doc);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn dim_unevaluated_returns_doc() {
+        let doc = atom_doc("test");
+        let result = dim_unevaluated(doc);
+        assert!(matches!(result.node, DocF::Atom(_)));
+    }
+
+    #[test]
+    fn has_any_annotation_true_when_present() {
+        let doc = Doc {
+            ann: Some(EvalAnn::CommandMatch(true)),
+            node: DocF::Atom("test".into()),
+            layout: LayoutHint::Auto,
+            dimmed: false,
+        };
+        assert!(has_any_annotation(&doc));
+    }
+
+    #[test]
+    fn has_any_annotation_false_when_absent() {
+        let doc = atom_doc("test");
+        assert!(!has_any_annotation(&doc));
+    }
+
+    #[test]
+    fn has_any_visible_annotation_true_for_visible() {
+        let doc = Doc {
+            ann: Some(EvalAnn::ContextHasPresence {
+                key: ":test".into(),
+                source: "test".into(),
+                matched: true,
+            }),
+            node: DocF::Atom("test".into()),
+            layout: LayoutHint::Auto,
+            dimmed: false,
+        };
+        assert!(has_any_visible_annotation(&doc));
+    }
+
+    #[test]
+    fn has_any_visible_annotation_false_for_invisible() {
+        let doc = Doc {
+            ann: Some(EvalAnn::CommandMatch(true)),
+            node: DocF::Atom("test".into()),
+            layout: LayoutHint::Auto,
+            dimmed: false,
+        };
+        assert!(!has_any_visible_annotation(&doc));
+    }
+
+    #[test]
+    fn truncate_unevaluated_atom_returns_clone() {
+        let doc = atom_doc("test");
+        let result = truncate_unevaluated(&doc, 2);
+        assert!(matches!(result.node, DocF::Atom(_)));
+    }
+
+    #[test]
+    fn truncate_unevaluated_vector() {
+        let doc = Doc {
+            ann: None,
+            node: DocF::Vector(vec![atom_doc("x"), atom_doc("y")]),
+            layout: LayoutHint::Auto,
+            dimmed: false,
+        };
+        let result = truncate_unevaluated(&doc, 2);
+        assert!(matches!(result.node, DocF::Vector(_)));
+    }
 }
