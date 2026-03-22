@@ -17,6 +17,7 @@ use crate::span::Span;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Shape {
     Atom(String),
+    Str(String),
     List(Vec<Box<CstNode>>),
     Vector(Vec<Box<CstNode>>),
 }
@@ -142,11 +143,10 @@ impl CstNode {
         // Write the shape
         match &self.shape {
             Shape::Atom(s) => {
-                if needs_quoting(s) {
-                    output.push_str(&quote_string(s));
-                } else {
-                    output.push_str(s);
-                }
+                output.push_str(s);
+            }
+            Shape::Str(s) => {
+                output.push_str(&quote_string(s));
             }
             Shape::List(children) => {
                 output.push('(');
@@ -197,7 +197,7 @@ impl CstNode {
 
         // If no transformation at this node, try children
         match &self.shape {
-            Shape::Atom(_) => None,
+            Shape::Atom(_) | Shape::Str(_) => None,
             Shape::List(children) => {
                 let mut new_children = Vec::new();
                 let mut changed = false;
@@ -240,20 +240,6 @@ impl CstNode {
             }
         }
     }
-}
-
-fn needs_quoting(s: &str) -> bool {
-    s.is_empty()
-        || s.contains(|c: char| {
-            c.is_whitespace()
-                || c == '('
-                || c == ')'
-                || c == '['
-                || c == ']'
-                || c == '"'
-                || c == ';'
-                || c == '\\'
-        })
 }
 
 fn quote_string(s: &str) -> String {
@@ -440,7 +426,7 @@ impl<'a> Parser<'a> {
                             span: Span::new(start, end),
                             ..Default::default()
                         },
-                        shape: Shape::Atom(s),
+                        shape: Shape::Str(s),
                     });
                 }
                 Some((_, '\\')) => match self.chars.next() {
@@ -498,6 +484,30 @@ impl<'a> Parser<'a> {
 fn is_atom_char(c: char) -> bool {
     c.is_ascii_alphanumeric()
         || matches!(c, '-' | '_' | '*' | '.' | '/' | '^' | ':' | '+' | '?' | '=')
+}
+
+/// A visitor for traversing s-expressions without transforming.
+pub trait Visitor {
+    /// Called for each node during traversal.
+    /// Return true to continue traversing children, false to skip.
+    fn visit(&mut self, node: &CstNode) -> bool;
+}
+
+impl CstNode {
+    /// Accept a visitor and traverse the tree.
+    pub fn accept<V: Visitor>(&self, visitor: &mut V) {
+        if !visitor.visit(self) {
+            return;
+        }
+        match &self.shape {
+            Shape::Atom(_) | Shape::Str(_) => {}
+            Shape::List(children) | Shape::Vector(children) => {
+                for child in children {
+                    child.accept(visitor);
+                }
+            }
+        }
+    }
 }
 
 /// A rewrite rule for transforming s-expressions.

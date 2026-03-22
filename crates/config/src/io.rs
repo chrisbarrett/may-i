@@ -11,7 +11,8 @@ pub fn load_v2(path: &Path) -> miette::Result<may_i_core::v2::ast::Config> {
         .into_diagnostic()
         .wrap_err_with(|| format!("Failed to read {}", path.display()))?;
 
-    crate::v2::parse_config(&content).map_err(|e| miette::miette!("{e}"))
+    crate::v2::parse_config(&content)
+        .map_err(|e| crate::ConfigError::from_raw(e, &content, &path.display().to_string()).into())
 }
 
 /// Resolve the config file path.

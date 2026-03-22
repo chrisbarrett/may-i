@@ -321,7 +321,34 @@ them to v2 syntax:
 may-i migrate ~/.config/may-i/config.lisp
 ```
 
-Add `--dry-run` to preview changes without modifying the file.
+**Options:**
+
+- `--dry-run` — Preview changes without modifying the file
+- `--diff` — Show a detailed form-by-form diff of what will change
+- `--yes` — Skip the confirmation prompt (required for non-TTY usage)
+
+**Interactive Mode:**
+
+When running in a terminal, `may-i migrate` shows a diff of the changes and
+prompts for confirmation before applying them:
+
+```
+Migration Diff:
+─────────────────────────────────────────────────────────────────
+│ BEFORE                    │ AFTER                     │
+│ (rule (command git)       │ (rule git                 │
+│   (effect :allow))        │   (effect :allow))        │
+─────────────────────────────────────────────────────────────────
+1 forms will change, 0 unchanged
+
+Apply migration? [Y/n]
+```
+
+For automated scripts or CI/CD pipelines, use `--yes` to skip the prompt:
+
+```bash
+may-i migrate ~/.config/may-i/config.lisp --yes
+```
 
 ### Global Flags
 

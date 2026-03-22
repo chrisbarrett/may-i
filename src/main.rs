@@ -70,6 +70,9 @@ enum Command {
         /// Skip validation of migrated output
         #[arg(long)]
         no_validate: bool,
+        /// Skip confirmation prompt (non-TTY requires this flag)
+        #[arg(long)]
+        yes: bool,
     },
 }
 
@@ -104,12 +107,14 @@ fn run() -> miette::Result<()> {
             dry_run,
             diff,
             no_validate,
+            yes,
         }) => cmd_migrate::cmd_migrate(
             cli.config.as_deref(),
             output.as_deref(),
             dry_run,
             diff,
             no_validate,
+            yes,
         )?,
         None => {
             if std::io::stdin().is_terminal() {

@@ -392,10 +392,10 @@ pub fn migrate_forms(forms: Vec<Box<CstNode>>) -> Vec<Box<CstNode>> {
 
 /// Validate that migrated output can be parsed with the v2 parser.
 /// Returns Ok(()) if valid, or Err with a list of validation errors.
-pub fn validate_migration(migrated_text: &str) -> Result<(), Vec<String>> {
+pub fn validate_migration(migrated_text: &str) -> Result<(), Vec<may_i_sexpr::RawError>> {
     match super::config::parse_config(migrated_text) {
         Ok(_) => Ok(()),
-        Err(e) => Err(vec![format!("{}", e)]),
+        Err(e) => Err(vec![e]),
     }
 }
 
@@ -406,7 +406,7 @@ pub fn check_unhandled_cases(original_text: &str) -> Vec<UnhandledCase> {
     let (forms, _) = may_i_sexpr::parse_cst(original_text);
 
     for form in &forms {
-        check_node_unhandled(form, &mut warnings);
+        check_node_unhandled(form, &mut warnings, true);
     }
 
     warnings
@@ -423,34 +423,161 @@ pub struct UnhandledCase {
     pub suggestion: String,
 }
 
+/// A span in the source text (for error reporting).
+#[derive(Debug, Clone, Copy)]
+pub struct Span {
+    pub start: usize,
+    pub end: usize,
+}
+
+/// A single form that will be migrated.
+#[derive(Debug, Clone)]
+pub struct MigrationDiff {
+    /// Original form text (with trivia)
+    pub before: String,
+    /// Migrated form text
+    pub after: String,
+    /// Up to 2 lines of trivia before the form
+    pub context_before: Vec<String>,
+    /// Up to 2 lines of trivia after the form
+    pub context_after: Vec<String>,
+    /// Span in original file (for error reporting)
+    pub span: Span,
+}
+
+/// Error with context for display.
+#[derive(Debug, Clone)]
+pub struct MigrationError {
+    pub message: String,
+    pub span: Span,
+    pub context_before: Vec<String>,
+    pub context_after: Vec<String>,
+}
+
+/// Result of analyzing a config for migration.
+#[derive(Debug, Clone)]
+pub struct MigrationAnalysis {
+    /// Forms that will change
+    pub diffs: Vec<MigrationDiff>,
+    /// Forms that couldn't be parsed (with context)
+    pub errors: Vec<MigrationError>,
+    /// Forms that remained unchanged
+    pub unchanged_count: usize,
+}
+
+/// Extract trivia context (up to N lines) from a node's leading trivia.
+pub fn extract_leading_context(node: &CstNode, max_lines: usize) -> Vec<String> {
+    extract_context_from_trivia(&node.annotation.leading, max_lines)
+}
+
+/// Extract trivia context (up to N lines) from a node's trailing trivia.
+pub fn extract_trailing_context(node: &CstNode, max_lines: usize) -> Vec<String> {
+    extract_context_from_trivia(&node.annotation.trailing, max_lines)
+}
+
+/// Extract context from trivia items, up to max_lines lines.
+fn extract_context_from_trivia(
+    trivia: &[may_i_sexpr::cst::Trivia],
+    max_lines: usize,
+) -> Vec<String> {
+    let mut result = Vec::new();
+    let mut line_count = 0;
+
+    for item in trivia.iter().rev() {
+        let text = item.as_str();
+        result.push(text.to_string());
+        line_count += text.matches('\n').count();
+        if line_count >= max_lines {
+            break;
+        }
+    }
+
+    // Reverse to maintain original order
+    result.reverse();
+    result
+}
+
+/// Analyze a config for migration and produce a detailed diff.
+pub fn analyze_migration(source: &str) -> MigrationAnalysis {
+    let (forms, errors) = may_i_sexpr::parse_cst(source);
+    let mut diffs = Vec::new();
+    let mut migration_errors = Vec::new();
+    let mut unchanged_count = 0;
+
+    // Convert parse errors to migration errors with context
+    for err in &errors {
+        migration_errors.push(MigrationError {
+            message: format!("{}", err),
+            span: Span { start: 0, end: 0 },
+            context_before: vec![],
+            context_after: vec![],
+        });
+    }
+
+    // Analyze each form
+    for form in &forms {
+        let original = form.serialize();
+        let migrated_form = migrate(form.clone());
+        let migrated = migrated_form.serialize();
+
+        if original != migrated {
+            // Form changed - create a diff
+            diffs.push(MigrationDiff {
+                before: original,
+                after: migrated,
+                context_before: extract_leading_context(form, 2),
+                context_after: extract_trailing_context(form, 2),
+                span: Span {
+                    start: form.annotation.span.start,
+                    end: form.annotation.span.end,
+                },
+            });
+        } else {
+            unchanged_count += 1;
+        }
+    }
+
+    MigrationAnalysis {
+        diffs,
+        errors: migration_errors,
+        unchanged_count,
+    }
+}
+
 /// Recursively check a CST node for unhandled v1 constructs.
-fn check_node_unhandled(node: &CstNode, warnings: &mut Vec<UnhandledCase>) {
+/// Only reports forms at the top level of each form (not nested inside migratable forms).
+fn check_node_unhandled(node: &CstNode, warnings: &mut Vec<UnhandledCase>, is_top_level: bool) {
     if let Some(list) = node.as_list()
         && !list.is_empty()
     {
         if let Some(tag) = list[0].as_atom() {
             match tag {
-                // Legacy v1 forms that should have been converted
-                "wrapper" => {
+                // Legacy v1 forms that should have been converted - only report at top level
+                "wrapper" if is_top_level => {
                     warnings.push(UnhandledCase {
                         description: "Legacy wrapper form".to_string(),
                         source: node.serialize(),
                         suggestion: "Convert to (rule ...) with . (may-i *)".to_string(),
                     });
+                    // Don't recurse into wrapper forms - they're already flagged
+                    return;
                 }
-                "defcontext" => {
+                "defcontext" if is_top_level => {
                     warnings.push(UnhandledCase {
                         description: "Legacy defcontext form".to_string(),
                         source: node.serialize(),
                         suggestion: "Convert to (define ...)".to_string(),
                     });
+                    return;
                 }
                 "context" => {
+                    // Context inside a rule should be reported
                     warnings.push(UnhandledCase {
                         description: "Legacy context form in rule".to_string(),
                         source: node.serialize(),
                         suggestion: "Inline context expression into rule predicates".to_string(),
                     });
+                    return;
                 }
                 "args" => {
                     // Check if this is an args with cond that might not migrate well
@@ -464,6 +591,7 @@ fn check_node_unhandled(node: &CstNode, warnings: &mut Vec<UnhandledCase>) {
                             suggestion: "Convert to (case ...) in effect position".to_string(),
                         });
                     }
+                    return;
                 }
                 "MatcherCondPredicate" | "ArgMatcher" | "BoolExpr" => {
                     warnings.push(UnhandledCase {
@@ -471,14 +599,15 @@ fn check_node_unhandled(node: &CstNode, warnings: &mut Vec<UnhandledCase>) {
                         source: node.serialize(),
                         suggestion: "This should not appear in user config".to_string(),
                     });
+                    return;
                 }
                 _ => {}
             }
         }
 
-        // Recursively check children
+        // Recursively check children (not at top level)
         for child in list {
-            check_node_unhandled(child, warnings);
+            check_node_unhandled(child, warnings, false);
         }
     }
 }
