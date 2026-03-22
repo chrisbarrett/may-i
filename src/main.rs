@@ -61,15 +61,6 @@ enum Command {
         /// Output file (defaults to stdout, use same as input for in-place)
         #[arg(short, long)]
         output: Option<String>,
-        /// Show what would be changed without writing
-        #[arg(long)]
-        dry_run: bool,
-        /// Show diff of changes
-        #[arg(long)]
-        diff: bool,
-        /// Skip validation of migrated output
-        #[arg(long)]
-        no_validate: bool,
         /// Skip confirmation prompt (non-TTY requires this flag)
         #[arg(long)]
         yes: bool,
@@ -102,20 +93,9 @@ fn run() -> miette::Result<()> {
             cmd_check::cmd_check(cli.json, verbose, cli.v2, cli.config.as_deref())?
         }
         Some(Command::Parse { command, file }) => cmd_parse::cmd_parse(command, file, cli.json)?,
-        Some(Command::Migrate {
-            output,
-            dry_run,
-            diff,
-            no_validate,
-            yes,
-        }) => cmd_migrate::cmd_migrate(
-            cli.config.as_deref(),
-            output.as_deref(),
-            dry_run,
-            diff,
-            no_validate,
-            yes,
-        )?,
+        Some(Command::Migrate { output, yes }) => {
+            cmd_migrate::cmd_migrate(cli.config.as_deref(), output.as_deref(), yes)?
+        }
         None => {
             if std::io::stdin().is_terminal() {
                 Cli::command()

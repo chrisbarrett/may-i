@@ -94,30 +94,16 @@ impl PromptHandler for MockPromptHandler {
 pub fn cmd_migrate(
     config_path: Option<&Path>,
     output: Option<&str>,
-    dry_run: bool,
-    diff: bool,
-    no_validate: bool,
     yes: bool,
 ) -> miette::Result<()> {
     let handler = RealPromptHandler;
-    cmd_migrate_with_handler(
-        config_path,
-        output,
-        dry_run,
-        diff,
-        no_validate,
-        yes,
-        &handler,
-    )
+    cmd_migrate_with_handler(config_path, output, yes, &handler)
 }
 
 /// Run the migration command with a custom prompt handler (for testing).
 pub fn cmd_migrate_with_handler(
     config_path: Option<&Path>,
     output: Option<&str>,
-    dry_run: bool,
-    diff: bool,
-    no_validate: bool,
     yes: bool,
     handler: &dyn PromptHandler,
 ) -> miette::Result<()> {
@@ -161,8 +147,7 @@ pub fn cmd_migrate_with_handler(
         .join("");
 
     // Validate migration output parses with v2 parser
-    if !no_validate
-        && let Err(validation_errors) = validate_migration(&output_text)
+    if let Err(validation_errors) = validate_migration(&output_text)
         && let Some(raw_err) = validation_errors.first()
     {
         return Err(may_i_config::ConfigError::from_raw(
@@ -183,7 +168,7 @@ pub fn cmd_migrate_with_handler(
     let has_changes = original_text != output_text;
 
     // Show diff if requested or if changes exist and not auto-confirmed
-    if diff || (has_changes && !yes) {
+    if has_changes && !yes {
         let config = DiffConfig::default();
         let diff_output = render_diff(&diff_nodes, &config);
 
@@ -198,7 +183,7 @@ pub fn cmd_migrate_with_handler(
     }
 
     // Check if we need to prompt for confirmation
-    if has_changes && !dry_run && !yes {
+    if has_changes && !yes {
         if !handler.is_tty() {
             return Err(miette::miette!(
                 "Migration would modify {} form(s). Use --yes to confirm non-interactive execution.",
@@ -223,14 +208,7 @@ pub fn cmd_migrate_with_handler(
     let output_path = output.map(Path::new);
 
     // Write output or print
-    if dry_run {
-        if !has_changes {
-            println!("\nDry run - no changes needed.");
-        } else {
-            println!("\nDry run - would produce:");
-            println!("{}", output_text);
-        }
-    } else if let Some(path) = output_path {
+    if let Some(path) = output_path {
         std::fs::write(path, output_text)
             .map_err(|e| miette::miette!("Failed to write output file: {e}"))?;
         println!("Migrated config written to {}", path.display());
