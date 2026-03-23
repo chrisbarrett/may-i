@@ -1,5 +1,5 @@
-// Effect parser for v2 DSL.
-// Task 2.6: Implement effect parser (`effect`, `may-i`, `case`, `when`, `unless`, `if`)
+// Effect parser for v2 unified DSL.
+// All effect forms evaluate to Decision | Nil.
 
 use may_i_core::v2::ast::{Effect, Spanned};
 use may_i_sexpr::{RawError, Sexpr};
@@ -7,18 +7,54 @@ use may_i_sexpr::{RawError, Sexpr};
 /// Parse an effect from an s-expression list.
 ///
 /// Syntax:
-/// - `(effect :allow)` or `(effect :allow "reason")`
-/// - `(effect :ask)` or `(effect :ask "reason")`
-/// - `(effect :deny)` or `(effect :deny "reason")`
-/// - `(may-i PATTERN)` - recursive evaluation
-/// - `(case [(PREDICATE EFFECT) ...] [ELSE-EFFECT])`
-/// - `(when PREDICATE EFFECT)`
-/// - `(unless PREDICATE EFFECT)`
-/// - `(if PREDICATE THEN-EFFECT [ELSE-EFFECT])`
+/// - Terminal effects: `(effect :allow)`, `(effect :ask)`, `(effect :deny)` with optional reason
+/// - Pattern effects: command strings, `(positional ...)`, `(exact ...)`, `(anywhere ...)`, `(forbidden ...)`
+/// - Combinators: `(and EFFECT ...)`, `(or EFFECT ...)`, `(not EFFECT)`
+/// - Conditionals: `(when PREDICATE EFFECT)`, `(unless PREDICATE EFFECT)`, `(if PREDICATE THEN ELSE)`, `(cond ...)`
+/// - Recursion: `(may-i PATTERN)`
 pub fn parse_effect(sexpr: &Sexpr) -> Result<Spanned<Effect>, RawError> {
-    let list = sexpr
-        .as_list()
-        .ok_or_else(|| RawError::new("effect must be a list", sexpr.span()))?;
+    // Handle shorthand notation first: :allow, :ask, :deny, or [:ask "reason"]
+    if let Some(atom) = sexpr.as_atom() {
+        // Check for shorthand keywords
+        match atom {
+            ":allow" => return Ok(Spanned::new(Effect::Allow(None), sexpr.span())),
+            ":ask" => return Ok(Spanned::new(Effect::Ask(None), sexpr.span())),
+            ":deny" => return Ok(Spanned::new(Effect::Deny(None), sexpr.span())),
+            _ => {
+                if !super::is_reserved_keyword(atom) {
+                    // This is a command literal - treat as CommandPattern effect
+                    let pattern = super::command::parse_command_pattern_from_atom(atom)?;
+                    return Ok(Spanned::new(Effect::CommandPattern(pattern), sexpr.span()));
+                }
+            }
+        }
+    }
+
+    // Handle vector shorthand: [:ask "reason"]
+    if let Sexpr::Vector(items, _) = sexpr
+        && !items.is_empty()
+        && let Some(kw) = items[0].as_atom()
+    {
+        let reason = if items.len() > 1 {
+            items[1].as_atom().map(|s| s.to_string())
+        } else {
+            None
+        };
+
+        match kw {
+            ":allow" => return Ok(Spanned::new(Effect::Allow(reason), sexpr.span())),
+            ":ask" => return Ok(Spanned::new(Effect::Ask(reason), sexpr.span())),
+            ":deny" => return Ok(Spanned::new(Effect::Deny(reason), sexpr.span())),
+            _ => {}
+        }
+    }
+
+    let list = sexpr.as_list().ok_or_else(|| {
+        RawError::new(
+            "effect must be a list, command literal, or shorthand keyword",
+            sexpr.span(),
+        )
+    })?;
 
     if list.is_empty() {
         return Err(RawError::new("empty effect", sexpr.span()));
@@ -31,19 +67,59 @@ pub fn parse_effect(sexpr: &Sexpr) -> Result<Spanned<Effect>, RawError> {
     let effect = match tag {
         "effect" => parse_terminal_effect(&list[1..], sexpr.span())?,
         "may-i" => parse_may_i(&list[1..], sexpr.span())?,
-        "case" => parse_case(&list[1..], sexpr.span())?,
+        "cond" => parse_cond(&list[1..], sexpr.span())?,
         "when" => parse_when(&list[1..], sexpr.span())?,
         "unless" => parse_unless(&list[1..], sexpr.span())?,
         "if" => parse_if(&list[1..], sexpr.span())?,
+        "and" => parse_and(&list[1..], sexpr.span())?,
+        "not" => parse_not(&list[1..], sexpr.span())?,
+        // Pattern effects
+        "positional" | "exact" | "anywhere" | "forbidden" | "=" => {
+            let pattern = super::pattern::parse_arg_pattern(sexpr)?;
+            Effect::ArgPattern(pattern)
+        }
+        // "or" can be either a command pattern or an effect combinator
+        "or" => {
+            // Check if this is a command pattern (or "git" "gh") - all args are simple atoms
+            if list.len() > 1 && is_command_or_pattern(&list[1..]) {
+                let patterns: Result<Vec<_>, _> = list[1..]
+                    .iter()
+                    .map(|s| {
+                        s.as_atom()
+                            .ok_or_else(|| {
+                                RawError::new(
+                                    "command or pattern requires atom arguments",
+                                    s.span(),
+                                )
+                            })
+                            .and_then(super::command::parse_command_pattern_from_atom)
+                    })
+                    .collect();
+                Effect::CommandPattern(may_i_core::v2::pattern::CommandPattern::Or(patterns?))
+            } else {
+                // It's an effect combinator
+                parse_or(&list[1..], sexpr.span())?
+            }
+        }
         other => {
-            return Err(
-                RawError::new(format!("unknown effect form: {other}"), list[0].span())
-                    .with_help("valid effects: effect, may-i, case, when, unless, if"),
-            );
+            // Try to parse as a command pattern (for complex command patterns)
+            if let Ok(pattern) = super::command::parse_command_pattern(sexpr) {
+                Effect::CommandPattern(pattern)
+            } else {
+                return Err(
+                    RawError::new(format!("unknown effect form: {other}"), list[0].span())
+                        .with_help("valid effects: effect, may-i, cond, when, unless, if, and, or, not, positional, exact, anywhere, forbidden"),
+                );
+            }
         }
     };
 
     Ok(Spanned::new(effect, sexpr.span()))
+}
+
+/// Check if all sexprs are simple atoms (for command or pattern detection).
+fn is_command_or_pattern(exprs: &[Sexpr]) -> bool {
+    exprs.iter().all(|e| e.as_atom().is_some())
 }
 
 /// Parse a terminal effect (allow, ask, deny).
@@ -91,13 +167,13 @@ fn parse_may_i(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawErro
     }
 
     let pattern = super::pattern::parse_arg_pattern(&args[0])?;
-    Ok(Effect::Evaluate(pattern))
+    Ok(Effect::MayI { pattern })
 }
 
-/// Parse a case expression.
-fn parse_case(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawError> {
+/// Parse a cond expression (renamed from case).
+fn parse_cond(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawError> {
     if args.is_empty() {
-        return Err(RawError::new("case must have at least one branch", span));
+        return Err(RawError::new("cond must have at least one branch", span));
     }
 
     let mut branches = Vec::new();
@@ -106,10 +182,10 @@ fn parse_case(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawError
     for (i, arg) in args.iter().enumerate() {
         let branch_list = arg
             .as_list()
-            .ok_or_else(|| RawError::new("case branch must be a list", arg.span()))?;
+            .ok_or_else(|| RawError::new("cond branch must be a list", arg.span()))?;
 
         if branch_list.is_empty() {
-            return Err(RawError::new("empty case branch", arg.span()));
+            return Err(RawError::new("empty cond branch", arg.span()));
         }
 
         // Check for else branch
@@ -137,7 +213,7 @@ fn parse_case(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawError
         // Regular branch: (PREDICATE EFFECT)
         if branch_list.len() != 2 {
             return Err(RawError::new(
-                "case branch must have exactly a predicate and an effect",
+                "cond branch must have exactly a predicate and an effect",
                 arg.span(),
             ));
         }
@@ -148,7 +224,7 @@ fn parse_case(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawError
         branches.push((Spanned::new(predicate, branch_list[0].span()), effect));
     }
 
-    Ok(Effect::Case { branches, fallback })
+    Ok(Effect::Cond { branches, fallback })
 }
 
 /// Parse a when expression.
@@ -189,25 +265,74 @@ fn parse_unless(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawErr
 
 /// Parse an if expression.
 fn parse_if(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawError> {
-    if args.len() < 2 || args.len() > 3 {
+    if args.len() != 3 {
         return Err(RawError::new(
-            "if must have 2 or 3 arguments: (if PREDICATE THEN-EFFECT [ELSE-EFFECT])",
+            "if must have exactly 3 arguments: (if PREDICATE THEN-EFFECT ELSE-EFFECT)",
             span,
         ));
     }
 
     let predicate = super::predicate::parse_predicate(&args[0])?;
     let then_effect = parse_effect(&args[1])?;
-    let else_effect = if args.len() == 3 {
-        Some(Box::new(parse_effect(&args[2])?))
-    } else {
-        None
-    };
+    let else_effect = parse_effect(&args[2])?;
 
     Ok(Effect::If {
         predicate: Spanned::new(predicate, args[0].span()),
         then_effect: Box::new(then_effect),
-        else_effect,
+        else_effect: Box::new(else_effect),
+    })
+}
+
+/// Parse an and expression.
+/// Syntax: `(and EFFECT ...)` - all effects must return non-Nil
+fn parse_and(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawError> {
+    if args.is_empty() {
+        return Err(RawError::new(
+            "and must have at least one effect: (and EFFECT+)",
+            span,
+        ));
+    }
+
+    let effects = args
+        .iter()
+        .map(parse_effect)
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(Effect::And { effects })
+}
+
+/// Parse an or expression.
+/// Syntax: `(or EFFECT ...)` - returns first non-Nil effect
+fn parse_or(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawError> {
+    if args.is_empty() {
+        return Err(RawError::new(
+            "or must have at least one effect: (or EFFECT+)",
+            span,
+        ));
+    }
+
+    let effects = args
+        .iter()
+        .map(parse_effect)
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(Effect::Or { effects })
+}
+
+/// Parse a not expression.
+/// Syntax: `(not EFFECT)` - inverts Allow/Nil, passes through Ask/Deny
+fn parse_not(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawError> {
+    if args.len() != 1 {
+        return Err(RawError::new(
+            "not must have exactly one effect: (not EFFECT)",
+            span,
+        ));
+    }
+
+    let effect = parse_effect(&args[0])?;
+
+    Ok(Effect::Not {
+        effect: Box::new(effect),
     })
 }
 
@@ -270,14 +395,14 @@ mod tests {
     fn parse_may_i_effect() {
         let effect = parse_effect_str(r#"(may-i (positional *))"#).unwrap();
         match effect {
-            Effect::Evaluate(_) => {}
-            _ => panic!("expected Evaluate"),
+            Effect::MayI { .. } => {}
+            _ => panic!("expected MayI"),
         }
     }
 
     #[test]
     fn parse_when_effect() {
-        let effect = parse_effect_str(r#"(when (has :via/ssh) (effect :allow))"#).unwrap();
+        let effect = parse_effect_str(r#"(when (fact? :via/ssh) (effect :allow))"#).unwrap();
         match effect {
             Effect::When { .. } => {}
             _ => panic!("expected When"),
@@ -286,7 +411,7 @@ mod tests {
 
     #[test]
     fn parse_unless_effect() {
-        let effect = parse_effect_str(r#"(unless (has :dangerous) (effect :allow))"#).unwrap();
+        let effect = parse_effect_str(r#"(unless (fact? :dangerous) (effect :allow))"#).unwrap();
         match effect {
             Effect::Unless { .. } => {}
             _ => panic!("expected Unless"),
@@ -296,43 +421,82 @@ mod tests {
     #[test]
     fn parse_if_effect() {
         let effect =
-            parse_effect_str(r#"(if (has :via/ssh) (effect :allow) (effect :ask))"#).unwrap();
+            parse_effect_str(r#"(if (fact? :via/ssh) (effect :allow) (effect :ask))"#).unwrap();
         match effect {
-            Effect::If { else_effect, .. } => {
-                assert!(else_effect.is_some());
-            }
+            Effect::If { .. } => {}
             _ => panic!("expected If"),
         }
     }
 
     #[test]
-    fn parse_case_effect() {
+    fn parse_cond_effect() {
         let effect = parse_effect_str(
             r#"
-            (case
-                [(has :via/ssh) (effect :allow)]
-                [(positional "push") (effect :ask)]
-                [else (effect :deny)])
+            (cond
+                ((fact? :via/ssh) (effect :allow))
+                ((positional "push") (effect :ask))
+                (else (effect :deny)))
         "#,
         )
         .unwrap();
 
         match effect {
-            Effect::Case { branches, fallback } => {
+            Effect::Cond { branches, fallback } => {
                 assert_eq!(branches.len(), 2);
                 assert!(fallback.is_some());
             }
-            _ => panic!("expected Case"),
+            _ => panic!("expected Cond"),
         }
     }
 
     #[test]
-    fn case_else_not_last_is_error() {
+    fn parse_positional_as_effect() {
+        // Positional patterns are now effects too
+        let effect = parse_effect_str(r#"(positional "push")"#).unwrap();
+        match effect {
+            Effect::ArgPattern(ArgPattern::Positional(_)) => {}
+            _ => panic!("expected ArgPattern::Positional"),
+        }
+    }
+
+    #[test]
+    fn parse_and_effect() {
+        let effect = parse_effect_str(r#"(and (positional "push") (effect :allow))"#).unwrap();
+        match effect {
+            Effect::And { effects } => {
+                assert_eq!(effects.len(), 2);
+            }
+            _ => panic!("expected And"),
+        }
+    }
+
+    #[test]
+    fn parse_or_effect() {
+        let effect = parse_effect_str(r#"(or (positional "push") (effect :allow))"#).unwrap();
+        match effect {
+            Effect::Or { effects } => {
+                assert_eq!(effects.len(), 2);
+            }
+            _ => panic!("expected Or"),
+        }
+    }
+
+    #[test]
+    fn parse_not_effect() {
+        let effect = parse_effect_str(r#"(not (positional "push"))"#).unwrap();
+        match effect {
+            Effect::Not { .. } => {}
+            _ => panic!("expected Not"),
+        }
+    }
+
+    #[test]
+    fn cond_else_not_last_is_error() {
         let err = parse_effect_str(
             r#"
-            (case
-                [else (effect :deny)]
-                [(has :via/ssh) (effect :allow)])
+            (cond
+                (else (effect :deny))
+                ((fact? :via/ssh) (effect :allow)))
         "#,
         )
         .expect_err("expected error");
@@ -343,39 +507,28 @@ mod tests {
     fn parse_may_i_with_exact_pattern() {
         let effect = parse_effect_str(r#"(may-i (exact "git" "push"))"#).unwrap();
         match effect {
-            Effect::Evaluate(ArgPattern::Exact(_)) => {}
-            _ => panic!("expected Evaluate with Exact pattern"),
+            Effect::MayI { .. } => {}
+            _ => panic!("expected MayI with Exact pattern"),
         }
     }
 
     #[test]
-    fn parse_case_without_else() {
+    fn parse_cond_without_else() {
         let effect = parse_effect_str(
             r#"
-            (case
-                [(has :via/ssh) (effect :allow)]
-                [(positional "push") (effect :ask)])
+            (cond
+                ((fact? :via/ssh) (effect :allow))
+                ((positional "push") (effect :ask)))
         "#,
         )
         .unwrap();
 
         match effect {
-            Effect::Case { branches, fallback } => {
+            Effect::Cond { branches, fallback } => {
                 assert_eq!(branches.len(), 2);
                 assert!(fallback.is_none());
             }
-            _ => panic!("expected Case without fallback"),
-        }
-    }
-
-    #[test]
-    fn parse_if_without_else() {
-        let effect = parse_effect_str(r#"(if (has :via/ssh) (effect :allow))"#).unwrap();
-        match effect {
-            Effect::If { else_effect, .. } => {
-                assert!(else_effect.is_none());
-            }
-            _ => panic!("expected If without else"),
+            _ => panic!("expected Cond without fallback"),
         }
     }
 
@@ -383,19 +536,19 @@ mod tests {
     fn parse_nested_effects() {
         let effect = parse_effect_str(
             r#"
-            (when (has :via/ssh)
-                (case
-                    [(positional "push") (effect :ask)]
-                    [else (effect :allow)]))
+            (when (fact? :via/ssh)
+                (cond
+                    ((positional "push") (effect :ask))
+                    (else (effect :allow))))
         "#,
         )
         .unwrap();
 
         match effect {
             Effect::When { effect: inner, .. } => {
-                assert!(matches!(inner.value, Effect::Case { .. }));
+                assert!(matches!(inner.value, Effect::Cond { .. }));
             }
-            _ => panic!("expected When with nested Case"),
+            _ => panic!("expected When with nested Cond"),
         }
     }
 
@@ -418,9 +571,23 @@ mod tests {
     }
 
     #[test]
-    fn non_list_effect_error() {
-        let err = parse_effect_str(r#":effect"#).expect_err("expected error");
-        assert!(format!("{err}").contains("effect must be a list"));
+    fn shorthand_keyword_parsing() {
+        // Shorthand keywords should parse as terminal effects
+        let effect = parse_effect_str(r#":allow"#).unwrap();
+        assert!(matches!(effect, Effect::Allow(None)));
+
+        let effect = parse_effect_str(r#":ask"#).unwrap();
+        assert!(matches!(effect, Effect::Ask(None)));
+
+        let effect = parse_effect_str(r#":deny"#).unwrap();
+        assert!(matches!(effect, Effect::Deny(None)));
+    }
+
+    #[test]
+    fn non_keyword_atom_as_command() {
+        // Non-reserved atoms should be treated as command patterns
+        let effect = parse_effect_str(r#"git"#).unwrap();
+        assert!(matches!(effect, Effect::CommandPattern(_)));
     }
 
     #[test]
@@ -456,68 +623,69 @@ mod tests {
     }
 
     #[test]
-    fn case_empty_error() {
-        let err = parse_effect_str(r#"(case)"#).expect_err("expected error");
-        assert!(format!("{err}").contains("case must have at least one branch"));
+    fn cond_empty_error() {
+        let err = parse_effect_str(r#"(cond)"#).expect_err("expected error");
+        assert!(format!("{err}").contains("cond must have at least one branch"));
     }
 
     #[test]
-    fn case_non_list_branch_error() {
-        let err = parse_effect_str(r#"(case :not-a-list)"#).expect_err("expected error");
-        assert!(format!("{err}").contains("case branch must be a list"));
+    fn cond_non_list_branch_error() {
+        let err = parse_effect_str(r#"(cond :not-a-list)"#).expect_err("expected error");
+        assert!(format!("{err}").contains("cond branch must be a list"));
     }
 
     #[test]
-    fn case_empty_branch_error() {
-        let err = parse_effect_str(r#"(case ())"#).expect_err("expected error");
-        assert!(format!("{err}").contains("empty case branch"));
+    fn cond_empty_branch_error() {
+        let err = parse_effect_str(r#"(cond ())"#).expect_err("expected error");
+        assert!(format!("{err}").contains("empty cond branch"));
     }
 
     #[test]
-    fn case_else_with_too_many_effects_error() {
-        let err = parse_effect_str(r#"(case [else (effect :allow) (effect :deny)])"#)
+    fn cond_else_with_too_many_effects_error() {
+        let err = parse_effect_str(r#"(cond (else (effect :allow) (effect :deny)))"#)
             .expect_err("expected error");
         assert!(format!("{err}").contains("else branch must have exactly one effect"));
     }
 
     #[test]
-    fn case_branch_with_wrong_arg_count_error() {
-        let err = parse_effect_str(r#"(case [(has :via/ssh)])"#).expect_err("expected error");
+    fn cond_branch_with_wrong_arg_count_error() {
+        let err = parse_effect_str(r#"(cond ((fact? :via/ssh)))"#).expect_err("expected error");
         assert!(
-            format!("{err}").contains("case branch must have exactly a predicate and an effect")
+            format!("{err}").contains("cond branch must have exactly a predicate and an effect")
         );
     }
 
     #[test]
     fn when_with_wrong_arg_count_error() {
-        let err = parse_effect_str(r#"(when (has :via/ssh))"#).expect_err("expected error");
+        let err = parse_effect_str(r#"(when (fact? :via/ssh))"#).expect_err("expected error");
         assert!(format!("{err}").contains("when must have exactly"));
     }
 
     #[test]
     fn when_with_too_many_args_error() {
-        let err = parse_effect_str(r#"(when (has :via/ssh) (effect :allow) (effect :deny))"#)
+        let err = parse_effect_str(r#"(when (fact? :via/ssh) (effect :allow) (effect :deny))"#)
             .expect_err("expected error");
         assert!(format!("{err}").contains("when must have exactly"));
     }
 
     #[test]
     fn unless_with_wrong_arg_count_error() {
-        let err = parse_effect_str(r#"(unless (has :via/ssh))"#).expect_err("expected error");
+        let err = parse_effect_str(r#"(unless (fact? :via/ssh))"#).expect_err("expected error");
         assert!(format!("{err}").contains("unless must have exactly"));
     }
 
     #[test]
     fn if_with_too_few_args_error() {
-        let err = parse_effect_str(r#"(if (has :via/ssh))"#).expect_err("expected error");
-        assert!(format!("{err}").contains("if must have 2 or 3 arguments"));
+        let err = parse_effect_str(r#"(if (fact? :via/ssh))"#).expect_err("expected error");
+        assert!(format!("{err}").contains("if must have exactly 3 arguments"));
     }
 
     #[test]
     fn if_with_too_many_args_error() {
-        let err =
-            parse_effect_str(r#"(if (has :via/ssh) (effect :allow) (effect :deny) (effect :ask))"#)
-                .expect_err("expected error");
-        assert!(format!("{err}").contains("if must have 2 or 3 arguments"));
+        let err = parse_effect_str(
+            r#"(if (fact? :via/ssh) (effect :allow) (effect :deny) (effect :ask))"#,
+        )
+        .expect_err("expected error");
+        assert!(format!("{err}").contains("if must have exactly 3 arguments"));
     }
 }

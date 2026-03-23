@@ -73,8 +73,8 @@ fn test_trivia_extraction() {
 fn test_migration_analysis_no_changes() {
     use may_i_config::v2::migrate::analyze_migration;
 
-    // Already v2 syntax - no changes needed
-    let source = "(rule git (effect :allow))";
+    // Already v2 syntax (new unified style) - no changes needed
+    let source = "(rule git :effect :allow)";
     let analysis = analyze_migration(source);
 
     assert!(
@@ -117,12 +117,12 @@ fn test_migration_analysis_multiple_forms() {
     let source = r#"
 (rule (command git) (effect :allow))
 (defcontext ssh (has :via/ssh))
-(rule ls (effect :allow))
+(rule ls :effect :allow)
 "#;
 
     let analysis = analyze_migration(source);
 
-    // Should detect changes in first two forms, last one is already v2
+    // Should detect changes in first two forms (v1 syntax), last one is already new v2 syntax
     assert!(analysis.diffs.len() >= 2, "Should have at least 2 diffs");
     assert!(
         analysis.unchanged_count >= 1,

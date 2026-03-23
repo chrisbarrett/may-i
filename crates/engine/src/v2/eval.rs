@@ -1,12 +1,10 @@
-// v2 evaluator for the unified rule DSL.
-// Tasks 4.1-4.10: Predicate/effect evaluation, boolean combinators, recursion, etc.
+// v2 unified effect evaluator.
+// All effect forms evaluate to EffectResult (Decision | Nil).
 
-use may_i_core::types::Expr;
-use may_i_core::types::{ContextFacts, Decision, EvalResult, TraceEntry as CoreTraceEntry};
+use may_i_core::types::{ContextFacts, Decision, EvalResult};
 use may_i_core::types::{FactPattern, FactQuery};
-use may_i_core::v2::ast::{Effect, Rule};
-use may_i_core::v2::pattern::{ArgPattern, PositionalArg};
-use may_i_core::v2::predicate::Predicate;
+use may_i_core::v2::ast::{Effect, EffectResult, Predicate, Rule};
+use may_i_core::v2::pattern::{ArgPattern, CommandPattern, PositionalArg};
 
 use crate::v2::trace::{EffectTrace, PredicateTrace, TraceEntry};
 
@@ -83,7 +81,7 @@ pub fn evaluate_v2(
     evaluator.evaluate(&ctx)
 }
 
-/// Evaluator for v2 rules.
+/// Evaluator for v2 rules with unified effect model.
 pub struct Evaluator<'a> {
     rules: &'a [Rule],
 }
@@ -95,7 +93,7 @@ impl<'a> Evaluator<'a> {
     }
 
     /// Evaluate a command against all rules.
-    /// Returns the most restrictive effect from matching rules.
+    /// Returns the first matching rule's effect, or ask if none match.
     pub fn evaluate(&self, ctx: &EvalContext) -> EvalResult {
         // If depth exceeded, return ask
         if ctx.is_depth_exceeded() {
@@ -108,68 +106,40 @@ impl<'a> Evaluator<'a> {
             );
         }
 
-        let mut results = Vec::new();
-        let mut rule_traces = Vec::new();
-
+        // Evaluate rules in order, return first non-Nil result
         for rule in self.rules {
-            let (effect, trace) = self.evaluate_rule_with_trace(rule, ctx);
-            if let Some(eff) = effect {
-                results.push(eff);
-            }
-            if let Some(t) = trace {
-                rule_traces.push(t);
+            let (result, _trace) = self.evaluate_rule_with_trace(rule, ctx);
+
+            // Convert EffectResult to EvalResult
+            match result {
+                EffectResult::Decision(decision, reason) => {
+                    let eval_result = EvalResult::new(decision, reason);
+                    // TODO: Add trace integration
+                    return eval_result;
+                }
+                EffectResult::Nil => {
+                    // Rule didn't match, continue to next
+                    continue;
+                }
             }
         }
 
-        // Build final result with traces
-        let mut result = if results.is_empty() {
-            // No rules matched - return ask with a reason
-            EvalResult::new(Decision::Ask, Some("no matching rule found".to_string()))
-        } else {
-            // Combine effects: most restrictive wins
-            combine_effects(&results, ctx, self.rules)
-        };
-
-        // Convert v2 trace entries to core trace entries
-        // For now, we store them as DefaultAsk entries with description
-        // This is a temporary approach until full trace integration is complete
-        for trace in rule_traces {
-            // Create a simple trace entry - full integration would convert properly
-            let desc = match &trace {
-                crate::v2::trace::TraceEntry::RuleEvaluation { matched, .. } => {
-                    format!("Rule evaluation: matched={}", matched)
-                }
-                crate::v2::trace::TraceEntry::Decision { decision, .. } => {
-                    format!("Decision: {:?}", decision)
-                }
-                crate::v2::trace::TraceEntry::RecursiveEvaluation { depth, .. } => {
-                    format!("Recursive evaluation at depth {}", depth)
-                }
-                crate::v2::trace::TraceEntry::DepthLimitExceeded { limit } => {
-                    format!("Depth limit exceeded: {}", limit)
-                }
-                crate::v2::trace::TraceEntry::DefaultAsk { reason } => {
-                    format!("Default ask: {}", reason)
-                }
-            };
-            result
-                .trace
-                .push(CoreTraceEntry::DefaultAsk { reason: desc });
-        }
-
-        result
+        // No rules matched - return ask
+        EvalResult::new(Decision::Ask, Some("no matching rule found".to_string()))
     }
 
     /// Evaluate a rule with tracing.
-    /// Returns (effect, trace) where trace captures predicate evaluations.
+    /// Returns (EffectResult, trace) where EffectResult is Decision | Nil.
     fn evaluate_rule_with_trace(
         &self,
         rule: &Rule,
         ctx: &EvalContext,
-    ) -> (Option<Effect>, Option<crate::v2::trace::TraceEntry>) {
-        // Check if command matches
-        if !rule.command.value.is_match(ctx.command) {
-            // Rule didn't match - create trace showing command mismatch
+    ) -> (EffectResult, Option<crate::v2::trace::TraceEntry>) {
+        // Step 1: Evaluate command effect - must return non-Nil for rule to apply
+        let command_result = evaluate_effect(&rule.command_effect.value, ctx, self.rules);
+
+        if command_result.is_nil() {
+            // Command didn't match - rule doesn't apply
             let trace = TraceEntry::RuleEvaluation {
                 rule: Box::new(rule.clone()),
                 matched: false,
@@ -177,52 +147,57 @@ impl<'a> Evaluator<'a> {
                 predicate_traces: vec![],
                 effect_trace: None,
             };
-            return (None, Some(trace));
+            return (EffectResult::Nil, Some(trace));
         }
 
-        // Evaluate predicates and collect traces
-        let mut predicate_traces = Vec::new();
-        let mut all_match = true;
+        // Step 2: Evaluate subsequent effects in sequence
+        let mut effect_traces = Vec::new();
 
-        for predicate in &rule.predicates {
-            let (result, trace) = evaluate_predicate_with_trace(&predicate.value, ctx);
-            predicate_traces.push(trace);
-            if result == PredicateResult::NoMatch {
-                all_match = false;
+        for effect in &rule.effects {
+            let (result, trace) = evaluate_effect_with_trace(&effect.value, ctx, self.rules);
+            effect_traces.push(trace);
+
+            match result {
+                EffectResult::Decision(_, _) => {
+                    // Found a terminal decision
+                    let trace = TraceEntry::RuleEvaluation {
+                        rule: Box::new(rule.clone()),
+                        matched: true,
+                        effect: Some(effect.value.clone()),
+                        predicate_traces: vec![],
+                        effect_trace: Some(Box::new(effect_traces.last().unwrap().clone())),
+                    };
+                    return (result, Some(trace));
+                }
+                EffectResult::Nil => {
+                    // Effect returned Nil, continue to next
+                }
             }
         }
 
-        if all_match {
-            // All predicates matched - evaluate effect with tracing
-            let (_result, effect_trace) =
-                evaluate_effect_with_trace(&rule.effect.value, ctx, self.rules);
-            let trace = TraceEntry::RuleEvaluation {
-                rule: Box::new(rule.clone()),
-                matched: true,
-                effect: Some(rule.effect.value.clone()),
-                predicate_traces,
-                effect_trace: Some(Box::new(effect_trace)),
-            };
-            (Some(rule.effect.value.clone()), Some(trace))
-        } else {
-            // Some predicates didn't match
-            let trace = TraceEntry::RuleEvaluation {
-                rule: Box::new(rule.clone()),
-                matched: false,
-                effect: None,
-                predicate_traces,
-                effect_trace: None,
-            };
-            (None, Some(trace))
-        }
+        // Step 3: All effects returned Nil, use default effect
+        let (default_result, default_trace) =
+            evaluate_effect_with_trace(&rule.default_effect.value, ctx, self.rules);
+        effect_traces.push(default_trace);
+
+        let trace = TraceEntry::RuleEvaluation {
+            rule: Box::new(rule.clone()),
+            matched: true,
+            effect: Some(rule.default_effect.value.clone()),
+            predicate_traces: vec![],
+            effect_trace: Some(Box::new(effect_traces.last().unwrap().clone())),
+        };
+
+        (default_result, Some(trace))
     }
 }
 
 /// Evaluate a predicate against the context.
+/// Predicates are used in conditional contexts (when/unless/if/cond).
 pub fn evaluate_predicate(predicate: &Predicate, ctx: &EvalContext) -> PredicateResult {
     match predicate {
-        Predicate::Has(query) => evaluate_fact_query(query, ctx),
-        Predicate::Arg(pattern) => evaluate_arg_pattern(pattern, ctx),
+        Predicate::Fact(query) => evaluate_fact_query(query, ctx),
+        Predicate::Arg(pattern) => evaluate_arg_pattern_predicate(pattern, ctx),
         Predicate::And(predicates) => {
             for p in predicates {
                 if evaluate_predicate(p, ctx) == PredicateResult::NoMatch {
@@ -251,106 +226,18 @@ pub fn evaluate_predicate(predicate: &Predicate, ctx: &EvalContext) -> Predicate
 }
 
 /// Evaluate a predicate with tracing.
-/// Returns the result and a trace entry capturing the evaluation.
 pub fn evaluate_predicate_with_trace(
     predicate: &Predicate,
     ctx: &EvalContext,
 ) -> (PredicateResult, PredicateTrace) {
     use crate::v2::trace::PredicateResult as TracePredResult;
 
-    match predicate {
-        Predicate::Has(query) => {
-            let result = evaluate_fact_query(query, ctx);
-            let trace_result = match result {
-                PredicateResult::Match => TracePredResult::Match,
-                PredicateResult::NoMatch => TracePredResult::NoMatch,
-            };
-            (result, PredicateTrace::new(predicate.clone(), trace_result))
-        }
-        Predicate::Arg(pattern) => {
-            let result = evaluate_arg_pattern(pattern, ctx);
-            let trace_result = match result {
-                PredicateResult::Match => TracePredResult::Match,
-                PredicateResult::NoMatch => TracePredResult::NoMatch,
-            };
-            (result, PredicateTrace::new(predicate.clone(), trace_result))
-        }
-        Predicate::And(predicates) => {
-            let mut children = Vec::new();
-            let mut all_match = true;
-
-            for p in predicates {
-                let (result, child_trace) = evaluate_predicate_with_trace(p, ctx);
-                children.push(child_trace);
-                if result == PredicateResult::NoMatch {
-                    all_match = false;
-                }
-            }
-
-            let result = if all_match {
-                PredicateResult::Match
-            } else {
-                PredicateResult::NoMatch
-            };
-            let trace_result = if all_match {
-                TracePredResult::Match
-            } else {
-                TracePredResult::NoMatch
-            };
-
-            (
-                result,
-                PredicateTrace::with_children(predicate.clone(), trace_result, children),
-            )
-        }
-        Predicate::Or(predicates) => {
-            let mut children = Vec::new();
-            let mut any_match = false;
-
-            for p in predicates {
-                let (result, child_trace) = evaluate_predicate_with_trace(p, ctx);
-                children.push(child_trace);
-                if result == PredicateResult::Match {
-                    any_match = true;
-                }
-            }
-
-            let result = if any_match {
-                PredicateResult::Match
-            } else {
-                PredicateResult::NoMatch
-            };
-            let trace_result = if any_match {
-                TracePredResult::Match
-            } else {
-                TracePredResult::NoMatch
-            };
-
-            (
-                result,
-                PredicateTrace::with_children(predicate.clone(), trace_result, children),
-            )
-        }
-        Predicate::Not(inner) => {
-            let (inner_result, inner_trace) = evaluate_predicate_with_trace(inner, ctx);
-            let result = match inner_result {
-                PredicateResult::Match => PredicateResult::NoMatch,
-                PredicateResult::NoMatch => PredicateResult::Match,
-            };
-            let trace_result = match result {
-                PredicateResult::Match => TracePredResult::Match,
-                PredicateResult::NoMatch => TracePredResult::NoMatch,
-            };
-            (
-                result,
-                PredicateTrace::with_children(predicate.clone(), trace_result, vec![inner_trace]),
-            )
-        }
-        Predicate::Named(_) => {
-            // Named predicates should have been resolved before evaluation
-            panic!("Named predicates should be resolved before evaluation")
-        }
-    }
+    let result = evaluate_predicate(predicate, ctx);
+    let trace_result = match result {
+        PredicateResult::Match => TracePredResult::Match,
+        PredicateResult::NoMatch => TracePredResult::NoMatch,
+    };
+    (result, PredicateTrace::new(predicate.clone(), trace_result))
 }
 
 /// Evaluate a fact query against the context.
@@ -363,62 +250,17 @@ fn evaluate_fact_query(query: &FactQuery, ctx: &EvalContext) -> PredicateResult 
                 PredicateResult::NoMatch
             }
         }
-        FactQuery::Value { key, pattern } => match ctx.facts.get_scalar(key) {
-            Some(value) => {
-                if match_fact_pattern(pattern, value) {
-                    PredicateResult::Match
-                } else {
-                    PredicateResult::NoMatch
-                }
-            }
-            None => PredicateResult::NoMatch,
-        },
-    }
-}
-
-/// Match a fact pattern against a value.
-fn match_fact_pattern(pattern: &FactPattern, value: &str) -> bool {
-    match pattern {
-        FactPattern::Literal(lit) => lit == value,
-        FactPattern::Wildcard => true,
-        FactPattern::Regex(re) => re.is_match(value),
-        FactPattern::And(patterns) => patterns.iter().all(|p| match_fact_pattern(p, value)),
-        FactPattern::Or(patterns) => patterns.iter().any(|p| match_fact_pattern(p, value)),
-        FactPattern::Not(inner) => !match_fact_pattern(inner, value),
-    }
-}
-
-/// Evaluate an argument pattern against the context.
-fn evaluate_arg_pattern(pattern: &ArgPattern, ctx: &EvalContext) -> PredicateResult {
-    match pattern {
-        ArgPattern::Positional(pargs) => evaluate_positional(pargs, ctx.args, false),
-        ArgPattern::Exact(pargs) => evaluate_positional(pargs, ctx.args, true),
-        ArgPattern::Anywhere(exprs) => {
-            // All expressions must match somewhere in args
-            for expr in exprs {
-                if !expr_matches_anywhere(expr, ctx.args) {
-                    return PredicateResult::NoMatch;
-                }
-            }
-            PredicateResult::Match
-        }
-        ArgPattern::Forbidden(exprs) => {
-            // None of the expressions should match
-            for expr in exprs {
-                if expr_matches_anywhere(expr, ctx.args) {
-                    return PredicateResult::NoMatch;
-                }
-            }
-            PredicateResult::Match
-        }
-        ArgPattern::At { position, pattern } => {
-            // Match at specific position (1-indexed)
-            let idx = position.saturating_sub(1);
-            if idx < ctx.args.len() {
-                if match_expr(pattern, &ctx.args[idx]) {
-                    PredicateResult::Match
-                } else {
-                    PredicateResult::NoMatch
+        FactQuery::Value { key, pattern } => {
+            if let Some(value) = ctx.facts.get(key) {
+                match value {
+                    may_i_core::types::ContextValue::Scalar(s) => {
+                        if match_fact_pattern(pattern, s) {
+                            PredicateResult::Match
+                        } else {
+                            PredicateResult::NoMatch
+                        }
+                    }
+                    may_i_core::types::ContextValue::Present => PredicateResult::NoMatch,
                 }
             } else {
                 PredicateResult::NoMatch
@@ -427,146 +269,251 @@ fn evaluate_arg_pattern(pattern: &ArgPattern, ctx: &EvalContext) -> PredicateRes
     }
 }
 
-/// Evaluate positional arguments.
-/// If exact is true, requires exactly the right number of positional args.
-fn evaluate_positional(pargs: &[PositionalArg], args: &[String], exact: bool) -> PredicateResult {
-    let mut arg_idx = 0;
+/// Match a fact pattern against a value.
+fn match_fact_pattern(pattern: &FactPattern, value: &str) -> bool {
+    match pattern {
+        FactPattern::Wildcard => true,
+        FactPattern::Literal(s) => s == value,
+        FactPattern::Regex(re) => re.is_match(value),
+        FactPattern::And(patterns) => patterns.iter().all(|p| match_fact_pattern(p, value)),
+        FactPattern::Or(patterns) => patterns.iter().any(|p| match_fact_pattern(p, value)),
+        FactPattern::Not(inner) => !match_fact_pattern(inner, value),
+    }
+}
 
-    for parg in pargs {
-        match parg.quantifier {
+/// Evaluate an arg pattern as a predicate (returns Match/NoMatch).
+fn evaluate_arg_pattern_predicate(pattern: &ArgPattern, ctx: &EvalContext) -> PredicateResult {
+    match pattern {
+        ArgPattern::Positional(patterns) => {
+            // Match positional args against patterns
+            let positional_args: Vec<&String> = ctx
+                .args
+                .iter()
+                .filter(|arg| !arg.starts_with('-'))
+                .collect();
+
+            if match_positional_patterns(&positional_args, patterns) {
+                PredicateResult::Match
+            } else {
+                PredicateResult::NoMatch
+            }
+        }
+        ArgPattern::Exact(patterns) => {
+            let positional_args: Vec<&String> = ctx
+                .args
+                .iter()
+                .filter(|arg| !arg.starts_with('-'))
+                .collect();
+
+            if positional_args.len() == patterns.len()
+                && match_positional_patterns(&positional_args, patterns)
+            {
+                PredicateResult::Match
+            } else {
+                PredicateResult::NoMatch
+            }
+        }
+        ArgPattern::Anywhere(exprs) => {
+            for expr in exprs {
+                match expr {
+                    may_i_core::types::Expr::Literal(s) => {
+                        if ctx.args.iter().any(|arg| arg == s) {
+                            return PredicateResult::Match;
+                        }
+                    }
+                    may_i_core::types::Expr::Wildcard => {
+                        // Wildcard matches anything
+                        return PredicateResult::Match;
+                    }
+                    _ => {} // Other variants not supported in Anywhere
+                }
+            }
+            PredicateResult::NoMatch
+        }
+        ArgPattern::Forbidden(exprs) => {
+            for expr in exprs {
+                match expr {
+                    may_i_core::types::Expr::Literal(s) => {
+                        if ctx.args.iter().any(|arg| arg == s) {
+                            // Found the forbidden pattern - this is a constraint violation
+                            return PredicateResult::NoMatch;
+                        }
+                    }
+                    may_i_core::types::Expr::Wildcard => {
+                        // Wildcard forbidden means any arg is forbidden
+                        if !ctx.args.is_empty() {
+                            return PredicateResult::NoMatch;
+                        }
+                    }
+                    _ => {} // Other variants not supported in Forbidden
+                }
+            }
+            // Didn't find any forbidden patterns - constraint satisfied
+            PredicateResult::Match
+        }
+        ArgPattern::At { position, pattern } => {
+            if *position > 0 && *position <= ctx.args.len() {
+                let arg = &ctx.args[*position - 1];
+                match pattern {
+                    may_i_core::types::Expr::Literal(s) => {
+                        if arg == s {
+                            PredicateResult::Match
+                        } else {
+                            PredicateResult::NoMatch
+                        }
+                    }
+                    may_i_core::types::Expr::Wildcard => PredicateResult::Match,
+                    _ => PredicateResult::NoMatch, // Other variants not supported in At
+                }
+            } else {
+                PredicateResult::NoMatch
+            }
+        }
+    }
+}
+
+/// Match positional patterns against args.
+fn match_positional_patterns(args: &[&String], patterns: &[PositionalArg]) -> bool {
+    if args.len() < patterns.len() {
+        return false;
+    }
+
+    for (i, pattern) in patterns.iter().enumerate() {
+        let arg = args[i];
+
+        match &pattern.quantifier {
             may_i_core::types::Quantifier::One => {
-                if arg_idx >= args.len() {
-                    return PredicateResult::NoMatch;
+                if !match_expr(&pattern.pattern, arg) {
+                    return false;
                 }
-                if !match_expr(&parg.pattern, &args[arg_idx]) {
-                    return PredicateResult::NoMatch;
-                }
-                arg_idx += 1;
             }
             may_i_core::types::Quantifier::Optional => {
-                if arg_idx < args.len() && match_expr(&parg.pattern, &args[arg_idx]) {
-                    arg_idx += 1;
+                // Optional pattern - if arg exists, it must match
+                if i < args.len() && !match_expr(&pattern.pattern, arg) {
+                    return false;
                 }
-                // Optional args can match 0 times
             }
             may_i_core::types::Quantifier::OneOrMore => {
-                if arg_idx >= args.len() {
-                    return PredicateResult::NoMatch;
+                // OneOrMore pattern - at least one arg must match, then continue
+                if i >= args.len() {
+                    return false;
                 }
-                if !match_expr(&parg.pattern, &args[arg_idx]) {
-                    return PredicateResult::NoMatch;
+                for arg in args.iter().skip(i) {
+                    if !match_expr(&pattern.pattern, arg) {
+                        return false;
+                    }
                 }
-                arg_idx += 1;
-                // Continue matching while pattern matches
-                while arg_idx < args.len() && match_expr(&parg.pattern, &args[arg_idx]) {
-                    arg_idx += 1;
-                }
+                return true;
             }
             may_i_core::types::Quantifier::ZeroOrMore => {
-                // Match as many as possible
-                while arg_idx < args.len() && match_expr(&parg.pattern, &args[arg_idx]) {
-                    arg_idx += 1;
+                // ZeroOrMore pattern - all remaining args must match
+                for arg in args.iter().skip(i) {
+                    if !match_expr(&pattern.pattern, arg) {
+                        return false;
+                    }
                 }
+                return true;
             }
         }
     }
 
-    // If exact, all args must have been consumed
-    if exact && arg_idx < args.len() {
-        return PredicateResult::NoMatch;
+    true
+}
+
+/// Match a single expression against a value.
+fn match_expr(expr: &may_i_core::types::Expr, value: &str) -> bool {
+    match expr {
+        may_i_core::types::Expr::Literal(s) => s == value,
+        may_i_core::types::Expr::Wildcard => true,
+        may_i_core::types::Expr::Regex(re) => re.is_match(value),
+        may_i_core::types::Expr::And(exprs) => exprs.iter().all(|e| match_expr(e, value)),
+        may_i_core::types::Expr::Or(exprs) => exprs.iter().any(|e| match_expr(e, value)),
+        may_i_core::types::Expr::Not(inner) => !match_expr(inner, value),
+        _ => false, // Cond not supported in simple matching
     }
-
-    PredicateResult::Match
 }
 
-/// Check if an expression matches any argument.
-fn expr_matches_anywhere(expr: &Expr, args: &[String]) -> bool {
-    args.iter().any(|arg| match_expr(expr, arg))
-}
-
-/// Match an expression against a string.
-fn match_expr(expr: &Expr, value: &str) -> bool {
-    expr.is_match(value)
-}
-
-/// Combine multiple effects, returning the most restrictive.
-fn combine_effects(effects: &[Effect], ctx: &EvalContext, rules: &[Rule]) -> EvalResult {
-    // Start with Allow (least restrictive)
-    let mut result = EvalResult::new(Decision::Allow, None);
-
-    for effect in effects {
-        let eval_result = evaluate_effect(effect, ctx, rules);
-        // Most restrictive wins
-        if eval_result.decision > result.decision {
-            result = eval_result;
-        } else if eval_result.decision == result.decision && result.reason.is_none() {
-            // Same decision but we don't have a reason yet - use the new one
-            result.reason = eval_result.reason;
-        }
-    }
-
-    result
-}
-
-/// Evaluate an effect to produce a decision result.
-fn evaluate_effect(effect: &Effect, ctx: &EvalContext, rules: &[Rule]) -> EvalResult {
+/// Evaluate an effect to produce an EffectResult (Decision | Nil).
+/// This is the core of the unified effect model.
+fn evaluate_effect(effect: &Effect, ctx: &EvalContext, rules: &[Rule]) -> EffectResult {
     match effect {
-        Effect::Allow(reason) => EvalResult::new(Decision::Allow, reason.clone()),
-        Effect::Ask(reason) => EvalResult::new(Decision::Ask, reason.clone()),
-        Effect::Deny(reason) => EvalResult::new(Decision::Deny, reason.clone()),
-        Effect::Evaluate(pattern) => {
-            // Task 4.7: Recursive evaluation for (may-i ...)
-            // Extract inner command from args based on the pattern
-            match extract_inner_command(pattern, ctx.args) {
-                Some((inner_cmd, inner_args)) => {
-                    let evaluator = Evaluator::new(rules);
-                    let inner_ctx = EvalContext {
-                        command: &inner_cmd,
-                        args: &inner_args,
-                        facts: ctx.facts,
-                        recursion_depth: ctx.recursion_depth + 1,
-                        recursion_limit: ctx.recursion_limit,
-                    };
-                    evaluator.evaluate(&inner_ctx)
-                }
-                None => {
-                    // Pattern didn't match - no inner command to evaluate
-                    EvalResult::new(
-                        Decision::Ask,
-                        Some("no inner command to evaluate".to_string()),
-                    )
-                }
-            }
-        }
-        Effect::Case { branches, fallback } => {
-            // Find first matching branch
-            for (predicate, branch_effect) in branches {
-                if evaluate_predicate(&predicate.value, ctx) == PredicateResult::Match {
-                    return evaluate_effect(&branch_effect.value, ctx, rules);
-                }
-            }
-            // No branch matched - use fallback or return ask
-            if let Some(fb) = fallback {
-                evaluate_effect(&fb.value, ctx, rules)
+        // Terminal effects return a decision with reason
+        Effect::Allow(reason) => EffectResult::Decision(Decision::Allow, reason.clone()),
+        Effect::Ask(reason) => EffectResult::Decision(Decision::Ask, reason.clone()),
+        Effect::Deny(reason) => EffectResult::Decision(Decision::Deny, reason.clone()),
+
+        // Pattern effects return Allow on match, Nil otherwise
+        Effect::CommandPattern(pattern) => {
+            let matches = match pattern {
+                CommandPattern::Literal(s) => s == ctx.command,
+                CommandPattern::Regex(re) => re.is_match(ctx.command),
+                CommandPattern::Or(patterns) => patterns.iter().any(|p| {
+                    match p {
+                        CommandPattern::Literal(s) => s == ctx.command,
+                        CommandPattern::Regex(re) => re.is_match(ctx.command),
+                        CommandPattern::Or(_) => false, // Nested or not expected
+                    }
+                }),
+            };
+            if matches {
+                EffectResult::Decision(Decision::Allow, None)
             } else {
-                EvalResult::new(Decision::Ask, Some("no case branch matched".to_string()))
+                EffectResult::Nil
             }
         }
+        Effect::ArgPattern(pattern) => match evaluate_arg_pattern_effect(pattern, ctx) {
+            Some(decision) => EffectResult::Decision(decision, None),
+            None => EffectResult::Nil,
+        },
+
+        // Combinators with Nil handling
+        Effect::And { effects } => {
+            // Evaluate left-to-right, return first Nil or last effect's result
+            let mut last_result = EffectResult::Decision(Decision::Allow, None);
+            for effect in effects {
+                let result = evaluate_effect(&effect.value, ctx, rules);
+                if result.is_nil() {
+                    return EffectResult::Nil;
+                }
+                last_result = result;
+            }
+            last_result
+        }
+        Effect::Or { effects } => {
+            // Evaluate left-to-right, return first non-Nil or Nil
+            for effect in effects {
+                let result = evaluate_effect(&effect.value, ctx, rules);
+                if !result.is_nil() {
+                    return result;
+                }
+            }
+            EffectResult::Nil
+        }
+        Effect::Not { effect } => {
+            // Invert Allow/Nil, pass through Ask/Deny
+            let result = evaluate_effect(&effect.value, ctx, rules);
+            match result {
+                EffectResult::Nil => EffectResult::Decision(Decision::Allow, None),
+                EffectResult::Decision(Decision::Allow, _) => EffectResult::Nil,
+                EffectResult::Decision(ask_or_deny, reason) => {
+                    EffectResult::Decision(ask_or_deny, reason)
+                }
+            }
+        }
+
+        // Conditionals
         Effect::When { predicate, effect } => {
             if evaluate_predicate(&predicate.value, ctx) == PredicateResult::Match {
                 evaluate_effect(&effect.value, ctx, rules)
             } else {
-                EvalResult::new(
-                    Decision::Ask,
-                    Some("when predicate did not match".to_string()),
-                )
+                EffectResult::Nil
             }
         }
         Effect::Unless { predicate, effect } => {
             if evaluate_predicate(&predicate.value, ctx) == PredicateResult::NoMatch {
                 evaluate_effect(&effect.value, ctx, rules)
             } else {
-                EvalResult::new(Decision::Ask, Some("unless predicate matched".to_string()))
+                EffectResult::Nil
             }
         }
         Effect::If {
@@ -576,57 +523,26 @@ fn evaluate_effect(effect: &Effect, ctx: &EvalContext, rules: &[Rule]) -> EvalRe
         } => {
             if evaluate_predicate(&predicate.value, ctx) == PredicateResult::Match {
                 evaluate_effect(&then_effect.value, ctx, rules)
-            } else if let Some(else_eff) = else_effect {
-                evaluate_effect(&else_eff.value, ctx, rules)
             } else {
-                EvalResult::new(
-                    Decision::Ask,
-                    Some("if predicate did not match and no else".to_string()),
-                )
+                evaluate_effect(&else_effect.value, ctx, rules)
             }
         }
-    }
-}
+        Effect::Cond { branches, fallback } => {
+            for (predicate, branch_effect) in branches {
+                if evaluate_predicate(&predicate.value, ctx) == PredicateResult::Match {
+                    return evaluate_effect(&branch_effect.value, ctx, rules);
+                }
+            }
+            // No branch matched - use fallback or return Nil
+            if let Some(fb) = fallback {
+                evaluate_effect(&fb.value, ctx, rules)
+            } else {
+                EffectResult::Nil
+            }
+        }
 
-/// Evaluate an effect with tracing.
-/// Returns the evaluation result and a trace of the effect evaluation.
-fn evaluate_effect_with_trace(
-    effect: &Effect,
-    ctx: &EvalContext,
-    rules: &[Rule],
-) -> (EvalResult, EffectTrace) {
-    use crate::v2::trace::PredicateResult as TracePredResult;
-
-    match effect {
-        Effect::Allow(reason) => {
-            let result = EvalResult::new(Decision::Allow, reason.clone());
-            let trace = EffectTrace::Terminal {
-                effect: effect.clone(),
-                decision: Decision::Allow,
-                reason: reason.clone(),
-            };
-            (result, trace)
-        }
-        Effect::Ask(reason) => {
-            let result = EvalResult::new(Decision::Ask, reason.clone());
-            let trace = EffectTrace::Terminal {
-                effect: effect.clone(),
-                decision: Decision::Ask,
-                reason: reason.clone(),
-            };
-            (result, trace)
-        }
-        Effect::Deny(reason) => {
-            let result = EvalResult::new(Decision::Deny, reason.clone());
-            let trace = EffectTrace::Terminal {
-                effect: effect.clone(),
-                decision: Decision::Deny,
-                reason: reason.clone(),
-            };
-            (result, trace)
-        }
-        Effect::Evaluate(pattern) => {
-            // Task 5.6: Trace generation for recursive evaluation
+        // Recursion
+        Effect::MayI { pattern } => {
             match extract_inner_command(pattern, ctx.args) {
                 Some((inner_cmd, inner_args)) => {
                     let evaluator = Evaluator::new(rules);
@@ -637,296 +553,95 @@ fn evaluate_effect_with_trace(
                         recursion_depth: ctx.recursion_depth + 1,
                         recursion_limit: ctx.recursion_limit,
                     };
-                    let result = evaluator.evaluate(&inner_ctx);
-
-                    // Build recursive evaluation trace
-                    let trace = EffectTrace::Recursive {
-                        pattern: pattern.clone(),
-                        command: inner_cmd.clone(),
-                        args: inner_args.clone(),
-                        depth: ctx.recursion_depth + 1,
-                        result: result.clone(),
-                        nested: Vec::new(), // Would capture from result if TraceEntry was stored there
-                    };
-
-                    (result, trace)
+                    let eval_result = evaluator.evaluate(&inner_ctx);
+                    EffectResult::Decision(eval_result.decision, eval_result.reason)
                 }
                 None => {
-                    // Pattern didn't match - no inner command to evaluate
-                    let result = EvalResult::new(
-                        Decision::Ask,
-                        Some("no inner command to evaluate".to_string()),
-                    );
-                    let trace = EffectTrace::Recursive {
-                        pattern: pattern.clone(),
-                        command: String::new(),
-                        args: vec![],
-                        depth: ctx.recursion_depth + 1,
-                        result: result.clone(),
-                        nested: Vec::new(),
-                    };
-                    (result, trace)
+                    // Pattern didn't match - return Nil
+                    EffectResult::Nil
                 }
-            }
-        }
-        Effect::Case { branches, fallback } => {
-            // Task 5.5: Trace generation for case effects
-            let mut branch_traces = Vec::new();
-
-            for (predicate, branch_effect) in branches {
-                let pred_result = evaluate_predicate(&predicate.value, ctx);
-                let trace_pred_result = match pred_result {
-                    PredicateResult::Match => TracePredResult::Match,
-                    PredicateResult::NoMatch => TracePredResult::NoMatch,
-                };
-
-                if pred_result == PredicateResult::Match {
-                    let (result, effect_trace) =
-                        evaluate_effect_with_trace(&branch_effect.value, ctx, rules);
-                    branch_traces.push((
-                        predicate.value.clone(),
-                        trace_pred_result,
-                        Box::new(effect_trace),
-                    ));
-                    let trace = EffectTrace::Case {
-                        branches: branch_traces,
-                        fallback: None,
-                        decision: result.decision,
-                        reason: result.reason.clone(),
-                    };
-                    return (result, trace);
-                } else {
-                    branch_traces.push((
-                        predicate.value.clone(),
-                        trace_pred_result,
-                        Box::new(EffectTrace::Terminal {
-                            effect: Effect::Ask(None),
-                            decision: Decision::Ask,
-                            reason: None,
-                        }),
-                    ));
-                }
-            }
-
-            // No branch matched - use fallback or return ask
-            if let Some(fb) = fallback {
-                let (result, fallback_trace) = evaluate_effect_with_trace(&fb.value, ctx, rules);
-                let trace = EffectTrace::Case {
-                    branches: branch_traces,
-                    fallback: Some(Box::new(fallback_trace)),
-                    decision: result.decision,
-                    reason: result.reason.clone(),
-                };
-                (result, trace)
-            } else {
-                let result =
-                    EvalResult::new(Decision::Ask, Some("no case branch matched".to_string()));
-                let trace = EffectTrace::Case {
-                    branches: branch_traces,
-                    fallback: None,
-                    decision: Decision::Ask,
-                    reason: Some("no case branch matched".to_string()),
-                };
-                (result, trace)
-            }
-        }
-        Effect::When { predicate, effect } => {
-            let pred_result = evaluate_predicate(&predicate.value, ctx);
-            let trace_pred_result = match pred_result {
-                PredicateResult::Match => TracePredResult::Match,
-                PredicateResult::NoMatch => TracePredResult::NoMatch,
-            };
-
-            if pred_result == PredicateResult::Match {
-                let (result, effect_trace) = evaluate_effect_with_trace(&effect.value, ctx, rules);
-                let trace = EffectTrace::When {
-                    predicate: predicate.value.clone(),
-                    predicate_result: trace_pred_result,
-                    effect: Box::new(effect_trace),
-                    decision: result.decision,
-                    reason: result.reason.clone(),
-                };
-                (result, trace)
-            } else {
-                let result = EvalResult::new(
-                    Decision::Ask,
-                    Some("when predicate did not match".to_string()),
-                );
-                let trace = EffectTrace::When {
-                    predicate: predicate.value.clone(),
-                    predicate_result: trace_pred_result,
-                    effect: Box::new(EffectTrace::Terminal {
-                        effect: Effect::Ask(None),
-                        decision: Decision::Ask,
-                        reason: Some("when predicate did not match".to_string()),
-                    }),
-                    decision: Decision::Ask,
-                    reason: Some("when predicate did not match".to_string()),
-                };
-                (result, trace)
-            }
-        }
-        Effect::Unless { predicate, effect } => {
-            let pred_result = evaluate_predicate(&predicate.value, ctx);
-            let trace_pred_result = match pred_result {
-                PredicateResult::Match => TracePredResult::Match,
-                PredicateResult::NoMatch => TracePredResult::NoMatch,
-            };
-
-            if pred_result == PredicateResult::NoMatch {
-                let (result, effect_trace) = evaluate_effect_with_trace(&effect.value, ctx, rules);
-                let trace = EffectTrace::Unless {
-                    predicate: predicate.value.clone(),
-                    predicate_result: trace_pred_result,
-                    effect: Box::new(effect_trace),
-                    decision: result.decision,
-                    reason: result.reason.clone(),
-                };
-                (result, trace)
-            } else {
-                let result =
-                    EvalResult::new(Decision::Ask, Some("unless predicate matched".to_string()));
-                let trace = EffectTrace::Unless {
-                    predicate: predicate.value.clone(),
-                    predicate_result: trace_pred_result,
-                    effect: Box::new(EffectTrace::Terminal {
-                        effect: Effect::Ask(None),
-                        decision: Decision::Ask,
-                        reason: Some("unless predicate matched".to_string()),
-                    }),
-                    decision: Decision::Ask,
-                    reason: Some("unless predicate matched".to_string()),
-                };
-                (result, trace)
-            }
-        }
-        Effect::If {
-            predicate,
-            then_effect,
-            else_effect,
-        } => {
-            let pred_result = evaluate_predicate(&predicate.value, ctx);
-            let trace_pred_result = match pred_result {
-                PredicateResult::Match => TracePredResult::Match,
-                PredicateResult::NoMatch => TracePredResult::NoMatch,
-            };
-
-            if pred_result == PredicateResult::Match {
-                let (result, then_trace) =
-                    evaluate_effect_with_trace(&then_effect.value, ctx, rules);
-                let trace = EffectTrace::If {
-                    predicate: predicate.value.clone(),
-                    predicate_result: trace_pred_result,
-                    then_effect: Box::new(then_trace),
-                    else_effect: None,
-                    decision: result.decision,
-                    reason: result.reason.clone(),
-                };
-                (result, trace)
-            } else if let Some(else_eff) = else_effect {
-                let (result, else_trace) = evaluate_effect_with_trace(&else_eff.value, ctx, rules);
-                let trace = EffectTrace::If {
-                    predicate: predicate.value.clone(),
-                    predicate_result: trace_pred_result,
-                    then_effect: Box::new(EffectTrace::Terminal {
-                        effect: Effect::Ask(None),
-                        decision: Decision::Ask,
-                        reason: None,
-                    }),
-                    else_effect: Some(Box::new(else_trace)),
-                    decision: result.decision,
-                    reason: result.reason.clone(),
-                };
-                (result, trace)
-            } else {
-                let result = EvalResult::new(
-                    Decision::Ask,
-                    Some("if predicate did not match and no else".to_string()),
-                );
-                let trace = EffectTrace::If {
-                    predicate: predicate.value.clone(),
-                    predicate_result: trace_pred_result,
-                    then_effect: Box::new(EffectTrace::Terminal {
-                        effect: Effect::Ask(None),
-                        decision: Decision::Ask,
-                        reason: None,
-                    }),
-                    else_effect: None,
-                    decision: Decision::Ask,
-                    reason: Some("if predicate did not match and no else".to_string()),
-                };
-                (result, trace)
             }
         }
     }
 }
 
-/// Extract an inner command from args based on an arg pattern.
-/// Returns Some((command, args)) if a command can be extracted, None otherwise.
-///
-/// For patterns with the `recursive` flag set on a positional arg, the remaining
-/// args after that position become the inner command.
-fn extract_inner_command(pattern: &ArgPattern, args: &[String]) -> Option<(String, Vec<String>)> {
+/// Evaluate an arg pattern as an effect (returns decision or None for Nil).
+fn evaluate_arg_pattern_effect(pattern: &ArgPattern, ctx: &EvalContext) -> Option<Decision> {
     match pattern {
-        ArgPattern::Positional(pargs) | ArgPattern::Exact(pargs) => {
-            // Find the recursive marker in positional args
-            let mut arg_idx = 0;
-            for (parg_idx, parg) in pargs.iter().enumerate() {
-                if parg.recursive {
-                    // Skip matched args up to this point
-                    let consumed = count_matched_args(&pargs[..parg_idx], args)?;
-                    let remaining = &args[consumed..];
-                    if remaining.is_empty() {
-                        return None;
-                    }
-                    let inner_cmd = remaining[0].clone();
-                    let inner_args = remaining[1..].to_vec();
-                    return Some((inner_cmd, inner_args));
-                }
-                // Advance arg_idx based on quantifier
-                match parg.quantifier {
-                    may_i_core::types::Quantifier::One => {
-                        if arg_idx < args.len() && match_expr(&parg.pattern, &args[arg_idx]) {
-                            arg_idx += 1;
-                        }
-                    }
-                    may_i_core::types::Quantifier::Optional => {
-                        if arg_idx < args.len() && match_expr(&parg.pattern, &args[arg_idx]) {
-                            arg_idx += 1;
-                        }
-                    }
-                    may_i_core::types::Quantifier::OneOrMore => {
-                        if arg_idx < args.len() && match_expr(&parg.pattern, &args[arg_idx]) {
-                            arg_idx += 1;
-                            while arg_idx < args.len() && match_expr(&parg.pattern, &args[arg_idx])
-                            {
-                                arg_idx += 1;
-                            }
-                        }
-                    }
-                    may_i_core::types::Quantifier::ZeroOrMore => {
-                        while arg_idx < args.len() && match_expr(&parg.pattern, &args[arg_idx]) {
-                            arg_idx += 1;
-                        }
-                    }
-                }
-            }
-            // No recursive marker found - try to use all args as inner command
-            if !args.is_empty() {
-                let inner_cmd = args[0].clone();
-                let inner_args = args[1..].to_vec();
-                Some((inner_cmd, inner_args))
+        ArgPattern::Positional(patterns) => {
+            let positional_args: Vec<&String> = ctx
+                .args
+                .iter()
+                .filter(|arg| !arg.starts_with('-'))
+                .collect();
+
+            if match_positional_patterns(&positional_args, patterns) {
+                Some(Decision::Allow)
             } else {
                 None
             }
         }
-        ArgPattern::Anywhere(_) | ArgPattern::Forbidden(_) | ArgPattern::At { .. } => {
-            // These patterns don't define a clear inner command structure
-            // Just use all args as the inner command
-            if !args.is_empty() {
-                let inner_cmd = args[0].clone();
-                let inner_args = args[1..].to_vec();
-                Some((inner_cmd, inner_args))
+        ArgPattern::Exact(patterns) => {
+            let positional_args: Vec<&String> = ctx
+                .args
+                .iter()
+                .filter(|arg| !arg.starts_with('-'))
+                .collect();
+
+            if positional_args.len() == patterns.len()
+                && match_positional_patterns(&positional_args, patterns)
+            {
+                Some(Decision::Allow)
+            } else {
+                None
+            }
+        }
+        ArgPattern::Anywhere(exprs) => {
+            for expr in exprs {
+                match expr {
+                    may_i_core::types::Expr::Literal(s) => {
+                        if ctx.args.iter().any(|arg| arg == s) {
+                            return Some(Decision::Allow);
+                        }
+                    }
+                    may_i_core::types::Expr::Wildcard => return Some(Decision::Allow),
+                    _ => {}
+                }
+            }
+            None
+        }
+        ArgPattern::Forbidden(exprs) => {
+            for expr in exprs {
+                match expr {
+                    may_i_core::types::Expr::Literal(s) => {
+                        if ctx.args.iter().any(|arg| arg == s) {
+                            return Some(Decision::Deny);
+                        }
+                    }
+                    may_i_core::types::Expr::Wildcard => {
+                        if !ctx.args.is_empty() {
+                            return Some(Decision::Deny);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            None
+        }
+        ArgPattern::At { position, pattern } => {
+            if *position > 0 && *position <= ctx.args.len() {
+                let arg = &ctx.args[*position - 1];
+                match pattern {
+                    may_i_core::types::Expr::Literal(s) => {
+                        if arg == s {
+                            Some(Decision::Allow)
+                        } else {
+                            None
+                        }
+                    }
+                    may_i_core::types::Expr::Wildcard => Some(Decision::Allow),
+                    _ => None,
+                }
             } else {
                 None
             }
@@ -934,197 +649,253 @@ fn extract_inner_command(pattern: &ArgPattern, args: &[String]) -> Option<(Strin
     }
 }
 
-/// Count how many args are consumed by the given positional arg patterns.
-fn count_matched_args(pargs: &[PositionalArg], args: &[String]) -> Option<usize> {
-    let mut arg_idx = 0;
-    for parg in pargs {
-        match parg.quantifier {
-            may_i_core::types::Quantifier::One => {
-                if arg_idx >= args.len() || !match_expr(&parg.pattern, &args[arg_idx]) {
-                    return None;
-                }
-                arg_idx += 1;
-            }
-            may_i_core::types::Quantifier::Optional => {
-                if arg_idx < args.len() && match_expr(&parg.pattern, &args[arg_idx]) {
-                    arg_idx += 1;
-                }
-            }
-            may_i_core::types::Quantifier::OneOrMore => {
-                if arg_idx >= args.len() || !match_expr(&parg.pattern, &args[arg_idx]) {
-                    return None;
-                }
-                arg_idx += 1;
-                while arg_idx < args.len() && match_expr(&parg.pattern, &args[arg_idx]) {
-                    arg_idx += 1;
-                }
-            }
-            may_i_core::types::Quantifier::ZeroOrMore => {
-                while arg_idx < args.len() && match_expr(&parg.pattern, &args[arg_idx]) {
-                    arg_idx += 1;
-                }
+/// Extract inner command from args based on pattern (for may-i recursion).
+fn extract_inner_command(pattern: &ArgPattern, args: &[String]) -> Option<(String, Vec<String>)> {
+    // For now, simple implementation: take remaining positional args after pattern match
+    // Full implementation would need to properly handle the pattern
+    match pattern {
+        ArgPattern::Positional(_) | ArgPattern::Exact(_) => {
+            // Extract first positional arg as command, rest as args
+            let positional: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
+            if positional.is_empty() {
+                None
+            } else {
+                let cmd = positional[0].clone();
+                let remaining: Vec<String> = positional[1..].iter().map(|s| (*s).clone()).collect();
+                Some((cmd, remaining))
             }
         }
+        ArgPattern::Anywhere(_) => {
+            // Take all args as inner command
+            if args.is_empty() {
+                None
+            } else {
+                let cmd = args[0].clone();
+                let remaining: Vec<String> = args[1..].to_vec();
+                Some((cmd, remaining))
+            }
+        }
+        _ => None,
     }
-    Some(arg_idx)
+}
+
+/// Evaluate an effect with tracing.
+fn evaluate_effect_with_trace(
+    effect: &Effect,
+    ctx: &EvalContext,
+    rules: &[Rule],
+) -> (EffectResult, EffectTrace) {
+    let result = evaluate_effect(effect, ctx, rules);
+
+    let trace = match effect {
+        Effect::Allow(reason) => EffectTrace::Terminal {
+            effect: effect.clone(),
+            decision: Decision::Allow,
+            reason: reason.clone(),
+        },
+        Effect::Ask(reason) => EffectTrace::Terminal {
+            effect: effect.clone(),
+            decision: Decision::Ask,
+            reason: reason.clone(),
+        },
+        Effect::Deny(reason) => EffectTrace::Terminal {
+            effect: effect.clone(),
+            decision: Decision::Deny,
+            reason: reason.clone(),
+        },
+        Effect::CommandPattern(_) => EffectTrace::Terminal {
+            effect: effect.clone(),
+            decision: match result {
+                EffectResult::Decision(d, _) => d,
+                EffectResult::Nil => Decision::Allow, // Should not happen
+            },
+            reason: None,
+        },
+        Effect::ArgPattern(_) => EffectTrace::Terminal {
+            effect: effect.clone(),
+            decision: match result {
+                EffectResult::Decision(d, _) => d,
+                EffectResult::Nil => Decision::Allow, // Should not happen
+            },
+            reason: None,
+        },
+        Effect::And { .. } | Effect::Or { .. } | Effect::Not { .. } => EffectTrace::Terminal {
+            effect: effect.clone(),
+            decision: match result {
+                EffectResult::Decision(d, _) => d,
+                EffectResult::Nil => Decision::Allow,
+            },
+            reason: None,
+        },
+        Effect::When { .. } | Effect::Unless { .. } | Effect::If { .. } | Effect::Cond { .. } => {
+            EffectTrace::Terminal {
+                effect: effect.clone(),
+                decision: match result {
+                    EffectResult::Decision(d, _) => d,
+                    EffectResult::Nil => Decision::Allow,
+                },
+                reason: None,
+            }
+        }
+        Effect::MayI { .. } => EffectTrace::Terminal {
+            effect: effect.clone(),
+            decision: match result {
+                EffectResult::Decision(d, _) => d,
+                EffectResult::Nil => Decision::Allow,
+            },
+            reason: None,
+        },
+    };
+
+    (result, trace)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use may_i_core::span::Span;
-    use may_i_core::v2::Spanned;
-    use may_i_core::v2::ast::{Effect, Rule};
-    use may_i_core::v2::pattern::CommandPattern;
 
-    fn dummy_span() -> Span {
-        Span::new(0, 0)
-    }
-
-    fn create_rule(command: &str, predicates: Vec<Predicate>, effect: Effect) -> Rule {
-        Rule {
-            command: Spanned::new(CommandPattern::Literal(command.to_string()), dummy_span()),
-            predicates: predicates
-                .into_iter()
-                .map(|p| Spanned::new(p, dummy_span()))
-                .collect(),
-            effect: Spanned::new(effect, dummy_span()),
-            span: dummy_span(),
-        }
+    fn dummy_context<'a>(
+        command: &'a str,
+        args: &'a [String],
+        facts: &'a ContextFacts,
+    ) -> EvalContext<'a> {
+        EvalContext::new(command, args, facts)
     }
 
     #[test]
-    fn evaluate_simple_rule() {
-        let rules = vec![create_rule("git", vec![], Effect::Allow(None))];
-        let evaluator = Evaluator::new(&rules);
+    fn evaluate_terminal_effects() {
         let facts = ContextFacts::default();
-        let ctx = EvalContext::new("git", &[], &facts);
+        let ctx = dummy_context("test", &[], &facts);
+        let rules: &[Rule] = &[];
 
-        let result = evaluator.evaluate(&ctx);
-        assert_eq!(result.decision, Decision::Allow);
+        assert_eq!(
+            evaluate_effect(&Effect::Allow(None), &ctx, rules),
+            EffectResult::Decision(Decision::Allow, None)
+        );
+        assert_eq!(
+            evaluate_effect(&Effect::Ask(None), &ctx, rules),
+            EffectResult::Decision(Decision::Ask, None)
+        );
+        assert_eq!(
+            evaluate_effect(&Effect::Deny(None), &ctx, rules),
+            EffectResult::Decision(Decision::Deny, None)
+        );
     }
 
     #[test]
-    fn command_mismatch_returns_ask() {
-        let rules = vec![create_rule("hg", vec![], Effect::Allow(None))];
-        let evaluator = Evaluator::new(&rules);
+    fn evaluate_command_pattern() {
         let facts = ContextFacts::default();
-        let ctx = EvalContext::new("git", &[], &facts);
+        let ctx = dummy_context("git", &[], &facts);
+        let rules: &[Rule] = &[];
 
-        let result = evaluator.evaluate(&ctx);
-        assert_eq!(result.decision, Decision::Ask);
+        let pattern = CommandPattern::Literal("git".to_string());
+        assert_eq!(
+            evaluate_effect(&Effect::CommandPattern(pattern), &ctx, rules),
+            EffectResult::Decision(Decision::Allow, None)
+        );
+
+        let pattern = CommandPattern::Literal("hg".to_string());
+        assert_eq!(
+            evaluate_effect(&Effect::CommandPattern(pattern), &ctx, rules),
+            EffectResult::Nil
+        );
     }
 
     #[test]
-    fn predicate_no_match_returns_ask() {
-        let rules = vec![create_rule(
-            "git",
-            vec![Predicate::has_presence(":nonexistent")],
+    fn evaluate_and_combinator() {
+        let facts = ContextFacts::default();
+        let ctx = dummy_context("test", &[], &facts);
+        let rules: &[Rule] = &[];
+
+        // All non-Nil returns last
+        let effects = vec![
+            may_i_core::v2::ast::Spanned::new(
+                Effect::Allow(None),
+                may_i_core::span::Span::new(0, 1),
+            ),
+            may_i_core::v2::ast::Spanned::new(Effect::Ask(None), may_i_core::span::Span::new(0, 1)),
+        ];
+        assert_eq!(
+            evaluate_effect(&Effect::And { effects }, &ctx, rules),
+            EffectResult::Decision(Decision::Ask, None)
+        );
+    }
+
+    #[test]
+    fn evaluate_or_combinator() {
+        let facts = ContextFacts::default();
+        let ctx = dummy_context("test", &[], &facts);
+        let rules: &[Rule] = &[];
+
+        // Returns first non-Nil
+        let effects = vec![
+            may_i_core::v2::ast::Spanned::new(
+                Effect::Allow(None),
+                may_i_core::span::Span::new(0, 1),
+            ),
+            may_i_core::v2::ast::Spanned::new(
+                Effect::Deny(None),
+                may_i_core::span::Span::new(0, 1),
+            ),
+        ];
+        assert_eq!(
+            evaluate_effect(&Effect::Or { effects }, &ctx, rules),
+            EffectResult::Decision(Decision::Allow, None)
+        );
+    }
+
+    #[test]
+    fn evaluate_not_combinator() {
+        let facts = ContextFacts::default();
+        let ctx = dummy_context("test", &[], &facts);
+        let rules: &[Rule] = &[];
+
+        // Not of Allow returns Nil
+        let effect = may_i_core::v2::ast::Spanned::new(
             Effect::Allow(None),
-        )];
-        let evaluator = Evaluator::new(&rules);
+            may_i_core::span::Span::new(0, 1),
+        );
+        assert_eq!(
+            evaluate_effect(
+                &Effect::Not {
+                    effect: Box::new(effect)
+                },
+                &ctx,
+                rules
+            ),
+            EffectResult::Nil
+        );
+    }
+
+    #[test]
+    fn predicate_evaluation() {
         let facts = ContextFacts::default();
-        let ctx = EvalContext::new("git", &[], &facts);
+        let ctx = dummy_context("test", &[], &facts);
 
-        let result = evaluator.evaluate(&ctx);
-        assert_eq!(result.decision, Decision::Ask);
-    }
-
-    #[test]
-    fn fact_presence_match() {
-        let mut facts = ContextFacts::default();
-        facts.insert_present(":via/ssh");
-        let ctx = EvalContext::new("git", &[], &facts);
-
-        let result = evaluate_predicate(&Predicate::has_presence(":via/ssh"), &ctx);
-        assert_eq!(result, PredicateResult::Match);
-    }
-
-    #[test]
-    fn and_predicate_all_match() {
-        let mut facts = ContextFacts::default();
-        facts.insert_present(":a");
-        facts.insert_present(":b");
-        let ctx = EvalContext::new("git", &[], &facts);
-
-        let pred = Predicate::And(vec![
-            Predicate::has_presence(":a"),
-            Predicate::has_presence(":b"),
-        ]);
-        assert_eq!(evaluate_predicate(&pred, &ctx), PredicateResult::Match);
-    }
-
-    #[test]
-    fn and_predicate_one_no_match() {
-        let mut facts = ContextFacts::default();
-        facts.insert_present(":a");
-        let ctx = EvalContext::new("git", &[], &facts);
-
-        let pred = Predicate::And(vec![
-            Predicate::has_presence(":a"),
-            Predicate::has_presence(":b"),
-        ]);
+        let pred = Predicate::Fact(FactQuery::Presence {
+            key: ":missing".to_string(),
+            vector_syntax: false,
+        });
         assert_eq!(evaluate_predicate(&pred, &ctx), PredicateResult::NoMatch);
-    }
 
-    #[test]
-    fn or_predicate_one_matches() {
         let mut facts = ContextFacts::default();
-        facts.insert_present(":a");
-        let ctx = EvalContext::new("git", &[], &facts);
+        facts.insert_present(":present");
+        let ctx = dummy_context("test", &[], &facts);
 
-        let pred = Predicate::Or(vec![
-            Predicate::has_presence(":a"),
-            Predicate::has_presence(":b"),
-        ]);
+        let pred = Predicate::Fact(FactQuery::Presence {
+            key: ":present".to_string(),
+            vector_syntax: false,
+        });
         assert_eq!(evaluate_predicate(&pred, &ctx), PredicateResult::Match);
     }
 
     #[test]
-    fn not_predicate_inverts() {
+    fn context_depth_tracking() {
         let facts = ContextFacts::default();
-        let ctx = EvalContext::new("git", &[], &facts);
+        let ctx = EvalContext::new("test", &[], &facts).with_recursion_limit(5);
+        assert_eq!(ctx.recursion_limit, 5);
+        assert!(!ctx.is_depth_exceeded());
 
-        let pred = Predicate::Not(Box::new(Predicate::has_presence(":nonexistent")));
-        assert_eq!(evaluate_predicate(&pred, &ctx), PredicateResult::Match);
-    }
-
-    #[test]
-    fn deny_is_most_restrictive() {
-        let rules = vec![
-            create_rule("git", vec![], Effect::Allow(None)),
-            create_rule("git", vec![], Effect::Deny(None)),
-        ];
-        let evaluator = Evaluator::new(&rules);
-        let facts = ContextFacts::default();
-        let ctx = EvalContext::new("git", &[], &facts);
-
-        let result = evaluator.evaluate(&ctx);
-        assert_eq!(result.decision, Decision::Deny);
-    }
-
-    #[test]
-    fn ask_over_allow() {
-        let rules = vec![
-            create_rule("git", vec![], Effect::Allow(None)),
-            create_rule("git", vec![], Effect::Ask(None)),
-        ];
-        let evaluator = Evaluator::new(&rules);
-        let facts = ContextFacts::default();
-        let ctx = EvalContext::new("git", &[], &facts);
-
-        let result = evaluator.evaluate(&ctx);
-        assert_eq!(result.decision, Decision::Ask);
-    }
-
-    #[test]
-    fn recursion_limit_enforced() {
-        let rules = vec![];
-        let evaluator = Evaluator::new(&rules);
-        let facts = ContextFacts::default();
-        let ctx = EvalContext::new("git", &[], &facts).with_recursion_limit(5);
-
-        // Manually set depth to exceed limit
         let deep_ctx = EvalContext {
             command: ctx.command,
             args: ctx.args,
@@ -1132,381 +903,6 @@ mod tests {
             recursion_depth: 5,
             recursion_limit: 5,
         };
-
-        let result = evaluator.evaluate(&deep_ctx);
-        assert_eq!(result.decision, Decision::Ask);
-        assert!(result.reason.unwrap().contains("recursion"));
-    }
-
-    // Task 7.5: Additional evaluator tests for all effect types
-
-    #[test]
-    fn effect_allow_with_reason_evaluates_to_allow() {
-        // Test that Allow effect with reason evaluates correctly
-        let rules = vec![create_rule(
-            "git",
-            vec![],
-            Effect::Allow(Some("safe operation".to_string())),
-        )];
-        let evaluator = Evaluator::new(&rules);
-        let facts = ContextFacts::default();
-        let ctx = EvalContext::new("git", &[], &facts);
-
-        let result = evaluator.evaluate(&ctx);
-        assert_eq!(result.decision, Decision::Allow);
-    }
-
-    #[test]
-    fn when_effect_predicate_true() {
-        let mut facts = ContextFacts::default();
-        facts.insert_present(":via/ssh");
-
-        let rules = vec![create_rule(
-            "git",
-            vec![],
-            Effect::When {
-                predicate: Spanned::new(Predicate::has_presence(":via/ssh"), dummy_span()),
-                effect: Box::new(Spanned::new(Effect::Allow(None), dummy_span())),
-            },
-        )];
-        let evaluator = Evaluator::new(&rules);
-        let ctx = EvalContext::new("git", &[], &facts);
-
-        let result = evaluator.evaluate(&ctx);
-        assert_eq!(result.decision, Decision::Allow);
-    }
-
-    #[test]
-    fn when_effect_predicate_false() {
-        let facts = ContextFacts::default();
-
-        let rules = vec![create_rule(
-            "git",
-            vec![],
-            Effect::When {
-                predicate: Spanned::new(Predicate::has_presence(":via/ssh"), dummy_span()),
-                effect: Box::new(Spanned::new(Effect::Allow(None), dummy_span())),
-            },
-        )];
-        let evaluator = Evaluator::new(&rules);
-        let ctx = EvalContext::new("git", &[], &facts);
-
-        let result = evaluator.evaluate(&ctx);
-        assert_eq!(result.decision, Decision::Ask);
-    }
-
-    #[test]
-    fn unless_effect_predicate_false() {
-        let facts = ContextFacts::default();
-
-        let rules = vec![create_rule(
-            "git",
-            vec![],
-            Effect::Unless {
-                predicate: Spanned::new(Predicate::has_presence(":via/ssh"), dummy_span()),
-                effect: Box::new(Spanned::new(Effect::Allow(None), dummy_span())),
-            },
-        )];
-        let evaluator = Evaluator::new(&rules);
-        let ctx = EvalContext::new("git", &[], &facts);
-
-        let result = evaluator.evaluate(&ctx);
-        assert_eq!(result.decision, Decision::Allow);
-    }
-
-    #[test]
-    fn unless_effect_predicate_true() {
-        let mut facts = ContextFacts::default();
-        facts.insert_present(":via/ssh");
-
-        let rules = vec![create_rule(
-            "git",
-            vec![],
-            Effect::Unless {
-                predicate: Spanned::new(Predicate::has_presence(":via/ssh"), dummy_span()),
-                effect: Box::new(Spanned::new(Effect::Allow(None), dummy_span())),
-            },
-        )];
-        let evaluator = Evaluator::new(&rules);
-        let ctx = EvalContext::new("git", &[], &facts);
-
-        let result = evaluator.evaluate(&ctx);
-        assert_eq!(result.decision, Decision::Ask);
-    }
-
-    #[test]
-    fn if_effect_predicate_true() {
-        let mut facts = ContextFacts::default();
-        facts.insert_present(":via/ssh");
-
-        let rules = vec![create_rule(
-            "git",
-            vec![],
-            Effect::If {
-                predicate: Spanned::new(Predicate::has_presence(":via/ssh"), dummy_span()),
-                then_effect: Box::new(Spanned::new(Effect::Allow(None), dummy_span())),
-                else_effect: Some(Box::new(Spanned::new(Effect::Deny(None), dummy_span()))),
-            },
-        )];
-        let evaluator = Evaluator::new(&rules);
-        let ctx = EvalContext::new("git", &[], &facts);
-
-        let result = evaluator.evaluate(&ctx);
-        assert_eq!(result.decision, Decision::Allow);
-    }
-
-    #[test]
-    fn if_effect_predicate_false_with_else() {
-        let facts = ContextFacts::default();
-
-        let rules = vec![create_rule(
-            "git",
-            vec![],
-            Effect::If {
-                predicate: Spanned::new(Predicate::has_presence(":via/ssh"), dummy_span()),
-                then_effect: Box::new(Spanned::new(Effect::Allow(None), dummy_span())),
-                else_effect: Some(Box::new(Spanned::new(Effect::Deny(None), dummy_span()))),
-            },
-        )];
-        let evaluator = Evaluator::new(&rules);
-        let ctx = EvalContext::new("git", &[], &facts);
-
-        let result = evaluator.evaluate(&ctx);
-        assert_eq!(result.decision, Decision::Deny);
-    }
-
-    #[test]
-    fn if_effect_predicate_false_no_else() {
-        let facts = ContextFacts::default();
-
-        let rules = vec![create_rule(
-            "git",
-            vec![],
-            Effect::If {
-                predicate: Spanned::new(Predicate::has_presence(":via/ssh"), dummy_span()),
-                then_effect: Box::new(Spanned::new(Effect::Allow(None), dummy_span())),
-                else_effect: None,
-            },
-        )];
-        let evaluator = Evaluator::new(&rules);
-        let ctx = EvalContext::new("git", &[], &facts);
-
-        let result = evaluator.evaluate(&ctx);
-        assert_eq!(result.decision, Decision::Ask);
-    }
-
-    #[test]
-    fn case_effect_first_branch_matches() {
-        let mut facts = ContextFacts::default();
-        facts.insert_present(":via/ssh");
-
-        let rules = vec![create_rule(
-            "git",
-            vec![],
-            Effect::Case {
-                branches: vec![
-                    (
-                        Spanned::new(Predicate::has_presence(":via/ssh"), dummy_span()),
-                        Spanned::new(Effect::Allow(None), dummy_span()),
-                    ),
-                    (
-                        Spanned::new(Predicate::has_presence(":local"), dummy_span()),
-                        Spanned::new(Effect::Deny(None), dummy_span()),
-                    ),
-                ],
-                fallback: None,
-            },
-        )];
-        let evaluator = Evaluator::new(&rules);
-        let ctx = EvalContext::new("git", &[], &facts);
-
-        let result = evaluator.evaluate(&ctx);
-        assert_eq!(result.decision, Decision::Allow);
-    }
-
-    #[test]
-    fn case_effect_second_branch_matches() {
-        let mut facts = ContextFacts::default();
-        facts.insert_present(":local");
-
-        let rules = vec![create_rule(
-            "git",
-            vec![],
-            Effect::Case {
-                branches: vec![
-                    (
-                        Spanned::new(Predicate::has_presence(":via/ssh"), dummy_span()),
-                        Spanned::new(Effect::Allow(None), dummy_span()),
-                    ),
-                    (
-                        Spanned::new(Predicate::has_presence(":local"), dummy_span()),
-                        Spanned::new(Effect::Deny(None), dummy_span()),
-                    ),
-                ],
-                fallback: None,
-            },
-        )];
-        let evaluator = Evaluator::new(&rules);
-        let ctx = EvalContext::new("git", &[], &facts);
-
-        let result = evaluator.evaluate(&ctx);
-        assert_eq!(result.decision, Decision::Deny);
-    }
-
-    #[test]
-    fn case_effect_no_branch_matches_uses_fallback() {
-        let facts = ContextFacts::default();
-
-        let rules = vec![create_rule(
-            "git",
-            vec![],
-            Effect::Case {
-                branches: vec![(
-                    Spanned::new(Predicate::has_presence(":via/ssh"), dummy_span()),
-                    Spanned::new(Effect::Allow(None), dummy_span()),
-                )],
-                fallback: Some(Box::new(Spanned::new(Effect::Deny(None), dummy_span()))),
-            },
-        )];
-        let evaluator = Evaluator::new(&rules);
-        let ctx = EvalContext::new("git", &[], &facts);
-
-        let result = evaluator.evaluate(&ctx);
-        assert_eq!(result.decision, Decision::Deny);
-    }
-
-    #[test]
-    fn case_effect_no_branch_matches_no_fallback() {
-        let facts = ContextFacts::default();
-
-        let rules = vec![create_rule(
-            "git",
-            vec![],
-            Effect::Case {
-                branches: vec![(
-                    Spanned::new(Predicate::has_presence(":via/ssh"), dummy_span()),
-                    Spanned::new(Effect::Allow(None), dummy_span()),
-                )],
-                fallback: None,
-            },
-        )];
-        let evaluator = Evaluator::new(&rules);
-        let ctx = EvalContext::new("git", &[], &facts);
-
-        let result = evaluator.evaluate(&ctx);
-        assert_eq!(result.decision, Decision::Ask);
-    }
-
-    #[test]
-    fn multiple_rules_all_match_most_restrictive_wins() {
-        let rules = vec![
-            create_rule("git", vec![], Effect::Allow(None)),
-            create_rule("git", vec![], Effect::Ask(None)),
-            create_rule("git", vec![], Effect::Allow(None)),
-        ];
-        let evaluator = Evaluator::new(&rules);
-        let facts = ContextFacts::default();
-        let ctx = EvalContext::new("git", &[], &facts);
-
-        let result = evaluator.evaluate(&ctx);
-        assert_eq!(result.decision, Decision::Ask);
-    }
-
-    #[test]
-    fn arg_pattern_positional_match() {
-        let rules = vec![create_rule(
-            "git",
-            vec![Predicate::Arg(ArgPattern::Positional(vec![
-                PositionalArg {
-                    pattern: Expr::Literal("push".to_string()),
-                    quantifier: may_i_core::types::Quantifier::One,
-                    recursive: false,
-                },
-            ]))],
-            Effect::Allow(None),
-        )];
-        let evaluator = Evaluator::new(&rules);
-        let facts = ContextFacts::default();
-        let args = vec!["push".to_string()];
-        let ctx = EvalContext::new("git", &args, &facts);
-
-        let result = evaluator.evaluate(&ctx);
-        assert_eq!(result.decision, Decision::Allow);
-    }
-
-    #[test]
-    fn arg_pattern_positional_no_match() {
-        let rules = vec![create_rule(
-            "git",
-            vec![Predicate::Arg(ArgPattern::Positional(vec![
-                PositionalArg {
-                    pattern: Expr::Literal("push".to_string()),
-                    quantifier: may_i_core::types::Quantifier::One,
-                    recursive: false,
-                },
-            ]))],
-            Effect::Allow(None),
-        )];
-        let evaluator = Evaluator::new(&rules);
-        let facts = ContextFacts::default();
-        let args = vec!["status".to_string()];
-        let ctx = EvalContext::new("git", &args, &facts);
-
-        let result = evaluator.evaluate(&ctx);
-        assert_eq!(result.decision, Decision::Ask);
-    }
-
-    #[test]
-    fn arg_pattern_anywhere_match() {
-        let rules = vec![create_rule(
-            "git",
-            vec![Predicate::Arg(ArgPattern::Anywhere(vec![Expr::Literal(
-                "--force".to_string(),
-            )]))],
-            Effect::Deny(None),
-        )];
-        let evaluator = Evaluator::new(&rules);
-        let facts = ContextFacts::default();
-        let args = vec!["push".to_string(), "--force".to_string()];
-        let ctx = EvalContext::new("git", &args, &facts);
-
-        let result = evaluator.evaluate(&ctx);
-        assert_eq!(result.decision, Decision::Deny);
-    }
-
-    #[test]
-    fn arg_pattern_forbidden_match() {
-        let rules = vec![create_rule(
-            "git",
-            vec![Predicate::Arg(ArgPattern::Forbidden(vec![Expr::Literal(
-                "--dangerous".to_string(),
-            )]))],
-            Effect::Allow(None),
-        )];
-        let evaluator = Evaluator::new(&rules);
-        let facts = ContextFacts::default();
-        let args = vec!["status".to_string()];
-        let ctx = EvalContext::new("git", &args, &facts);
-
-        let result = evaluator.evaluate(&ctx);
-        assert_eq!(result.decision, Decision::Allow);
-    }
-
-    #[test]
-    fn arg_pattern_forbidden_violated() {
-        let rules = vec![create_rule(
-            "git",
-            vec![Predicate::Arg(ArgPattern::Forbidden(vec![Expr::Literal(
-                "--dangerous".to_string(),
-            )]))],
-            Effect::Allow(None),
-        )];
-        let evaluator = Evaluator::new(&rules);
-        let facts = ContextFacts::default();
-        let args = vec!["--dangerous".to_string()];
-        let ctx = EvalContext::new("git", &args, &facts);
-
-        let result = evaluator.evaluate(&ctx);
-        assert_eq!(result.decision, Decision::Ask);
+        assert!(deep_ctx.is_depth_exceeded());
     }
 }

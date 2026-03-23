@@ -13,12 +13,12 @@ pub mod rule;
 #[cfg(test)]
 mod migration_tests;
 
-pub use command::parse_command_pattern;
+pub use command::{parse_command_pattern, parse_command_pattern_from_atom};
 pub use config::parse_config;
 pub use effect::parse_effect;
 pub use pattern::{parse_arg_pattern, parse_positional_arg};
 pub use predicate::parse_predicate;
-pub use rule::{parse_define, parse_rule};
+pub use rule::{parse_define, parse_rule, parse_shorthand_effect};
 
 use may_i_core::v2::Spanned;
 use may_i_sexpr::Sexpr;
@@ -34,7 +34,7 @@ pub fn is_reserved_keyword(atom: &str) -> bool {
         atom,
         "rule"
             | "define"
-            | "has"
+            | "fact?"
             | "and"
             | "or"
             | "not"
@@ -45,10 +45,11 @@ pub fn is_reserved_keyword(atom: &str) -> bool {
             | "="
             | "effect"
             | "may-i"
-            | "case"
+            | "cond"
             | "when"
             | "unless"
             | "if"
+            | "else"
             | "safe-env-vars"
             | "check"
     )
@@ -79,8 +80,8 @@ mod tests {
     }
 
     #[test]
-    fn is_reserved_keyword_matches_has() {
-        assert!(is_reserved_keyword("has"));
+    fn is_reserved_keyword_matches_fact() {
+        assert!(is_reserved_keyword("fact?"));
     }
 
     #[test]
@@ -134,8 +135,13 @@ mod tests {
     }
 
     #[test]
-    fn is_reserved_keyword_matches_case() {
-        assert!(is_reserved_keyword("case"));
+    fn is_reserved_keyword_matches_cond() {
+        assert!(is_reserved_keyword("cond"));
+    }
+
+    #[test]
+    fn is_reserved_keyword_matches_else() {
+        assert!(is_reserved_keyword("else"));
     }
 
     #[test]

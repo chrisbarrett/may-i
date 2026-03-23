@@ -38,6 +38,9 @@ pub fn migration_rules() -> Vec<RewriteFn> {
         Box::new(wrapper_to_rule),
         // Rule: (defcontext NAME EXPR) → (define NAME EXPR)
         Box::new(defcontext_to_define),
+        // Rule: (rule ... (effect E)) → (rule ... :effect E)
+        // MUST run after other rule transformations that may produce old-style rules
+        Box::new(rule_convert_effect_to_keyword),
     ]
 }
 
@@ -175,6 +178,64 @@ fn rule_inline_args(node: &CstNode) -> Option<Box<CstNode>> {
     }))
 }
 
+/// Convert old-style `(effect EFFECT)` to new-style `:effect EFFECT` in rules.
+/// Transforms: (rule X ... (effect E)) → (rule X ... :effect E)
+fn rule_convert_effect_to_keyword(node: &CstNode) -> Option<Box<CstNode>> {
+    if !node.is_tagged("rule") {
+        return None;
+    }
+
+    let children = node.as_list()?;
+    if children.len() < 3 {
+        return None;
+    }
+
+    // Check if the last element is (effect ...)
+    let last_idx = children.len() - 1;
+    let last_child = &children[last_idx];
+
+    if !last_child.is_tagged("effect") {
+        return None;
+    }
+
+    // Extract the effect content from (effect EFFECT)
+    let effect_children = last_child.as_list()?;
+    if effect_children.len() != 2 {
+        // Invalid (effect) form, skip
+        return None;
+    }
+
+    let effect_content = &effect_children[1];
+
+    // Build new children: all except last, then :effect keyword, then effect content
+    let mut new_children = Vec::new();
+
+    // Copy all children except the last
+    for child in &children[..last_idx] {
+        new_children.push(child.clone());
+    }
+
+    // Add :effect keyword with leading trivia from the old (effect ...) list
+    let effect_keyword = CstNode::atom(
+        ":effect",
+        TriviaAnn {
+            leading: last_child.ann.leading.clone(),
+            ..Default::default()
+        },
+    );
+    new_children.push(Box::new(effect_keyword));
+
+    // Add the effect content with combined trailing trivia
+    let mut new_effect_content = (**effect_content).clone();
+    new_effect_content.ann.trailing = last_child.ann.trailing.clone();
+    new_children.push(Box::new(new_effect_content));
+
+    Some(Box::new(CstNode {
+        ann: node.ann.clone(),
+        shape: Shape::List(new_children),
+    }))
+}
+
 /// Convert (wrapper CMD ...) to (rule CMD ... . (may-i *))
 fn wrapper_to_rule(node: &CstNode) -> Option<Box<CstNode>> {
     if !node.is_tagged("wrapper") {
@@ -249,17 +310,14 @@ fn wrapper_to_rule(node: &CstNode) -> Option<Box<CstNode>> {
 
             // Convert v1 bracket capture patterns [:key *] to just * for v2
             // The capture functionality is handled by the wrapper mechanism
-            if let Some(vector) = pat.as_vector() {
-                // Check if this is a capture pattern like [:key *] or [:key]
-                if vector.len() == 2 {
-                    if let Some(second) = vector.get(1)
-                        && let Some(atom) = second.as_atom()
-                        && atom == "*"
-                    {
-                        // Replace [:key *] with just *
-                        pat = Box::new(CstNode::atom("*", pat.ann.clone()));
-                    }
-                }
+            if let Some(vector) = pat.as_vector()
+                && vector.len() == 2
+                && let Some(second) = vector.get(1)
+                && let Some(atom) = second.as_atom()
+                && atom == "*"
+            {
+                // Replace [:key *] with just *
+                pat = Box::new(CstNode::atom("*", pat.ann.clone()));
             }
 
             // Add leading whitespace for spacing between patterns
@@ -295,18 +353,16 @@ fn wrapper_to_rule(node: &CstNode) -> Option<Box<CstNode>> {
         }
     }
 
-    // Add (effect :allow)
-    let effect = CstNode::list(
-        vec![
-            Box::new(CstNode::atom("effect", Default::default())),
-            Box::new(CstNode::atom(":allow", Default::default())),
-        ],
+    // Add :effect :allow
+    // In new unified syntax, :effect keyword comes before default effect
+    new_children.push(Box::new(CstNode::atom(
+        ":effect",
         TriviaAnn {
             leading: vec![may_i_sexpr::cst::Trivia::Whitespace(" ".to_string())],
             ..Default::default()
         },
-    );
-    new_children.push(Box::new(effect));
+    )));
+    new_children.push(Box::new(CstNode::atom(":allow", Default::default())));
 
     Some(Box::new(CstNode::list(
         new_children,
@@ -430,7 +486,46 @@ fn transform_has_expression(expr: &CstNode) -> Box<CstNode> {
     }
 }
 
-/// Convert (args (cond ...)) or (args (if ...)) in rule to (case ...) as effect
+/// Find and extract a cond/if form nested within boolean combinators.
+/// Returns (remaining_predicates, cond_or_if_node) if found.
+#[allow(clippy::vec_box)]
+fn find_cond_or_if_in_booleans(node: &CstNode) -> Option<(Vec<Box<CstNode>>, Box<CstNode>)> {
+    // Check if this is a boolean combinator
+    if let Some(list) = node.as_list()
+        && !list.is_empty()
+        && let Some(tag) = list[0].as_atom()
+    {
+        match tag {
+            "and" | "or" => {
+                // Look through children for cond/if
+                let mut remaining = Vec::new();
+                let mut found = None;
+
+                for child in &list[1..] {
+                    if child.is_tagged("cond") || child.is_tagged("if") {
+                        found = Some(child.clone());
+                    } else if let Some((nested_remaining, nested_found)) =
+                        find_cond_or_if_in_booleans(child)
+                    {
+                        // Found nested - merge remaining predicates
+                        found = Some(nested_found);
+                        remaining.extend(nested_remaining);
+                    } else {
+                        remaining.push(child.clone());
+                    }
+                }
+
+                found.map(|f| (remaining, f))
+            }
+            _ => None,
+        }
+    } else {
+        None
+    }
+}
+
+/// Convert (args ...) in rule to predicates and an effect.
+/// Handles cond/if nested inside and/or combinators.
 fn args_cond_to_case(node: &CstNode) -> Option<Box<CstNode>> {
     if !node.is_tagged("rule") {
         return None;
@@ -438,6 +533,7 @@ fn args_cond_to_case(node: &CstNode) -> Option<Box<CstNode>> {
 
     let children = node.as_list()?;
     let mut new_children = Vec::new();
+    let mut predicates_to_add = Vec::new();
     let mut found_case_source = None;
 
     new_children.push(children[0].clone()); // "rule" tag
@@ -448,24 +544,32 @@ fn args_cond_to_case(node: &CstNode) -> Option<Box<CstNode>> {
             let args_children = child.as_list()?;
             if args_children.len() == 2 {
                 let matcher = &args_children[1];
+
+                // Check for direct cond/if
                 if matcher.is_tagged("cond") {
-                    found_case_source = Some(matcher.clone());
+                    found_case_source = Some((Vec::new(), matcher.clone()));
                     continue;
                 }
                 if matcher.is_tagged("if") {
-                    // Convert (if PRED THEN ELSE) to case form
                     let if_children = matcher.as_list()?;
                     if if_children.len() == 4 {
-                        found_case_source = Some(matcher.clone());
+                        found_case_source = Some((Vec::new(), matcher.clone()));
                         continue;
                     }
+                }
+
+                // Check for cond/if nested in and/or
+                if let Some((remaining, cond_or_if)) = find_cond_or_if_in_booleans(matcher) {
+                    predicates_to_add = remaining;
+                    found_case_source = Some((Vec::new(), cond_or_if));
+                    continue;
                 }
             }
         }
         new_children.push(child.clone());
     }
 
-    let case_source = found_case_source?;
+    let (extra_predicates, case_source) = found_case_source?;
 
     // Build case expression based on source type
     let mut case_children = vec![Box::new(CstNode::atom("case", Default::default()))];
@@ -473,11 +577,7 @@ fn args_cond_to_case(node: &CstNode) -> Option<Box<CstNode>> {
     if case_source.is_tagged("cond") {
         let cond_children = case_source.as_list()?;
         for branch in &cond_children[1..] {
-            if branch.is_tagged("else") {
-                case_children.push(branch.clone());
-            } else {
-                case_children.push(branch.clone());
-            }
+            case_children.push(branch.clone());
         }
     } else if case_source.is_tagged("if") {
         // Convert (if PRED THEN ELSE) to case branches
@@ -503,6 +603,11 @@ fn args_cond_to_case(node: &CstNode) -> Option<Box<CstNode>> {
             );
             case_children.push(Box::new(else_branch));
         }
+    }
+
+    // Insert extracted predicates before the case
+    for pred in predicates_to_add.iter().chain(extra_predicates.iter()) {
+        new_children.push(pred.clone());
     }
 
     // Insert case at the END as it's an effect, not a predicate
@@ -941,7 +1046,8 @@ mod tests {
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let node = nodes.into_iter().next().unwrap();
         let result = migrate(node);
-        assert_eq!(result.serialize(), "(rule git (effect :allow))");
+        // New unified syntax uses :effect keyword with shorthand
+        assert_eq!(result.serialize(), "(rule git :effect :allow)");
     }
 
     #[test]
@@ -950,12 +1056,8 @@ mod tests {
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let results = migrate_forms(nodes);
         assert_eq!(results.len(), 2);
-        // Use contains to ignore potential whitespace/newline differences
-        assert!(
-            results[0]
-                .serialize()
-                .contains("(rule git (effect :allow))")
-        );
+        // New unified syntax uses :effect keyword with shorthand
+        assert!(results[0].serialize().contains("(rule git :effect :allow)"));
         assert!(
             results[1]
                 .serialize()
@@ -965,10 +1067,11 @@ mod tests {
 
     #[test]
     fn test_validate_migration_success() {
-        let input = "(rule git (effect :allow))";
+        let input = "(rule (command git) (effect :allow))";
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let migrated = migrate(nodes.into_iter().next().unwrap());
         let result = validate_migration(&migrated.serialize());
+        // Should pass now that migration outputs new unified syntax
         assert!(result.is_ok());
     }
 

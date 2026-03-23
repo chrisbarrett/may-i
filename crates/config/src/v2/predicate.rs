@@ -4,13 +4,13 @@
 // Task 2.5: Implement unified predicate parser that dispatches to fact or arg parsers
 
 use may_i_core::types::FactQuery;
-use may_i_core::v2::predicate::Predicate;
+use may_i_core::v2::ast::Predicate;
 use may_i_sexpr::{RawError, Sexpr};
 
 /// Parse a unified predicate from an s-expression.
 ///
 /// This is the main entry point for predicate parsing. It handles:
-/// - Fact queries: `(has FACT-QUERY)`
+/// - Fact queries: `(fact? FACT-QUERY)` (renamed from `has`)
 /// - Argument patterns: `(positional ...)`, `(exact ...)`, etc.
 /// - Boolean combinators: `(and PREDICATE ...)`, `(or PREDICATE ...)`, `(not PREDICATE)`
 /// - Named predicate references (will be resolved later)
@@ -34,16 +34,16 @@ pub fn parse_predicate(sexpr: &Sexpr) -> Result<Predicate, RawError> {
         .ok_or_else(|| RawError::new("predicate tag must be an atom", list[0].span()))?;
 
     match tag {
-        // Fact query
-        "has" => {
+        // Fact query (renamed from `has` to `fact?`)
+        "fact?" => {
             if list.len() != 2 {
                 return Err(RawError::new(
-                    "has must have exactly one fact query",
+                    "fact? must have exactly one fact query",
                     sexpr.span(),
                 ));
             }
             let query = parse_fact_query(&list[1])?;
-            Ok(Predicate::Has(query))
+            Ok(Predicate::Fact(query))
         }
 
         // Boolean combinators
@@ -88,7 +88,7 @@ pub fn parse_predicate(sexpr: &Sexpr) -> Result<Predicate, RawError> {
 
         other => Err(
             RawError::new(format!("unknown predicate form: {other}"), list[0].span()).with_help(
-                "valid predicates: has, and, or, not, positional, exact, anywhere, forbidden, =",
+                "valid predicates: fact?, and, or, not, positional, exact, anywhere, forbidden, =",
             ),
         ),
     }
@@ -243,48 +243,48 @@ mod tests {
     }
 
     #[test]
-    fn parse_has_presence_bare() {
-        let pred = parse_pred(r#"(has :via/ssh)"#).unwrap();
+    fn parse_fact_presence_bare() {
+        let pred = parse_pred(r#"(fact? :via/ssh)"#).unwrap();
         match pred {
-            Predicate::Has(FactQuery::Presence { key, vector_syntax }) => {
+            Predicate::Fact(FactQuery::Presence { key, vector_syntax }) => {
                 assert_eq!(key, ":via/ssh");
                 assert!(!vector_syntax);
             }
-            _ => panic!("expected Has with Presence"),
+            _ => panic!("expected Fact with Presence"),
         }
     }
 
     #[test]
-    fn parse_has_presence_vector() {
-        let pred = parse_pred(r#"(has [:via/ssh])"#).unwrap();
+    fn parse_fact_presence_vector() {
+        let pred = parse_pred(r#"(fact? [:via/ssh])"#).unwrap();
         match pred {
-            Predicate::Has(FactQuery::Presence { key, vector_syntax }) => {
+            Predicate::Fact(FactQuery::Presence { key, vector_syntax }) => {
                 assert_eq!(key, ":via/ssh");
                 assert!(vector_syntax);
             }
-            _ => panic!("expected Has with Presence"),
+            _ => panic!("expected Fact with Presence"),
         }
     }
 
     #[test]
-    fn parse_has_value() {
-        let pred = parse_pred(r#"(has [:opencode/agent "build"])"#).unwrap();
+    fn parse_fact_value() {
+        let pred = parse_pred(r#"(fact? [:opencode/agent "build"])"#).unwrap();
         match pred {
-            Predicate::Has(FactQuery::Value { key, pattern }) => {
+            Predicate::Fact(FactQuery::Value { key, pattern }) => {
                 assert_eq!(key, ":opencode/agent");
                 assert!(matches!(pattern, FactPattern::Literal(s) if s == "build"));
             }
-            _ => panic!("expected Has with Value"),
+            _ => panic!("expected Fact with Value"),
         }
     }
 
     #[test]
     fn parse_and_predicate() {
-        let pred = parse_pred(r#"(and (has :via/ssh) (positional "push"))"#).unwrap();
+        let pred = parse_pred(r#"(and (fact? :via/ssh) (positional "push"))"#).unwrap();
         match pred {
             Predicate::And(preds) => {
                 assert_eq!(preds.len(), 2);
-                assert!(matches!(preds[0], Predicate::Has(_)));
+                assert!(matches!(preds[0], Predicate::Fact(_)));
                 assert!(matches!(preds[1], Predicate::Arg(_)));
             }
             _ => panic!("expected And"),
@@ -293,7 +293,8 @@ mod tests {
 
     #[test]
     fn parse_or_predicate() {
-        let pred = parse_pred(r#"(or (has :client/claude-code) (has :client/opencode))"#).unwrap();
+        let pred =
+            parse_pred(r#"(or (fact? :client/claude-code) (fact? :client/opencode))"#).unwrap();
         match pred {
             Predicate::Or(preds) => {
                 assert_eq!(preds.len(), 2);
@@ -304,10 +305,10 @@ mod tests {
 
     #[test]
     fn parse_not_predicate() {
-        let pred = parse_pred(r#"(not (has :dangerous))"#).unwrap();
+        let pred = parse_pred(r#"(not (fact? :dangerous))"#).unwrap();
         match pred {
             Predicate::Not(inner) => {
-                assert!(matches!(inner.as_ref(), Predicate::Has(_)));
+                assert!(matches!(inner.as_ref(), Predicate::Fact(_)));
             }
             _ => panic!("expected Not"),
         }
@@ -318,7 +319,7 @@ mod tests {
         let pred = parse_pred(
             r#"
             (and
-                (has :via/ssh)
+                (fact? :via/ssh)
                 (or (positional "push")
                     (positional "pull")))
         "#,
@@ -336,7 +337,7 @@ mod tests {
 
     #[test]
     fn non_namespaced_key_is_error() {
-        let err = parse_pred(r#"(has invalid-key)"#).expect_err("expected error");
+        let err = parse_pred(r#"(fact? invalid-key)"#).expect_err("expected error");
         assert!(format!("{err}").contains("namespaced"));
     }
 
@@ -352,33 +353,33 @@ mod tests {
     }
 
     #[test]
-    fn parse_has_with_regex() {
-        let pred = parse_pred(r#"(has [:ssh/host (regex "^prod-")])"#).unwrap();
+    fn parse_fact_with_regex() {
+        let pred = parse_pred(r#"(fact? [:ssh/host (regex "^prod-")])"#).unwrap();
         match pred {
-            Predicate::Has(FactQuery::Value { key, pattern }) => {
+            Predicate::Fact(FactQuery::Value { key, pattern }) => {
                 assert_eq!(key, ":ssh/host");
                 assert!(matches!(pattern, FactPattern::Regex(_)));
             }
-            _ => panic!("expected Has with Regex Value"),
+            _ => panic!("expected Fact with Regex Value"),
         }
     }
 
     #[test]
-    fn parse_has_with_wildcard() {
-        let pred = parse_pred(r#"(has [:ssh/host *])"#).unwrap();
+    fn parse_fact_with_wildcard() {
+        let pred = parse_pred(r#"(fact? [:ssh/host *])"#).unwrap();
         match pred {
-            Predicate::Has(FactQuery::Value { key, pattern }) => {
+            Predicate::Fact(FactQuery::Value { key, pattern }) => {
                 assert_eq!(key, ":ssh/host");
                 assert!(matches!(pattern, FactPattern::Wildcard));
             }
-            _ => panic!("expected Has with Wildcard Value"),
+            _ => panic!("expected Fact with Wildcard Value"),
         }
     }
 
     #[test]
     fn parse_and_preserves_single_predicate() {
         // Parser preserves (and X) as And([X]), doesn't flatten
-        let pred = parse_pred(r#"(and (has :via/ssh))"#).unwrap();
+        let pred = parse_pred(r#"(and (fact? :via/ssh))"#).unwrap();
         match pred {
             Predicate::And(preds) => {
                 assert_eq!(preds.len(), 1);
@@ -390,7 +391,7 @@ mod tests {
     #[test]
     fn parse_or_preserves_single_predicate() {
         // Parser preserves (or X) as Or([X]), doesn't flatten
-        let pred = parse_pred(r#"(or (has :via/ssh))"#).unwrap();
+        let pred = parse_pred(r#"(or (fact? :via/ssh))"#).unwrap();
         match pred {
             Predicate::Or(preds) => {
                 assert_eq!(preds.len(), 1);
@@ -405,10 +406,10 @@ mod tests {
             r#"
             (or
                 (and
-                    (has :via/ssh)
+                    (fact? :via/ssh)
                     (not (positional "--force")))
                 (and
-                    (has :local)
+                    (fact? :local)
                     (positional "--safe")))
         "#,
         )
@@ -467,15 +468,15 @@ mod tests {
     }
 
     #[test]
-    fn parse_has_without_args_error() {
-        let err = parse_pred(r#"(has)"#).expect_err("expected error");
-        assert!(format!("{err}").contains("has must have"));
+    fn parse_fact_without_args_error() {
+        let err = parse_pred(r#"(fact?)"#).expect_err("expected error");
+        assert!(format!("{err}").contains("fact? must have"));
     }
 
     #[test]
-    fn parse_has_with_too_many_args_error() {
-        let err = parse_pred(r#"(has :a :b :c)"#).expect_err("expected error");
-        assert!(format!("{err}").contains("has must have"));
+    fn parse_fact_with_too_many_args_error() {
+        let err = parse_pred(r#"(fact? :a :b :c)"#).expect_err("expected error");
+        assert!(format!("{err}").contains("fact? must have"));
     }
 
     #[test]
@@ -485,8 +486,8 @@ mod tests {
     }
 
     #[test]
-    fn parse_non_namespaced_key_in_has_error() {
-        let err = parse_pred(r#"(has "plain-key")"#).expect_err("expected error");
+    fn parse_non_namespaced_key_in_fact_error() {
+        let err = parse_pred(r#"(fact? "plain-key")"#).expect_err("expected error");
         assert!(format!("{err}").contains("namespaced"));
     }
 
@@ -510,68 +511,68 @@ mod tests {
 
     #[test]
     fn parse_not_with_too_many_args_error() {
-        let err = parse_pred(r#"(not (has :a) (has :b))"#).expect_err("expected error");
+        let err = parse_pred(r#"(not (fact? :a) (fact? :b))"#).expect_err("expected error");
         assert!(format!("{err}").contains("not must have exactly one predicate"));
     }
 
     #[test]
     fn parse_fact_query_with_three_items_error() {
-        let err = parse_pred(r#"(has [:key a b c])"#).expect_err("expected error");
+        let err = parse_pred(r#"(fact? [:key a b c])"#).expect_err("expected error");
         assert!(format!("{err}").contains("fact query vectors must contain"));
     }
 
     #[test]
     fn parse_invalid_regex_in_fact_pattern_error() {
-        let err = parse_pred(r#"(has [:key (regex "[invalid")])"#).expect_err("expected error");
+        let err = parse_pred(r#"(fact? [:key (regex "[invalid")])"#).expect_err("expected error");
         assert!(format!("{err}").contains("invalid regex"));
     }
 
     #[test]
     fn parse_empty_fact_pattern_error() {
-        let err = parse_pred(r#"(has [:key ()])"#).expect_err("expected error");
+        let err = parse_pred(r#"(fact? [:key ()])"#).expect_err("expected error");
         assert!(format!("{err}").contains("empty fact pattern"));
     }
 
     #[test]
     fn parse_unknown_fact_pattern_error() {
-        let err = parse_pred(r#"(has [:key (unknown "test")])"#).expect_err("expected error");
+        let err = parse_pred(r#"(fact? [:key (unknown "test")])"#).expect_err("expected error");
         assert!(format!("{err}").contains("unknown fact pattern"));
     }
 
     #[test]
     fn parse_and_in_fact_pattern_error() {
-        let err = parse_pred(r#"(has [:key (and)])"#).expect_err("expected error");
+        let err = parse_pred(r#"(fact? [:key (and)])"#).expect_err("expected error");
         assert!(format!("{err}").contains("and must have at least one pattern"));
     }
 
     #[test]
     fn parse_or_in_fact_pattern_error() {
-        let err = parse_pred(r#"(has [:key (or)])"#).expect_err("expected error");
+        let err = parse_pred(r#"(fact? [:key (or)])"#).expect_err("expected error");
         assert!(format!("{err}").contains("or must have at least one pattern"));
     }
 
     #[test]
     fn parse_not_in_fact_pattern_error() {
-        let err = parse_pred(r#"(has [:key (not)])"#).expect_err("expected error");
+        let err = parse_pred(r#"(fact? [:key (not)])"#).expect_err("expected error");
         assert!(format!("{err}").contains("not must have exactly one pattern"));
     }
 
     #[test]
     fn parse_not_in_fact_pattern_with_too_many_args_error() {
-        let err = parse_pred(r#"(has [:key (not a b)])"#).expect_err("expected error");
+        let err = parse_pred(r#"(fact? [:key (not a b)])"#).expect_err("expected error");
         assert!(format!("{err}").contains("not must have exactly one pattern"));
     }
 
     #[test]
     fn parse_nested_vector_syntax_error() {
-        let err = parse_pred(r#"(has [:key [:nested]])"#).expect_err("expected error");
+        let err = parse_pred(r#"(fact? [:key [:nested]])"#).expect_err("expected error");
         assert!(format!("{err}").contains("nested vector syntax"));
     }
 
     #[test]
     fn parse_non_atom_tag_in_fact_pattern_error() {
         // Use a list as the tag (not an atom) - the inner (1 2) is a list, not an atom
-        let err = parse_pred(r#"(has [:key ((1 2) "arg")])"#).expect_err("expected error");
+        let err = parse_pred(r#"(fact? [:key ((1 2) "arg")])"#).expect_err("expected error");
         assert!(format!("{err}").contains("fact pattern tag must be an atom"));
     }
 

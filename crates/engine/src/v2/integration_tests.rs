@@ -13,7 +13,7 @@ fn test_context() -> ContextFacts {
 fn integration_simple_allow_rule() {
     let config = parse_config(
         r#"
-        (rule "git" (effect :allow))
+        (rule "git" :effect :allow)
     "#,
     )
     .unwrap();
@@ -28,7 +28,7 @@ fn integration_simple_allow_rule() {
 fn integration_simple_deny_rule() {
     let config = parse_config(
         r#"
-        (rule "rm" (effect :deny "rm is dangerous"))
+        (rule "rm" :effect [:deny "rm is dangerous"])
     "#,
     )
     .unwrap();
@@ -44,7 +44,9 @@ fn integration_simple_deny_rule() {
 fn integration_rule_with_fact_predicate() {
     let config = parse_config(
         r#"
-        (rule "git" (has :via/ssh) (effect :ask "SSH operations require confirmation"))
+        (rule "git"
+            (when (fact? :via/ssh) (effect :ask "SSH operations require confirmation"))
+            :effect (effect :deny))
     "#,
     )
     .unwrap();
@@ -60,7 +62,7 @@ fn integration_rule_with_fact_predicate() {
 fn integration_rule_with_arg_pattern() {
     let config = parse_config(
         r#"
-        (rule "git" (positional "push") (effect :allow))
+        (rule "git" (positional "push") :effect :allow)
     "#,
     )
     .unwrap();
@@ -75,7 +77,9 @@ fn integration_rule_with_arg_pattern() {
 fn integration_rule_with_and_combinator() {
     let config = parse_config(
         r#"
-        (rule "git" (and (positional "push") (has :via/ssh)) (effect :ask))
+        (rule "git"
+            (when (and (fact? :via/ssh) (positional "push")) (effect :ask))
+            :effect (effect :deny))
     "#,
     )
     .unwrap();
@@ -91,7 +95,9 @@ fn integration_rule_with_and_combinator() {
 fn integration_rule_with_or_combinator() {
     let config = parse_config(
         r#"
-        (rule "git" (or (positional "push") (positional "pull")) (effect :allow))
+        (rule "git"
+            (when (or (positional "push") (positional "pull")) (effect :allow))
+            :effect (effect :deny))
     "#,
     )
     .unwrap();
@@ -109,7 +115,9 @@ fn integration_rule_with_or_combinator() {
 fn integration_rule_with_not_combinator() {
     let config = parse_config(
         r#"
-        (rule "git" (not (anywhere "--force")) (effect :allow))
+        (rule "git"
+            (when (not (anywhere "--force")) (effect :allow))
+            :effect (effect :deny))
     "#,
     )
     .unwrap();
@@ -120,21 +128,23 @@ fn integration_rule_with_not_combinator() {
     let result = evaluate_v2("git", &["push".to_string()], &config, &facts);
     assert_eq!(result.decision, Decision::Allow);
 
-    // With --force, should not match and return ask
+    // With --force, should deny (default effect)
     let result = evaluate_v2(
         "git",
         &["push".to_string(), "--force".to_string()],
         &config,
         &facts,
     );
-    assert_eq!(result.decision, Decision::Ask);
+    assert_eq!(result.decision, Decision::Deny);
 }
 
 #[test]
 fn integration_rule_with_when_effect() {
     let config = parse_config(
         r#"
-        (rule "git" (when (has :via/ssh) (effect :ask)))
+        (rule "git"
+            (when (fact? :via/ssh) (effect :ask))
+            :effect (effect :deny))
     "#,
     )
     .unwrap();
@@ -150,7 +160,9 @@ fn integration_rule_with_when_effect() {
 fn integration_rule_with_unless_effect() {
     let config = parse_config(
         r#"
-        (rule "git" (unless (has :local) (effect :ask)))
+        (rule "git"
+            (unless (fact? :local) (effect :ask))
+            :effect (effect :allow))
     "#,
     )
     .unwrap();
@@ -165,7 +177,9 @@ fn integration_rule_with_unless_effect() {
 fn integration_rule_with_if_effect() {
     let config = parse_config(
         r#"
-        (rule "git" (if (has :via/ssh) (effect :ask) (effect :allow)))
+        (rule "git"
+            (if (fact? :via/ssh) (effect :ask) (effect :allow))
+            :effect (effect :deny))
     "#,
     )
     .unwrap();
@@ -179,13 +193,15 @@ fn integration_rule_with_if_effect() {
 
 #[test]
 fn integration_rule_with_case_effect() {
+    // Note: 'case' was renamed to 'cond' in the unified effect model
     let config = parse_config(
         r#"
         (rule "git"
-            (case
+            (cond
                 ((positional "push") (effect :ask))
                 ((positional "pull") (effect :allow))
-                (else (effect :deny))))
+                (else (effect :deny)))
+            :effect (effect :deny))
     "#,
     )
     .unwrap();
@@ -206,8 +222,10 @@ fn integration_rule_with_case_effect() {
 fn integration_named_predicate_with_define() {
     let config = parse_config(
         r#"
-        (define ssh-session (has :via/ssh))
-        (rule "git" ssh-session (effect :ask))
+        (define ssh-session (fact? :via/ssh))
+        (rule "git"
+            (when ssh-session (effect :ask))
+            :effect (effect :deny))
     "#,
     )
     .unwrap();
@@ -227,30 +245,34 @@ fn integration_named_predicate_with_define() {
 
 #[test]
 fn integration_multiple_rules_most_restrictive_wins() {
+    // In the unified effect model, rules are evaluated in order.
+    // More specific rules should come first.
+    // Use 'when' to combine pattern matching with the desired effect.
     let config = parse_config(
         r#"
-        (rule "git" (effect :allow))
-        (rule "git" (positional "rm") (effect :deny))
+        (rule "git"
+            (when (positional "rm") (effect :deny "git rm is restricted"))
+            :effect (effect :allow))
     "#,
     )
     .unwrap();
 
     let facts = test_context();
 
-    // Simple git should allow
-    let result = evaluate_v2("git", &[], &config, &facts);
-    assert_eq!(result.decision, Decision::Allow);
-
-    // git rm should deny (most restrictive)
+    // git rm should deny (specific pattern matches)
     let result = evaluate_v2("git", &["rm".to_string()], &config, &facts);
     assert_eq!(result.decision, Decision::Deny);
+
+    // Simple git should allow (falls through to default effect)
+    let result = evaluate_v2("git", &[], &config, &facts);
+    assert_eq!(result.decision, Decision::Allow);
 }
 
 #[test]
 fn integration_or_command_pattern() {
     let config = parse_config(
         r#"
-        (rule (or "git" "gh") (effect :allow))
+        (rule (or "git" "gh") :effect :allow)
     "#,
     )
     .unwrap();
@@ -271,7 +293,9 @@ fn integration_or_command_pattern() {
 fn integration_forbidden_pattern() {
     let config = parse_config(
         r#"
-        (rule "git" (forbidden "--force") (effect :allow))
+        (rule "git"
+            (when (forbidden "--force") (effect :allow))
+            :effect (effect :deny))
     "#,
     )
     .unwrap();
@@ -289,14 +313,16 @@ fn integration_forbidden_pattern() {
         &config,
         &facts,
     );
-    assert_eq!(result.decision, Decision::Ask);
+    assert_eq!(result.decision, Decision::Deny);
 }
 
 #[test]
 fn integration_anywhere_pattern() {
     let config = parse_config(
         r#"
-        (rule "rm" (anywhere "-r") (effect :ask "Recursive delete requires confirmation"))
+        (rule "rm"
+            (when (anywhere "-r") (effect :ask "Recursive delete requires confirmation"))
+            :effect (effect :allow))
     "#,
     )
     .unwrap();
@@ -312,14 +338,14 @@ fn integration_anywhere_pattern() {
     assert_eq!(result.decision, Decision::Ask);
 
     let result = evaluate_v2("rm", &["foo".to_string()], &config, &facts);
-    assert_eq!(result.decision, Decision::Ask); // No rule matched
+    assert_eq!(result.decision, Decision::Allow);
 }
 
 #[test]
 fn integration_no_matching_rule_returns_ask() {
     let config = parse_config(
         r#"
-        (rule "git" (effect :allow))
+        (rule "git" :effect :allow)
     "#,
     )
     .unwrap();
@@ -334,7 +360,9 @@ fn integration_no_matching_rule_returns_ask() {
 fn integration_exact_pattern_requires_all_args() {
     let config = parse_config(
         r#"
-        (rule "git" (exact "status") (effect :allow))
+        (rule "git"
+            (when (exact "status") (effect :allow))
+            :effect (effect :ask))
     "#,
     )
     .unwrap();
@@ -345,10 +373,10 @@ fn integration_exact_pattern_requires_all_args() {
     let result = evaluate_v2("git", &["status".to_string()], &config, &facts);
     assert_eq!(result.decision, Decision::Allow);
 
-    // Extra args - no match
+    // Extra positional args - no match (flags are ignored by exact)
     let result = evaluate_v2(
         "git",
-        &["status".to_string(), "--short".to_string()],
+        &["status".to_string(), "extra".to_string()],
         &config,
         &facts,
     );
@@ -360,10 +388,11 @@ fn integration_complex_nested_combinators() {
     let config = parse_config(
         r#"
         (rule "kubectl"
-            (and
+            (when (and
                 (or (positional "apply") (positional "delete"))
-                (has [:env "prod"]))
-            (effect :deny "No mutations in prod"))
+                (fact? [:env "prod"]))
+                (effect :deny "No mutations in prod"))
+            :effect (effect :allow))
     "#,
     )
     .unwrap();
@@ -377,7 +406,7 @@ fn integration_complex_nested_combinators() {
     let result = evaluate_v2("kubectl", &["delete".to_string()], &config, &facts);
     assert_eq!(result.decision, Decision::Deny);
 
-    // Non-mutation command should not match
+    // Non-mutation command should not match the when clause, use default
     let result = evaluate_v2("kubectl", &["get".to_string()], &config, &facts);
-    assert_eq!(result.decision, Decision::Ask);
+    assert_eq!(result.decision, Decision::Allow);
 }

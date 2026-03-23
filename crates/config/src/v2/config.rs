@@ -453,8 +453,8 @@ mod tests {
             (define safe-git
                 (or (positional "status") (positional "log")))
             
-            (rule "git" (or (positional "status") (positional "log")) (effect :allow))
-            (rule "git" (positional "push") (effect :ask))
+            (rule "git" (or (positional "status") (positional "log")) :effect (effect :allow))
+            (rule "git" (positional "push") :effect (effect :ask))
             
             (check
                 :allow "git status"

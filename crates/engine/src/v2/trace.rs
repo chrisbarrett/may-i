@@ -5,9 +5,8 @@
 // predicate and effect syntax.
 
 use may_i_core::types::{Decision, EvalResult};
-use may_i_core::v2::ast::{Effect, Rule};
+use may_i_core::v2::ast::{Effect, Predicate, Rule};
 use may_i_core::v2::pattern::ArgPattern;
-use may_i_core::v2::predicate::Predicate;
 
 /// A trace entry representing one step in the evaluation process.
 #[derive(Debug, Clone)]
@@ -105,6 +104,27 @@ pub enum EffectTrace {
         predicate_result: PredicateResult,
         then_effect: Box<EffectTrace>,
         else_effect: Option<Box<EffectTrace>>,
+        decision: Decision,
+        reason: Option<String>,
+    },
+
+    /// And expression evaluation - all effects must succeed
+    And {
+        effects: Vec<EffectTrace>,
+        decision: Decision,
+        reason: Option<String>,
+    },
+
+    /// Or expression evaluation - at least one effect must succeed
+    Or {
+        effects: Vec<EffectTrace>,
+        decision: Decision,
+        reason: Option<String>,
+    },
+
+    /// Not expression evaluation - negates an effect's decision
+    Not {
+        effect: Box<EffectTrace>,
         decision: Decision,
         reason: Option<String>,
     },
@@ -264,7 +284,7 @@ mod tests {
 
     #[test]
     fn predicate_trace_with_children() {
-        let child = PredicateTrace::new(Predicate::has_presence(":test"), PredicateResult::Match);
+        let child = PredicateTrace::new(Predicate::fact_presence(":test"), PredicateResult::Match);
         let parent = PredicateTrace::with_children(
             Predicate::And(vec![]),
             PredicateResult::Match,
@@ -395,7 +415,7 @@ mod tests {
     #[test]
     fn effect_trace_when() {
         let trace = EffectTrace::When {
-            predicate: Predicate::has_presence(":test"),
+            predicate: Predicate::fact_presence(":test"),
             predicate_result: PredicateResult::Match,
             effect: Box::new(EffectTrace::Terminal {
                 effect: Effect::Allow(None),
@@ -422,7 +442,7 @@ mod tests {
     #[test]
     fn effect_trace_unless() {
         let trace = EffectTrace::Unless {
-            predicate: Predicate::has_presence(":test"),
+            predicate: Predicate::fact_presence(":test"),
             predicate_result: PredicateResult::NoMatch,
             effect: Box::new(EffectTrace::Terminal {
                 effect: Effect::Deny(Some("test".into())),
@@ -449,7 +469,7 @@ mod tests {
     #[test]
     fn effect_trace_if() {
         let trace = EffectTrace::If {
-            predicate: Predicate::has_presence(":test"),
+            predicate: Predicate::fact_presence(":test"),
             predicate_result: PredicateResult::Match,
             then_effect: Box::new(EffectTrace::Terminal {
                 effect: Effect::Allow(None),
