@@ -7,6 +7,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 mod cmd_check;
 mod cmd_claude_code_hook;
 mod cmd_eval;
+mod cmd_help;
 mod cmd_migrate;
 mod cmd_parse;
 mod runtime_facts;
@@ -65,6 +66,8 @@ enum Command {
         #[arg(long)]
         yes: bool,
     },
+    /// Show detailed DSL syntax reference
+    Reference,
 }
 
 fn main() {
@@ -96,6 +99,7 @@ fn run() -> miette::Result<()> {
         Some(Command::Migrate { output, yes }) => {
             cmd_migrate::cmd_migrate(cli.config.as_deref(), output.as_deref(), yes)?
         }
+        Some(Command::Reference) => cmd_help::cmd_help()?,
         None => {
             if std::io::stdin().is_terminal() {
                 Cli::command()

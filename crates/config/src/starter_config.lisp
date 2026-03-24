@@ -1,8 +1,7 @@
 ;;; may-i configuration
 ;;
-;; Rules are evaluated in order. First match wins (deny rules always win).
-;; Commands with no matching rule default to "ask". Edits to this file take
-;; effect immediately.
+;; Rules are evaluated in order. First match wins.
+;; Commands with no matching rule default to "ask". Edits take effect immediately.
 ;;
 ;; Validate your config with: may-i check
 
@@ -10,224 +9,161 @@
 ;;
 ;; RULES
 ;;
-;;   (rule (command "grep")                           ; exact command name
-;;         (effect :allow "Text search"))             ; decision + optional reason
+;;   (rule "grep" :effect :allow)                    ; simple allow
+;;   (rule "rm" :effect [:deny "Dangerous"])         ; with reason
 ;;
-;;   (rule (command (or "cat" "head" "tail"))      ; match any of these commands
-;;         (effect :allow))
+;;   (rule (or "cat" "head" "tail")                  ; match any command
+;;         :effect :allow)
 ;;
-;;   (rule (command (regex "^git-.*"))                 ; match by regex
-;;         (effect :allow))
+;;   (rule (regex "^git-.*")                         ; regex match
+;;         :effect :allow)
 ;;
-;; FACTS (runtime context attached to a command evaluation)
+;; EFFECTS
 ;;
-;; Facts are always namespaced keys like :via/ssh or :opencode/agent.
-;; They come in two shapes:
+;; Terminal effects (return a decision):
+;;   (effect :allow)
+;;   (effect :ask "Reason")
+;;   (effect :deny "Reason")
 ;;
-;;   presence fact: [:via/ssh]                 ; key is present
-;;   scalar fact:   [:opencode/agent "build"] ; key has a string value
+;; Pattern effects (return Allow on match, Nil otherwise):
+;;   (positional "push" "origin")     ; match positional args
+;;   (exact "ls" "-la")               ; exact match (no extra args)
+;;   (anywhere "--force" "-f")        ; match anywhere in args
+;;   (forbidden "--dangerous")        ; fail if pattern found
 ;;
-;; Facts are introduced in a few ways:
+;; Combinators:
+;;   (and EFFECT ...)                 ; all must match
+;;   (or EFFECT ...)                  ; first match wins
+;;   (not EFFECT)                     ; invert Allow/Nil
 ;;
-;;   runtime integrations
-;;     - OpenCode can pass :client/opencode and :opencode/agent to `may-i eval --fact`
-;;     - Claude Code adds :client/claude-code and related metadata
+;; Conditionals:
+;;   (when PATTERN EFFECT)            ; effect if pattern matches
+;;   (unless PATTERN EFFECT)          ; effect if pattern doesn't match
+;;   (if PATTERN THEN ELSE)           ; if-then-else
+;;   (cond ((PATTERN) EFFECT) ...     ; multi-way branch
+;;          (else EFFECT))
 ;;
-;;   wrappers
-;;     - matched wrappers automatically add :via/<wrapper-command>
-;;     - bracket bindings like [:ssh/host *] capture a matched value as a fact
+;; Recursive evaluation (for wrapper commands like ssh, sudo):
+;;   (may-i PATTERN)                  ; evaluate inner command
+;;   (positional [:host *] . (may-i *))   ; capture host, eval rest
 ;;
-;; Facts are queried inside (context ...) with:
+;; FACTS (runtime context)
 ;;
-;;   (has :via/ssh)                              ; presence check
-;;   (has [:via/ssh])                            ; same as (has :via/ssh)
-;;   (has [:opencode/agent "build"])            ; exact string value
-;;   (has [:ssh/host *])                         ; any scalar value is set
-;;   (has [:ssh/host (regex "^prod-")])         ; regex value match
-;;   (has [:opencode/agent (or "build" "plan")])
-;;   (has [:ssh/host (and (regex "^prod-")
-;;                        (not "prod-test"))])
-;;   (and (has :via/ssh) (has [:opencode/agent "build"]))
+;; Facts are namespaced keys like :via/ssh or :opencode/agent.
 ;;
-;; CONTEXT MATCHERS (inside (context ...))
+;;   presence: :via/ssh              ; key is present
+;;   scalar:   [:env "prod"]         ; key has string value
 ;;
-;;   (defcontext remote-prod
-;;     (and (has :via/ssh)
-;;          (has [:ssh/host (regex "^prod-")])))
+;; Query facts with (fact? ...):
+;;   (fact? :via/ssh)                                     ; presence
+;;   (fact? [:env "prod"])                                ; exact value
+;;   (fact? [:ssh/host (regex "^prod-")])                ; regex match
+;;   (and (fact? :via/ssh) (fact? [:env "prod"]))        ; combined
 ;;
-;;   (rule (command "journalctl")
-;;         (context remote-prod)
-;;         (effect :allow))
+;; PATTERNS (for positional/anywhere/exact)
 ;;
-;;   (rule (command "echo")
-;;         (context (has [:claude-code/permission-mode "acceptEdits"]))
-;;         (effect :allow))
+;;   "literal"                       ; exact string
+;;   *                               ; wildcard (matches anything)
+;;   (regex "^pattern$")             ; regex
+;;   (or "a" "b" "c")                ; match any
+;;   (and P1 (not P2))               ; combine patterns
 ;;
-;;   (rule (command "git")
-;;         (context (has [:opencode/agent "plan"]))
-;;         (effect :ask "Git commands in the plan agent need approval"))
+;; QUANTIFIERS (for positional args)
 ;;
-;; ARGUMENT MATCHERS (inside (args ...))
+;;   "cmd"                           ; exactly one (default)
+;;   (? "cmd")                       ; zero or one
+;;   (+ "cmd")                       ; one or more
+;;   (* "cmd")                       ; zero or more
 ;;
-;;   (positional "push" *)                  ; match by position (skip flags); * = any
-;;   (exact "remote")                       ; like positional but requires exact arg count
-;;   (anywhere "-r" "--recursive")          ; any of these tokens appears in argv
-;;   (forbidden "-d" "--data")              ; sugar for (not (anywhere ...))
-;;   (and (anywhere "-r") (anywhere "/"))   ; all sub-matchers must match
-;;   (or (positional "a") (positional "b")) ; any sub-matcher must match
-;;   (not (anywhere "--force"))             ; inverts a sub-matcher
+;; NAMED PREDICATES
 ;;
-;; POSITIONAL QUANTIFIERS
+;;   (define prod-host
+;;     (and (fact? :via/ssh)
+;;          (fact? [:ssh/host (regex "^prod-")])))
 ;;
-;;   (positional "cmd" *)              ; bare expr = exactly one
-;;   (positional "cmd" (? *))          ; zero or one
-;;   (positional "cmd" (+ *))          ; one or more
-;;   (positional "cmd" (* *))          ; zero or more
+;;   (rule "kubectl"
+;;     (when prod-host (effect :deny "No kubectl on prod"))
+;;     :effect (effect :allow))
 ;;
-;; PATTERNS (inside positional/anywhere)
+;; CHECKS (validated by `may-i check`)
 ;;
-;;   "literal"                         ; exact string match
-;;   *                                 ; wildcard (matches anything)
-;;   (regex "^(get|list).*")           ; regex match
-;;   (or "create" "delete" "fork")     ; match any of these strings
-;;   (and (regex "^/") (not "/tmp"))   ; combine with and/not
+;;   (check :allow "ls -la"
+;;          :deny "rm -rf /")
 ;;
-;; FACT PREDICATES IN ARGS (NEW - check runtime context within argument matching)
+;; With facts:
+;;   (check (with-facts [[:env "prod"]]
+;;            :deny "kubectl get pods")
+;;          (with-facts [[:env "dev"]]
+;;            :allow "kubectl get pods"))
 ;;
-;;   (has :via/ssh)                       ; presence check in args context
-;;   (has [:env "prod"])                  ; exact value match
-;;   (has [:env (regex "^prod-")])       ; regex value match
-;;   (and (positional "delete") (has [:env "prod"]))  ; combine arg + fact checks
-;;   (or (has :via/ssh) (has :via/mosh))  ; either wrapper fact present
+;; ENV VAR RESOLUTION
 ;;
-;;   (rule (command "kubectl")
-;;         (args (cond
-;;                 ((has [:env "prod"])
-;;                  (effect :deny "No kubectl in production"))
-;;                 (else
-;;                  (effect :allow)))))
+;;   (safe-env-vars "HOME" "PWD" "USER" "SHELL" "EDITOR")
 ;;
-;; COND (branch on args within a single rule; first matching branch wins)
-;;
-;;   (rule (command "tmux")
-;;         (args (cond
-;;                 ((positional "source-file" "~/.tmux.conf")
-;;                  (effect :allow "Reloading config"))
-;;                 (else
-;;                  (effect :deny "Unknown tmux command")))))
-;;
-;; SUGAR FORMS (work at the args level; use cond with else for fallthrough)
-;;
-;;   (if MATCHER THEN-EFFECT)             ; one-branch conditional
-;;   (if MATCHER THEN-EFFECT ELSE-EFFECT) ; two-branch conditional
-;;   (when MATCHER EFFECT)                ; use (cond ((TEST EFFECT)) (else FALLBACK))
-;;   (unless MATCHER EFFECT)              ; use (cond ((TEST EFFECT)) (else FALLBACK))
-;;
-;; NOTE: Embedded effects in args (cond/if/when/unless) and rule-level (effect ...)
-;; are mutually exclusive. Use cond with an explicit else branch for fallthrough:
-;;
-;;   ; Correct: cond with else for fallback
-;;   (args (cond ((has [:env "prod"]) (effect :deny))
-;;               (else (effect :allow))))
-;;
-;;   ; Incorrect: embedded effect + rule-level effect
-;;   (args (when (has [:env "prod"]) (effect :deny)))  ; when + rule-level effect = error
-;;
-;; INLINE CHECKS (validated by `may-i check`)
-;;
-;; Plain checks just assert a command's expected decision:
-;;
-;;   (check :allow "curl -I https://example.com"
-;;          :ask "curl -d data https://example.com")
-;;
-;; Fact-aware checks simulate runtime context with (with-facts ...).
-;; Each entry in the fact vector is either [[:key]] for presence or
-;; [[:key "value"]] for a scalar binding. Nested with-facts scopes inherit
-;; outer facts, and inner bindings override outer bindings with the same key.
-;;
-;;   (check
-;;     (with-facts [[:client/opencode]
-;;                  [:opencode/agent "build"]]
-;;       :allow "git add .")
-;;     (with-facts [[:client/opencode]
-;;                  [:opencode/agent "plan"]]
-;;       :ask "git add ."))
-;;
-;; WRAPPERS (unwrap to evaluate the inner command)
-;;
-;;   (wrapper "nohup"      :command+args)              ; inner cmd after flags
-;;   (wrapper "mise"       (positional "exec") (flag "--" :command+args))
-;;   (wrapper "ssh"        (positional [:ssh/host *] :command+args))
-;;   (wrapper "nix"        (positional (or "shell" "develop")) (flag "--command" :command+args))
-;;
-;; ENV VAR RESOLUTION (allow static analysis to resolve these env vars)
-;;
-;;   (safe-env-vars "HOME" "PWD" "USER" "SHELL" "EDITOR" "TERM")
-;;
-
-(wrapper "time" :command+args)
 
 ;;; -- Deny: dangerous operations ---------------------------------------------
 
-(rule (command "rm")
-      (args (and (anywhere "-r" "--recursive")
-                 (anywhere "/")))
-      (effect :deny "Recursive deletion from root"))
+(rule "rm"
+  (when (and (anywhere "-r" "--recursive")
+             (anywhere "/"))
+    (effect :deny "Recursive deletion from root"))
+  :effect (effect :ask))
 
-(rule (command (or "mkfs" "dd" "fdisk" "parted" "gdisk"))
-      (effect :deny "Dangerous filesystem or device operation"))
+(rule (or "mkfs" "dd" "fdisk" "parted" "gdisk")
+  :effect [:deny "Dangerous filesystem or device operation"])
 
-(rule (command (or "shutdown" "reboot" "halt" "poweroff" "init"))
-      (effect :deny "System power control"))
+(rule (or "shutdown" "reboot" "halt" "poweroff" "init")
+  :effect [:deny "System power control"])
 
-(rule (command (or "iptables" "nft" "pfctl"))
-      (effect :deny "Firewall manipulation"))
+(rule (or "iptables" "nft" "pfctl")
+  :effect [:deny "Firewall manipulation"])
 
-;;; -- Context-aware rules using fact predicates  -------------------------
+;;; -- Context-aware rules using facts -----------------------------------------
 
-; Example: Block kubectl in production environment
-; (requires passing --fact :env=prod to may-i eval)
-(rule (command "kubectl")
-      (args (cond
-              ((has [:env "prod"])
-               (effect :deny "No kubectl in production environment"))
-              (else
-               (effect :allow)))))
+; Example: Block kubectl in production
+; (pass --fact :env=prod to may-i eval to test)
+(rule "kubectl"
+  (when (fact? [:env "prod"])
+    (effect :deny "No kubectl in production"))
+  :effect (effect :allow))
 
-; Example: Different handling based on SSH host pattern
-; (works with ssh wrapper that captures host as :ssh/host fact)
-(wrapper "ssh" (positional [:ssh/host *] :command+args))
+; Example: SSH wrapper - capture host, evaluate inner command
+(rule "ssh"
+  (positional [:ssh/host *] . (may-i *))
+  :effect [:deny "SSH commands denied by default"])
 
-(rule (command "rm")
-      (args (cond
-              ((and (anywhere "-r" "--recursive")
-                    (has [:ssh/host (regex "^prod-")]))
-               (effect :deny "Recursive delete on production hosts"))
-              (else
-               (effect :ask "Confirm recursive deletion")))))
+(rule "rm"
+  (cond
+    ((and (anywhere "-r" "--recursive")
+          (fact? [:ssh/host (regex "^prod-")]))
+     (effect :deny "Recursive delete on production hosts"))
+    ((anywhere "-r" "--recursive")
+     (effect :ask "Confirm recursive deletion"))
+    (else
+     (effect :allow))))
 
 ;;; -- Allow: read-only operations ---------------------------------------------
 
-(rule (command (or "cat" "head" "tail" "less" "more" "wc" "sort" "uniq"))
-      (effect :allow "Read-only file operations"))
+(rule (or "cat" "head" "tail" "less" "more" "wc" "sort" "uniq")
+  :effect [:allow "Read-only file operations"])
 
-(rule (command (or "ls" "tree" "file" "stat" "du" "df"))
-      (effect :allow "Read-only filesystem inspection"))
+(rule (or "ls" "tree" "file" "stat" "du" "df")
+  :effect [:allow "Read-only filesystem inspection"])
 
-(rule (command (or "grep" "rg" "ag" "ack"))
-      (effect :allow "Text search"))
+(rule (or "grep" "rg" "ag" "ack")
+  :effect [:allow "Text search"])
 
-(rule (command (or "locate" "which" "whereis" "type"))
-      (effect :allow "File and command lookup"))
+(rule (or "locate" "which" "whereis" "type")
+  :effect [:allow "File and command lookup"])
 
-(rule (command (or "echo" "printf" "true" "false" "test" "["))
-      (effect :allow "Shell builtins"))
+(rule (or "echo" "printf" "true" "false" "test" "[")
+  :effect [:allow "Shell builtins"])
 
-(rule (command (or "date" "hostname" "uname" "whoami" "id" "printenv" "env"))
-      (effect :allow "System information"))
+(rule (or "date" "hostname" "uname" "whoami" "id" "printenv" "env")
+  :effect [:allow "System information"])
 
-(rule (command (or "ps" "top" "uptime" "free" "vmstat" "iostat"))
-      (effect :allow "Process and system monitoring"))
+(rule (or "ps" "top" "uptime" "free" "vmstat" "iostat")
+  :effect [:allow "Process and system monitoring"])
 
-(rule (command (or "basename" "dirname" "realpath" "readlink" "pwd"))
-      (effect :allow "Path utilities"))
+(rule (or "basename" "dirname" "realpath" "readlink" "pwd")
+  :effect [:allow "Path utilities"])

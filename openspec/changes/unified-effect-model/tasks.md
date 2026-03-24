@@ -64,34 +64,40 @@
 
 ## 4. Update v1 Migration Tool
 
-- [ ] 4.1 Update migration rules for new syntax
+- [x] 4.1 Update migration rules for new syntax
   - Migrate (rule (command X) ...) to (rule X ...)
-  - Migrate (args (cond ...)) to proper case form
-  - Handle (args (and ... (if ...))) extraction
-- [ ] 4.2 Add migration for has → fact?
-- [ ] 4.3 Update validation to target new parser
-- [ ] 4.4 Add tests for complex migration cases
+  - Migrate (effect :allow) to :effect :allow shorthand
+  - Handle old-style rule structures
+- [x] 4.2 Add migration for has → fact?
+- [x] 4.3 Update validation to target new parser
+- [x] 4.4 Add tests for complex migration cases
 
 ## 5. Update Tests
 
-- [ ] 5.1 Update parser tests for new syntax
-- [ ] 5.2 Update evaluator tests for unified effects
-- [ ] 5.3 Add tests for Nil handling in combinators
+- [x] 5.1 Update parser tests for new syntax
+- [x] 5.2 Update evaluator tests for unified effects
+- [x] 5.3 Add tests for Nil handling in combinators
 - [ ] 5.4 Add tests for dot notation
-- [ ] 5.5 Add tests for shorthand :effect syntax
-- [ ] 5.6 Update integration tests
+- [x] 5.5 Add tests for shorthand :effect syntax
+- [x] 5.6 Update integration tests
 
 ## 6. Documentation
 
-- [ ] 6.1 Update README with new syntax
-- [ ] 6.2 Update config examples
-- [ ] 6.3 Document effect evaluation semantics
-- [ ] 6.4 Document dot notation usage
+- [x] 6.1 Update README with new syntax
+- [x] 6.2 Update starter config with new syntax
+- [x] 6.3 Add `may-i reference` command for detailed DSL help
+- [ ] 6.4 Document dot notation usage (pending implementation)
 
 ## 7. Cleanup
 
-- [ ] 7.1 Remove old v2 AST types
-- [ ] 7.2 Remove old v2 parser code
-- [ ] 7.3 Remove old v2 evaluator code
-- [ ] 7.4 Run full test suite
-- [ ] 7.5 Verify migration works on example configs
+- [x] 7.1 Remove old v2 AST types
+  - Deleted crates/core/src/v2/predicate.rs
+- [x] 7.2 Remove old v2 parser code
+  - All parser code updated to unified model
+- [x] 7.3 Remove old v2 evaluator code
+  - All evaluator code updated to unified model
+- [x] 7.4 Run full test suite
+  - All 1402 tests passing
+- [x] 7.5 Verify migration works on example configs
+  - Migration tests all passing
+  - Validation confirms migrated output parses correctly

@@ -21,24 +21,26 @@ commands. `rm` is denied on immutable hosts, even when snuck in via `sudo`.
 ```scheme
 ; Define a reusable predicate for immutable production hosts
 (define immutable
-  (and (has :via/ssh)
-       (has [:ssh/host (regex "(^|@).*prod.*")])))
+  (and (fact? :via/ssh)
+       (fact? [:ssh/host (regex "(^|@).*prod.*")])))
 
 ; Allow echo always
-(rule "echo" (effect :allow "Local echo is always fine"))
+(rule "echo" :effect [:allow "Local echo is always fine"])
 
 ; Deny rm on immutable hosts using the defined predicate
 (rule "rm"
-  immutable
-  (effect :deny "Production hosts are immutable"))
+  (when immutable (effect :deny "Production hosts are immutable"))
+  :effect (effect :allow))
 
 ; SSH unwraps to evaluate the inner command
 (rule "ssh"
-  (positional [:ssh/host *] . (may-i *)))
+  (positional [:ssh/host *] . (may-i *))
+  :effect (effect :deny))
 
-; Sudo unwraps to evaluate the inner command  
+; Sudo unwraps to evaluate the inner command
 (rule "sudo"
-  (positional . (may-i *)))
+  (positional . (may-i *))
+  :effect (effect :deny))
 ```
 
 </details>
@@ -71,56 +73,69 @@ based on the real command structure rather than brittle string matching.
 Rules match commands and decide what should happen. This is the core of the
 system: "allow these", "ask for those", "never permit these".
 
-Rules use a simplified syntax where the first argument is always the command:
+Rules match commands using pattern effects. Use `:effect` to specify the default:
 
 ```scheme
 ; Simple rule: allow cat
-(rule "cat" (effect :allow))
+(rule "cat" :effect :allow)
 
-; Rule with predicate: ask for rm -rf
+; Rule with pattern matching: ask for rm -rf
 (rule "rm"
-  (anywhere "-rf" "--recursive")
-  (effect :ask "Recursive deletion requires confirmation"))
+  (when (anywhere "-rf" "--recursive")
+    (effect :ask "Recursive deletion requires confirmation"))
+  :effect (effect :allow))
 ```
 
-### Predicates
+### Pattern Effects
 
-Predicates test whether a rule applies. They can query:
-- **Facts** with `(has ...)` - runtime context like `:via/ssh` or `:client/opencode`
-- **Arguments** with patterns like `(positional ...)`, `(anywhere ...)`, `(exact ...)`
-- **Combined** with `(and ...)`, `(or ...)`, `(not ...)`
+Pattern effects match command arguments and return `Allow` on success, `Nil` otherwise. They can be used in `when`, `unless`, `if`, and `cond` to make decisions conditional:
 
 ```scheme
-; Fact predicate
-(has :via/ssh)
-(has [:ssh/host "prod-server-01"])
-
-; Argument predicates  
+; Match positional arguments (skipping flags)
 (positional "git" "push")
+(positional [:host *] "deploy")
+
+; Match anywhere in args
 (anywhere "--force" "-f")
+
+; Require exact argument match
 (exact "ls" "-la")
 
-; Combined
-(and (has :via/ssh) (positional "rm" "-rf"))
-(or (positional "git" "push") (positional "git" "pull"))
+; Combined with conditionals
+(when (and (fact? :via/ssh) (positional "rm" "-rf"))
+  (effect :deny))
+
+(if (anywhere "--force")
+  (effect :ask "Force flag detected")
+  (effect :allow))
 ```
 
 ### Effects
 
-Effects decide what happens when a rule matches:
+Effects are evaluated in order within a rule until one returns a decision:
 
 ```scheme
+; Terminal effects
 (effect :allow)
 (effect :ask "Reason for asking")
 (effect :deny "Why this is blocked")
-(may-i PATTERN)                    ; Recursively evaluate inner command
-(case ((PREDICATE) EFFECT) ...)    ; Conditional effects
-(when PREDICATE EFFECT)            ; Conditional effect sugar
-(unless PREDICATE EFFECT)          ; Negated conditional
-(if PREDICATE THEN ELSE)           ; If-then-else
+
+; Recursive evaluation
+(may-i PATTERN)                    ; Evaluate inner command
+
+; Combinators
+(and EFFECT ...)                   ; All must succeed
+(or EFFECT ...)                    ; First to succeed wins
+(not EFFECT)                       ; Invert Allow/Nil
+
+; Conditionals
+(cond ((PATTERN) EFFECT) ... (else EFFECT))  ; Pattern-based branching
+(when PATTERN EFFECT)              ; Conditional effect
+(unless PATTERN EFFECT)            ; Negated conditional
+(if PATTERN THEN ELSE)             ; If-then-else
 ```
 
-Effects combine with "most restrictive wins": `Deny > Ask > Allow`.
+Effects evaluate to `Decision | Nil`. The `:effect` keyword specifies the default if all effects return `Nil`. Decisions combine with "most restrictive wins": `Deny > Ask > Allow`.
 
 ### Named Predicates
 
@@ -128,8 +143,8 @@ Define reusable predicates with `(define ...)`:
 
 ```scheme
 (define prod-host
-  (and (has :via/ssh)
-       (has [:ssh/host (regex "^prod-")])))
+  (and (fact? :via/ssh)
+       (fact? [:ssh/host (regex "^prod-")])))
 
 (define dangerous-rm
   (and (positional "rm")
@@ -137,8 +152,9 @@ Define reusable predicates with `(define ...)`:
 
 ; Use the defined predicates
 (rule "rm"
-  (and prod-host dangerous-rm)
-  (effect :deny "Recursive delete on production hosts"))
+  (when (and prod-host dangerous-rm)
+    (effect :deny "Recursive delete on production hosts"))
+  :effect (effect :allow))
 ```
 
 ### Recursive Evaluation
@@ -149,19 +165,23 @@ and `mise` to evaluate the inner command:
 ```scheme
 ; SSH unwrap: capture host as fact, evaluate inner command
 (rule "ssh"
-  (positional [:ssh/host *] . (may-i *)))
+  (positional [:ssh/host *] . (may-i *))
+  :effect (effect :deny "No SSH commands allowed by default"))
 
 ; Sudo unwrap: evaluate inner command directly
 (rule "sudo"
-  (positional . (may-i *)))
+  (positional . (may-i *))
+  :effect (effect :deny))
 
 ; Mise exec unwrap: skip "exec", evaluate rest
 (rule "mise"
-  (positional "exec" . (may-i *)))
+  (positional "exec" . (may-i *))
+  :effect (effect :deny))
 ```
 
 The dot (`.`) syntax explicitly marks where remaining arguments become the
-recursive evaluation target.
+recursive evaluation target. If `(may-i *)` doesn't match, the rule falls through
+to the `:effect` default.
 
 ### Checks
 
@@ -173,6 +193,7 @@ as it grows:
   (if (anywhere "-f" "--force")
       (effect :ask "Force moves can be destructive")
       (effect :allow))
+  :effect (effect :deny)
   (check :allow "mv foo bar"
          :ask "mv -f foo bar"))
 ```
@@ -189,6 +210,7 @@ when it uses `--force`:
   (if (anywhere "-f" "--force")
       (effect :ask "File moves with -f/--force can be destructive")
       (effect :allow))
+  :effect (effect :deny)
   (check :allow "mv foo bar"
          :ask "mv -f foo bar"))
 ```
@@ -211,14 +233,16 @@ recursive evaluation while `may-i` unwraps a command.
 ```scheme
 ; Block kubectl in production environment
 (rule "kubectl"
-  (has [:env "prod"])
-  (effect :deny "No kubectl in production"))
+  (when (fact? [:env "prod"])
+    (effect :deny "No kubectl in production"))
+  :effect (effect :allow))
 
 ; Combine arg patterns with fact checks
 (rule "rm"
-  (and (anywhere "-r" "--recursive")
-       (has [:ssh/host (regex "^prod-")]))
-  (effect :deny "Recursive delete on production hosts"))
+  (when (and (anywhere "-r" "--recursive")
+             (fact? [:ssh/host (regex "^prod-")]))
+    (effect :deny "Recursive delete on production hosts"))
+  :effect (effect :allow))
 ```
 
 ## Installation
