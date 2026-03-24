@@ -34,7 +34,11 @@
   - Parse (positional A B . EFFECT)
   - Store continuation effect in ArgPattern
   - Evaluate continuation with remaining args
-- [ ] 2.5 Update error messages for new syntax
+- [x] 2.5 Update error messages for new syntax
+  - Added migration rule to rename `has` → `fact?` in migrate.rs
+  - Updated all tests to expect `fact?` instead of `has` in migrated output
+  - Fixed validate_migration_success test to use new syntax
+  - All 282 tests passing
 
 ## 3. Evaluator Rewrite (may_i_engine::v2::eval)
 

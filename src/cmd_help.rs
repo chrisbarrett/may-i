@@ -3,6 +3,7 @@
 use colored::Colorize;
 
 /// Print comprehensive DSL syntax help.
+#[allow(clippy::print_literal)]
 pub fn cmd_help() -> miette::Result<()> {
     print!(
         "{}",

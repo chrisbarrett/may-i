@@ -785,7 +785,7 @@ fn evaluate_effect_with_trace(
         }
 
         // Pattern effects
-        Effect::CommandPattern(pattern) => {
+        Effect::CommandPattern(_pattern) => {
             let result = evaluate_effect(effect, ctx, rules);
             let trace = EffectTrace::Terminal {
                 effect: effect.clone(),
@@ -1025,7 +1025,7 @@ fn evaluate_effect_with_trace(
         }
 
         // Recursion
-        Effect::MayI { pattern } => {
+        Effect::MayI { pattern: _ } => {
             let result = evaluate_effect(effect, ctx, rules);
             let trace = EffectTrace::Terminal {
                 effect: effect.clone(),

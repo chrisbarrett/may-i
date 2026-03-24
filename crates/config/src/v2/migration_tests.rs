@@ -34,7 +34,7 @@ fn migration_rule_with_context() {
     let result = migrate(node);
     let output = result.serialize();
 
-    assert!(output.contains("has"));
+    assert!(output.contains("fact?"));
     assert!(output.contains(":via/ssh"));
     assert!(!output.contains("(context")); // Should be inlined
 }
@@ -105,17 +105,16 @@ fn migration_preserves_comments() {
 
 #[test]
 fn validate_migration_success() {
+    // Test that properly migrated (new syntax) configs pass validation
     let migrated = r#"
-        (rule "git" (effect :allow))
-        (define safe (has :local))
+        (rule "git" :effect :allow)
+        (define safe (fact? :local))
     "#;
 
     let result = validate_migration(migrated);
-    // TODO: Migration tool needs to be updated for new :effect syntax
-    // For now, expect failure since migration outputs old syntax
     assert!(
-        result.is_err(),
-        "Expected validation to fail until migration tool is updated"
+        result.is_ok(),
+        "Validation should succeed for properly migrated new syntax"
     );
 }
 

@@ -38,6 +38,9 @@ pub fn migration_rules() -> Vec<RewriteFn> {
         Box::new(wrapper_to_rule),
         // Rule: (defcontext NAME EXPR) → (define NAME EXPR)
         Box::new(defcontext_to_define),
+        // Rule: (has ...) → (fact? ...)
+        // Rename has to fact? for the new unified syntax
+        Box::new(rename_has_to_fact),
         // Rule: (rule ... (effect E)) → (rule ... :effect E)
         // MUST run after other rule transformations that may produce old-style rules
         Box::new(rule_convert_effect_to_keyword),
@@ -484,6 +487,71 @@ fn transform_has_expression(expr: &CstNode) -> Box<CstNode> {
         // Atom or string - return as-is
         Box::new(expr.clone())
     }
+}
+
+/// Rename `has` to `fact?` in all expressions.
+/// This is part of the unified effect model where `has` was renamed to `fact?`.
+fn rename_has_to_fact(node: &CstNode) -> Option<Box<CstNode>> {
+    if let Some(list) = node.as_list() {
+        if list.is_empty() {
+            return None;
+        }
+
+        // Check if this is a (has ...) expression
+        if let Some(tag) = list[0].as_atom()
+            && tag == "has"
+        {
+            // Rename to fact?
+            let mut new_children = Vec::new();
+            new_children.push(Box::new(CstNode::atom(
+                "fact?",
+                TriviaAnn {
+                    leading: list[0].ann.leading.clone(),
+                    trailing: list[0].ann.trailing.clone(),
+                    span: list[0].ann.span,
+                },
+            )));
+            // Copy the rest of the children
+            for child in &list[1..] {
+                new_children.push(child.clone());
+            }
+
+            return Some(Box::new(CstNode::list(
+                new_children,
+                TriviaAnn {
+                    leading: node.ann.leading.clone(),
+                    trailing: node.ann.trailing.clone(),
+                    span: node.ann.span,
+                },
+            )));
+        }
+
+        // Recursively process children
+        let mut new_children = Vec::new();
+        let mut changed = false;
+
+        for child in list {
+            if let Some(transformed) = rename_has_to_fact(child) {
+                new_children.push(transformed);
+                changed = true;
+            } else {
+                new_children.push(child.clone());
+            }
+        }
+
+        if changed {
+            return Some(Box::new(CstNode::list(
+                new_children,
+                TriviaAnn {
+                    leading: node.ann.leading.clone(),
+                    trailing: node.ann.trailing.clone(),
+                    span: node.ann.span,
+                },
+            )));
+        }
+    }
+
+    None
 }
 
 /// Find and extract a cond/if form nested within boolean combinators.
@@ -1061,7 +1129,7 @@ mod tests {
         assert!(
             results[1]
                 .serialize()
-                .contains("(define ssh (has :via/ssh))")
+                .contains("(define ssh (fact? :via/ssh))")
         );
     }
 
