@@ -284,7 +284,10 @@ fn match_fact_pattern(pattern: &FactPattern, value: &str) -> bool {
 /// Evaluate an arg pattern as a predicate (returns Match/NoMatch).
 fn evaluate_arg_pattern_predicate(pattern: &ArgPattern, ctx: &EvalContext) -> PredicateResult {
     match pattern {
-        ArgPattern::Positional(patterns) => {
+        ArgPattern::Positional {
+            patterns,
+            continuation: _,
+        } => {
             // Match positional args against patterns
             let positional_args: Vec<&String> = ctx
                 .args
@@ -298,7 +301,10 @@ fn evaluate_arg_pattern_predicate(pattern: &ArgPattern, ctx: &EvalContext) -> Pr
                 PredicateResult::NoMatch
             }
         }
-        ArgPattern::Exact(patterns) => {
+        ArgPattern::Exact {
+            patterns,
+            continuation: _,
+        } => {
             let positional_args: Vec<&String> = ctx
                 .args
                 .iter()
@@ -461,10 +467,7 @@ fn evaluate_effect(effect: &Effect, ctx: &EvalContext, rules: &[Rule]) -> Effect
                 EffectResult::Nil
             }
         }
-        Effect::ArgPattern(pattern) => match evaluate_arg_pattern_effect(pattern, ctx) {
-            Some(decision) => EffectResult::Decision(decision, None),
-            None => EffectResult::Nil,
-        },
+        Effect::ArgPattern(pattern) => evaluate_arg_pattern_effect(pattern, ctx, rules),
 
         // Combinators with Nil handling
         Effect::And { effects } => {
@@ -565,10 +568,17 @@ fn evaluate_effect(effect: &Effect, ctx: &EvalContext, rules: &[Rule]) -> Effect
     }
 }
 
-/// Evaluate an arg pattern as an effect (returns decision or None for Nil).
-fn evaluate_arg_pattern_effect(pattern: &ArgPattern, ctx: &EvalContext) -> Option<Decision> {
+/// Evaluate an arg pattern as an effect (returns EffectResult).
+fn evaluate_arg_pattern_effect(
+    pattern: &ArgPattern,
+    ctx: &EvalContext,
+    rules: &[Rule],
+) -> EffectResult {
     match pattern {
-        ArgPattern::Positional(patterns) => {
+        ArgPattern::Positional {
+            patterns,
+            continuation,
+        } => {
             let positional_args: Vec<&String> = ctx
                 .args
                 .iter()
@@ -576,12 +586,35 @@ fn evaluate_arg_pattern_effect(pattern: &ArgPattern, ctx: &EvalContext) -> Optio
                 .collect();
 
             if match_positional_patterns(&positional_args, patterns) {
-                Some(Decision::Allow)
+                if let Some(cont) = continuation {
+                    // Calculate remaining args after consuming matched patterns
+                    let consumed_count = patterns
+                        .iter()
+                        .map(|p| match p.quantifier {
+                            may_i_core::types::Quantifier::One => 1,
+                            _ => 1, // For now, treat all as consuming 1
+                        })
+                        .sum::<usize>();
+                    let remaining_args: Vec<String> = ctx
+                        .args
+                        .iter()
+                        .filter(|arg| !arg.starts_with('-'))
+                        .skip(consumed_count)
+                        .map(|s| s.to_string())
+                        .collect();
+                    // Evaluate continuation with remaining args
+                    evaluate_effect_with_owned_args(cont, ctx, rules, remaining_args)
+                } else {
+                    EffectResult::Decision(Decision::Allow, None)
+                }
             } else {
-                None
+                EffectResult::Nil
             }
         }
-        ArgPattern::Exact(patterns) => {
+        ArgPattern::Exact {
+            patterns,
+            continuation,
+        } => {
             let positional_args: Vec<&String> = ctx
                 .args
                 .iter()
@@ -591,9 +624,21 @@ fn evaluate_arg_pattern_effect(pattern: &ArgPattern, ctx: &EvalContext) -> Optio
             if positional_args.len() == patterns.len()
                 && match_positional_patterns(&positional_args, patterns)
             {
-                Some(Decision::Allow)
+                if let Some(cont) = continuation {
+                    // For exact patterns, no positional args remain after exact match
+                    // But we should still pass any flags that weren't part of the pattern
+                    let remaining_args: Vec<String> = ctx
+                        .args
+                        .iter()
+                        .filter(|arg| arg.starts_with('-'))
+                        .map(|s| s.to_string())
+                        .collect();
+                    evaluate_effect_with_owned_args(cont, ctx, rules, remaining_args)
+                } else {
+                    EffectResult::Decision(Decision::Allow, None)
+                }
             } else {
-                None
+                EffectResult::Nil
             }
         }
         ArgPattern::Anywhere(exprs) => {
@@ -601,32 +646,34 @@ fn evaluate_arg_pattern_effect(pattern: &ArgPattern, ctx: &EvalContext) -> Optio
                 match expr {
                     may_i_core::types::Expr::Literal(s) => {
                         if ctx.args.iter().any(|arg| arg == s) {
-                            return Some(Decision::Allow);
+                            return EffectResult::Decision(Decision::Allow, None);
                         }
                     }
-                    may_i_core::types::Expr::Wildcard => return Some(Decision::Allow),
+                    may_i_core::types::Expr::Wildcard => {
+                        return EffectResult::Decision(Decision::Allow, None);
+                    }
                     _ => {}
                 }
             }
-            None
+            EffectResult::Nil
         }
         ArgPattern::Forbidden(exprs) => {
             for expr in exprs {
                 match expr {
                     may_i_core::types::Expr::Literal(s) => {
                         if ctx.args.iter().any(|arg| arg == s) {
-                            return Some(Decision::Deny);
+                            return EffectResult::Decision(Decision::Deny, None);
                         }
                     }
                     may_i_core::types::Expr::Wildcard => {
                         if !ctx.args.is_empty() {
-                            return Some(Decision::Deny);
+                            return EffectResult::Decision(Decision::Deny, None);
                         }
                     }
                     _ => {}
                 }
             }
-            None
+            EffectResult::Decision(Decision::Allow, None)
         }
         ArgPattern::At { position, pattern } => {
             if *position > 0 && *position <= ctx.args.len() {
@@ -634,19 +681,39 @@ fn evaluate_arg_pattern_effect(pattern: &ArgPattern, ctx: &EvalContext) -> Optio
                 match pattern {
                     may_i_core::types::Expr::Literal(s) => {
                         if arg == s {
-                            Some(Decision::Allow)
+                            EffectResult::Decision(Decision::Allow, None)
                         } else {
-                            None
+                            EffectResult::Nil
                         }
                     }
-                    may_i_core::types::Expr::Wildcard => Some(Decision::Allow),
-                    _ => None,
+                    may_i_core::types::Expr::Wildcard => {
+                        EffectResult::Decision(Decision::Allow, None)
+                    }
+                    _ => EffectResult::Nil,
                 }
             } else {
-                None
+                EffectResult::Nil
             }
         }
     }
+}
+
+/// Helper to evaluate an effect with owned args.
+fn evaluate_effect_with_owned_args(
+    effect: &Effect,
+    ctx: &EvalContext,
+    rules: &[Rule],
+    owned_args: Vec<String>,
+) -> EffectResult {
+    let _args_ref: Vec<&str> = owned_args.iter().map(|s| s.as_str()).collect();
+    let inner_ctx = EvalContext {
+        command: ctx.command,
+        args: &owned_args,
+        facts: ctx.facts,
+        recursion_depth: ctx.recursion_depth,
+        recursion_limit: ctx.recursion_limit,
+    };
+    evaluate_effect(effect, &inner_ctx, rules)
 }
 
 /// Extract inner command from args based on pattern (for may-i recursion).
@@ -654,7 +721,7 @@ fn extract_inner_command(pattern: &ArgPattern, args: &[String]) -> Option<(Strin
     // For now, simple implementation: take remaining positional args after pattern match
     // Full implementation would need to properly handle the pattern
     match pattern {
-        ArgPattern::Positional(_) | ArgPattern::Exact(_) => {
+        ArgPattern::Positional { .. } | ArgPattern::Exact { .. } => {
             // Extract first positional arg as command, rest as args
             let positional: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
             if positional.is_empty() {

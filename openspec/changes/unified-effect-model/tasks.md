@@ -30,9 +30,10 @@
   - Parse (rule COMMAND-EFFECT EFFECT* :effect DEFAULT)
   - Support shorthand :effect :keyword
   - Support shorthand :effect [:keyword "reason"]
-- [ ] 2.4 Add improper list (dot notation) parsing
+- [x] 2.4 Add improper list (dot notation) parsing
   - Parse (positional A B . EFFECT)
-  - Transform to internal representation
+  - Store continuation effect in ArgPattern
+  - Evaluate continuation with remaining args
 - [ ] 2.5 Update error messages for new syntax
 
 ## 3. Evaluator Rewrite (may_i_engine::v2::eval)
@@ -77,7 +78,11 @@
 - [x] 5.1 Update parser tests for new syntax
 - [x] 5.2 Update evaluator tests for unified effects
 - [x] 5.3 Add tests for Nil handling in combinators
-- [ ] 5.4 Add tests for dot notation
+- [x] 5.4 Add tests for dot notation
+  - Parser tests for dot notation
+  - Integration tests for simple dot notation
+  - Integration tests for dot notation with may-i
+  - Integration tests for exact with dot notation
 - [x] 5.5 Add tests for shorthand :effect syntax
 - [x] 5.6 Update integration tests
 
@@ -86,7 +91,9 @@
 - [x] 6.1 Update README with new syntax
 - [x] 6.2 Update starter config with new syntax
 - [x] 6.3 Add `may-i reference` command for detailed DSL help
-- [ ] 6.4 Document dot notation usage (pending implementation)
+- [x] 6.4 Document dot notation usage
+  - Documented in `may-i reference` command
+  - Example: (positional [:host *] . (may-i *))
 
 ## 7. Cleanup
 

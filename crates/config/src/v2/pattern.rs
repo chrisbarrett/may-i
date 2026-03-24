@@ -125,43 +125,49 @@ pub fn parse_arg_pattern(sexpr: &Sexpr) -> Result<ArgPattern, RawError> {
     }
 }
 
-/// Parse positional/exact argument form, handling dot syntax for recursive evaluation.
+/// Parse positional/exact argument form, handling dot syntax for continuation effects.
 fn parse_positional_form(
     args: &[Sexpr],
     _span: may_i_core::Span,
     exact: bool,
 ) -> Result<ArgPattern, RawError> {
-    // Check for dot syntax indicating recursive evaluation target
-    // Look for a `.` atom followed by the recursive pattern
-    let mut pargs: Vec<PositionalArg> = Vec::new();
+    // Check for dot syntax: patterns before dot, continuation effect after
+    let mut patterns: Vec<PositionalArg> = Vec::new();
+    let mut continuation: Option<may_i_core::v2::ast::Effect> = None;
     let mut i = 0;
 
     while i < args.len() {
-        // Check for dot syntax: `.` followed by recursive pattern
+        // Check for dot syntax: `.` followed by continuation effect
         if let Some(atom) = args[i].as_atom()
             && atom == "."
-            && i + 1 < args.len()
         {
-            // Parse all items before the dot as positional args
-            // The remaining item after dot should be a recursive pattern
-            // For now, we just mark the last positional arg as recursive
-            // or we could handle it differently based on design
-            if !pargs.is_empty() {
-                let last_idx = pargs.len() - 1;
-                pargs[last_idx].recursive = true;
+            if i + 1 >= args.len() {
+                return Err(RawError::new(
+                    "dot notation requires an effect after the dot",
+                    args[i].span(),
+                ));
             }
-            i += 2; // Skip dot and the recursive target
+            // Parse the continuation effect
+            let spanned_effect = super::effect::parse_effect(&args[i + 1])?;
+            continuation = Some(spanned_effect.value);
+            i += 2;
             continue;
         }
 
-        pargs.push(parse_positional_arg(&args[i])?);
+        patterns.push(parse_positional_arg(&args[i])?);
         i += 1;
     }
 
     if exact {
-        Ok(ArgPattern::Exact(pargs))
+        Ok(ArgPattern::Exact {
+            patterns,
+            continuation: continuation.map(Box::new),
+        })
     } else {
-        Ok(ArgPattern::Positional(pargs))
+        Ok(ArgPattern::Positional {
+            patterns,
+            continuation: continuation.map(Box::new),
+        })
     }
 }
 
@@ -247,7 +253,9 @@ mod tests {
     fn parse_positional_simple() {
         let pattern = parse_arg(r#"(positional "push")"#).unwrap();
         match pattern {
-            ArgPattern::Positional(pargs) => {
+            ArgPattern::Positional {
+                patterns: pargs, ..
+            } => {
                 assert_eq!(pargs.len(), 1);
             }
             _ => panic!("expected Positional"),
@@ -258,7 +266,9 @@ mod tests {
     fn parse_positional_with_wildcard() {
         let pattern = parse_arg(r#"(positional "push" *)"#).unwrap();
         match pattern {
-            ArgPattern::Positional(pargs) => {
+            ArgPattern::Positional {
+                patterns: pargs, ..
+            } => {
                 assert_eq!(pargs.len(), 2);
             }
             _ => panic!("expected Positional"),
@@ -269,7 +279,9 @@ mod tests {
     fn parse_exact_pattern() {
         let pattern = parse_arg(r#"(exact "status")"#).unwrap();
         match pattern {
-            ArgPattern::Exact(pargs) => {
+            ArgPattern::Exact {
+                patterns: pargs, ..
+            } => {
                 assert_eq!(pargs.len(), 1);
             }
             _ => panic!("expected Exact"),
@@ -313,7 +325,9 @@ mod tests {
     fn positional_with_quantifiers() {
         let pattern = parse_arg(r#"(positional "cmd" (? "arg") (+ "more"))"#).unwrap();
         match pattern {
-            ArgPattern::Positional(pargs) => {
+            ArgPattern::Positional {
+                patterns: pargs, ..
+            } => {
                 assert_eq!(pargs.len(), 3);
                 assert!(matches!(pargs[0].quantifier, Quantifier::One));
                 assert!(matches!(pargs[1].quantifier, Quantifier::Optional));
@@ -381,7 +395,9 @@ mod tests {
     fn parse_positional_with_or_expression() {
         let pattern = parse_arg(r#"(positional (or "a" "b"))"#).unwrap();
         match pattern {
-            ArgPattern::Positional(pargs) => {
+            ArgPattern::Positional {
+                patterns: pargs, ..
+            } => {
                 assert_eq!(pargs.len(), 1);
                 assert!(matches!(pargs[0].pattern, Expr::Or(_)));
             }
@@ -393,7 +409,9 @@ mod tests {
     fn parse_positional_with_and_expression() {
         let pattern = parse_arg(r#"(positional (and "a" "b"))"#).unwrap();
         match pattern {
-            ArgPattern::Positional(pargs) => {
+            ArgPattern::Positional {
+                patterns: pargs, ..
+            } => {
                 assert_eq!(pargs.len(), 1);
                 assert!(matches!(pargs[0].pattern, Expr::And(_)));
             }
@@ -405,7 +423,9 @@ mod tests {
     fn parse_positional_with_not_expression() {
         let pattern = parse_arg(r#"(positional (not "a"))"#).unwrap();
         match pattern {
-            ArgPattern::Positional(pargs) => {
+            ArgPattern::Positional {
+                patterns: pargs, ..
+            } => {
                 assert_eq!(pargs.len(), 1);
                 assert!(matches!(pargs[0].pattern, Expr::Not(_)));
             }
@@ -417,7 +437,9 @@ mod tests {
     fn parse_positional_with_optional_quantifier() {
         let pattern = parse_arg(r#"(positional (? "arg"))"#).unwrap();
         match pattern {
-            ArgPattern::Positional(pargs) => {
+            ArgPattern::Positional {
+                patterns: pargs, ..
+            } => {
                 assert_eq!(pargs.len(), 1);
                 assert!(matches!(pargs[0].quantifier, Quantifier::Optional));
             }
@@ -429,7 +451,9 @@ mod tests {
     fn parse_positional_with_zero_or_more_quantifier() {
         let pattern = parse_arg(r#"(positional (* "arg"))"#).unwrap();
         match pattern {
-            ArgPattern::Positional(pargs) => {
+            ArgPattern::Positional {
+                patterns: pargs, ..
+            } => {
                 assert_eq!(pargs.len(), 1);
                 assert!(matches!(pargs[0].quantifier, Quantifier::ZeroOrMore));
             }
@@ -441,7 +465,9 @@ mod tests {
     fn parse_positional_with_one_or_more_quantifier() {
         let pattern = parse_arg(r#"(positional (+ "arg"))"#).unwrap();
         match pattern {
-            ArgPattern::Positional(pargs) => {
+            ArgPattern::Positional {
+                patterns: pargs, ..
+            } => {
                 assert_eq!(pargs.len(), 1);
                 assert!(matches!(pargs[0].quantifier, Quantifier::OneOrMore));
             }
@@ -471,5 +497,60 @@ mod tests {
     fn parse_non_atom_expr_tag_error() {
         let err = parse_arg(r#"(positional (("not an atom")))"#).expect_err("expected error");
         assert!(format!("{err}").contains("tag must be an atom"));
+    }
+
+    #[test]
+    fn parse_positional_with_dot_notation() {
+        // (positional "git" . (effect :allow))
+        let pattern = parse_arg(r#"(positional "git" . (effect :allow))"#).unwrap();
+        match pattern {
+            ArgPattern::Positional {
+                patterns,
+                continuation,
+            } => {
+                assert_eq!(patterns.len(), 1);
+                assert!(continuation.is_some());
+            }
+            _ => panic!("expected Positional with continuation"),
+        }
+    }
+
+    #[test]
+    fn parse_positional_with_dot_notation_may_i() {
+        // (positional * . (may-i (positional *)))
+        let pattern = parse_arg(r#"(positional * . (may-i (positional *)))"#).unwrap();
+        match pattern {
+            ArgPattern::Positional {
+                patterns,
+                continuation,
+            } => {
+                assert_eq!(patterns.len(), 1);
+                assert!(continuation.is_some());
+            }
+            _ => panic!("expected Positional with may-i continuation"),
+        }
+    }
+
+    #[test]
+    fn parse_exact_with_dot_notation() {
+        // (exact "git" "status" . (effect :allow))
+        let pattern = parse_arg(r#"(exact "git" "status" . (effect :allow))"#).unwrap();
+        match pattern {
+            ArgPattern::Exact {
+                patterns,
+                continuation,
+            } => {
+                assert_eq!(patterns.len(), 2);
+                assert!(continuation.is_some());
+            }
+            _ => panic!("expected Exact with continuation"),
+        }
+    }
+
+    #[test]
+    fn parse_positional_dot_without_effect_error() {
+        // (positional "git" .)
+        let err = parse_arg(r#"(positional "git" .)"#).expect_err("expected error");
+        assert!(format!("{err}").contains("requires an effect after the dot"));
     }
 }

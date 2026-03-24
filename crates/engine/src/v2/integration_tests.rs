@@ -410,3 +410,133 @@ fn integration_complex_nested_combinators() {
     let result = evaluate_v2("kubectl", &["get".to_string()], &config, &facts);
     assert_eq!(result.decision, Decision::Allow);
 }
+
+#[test]
+fn integration_dot_notation_simple() {
+    // (positional "git" . (effect :allow)) matches "git" followed by anything
+    let config = parse_config(
+        r#"
+        (rule "cmd"
+            (positional "git" . (effect :allow))
+            :effect (effect :deny))
+    "#,
+    )
+    .unwrap();
+
+    let facts = test_context();
+
+    // Should match "git" and return Allow via continuation
+    let result = evaluate_v2(
+        "cmd",
+        &["git".to_string(), "push".to_string()],
+        &config,
+        &facts,
+    );
+    assert_eq!(result.decision, Decision::Allow);
+
+    // Should match "git" and return Allow via continuation
+    let result = evaluate_v2(
+        "cmd",
+        &["git".to_string(), "status".to_string()],
+        &config,
+        &facts,
+    );
+    assert_eq!(result.decision, Decision::Allow);
+
+    // Should not match "hg", fall through to default
+    let result = evaluate_v2(
+        "cmd",
+        &["hg".to_string(), "status".to_string()],
+        &config,
+        &facts,
+    );
+    assert_eq!(result.decision, Decision::Deny);
+}
+
+#[test]
+fn integration_dot_notation_with_may_i() {
+    // SSH-style wrapper: capture first arg as "host", recursively evaluate rest
+    let config = parse_config(
+        r#"
+        (rule "ssh"
+            (positional * . (may-i (positional *)))
+            :effect (effect :deny "No SSH allowed by default"))
+        
+        (rule "ls" :effect :allow)
+        (rule "rm" :effect [:deny "rm is dangerous"])
+    "#,
+    )
+    .unwrap();
+
+    let facts = test_context();
+
+    // ssh host1 ls -> should allow (ls is allowed)
+    let result = evaluate_v2(
+        "ssh",
+        &["host1".to_string(), "ls".to_string(), "-la".to_string()],
+        &config,
+        &facts,
+    );
+    assert_eq!(result.decision, Decision::Allow);
+
+    // ssh host1 rm -> should deny (rm is denied)
+    let result = evaluate_v2(
+        "ssh",
+        &["host1".to_string(), "rm".to_string(), "-rf".to_string()],
+        &config,
+        &facts,
+    );
+    assert_eq!(result.decision, Decision::Deny);
+
+    // ssh (no args after host) -> should fall through to default
+    let result = evaluate_v2("ssh", &["host1".to_string()], &config, &facts);
+    assert_eq!(result.decision, Decision::Deny);
+}
+
+#[test]
+fn integration_dot_notation_exact() {
+    // Exact with dot: match exactly, then evaluate continuation
+    // Note: exact patterns skip flags, so "--short" is not counted
+    let config = parse_config(
+        r#"
+        (rule "cmd"
+            (exact "git" "status" . (effect :allow))
+            :effect (effect :deny))
+    "#,
+    )
+    .unwrap();
+
+    let facts = test_context();
+
+    // Exact match for "git status"
+    let result = evaluate_v2(
+        "cmd",
+        &["git".to_string(), "status".to_string()],
+        &config,
+        &facts,
+    );
+    assert_eq!(result.decision, Decision::Allow);
+
+    // With flag - exact pattern still matches because flags are skipped
+    // The continuation (effect :allow) is evaluated
+    let result = evaluate_v2(
+        "cmd",
+        &[
+            "git".to_string(),
+            "status".to_string(),
+            "--short".to_string(),
+        ],
+        &config,
+        &facts,
+    );
+    assert_eq!(result.decision, Decision::Allow);
+
+    // Extra positional arg - exact match fails, falls through to default
+    let result = evaluate_v2(
+        "cmd",
+        &["git".to_string(), "status".to_string(), "extra".to_string()],
+        &config,
+        &facts,
+    );
+    assert_eq!(result.decision, Decision::Deny);
+}

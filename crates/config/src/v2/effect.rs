@@ -454,7 +454,7 @@ mod tests {
         // Positional patterns are now effects too
         let effect = parse_effect_str(r#"(positional "push")"#).unwrap();
         match effect {
-            Effect::ArgPattern(ArgPattern::Positional(_)) => {}
+            Effect::ArgPattern(ArgPattern::Positional { .. }) => {}
             _ => panic!("expected ArgPattern::Positional"),
         }
     }

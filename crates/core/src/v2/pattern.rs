@@ -66,12 +66,20 @@ impl PositionalArg {
 #[derive(Debug, Clone)]
 pub enum ArgPattern {
     /// Match positional args by position (skip flags).
-    /// Syntax: `(positional PATTERN ... [. (may-i *)])`
-    Positional(Vec<PositionalArg>),
+    /// Syntax: `(positional PATTERN ... [. EFFECT])`
+    Positional {
+        patterns: Vec<PositionalArg>,
+        /// Optional continuation effect evaluated with remaining args.
+        continuation: Option<Box<crate::v2::ast::Effect>>,
+    },
 
     /// Like Positional, but requires exactly as many positional args as patterns.
-    /// Syntax: `(exact PATTERN ... [. (may-i *)])`
-    Exact(Vec<PositionalArg>),
+    /// Syntax: `(exact PATTERN ... [. EFFECT])`
+    Exact {
+        patterns: Vec<PositionalArg>,
+        /// Optional continuation effect evaluated with remaining args.
+        continuation: Option<Box<crate::v2::ast::Effect>>,
+    },
 
     /// Token appears anywhere in argv.
     /// Syntax: `(anywhere PATTERN ...)`
@@ -89,12 +97,37 @@ pub enum ArgPattern {
 impl ArgPattern {
     /// Create a simple positional pattern from expressions.
     pub fn positional(exprs: Vec<Expr>) -> Self {
-        ArgPattern::Positional(exprs.into_iter().map(PositionalArg::one).collect())
+        ArgPattern::Positional {
+            patterns: exprs.into_iter().map(PositionalArg::one).collect(),
+            continuation: None,
+        }
+    }
+
+    /// Create a positional pattern with a continuation effect.
+    pub fn positional_with_continuation(
+        exprs: Vec<Expr>,
+        continuation: crate::v2::ast::Effect,
+    ) -> Self {
+        ArgPattern::Positional {
+            patterns: exprs.into_iter().map(PositionalArg::one).collect(),
+            continuation: Some(Box::new(continuation)),
+        }
     }
 
     /// Create an exact positional pattern from expressions.
     pub fn exact(exprs: Vec<Expr>) -> Self {
-        ArgPattern::Exact(exprs.into_iter().map(PositionalArg::one).collect())
+        ArgPattern::Exact {
+            patterns: exprs.into_iter().map(PositionalArg::one).collect(),
+            continuation: None,
+        }
+    }
+
+    /// Create an exact pattern with a continuation effect.
+    pub fn exact_with_continuation(exprs: Vec<Expr>, continuation: crate::v2::ast::Effect) -> Self {
+        ArgPattern::Exact {
+            patterns: exprs.into_iter().map(PositionalArg::one).collect(),
+            continuation: Some(Box::new(continuation)),
+        }
     }
 
     /// Create an anywhere pattern.
@@ -167,13 +200,17 @@ mod tests {
     fn arg_pattern_positional_creates_correctly() {
         let pattern =
             ArgPattern::positional(vec![Expr::Literal("a".into()), Expr::Literal("b".into())]);
-        assert!(matches!(pattern, ArgPattern::Positional(args) if args.len() == 2));
+        assert!(
+            matches!(pattern, ArgPattern::Positional { patterns, continuation: None } if patterns.len() == 2)
+        );
     }
 
     #[test]
     fn arg_pattern_exact_creates_correctly() {
         let pattern = ArgPattern::exact(vec![Expr::Literal("x".into())]);
-        assert!(matches!(pattern, ArgPattern::Exact(args) if args.len() == 1));
+        assert!(
+            matches!(pattern, ArgPattern::Exact { patterns, continuation: None } if patterns.len() == 1)
+        );
     }
 
     #[test]

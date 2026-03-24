@@ -452,7 +452,9 @@ mod tests {
     fn effect_arg_pattern_creates_correctly() {
         let pattern = ArgPattern::positional(vec![]);
         let effect = Effect::arg_pattern(pattern.clone());
-        assert!(matches!(effect, Effect::ArgPattern(p) if matches!(p, ArgPattern::Positional(_))));
+        assert!(
+            matches!(effect, Effect::ArgPattern(p) if matches!(p, ArgPattern::Positional { .. }))
+        );
     }
 
     #[test]
@@ -563,7 +565,10 @@ mod tests {
     fn predicate_arg_creates_correctly() {
         let pattern = ArgPattern::positional(vec![]);
         let pred = Predicate::arg(pattern);
-        assert!(matches!(pred, Predicate::Arg(ArgPattern::Positional(_))));
+        assert!(matches!(
+            pred,
+            Predicate::Arg(ArgPattern::Positional { .. })
+        ));
     }
 
     #[test]

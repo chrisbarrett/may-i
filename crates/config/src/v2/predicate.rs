@@ -429,7 +429,7 @@ mod tests {
     fn parse_arg_predicate_positional() {
         let pred = parse_pred(r#"(positional "push")"#).unwrap();
         match pred {
-            Predicate::Arg(ArgPattern::Positional(_)) => {}
+            Predicate::Arg(ArgPattern::Positional { .. }) => {}
             _ => panic!("expected Arg with Positional"),
         }
     }
@@ -438,7 +438,7 @@ mod tests {
     fn parse_arg_predicate_exact() {
         let pred = parse_pred(r#"(exact "status")"#).unwrap();
         match pred {
-            Predicate::Arg(ArgPattern::Exact(_)) => {}
+            Predicate::Arg(ArgPattern::Exact { .. }) => {}
             _ => panic!("expected Arg with Exact"),
         }
     }
