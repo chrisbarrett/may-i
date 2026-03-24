@@ -59,9 +59,11 @@
   - Evaluate command effect first
   - If non-Nil, evaluate subsequent effects until non-Nil
   - Use :effect default if all Nil
-- [ ] 3.6 Update trace generation for new effect types
-  - Add And, Or, Not traces
-  - Update existing traces for Nil handling
+- [x] 3.6 Update trace generation for new effect types
+  - Rewrote evaluate_effect_with_trace to create proper hierarchical traces
+  - And/Or/Not traces include nested effect traces
+  - When/Unless/If/Cond traces include predicate results and effect traces
+  - All traces properly handle Nil results
 
 ## 4. Update v1 Migration Tool
 

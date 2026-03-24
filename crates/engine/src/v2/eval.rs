@@ -6,7 +6,9 @@ use may_i_core::types::{FactPattern, FactQuery};
 use may_i_core::v2::ast::{Effect, EffectResult, Predicate, Rule};
 use may_i_core::v2::pattern::{ArgPattern, CommandPattern, PositionalArg};
 
-use crate::v2::trace::{EffectTrace, PredicateTrace, TraceEntry};
+use crate::v2::trace::{
+    EffectTrace, PredicateResult as TracePredicateResult, PredicateTrace, TraceEntry,
+};
 
 /// Maximum recursion depth for (may-i ...) evaluation.
 pub const DEFAULT_RECURSION_LIMIT: usize = 10;
@@ -752,69 +754,287 @@ fn evaluate_effect_with_trace(
     ctx: &EvalContext,
     rules: &[Rule],
 ) -> (EffectResult, EffectTrace) {
-    let result = evaluate_effect(effect, ctx, rules);
-
-    let trace = match effect {
-        Effect::Allow(reason) => EffectTrace::Terminal {
-            effect: effect.clone(),
-            decision: Decision::Allow,
-            reason: reason.clone(),
-        },
-        Effect::Ask(reason) => EffectTrace::Terminal {
-            effect: effect.clone(),
-            decision: Decision::Ask,
-            reason: reason.clone(),
-        },
-        Effect::Deny(reason) => EffectTrace::Terminal {
-            effect: effect.clone(),
-            decision: Decision::Deny,
-            reason: reason.clone(),
-        },
-        Effect::CommandPattern(_) => EffectTrace::Terminal {
-            effect: effect.clone(),
-            decision: match result {
-                EffectResult::Decision(d, _) => d,
-                EffectResult::Nil => Decision::Allow, // Should not happen
-            },
-            reason: None,
-        },
-        Effect::ArgPattern(_) => EffectTrace::Terminal {
-            effect: effect.clone(),
-            decision: match result {
-                EffectResult::Decision(d, _) => d,
-                EffectResult::Nil => Decision::Allow, // Should not happen
-            },
-            reason: None,
-        },
-        Effect::And { .. } | Effect::Or { .. } | Effect::Not { .. } => EffectTrace::Terminal {
-            effect: effect.clone(),
-            decision: match result {
-                EffectResult::Decision(d, _) => d,
-                EffectResult::Nil => Decision::Allow,
-            },
-            reason: None,
-        },
-        Effect::When { .. } | Effect::Unless { .. } | Effect::If { .. } | Effect::Cond { .. } => {
-            EffectTrace::Terminal {
+    match effect {
+        // Terminal effects
+        Effect::Allow(reason) => {
+            let result = EffectResult::Decision(Decision::Allow, reason.clone());
+            let trace = EffectTrace::Terminal {
                 effect: effect.clone(),
-                decision: match result {
-                    EffectResult::Decision(d, _) => d,
-                    EffectResult::Nil => Decision::Allow,
-                },
+                decision: Decision::Allow,
+                reason: reason.clone(),
+            };
+            (result, trace)
+        }
+        Effect::Ask(reason) => {
+            let result = EffectResult::Decision(Decision::Ask, reason.clone());
+            let trace = EffectTrace::Terminal {
+                effect: effect.clone(),
+                decision: Decision::Ask,
+                reason: reason.clone(),
+            };
+            (result, trace)
+        }
+        Effect::Deny(reason) => {
+            let result = EffectResult::Decision(Decision::Deny, reason.clone());
+            let trace = EffectTrace::Terminal {
+                effect: effect.clone(),
+                decision: Decision::Deny,
+                reason: reason.clone(),
+            };
+            (result, trace)
+        }
+
+        // Pattern effects
+        Effect::CommandPattern(pattern) => {
+            let result = evaluate_effect(effect, ctx, rules);
+            let trace = EffectTrace::Terminal {
+                effect: effect.clone(),
+                decision: result.decision().unwrap_or(Decision::Allow),
                 reason: None,
+            };
+            (result, trace)
+        }
+        Effect::ArgPattern(arg_pattern) => {
+            let result = evaluate_arg_pattern_effect(arg_pattern, ctx, rules);
+            let trace = EffectTrace::Terminal {
+                effect: effect.clone(),
+                decision: result.decision().unwrap_or(Decision::Allow),
+                reason: None,
+            };
+            (result, trace)
+        }
+
+        // Combinators with nested traces
+        Effect::And { effects } => {
+            let mut effect_traces = Vec::new();
+            let mut last_result = EffectResult::Decision(Decision::Allow, None);
+
+            for effect in effects {
+                let (result, trace) = evaluate_effect_with_trace(&effect.value, ctx, rules);
+                effect_traces.push(trace);
+                if result.is_nil() {
+                    let decision = last_result.decision().unwrap_or(Decision::Allow);
+                    let trace = EffectTrace::And {
+                        effects: effect_traces,
+                        decision,
+                        reason: None,
+                    };
+                    return (EffectResult::Nil, trace);
+                }
+                last_result = result;
+            }
+
+            let decision = last_result.decision().unwrap_or(Decision::Allow);
+            let trace = EffectTrace::And {
+                effects: effect_traces,
+                decision,
+                reason: last_result.reason().cloned(),
+            };
+            (last_result, trace)
+        }
+
+        Effect::Or { effects } => {
+            let mut effect_traces = Vec::new();
+
+            for effect in effects {
+                let (result, trace) = evaluate_effect_with_trace(&effect.value, ctx, rules);
+                effect_traces.push(trace);
+                if !result.is_nil() {
+                    let decision = result.decision().unwrap_or(Decision::Allow);
+                    let trace = EffectTrace::Or {
+                        effects: effect_traces,
+                        decision,
+                        reason: result.reason().cloned(),
+                    };
+                    return (result, trace);
+                }
+            }
+
+            let trace = EffectTrace::Or {
+                effects: effect_traces,
+                decision: Decision::Allow,
+                reason: None,
+            };
+            (EffectResult::Nil, trace)
+        }
+
+        Effect::Not {
+            effect: inner_effect,
+        } => {
+            let (inner_result, inner_trace) =
+                evaluate_effect_with_trace(&inner_effect.value, ctx, rules);
+
+            let result = match inner_result {
+                EffectResult::Nil => EffectResult::Decision(Decision::Allow, None),
+                EffectResult::Decision(Decision::Allow, _) => EffectResult::Nil,
+                EffectResult::Decision(ask_or_deny, reason) => {
+                    EffectResult::Decision(ask_or_deny, reason)
+                }
+            };
+
+            let decision = result.decision().unwrap_or(Decision::Allow);
+            let trace = EffectTrace::Not {
+                effect: Box::new(inner_trace),
+                decision,
+                reason: result.reason().cloned(),
+            };
+            (result, trace)
+        }
+
+        // Conditionals with nested traces
+        Effect::When {
+            predicate,
+            effect: inner_effect,
+        } => {
+            let pred_result = evaluate_predicate(&predicate.value, ctx);
+            let (effect_result, effect_trace) =
+                evaluate_effect_with_trace(&inner_effect.value, ctx, rules);
+
+            let result = if pred_result == PredicateResult::Match {
+                effect_result
+            } else {
+                EffectResult::Nil
+            };
+
+            let decision = result.decision().unwrap_or(Decision::Allow);
+            let trace = EffectTrace::When {
+                predicate: predicate.value.clone(),
+                predicate_result: match pred_result {
+                    PredicateResult::Match => TracePredicateResult::Match,
+                    PredicateResult::NoMatch => TracePredicateResult::NoMatch,
+                },
+                effect: Box::new(effect_trace),
+                decision,
+                reason: result.reason().cloned(),
+            };
+            (result, trace)
+        }
+
+        Effect::Unless {
+            predicate,
+            effect: inner_effect,
+        } => {
+            let pred_result = evaluate_predicate(&predicate.value, ctx);
+            let (effect_result, effect_trace) =
+                evaluate_effect_with_trace(&inner_effect.value, ctx, rules);
+
+            let result = if pred_result == PredicateResult::NoMatch {
+                effect_result
+            } else {
+                EffectResult::Nil
+            };
+
+            let decision = result.decision().unwrap_or(Decision::Allow);
+            let trace = EffectTrace::Unless {
+                predicate: predicate.value.clone(),
+                predicate_result: match pred_result {
+                    PredicateResult::Match => TracePredicateResult::Match,
+                    PredicateResult::NoMatch => TracePredicateResult::NoMatch,
+                },
+                effect: Box::new(effect_trace),
+                decision,
+                reason: result.reason().cloned(),
+            };
+            (result, trace)
+        }
+
+        Effect::If {
+            predicate,
+            then_effect,
+            else_effect,
+        } => {
+            let pred_result = evaluate_predicate(&predicate.value, ctx);
+            let (then_result, then_trace) =
+                evaluate_effect_with_trace(&then_effect.value, ctx, rules);
+            let (else_result, else_trace) =
+                evaluate_effect_with_trace(&else_effect.value, ctx, rules);
+
+            let result = if pred_result == PredicateResult::Match {
+                then_result
+            } else {
+                else_result
+            };
+
+            let decision = result.decision().unwrap_or(Decision::Allow);
+            let trace = EffectTrace::If {
+                predicate: predicate.value.clone(),
+                predicate_result: match pred_result {
+                    PredicateResult::Match => TracePredicateResult::Match,
+                    PredicateResult::NoMatch => TracePredicateResult::NoMatch,
+                },
+                then_effect: Box::new(then_trace),
+                else_effect: Some(Box::new(else_trace)),
+                decision,
+                reason: result.reason().cloned(),
+            };
+            (result, trace)
+        }
+
+        Effect::Cond { branches, fallback } => {
+            let mut branch_traces = Vec::new();
+
+            for (predicate, branch_effect) in branches {
+                let pred_result = evaluate_predicate(&predicate.value, ctx);
+                let (effect_result, effect_trace) =
+                    evaluate_effect_with_trace(&branch_effect.value, ctx, rules);
+
+                branch_traces.push((
+                    predicate.value.clone(),
+                    match pred_result {
+                        PredicateResult::Match => TracePredicateResult::Match,
+                        PredicateResult::NoMatch => TracePredicateResult::NoMatch,
+                    },
+                    Box::new(effect_trace),
+                ));
+
+                if pred_result == PredicateResult::Match {
+                    let decision = effect_result.decision().unwrap_or(Decision::Allow);
+                    let trace = EffectTrace::Case {
+                        branches: branch_traces,
+                        fallback: fallback.as_ref().map(|fb| {
+                            let (_, trace) = evaluate_effect_with_trace(&fb.value, ctx, rules);
+                            Box::new(trace)
+                        }),
+                        decision,
+                        reason: effect_result.reason().cloned(),
+                    };
+                    return (effect_result, trace);
+                }
+            }
+
+            // No branch matched - use fallback
+            if let Some(fb) = fallback {
+                let (result, trace) = evaluate_effect_with_trace(&fb.value, ctx, rules);
+                let decision = result.decision().unwrap_or(Decision::Allow);
+                let wrapped_trace = EffectTrace::Case {
+                    branches: branch_traces,
+                    fallback: Some(Box::new(trace)),
+                    decision,
+                    reason: result.reason().cloned(),
+                };
+                (result, wrapped_trace)
+            } else {
+                let trace = EffectTrace::Case {
+                    branches: branch_traces,
+                    fallback: None,
+                    decision: Decision::Allow,
+                    reason: None,
+                };
+                (EffectResult::Nil, trace)
             }
         }
-        Effect::MayI { .. } => EffectTrace::Terminal {
-            effect: effect.clone(),
-            decision: match result {
-                EffectResult::Decision(d, _) => d,
-                EffectResult::Nil => Decision::Allow,
-            },
-            reason: None,
-        },
-    };
 
-    (result, trace)
+        // Recursion
+        Effect::MayI { pattern } => {
+            let result = evaluate_effect(effect, ctx, rules);
+            let trace = EffectTrace::Terminal {
+                effect: effect.clone(),
+                decision: result.decision().unwrap_or(Decision::Allow),
+                reason: None,
+            };
+            (result, trace)
+        }
+    }
 }
 
 #[cfg(test)]
