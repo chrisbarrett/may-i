@@ -20,7 +20,7 @@ repos:
 
       - id: cargo-clippy-affected
         name: cargo clippy (affected)
-        entry: cargo affected --verbose --staged clippy -- -D warnings
+        entry: cargo affected --verbose --staged clippy --fix -- -D warnings
         language: system
         types: [rust]
         pass_filenames: false
@@ -53,7 +53,7 @@ repos:
 
       - id: cargo-clippy-full
         name: cargo clippy (full)
-        entry: cargo clippy -- -D warnings
+        entry: cargo clippy --fix -- -D warnings
         language: system
         types: [rust]
         pass_filenames: false
