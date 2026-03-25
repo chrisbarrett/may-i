@@ -1,7 +1,7 @@
 // Rule and define parser for v2 unified DSL.
 // New syntax: (rule COMMAND-EFFECT EFFECT... [CHECK...])
 
-use may_i_core::v2::ast::{Check, Define, Effect, Rule, Spanned};
+use may_i_core::v2::ast::{Define, Effect, Rule, Spanned};
 use may_i_sexpr::{RawError, Sexpr};
 
 /// Parse a rule from an s-expression.
@@ -42,23 +42,21 @@ pub fn parse_rule(sexpr: &Sexpr) -> Result<Spanned<Rule>, RawError> {
 
     for sexpr in list.iter().skip(2) {
         // Skip :effect keyword (for backward compatibility during migration)
-        if let Some(atom) = sexpr.as_atom() {
-            if atom == ":effect" {
-                continue;
-            }
+        if let Some(atom) = sexpr.as_atom()
+            && atom == ":effect"
+        {
+            continue;
         }
 
         // Check for check forms
-        if let Some(lst) = sexpr.as_list() {
-            if !lst.is_empty() {
-                if let Some(tag) = lst[0].as_atom() {
-                    if tag == "check" {
-                        let check_items = super::config::parse_check(&lst[1..], sexpr.span())?;
-                        checks.extend(check_items);
-                        continue;
-                    }
-                }
-            }
+        if let Some(lst) = sexpr.as_list()
+            && !lst.is_empty()
+            && let Some(tag) = lst[0].as_atom()
+            && tag == "check"
+        {
+            let check_items = super::config::parse_check(&lst[1..], sexpr.span())?;
+            checks.extend(check_items);
+            continue;
         }
 
         let effect = super::effect::parse_effect(sexpr)?;

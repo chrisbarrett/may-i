@@ -1,7 +1,7 @@
 // v2 unified effect evaluator.
 // All effect forms evaluate to EffectResult (Decision | Nil).
 
-use may_i_core::types::{ContextFacts, Decision, EvalResult, Expr};
+use may_i_core::types::{ContextFacts, Decision, EvalResult};
 use may_i_core::types::{FactPattern, FactQuery};
 use may_i_core::v2::ast::{Effect, EffectResult, Predicate, Rule};
 use may_i_core::v2::pattern::{ArgPattern, CommandPattern, PositionalArg};
@@ -430,14 +430,18 @@ fn match_positional_patterns(args: &[&String], patterns: &[PositionalArg]) -> bo
 }
 
 /// Match a single expression against a value.
-fn match_expr(expr: &may_i_core::types::Expr, value: &str) -> bool {
+fn match_expr<E: std::fmt::Debug + may_i_core::types::ToDoc>(
+    expr: &may_i_core::types::Expr<E>,
+    value: &str,
+) -> bool {
+    use may_i_core::types::Expr;
     match expr {
-        may_i_core::types::Expr::Literal(s) => s == value,
-        may_i_core::types::Expr::Wildcard => true,
-        may_i_core::types::Expr::Regex(re) => re.is_match(value),
-        may_i_core::types::Expr::And(exprs) => exprs.iter().all(|e| match_expr(e, value)),
-        may_i_core::types::Expr::Or(exprs) => exprs.iter().any(|e| match_expr(e, value)),
-        may_i_core::types::Expr::Not(inner) => !match_expr(inner, value),
+        Expr::Literal(s) => s == value,
+        Expr::Wildcard => true,
+        Expr::Regex(re) => re.is_match(value),
+        Expr::And(exprs) => exprs.iter().all(|e| match_expr(e, value)),
+        Expr::Or(exprs) => exprs.iter().any(|e| match_expr(e, value)),
+        Expr::Not(inner) => !match_expr(inner, value),
         _ => false, // Cond not supported in simple matching
     }
 }

@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 2727fa8d81e65bc559d84d9b4b44e80edadbe873f9ed93e7eb9a6b288de6fbe0 # shrinks to e = Literal("a"), s = "a"
+cc 79d0eb92442bfb1de8b05054c8facf8dfea148d841fb07694c92a426bd4fe814 # shrinks to e = Cond([ExprBranch { test: Cond([ExprBranch { test: Literal("a"), effect: SimpleEffect(0) }]), effect: SimpleEffect(0) }]), s = "a"

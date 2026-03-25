@@ -272,16 +272,16 @@ fn rule_add_default_effect(node: &CstNode) -> Option<Box<CstNode>> {
 
     // Check if the rule already has a :effect keyword
     for child in &children[1..] {
-        if let Some(atom) = child.as_atom() {
-            if atom == ":effect" {
-                // Rule already has :effect keyword
-                return None;
-            }
+        if let Some(atom) = child.as_atom()
+            && atom == ":effect"
+        {
+            // Rule already has :effect keyword
+            return None;
         }
     }
 
     // Add :effect :ask at the end
-    let mut new_children: Vec<Box<CstNode>> = children.iter().cloned().collect();
+    let mut new_children: Vec<Box<CstNode>> = children.to_vec();
 
     // Add :effect keyword
     new_children.push(Box::new(CstNode::atom(
