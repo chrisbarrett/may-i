@@ -7,7 +7,7 @@ use std::io::IsTerminal;
 
 use colored::Colorize;
 use may_i_core::Doc;
-use may_i_pp::{Format, pretty};
+use may_i_pp::{pretty, Format};
 use may_i_sexpr::diff::{ChangeType, DiffCst, PlainCst};
 
 /// Configuration for diff rendering.
@@ -172,12 +172,10 @@ fn render_two_column(annotated: &[DiffCst], config: &DiffConfig, term_width: usi
                 let before_trunc = truncate_width(&before_colored, column_width);
                 let after_trunc = truncate_width(&after_colored, column_width);
 
-                output.push_str(&format!(
-                    "{:cw$} │ {}\n",
-                    before_trunc,
-                    after_trunc,
-                    cw = column_width
-                ));
+                // Pad to exact visible width for consistent separator alignment
+                let before_padded = pad_to_visible_width(&before_trunc, column_width);
+
+                output.push_str(&format!("{} │ {}\n", before_padded, after_trunc));
                 prev_was_fold = false;
             }
         }
@@ -379,9 +377,29 @@ fn truncate_width(s: &str, max_width: usize) -> String {
     }
 }
 
+/// Pad a string to a specific visible width (for consistent column alignment).
+/// This handles ANSI escape sequences correctly and pads with spaces to reach
+/// the exact visible width.
+fn pad_to_visible_width(s: &str, target_width: usize) -> String {
+    let current_width = visible_width(s);
+    let padding_needed = target_width.saturating_sub(current_width);
+    let mut result = s.to_string();
+    result.push_str(&" ".repeat(padding_needed));
+    result
+}
+
 /// Calculate visible width of a string (ignoring ANSI codes).
 fn visible_width(s: &str) -> usize {
-    let mut width = 0;
+    use unicode_width::UnicodeWidthStr;
+
+    // Strip ANSI escape sequences and calculate width
+    let stripped = strip_ansi_codes(s);
+    stripped.width()
+}
+
+/// Strip ANSI escape sequences from a string.
+fn strip_ansi_codes(s: &str) -> String {
+    let mut result = String::new();
     let mut in_escape = false;
     for ch in s.chars() {
         if in_escape {
@@ -391,11 +409,10 @@ fn visible_width(s: &str) -> usize {
         } else if ch == '\x1b' {
             in_escape = true;
         } else {
-            // Use 1 for ASCII, 2 for CJK/fullwidth chars
-            width += if ch.is_ascii() { 1 } else { 2 };
+            result.push(ch);
         }
     }
-    width
+    result
 }
 
 /// Get terminal width with fallback.
@@ -472,6 +489,26 @@ mod tests {
     }
 
     #[test]
+    fn test_strip_ansi_codes() {
+        assert_eq!(strip_ansi_codes("hello"), "hello");
+        assert_eq!(strip_ansi_codes("\x1b[31mhello\x1b[0m"), "hello");
+        assert_eq!(strip_ansi_codes("\x1b[1;31mhello\x1b[0m"), "hello");
+    }
+
+    #[test]
+    fn test_pad_to_visible_width() {
+        // Test padding shorter strings
+        assert_eq!(pad_to_visible_width("hello", 10), "hello     ");
+        // Test exact width (no padding)
+        assert_eq!(pad_to_visible_width("hello", 5), "hello");
+        // Test with ANSI codes
+        assert_eq!(
+            pad_to_visible_width("\x1b[31mhi\x1b[0m", 5),
+            "\x1b[31mhi\x1b[0m   "
+        );
+    }
+
+    #[test]
     fn test_diff_config_default() {
         let config = DiffConfig::default();
         assert!(config.line_numbers);
@@ -499,5 +536,400 @@ mod tests {
         // Large content might use pager (depends on terminal)
         // This test mainly ensures the function doesn't panic
         let _ = should_use_pager(1000);
+    }
+
+    #[test]
+    fn test_two_column_separator_alignment() {
+        // Test that the separator `│` is consistently positioned regardless of content
+        use may_i_sexpr::cst::{CstNode, ShapeF, TriviaAnn};
+        use may_i_sexpr::diff::{ChangeType, DiffAnn, DiffCst};
+
+        fn to_diff_cst(node: CstNode<TriviaAnn>, change: ChangeType) -> DiffCst {
+            fn annotate(node: &CstNode<TriviaAnn>, change: &ChangeType) -> DiffCst {
+                DiffCst {
+                    ann: DiffAnn {
+                        trivia: node.ann.clone(),
+                        change: change.clone(),
+                    },
+                    shape: node
+                        .shape
+                        .map_ref(|child| Box::new(annotate(child, change))),
+                }
+            }
+            annotate(&node, &change)
+        }
+
+        // Create a simple before/after pair with different content lengths
+        let before = CstNode {
+            ann: TriviaAnn::default(),
+            shape: ShapeF::List(vec![
+                Box::new(CstNode {
+                    ann: TriviaAnn::default(),
+                    shape: ShapeF::Atom("short".to_string()),
+                }),
+                Box::new(CstNode {
+                    ann: TriviaAnn::default(),
+                    shape: ShapeF::Atom("cmd".to_string()),
+                }),
+            ]),
+        };
+
+        let after = CstNode {
+            ann: TriviaAnn::default(),
+            shape: ShapeF::List(vec![
+                Box::new(CstNode {
+                    ann: TriviaAnn::default(),
+                    shape: ShapeF::Atom("much_longer_command_name".to_string()),
+                }),
+                Box::new(CstNode {
+                    ann: TriviaAnn::default(),
+                    shape: ShapeF::Atom("with_args".to_string()),
+                }),
+            ]),
+        };
+
+        let diff_cst = to_diff_cst(before, ChangeType::Modified { after });
+
+        let config = DiffConfig {
+            color: false, // Disable colors for predictable testing
+            ..Default::default()
+        };
+
+        let output = render_diff(&[diff_cst], &config);
+        let lines: Vec<&str> = output.lines().collect();
+
+        // Find all lines containing the separator
+        let separator_positions: Vec<usize> =
+            lines.iter().filter_map(|line| line.find('│')).collect();
+
+        // All separators should be at the same position
+        assert!(
+            separator_positions.len() > 1,
+            "Expected multiple separator lines, got: {:?}",
+            separator_positions
+        );
+
+        let first_pos = separator_positions[0];
+        for (i, &pos) in separator_positions.iter().enumerate() {
+            assert_eq!(
+                pos, first_pos,
+                "Separator at line {} is at position {}, expected {}. Line: '{}'",
+                i, pos, first_pos, lines[i]
+            );
+        }
+    }
+
+    #[test]
+    fn test_header_separator_alignment() {
+        // Test that the header separator matches the header width
+        use may_i_sexpr::cst::{ShapeF, TriviaAnn};
+        use may_i_sexpr::diff::DiffCst;
+
+        let unchanged = DiffCst {
+            ann: may_i_sexpr::diff::DiffAnn {
+                trivia: TriviaAnn::default(),
+                change: may_i_sexpr::diff::ChangeType::Unchanged,
+            },
+            shape: ShapeF::Atom("test".to_string()),
+        };
+
+        let config = DiffConfig {
+            color: false,
+            ..Default::default()
+        };
+
+        let output = render_diff(&[unchanged], &config);
+        let lines: Vec<&str> = output.lines().collect();
+
+        // Find the header line and separator line
+        let header_line = lines
+            .iter()
+            .find(|l| l.contains("BEFORE") && l.contains("AFTER"));
+        let separator_line = lines.iter().find(|l| l.starts_with('─'));
+
+        assert!(header_line.is_some(), "Header line not found");
+        assert!(separator_line.is_some(), "Separator line not found");
+
+        let header_len = header_line.unwrap().chars().count();
+        let separator_len = separator_line.unwrap().chars().count();
+
+        // The separator should be at least as wide as the header
+        assert!(
+            separator_len >= header_len,
+            "Separator length ({}) should be >= header length ({})",
+            separator_len,
+            header_len
+        );
+    }
+
+    #[test]
+    fn test_ansi_codes_dont_break_alignment() {
+        // Test that ANSI color codes don't cause misalignment
+        use may_i_sexpr::cst::{CstNode, ShapeF, TriviaAnn};
+        use may_i_sexpr::diff::{ChangeType, DiffAnn, DiffCst};
+
+        fn to_diff_cst(node: CstNode<TriviaAnn>, change: ChangeType) -> DiffCst {
+            fn annotate(node: &CstNode<TriviaAnn>, change: &ChangeType) -> DiffCst {
+                DiffCst {
+                    ann: DiffAnn {
+                        trivia: node.ann.clone(),
+                        change: change.clone(),
+                    },
+                    shape: node
+                        .shape
+                        .map_ref(|child| Box::new(annotate(child, change))),
+                }
+            }
+            annotate(&node, &change)
+        }
+
+        let before = CstNode {
+            ann: TriviaAnn::default(),
+            shape: ShapeF::List(vec![
+                Box::new(CstNode {
+                    ann: TriviaAnn::default(),
+                    shape: ShapeF::Atom("rule".to_string()),
+                }),
+                Box::new(CstNode {
+                    ann: TriviaAnn::default(),
+                    shape: ShapeF::Atom("rm".to_string()),
+                }),
+            ]),
+        };
+
+        let after = CstNode {
+            ann: TriviaAnn::default(),
+            shape: ShapeF::List(vec![
+                Box::new(CstNode {
+                    ann: TriviaAnn::default(),
+                    shape: ShapeF::Atom("rule".to_string()),
+                }),
+                Box::new(CstNode {
+                    ann: TriviaAnn::default(),
+                    shape: ShapeF::Atom("rm".to_string()),
+                }),
+            ]),
+        };
+
+        let diff_cst = to_diff_cst(before, ChangeType::Modified { after });
+
+        // Test with colors enabled
+        let config_color = DiffConfig {
+            color: true,
+            ..Default::default()
+        };
+
+        let output_color = render_diff(&[diff_cst.clone()], &config_color);
+
+        // Test with colors disabled
+        let config_no_color = DiffConfig {
+            color: false,
+            ..Default::default()
+        };
+
+        let output_no_color = render_diff(&[diff_cst], &config_no_color);
+
+        let lines_color: Vec<&str> = output_color.lines().collect();
+        let lines_no_color: Vec<&str> = output_no_color.lines().collect();
+
+        // Find separator positions in both outputs
+        let sep_positions_color: Vec<usize> = lines_color
+            .iter()
+            .filter_map(|line| line.find('│'))
+            .collect();
+        let sep_positions_no_color: Vec<usize> = lines_no_color
+            .iter()
+            .filter_map(|line| line.find('│'))
+            .collect();
+
+        // The separator positions should be the same regardless of ANSI codes
+        assert_eq!(
+            sep_positions_color, sep_positions_no_color,
+            "ANSI codes should not affect separator alignment\nWith color: {:?}\nWithout color: {:?}",
+            sep_positions_color, sep_positions_no_color
+        );
+    }
+
+    #[test]
+    fn test_multiline_content_alignment() {
+        // Test that multi-line expressions maintain consistent separator alignment
+        // This reproduces the issue seen in the migration output where nested
+        // expressions with different indentation cause the separator to shift
+        use may_i_sexpr::cst::{CstNode, ShapeF, TriviaAnn};
+        use may_i_sexpr::diff::{ChangeType, DiffAnn, DiffCst};
+
+        fn to_diff_cst(node: CstNode<TriviaAnn>, change: ChangeType) -> DiffCst {
+            fn annotate(node: &CstNode<TriviaAnn>, change: &ChangeType) -> DiffCst {
+                DiffCst {
+                    ann: DiffAnn {
+                        trivia: node.ann.clone(),
+                        change: change.clone(),
+                    },
+                    shape: node
+                        .shape
+                        .map_ref(|child| Box::new(annotate(child, change))),
+                }
+            }
+            annotate(&node, &change)
+        }
+
+        // Create a nested structure that mimics the actual migration output:
+        // (wrapper "nix"                        │ (rule "nix"
+        //          (positional (or "shell" "de… │       (positional (or "shell" "devel…
+        //          (flag "--command" :command+… │       :effect
+        //                                       │       :ask)
+        let before = CstNode {
+            ann: TriviaAnn::default(),
+            shape: ShapeF::List(vec![
+                Box::new(CstNode {
+                    ann: TriviaAnn::default(),
+                    shape: ShapeF::Atom("wrapper".to_string()),
+                }),
+                Box::new(CstNode {
+                    ann: TriviaAnn::default(),
+                    shape: ShapeF::Str("nix".to_string()),
+                }),
+                Box::new(CstNode {
+                    ann: TriviaAnn::default(),
+                    shape: ShapeF::List(vec![
+                        Box::new(CstNode {
+                            ann: TriviaAnn::default(),
+                            shape: ShapeF::Atom("positional".to_string()),
+                        }),
+                        Box::new(CstNode {
+                            ann: TriviaAnn::default(),
+                            shape: ShapeF::List(vec![
+                                Box::new(CstNode {
+                                    ann: TriviaAnn::default(),
+                                    shape: ShapeF::Atom("or".to_string()),
+                                }),
+                                Box::new(CstNode {
+                                    ann: TriviaAnn::default(),
+                                    shape: ShapeF::Str("shell".to_string()),
+                                }),
+                                Box::new(CstNode {
+                                    ann: TriviaAnn::default(),
+                                    shape: ShapeF::Str("develop".to_string()),
+                                }),
+                            ]),
+                        }),
+                    ]),
+                }),
+                Box::new(CstNode {
+                    ann: TriviaAnn::default(),
+                    shape: ShapeF::List(vec![
+                        Box::new(CstNode {
+                            ann: TriviaAnn::default(),
+                            shape: ShapeF::Atom("flag".to_string()),
+                        }),
+                        Box::new(CstNode {
+                            ann: TriviaAnn::default(),
+                            shape: ShapeF::Str("--command".to_string()),
+                        }),
+                        Box::new(CstNode {
+                            ann: TriviaAnn::default(),
+                            shape: ShapeF::Atom(":command+args".to_string()),
+                        }),
+                    ]),
+                }),
+            ]),
+        };
+
+        let after = CstNode {
+            ann: TriviaAnn::default(),
+            shape: ShapeF::List(vec![
+                Box::new(CstNode {
+                    ann: TriviaAnn::default(),
+                    shape: ShapeF::Atom("rule".to_string()),
+                }),
+                Box::new(CstNode {
+                    ann: TriviaAnn::default(),
+                    shape: ShapeF::Str("nix".to_string()),
+                }),
+                Box::new(CstNode {
+                    ann: TriviaAnn::default(),
+                    shape: ShapeF::List(vec![
+                        Box::new(CstNode {
+                            ann: TriviaAnn::default(),
+                            shape: ShapeF::Atom("positional".to_string()),
+                        }),
+                        Box::new(CstNode {
+                            ann: TriviaAnn::default(),
+                            shape: ShapeF::List(vec![
+                                Box::new(CstNode {
+                                    ann: TriviaAnn::default(),
+                                    shape: ShapeF::Atom("or".to_string()),
+                                }),
+                                Box::new(CstNode {
+                                    ann: TriviaAnn::default(),
+                                    shape: ShapeF::Str("shell".to_string()),
+                                }),
+                                Box::new(CstNode {
+                                    ann: TriviaAnn::default(),
+                                    shape: ShapeF::Str("develop".to_string()),
+                                }),
+                            ]),
+                        }),
+                    ]),
+                }),
+                Box::new(CstNode {
+                    ann: TriviaAnn::default(),
+                    shape: ShapeF::Atom(":effect".to_string()),
+                }),
+                Box::new(CstNode {
+                    ann: TriviaAnn::default(),
+                    shape: ShapeF::Atom(":ask".to_string()),
+                }),
+            ]),
+        };
+
+        let diff_cst = to_diff_cst(before, ChangeType::Modified { after });
+
+        let config = DiffConfig {
+            color: false,
+            ..Default::default()
+        };
+
+        let output = render_diff(&[diff_cst], &config);
+        let lines: Vec<&str> = output.lines().collect();
+
+        // Find all lines containing the separator using VISIBLE position (not byte position)
+        let separator_positions: Vec<(usize, usize)> = lines
+            .iter()
+            .enumerate()
+            .filter_map(|(i, line)| {
+                line.find('│').map(|byte_pos| {
+                    // Calculate visible position by counting visible chars before the separator
+                    let prefix = &line[..byte_pos];
+                    let visible_pos = visible_width(prefix);
+                    (i, visible_pos)
+                })
+            })
+            .collect();
+
+        // All content separators should be at the same position
+        // (skip the header line which may be different)
+        let content_separators: Vec<usize> = separator_positions
+            .iter()
+            .skip(1) // Skip header
+            .map(|(_, pos)| *pos)
+            .collect();
+
+        assert!(
+            content_separators.len() > 1,
+            "Expected multiple content separator lines"
+        );
+
+        let first_content_pos = content_separators[0];
+        for (i, &pos) in content_separators.iter().enumerate() {
+            assert_eq!(
+                pos,
+                first_content_pos,
+                "Content separator at line {} is at position {}, expected {}.",
+                separator_positions[i + 1].0,
+                pos,
+                first_content_pos
+            );
+        }
     }
 }

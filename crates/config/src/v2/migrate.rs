@@ -370,15 +370,12 @@ fn rule_add_default_effect(node: &CstNode) -> Option<Box<CstNode>> {
     // Check if the rule has a conditional effect form (when, unless, cond, if)
     // These forms already contain effects, so we shouldn't add a default
     for child in &children[1..] {
-        if let Some(list) = child.as_list() {
-            if !list.is_empty() {
-                if let Some(tag) = list[0].as_atom() {
-                    if tag == "when" || tag == "unless" || tag == "cond" || tag == "if" {
+        if let Some(list) = child.as_list()
+            && !list.is_empty()
+                && let Some(tag) = list[0].as_atom()
+                    && (tag == "when" || tag == "unless" || tag == "cond" || tag == "if") {
                         return None;
                     }
-                }
-            }
-        }
     }
 
     // Add :effect :ask at the end
@@ -445,21 +442,29 @@ fn wrapper_to_rule(node: &CstNode) -> Option<Box<CstNode>> {
         if step.is_tagged("positional") {
             let pos_children = step.as_list()?;
             for pat in &pos_children[1..] {
-                // Check for capture markers inside positional
+                // Check for capture markers inside positional - don't add them to patterns
                 if let Some(atom) = pat.as_atom()
                     && (atom == ":command+args" || atom == ":command" || atom == ":args")
                 {
                     has_capture = true;
+                } else {
+                    patterns.push(pat.clone());
                 }
-                patterns.push(pat.clone());
             }
         } else if step.is_tagged("flag") {
-            // (flag "--command" ...) → "--command" and patterns
+            // (flag "--command" ...) → "--command" and patterns (excluding capture markers)
             let flag_children = step.as_list()?;
             if flag_children.len() >= 2 {
                 patterns.push(flag_children[1].clone());
                 for pat in &flag_children[2..] {
-                    patterns.push(pat.clone());
+                    // Check for capture markers - don't add them to patterns
+                    if let Some(atom) = pat.as_atom()
+                        && (atom == ":command+args" || atom == ":command" || atom == ":args")
+                    {
+                        has_capture = true;
+                    } else {
+                        patterns.push(pat.clone());
+                    }
                 }
             }
         } else if let Some(atom) = step.as_atom() {
@@ -468,12 +473,6 @@ fn wrapper_to_rule(node: &CstNode) -> Option<Box<CstNode>> {
                 has_capture = true;
             }
         }
-    }
-
-    // If we have capture but no patterns, add a wildcard to match anything
-    // This handles simple wrappers like (wrapper "nohup" :command+args)
-    if has_capture && patterns.is_empty() {
-        patterns.push(Box::new(CstNode::atom("*", Default::default())));
     }
 
     // Build positional pattern - wrappers always have arguments to match
@@ -504,9 +503,9 @@ fn wrapper_to_rule(node: &CstNode) -> Option<Box<CstNode>> {
     }
 
     // Add continuation effect inside positional if capture was present
-    // Syntax: (positional ... . (may-i (positional *)))
+    // Syntax: (positional ... . (may-i *))
     if has_capture {
-        // Add . (may-i (positional *)) as children inside the positional form
+        // Add . (may-i *) as children inside the positional form
         let dot = CstNode::atom(
             ".",
             TriviaAnn {
@@ -514,19 +513,13 @@ fn wrapper_to_rule(node: &CstNode) -> Option<Box<CstNode>> {
                 ..Default::default()
             },
         );
-        // Build (positional *) for the may-i argument
-        let may_i_arg = CstNode::list(
-            vec![
-                Box::new(CstNode::atom("positional", Default::default())),
-                Box::new(CstNode::atom(
-                    "*",
-                    TriviaAnn {
-                        leading: vec![may_i_sexpr::cst::Trivia::Whitespace(" ".to_string())],
-                        ..Default::default()
-                    },
-                )),
-            ],
-            Default::default(),
+        // Build * for the may-i argument (just the wildcard, not wrapped in positional)
+        let may_i_arg = CstNode::atom(
+            "*",
+            TriviaAnn {
+                leading: vec![may_i_sexpr::cst::Trivia::Whitespace(" ".to_string())],
+                ..Default::default()
+            },
         );
         let may_i = CstNode::list(
             vec![
@@ -1299,6 +1292,24 @@ mod tests {
     }
 
     #[test]
+    fn test_wrapper_to_rule_bare_capture() {
+        // Test simple wrapper like (wrapper "nohup" :command+args)
+        // Should produce: (rule "nohup" (positional . (may-i *)))
+        let input = r#"(wrapper "nohup" :command+args)"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let node = nodes.into_iter().next().unwrap();
+        let result = wrapper_to_rule(&node).unwrap();
+        let serialized = result.serialize();
+        assert!(serialized.contains("rule"));
+        assert!(serialized.contains("nohup"));
+        assert!(serialized.contains("positional"));
+        assert!(serialized.contains("may-i"));
+        assert!(serialized.contains("*"));
+        // Should NOT have (may-i (positional *)) - that was the bug
+        assert!(!serialized.contains("(may-i (positional"));
+    }
+
+    #[test]
     fn test_defcontext_to_define_not_defcontext() {
         let input = "(define x y)";
         let (nodes, _) = may_i_sexpr::parse_cst(input);
@@ -1469,9 +1480,10 @@ mod tests {
         let node = nodes.into_iter().next().unwrap();
         let result = wrapper_to_rule(&node).unwrap();
         let serialized = result.serialize();
-        // Should convert [:host *] to just *
+        // Should convert [:host *] to just * and not include :command+args
         assert!(serialized.contains("positional *"));
-        assert!(serialized.contains(":command+args"));
+        assert!(!serialized.contains(":command+args"));
+        assert!(serialized.contains("may-i"));
     }
 
     #[test]
@@ -1485,5 +1497,125 @@ mod tests {
         // Should include the flag pattern
         assert!(serialized.contains("positional"));
         assert!(serialized.contains("\"--rm\""));
+    }
+
+    #[test]
+    fn test_wrapper_docker_run_migration() {
+        // Test docker run wrapper produces correct output
+        let input = r#"(wrapper "docker" (positional "run" :command))"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let node = nodes.into_iter().next().unwrap();
+        let result = wrapper_to_rule(&node).unwrap();
+        let serialized = result.serialize();
+        // Expected: (rule "docker" (positional "run" . (may-i *)))
+        assert!(serialized.contains("rule"));
+        assert!(serialized.contains("\"docker\""));
+        assert!(serialized.contains("positional"));
+        assert!(serialized.contains("\"run\""));
+        assert!(serialized.contains("may-i"));
+        assert!(serialized.contains("*"));
+        // Should NOT contain capture keywords
+        assert!(!serialized.contains(":command"));
+        assert!(!serialized.contains("(may-i (positional"));
+    }
+
+    #[test]
+    fn test_wrapper_flag_with_capture() {
+        // Test wrapper with flag containing capture keyword
+        let input = r#"(wrapper "cmd" (flag "-x" :command))"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let node = nodes.into_iter().next().unwrap();
+        let result = wrapper_to_rule(&node).unwrap();
+        let serialized = result.serialize();
+        // Should have the flag but not :command keyword
+        assert!(serialized.contains("\"-x\""));
+        assert!(!serialized.contains(":command"));
+        assert!(serialized.contains("may-i"));
+    }
+
+    #[test]
+    fn test_wrapper_flag_with_multiple_patterns_and_capture() {
+        // Test wrapper with flag having multiple patterns and capture
+        let input = r#"(wrapper "cmd" (flag "-x" "-y" :command+args))"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let node = nodes.into_iter().next().unwrap();
+        let result = wrapper_to_rule(&node).unwrap();
+        let serialized = result.serialize();
+        // Should have both flags but not :command+args
+        assert!(serialized.contains("\"-x\""));
+        assert!(serialized.contains("\"-y\""));
+        assert!(!serialized.contains(":command+args"));
+        assert!(serialized.contains("may-i"));
+    }
+
+    #[test]
+    fn test_has_continuation_effect_with_nested_structure() {
+        // Test has_continuation_effect with deeply nested continuation
+        let input = r#"(rule test (positional . (may-i *)))"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let node = nodes.into_iter().next().unwrap();
+        assert!(has_continuation_effect(&node));
+    }
+
+    #[test]
+    fn test_has_continuation_effect_without_continuation() {
+        // Test has_continuation_effect returns false for rule without continuation
+        let input = r#"(rule test :effect :allow)"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let node = nodes.into_iter().next().unwrap();
+        assert!(!has_continuation_effect(&node));
+    }
+
+    #[test]
+    fn test_rule_add_default_effect_skips_continuation_rules() {
+        // Test that rules with continuation effects don't get default :effect :ask
+        let input = r#"(rule test (positional . (may-i *)))"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let node = nodes.into_iter().next().unwrap();
+        // Should return None since no transformation is needed
+        let result = rule_add_default_effect(&node);
+        assert!(
+            result.is_none(),
+            "Rules with continuation effects should not be modified"
+        );
+    }
+
+    #[test]
+    fn test_rule_add_default_effect_adds_to_rules_without_effect() {
+        // Test that rules without effects get default :effect :ask
+        let input = r#"(rule test (positional "x"))"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let node = nodes.into_iter().next().unwrap();
+        let result = rule_add_default_effect(&node).unwrap();
+        let serialized = result.serialize();
+        // Should have :effect :ask added
+        assert!(serialized.contains(":effect"));
+        assert!(serialized.contains(":ask"));
+    }
+
+    #[test]
+    fn test_args_cond_to_case_with_single_predicate() {
+        // Test args with cond and a single predicate - should wrap in when
+        // Note: the predicate is from (context prod) which gets extracted as a rule-level predicate
+        let input = r#"(rule git (args (cond ((regex "^push$") :allow))) prod)"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let node = nodes.into_iter().next().unwrap();
+        let result = args_cond_to_case(&node).unwrap();
+        let serialized = result.serialize();
+        // Should wrap cond in (when ...)
+        assert!(serialized.contains("when"), "Expected 'when' in: {}", serialized);
+    }
+
+    #[test]
+    fn test_args_cond_to_case_with_multiple_predicates() {
+        // Test args with cond and multiple predicates - should wrap in (and ...) then when
+        let input = r#"(rule git (args (cond ((regex "^push$") :allow))) prod ssh)"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let node = nodes.into_iter().next().unwrap();
+        let result = args_cond_to_case(&node).unwrap();
+        let serialized = result.serialize();
+        // Should wrap in (and ...) then (when ...)
+        assert!(serialized.contains("and"), "Expected 'and' in: {}", serialized);
+        assert!(serialized.contains("when"), "Expected 'when' in: {}", serialized);
     }
 }
