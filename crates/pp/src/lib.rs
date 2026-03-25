@@ -773,9 +773,17 @@ mod tests {
     // ── Coloring ────────────────────────────────────────────────────
 
     fn with_forced_color(f: impl FnOnce()) {
+        // Set both the override and the environment variable to force colors
+        // even in non-TTY environments (like pre-commit hooks)
         colored::control::set_override(true);
+        unsafe {
+            std::env::set_var("CLICOLOR_FORCE", "1");
+        }
         f();
         colored::control::unset_override();
+        unsafe {
+            std::env::remove_var("CLICOLOR_FORCE");
+        }
     }
 
     #[test]

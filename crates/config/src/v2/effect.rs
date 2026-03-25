@@ -166,7 +166,17 @@ fn parse_may_i(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawErro
         ));
     }
 
-    let pattern = super::pattern::parse_arg_pattern(&args[0])?;
+    // Allow bare `*` as shorthand for `(positional *)` - pass everything unconsumed down
+    let pattern = if let Some("*") = args[0].as_atom() {
+        use may_i_core::types::Expr;
+        use may_i_core::v2::pattern::{ArgPattern, PositionalArg};
+        ArgPattern::Positional {
+            patterns: vec![PositionalArg::one(Expr::Wildcard)],
+            continuation: None,
+        }
+    } else {
+        super::pattern::parse_arg_pattern(&args[0])?
+    };
     Ok(Effect::MayI { pattern })
 }
 
@@ -397,6 +407,28 @@ mod tests {
         match effect {
             Effect::MayI { .. } => {}
             _ => panic!("expected MayI"),
+        }
+    }
+
+    #[test]
+    fn parse_may_i_with_bare_star_shorthand() {
+        // Bare `*` is shorthand for `(positional *)` - pass everything unconsumed down
+        let effect = parse_effect_str(r#"(may-i *)"#).unwrap();
+        match effect {
+            Effect::MayI { pattern } => {
+                // Verify it produces the same pattern as (may-i (positional *))
+                match pattern {
+                    ArgPattern::Positional {
+                        patterns,
+                        continuation,
+                    } => {
+                        assert_eq!(patterns.len(), 1);
+                        assert!(!continuation.is_some());
+                    }
+                    _ => panic!("expected Positional pattern, got {:?}", pattern),
+                }
+            }
+            _ => panic!("expected MayI effect, got {:?}", effect),
         }
     }
 

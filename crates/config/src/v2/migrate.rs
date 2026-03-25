@@ -372,10 +372,11 @@ fn rule_add_default_effect(node: &CstNode) -> Option<Box<CstNode>> {
     for child in &children[1..] {
         if let Some(list) = child.as_list()
             && !list.is_empty()
-                && let Some(tag) = list[0].as_atom()
-                    && (tag == "when" || tag == "unless" || tag == "cond" || tag == "if") {
-                        return None;
-                    }
+            && let Some(tag) = list[0].as_atom()
+            && (tag == "when" || tag == "unless" || tag == "cond" || tag == "if")
+        {
+            return None;
+        }
     }
 
     // Add :effect :ask at the end
@@ -1603,7 +1604,11 @@ mod tests {
         let result = args_cond_to_case(&node).unwrap();
         let serialized = result.serialize();
         // Should wrap cond in (when ...)
-        assert!(serialized.contains("when"), "Expected 'when' in: {}", serialized);
+        assert!(
+            serialized.contains("when"),
+            "Expected 'when' in: {}",
+            serialized
+        );
     }
 
     #[test]
@@ -1615,7 +1620,15 @@ mod tests {
         let result = args_cond_to_case(&node).unwrap();
         let serialized = result.serialize();
         // Should wrap in (and ...) then (when ...)
-        assert!(serialized.contains("and"), "Expected 'and' in: {}", serialized);
-        assert!(serialized.contains("when"), "Expected 'when' in: {}", serialized);
+        assert!(
+            serialized.contains("and"),
+            "Expected 'and' in: {}",
+            serialized
+        );
+        assert!(
+            serialized.contains("when"),
+            "Expected 'when' in: {}",
+            serialized
+        );
     }
 }

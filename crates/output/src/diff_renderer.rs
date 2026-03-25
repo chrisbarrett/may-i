@@ -7,7 +7,7 @@ use std::io::IsTerminal;
 
 use colored::Colorize;
 use may_i_core::Doc;
-use may_i_pp::{pretty, Format};
+use may_i_pp::{Format, pretty};
 use may_i_sexpr::diff::{ChangeType, DiffCst, PlainCst};
 
 /// Configuration for diff rendering.
