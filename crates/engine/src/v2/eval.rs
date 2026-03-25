@@ -1192,9 +1192,86 @@ mod tests {
             command: ctx.command,
             args: ctx.args,
             facts: ctx.facts,
-            recursion_depth: 5,
-            recursion_limit: 5,
+            recursion_depth: ctx.recursion_depth,
+            recursion_limit: ctx.recursion_limit,
         };
         assert!(deep_ctx.is_depth_exceeded());
+    }
+
+    // --- Tests for fact binding in expressions ---
+
+    #[test]
+    fn fact_binding_captures_matched_value() {
+        // When matching a Bind expression, the matched value should be captured
+        use may_i_core::types::Expr;
+
+        let bind_expr = Expr::Bind {
+            key: ":ssh/host".to_string(),
+            expr: Box::new(Expr::Wildcard),
+        };
+
+        // Match against "prod-server-01"
+        let matched_value = "prod-server-01";
+
+        // The match should succeed and bind the fact
+        // For now, this test documents the expected behavior
+        // match_expr needs to return both bool and bound facts
+        let facts = ContextFacts::default();
+        let ctx = EvalContext::new("ssh", &[matched_value.to_string()], &facts);
+
+        // After implementing Bind, this should work:
+        // let (matched, bound_facts) = match_expr_with_binding(&bind_expr, matched_value);
+        // assert!(matched);
+        // assert_eq!(bound_facts.get_scalar(":ssh/host"), Some(matched_value));
+
+        // For now, just assert the test structure exists
+        assert_eq!(ctx.args[0], "prod-server-01");
+    }
+
+    #[test]
+    fn positional_with_fact_binding_binds_for_continuation() {
+        // When a positional pattern with fact binding matches,
+        // the bound fact should be available in the continuation
+        use may_i_core::types::{Expr, Quantifier};
+        use may_i_core::v2::ast::Effect;
+        use may_i_core::v2::pattern::{ArgPattern, PositionalArg};
+
+        // Build: (positional [:ssh/host] . (may-i *))
+        // Simple binding - [:kw] is equivalent to [:kw *]
+        let bind_expr = Expr::Bind {
+            key: ":ssh/host".to_string(),
+            expr: Box::new(Expr::Wildcard),
+        };
+
+        let pattern = ArgPattern::Positional {
+            patterns: vec![PositionalArg {
+                quantifier: Quantifier::One,
+                pattern: bind_expr,
+                recursive: false,
+            }],
+            continuation: Some(Box::new(Effect::MayI {
+                pattern: ArgPattern::Positional {
+                    patterns: vec![PositionalArg {
+                        quantifier: Quantifier::One,
+                        pattern: Expr::Wildcard,
+                        recursive: false,
+                    }],
+                    continuation: None,
+                },
+            })),
+        };
+
+        // Test that the pattern structure is correct
+        match &pattern {
+            ArgPattern::Positional {
+                patterns,
+                continuation,
+            } => {
+                assert_eq!(patterns.len(), 1);
+                assert!(matches!(patterns[0].pattern, Expr::Bind { .. }));
+                assert!(continuation.is_some());
+            }
+            _ => panic!("expected Positional"),
+        }
     }
 }

@@ -1,7 +1,7 @@
 // Shared domain types for authorization rules and configuration.
 
 use crate::doc::Doc;
-use crate::span::{Span, offset_to_line_col};
+use crate::span::{offset_to_line_col, Span};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContextValue {
@@ -1446,13 +1446,11 @@ mod tests {
 
     #[test]
     fn pos_expr_is_wildcard_delegates() {
-        assert!(
-            PosExpr {
-                quantifier: Quantifier::ZeroOrMore,
-                expr: Expr::Wildcard
-            }
-            .is_wildcard()
-        );
+        assert!(PosExpr {
+            quantifier: Quantifier::ZeroOrMore,
+            expr: Expr::Wildcard
+        }
+        .is_wildcard());
         assert!(!PosExpr::one(Expr::Literal("x".into())).is_wildcard());
     }
 
@@ -2625,6 +2623,63 @@ mod prop_tests {
                 (ExprF::Or(c1), ExprF::Or(c2)) => prop_assert_eq!(c1.len(), c2.len()),
                 _ => prop_assert!(false, "map_ref_mut and map_ref produced different results"),
             }
+        }
+    }
+
+    // --- Tests for Keyword type ---
+
+    #[test]
+    fn keyword_valid_constructible() {
+        let kw = Keyword::new(":ssh/host").unwrap();
+        assert_eq!(kw.as_str(), ":ssh/host");
+    }
+
+    #[test]
+    fn keyword_rejects_non_namespaced() {
+        let result = Keyword::new("ssh");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("must start with"));
+    }
+
+    #[test]
+    fn keyword_rejects_empty() {
+        let result = Keyword::new("");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn keyword_rejects_whitespace() {
+        let result = Keyword::new("  ");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn keyword_to_doc_produces_atom() {
+        let kw = Keyword::new(":env").unwrap();
+        let doc = kw.to_doc();
+        // Should render as just ":env"
+        assert_eq!(doc.render(80), ":env");
+    }
+
+    // --- Tests for Expr::Bind with Keyword ---
+
+    #[test]
+    fn expr_bind_with_keyword() {
+        use crate::types::Expr;
+
+        // Create a Bind expression with a Keyword
+        let kw = Keyword::new(":ssh/host").unwrap();
+        let bind_expr = Expr::Bind {
+            key: kw,
+            expr: Box::new(Expr::Wildcard),
+        };
+
+        match bind_expr {
+            Expr::Bind { key, expr } => {
+                assert_eq!(key.as_str(), ":ssh/host");
+                assert!(matches!(expr.as_ref(), Expr::Wildcard));
+            }
+            _ => panic!("expected Expr::Bind"),
         }
     }
 }

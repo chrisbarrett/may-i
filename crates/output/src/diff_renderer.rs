@@ -75,10 +75,17 @@ pub fn render_diff(annotated: &[DiffCst], config: &DiffConfig) -> String {
     let term_width = get_term_width();
     let use_two_column = term_width >= config.two_column_threshold;
 
+    // Filter out unchanged forms - only show diffs for changed/deleted forms
+    let changed: Vec<_> = annotated
+        .iter()
+        .filter(|node| !node.ann.change.is_unchanged())
+        .cloned()
+        .collect();
+
     if use_two_column {
-        render_two_column(annotated, config, term_width)
+        render_two_column(&changed, config, term_width)
     } else {
-        render_inline(annotated, config)
+        render_inline(&changed, config)
     }
 }
 
@@ -948,5 +955,88 @@ mod tests {
                 first_content_pos
             );
         }
+    }
+
+    #[test]
+    fn test_unchanged_forms_filtered_out() {
+        // Test that completely unchanged forms are not shown in the diff
+        use may_i_sexpr::cst::{CstNode, ShapeF, TriviaAnn};
+        use may_i_sexpr::diff::{ChangeType, DiffAnn, DiffCst};
+
+        fn to_diff_cst(node: CstNode<TriviaAnn>, change: ChangeType) -> DiffCst {
+            fn annotate(node: &CstNode<TriviaAnn>, change: &ChangeType) -> DiffCst {
+                DiffCst {
+                    ann: DiffAnn {
+                        trivia: node.ann.clone(),
+                        change: change.clone(),
+                    },
+                    shape: node
+                        .shape
+                        .map_ref(|child| Box::new(annotate(child, change))),
+                }
+            }
+            annotate(&node, &change)
+        }
+
+        // Create one unchanged form and one modified form
+        let unchanged = CstNode {
+            ann: TriviaAnn::default(),
+            shape: ShapeF::List(vec![
+                Box::new(CstNode {
+                    ann: TriviaAnn::default(),
+                    shape: ShapeF::Atom("unchanged".to_string()),
+                }),
+                Box::new(CstNode {
+                    ann: TriviaAnn::default(),
+                    shape: ShapeF::Atom("form".to_string()),
+                }),
+            ]),
+        };
+
+        let before = CstNode {
+            ann: TriviaAnn::default(),
+            shape: ShapeF::List(vec![Box::new(CstNode {
+                ann: TriviaAnn::default(),
+                shape: ShapeF::Atom("old".to_string()),
+            })]),
+        };
+
+        let after = CstNode {
+            ann: TriviaAnn::default(),
+            shape: ShapeF::List(vec![Box::new(CstNode {
+                ann: TriviaAnn::default(),
+                shape: ShapeF::Atom("new".to_string()),
+            })]),
+        };
+
+        let forms = vec![
+            to_diff_cst(unchanged, ChangeType::Unchanged),
+            to_diff_cst(before, ChangeType::Modified { after }),
+        ];
+
+        let config = DiffConfig {
+            color: false,
+            ..Default::default()
+        };
+
+        let output = render_diff(&forms, &config);
+
+        // The output should only show the modified form, not the unchanged one
+        assert!(
+            output.contains("old"),
+            "Output should contain the modified 'before' form"
+        );
+        assert!(
+            output.contains("new"),
+            "Output should contain the modified 'after' form"
+        );
+        assert!(
+            !output.contains("unchanged"),
+            "Output should NOT contain unchanged forms"
+        );
+        assert!(
+            !output.contains("form"),
+            "Output should NOT contain unchanged forms"
+        );
     }
 }

@@ -1488,6 +1488,23 @@ mod tests {
     }
 
     #[test]
+    fn test_wrapper_to_rule_preserves_fact_binding() {
+        // After implementing Expr::Bind, this test should pass
+        // The migration should preserve [:ssh/host *] as a fact binding expression
+        let input = r#"(wrapper "ssh" (positional [:ssh/host *] :command+args))"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let node = nodes.into_iter().next().unwrap();
+        let result = wrapper_to_rule(&node).unwrap();
+        let serialized = result.serialize();
+        
+        // The migrated output should preserve the fact binding
+        // Expected: (rule "ssh" (positional [:ssh/host *] . (may-i *)) :effect :ask)
+        assert!(serialized.contains("[:ssh/host *]"), 
+            "Migration should preserve fact binding syntax. Got: {}", serialized);
+        assert!(serialized.contains("may-i"));
+    }
+
+    #[test]
     fn test_wrapper_to_rule_with_flag() {
         // Test wrapper with flag step
         let input = r#"(wrapper "docker" (flag "--rm" :command))"#;

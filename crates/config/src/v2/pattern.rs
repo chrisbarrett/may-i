@@ -653,4 +653,95 @@ mod tests {
         let err = parse_arg(r#"(positional "git" .)"#).expect_err("expected error");
         assert!(format!("{err}").contains("requires an effect after the dot"));
     }
+
+    // --- Tests for fact binding (Expr::Bind) ---
+    // Syntax: [:kw] or [:kw *] - both equivalent, brackets are visual distinction
+
+    #[test]
+    fn parse_positional_with_fact_binding_simple() {
+        // (positional [:ssh/host] . (may-i *))
+        // Bracket notation binds matched value to the keyword
+        let pattern = parse_arg(r#"(positional [:ssh/host] . (may-i *))"#).unwrap();
+        match pattern {
+            ArgPattern::Positional {
+                patterns: pargs, ..
+            } => {
+                assert_eq!(pargs.len(), 1);
+                // The pattern should be a Bind expression with wildcard
+                match &pargs[0].pattern {
+                    Expr::Bind { key, expr } => {
+                        assert_eq!(key, ":ssh/host");
+                        assert!(matches!(expr.as_ref(), Expr::Wildcard));
+                    }
+                    other => panic!("expected Expr::Bind, got {:?}", other),
+                }
+            }
+            _ => panic!("expected Positional"),
+        }
+    }
+
+    #[test]
+    fn parse_positional_with_fact_binding_explicit_wildcard() {
+        // (positional [:ssh/host *] . (may-i *))
+        // Explicit * is optional but allowed for clarity
+        let pattern = parse_arg(r#"(positional [:ssh/host *] . (may-i *))"#).unwrap();
+        match pattern {
+            ArgPattern::Positional {
+                patterns: pargs, ..
+            } => {
+                assert_eq!(pargs.len(), 1);
+                match &pargs[0].pattern {
+                    Expr::Bind { key, expr } => {
+                        assert_eq!(key, ":ssh/host");
+                        assert!(matches!(expr.as_ref(), Expr::Wildcard));
+                    }
+                    other => panic!("expected Expr::Bind, got {:?}", other),
+                }
+            }
+            _ => panic!("expected Positional"),
+        }
+    }
+
+    #[test]
+    fn parse_positional_with_fact_binding_literal() {
+        // (positional [:env "prod"])
+        // Should bind the matched value to :env only if it equals "prod"
+        let pattern = parse_arg(r#"(positional [:env "prod"])"#).unwrap();
+        match pattern {
+            ArgPattern::Positional {
+                patterns: pargs, ..
+            } => {
+                assert_eq!(pargs.len(), 1);
+                match &pargs[0].pattern {
+                    Expr::Bind { key, expr } => {
+                        assert_eq!(key, ":env");
+                        assert!(matches!(expr.as_ref(), Expr::Literal(s) if s == "prod"));
+                    }
+                    other => panic!("expected Expr::Bind, got {:?}", other),
+                }
+            }
+            _ => panic!("expected Positional"),
+        }
+    }
+
+    #[test]
+    fn parse_positional_with_fact_binding_regex() {
+        // (positional [:ssh/host (regex "^prod-")])
+        let pattern = parse_arg(r#"(positional [:ssh/host (regex "^prod-")])"#).unwrap();
+        match pattern {
+            ArgPattern::Positional {
+                patterns: pargs, ..
+            } => {
+                assert_eq!(pargs.len(), 1);
+                match &pargs[0].pattern {
+                    Expr::Bind { key, expr } => {
+                        assert_eq!(key, ":ssh/host");
+                        assert!(matches!(expr.as_ref(), Expr::Regex(_)));
+                    }
+                    other => panic!("expected Expr::Bind, got {:?}", other),
+                }
+            }
+            _ => panic!("expected Positional"),
+        }
+    }
 }
