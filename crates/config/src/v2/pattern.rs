@@ -89,12 +89,67 @@ fn parse_expr(sexpr: &Sexpr) -> Result<Expr<Effect>, RawError> {
                     }
                     Ok(Expr::Cond(branches))
                 }
+                "if" => {
+                    // (if PRED THEN ELSE) -> Cond([(PRED, THEN), (Wildcard, ELSE)])
+                    if list.len() != 4 {
+                        return Err(RawError::new(
+                            "if must have exactly 3 arguments: (if PRED THEN ELSE)",
+                            *span,
+                        ));
+                    }
+                    let pred = parse_expr(&list[1])?;
+                    let then_eff = super::effect::parse_effect(&list[2])?.value;
+                    let else_eff = super::effect::parse_effect(&list[3])?.value;
+                    let branches = vec![
+                        may_i_core::types::ExprBranch {
+                            test: pred,
+                            effect: then_eff,
+                        },
+                        may_i_core::types::ExprBranch {
+                            test: Expr::Wildcard,
+                            effect: else_eff,
+                        },
+                    ];
+                    Ok(Expr::Cond(branches))
+                }
+                "when" => {
+                    // (when PRED EFFECT) -> Cond([(PRED, EFFECT)])
+                    if list.len() != 3 {
+                        return Err(RawError::new(
+                            "when must have exactly 2 arguments: (when PRED EFFECT)",
+                            *span,
+                        ));
+                    }
+                    let pred = parse_expr(&list[1])?;
+                    let eff = super::effect::parse_effect(&list[2])?.value;
+                    let branches = vec![may_i_core::types::ExprBranch {
+                        test: pred,
+                        effect: eff,
+                    }];
+                    Ok(Expr::Cond(branches))
+                }
+                "unless" => {
+                    // (unless PRED EFFECT) -> Cond([(Not(PRED), EFFECT)])
+                    if list.len() != 3 {
+                        return Err(RawError::new(
+                            "unless must have exactly 2 arguments: (unless PRED EFFECT)",
+                            *span,
+                        ));
+                    }
+                    let pred = parse_expr(&list[1])?;
+                    let eff = super::effect::parse_effect(&list[2])?.value;
+                    let branches = vec![may_i_core::types::ExprBranch {
+                        test: Expr::Not(Box::new(pred)),
+                        effect: eff,
+                    }];
+                    Ok(Expr::Cond(branches))
+                }
                 other => Err(RawError::new(
                     format!("unknown expression form: {other}"),
                     list[0].span(),
                 )
                 .with_label("not a recognised expression form")
-                .with_help("valid expression forms: regex, or, and, not, cond")),
+                .with_help("valid expression forms: regex, or, and, not, cond, if, when, unless")),
             }
         }
         Sexpr::Vector(_, span) => Err(RawError::new(

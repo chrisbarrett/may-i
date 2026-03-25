@@ -96,45 +96,96 @@ fn rule_simplify_command(node: &CstNode) -> Option<Box<CstNode>> {
     }))
 }
 
-/// Inline (context EXPR) into the rule as a predicate
+/// Inline (context EXPR) into the rule, wrapping context and effect in (when ...)
+/// Transforms: (rule CMD (context PRED) (effect EFF)) → (rule CMD (when PRED EFF))
 fn rule_inline_context(node: &CstNode) -> Option<Box<CstNode>> {
     if !node.is_tagged("rule") {
         return None;
     }
 
     let children = node.as_list()?;
-    let mut new_children = Vec::new();
-    let mut changed = false;
-
-    new_children.push(children[0].clone()); // "rule" tag
-
-    for child in &children[1..] {
-        if child.is_tagged("context") {
-            // Extract the context expression
-            let ctx_children = child.as_list()?;
-            if ctx_children.len() == 2 {
-                // Inline the context expression directly
-                let expr = &ctx_children[1];
-                let mut inlined = (**expr).clone();
-                // Combine trivia
-                inlined.ann.leading = child.ann.leading.clone();
-                inlined.ann.trailing = child.ann.trailing.clone();
-                new_children.push(Box::new(inlined));
-                changed = true;
-                continue;
-            }
-        }
-        new_children.push(child.clone());
-    }
-
-    if !changed {
+    if children.len() < 3 {
         return None;
     }
 
-    Some(Box::new(CstNode {
-        ann: node.ann.clone(),
-        shape: Shape::List(new_children),
-    }))
+    // Find context and effect
+    let mut context_expr = None;
+    let mut effect_expr = None;
+    let mut other_children = Vec::new();
+
+    for child in &children[1..] {
+        if child.is_tagged("context") {
+            let ctx_children = child.as_list()?;
+            if ctx_children.len() == 2 {
+                context_expr = Some(ctx_children[1].clone());
+            }
+        } else if child.is_tagged("effect") {
+            let eff_children = child.as_list()?;
+            if eff_children.len() >= 2 {
+                // Extract effect content: either :keyword or [:keyword "reason"]
+                effect_expr = if eff_children.len() == 2 {
+                    // Simple effect: (effect :keyword)
+                    Some(eff_children[1].clone())
+                } else {
+                    // Effect with reason: (effect :keyword "reason")
+                    Some(Box::new(CstNode {
+                        ann: TriviaAnn {
+                            leading: eff_children[1].ann.leading.clone(),
+                            trailing: eff_children[2].ann.trailing.clone(),
+                            span: eff_children[1].ann.span,
+                        },
+                        shape: Shape::Vector(vec![
+                            eff_children[1].clone(),
+                            eff_children[2].clone(),
+                        ]),
+                    }))
+                };
+            }
+        } else {
+            other_children.push(child.clone());
+        }
+    }
+
+    // Check if we have both context and effect, or just context
+    let has_effect = effect_expr.is_some();
+    let has_context = context_expr.is_some();
+
+    // If we have both context and effect, wrap them in (when ...)
+    if has_context && has_effect {
+        let mut new_children = Vec::new();
+        new_children.push(children[0].clone()); // "rule" tag
+        new_children.extend(other_children);
+
+        // Build (when CONTEXT EFFECT)
+        let when_children = vec![
+            Box::new(CstNode::atom("when", Default::default())),
+            context_expr.unwrap(),
+            effect_expr.unwrap(),
+        ];
+        let when_node = CstNode::list(when_children, Default::default());
+        new_children.push(Box::new(when_node));
+
+        return Some(Box::new(CstNode {
+            ann: node.ann.clone(),
+            shape: Shape::List(new_children),
+        }));
+    }
+
+    // If we only have context but no effect, inline the context directly
+    // (this handles cases where effect will be added later)
+    if has_context {
+        let mut new_children = Vec::new();
+        new_children.push(children[0].clone()); // "rule" tag
+        new_children.extend(other_children);
+        new_children.push(context_expr.unwrap());
+
+        return Some(Box::new(CstNode {
+            ann: node.ann.clone(),
+            shape: Shape::List(new_children),
+        }));
+    }
+
+    None
 }
 
 /// Inline (args MATCHER) into the rule as predicates
@@ -258,6 +309,34 @@ fn rule_convert_effect_to_keyword(node: &CstNode) -> Option<Box<CstNode>> {
     }))
 }
 
+/// Check if a node contains a continuation effect (dot notation with may-i).
+/// This recursively searches for patterns like (positional ... . (may-i ...))
+fn has_continuation_effect(node: &CstNode) -> bool {
+    // Check if this is a list with a dot followed by may-i
+    if let Some(list) = node.as_list() {
+        for (i, child) in list.iter().enumerate() {
+            if let Some(atom) = child.as_atom()
+                && atom == "."
+                && i + 1 < list.len()
+            {
+                // Check if the next element is (may-i ...)
+                let next = &list[i + 1];
+                if let Some(next_list) = next.as_list()
+                    && !next_list.is_empty()
+                    && next_list[0].as_atom() == Some("may-i")
+                {
+                    return true;
+                }
+            }
+            // Recursively check children
+            if has_continuation_effect(child) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// Add default :effect :ask to rules that don't have one.
 /// This handles v1 rules that relied on if/cond covering all cases.
 fn rule_add_default_effect(node: &CstNode) -> Option<Box<CstNode>> {
@@ -277,6 +356,28 @@ fn rule_add_default_effect(node: &CstNode) -> Option<Box<CstNode>> {
         {
             // Rule already has :effect keyword
             return None;
+        }
+    }
+
+    // Check if the rule has a continuation effect (e.g., from wrapper migration)
+    // Rules with continuations like (positional ... . (may-i ...)) don't need a default effect
+    for child in &children[1..] {
+        if has_continuation_effect(child) {
+            return None;
+        }
+    }
+
+    // Check if the rule has a conditional effect form (when, unless, cond, if)
+    // These forms already contain effects, so we shouldn't add a default
+    for child in &children[1..] {
+        if let Some(list) = child.as_list() {
+            if !list.is_empty() {
+                if let Some(tag) = list[0].as_atom() {
+                    if tag == "when" || tag == "unless" || tag == "cond" || tag == "if" {
+                        return None;
+                    }
+                }
+            }
         }
     }
 
@@ -369,43 +470,43 @@ fn wrapper_to_rule(node: &CstNode) -> Option<Box<CstNode>> {
         }
     }
 
-    // Add positional pattern if we have any
-    if !patterns.is_empty() {
-        // Build (positional PATTERN PATTERN ...) directly - don't wrap in extra list
-        let mut positional_children =
-            vec![Box::new(CstNode::atom("positional", Default::default()))];
-
-        // Add each pattern as a direct child with proper spacing
-        for (i, pat) in patterns.iter().enumerate() {
-            let mut pat = pat.clone();
-
-            // Convert v1 bracket capture patterns [:key *] to just * for v2
-            // The capture functionality is handled by the wrapper mechanism
-            if let Some(vector) = pat.as_vector()
-                && vector.len() == 2
-                && let Some(second) = vector.get(1)
-                && let Some(atom) = second.as_atom()
-                && atom == "*"
-            {
-                // Replace [:key *] with just *
-                pat = Box::new(CstNode::atom("*", pat.ann.clone()));
-            }
-
-            // Add leading whitespace for spacing between patterns
-            if i == 0 {
-                pat.ann.leading = vec![may_i_sexpr::cst::Trivia::Whitespace(" ".to_string())];
-            }
-            positional_children.push(pat);
-        }
-
-        let positional = CstNode::list(positional_children, Default::default());
-        new_children.push(Box::new(positional));
+    // If we have capture but no patterns, add a wildcard to match anything
+    // This handles simple wrappers like (wrapper "nohup" :command+args)
+    if has_capture && patterns.is_empty() {
+        patterns.push(Box::new(CstNode::atom("*", Default::default())));
     }
 
-    // Add recursive marker if capture was present
-    // The dot and continuation effect go at the RULE level, not inside positional
+    // Build positional pattern - wrappers always have arguments to match
+    // Build (positional PATTERN ... [. (may-i *)]) with continuation inside
+    let mut positional_children = vec![Box::new(CstNode::atom("positional", Default::default()))];
+
+    // Add each pattern as a direct child with proper spacing
+    for (i, pat) in patterns.iter().enumerate() {
+        let mut pat = pat.clone();
+
+        // Convert v1 bracket capture patterns [:key *] to just * for v2
+        // The capture functionality is handled by the wrapper mechanism
+        if let Some(vector) = pat.as_vector()
+            && vector.len() == 2
+            && let Some(second) = vector.get(1)
+            && let Some(atom) = second.as_atom()
+            && atom == "*"
+        {
+            // Replace [:key *] with just *
+            pat = Box::new(CstNode::atom("*", pat.ann.clone()));
+        }
+
+        // Add leading whitespace for spacing between patterns
+        if i == 0 {
+            pat.ann.leading = vec![may_i_sexpr::cst::Trivia::Whitespace(" ".to_string())];
+        }
+        positional_children.push(pat);
+    }
+
+    // Add continuation effect inside positional if capture was present
+    // Syntax: (positional ... . (may-i (positional *)))
     if has_capture {
-        // Add . (may-i *) as separate children at the rule level
+        // Add . (may-i (positional *)) as children inside the positional form
         let dot = CstNode::atom(
             ".",
             TriviaAnn {
@@ -413,10 +514,24 @@ fn wrapper_to_rule(node: &CstNode) -> Option<Box<CstNode>> {
                 ..Default::default()
             },
         );
+        // Build (positional *) for the may-i argument
+        let may_i_arg = CstNode::list(
+            vec![
+                Box::new(CstNode::atom("positional", Default::default())),
+                Box::new(CstNode::atom(
+                    "*",
+                    TriviaAnn {
+                        leading: vec![may_i_sexpr::cst::Trivia::Whitespace(" ".to_string())],
+                        ..Default::default()
+                    },
+                )),
+            ],
+            Default::default(),
+        );
         let may_i = CstNode::list(
             vec![
                 Box::new(CstNode::atom("may-i", Default::default())),
-                Box::new(CstNode::atom("*", Default::default())),
+                Box::new(may_i_arg),
             ],
             TriviaAnn {
                 leading: vec![may_i_sexpr::cst::Trivia::Whitespace(" ".to_string())],
@@ -424,20 +539,14 @@ fn wrapper_to_rule(node: &CstNode) -> Option<Box<CstNode>> {
             },
         );
 
-        new_children.push(Box::new(dot));
-        new_children.push(Box::new(may_i));
+        positional_children.push(Box::new(dot));
+        positional_children.push(Box::new(may_i));
     }
 
-    // Add :effect :allow
-    // In new unified syntax, :effect keyword comes before default effect
-    new_children.push(Box::new(CstNode::atom(
-        ":effect",
-        TriviaAnn {
-            leading: vec![may_i_sexpr::cst::Trivia::Whitespace(" ".to_string())],
-            ..Default::default()
-        },
-    )));
-    new_children.push(Box::new(CstNode::atom(":allow", Default::default())));
+    let positional = CstNode::list(positional_children, Default::default());
+    new_children.push(Box::new(positional));
+
+    // Note: No :effect needed - the effect is determined by the nested may-i call
 
     Some(Box::new(CstNode::list(
         new_children,
