@@ -2,7 +2,7 @@
 // Task 2.3: Implement argument pattern parsers (`positional`, `exact`, `anywhere`, `forbidden`)
 
 use may_i_core::Quantifier;
-use may_i_core::types::Expr;
+use may_i_core::types::{Expr, Keyword};
 use may_i_core::v2::ast::Effect;
 use may_i_core::v2::pattern::{ArgPattern, PositionalArg};
 use may_i_sexpr::{RawError, Sexpr};
@@ -152,10 +152,40 @@ fn parse_expr(sexpr: &Sexpr) -> Result<Expr<Effect>, RawError> {
                 .with_help("valid expression forms: regex, or, and, not, cond, if, when, unless")),
             }
         }
-        Sexpr::Vector(_, span) => Err(RawError::new(
-            "expression forms do not support bracket syntax here",
-            *span,
-        )),
+        Sexpr::Vector(vector, _span) => {
+            // Parse bracket notation as fact binding: [:keyword] or [:keyword EXPR]
+            if vector.is_empty() {
+                return Err(RawError::new("empty bracket vector is not valid", *_span));
+            }
+
+            // First element must be a keyword (starts with :)
+            let key_str = vector[0].as_atom().ok_or_else(|| {
+                RawError::new("fact binding key must be an atom", vector[0].span())
+            })?;
+
+            let keyword = Keyword::new(key_str).map_err(|e| {
+                RawError::new(format!("invalid fact binding key: {e}"), vector[0].span())
+            })?;
+
+            // Parse the inner expression
+            let inner_expr = if vector.len() == 1 {
+                // [:keyword] alone means "bind anything" (wildcard)
+                Expr::Wildcard
+            } else if vector.len() == 2 {
+                // [:keyword EXPR] - parse the expression
+                parse_expr(&vector[1])?
+            } else {
+                return Err(RawError::new(
+                    "fact binding must have form [:keyword] or [:keyword EXPR]",
+                    Sexpr::Vector(vector.clone(), *_span).span(),
+                ));
+            };
+
+            Ok(Expr::Bind {
+                key: keyword,
+                expr: Box::new(inner_expr),
+            })
+        }
     }
 }
 
@@ -462,9 +492,10 @@ mod tests {
     }
 
     #[test]
-    fn parse_bracket_syntax_error() {
-        let err = parse_arg(r#"(positional ["test"])"#).expect_err("expected error");
-        assert!(format!("{err}").contains("bracket syntax"));
+    fn parse_invalid_keyword_in_binding_error() {
+        // Bracket syntax is now valid for fact binding, but non-keyword first elements should error
+        let err = parse_arg(r#"(positional ["not-a-keyword"])"#).expect_err("expected error");
+        assert!(format!("{err}").contains("invalid fact binding key"));
     }
 
     #[test]
@@ -670,7 +701,7 @@ mod tests {
                 // The pattern should be a Bind expression with wildcard
                 match &pargs[0].pattern {
                     Expr::Bind { key, expr } => {
-                        assert_eq!(key, ":ssh/host");
+                        assert_eq!(key.as_str(), ":ssh/host");
                         assert!(matches!(expr.as_ref(), Expr::Wildcard));
                     }
                     other => panic!("expected Expr::Bind, got {:?}", other),
@@ -692,7 +723,7 @@ mod tests {
                 assert_eq!(pargs.len(), 1);
                 match &pargs[0].pattern {
                     Expr::Bind { key, expr } => {
-                        assert_eq!(key, ":ssh/host");
+                        assert_eq!(key.as_str(), ":ssh/host");
                         assert!(matches!(expr.as_ref(), Expr::Wildcard));
                     }
                     other => panic!("expected Expr::Bind, got {:?}", other),
@@ -714,7 +745,7 @@ mod tests {
                 assert_eq!(pargs.len(), 1);
                 match &pargs[0].pattern {
                     Expr::Bind { key, expr } => {
-                        assert_eq!(key, ":env");
+                        assert_eq!(key.as_str(), ":env");
                         assert!(matches!(expr.as_ref(), Expr::Literal(s) if s == "prod"));
                     }
                     other => panic!("expected Expr::Bind, got {:?}", other),
@@ -735,7 +766,7 @@ mod tests {
                 assert_eq!(pargs.len(), 1);
                 match &pargs[0].pattern {
                     Expr::Bind { key, expr } => {
-                        assert_eq!(key, ":ssh/host");
+                        assert_eq!(key.as_str(), ":ssh/host");
                         assert!(matches!(expr.as_ref(), Expr::Regex(_)));
                     }
                     other => panic!("expected Expr::Bind, got {:?}", other),

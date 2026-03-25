@@ -298,7 +298,8 @@ fn evaluate_arg_pattern_predicate(pattern: &ArgPattern, ctx: &EvalContext) -> Pr
                 .filter(|arg| !arg.starts_with('-'))
                 .collect();
 
-            if match_positional_patterns(&positional_args, patterns) {
+            let (matched, _) = match_positional_patterns(&positional_args, patterns);
+            if matched {
                 PredicateResult::Match
             } else {
                 PredicateResult::NoMatch
@@ -314,9 +315,8 @@ fn evaluate_arg_pattern_predicate(pattern: &ArgPattern, ctx: &EvalContext) -> Pr
                 .filter(|arg| !arg.starts_with('-'))
                 .collect();
 
-            if positional_args.len() == patterns.len()
-                && match_positional_patterns(&positional_args, patterns)
-            {
+            let (matched, _) = match_positional_patterns(&positional_args, patterns);
+            if positional_args.len() == patterns.len() && matched {
                 PredicateResult::Match
             } else {
                 PredicateResult::NoMatch
@@ -381,10 +381,14 @@ fn evaluate_arg_pattern_predicate(pattern: &ArgPattern, ctx: &EvalContext) -> Pr
     }
 }
 
-/// Match positional patterns against args.
-fn match_positional_patterns(args: &[&String], patterns: &[PositionalArg]) -> bool {
+/// Match positional patterns against args, capturing bound facts.
+/// Returns (matched, bound_facts) where bound_facts contains any facts
+/// captured from Expr::Bind expressions in the patterns.
+fn match_positional_patterns(args: &[&String], patterns: &[PositionalArg]) -> (bool, ContextFacts) {
+    let mut facts = ContextFacts::default();
+
     if args.len() < patterns.len() {
-        return false;
+        return (false, facts);
     }
 
     for (i, pattern) in patterns.iter().enumerate() {
@@ -392,58 +396,110 @@ fn match_positional_patterns(args: &[&String], patterns: &[PositionalArg]) -> bo
 
         match &pattern.quantifier {
             may_i_core::types::Quantifier::One => {
-                if !match_expr(&pattern.pattern, arg) {
-                    return false;
+                let (matched, f) = match_expr_with_binding(&pattern.pattern, arg);
+                facts = facts.merge(&f);
+                if !matched {
+                    return (false, facts);
                 }
             }
             may_i_core::types::Quantifier::Optional => {
                 // Optional pattern - if arg exists, it must match
-                if i < args.len() && !match_expr(&pattern.pattern, arg) {
-                    return false;
+                if i < args.len() {
+                    let (matched, f) = match_expr_with_binding(&pattern.pattern, arg);
+                    facts = facts.merge(&f);
+                    if !matched {
+                        return (false, facts);
+                    }
                 }
             }
             may_i_core::types::Quantifier::OneOrMore => {
                 // OneOrMore pattern - at least one arg must match, then continue
                 if i >= args.len() {
-                    return false;
+                    return (false, facts);
                 }
                 for arg in args.iter().skip(i) {
-                    if !match_expr(&pattern.pattern, arg) {
-                        return false;
+                    let (matched, f) = match_expr_with_binding(&pattern.pattern, arg);
+                    facts = facts.merge(&f);
+                    if !matched {
+                        return (false, facts);
                     }
                 }
-                return true;
+                return (true, facts);
             }
             may_i_core::types::Quantifier::ZeroOrMore => {
                 // ZeroOrMore pattern - all remaining args must match
                 for arg in args.iter().skip(i) {
-                    if !match_expr(&pattern.pattern, arg) {
-                        return false;
+                    let (matched, f) = match_expr_with_binding(&pattern.pattern, arg);
+                    facts = facts.merge(&f);
+                    if !matched {
+                        return (false, facts);
                     }
                 }
-                return true;
+                return (true, facts);
             }
         }
     }
 
-    true
+    (true, facts)
 }
 
-/// Match a single expression against a value.
-fn match_expr<E: std::fmt::Debug + may_i_core::types::ToDoc>(
+/// Match a single expression against a value, capturing bound facts.
+/// Returns (matched, bound_facts) where bound_facts contains any facts
+/// captured from Expr::Bind expressions.
+fn match_expr_with_binding<E: std::fmt::Debug + may_i_core::types::ToDoc>(
     expr: &may_i_core::types::Expr<E>,
     value: &str,
-) -> bool {
+) -> (bool, ContextFacts) {
     use may_i_core::types::Expr;
-    match expr {
+    let mut facts = ContextFacts::default();
+
+    let matched = match expr {
         Expr::Literal(s) => s == value,
         Expr::Wildcard => true,
         Expr::Regex(re) => re.is_match(value),
-        Expr::And(exprs) => exprs.iter().all(|e| match_expr(e, value)),
-        Expr::Or(exprs) => exprs.iter().any(|e| match_expr(e, value)),
-        Expr::Not(inner) => !match_expr(inner, value),
+        Expr::And(exprs) => {
+            let mut all_match = true;
+            for e in exprs {
+                let (m, f) = match_expr_with_binding(e, value);
+                facts = facts.merge(&f);
+                if !m {
+                    all_match = false;
+                }
+            }
+            all_match
+        }
+        Expr::Or(exprs) => {
+            let mut any_match = false;
+            for e in exprs {
+                let (m, f) = match_expr_with_binding(e, value);
+                if m {
+                    any_match = true;
+                    facts = facts.merge(&f);
+                }
+            }
+            any_match
+        }
+        Expr::Not(inner) => {
+            let (m, _) = match_expr_with_binding(inner, value);
+            !m
+        }
+        Expr::Bind { key, expr: inner } => {
+            // First check if the inner expression matches
+            let (inner_matched, inner_facts) = match_expr_with_binding(inner, value);
+            facts = facts.merge(&inner_facts);
+
+            if inner_matched {
+                // Capture the matched value as a fact
+                facts.insert_scalar(key.as_str(), value);
+                true
+            } else {
+                false
+            }
+        }
         _ => false, // Cond not supported in simple matching
-    }
+    };
+
+    (matched, facts)
 }
 
 /// Evaluate an effect to produce an EffectResult (Decision | Nil).
@@ -592,7 +648,8 @@ fn evaluate_arg_pattern_effect(
                 .filter(|arg| !arg.starts_with('-'))
                 .collect();
 
-            if match_positional_patterns(&positional_args, patterns) {
+            let (matched, bound_facts) = match_positional_patterns(&positional_args, patterns);
+            if matched {
                 if let Some(cont) = continuation {
                     // Calculate remaining args after consuming matched patterns
                     let consumed_count = patterns
@@ -609,8 +666,8 @@ fn evaluate_arg_pattern_effect(
                         .skip(consumed_count)
                         .map(|s| s.to_string())
                         .collect();
-                    // Evaluate continuation with remaining args
-                    evaluate_effect_with_owned_args(cont, ctx, rules, remaining_args)
+                    // Evaluate continuation with remaining args and bound facts
+                    evaluate_effect_with_owned_args(cont, ctx, rules, remaining_args, bound_facts)
                 } else {
                     EffectResult::Decision(Decision::Allow, None)
                 }
@@ -628,9 +685,8 @@ fn evaluate_arg_pattern_effect(
                 .filter(|arg| !arg.starts_with('-'))
                 .collect();
 
-            if positional_args.len() == patterns.len()
-                && match_positional_patterns(&positional_args, patterns)
-            {
+            let (matched, bound_facts) = match_positional_patterns(&positional_args, patterns);
+            if positional_args.len() == patterns.len() && matched {
                 if let Some(cont) = continuation {
                     // For exact patterns, no positional args remain after exact match
                     // But we should still pass any flags that weren't part of the pattern
@@ -640,7 +696,7 @@ fn evaluate_arg_pattern_effect(
                         .filter(|arg| arg.starts_with('-'))
                         .map(|s| s.to_string())
                         .collect();
-                    evaluate_effect_with_owned_args(cont, ctx, rules, remaining_args)
+                    evaluate_effect_with_owned_args(cont, ctx, rules, remaining_args, bound_facts)
                 } else {
                     EffectResult::Decision(Decision::Allow, None)
                 }
@@ -711,12 +767,15 @@ fn evaluate_effect_with_owned_args(
     ctx: &EvalContext,
     rules: &[Rule],
     owned_args: Vec<String>,
+    bound_facts: ContextFacts,
 ) -> EffectResult {
     let _args_ref: Vec<&str> = owned_args.iter().map(|s| s.as_str()).collect();
+    // Merge bound facts into the context facts
+    let merged_facts = ctx.facts.merge(&bound_facts);
     let inner_ctx = EvalContext {
         command: ctx.command,
         args: &owned_args,
-        facts: ctx.facts,
+        facts: &merged_facts,
         recursion_depth: ctx.recursion_depth,
         recursion_limit: ctx.recursion_limit,
     };
@@ -1192,7 +1251,7 @@ mod tests {
             command: ctx.command,
             args: ctx.args,
             facts: ctx.facts,
-            recursion_depth: ctx.recursion_depth,
+            recursion_depth: 5, // Set to equal recursion_limit
             recursion_limit: ctx.recursion_limit,
         };
         assert!(deep_ctx.is_depth_exceeded());
@@ -1203,10 +1262,10 @@ mod tests {
     #[test]
     fn fact_binding_captures_matched_value() {
         // When matching a Bind expression, the matched value should be captured
-        use may_i_core::types::Expr;
+        use may_i_core::types::{Effect, Expr, Keyword};
 
-        let bind_expr = Expr::Bind {
-            key: ":ssh/host".to_string(),
+        let bind_expr: Expr<Effect> = Expr::Bind {
+            key: Keyword::new(":ssh/host").unwrap(),
             expr: Box::new(Expr::Wildcard),
         };
 
@@ -1214,32 +1273,23 @@ mod tests {
         let matched_value = "prod-server-01";
 
         // The match should succeed and bind the fact
-        // For now, this test documents the expected behavior
-        // match_expr needs to return both bool and bound facts
-        let facts = ContextFacts::default();
-        let ctx = EvalContext::new("ssh", &[matched_value.to_string()], &facts);
-
-        // After implementing Bind, this should work:
-        // let (matched, bound_facts) = match_expr_with_binding(&bind_expr, matched_value);
-        // assert!(matched);
-        // assert_eq!(bound_facts.get_scalar(":ssh/host"), Some(matched_value));
-
-        // For now, just assert the test structure exists
-        assert_eq!(ctx.args[0], "prod-server-01");
+        let (matched, bound_facts) = match_expr_with_binding(&bind_expr, matched_value);
+        assert!(matched);
+        assert_eq!(bound_facts.get_scalar(":ssh/host"), Some(matched_value));
     }
 
     #[test]
     fn positional_with_fact_binding_binds_for_continuation() {
         // When a positional pattern with fact binding matches,
         // the bound fact should be available in the continuation
-        use may_i_core::types::{Expr, Quantifier};
+        use may_i_core::types::{Expr, Keyword, Quantifier};
         use may_i_core::v2::ast::Effect;
         use may_i_core::v2::pattern::{ArgPattern, PositionalArg};
 
         // Build: (positional [:ssh/host] . (may-i *))
         // Simple binding - [:kw] is equivalent to [:kw *]
         let bind_expr = Expr::Bind {
-            key: ":ssh/host".to_string(),
+            key: Keyword::new(":ssh/host").unwrap(),
             expr: Box::new(Expr::Wildcard),
         };
 

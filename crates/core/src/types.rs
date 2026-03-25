@@ -1,7 +1,58 @@
 // Shared domain types for authorization rules and configuration.
 
 use crate::doc::Doc;
-use crate::span::{offset_to_line_col, Span};
+use crate::span::{Span, offset_to_line_col};
+
+/// A validated keyword string that starts with `:`.
+///
+/// Keywords are used as fact keys in bindings and queries.
+/// The validation ensures correctness by construction.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Keyword(String);
+
+impl Keyword {
+    /// Create a new keyword from a string.
+    ///
+    /// Returns an error if the string does not start with `:`.
+    pub fn new(s: impl Into<String>) -> Result<Self, String> {
+        let s = s.into();
+        if s.starts_with(':') {
+            Ok(Keyword(s))
+        } else {
+            Err(format!("keyword must start with ':', got '{}'", s))
+        }
+    }
+
+    /// Create a new keyword without validation (for internal use).
+    ///
+    /// # Safety
+    /// The caller must ensure the string starts with `:`.
+    pub fn new_unchecked(s: impl Into<String>) -> Self {
+        Keyword(s.into())
+    }
+
+    /// Get the string representation of the keyword.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Convert into the inner String.
+    pub fn into_string(self) -> String {
+        self.0
+    }
+}
+
+impl std::fmt::Display for Keyword {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl ToDoc for Keyword {
+    fn to_doc(&self) -> Doc {
+        Doc::atom(self.0.clone())
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContextValue {
@@ -369,6 +420,8 @@ pub enum Expr<E: std::fmt::Debug + ToDoc = Effect> {
     Not(Box<Expr<E>>),
     /// Branches with effects; first matching branch wins.
     Cond(Vec<ExprBranch<E>>),
+    /// Bind the matched value to a fact key.
+    Bind { key: Keyword, expr: Box<Expr<E>> },
 }
 
 /// Base functor for expression types.
@@ -394,6 +447,8 @@ pub enum ExprF<R, E: std::fmt::Debug + ToDoc = Effect> {
     Not(Box<R>),
     /// Branches with effects; first matching branch wins.
     Cond(Vec<ExprBranchF<R, E>>),
+    /// Bind the matched value to a fact key.
+    Bind { key: Keyword, expr: Box<R> },
 }
 
 impl<R: Clone, E: std::fmt::Debug + ToDoc + Clone> Clone for ExprF<R, E> {
@@ -406,6 +461,10 @@ impl<R: Clone, E: std::fmt::Debug + ToDoc + Clone> Clone for ExprF<R, E> {
             ExprF::Or(children) => ExprF::Or(children.clone()),
             ExprF::Not(child) => ExprF::Not(child.clone()),
             ExprF::Cond(branches) => ExprF::Cond(branches.clone()),
+            ExprF::Bind { key, expr } => ExprF::Bind {
+                key: key.clone(),
+                expr: expr.clone(),
+            },
         }
     }
 }
@@ -443,6 +502,10 @@ impl<R, E: std::fmt::Debug + ToDoc + Clone> ExprF<R, E> {
             ExprF::Cond(branches) => {
                 ExprF::Cond(branches.into_iter().map(|b| b.map(&mut f)).collect())
             }
+            ExprF::Bind { key, expr } => ExprF::Bind {
+                key,
+                expr: Box::new(f(*expr)),
+            },
         }
     }
 
@@ -460,6 +523,10 @@ impl<R, E: std::fmt::Debug + ToDoc + Clone> ExprF<R, E> {
             ExprF::Cond(branches) => {
                 ExprF::Cond(branches.iter().map(|b| b.map_ref(&mut f)).collect())
             }
+            ExprF::Bind { key, expr } => ExprF::Bind {
+                key: key.clone(),
+                expr: Box::new(f(expr)),
+            },
         }
     }
 
@@ -477,6 +544,10 @@ impl<R, E: std::fmt::Debug + ToDoc + Clone> ExprF<R, E> {
             ExprF::Cond(branches) => {
                 ExprF::Cond(branches.iter_mut().map(|b| b.map_ref_mut(&mut f)).collect())
             }
+            ExprF::Bind { key, expr } => ExprF::Bind {
+                key: key.clone(),
+                expr: Box::new(f(expr)),
+            },
         }
     }
 }
@@ -492,6 +563,7 @@ impl<E: std::fmt::Debug + ToDoc> Expr<E> {
             Expr::Or(exprs) => exprs.iter().any(|e| e.is_match(text)),
             Expr::Not(expr) => !expr.is_match(text),
             Expr::Cond(branches) => branches.iter().any(|b| b.test.is_match(text)),
+            Expr::Bind { expr, .. } => expr.is_match(text),
         }
     }
 
@@ -514,6 +586,7 @@ impl<E: std::fmt::Debug + ToDoc> Expr<E> {
                 .iter()
                 .find(|b| b.test.is_match(text))
                 .map(|b| &b.effect),
+            Expr::Bind { expr, .. } => expr.find_effect(text),
         }
     }
 
@@ -551,6 +624,7 @@ impl<E: std::fmt::Debug + ToDoc> Expr<E> {
                 }
                 Doc::list(cs)
             }
+            Expr::Bind { key, expr } => Doc::vector(vec![key.to_doc(), expr.to_doc()]),
         }
     }
 }
@@ -583,6 +657,9 @@ impl std::fmt::Display for Expr {
                 }
                 write!(f, ")")
             }
+            Expr::Bind { key, expr } => {
+                write!(f, "[{key} {expr}]")
+            }
         }
     }
 }
@@ -597,6 +674,11 @@ impl<E: std::fmt::Debug + ToDoc> std::fmt::Debug for Expr<E> {
             Expr::Or(exprs) => f.debug_tuple("Or").field(exprs).finish(),
             Expr::Not(expr) => f.debug_tuple("Not").field(expr).finish(),
             Expr::Cond(branches) => f.debug_tuple("Cond").field(branches).finish(),
+            Expr::Bind { key, expr } => f
+                .debug_struct("Bind")
+                .field("key", key)
+                .field("expr", expr)
+                .finish(),
         }
     }
 }
@@ -979,6 +1061,7 @@ fn has_expr_effect(expr: &Expr) -> bool {
         Expr::Cond(_) => true,
         Expr::And(exprs) | Expr::Or(exprs) => exprs.iter().any(has_expr_effect),
         Expr::Not(e) => has_expr_effect(e),
+        Expr::Bind { expr, .. } => has_expr_effect(expr),
         Expr::Literal(_) | Expr::Regex(_) | Expr::Wildcard => false,
     }
 }
@@ -1446,11 +1529,13 @@ mod tests {
 
     #[test]
     fn pos_expr_is_wildcard_delegates() {
-        assert!(PosExpr {
-            quantifier: Quantifier::ZeroOrMore,
-            expr: Expr::Wildcard
-        }
-        .is_wildcard());
+        assert!(
+            PosExpr {
+                quantifier: Quantifier::ZeroOrMore,
+                expr: Expr::Wildcard
+            }
+            .is_wildcard()
+        );
         assert!(!PosExpr::one(Expr::Literal("x".into())).is_wildcard());
     }
 
@@ -2488,6 +2573,7 @@ mod prop_tests {
                         Expr::Cond(nested_branches) => {
                             nested_branches.iter().any(|nb| nb.test.is_match(&s))
                         }
+                        Expr::Bind { expr, .. } => expr.is_match(&s),
                     };
                     prop_assert_eq!(matches, double_check);
                 }
@@ -2657,8 +2743,11 @@ mod prop_tests {
     fn keyword_to_doc_produces_atom() {
         let kw = Keyword::new(":env").unwrap();
         let doc = kw.to_doc();
-        // Should render as just ":env"
-        assert_eq!(doc.render(80), ":env");
+        // Doc should be an atom with value ":env"
+        match &doc.node {
+            crate::doc::DocF::Atom(s) => assert_eq!(s, ":env"),
+            _ => panic!("expected DocF::Atom"),
+        }
     }
 
     // --- Tests for Expr::Bind with Keyword ---
@@ -2669,7 +2758,7 @@ mod prop_tests {
 
         // Create a Bind expression with a Keyword
         let kw = Keyword::new(":ssh/host").unwrap();
-        let bind_expr = Expr::Bind {
+        let bind_expr: Expr<Effect> = Expr::Bind {
             key: kw,
             expr: Box::new(Expr::Wildcard),
         };

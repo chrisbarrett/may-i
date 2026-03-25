@@ -481,20 +481,9 @@ fn wrapper_to_rule(node: &CstNode) -> Option<Box<CstNode>> {
     let mut positional_children = vec![Box::new(CstNode::atom("positional", Default::default()))];
 
     // Add each pattern as a direct child with proper spacing
+    // Note: [:key *] patterns are now preserved as-is for the v2 parser to handle
     for (i, pat) in patterns.iter().enumerate() {
         let mut pat = pat.clone();
-
-        // Convert v1 bracket capture patterns [:key *] to just * for v2
-        // The capture functionality is handled by the wrapper mechanism
-        if let Some(vector) = pat.as_vector()
-            && vector.len() == 2
-            && let Some(second) = vector.get(1)
-            && let Some(atom) = second.as_atom()
-            && atom == "*"
-        {
-            // Replace [:key *] with just *
-            pat = Box::new(CstNode::atom("*", pat.ann.clone()));
-        }
 
         // Add leading whitespace for spacing between patterns
         if i == 0 {
@@ -1481,8 +1470,8 @@ mod tests {
         let node = nodes.into_iter().next().unwrap();
         let result = wrapper_to_rule(&node).unwrap();
         let serialized = result.serialize();
-        // Should convert [:host *] to just * and not include :command+args
-        assert!(serialized.contains("positional *"));
+        // Should preserve [:host *] as a fact binding (not convert to just *)
+        assert!(serialized.contains("[:host *]"));
         assert!(!serialized.contains(":command+args"));
         assert!(serialized.contains("may-i"));
     }
@@ -1496,11 +1485,14 @@ mod tests {
         let node = nodes.into_iter().next().unwrap();
         let result = wrapper_to_rule(&node).unwrap();
         let serialized = result.serialize();
-        
+
         // The migrated output should preserve the fact binding
         // Expected: (rule "ssh" (positional [:ssh/host *] . (may-i *)) :effect :ask)
-        assert!(serialized.contains("[:ssh/host *]"), 
-            "Migration should preserve fact binding syntax. Got: {}", serialized);
+        assert!(
+            serialized.contains("[:ssh/host *]"),
+            "Migration should preserve fact binding syntax. Got: {}",
+            serialized
+        );
         assert!(serialized.contains("may-i"));
     }
 
