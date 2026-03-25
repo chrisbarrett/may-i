@@ -1,12 +1,15 @@
 // Argument pattern parser for v2 DSL.
 // Task 2.3: Implement argument pattern parsers (`positional`, `exact`, `anywhere`, `forbidden`)
 
-use may_i_core::types::{Expr, Quantifier};
+use may_i_core::Quantifier;
+use may_i_core::types::Expr;
+use may_i_core::v2::ast::Effect;
 use may_i_core::v2::pattern::{ArgPattern, PositionalArg};
 use may_i_sexpr::{RawError, Sexpr};
 
 /// Parse a simple expression pattern from an s-expression.
-fn parse_expr(sexpr: &Sexpr) -> Result<Expr, RawError> {
+/// Uses V2Effect for cond branches.
+fn parse_expr(sexpr: &Sexpr) -> Result<Expr<Effect>, RawError> {
     match sexpr {
         Sexpr::Atom(s, _) if s == "*" => Ok(Expr::Wildcard),
         Sexpr::Atom(s, _) => Ok(Expr::Literal(s.clone())),
@@ -31,11 +34,13 @@ fn parse_expr(sexpr: &Sexpr) -> Result<Expr, RawError> {
                     Ok(Expr::Regex(re))
                 }
                 "or" => {
-                    let exprs: Result<Vec<Expr>, _> = list[1..].iter().map(parse_expr).collect();
+                    let exprs: Result<Vec<Expr<Effect>>, _> =
+                        list[1..].iter().map(parse_expr).collect();
                     Ok(Expr::Or(exprs?))
                 }
                 "and" => {
-                    let exprs: Result<Vec<Expr>, _> = list[1..].iter().map(parse_expr).collect();
+                    let exprs: Result<Vec<Expr<Effect>>, _> =
+                        list[1..].iter().map(parse_expr).collect();
                     Ok(Expr::And(exprs?))
                 }
                 "not" => {
@@ -44,12 +49,52 @@ fn parse_expr(sexpr: &Sexpr) -> Result<Expr, RawError> {
                     }
                     Ok(Expr::Not(Box::new(parse_expr(&list[1])?)))
                 }
+                "cond" => {
+                    // Parse cond branches: ((test effect) ... (else effect))
+                    let mut branches = Vec::new();
+                    for branch in &list[1..] {
+                        let branch_list = branch.as_list().ok_or_else(|| {
+                            RawError::new("cond branch must be a list", branch.span())
+                        })?;
+                        if branch_list.is_empty() {
+                            return Err(RawError::new("empty cond branch", branch.span()));
+                        }
+
+                        let branch_tag = branch_list[0].as_atom();
+                        if branch_tag == Some("else") {
+                            // Else branch: (else effect)
+                            if branch_list.len() != 2 {
+                                return Err(RawError::new(
+                                    "else branch must have exactly one effect",
+                                    branch.span(),
+                                ));
+                            }
+                            let effect = super::effect::parse_effect(&branch_list[1])?.value;
+                            branches.push(may_i_core::types::ExprBranch {
+                                test: Expr::Wildcard,
+                                effect,
+                            });
+                        } else {
+                            // Regular branch: (test effect)
+                            if branch_list.len() != 2 {
+                                return Err(RawError::new(
+                                    "cond branch must have (test effect) form",
+                                    branch.span(),
+                                ));
+                            }
+                            let test = parse_expr(&branch_list[0])?;
+                            let effect = super::effect::parse_effect(&branch_list[1])?.value;
+                            branches.push(may_i_core::types::ExprBranch { test, effect });
+                        }
+                    }
+                    Ok(Expr::Cond(branches))
+                }
                 other => Err(RawError::new(
                     format!("unknown expression form: {other}"),
                     list[0].span(),
                 )
                 .with_label("not a recognised expression form")
-                .with_help("valid expression forms: regex, or, and, not")),
+                .with_help("valid expression forms: regex, or, and, not, cond")),
             }
         }
         Sexpr::Vector(_, span) => Err(RawError::new(
@@ -84,11 +129,11 @@ pub fn parse_arg_pattern(sexpr: &Sexpr) -> Result<ArgPattern, RawError> {
         "positional" => parse_positional_form(&list[1..], sexpr.span(), false),
         "exact" => parse_positional_form(&list[1..], sexpr.span(), true),
         "anywhere" => {
-            let exprs: Result<Vec<Expr>, _> = list[1..].iter().map(parse_expr).collect();
+            let exprs: Result<Vec<Expr<Effect>>, _> = list[1..].iter().map(parse_expr).collect();
             Ok(ArgPattern::Anywhere(exprs?))
         }
         "forbidden" => {
-            let exprs: Result<Vec<Expr>, _> = list[1..].iter().map(parse_expr).collect();
+            let exprs: Result<Vec<Expr<Effect>>, _> = list[1..].iter().map(parse_expr).collect();
             Ok(ArgPattern::Forbidden(exprs?))
         }
         "=" => {

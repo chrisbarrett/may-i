@@ -1,6 +1,8 @@
 // Argument and command patterns for the unified rule DSL.
 
-use crate::types::{Expr, Quantifier};
+use crate::Quantifier;
+use crate::types::Expr;
+use crate::v2::ast::Effect;
 
 /// Pattern for matching commands in rules.
 /// Position 1 of a rule is always the command pattern.
@@ -31,14 +33,14 @@ impl CommandPattern {
 #[derive(Debug, Clone)]
 pub struct PositionalArg {
     pub quantifier: Quantifier,
-    pub pattern: Expr,
+    pub pattern: Expr<Effect>,
     /// Optional recursive evaluation target for remaining args.
     pub recursive: bool,
 }
 
 impl PositionalArg {
     /// Create a single required positional argument.
-    pub fn one(expr: Expr) -> Self {
+    pub fn one(expr: Expr<Effect>) -> Self {
         Self {
             quantifier: Quantifier::One,
             pattern: expr,
@@ -47,7 +49,7 @@ impl PositionalArg {
     }
 
     /// Create a positional argument with custom quantifier.
-    pub fn with_quantifier(expr: Expr, quantifier: Quantifier) -> Self {
+    pub fn with_quantifier(expr: Expr<Effect>, quantifier: Quantifier) -> Self {
         Self {
             quantifier,
             pattern: expr,
@@ -83,20 +85,23 @@ pub enum ArgPattern {
 
     /// Token appears anywhere in argv.
     /// Syntax: `(anywhere PATTERN ...)`
-    Anywhere(Vec<Expr>),
+    Anywhere(Vec<Expr<Effect>>),
 
     /// Token must NOT appear anywhere in argv.
     /// Syntax: `(forbidden PATTERN ...)`
-    Forbidden(Vec<Expr>),
+    Forbidden(Vec<Expr<Effect>>),
 
     /// Match a literal string at a specific position (1-indexed).
     /// Syntax: `(= N PATTERN)`
-    At { position: usize, pattern: Expr },
+    At {
+        position: usize,
+        pattern: Expr<Effect>,
+    },
 }
 
 impl ArgPattern {
     /// Create a simple positional pattern from expressions.
-    pub fn positional(exprs: Vec<Expr>) -> Self {
+    pub fn positional(exprs: Vec<Expr<Effect>>) -> Self {
         ArgPattern::Positional {
             patterns: exprs.into_iter().map(PositionalArg::one).collect(),
             continuation: None,
@@ -105,7 +110,7 @@ impl ArgPattern {
 
     /// Create a positional pattern with a continuation effect.
     pub fn positional_with_continuation(
-        exprs: Vec<Expr>,
+        exprs: Vec<Expr<Effect>>,
         continuation: crate::v2::ast::Effect,
     ) -> Self {
         ArgPattern::Positional {
@@ -115,7 +120,7 @@ impl ArgPattern {
     }
 
     /// Create an exact positional pattern from expressions.
-    pub fn exact(exprs: Vec<Expr>) -> Self {
+    pub fn exact(exprs: Vec<Expr<Effect>>) -> Self {
         ArgPattern::Exact {
             patterns: exprs.into_iter().map(PositionalArg::one).collect(),
             continuation: None,
@@ -123,7 +128,10 @@ impl ArgPattern {
     }
 
     /// Create an exact pattern with a continuation effect.
-    pub fn exact_with_continuation(exprs: Vec<Expr>, continuation: crate::v2::ast::Effect) -> Self {
+    pub fn exact_with_continuation(
+        exprs: Vec<Expr<Effect>>,
+        continuation: crate::v2::ast::Effect,
+    ) -> Self {
         ArgPattern::Exact {
             patterns: exprs.into_iter().map(PositionalArg::one).collect(),
             continuation: Some(Box::new(continuation)),
@@ -131,17 +139,17 @@ impl ArgPattern {
     }
 
     /// Create an anywhere pattern.
-    pub fn anywhere(exprs: Vec<Expr>) -> Self {
+    pub fn anywhere(exprs: Vec<Expr<Effect>>) -> Self {
         ArgPattern::Anywhere(exprs)
     }
 
     /// Create a forbidden pattern.
-    pub fn forbidden(exprs: Vec<Expr>) -> Self {
+    pub fn forbidden(exprs: Vec<Expr<Effect>>) -> Self {
         ArgPattern::Forbidden(exprs)
     }
 
     /// Create an at-position pattern.
-    pub fn at(position: usize, pattern: Expr) -> Self {
+    pub fn at(position: usize, pattern: Expr<Effect>) -> Self {
         ArgPattern::At { position, pattern }
     }
 }

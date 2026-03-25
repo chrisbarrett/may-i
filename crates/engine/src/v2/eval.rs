@@ -1,7 +1,7 @@
 // v2 unified effect evaluator.
 // All effect forms evaluate to EffectResult (Decision | Nil).
 
-use may_i_core::types::{ContextFacts, Decision, EvalResult};
+use may_i_core::types::{ContextFacts, Decision, EvalResult, Expr};
 use may_i_core::types::{FactPattern, FactQuery};
 use may_i_core::v2::ast::{Effect, EffectResult, Predicate, Rule};
 use may_i_core::v2::pattern::{ArgPattern, CommandPattern, PositionalArg};
@@ -177,20 +177,21 @@ impl<'a> Evaluator<'a> {
             }
         }
 
-        // Step 3: All effects returned Nil, use default effect
-        let (default_result, default_trace) =
-            evaluate_effect_with_trace(&rule.default_effect.value, ctx, self.rules);
-        effect_traces.push(default_trace);
+        // Step 3: All effects returned Nil, default to :ask
+        // The evaluator applies (or ... (effect :ask)) at the top level
+        let ask_effect = Effect::Ask(None);
+        let (ask_result, ask_trace) = evaluate_effect_with_trace(&ask_effect, ctx, self.rules);
+        effect_traces.push(ask_trace);
 
         let trace = TraceEntry::RuleEvaluation {
             rule: Box::new(rule.clone()),
             matched: true,
-            effect: Some(rule.default_effect.value.clone()),
+            effect: Some(ask_effect),
             predicate_traces: vec![],
             effect_trace: Some(Box::new(effect_traces.last().unwrap().clone())),
         };
 
-        (default_result, Some(trace))
+        (ask_result, Some(trace))
     }
 }
 

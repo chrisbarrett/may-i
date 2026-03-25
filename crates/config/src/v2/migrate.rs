@@ -44,6 +44,9 @@ pub fn migration_rules() -> Vec<RewriteFn> {
         // Rule: (rule ... (effect E)) → (rule ... :effect E)
         // MUST run after other rule transformations that may produce old-style rules
         Box::new(rule_convert_effect_to_keyword),
+        // Rule: Add :effect :ask when rule has no default effect
+        // This handles v1 rules that relied on if/cond covering all cases
+        Box::new(rule_add_default_effect),
     ]
 }
 
@@ -201,14 +204,30 @@ fn rule_convert_effect_to_keyword(node: &CstNode) -> Option<Box<CstNode>> {
         return None;
     }
 
-    // Extract the effect content from (effect EFFECT)
+    // Extract the effect content from (effect EFFECT) or (effect EFFECT "reason")
     let effect_children = last_child.as_list()?;
-    if effect_children.len() != 2 {
+    if effect_children.len() < 2 || effect_children.len() > 3 {
         // Invalid (effect) form, skip
         return None;
     }
 
-    let effect_content = &effect_children[1];
+    // Build the effect content: either just the keyword, or [:keyword "reason"]
+    let effect_content = if effect_children.len() == 2 {
+        // Simple effect: (effect :keyword) → :keyword
+        effect_children[1].clone()
+    } else {
+        // Effect with reason: (effect :keyword "reason") → [:keyword "reason"]
+        let keyword = &effect_children[1];
+        let reason = &effect_children[2];
+        Box::new(CstNode {
+            ann: TriviaAnn {
+                leading: keyword.ann.leading.clone(),
+                trailing: reason.ann.trailing.clone(),
+                span: keyword.ann.span, // Approximate
+            },
+            shape: Shape::Vector(vec![keyword.clone(), reason.clone()]),
+        })
+    };
 
     // Build new children: all except last, then :effect keyword, then effect content
     let mut new_children = Vec::new();
@@ -229,9 +248,58 @@ fn rule_convert_effect_to_keyword(node: &CstNode) -> Option<Box<CstNode>> {
     new_children.push(Box::new(effect_keyword));
 
     // Add the effect content with combined trailing trivia
-    let mut new_effect_content = (**effect_content).clone();
+    let mut new_effect_content = (*effect_content).clone();
     new_effect_content.ann.trailing = last_child.ann.trailing.clone();
     new_children.push(Box::new(new_effect_content));
+
+    Some(Box::new(CstNode {
+        ann: node.ann.clone(),
+        shape: Shape::List(new_children),
+    }))
+}
+
+/// Add default :effect :ask to rules that don't have one.
+/// This handles v1 rules that relied on if/cond covering all cases.
+fn rule_add_default_effect(node: &CstNode) -> Option<Box<CstNode>> {
+    if !node.is_tagged("rule") {
+        return None;
+    }
+
+    let children = node.as_list()?;
+    if children.len() < 2 {
+        return None;
+    }
+
+    // Check if the rule already has a :effect keyword
+    for child in &children[1..] {
+        if let Some(atom) = child.as_atom() {
+            if atom == ":effect" {
+                // Rule already has :effect keyword
+                return None;
+            }
+        }
+    }
+
+    // Add :effect :ask at the end
+    let mut new_children: Vec<Box<CstNode>> = children.iter().cloned().collect();
+
+    // Add :effect keyword
+    new_children.push(Box::new(CstNode::atom(
+        ":effect",
+        TriviaAnn {
+            leading: vec![may_i_sexpr::cst::Trivia::Whitespace(" ".to_string())],
+            ..Default::default()
+        },
+    )));
+
+    // Add :ask default effect
+    new_children.push(Box::new(CstNode::atom(
+        ":ask",
+        TriviaAnn {
+            leading: vec![may_i_sexpr::cst::Trivia::Whitespace(" ".to_string())],
+            ..Default::default()
+        },
+    )));
 
     Some(Box::new(CstNode {
         ann: node.ann.clone(),
@@ -335,25 +403,29 @@ fn wrapper_to_rule(node: &CstNode) -> Option<Box<CstNode>> {
     }
 
     // Add recursive marker if capture was present
+    // The dot and continuation effect go at the RULE level, not inside positional
     if has_capture {
-        // Add . (may-i *) to the list
-        let dot = CstNode::atom(".", Default::default());
+        // Add . (may-i *) as separate children at the rule level
+        let dot = CstNode::atom(
+            ".",
+            TriviaAnn {
+                leading: vec![may_i_sexpr::cst::Trivia::Whitespace(" ".to_string())],
+                ..Default::default()
+            },
+        );
         let may_i = CstNode::list(
             vec![
                 Box::new(CstNode::atom("may-i", Default::default())),
                 Box::new(CstNode::atom("*", Default::default())),
             ],
-            Default::default(),
+            TriviaAnn {
+                leading: vec![may_i_sexpr::cst::Trivia::Whitespace(" ".to_string())],
+                ..Default::default()
+            },
         );
 
-        if let Some(last) = new_children.last_mut()
-            && let Some(list_children) = last.as_list()
-        {
-            let mut new_last_children = list_children.to_vec();
-            new_last_children.push(Box::new(dot));
-            new_last_children.push(Box::new(may_i));
-            **last = CstNode::list(new_last_children, last.ann.clone());
-        }
+        new_children.push(Box::new(dot));
+        new_children.push(Box::new(may_i));
     }
 
     // Add :effect :allow
@@ -594,20 +666,28 @@ fn find_cond_or_if_in_booleans(node: &CstNode) -> Option<(Vec<Box<CstNode>>, Box
 
 /// Convert (args ...) in rule to predicates and an effect.
 /// Handles cond/if nested inside and/or combinators.
+/// Also collects bare atom predicates between command and args (e.g., from inlined context).
 fn args_cond_to_case(node: &CstNode) -> Option<Box<CstNode>> {
     if !node.is_tagged("rule") {
         return None;
     }
 
     let children = node.as_list()?;
+    if children.len() < 2 {
+        return None;
+    }
+
     let mut new_children = Vec::new();
     let mut predicates_to_add = Vec::new();
+    let mut rule_level_predicates = Vec::new(); // Predicates from inlined context
     let mut found_case_source = None;
 
     new_children.push(children[0].clone()); // "rule" tag
+    new_children.push(children[1].clone()); // command
 
-    // First pass: collect non-args children and find cond/if
-    for child in &children[1..] {
+    // First pass: collect rule-level predicates (bare atoms after command, before args/effects)
+    // and find args with cond/if
+    for child in &children[2..] {
         if child.is_tagged("args") {
             let args_children = child.as_list()?;
             if args_children.len() == 2 {
@@ -633,14 +713,19 @@ fn args_cond_to_case(node: &CstNode) -> Option<Box<CstNode>> {
                     continue;
                 }
             }
+        } else if child.as_atom().is_some() && !child.is_tagged(":effect") {
+            // Bare atom after command - likely a context predicate from inlined (context ...)
+            // Skip :effect keyword and collect other atoms as predicates
+            rule_level_predicates.push(child.clone());
+        } else {
+            new_children.push(child.clone());
         }
-        new_children.push(child.clone());
     }
 
     let (extra_predicates, case_source) = found_case_source?;
 
-    // Build case expression based on source type
-    let mut case_children = vec![Box::new(CstNode::atom("case", Default::default()))];
+    // Build cond expression based on source type
+    let mut case_children = vec![Box::new(CstNode::atom("cond", Default::default()))];
 
     if case_source.is_tagged("cond") {
         let cond_children = case_source.as_list()?;
@@ -673,14 +758,46 @@ fn args_cond_to_case(node: &CstNode) -> Option<Box<CstNode>> {
         }
     }
 
-    // Insert extracted predicates before the case
-    for pred in predicates_to_add.iter().chain(extra_predicates.iter()) {
-        new_children.push(pred.clone());
-    }
+    // Combine all predicates: from args, from cond/if, and from rule-level context references
+    let all_predicates: Vec<_> = rule_level_predicates
+        .iter()
+        .chain(predicates_to_add.iter())
+        .chain(extra_predicates.iter())
+        .cloned()
+        .collect();
 
-    // Insert case at the END as it's an effect, not a predicate
-    let case_node = Box::new(CstNode::list(case_children, Default::default()));
-    new_children.push(case_node);
+    // Wrap the cond in a when expression if there are predicates
+    let final_effect = if all_predicates.is_empty() {
+        // No predicates, use cond directly
+        Box::new(CstNode::list(case_children, Default::default()))
+    } else if all_predicates.len() == 1 {
+        // Single predicate, wrap in when
+        let pred = &all_predicates[0];
+        let cond_node = CstNode::list(case_children, Default::default());
+        let when_children = vec![
+            Box::new(CstNode::atom("when", Default::default())),
+            pred.clone(),
+            Box::new(cond_node),
+        ];
+        Box::new(CstNode::list(when_children, Default::default()))
+    } else {
+        // Multiple predicates, wrap in (and ...) then when
+        let mut and_children = vec![Box::new(CstNode::atom("and", Default::default()))];
+        for pred in &all_predicates {
+            and_children.push(pred.clone());
+        }
+        let and_node = CstNode::list(and_children, Default::default());
+        let cond_node = CstNode::list(case_children, Default::default());
+        let when_children = vec![
+            Box::new(CstNode::atom("when", Default::default())),
+            Box::new(and_node),
+            Box::new(cond_node),
+        ];
+        Box::new(CstNode::list(when_children, Default::default()))
+    };
+
+    // Insert the final effect at the END
+    new_children.push(final_effect);
 
     Some(Box::new(CstNode::list(new_children, node.ann.clone())))
 }
@@ -1225,13 +1342,13 @@ mod tests {
 
     #[test]
     fn test_args_cond_to_case_with_if() {
-        // Test (args (if PRED THEN ELSE)) -> (case ...)
+        // Test (args (if PRED THEN ELSE)) -> (cond ...)
         let input = r#"(rule "mv" (args (if (anywhere "-f") (effect :ask) (effect :allow))) (effect :allow))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let node = nodes.into_iter().next().unwrap();
         let result = args_cond_to_case(&node).unwrap();
         let serialized = result.serialize();
-        assert!(serialized.contains("case"));
+        assert!(serialized.contains("cond"));
         assert!(!serialized.contains("args"));
     }
 

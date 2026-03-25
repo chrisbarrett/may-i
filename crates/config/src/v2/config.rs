@@ -74,7 +74,7 @@ fn parse_safe_env_vars(
 
 /// Parse check form: (check DECISION "cmd" ...)
 /// Supports nested with-facts: (check (with-facts [[:key]] :allow "cmd"))
-fn parse_check(args: &[Sexpr], check_span: Span) -> Result<Vec<Check>, RawError> {
+pub fn parse_check(args: &[Sexpr], check_span: Span) -> Result<Vec<Check>, RawError> {
     let mut checks = Vec::new();
     let mut i = 0;
 

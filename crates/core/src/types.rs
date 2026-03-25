@@ -322,8 +322,8 @@ pub struct Effect {
     pub reason: Option<String>,
 }
 
-impl Effect {
-    pub fn to_doc(&self) -> Doc {
+impl ToDoc for Effect {
+    fn to_doc(&self) -> Doc {
         let mut cs = vec![
             Doc::atom("effect"),
             Doc::atom(format!(":{}", self.decision)),
@@ -344,9 +344,14 @@ impl std::fmt::Display for Effect {
     }
 }
 
+/// Trait for types that can be converted to a Doc representation.
+pub trait ToDoc {
+    fn to_doc(&self) -> Doc;
+}
+
 /// An expression that matches a single string, optionally carrying effects.
 #[derive(Clone)]
-pub enum Expr {
+pub enum Expr<E: std::fmt::Debug + ToDoc = Effect> {
     /// Exact string match.
     Literal(String),
     /// Regex match.
@@ -354,29 +359,16 @@ pub enum Expr {
     /// Matches any string.
     Wildcard,
     /// All sub-expressions must match.
-    And(Vec<Expr>),
+    And(Vec<Expr<E>>),
     /// Any sub-expression must match.
-    Or(Vec<Expr>),
+    Or(Vec<Expr<E>>),
     /// Inverts the match result.
-    Not(Box<Expr>),
+    Not(Box<Expr<E>>),
     /// Branches with effects; first matching branch wins.
-    Cond(Vec<ExprBranch>),
+    Cond(Vec<ExprBranch<E>>),
 }
 
-impl Expr {
-    /// Find the effect from the first matching Cond branch for the given text.
-    pub fn find_effect(&self, text: &str) -> Option<&Effect> {
-        match self {
-            Expr::Cond(branches) => branches
-                .iter()
-                .find(|b| b.test.is_match(text))
-                .map(|b| &b.effect),
-            Expr::And(exprs) | Expr::Or(exprs) => exprs.iter().find_map(|e| e.find_effect(text)),
-            Expr::Not(expr) => expr.find_effect(text),
-            Expr::Literal(_) | Expr::Regex(_) | Expr::Wildcard => None,
-        }
-    }
-
+impl<E: std::fmt::Debug + ToDoc> Expr<E> {
     /// Check if the expression matches the given text (ignoring effects).
     pub fn is_match(&self, text: &str) -> bool {
         match self {
@@ -465,7 +457,7 @@ impl std::fmt::Display for Expr {
     }
 }
 
-impl std::fmt::Debug for Expr {
+impl<E: std::fmt::Debug + ToDoc> std::fmt::Debug for Expr<E> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Expr::Literal(s) => f.debug_tuple("Literal").field(s).finish(),
@@ -481,9 +473,9 @@ impl std::fmt::Debug for Expr {
 
 /// A branch in an expression-level cond.
 #[derive(Debug, Clone)]
-pub struct ExprBranch {
-    pub test: Expr,
-    pub effect: Effect,
+pub struct ExprBranch<E: std::fmt::Debug + ToDoc = Effect> {
+    pub test: Expr<E>,
+    pub effect: E,
 }
 
 /// Source file information for diagnostics.

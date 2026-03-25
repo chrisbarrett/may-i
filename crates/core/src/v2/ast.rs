@@ -1,8 +1,9 @@
 // Core AST types for the unified rule DSL.
 // Redesigned for unified effect model where everything returns Decision | Nil.
 
+use crate::doc::Doc;
 use crate::span::Span;
-use crate::types::Decision;
+use crate::types::{Decision, ToDoc};
 use crate::v2::pattern::{ArgPattern, CommandPattern};
 
 /// A value with source span tracking.
@@ -306,18 +307,22 @@ impl Define {
 }
 
 /// An authorization rule.
-/// Syntax: `(rule COMMAND-EFFECT EFFECT* :effect DEFAULT-EFFECT)`
+/// Syntax: `(rule COMMAND-EFFECT EFFECT... [CHECK...])`
+///
+/// Effects are evaluated in order. Pattern effects (positional, exact, etc.)
+/// return Allow on match or Nil otherwise. Terminal effects (effect :allow/:ask/:deny)
+/// return a decision. The last effect (or combined via boolean operators) serves
+/// as the final decision.
 #[derive(Debug, Clone)]
 pub struct Rule {
     /// The command effect (position 1) - must return non-Nil for rule to apply.
     pub command_effect: Spanned<Effect>,
 
-    /// Additional effects evaluated in sequence until non-Nil.
+    /// Effects evaluated in sequence until a terminal decision is reached.
     pub effects: Vec<Spanned<Effect>>,
 
-    /// Default effect when all others return Nil.
-    /// Syntax: `:effect DEFAULT-EFFECT`
-    pub default_effect: Spanned<Effect>,
+    /// Validation checks associated with this rule.
+    pub checks: Vec<Check>,
 
     /// Source span for error reporting.
     pub span: Span,
@@ -328,13 +333,13 @@ impl Rule {
     pub fn new(
         command_effect: Spanned<Effect>,
         effects: Vec<Spanned<Effect>>,
-        default_effect: Spanned<Effect>,
+        checks: Vec<Check>,
         span: Span,
     ) -> Self {
         Self {
             command_effect,
             effects,
-            default_effect,
+            checks,
             span,
         }
     }
@@ -377,6 +382,44 @@ pub struct Check {
 
     /// Source span for error reporting.
     pub span: Span,
+}
+
+impl ToDoc for Effect {
+    fn to_doc(&self) -> Doc {
+        match self {
+            Effect::Allow(reason) => {
+                let mut cs = vec![Doc::atom("effect"), Doc::atom(":allow")];
+                if let Some(r) = reason {
+                    cs.push(Doc::atom(format!("\"{r}\"")));
+                }
+                Doc::list(cs)
+            }
+            Effect::Ask(reason) => {
+                let mut cs = vec![Doc::atom("effect"), Doc::atom(":ask")];
+                if let Some(r) = reason {
+                    cs.push(Doc::atom(format!("\"{r}\"")));
+                }
+                Doc::list(cs)
+            }
+            Effect::Deny(reason) => {
+                let mut cs = vec![Doc::atom("effect"), Doc::atom(":deny")];
+                if let Some(r) = reason {
+                    cs.push(Doc::atom(format!("\"{r}\"")));
+                }
+                Doc::list(cs)
+            }
+            Effect::CommandPattern(_) => Doc::atom("<command-pattern>"),
+            Effect::ArgPattern(_) => Doc::atom("<arg-pattern>"),
+            Effect::And { .. } => Doc::atom("<and-effect>"),
+            Effect::Or { .. } => Doc::atom("<or-effect>"),
+            Effect::Not { .. } => Doc::atom("<not-effect>"),
+            Effect::When { .. } => Doc::atom("<when-effect>"),
+            Effect::Unless { .. } => Doc::atom("<unless-effect>"),
+            Effect::If { .. } => Doc::atom("<if-effect>"),
+            Effect::Cond { .. } => Doc::atom("<cond-effect>"),
+            Effect::MayI { .. } => Doc::atom("<may-i-effect>"),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -625,8 +668,7 @@ mod tests {
             Effect::command_pattern(CommandPattern::Literal("git".into())),
             span,
         );
-        let default_effect = Spanned::new(Effect::Allow(None), span);
-        let rule = Rule::new(cmd_effect, vec![], default_effect, span);
+        let rule = Rule::new(cmd_effect, vec![], vec![], span);
 
         assert!(
             matches!(rule.command_effect.value, Effect::CommandPattern(CommandPattern::Literal(s)) if s == "git")

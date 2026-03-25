@@ -121,11 +121,14 @@ fn validate_migration_success() {
 #[test]
 fn validate_migration_failure() {
     let migrated = r#"
-        (rule "git" invalid-effect-here)
+        (rule "git" :effect (effect :invalid-decision))
     "#;
 
     let result = validate_migration(migrated);
-    assert!(result.is_err(), "Validation should fail for invalid syntax");
+    assert!(
+        result.is_err(),
+        "Validation should fail for invalid effect keyword"
+    );
 }
 
 #[test]
@@ -274,7 +277,7 @@ fn migration_args_with_cond() {
     let result = migrate(node);
     let output = result.serialize();
 
-    assert!(output.contains("case"));
+    assert!(output.contains("cond"));
     assert!(output.contains("else"));
 }
 

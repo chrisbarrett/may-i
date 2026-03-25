@@ -18,5 +18,5 @@ pub use crate::types::{
     ContextExpr, ContextFacts, ContextFailureReason, ContextValue, Decision, Effect, EvalAnn,
     EvalResult, Expr, ExprBranch, FactPattern, FactPatternEval, FactQuery, MatcherCondPredicate,
     PolymorphicCondArm, PolymorphicCondBranch, PosExpr, Quantifier, Rule, RuleBody, SecurityConfig,
-    SourceInfo, TraceEntry, Wrapper, WrapperPattern, WrapperStep,
+    SourceInfo, ToDoc, TraceEntry, Wrapper, WrapperPattern, WrapperStep,
 };

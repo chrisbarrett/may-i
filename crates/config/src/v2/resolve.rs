@@ -226,23 +226,6 @@ pub fn check_undefined_refs(
                 }
             }
         }
-        // Also check default effect
-        let refs = collect_named_refs_from_effect(&rule.default_effect);
-        for named_ref in refs {
-            if !defined_names.contains(&named_ref.name) {
-                return Err(ResolutionError::new(
-                    format!(
-                        "undefined predicate reference: '{}' in rule",
-                        named_ref.name
-                    ),
-                    named_ref.span,
-                )
-                .with_help(format!(
-                    "define '{}' before using it, or check for typos",
-                    named_ref.name
-                )));
-            }
-        }
     }
 
     Ok(())
@@ -319,19 +302,17 @@ fn resolve_rule_predicates(
     defines: &[Define],
     define_map: &DefineMap,
 ) -> Result<Rule, ResolutionError> {
-    // Resolve predicates within effects
+    // Resolve predicates within all effects
     let resolved_effects: Result<Vec<_>, _> = rule
         .effects
         .iter()
         .map(|e| resolve_effect_predicates(e, defines, define_map))
         .collect();
 
-    let resolved_default = resolve_effect_predicates(&rule.default_effect, defines, define_map)?;
-
     Ok(Rule {
         command_effect: rule.command_effect.clone(),
         effects: resolved_effects?,
-        default_effect: resolved_default,
+        checks: rule.checks.clone(),
         span: rule.span,
     })
 }
@@ -536,15 +517,15 @@ mod tests {
     }
 
     fn create_rule_with_effect(effect: Effect) -> Rule {
-        Rule {
-            command_effect: Spanned::new(
+        Rule::new(
+            Spanned::new(
                 Effect::CommandPattern(CommandPattern::Literal("test".to_string())),
                 dummy_span(),
             ),
-            effects: vec![],
-            default_effect: Spanned::new(effect, dummy_span()),
-            span: dummy_span(),
-        }
+            vec![Spanned::new(effect, dummy_span())],
+            vec![],
+            dummy_span(),
+        )
     }
 
     fn create_rule_with_conditional(predicate: Predicate, effect: Effect) -> Rule {
@@ -552,15 +533,15 @@ mod tests {
             predicate: Spanned::new(predicate, dummy_span()),
             effect: Box::new(Spanned::new(effect, dummy_span())),
         };
-        Rule {
-            command_effect: Spanned::new(
+        Rule::new(
+            Spanned::new(
                 Effect::CommandPattern(CommandPattern::Literal("test".to_string())),
                 dummy_span(),
             ),
-            effects: vec![Spanned::new(conditional_effect, dummy_span())],
-            default_effect: Spanned::new(Effect::Allow(None), dummy_span()),
-            span: dummy_span(),
-        }
+            vec![Spanned::new(conditional_effect, dummy_span())],
+            vec![],
+            dummy_span(),
+        )
     }
 
     fn create_define(name: &str, predicate: Predicate) -> Define {

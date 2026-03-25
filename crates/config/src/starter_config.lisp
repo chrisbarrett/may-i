@@ -107,7 +107,7 @@
   (when (and (anywhere "-r" "--recursive")
              (anywhere "/"))
     (effect :deny "Recursive deletion from root"))
-  :effect (effect :ask))
+  :effect :ask)
 
 (rule (or "mkfs" "dd" "fdisk" "parted" "gdisk")
   :effect [:deny "Dangerous filesystem or device operation"])
@@ -125,7 +125,7 @@
 (rule "kubectl"
   (when (fact? [:env "prod"])
     (effect :deny "No kubectl in production"))
-  :effect (effect :allow))
+  :effect :allow)
 
 ; Example: SSH wrapper - capture host, evaluate inner command
 (rule "ssh"
