@@ -114,7 +114,11 @@ fn render_two_column(annotated: &[DiffCst], config: &DiffConfig, term_width: usi
             cw = column_width
         ));
     }
-    output.push_str(&"─".repeat(term_width));
+    if config.color {
+        output.push_str(&"─".repeat(term_width).dimmed().to_string());
+    } else {
+        output.push_str(&"─".repeat(term_width));
+    }
     output.push('\n');
 
     // Group forms and render
@@ -140,7 +144,11 @@ fn render_two_column(annotated: &[DiffCst], config: &DiffConfig, term_width: usi
                 }
             }
             DiffLine::Separator => {
-                output.push_str(&"─".repeat(term_width));
+                if config.color {
+                    output.push_str(&"─".repeat(term_width).dimmed().to_string());
+                } else {
+                    output.push_str(&"─".repeat(term_width));
+                }
                 output.push('\n');
                 prev_was_fold = false;
             }
@@ -175,7 +183,16 @@ fn render_two_column(annotated: &[DiffCst], config: &DiffConfig, term_width: usi
                 // Pad to exact visible width for consistent separator alignment
                 let before_padded = pad_to_visible_width(&before_trunc, column_width);
 
-                output.push_str(&format!("{} │ {}\n", before_padded, after_trunc));
+                if config.color {
+                    output.push_str(&format!(
+                        "{} {} {}\n",
+                        before_padded,
+                        "│".dimmed(),
+                        after_trunc
+                    ));
+                } else {
+                    output.push_str(&format!("{} │ {}\n", before_padded, after_trunc));
+                }
                 prev_was_fold = false;
             }
         }
