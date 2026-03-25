@@ -1324,4 +1324,373 @@ mod tests {
             _ => panic!("expected Positional"),
         }
     }
+
+    #[test]
+    fn match_expr_with_binding_and_expr() {
+        use may_i_core::types::{Expr, Keyword};
+
+        // Test And expression with Bind - all must match
+        let and_expr: Expr<Effect> = Expr::And(vec![
+            Expr::Bind {
+                key: Keyword::new(":host").unwrap(),
+                expr: Box::new(Expr::Wildcard),
+            },
+            Expr::Literal("prod".to_string()),
+        ]);
+
+        let (matched, facts) = match_expr_with_binding(&and_expr, "prod");
+        assert!(matched);
+        assert_eq!(facts.get_scalar(":host"), Some("prod"));
+
+        // Should not match if second part fails
+        let (matched, facts) = match_expr_with_binding(&and_expr, "dev");
+        assert!(!matched);
+        // First part matched and bound the fact
+        assert_eq!(facts.get_scalar(":host"), Some("dev"));
+    }
+
+    #[test]
+    fn match_expr_with_binding_or_expr() {
+        use may_i_core::types::{Expr, Keyword};
+
+        // Test Or expression with Bind
+        let or_expr: Expr<Effect> = Expr::Or(vec![
+            Expr::Bind {
+                key: Keyword::new(":special").unwrap(),
+                expr: Box::new(Expr::Literal("special".to_string())),
+            },
+            Expr::Wildcard,
+        ]);
+
+        // First branch matches and binds
+        let (matched, facts) = match_expr_with_binding(&or_expr, "special");
+        assert!(matched);
+        assert_eq!(facts.get_scalar(":special"), Some("special"));
+
+        // Second branch matches, no binding from first
+        let (matched, facts) = match_expr_with_binding(&or_expr, "anything");
+        assert!(matched);
+        assert_eq!(facts.get_scalar(":special"), None);
+    }
+
+    #[test]
+    fn match_expr_with_binding_not_expr() {
+        use may_i_core::types::{Expr, Keyword};
+
+        // Test Not expression - should not bind from inner
+        let not_expr: Expr<Effect> = Expr::Not(Box::new(Expr::Bind {
+            key: Keyword::new(":excluded").unwrap(),
+            expr: Box::new(Expr::Literal("exclude".to_string())),
+        }));
+
+        // Inner matches, so Not fails - no binding
+        let (matched, facts) = match_expr_with_binding(&not_expr, "exclude");
+        assert!(!matched);
+        assert_eq!(facts.get_scalar(":excluded"), None);
+
+        // Inner doesn't match, so Not succeeds - still no binding
+        let (matched, facts) = match_expr_with_binding(&not_expr, "include");
+        assert!(matched);
+        assert_eq!(facts.get_scalar(":excluded"), None);
+    }
+
+    #[test]
+    fn match_expr_with_binding_nested_bind() {
+        use may_i_core::types::{Expr, Keyword};
+
+        // Test Bind wrapping another Bind
+        let nested_bind: Expr<Effect> = Expr::Bind {
+            key: Keyword::new(":outer").unwrap(),
+            expr: Box::new(Expr::Bind {
+                key: Keyword::new(":inner").unwrap(),
+                expr: Box::new(Expr::Wildcard),
+            }),
+        };
+
+        let (matched, facts) = match_expr_with_binding(&nested_bind, "value");
+        assert!(matched);
+        assert_eq!(facts.get_scalar(":outer"), Some("value"));
+        assert_eq!(facts.get_scalar(":inner"), Some("value"));
+    }
+
+    #[test]
+    fn match_expr_with_binding_bind_no_match() {
+        use may_i_core::types::{Expr, Keyword};
+
+        // Bind with inner expr that doesn't match - should not bind
+        let bind_expr: Expr<Effect> = Expr::Bind {
+            key: Keyword::new(":env").unwrap(),
+            expr: Box::new(Expr::Literal("prod".to_string())),
+        };
+
+        let (matched, facts) = match_expr_with_binding(&bind_expr, "dev");
+        assert!(!matched);
+        assert_eq!(facts.get_scalar(":env"), None);
+    }
+
+    #[test]
+    fn match_positional_patterns_with_binding() {
+        use may_i_core::types::{Expr, Keyword, Quantifier};
+        use may_i_core::v2::pattern::PositionalArg;
+
+        // Test positional patterns with fact binding
+        let patterns = vec![
+            PositionalArg {
+                quantifier: Quantifier::One,
+                pattern: Expr::Bind {
+                    key: Keyword::new(":cmd").unwrap(),
+                    expr: Box::new(Expr::Wildcard),
+                },
+                recursive: false,
+            },
+            PositionalArg {
+                quantifier: Quantifier::One,
+                pattern: Expr::Bind {
+                    key: Keyword::new(":subcmd").unwrap(),
+                    expr: Box::new(Expr::Wildcard),
+                },
+                recursive: false,
+            },
+        ];
+
+        let arg1 = "git".to_string();
+        let arg2 = "push".to_string();
+        let args: Vec<&String> = vec![&arg1, &arg2];
+        let (matched, facts) = match_positional_patterns(&args, &patterns);
+
+        assert!(matched);
+        assert_eq!(facts.get_scalar(":cmd"), Some("git"));
+        assert_eq!(facts.get_scalar(":subcmd"), Some("push"));
+    }
+
+    #[test]
+    fn match_positional_patterns_no_match_with_binding() {
+        use may_i_core::types::{Expr, Keyword, Quantifier};
+        use may_i_core::v2::pattern::PositionalArg;
+
+        // Test that facts are still captured even when pattern fails later
+        let patterns = vec![
+            PositionalArg {
+                quantifier: Quantifier::One,
+                pattern: Expr::Bind {
+                    key: Keyword::new(":host").unwrap(),
+                    expr: Box::new(Expr::Wildcard),
+                },
+                recursive: false,
+            },
+            PositionalArg {
+                quantifier: Quantifier::One,
+                pattern: Expr::Literal("required".to_string()),
+                recursive: false,
+            },
+        ];
+
+        let arg1 = "server".to_string();
+        let arg2 = "wrong".to_string();
+        let args: Vec<&String> = vec![&arg1, &arg2];
+        let (matched, facts) = match_positional_patterns(&args, &patterns);
+
+        assert!(!matched);
+        // First arg was still bound before the failure
+        assert_eq!(facts.get_scalar(":host"), Some("server"));
+    }
+
+    #[test]
+    fn match_positional_patterns_optional_with_binding() {
+        use may_i_core::types::{Expr, Keyword, Quantifier};
+        use may_i_core::v2::pattern::PositionalArg;
+
+        // Test optional pattern with binding - arg present and matches
+        let patterns = vec![PositionalArg {
+            quantifier: Quantifier::Optional,
+            pattern: Expr::Bind {
+                key: Keyword::new(":opt").unwrap(),
+                expr: Box::new(Expr::Wildcard),
+            },
+            recursive: false,
+        }];
+
+        let arg1 = "value".to_string();
+        let args: Vec<&String> = vec![&arg1];
+        let (matched, facts) = match_positional_patterns(&args, &patterns);
+
+        assert!(matched);
+        assert_eq!(facts.get_scalar(":opt"), Some("value"));
+    }
+
+    #[test]
+    fn match_positional_patterns_one_or_more_with_binding() {
+        use may_i_core::types::{Expr, Keyword, Quantifier};
+        use may_i_core::v2::pattern::PositionalArg;
+
+        // Test OneOrMore pattern with binding
+        let patterns = vec![PositionalArg {
+            quantifier: Quantifier::OneOrMore,
+            pattern: Expr::Bind {
+                key: Keyword::new(":items").unwrap(),
+                expr: Box::new(Expr::Wildcard),
+            },
+            recursive: false,
+        }];
+
+        let arg1 = "a".to_string();
+        let arg2 = "b".to_string();
+        let args: Vec<&String> = vec![&arg1, &arg2];
+        let (matched, facts) = match_positional_patterns(&args, &patterns);
+
+        assert!(matched);
+        // OneOrMore only binds the last matched value in this implementation
+        assert_eq!(facts.get_scalar(":items"), Some("b"));
+    }
+
+    #[test]
+    fn match_positional_patterns_zero_or_more_with_binding() {
+        use may_i_core::types::{Expr, Keyword, Quantifier};
+        use may_i_core::v2::pattern::PositionalArg;
+
+        // Test ZeroOrMore pattern with binding - matches all remaining
+        let patterns = vec![PositionalArg {
+            quantifier: Quantifier::ZeroOrMore,
+            pattern: Expr::Bind {
+                key: Keyword::new(":rest").unwrap(),
+                expr: Box::new(Expr::Wildcard),
+            },
+            recursive: false,
+        }];
+
+        let arg1 = "a".to_string();
+        let arg2 = "b".to_string();
+        let args: Vec<&String> = vec![&arg1, &arg2];
+        let (matched, facts) = match_positional_patterns(&args, &patterns);
+
+        assert!(matched);
+        // ZeroOrMore binds the last matched value
+        assert_eq!(facts.get_scalar(":rest"), Some("b"));
+    }
+
+    #[test]
+    fn match_positional_patterns_not_enough_args() {
+        use may_i_core::types::{Expr, Keyword, Quantifier};
+        use may_i_core::v2::pattern::PositionalArg;
+
+        // Test pattern with more patterns than args
+        let patterns = vec![
+            PositionalArg {
+                quantifier: Quantifier::One,
+                pattern: Expr::Bind {
+                    key: Keyword::new(":first").unwrap(),
+                    expr: Box::new(Expr::Wildcard),
+                },
+                recursive: false,
+            },
+            PositionalArg {
+                quantifier: Quantifier::One,
+                pattern: Expr::Bind {
+                    key: Keyword::new(":second").unwrap(),
+                    expr: Box::new(Expr::Wildcard),
+                },
+                recursive: false,
+            },
+        ];
+
+        let arg1 = "only".to_string();
+        let args: Vec<&String> = vec![&arg1];
+        let (matched, _) = match_positional_patterns(&args, &patterns);
+
+        assert!(!matched);
+    }
+
+    #[test]
+    fn match_positional_patterns_one_or_more_no_args() {
+        use may_i_core::types::{Expr, Quantifier};
+        use may_i_core::v2::pattern::PositionalArg;
+
+        // Test OneOrMore fails with no args
+        let patterns = vec![PositionalArg {
+            quantifier: Quantifier::OneOrMore,
+            pattern: Expr::Wildcard,
+            recursive: false,
+        }];
+
+        let args: Vec<&String> = vec![];
+        let (matched, _) = match_positional_patterns(&args, &patterns);
+
+        assert!(!matched);
+    }
+
+    #[test]
+    fn match_expr_with_binding_regex() {
+        use may_i_core::types::Expr;
+
+        // Test Regex matching
+        let expr: Expr<Effect> = Expr::Regex(regex::Regex::new("^prod-").unwrap());
+        let (matched, facts) = match_expr_with_binding(&expr, "prod-server-01");
+        assert!(matched);
+        // Regex doesn't bind facts
+        assert!(!facts.has(":anything"));
+
+        let (matched, _) = match_expr_with_binding(&expr, "dev-server");
+        assert!(!matched);
+    }
+
+    #[test]
+    fn match_expr_with_binding_literal() {
+        use may_i_core::types::Expr;
+
+        // Test Literal matching
+        let expr: Expr<Effect> = Expr::Literal("exact".to_string());
+        let (matched, facts) = match_expr_with_binding(&expr, "exact");
+        assert!(matched);
+        // Literal doesn't bind facts
+        assert!(!facts.has(":anything"));
+
+        let (matched, _) = match_expr_with_binding(&expr, "different");
+        assert!(!matched);
+    }
+
+    #[test]
+    fn match_expr_with_binding_empty_and() {
+        use may_i_core::types::Expr;
+
+        // Test empty And expression
+        let expr: Expr<Effect> = Expr::And(vec![]);
+        let (matched, _) = match_expr_with_binding(&expr, "anything");
+        assert!(matched);
+    }
+
+    #[test]
+    fn match_expr_with_binding_empty_or() {
+        use may_i_core::types::Expr;
+
+        // Test empty Or expression
+        let expr: Expr<Effect> = Expr::Or(vec![]);
+        let (matched, _) = match_expr_with_binding(&expr, "anything");
+        assert!(!matched);
+    }
+
+    #[test]
+    fn match_expr_with_binding_and_all_fail() {
+        use may_i_core::types::Expr;
+
+        // Test And where all fail
+        let expr: Expr<Effect> = Expr::And(vec![
+            Expr::Literal("a".to_string()),
+            Expr::Literal("b".to_string()),
+        ]);
+        let (matched, _) = match_expr_with_binding(&expr, "a");
+        assert!(!matched);
+    }
+
+    #[test]
+    fn match_expr_with_binding_or_all_fail() {
+        use may_i_core::types::Expr;
+
+        // Test Or where all fail
+        let expr: Expr<Effect> = Expr::Or(vec![
+            Expr::Literal("a".to_string()),
+            Expr::Literal("b".to_string()),
+        ]);
+        let (matched, _) = match_expr_with_binding(&expr, "c");
+        assert!(!matched);
+    }
 }

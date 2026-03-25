@@ -775,4 +775,85 @@ mod tests {
             _ => panic!("expected Positional"),
         }
     }
+
+    #[test]
+    fn parse_empty_bracket_vector_error() {
+        // Empty bracket vector should error
+        let (sexprs, _) = may_i_sexpr::parse(r#"[]"#);
+        let err = parse_expr(&sexprs[0]).expect_err("expected error");
+        assert!(format!("{err}").contains("empty bracket vector"));
+    }
+
+    #[test]
+    fn parse_bracket_with_non_keyword_error() {
+        // Bracket with non-keyword first element should error
+        let (sexprs, _) = may_i_sexpr::parse(r#"["not-a-keyword"]"#);
+        let err = parse_expr(&sexprs[0]).expect_err("expected error");
+        assert!(format!("{err}").contains("invalid fact binding key"));
+    }
+
+    #[test]
+    fn parse_bracket_with_too_many_elements_error() {
+        // Bracket with more than 2 elements should error
+        let (sexprs, _) = may_i_sexpr::parse(r#"[:key a b]"#);
+        let err = parse_expr(&sexprs[0]).expect_err("expected error");
+        assert!(format!("{err}").contains("fact binding must have form"));
+    }
+
+    #[test]
+    fn parse_fact_binding_nested_and() {
+        // Test parsing [:key (and "a" "b")]
+        let (sexprs, _) = may_i_sexpr::parse(r#"[:env (and "prod" "us")]"#);
+        let expr = parse_expr(&sexprs[0]).unwrap();
+        match expr {
+            Expr::Bind { key, expr } => {
+                assert_eq!(key.as_str(), ":env");
+                match expr.as_ref() {
+                    Expr::And(children) => {
+                        assert_eq!(children.len(), 2);
+                    }
+                    _ => panic!("expected And"),
+                }
+            }
+            _ => panic!("expected Bind"),
+        }
+    }
+
+    #[test]
+    fn parse_fact_binding_nested_or() {
+        // Test parsing [:key (or "a" "b")]
+        let (sexprs, _) = may_i_sexpr::parse(r#"[:env (or "prod" "staging")]"#);
+        let expr = parse_expr(&sexprs[0]).unwrap();
+        match expr {
+            Expr::Bind { key, expr } => {
+                assert_eq!(key.as_str(), ":env");
+                match expr.as_ref() {
+                    Expr::Or(children) => {
+                        assert_eq!(children.len(), 2);
+                    }
+                    _ => panic!("expected Or"),
+                }
+            }
+            _ => panic!("expected Bind"),
+        }
+    }
+
+    #[test]
+    fn parse_fact_binding_nested_not() {
+        // Test parsing [:key (not "exclude")]
+        let (sexprs, _) = may_i_sexpr::parse(r#"[:env (not "exclude")]"#);
+        let expr = parse_expr(&sexprs[0]).unwrap();
+        match expr {
+            Expr::Bind { key, expr } => {
+                assert_eq!(key.as_str(), ":env");
+                match expr.as_ref() {
+                    Expr::Not(inner) => {
+                        assert!(matches!(inner.as_ref(), Expr::Literal(_)));
+                    }
+                    _ => panic!("expected Not"),
+                }
+            }
+            _ => panic!("expected Bind"),
+        }
+    }
 }
