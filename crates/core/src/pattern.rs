@@ -238,4 +238,43 @@ mod tests {
         let pattern = ArgPattern::at(2, Expr::Literal("file.txt".into()));
         assert!(matches!(pattern, ArgPattern::At { position: 2, .. }));
     }
+
+    #[test]
+    fn positional_with_continuation_sets_continuation() {
+        let cont = Effect::allow(None);
+        let pattern = ArgPattern::positional_with_continuation(vec![], cont);
+        assert!(
+            matches!(pattern, ArgPattern::Positional { continuation: Some(_), patterns } if patterns.is_empty())
+        );
+    }
+
+    #[test]
+    fn positional_with_continuation_with_patterns() {
+        let cont = Effect::ask(Some("confirm".into()));
+        let pattern = ArgPattern::positional_with_continuation(
+            vec![Expr::Literal("arg1".into()), Expr::Literal("arg2".into())],
+            cont,
+        );
+        assert!(
+            matches!(pattern, ArgPattern::Positional { continuation: Some(_), patterns } if patterns.len() == 2)
+        );
+    }
+
+    #[test]
+    fn exact_with_continuation_sets_continuation() {
+        let cont = Effect::deny(Some("blocked".into()));
+        let pattern = ArgPattern::exact_with_continuation(vec![], cont);
+        assert!(
+            matches!(pattern, ArgPattern::Exact { continuation: Some(_), patterns } if patterns.is_empty())
+        );
+    }
+
+    #[test]
+    fn exact_with_continuation_with_patterns() {
+        let cont = Effect::allow(Some("safe".into()));
+        let pattern = ArgPattern::exact_with_continuation(vec![Expr::Literal("cmd".into())], cont);
+        assert!(
+            matches!(pattern, ArgPattern::Exact { continuation: Some(_), patterns } if patterns.len() == 1)
+        );
+    }
 }

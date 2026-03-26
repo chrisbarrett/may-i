@@ -467,6 +467,24 @@ mod tests {
     }
 
     #[test]
+    fn effect_result_reason_returns_some_for_decision() {
+        assert_eq!(
+            EffectResult::Decision(Decision::Allow, Some("test".into())).reason(),
+            Some(&"test".to_string())
+        );
+    }
+
+    #[test]
+    fn effect_result_reason_returns_none_for_nil() {
+        assert_eq!(EffectResult::Nil.reason(), None);
+    }
+
+    #[test]
+    fn effect_result_reason_returns_none_for_decision_without_reason() {
+        assert_eq!(EffectResult::Decision(Decision::Deny, None).reason(), None);
+    }
+
+    #[test]
     fn effect_allow_creates_correctly() {
         let effect = Effect::allow(Some("reason".into()));
         assert!(matches!(effect, Effect::Allow(Some(r)) if r == "reason"));
@@ -689,5 +707,143 @@ mod tests {
         assert!(config.rules.is_empty());
         assert!(config.checks.is_empty());
         assert!(config.security.safe_env_vars.is_empty());
+    }
+
+    #[test]
+    fn effect_to_doc_allow_without_reason() {
+        let doc = Effect::Allow(None).to_doc();
+        assert_eq!(doc_text(&doc), "(effect :allow)");
+    }
+
+    #[test]
+    fn effect_to_doc_allow_with_reason() {
+        let doc = Effect::Allow(Some("safe command".into())).to_doc();
+        assert_eq!(doc_text(&doc), "(effect :allow \"safe command\")");
+    }
+
+    #[test]
+    fn effect_to_doc_ask_without_reason() {
+        let doc = Effect::Ask(None).to_doc();
+        assert_eq!(doc_text(&doc), "(effect :ask)");
+    }
+
+    #[test]
+    fn effect_to_doc_ask_with_reason() {
+        let doc = Effect::Ask(Some("confirm".into())).to_doc();
+        assert_eq!(doc_text(&doc), "(effect :ask \"confirm\")");
+    }
+
+    #[test]
+    fn effect_to_doc_deny_without_reason() {
+        let doc = Effect::Deny(None).to_doc();
+        assert_eq!(doc_text(&doc), "(effect :deny)");
+    }
+
+    #[test]
+    fn effect_to_doc_deny_with_reason() {
+        let doc = Effect::Deny(Some("blocked".into())).to_doc();
+        assert_eq!(doc_text(&doc), "(effect :deny \"blocked\")");
+    }
+
+    #[test]
+    fn effect_to_doc_command_pattern_placeholder() {
+        let doc = Effect::CommandPattern(CommandPattern::Literal("git".into())).to_doc();
+        assert_eq!(doc_text(&doc), "<command-pattern>");
+    }
+
+    #[test]
+    fn effect_to_doc_arg_pattern_placeholder() {
+        let doc = Effect::ArgPattern(ArgPattern::positional(vec![])).to_doc();
+        assert_eq!(doc_text(&doc), "<arg-pattern>");
+    }
+
+    #[test]
+    fn effect_to_doc_and_placeholder() {
+        let doc = Effect::And { effects: vec![] }.to_doc();
+        assert_eq!(doc_text(&doc), "<and-effect>");
+    }
+
+    #[test]
+    fn effect_to_doc_or_placeholder() {
+        let doc = Effect::Or { effects: vec![] }.to_doc();
+        assert_eq!(doc_text(&doc), "<or-effect>");
+    }
+
+    #[test]
+    fn effect_to_doc_not_placeholder() {
+        let span = Span { start: 0, end: 1 };
+        let effect = Spanned::new(Effect::Allow(None), span);
+        let doc = Effect::Not {
+            effect: Box::new(effect),
+        }
+        .to_doc();
+        assert_eq!(doc_text(&doc), "<not-effect>");
+    }
+
+    #[test]
+    fn effect_to_doc_when_placeholder() {
+        let span = Span { start: 0, end: 1 };
+        let pred = Spanned::new(Predicate::fact_presence("test"), span);
+        let effect = Spanned::new(Effect::Allow(None), span);
+        let doc = Effect::When {
+            predicate: pred,
+            effect: Box::new(effect),
+        }
+        .to_doc();
+        assert_eq!(doc_text(&doc), "<when-effect>");
+    }
+
+    #[test]
+    fn effect_to_doc_unless_placeholder() {
+        let span = Span { start: 0, end: 1 };
+        let pred = Spanned::new(Predicate::fact_presence("test"), span);
+        let effect = Spanned::new(Effect::Allow(None), span);
+        let doc = Effect::Unless {
+            predicate: pred,
+            effect: Box::new(effect),
+        }
+        .to_doc();
+        assert_eq!(doc_text(&doc), "<unless-effect>");
+    }
+
+    #[test]
+    fn effect_to_doc_if_placeholder() {
+        let span = Span { start: 0, end: 1 };
+        let pred = Spanned::new(Predicate::fact_presence("test"), span);
+        let effect = Spanned::new(Effect::Allow(None), span);
+        let doc = Effect::If {
+            predicate: pred,
+            then_effect: Box::new(effect.clone()),
+            else_effect: Box::new(effect),
+        }
+        .to_doc();
+        assert_eq!(doc_text(&doc), "<if-effect>");
+    }
+
+    #[test]
+    fn effect_to_doc_cond_placeholder() {
+        let doc = Effect::Cond {
+            branches: vec![],
+            fallback: None,
+        }
+        .to_doc();
+        assert_eq!(doc_text(&doc), "<cond-effect>");
+    }
+
+    #[test]
+    fn effect_to_doc_may_i_placeholder() {
+        let doc = Effect::MayI {
+            pattern: ArgPattern::positional(vec![]),
+        }
+        .to_doc();
+        assert_eq!(doc_text(&doc), "<may-i-effect>");
+    }
+
+    fn doc_text(doc: &crate::doc::Doc) -> String {
+        doc.fold(&|node, _ann| match node {
+            crate::doc::DocF::Atom(s) => s.clone(),
+            crate::doc::DocF::List(cs) => format!("({})", cs.join(" ")),
+            crate::doc::DocF::Vector(cs) => format!("[{}]", cs.join(" ")),
+        })
     }
 }

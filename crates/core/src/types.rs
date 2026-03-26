@@ -1303,6 +1303,8 @@ pub struct Check {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::doc::DocF;
+    use crate::pattern::PositionalArg;
 
     // --- Decision::Display ---
 
@@ -2349,6 +2351,799 @@ mod tests {
         };
         assert_eq!(check.command, "test");
     }
+
+    // --- Effect::Display (lines 389-394) ---
+
+    #[test]
+    fn effect_display_allow_without_reason() {
+        let e = Effect {
+            decision: Decision::Allow,
+            reason: None,
+        };
+        assert_eq!(format!("{}", e), "(effect :allow)");
+    }
+
+    #[test]
+    fn effect_display_ask_with_reason() {
+        let e = Effect {
+            decision: Decision::Ask,
+            reason: Some("confirm this".into()),
+        };
+        assert_eq!(format!("{}", e), "(effect :ask \"confirm this\")");
+    }
+
+    #[test]
+    fn effect_display_deny_with_special_chars() {
+        let e = Effect {
+            decision: Decision::Deny,
+            reason: Some("danger\"ous".into()),
+        };
+        assert_eq!(format!("{}", e), "(effect :deny \"danger\"ous\")");
+    }
+
+    // --- Keyword::Display (lines 46-47) ---
+
+    #[test]
+    fn keyword_display_shows_value() {
+        let kw = Keyword::new(":test/key").unwrap();
+        assert_eq!(format!("{}", kw), ":test/key");
+    }
+
+    #[test]
+    fn keyword_display_preserves_colon() {
+        let kw = Keyword::new_unchecked(":my-keyword");
+        assert_eq!(format!("{}", kw), ":my-keyword");
+    }
+
+    // --- Expr::Display Bind variant (lines 660-661) ---
+
+    #[test]
+    fn expr_display_bind_with_keyword() {
+        let kw = Keyword::new_unchecked(":host");
+        let e = Expr::Bind {
+            key: kw,
+            expr: Box::new(Expr::Wildcard),
+        };
+        assert_eq!(format!("{}", e), "[:host *]");
+    }
+
+    #[test]
+    fn expr_display_bind_with_literal() {
+        let kw = Keyword::new_unchecked(":env");
+        let e = Expr::Bind {
+            key: kw,
+            expr: Box::new(Expr::Literal("prod".into())),
+        };
+        assert_eq!(format!("{}", e), "[:env \"prod\"]");
+    }
+
+    // --- BoolExpr::to_doc for Or/Not/Has (lines 305-317) ---
+
+    #[test]
+    fn bool_expr_to_doc_has_presence() {
+        let e = BoolExpr::Has(FactQuery::Presence {
+            key: ":via/ssh".into(),
+            vector_syntax: false,
+        });
+        assert_eq!(doc_text(&e.to_doc()), "(has :via/ssh)");
+    }
+
+    #[test]
+    fn bool_expr_to_doc_has_value() {
+        let e = BoolExpr::Has(FactQuery::Value {
+            key: ":opencode/agent".into(),
+            pattern: FactPattern::Literal("build".into()),
+        });
+        assert_eq!(doc_text(&e.to_doc()), "(has [:opencode/agent \"build\"])");
+    }
+
+    #[test]
+    fn bool_expr_to_doc_not() {
+        let inner = BoolExpr::Has(FactQuery::Presence {
+            key: ":restricted".into(),
+            vector_syntax: false,
+        });
+        let e = BoolExpr::Not(Box::new(inner));
+        assert_eq!(doc_text(&e.to_doc()), "(not (has :restricted))");
+    }
+
+    #[test]
+    fn bool_expr_to_doc_or_with_multiple() {
+        let e = BoolExpr::Or(vec![
+            BoolExpr::Has(FactQuery::Presence {
+                key: ":a".into(),
+                vector_syntax: false,
+            }),
+            BoolExpr::Has(FactQuery::Presence {
+                key: ":b".into(),
+                vector_syntax: false,
+            }),
+        ]);
+        assert_eq!(doc_text(&e.to_doc()), "(or (has :a) (has :b))");
+    }
+
+    // --- ContextFacts additional tests (lines 30-31, 40-41) ---
+
+    #[test]
+    fn context_facts_get_returns_present() {
+        let mut facts = ContextFacts::default();
+        facts.insert_present(":test");
+        assert!(matches!(facts.get(":test"), Some(ContextValue::Present)));
+    }
+
+    #[test]
+    fn context_facts_get_returns_scalar() {
+        let mut facts = ContextFacts::default();
+        facts.insert_scalar(":key", "value");
+        assert!(matches!(facts.get(":key"), Some(ContextValue::Scalar(v)) if v == "value"));
+    }
+
+    #[test]
+    fn context_facts_get_returns_none_for_missing() {
+        let facts = ContextFacts::default();
+        assert_eq!(facts.get(":missing"), None);
+    }
+
+    #[test]
+    fn context_facts_get_scalar_returns_value() {
+        let mut facts = ContextFacts::default();
+        facts.insert_scalar(":env", "production");
+        assert_eq!(facts.get_scalar(":env"), Some("production"));
+    }
+
+    // --- Keyword tests (lines 30-31, 40-41) ---
+
+    #[test]
+    fn keyword_into_string_consumes() {
+        let kw = Keyword::new_unchecked(":my-keyword");
+        let s: String = kw.into_string();
+        assert_eq!(s, ":my-keyword");
+    }
+
+    #[test]
+    fn keyword_new_unchecked_accepts_any() {
+        // Even though it's unsafe, it should accept any string
+        let kw = Keyword::new_unchecked(":special-chars-123");
+        assert_eq!(kw.as_str(), ":special-chars-123");
+    }
+
+    // --- FactQuery additional tests (lines 116, 119) ---
+
+    #[test]
+    fn fact_query_key_for_presence() {
+        let q = FactQuery::Presence {
+            key: ":via/ssh".into(),
+            vector_syntax: false,
+        };
+        assert_eq!(q.key(), ":via/ssh");
+    }
+
+    #[test]
+    fn fact_query_key_for_value() {
+        let q = FactQuery::Value {
+            key: ":opencode/agent".into(),
+            pattern: FactPattern::Wildcard,
+        };
+        assert_eq!(q.key(), ":opencode/agent");
+    }
+
+    // --- ContextExpr additional tests (lines 147-150, 152-155, 157, 279-282) ---
+
+    #[test]
+    fn context_expr_and_to_doc() {
+        let e = ContextExpr::And(vec![
+            ContextExpr::Alias("a".into()),
+            ContextExpr::Alias("b".into()),
+        ]);
+        assert_eq!(doc_text(&e.to_doc()), "(and a b)");
+    }
+
+    #[test]
+    fn context_expr_or_to_doc() {
+        let e = ContextExpr::Or(vec![
+            ContextExpr::Alias("x".into()),
+            ContextExpr::Alias("y".into()),
+        ]);
+        assert_eq!(doc_text(&e.to_doc()), "(or x y)");
+    }
+
+    #[test]
+    fn context_expr_not_to_doc() {
+        let inner = ContextExpr::Alias("test".into());
+        let e = ContextExpr::Not(Box::new(inner));
+        assert_eq!(doc_text(&e.to_doc()), "(not test)");
+    }
+
+    #[test]
+    fn context_expr_debug_and() {
+        let e = ContextExpr::And(vec![]);
+        let dbg = format!("{:?}", e);
+        assert!(dbg.starts_with("And("));
+    }
+
+    #[test]
+    fn context_expr_debug_or() {
+        let e = ContextExpr::Or(vec![]);
+        let dbg = format!("{:?}", e);
+        assert!(dbg.starts_with("Or("));
+    }
+
+    #[test]
+    fn context_expr_debug_not() {
+        let e = ContextExpr::Not(Box::new(ContextExpr::Alias("test".into())));
+        let dbg = format!("{:?}", e);
+        assert!(dbg.starts_with("Not("));
+    }
+
+    #[test]
+    fn context_expr_debug_has() {
+        let e = ContextExpr::Has(FactQuery::Presence {
+            key: ":key".into(),
+            vector_syntax: false,
+        });
+        let dbg = format!("{:?}", e);
+        assert!(dbg.starts_with("Has("));
+    }
+
+    // --- Expr::to_doc Bind (line 627) ---
+
+    #[test]
+    fn expr_to_doc_bind() {
+        let kw = Keyword::new_unchecked(":host");
+        let e: Expr = Expr::Bind {
+            key: kw,
+            expr: Box::new(Expr::Literal("server".into())),
+        };
+        assert_eq!(doc_text(&e.to_doc()), "[:host \"server\"]");
+    }
+
+    // --- Expr::find_effect additional coverage (lines 589, 800) ---
+
+    #[test]
+    fn expr_find_effect_through_bind() {
+        let cond = Expr::Cond(vec![ExprBranch {
+            test: Expr::Literal("x".into()),
+            effect: Effect {
+                decision: Decision::Allow,
+                reason: None,
+            },
+        }]);
+        let e = Expr::Bind {
+            key: Keyword::new_unchecked(":key"),
+            expr: Box::new(cond),
+        };
+        assert_eq!(e.find_effect("x").unwrap().decision, Decision::Allow);
+    }
+
+    #[test]
+    fn expr_find_effect_bind_no_match() {
+        let e: Expr = Expr::Bind {
+            key: Keyword::new_unchecked(":key"),
+            expr: Box::new(Expr::Literal("inner".into())),
+        };
+        assert!(e.find_effect("other").is_none());
+    }
+
+    // --- ArgMatcher::has_effect additional coverage (lines 1043-1044, 1051-1053, 1062-1064) ---
+
+    #[test]
+    fn arg_matcher_has_effect_and_with_cond() {
+        let inner = ArgMatcher::Positional(vec![PosExpr::one(Expr::Cond(vec![]))]);
+        let m = ArgMatcher::And(vec![inner]);
+        assert!(m.has_effect());
+    }
+
+    #[test]
+    fn arg_matcher_has_effect_or_with_cond() {
+        let inner = ArgMatcher::Positional(vec![PosExpr::one(Expr::Cond(vec![]))]);
+        let m = ArgMatcher::Or(vec![inner]);
+        assert!(m.has_effect());
+    }
+
+    #[test]
+    fn arg_matcher_has_effect_cond_without_effect() {
+        let m = ArgMatcher::Cond(CondArm {
+            branches: vec![CondBranch {
+                matcher: ArgMatcher::Positional(vec![PosExpr::one(Expr::Wildcard)]),
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
+            }],
+            fallback: None,
+        });
+        // The Cond returns true because branches.iter().any(|b| b.matcher.has_effect())
+        // but wait, the matcher is Positional with Wildcard which has no Cond...
+        // Let me reconsider - the Cond's has_effect checks if ANY branch's matcher has_effect
+        // The branch's matcher is Positional(vec![PosExpr::one(Expr::Wildcard)])
+        // Positional checks pexprs.iter().any(|pe| has_expr_effect(&pe.expr))
+        // has_expr_effect checks for Cond, And, Or, Not, Bind - but Wildcard is none of these
+        // So this should NOT have effect... let me trace through more carefully
+        assert!(!m.has_effect());
+    }
+
+    // --- WrapperPattern tests (lines 338) ---
+
+    #[test]
+    fn wrapper_pattern_to_doc_no_bind() {
+        let wp = WrapperPattern {
+            expr: Expr::Literal("test".into()),
+            bind_fact: None,
+        };
+        assert_eq!(doc_text(&wp.to_doc()), "\"test\"");
+    }
+
+    // --- FactPattern::to_doc tests (lines 458, 462-463, 465-466) ---
+
+    #[test]
+    fn fact_pattern_to_doc_and() {
+        let p = FactPattern::And(vec![
+            FactPattern::Literal("a".into()),
+            FactPattern::Literal("b".into()),
+        ]);
+        assert_eq!(doc_text(&p.to_doc()), "(and \"a\" \"b\")");
+    }
+
+    #[test]
+    fn fact_pattern_to_doc_or() {
+        let p = FactPattern::Or(vec![
+            FactPattern::Literal("x".into()),
+            FactPattern::Wildcard,
+        ]);
+        assert_eq!(doc_text(&p.to_doc()), "(or \"x\" *)");
+    }
+
+    #[test]
+    fn fact_pattern_to_doc_not() {
+        let p = FactPattern::Not(Box::new(FactPattern::Literal("test".into())));
+        assert_eq!(doc_text(&p.to_doc()), "(not \"test\")");
+    }
+
+    #[test]
+    fn fact_pattern_to_doc_wildcard() {
+        let p = FactPattern::Wildcard;
+        assert_eq!(doc_text(&p.to_doc()), "*");
+    }
+
+    // --- ArgMatcher::to_doc tests (lines 497, 501-503, 507, 518, 522-524, 527-528, 539, 543-545, 548-549) ---
+
+    #[test]
+    fn arg_matcher_to_doc_has_bool_expr() {
+        let m = ArgMatcher::Has(BoolExpr::Has(FactQuery::Presence {
+            key: ":test".into(),
+            vector_syntax: false,
+        }));
+        assert_eq!(doc_text(&m.to_doc()), "(has :test)");
+    }
+
+    // --- Rule::to_doc with context (line 800) ---
+
+    #[test]
+    fn rule_to_doc_with_context() {
+        let rule = Rule {
+            command: CommandMatcher::Exact("git".into()),
+            context: Some(ContextExpr::Alias("ssh-context".into())),
+            body: RuleBody::Effect {
+                matcher: None,
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
+            },
+            checks: vec![],
+            source_span: Span { start: 0, end: 0 },
+        };
+        assert_eq!(
+            doc_text(&rule.to_doc()),
+            r#"(rule (command "git") (context ssh-context) (effect :allow))"#
+        );
+    }
+
+    // --- CondArm with fallback (lines 874) ---
+
+    #[test]
+    fn polymorphic_cond_arm_to_doc_unless_with_fallback() {
+        let arm = PolymorphicCondArm {
+            branches: vec![],
+            fallback: Some(Effect {
+                decision: Decision::Deny,
+                reason: None,
+            }),
+        };
+        assert_eq!(
+            doc_text(&arm.to_doc("unless")),
+            "(unless (else (effect :deny)))"
+        );
+    }
+
+    // --- EvalAnn and TraceEntry debug tests (lines 874, 1029, 1043-1044, 1051-1053, 1062-1064) ---
+
+    #[test]
+    fn eval_ann_variants_compile() {
+        // Just verify all EvalAnn variants can be constructed
+        let _: EvalAnn = EvalAnn::CommandMatch(true);
+        let _: EvalAnn = EvalAnn::ExprVsArg {
+            arg: "test".into(),
+            matched: true,
+        };
+        let _: EvalAnn = EvalAnn::Quantifier {
+            count: 1,
+            matched: true,
+        };
+        let _: EvalAnn = EvalAnn::Missing;
+        let _: EvalAnn = EvalAnn::Anywhere {
+            args: vec![],
+            matched: true,
+        };
+        let _: EvalAnn = EvalAnn::ContextResult(true);
+        let _: EvalAnn = EvalAnn::ContextHasPresence {
+            key: ":test".into(),
+            source: "source".into(),
+            matched: true,
+        };
+        let _: EvalAnn = EvalAnn::ContextHasExact {
+            key: ":test".into(),
+            source: "source".into(),
+            expected: "exp".into(),
+            actual: Some("act".into()),
+            matched: false,
+            reason: Some(ContextFailureReason::ValueMismatch),
+            search_needle: "needle".into(),
+        };
+        let _: EvalAnn = EvalAnn::ContextHasPattern {
+            key: ":test".into(),
+            source: "source".into(),
+            pattern_source: "pat".into(),
+            pattern: FactPattern::Wildcard,
+            pattern_eval: FactPatternEval::Wildcard {
+                evaluated: true,
+                matched: true,
+            },
+            actual: None,
+            matched: true,
+            reason: None,
+            search_needle: "needle".into(),
+        };
+        let _: EvalAnn = EvalAnn::CondBranch {
+            decision: Decision::Allow,
+        };
+        let _: EvalAnn = EvalAnn::CondElse {
+            decision: Decision::Deny,
+        };
+        let _: EvalAnn = EvalAnn::ExactArgs {
+            patterns: vec![],
+            args: vec![],
+            matched: true,
+        };
+        let _: EvalAnn = EvalAnn::ExactRemainder { count: 0 };
+        let _: EvalAnn = EvalAnn::ArgsResult(true);
+        let _: EvalAnn = EvalAnn::RuleEffect {
+            decision: Decision::Ask,
+            reason: Some("reason".into()),
+        };
+        let _: EvalAnn = EvalAnn::DefaultAsk;
+    }
+
+    #[test]
+    fn trace_entry_rule_compiles() {
+        // Create a Doc<Option<EvalAnn>> manually
+        let annotated_doc = Doc {
+            ann: Some(EvalAnn::DefaultAsk),
+            node: DocF::Atom("test".into()),
+            layout: crate::doc::LayoutHint::Auto,
+            dimmed: false,
+        };
+        let _: TraceEntry = TraceEntry::Rule {
+            doc: Box::new(annotated_doc),
+            line: Some(1),
+        };
+    }
+
+    #[test]
+    fn trace_entry_segment_header_compiles() {
+        let _: TraceEntry = TraceEntry::SegmentHeader {
+            command: "cmd".into(),
+            decision: Decision::Allow,
+        };
+    }
+
+    #[test]
+    fn trace_entry_default_ask_compiles() {
+        let _: TraceEntry = TraceEntry::DefaultAsk {
+            reason: "no rule matched".into(),
+        };
+    }
+
+    // --- FactPatternEval tests (lines 1029) ---
+
+    #[test]
+    fn fact_pattern_eval_variants_compile() {
+        let _: FactPatternEval = FactPatternEval::Literal {
+            value: "test".into(),
+            evaluated: true,
+            matched: true,
+        };
+        let _: FactPatternEval = FactPatternEval::Wildcard {
+            evaluated: true,
+            matched: true,
+        };
+        let _: FactPatternEval = FactPatternEval::Regex {
+            pattern: "^test$".into(),
+            evaluated: true,
+            matched: true,
+        };
+        let _: FactPatternEval = FactPatternEval::And {
+            evaluated: true,
+            matched: true,
+            children: vec![],
+        };
+        let _: FactPatternEval = FactPatternEval::Or {
+            evaluated: true,
+            matched: true,
+            children: vec![],
+        };
+        let _: FactPatternEval = FactPatternEval::Not {
+            evaluated: true,
+            matched: true,
+            child: Box::new(FactPatternEval::Wildcard {
+                evaluated: true,
+                matched: false,
+            }),
+        };
+    }
+
+    // --- WrapperStep tests (lines 660-661, 677) ---
+
+    #[test]
+    fn wrapper_step_positional_compiles() {
+        let _: WrapperStep = WrapperStep::Positional {
+            patterns: vec![],
+            capture: true,
+        };
+    }
+
+    #[test]
+    fn wrapper_step_flag_compiles() {
+        let _: WrapperStep = WrapperStep::Flag { name: "--".into() };
+    }
+
+    // --- ContextFailureReason tests (lines 677, 679-680, 688, 690-691, 696, 698-699, 704, 706-707) ---
+
+    #[test]
+    fn context_failure_reason_all_variants() {
+        assert_eq!(ContextFailureReason::Absent.as_str(), "absent");
+        assert_eq!(
+            ContextFailureReason::PresentWithoutScalar.as_str(),
+            "present_without_scalar"
+        );
+        assert_eq!(
+            ContextFailureReason::ValueMismatch.as_str(),
+            "value_mismatch"
+        );
+        assert_eq!(
+            ContextFailureReason::PatternMismatch.as_str(),
+            "pattern_mismatch"
+        );
+    }
+
+    // --- Config tests (lines 721-723) ---
+
+    #[test]
+    fn config_fields_accessible() {
+        let config = Config {
+            rules: vec![],
+            wrappers: vec![],
+            security: SecurityConfig::default(),
+            checks: vec![],
+            warnings: vec![],
+            source_info: Some(SourceInfo {
+                filename: "test.lisp".into(),
+                content: "(rule)".into(),
+            }),
+        };
+        assert!(config.source_info.is_some());
+    }
+
+    // --- SourceInfo::location_of tests (lines 721-723) ---
+
+    #[test]
+    fn source_info_location_of_first_line() {
+        let info = SourceInfo {
+            filename: "test.lisp".into(),
+            content: "(rule)\n(second)".into(),
+        };
+        assert_eq!(info.location_of(Span { start: 0, end: 6 }), "test.lisp:1:1");
+    }
+
+    #[test]
+    fn source_info_location_of_second_line() {
+        let info = SourceInfo {
+            filename: "test.lisp".into(),
+            content: "(rule)\n(second)".into(),
+        };
+        assert_eq!(
+            info.location_of(Span { start: 7, end: 15 }),
+            "test.lisp:2:1"
+        );
+    }
+
+    // --- FactPattern::to_source tests (lines 874) ---
+
+    #[test]
+    fn fact_pattern_to_source_wildcard() {
+        let p = FactPattern::Wildcard;
+        assert_eq!(p.to_source(), "*");
+    }
+
+    // --- FactQuery::to_source tests (lines 192) ---
+
+    #[test]
+    fn fact_query_to_source_presence_bare() {
+        let q = FactQuery::Presence {
+            key: ":test".into(),
+            vector_syntax: false,
+        };
+        assert_eq!(q.to_source(), ":test");
+    }
+
+    #[test]
+    fn fact_query_to_source_presence_vector() {
+        let q = FactQuery::Presence {
+            key: ":test".into(),
+            vector_syntax: true,
+        };
+        assert_eq!(q.to_source(), "[:test]");
+    }
+
+    // --- RuleBody::to_doc edge cases (lines 260-263, 265-268, 270) ---
+
+    #[test]
+    fn rule_body_to_doc_effect_with_empty_matcher() {
+        let body = RuleBody::Effect {
+            matcher: Some(ArgMatcher::Positional(vec![])),
+            effect: Effect {
+                decision: Decision::Allow,
+                reason: None,
+            },
+        };
+        let docs: Vec<String> = body.to_doc().iter().map(|d| doc_text(d)).collect();
+        assert_eq!(docs.len(), 2);
+        assert_eq!(docs[0], "(args (positional))");
+        assert_eq!(docs[1], "(effect :allow)");
+    }
+
+    // --- ArgMatcher::Cond tests with fallback (lines 566) ---
+
+    #[test]
+    fn arg_matcher_cond_to_doc_full() {
+        let m = ArgMatcher::Cond(CondArm {
+            branches: vec![CondBranch {
+                matcher: ArgMatcher::Positional(vec![PosExpr::one(Expr::Wildcard)]),
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
+            }],
+            fallback: Some(Effect {
+                decision: Decision::Deny,
+                reason: Some("fallback".into()),
+            }),
+        });
+        assert_eq!(
+            doc_text(&m.to_doc()),
+            "(cond ((positional *) (effect :allow)) (else (effect :deny \"fallback\")))"
+        );
+    }
+
+    // --- ArgMatcher::to_doc When/Unless/If with branches (lines 589) ---
+
+    #[test]
+    fn arg_matcher_to_doc_when_with_branch() {
+        let m = ArgMatcher::When(PolymorphicCondArm {
+            branches: vec![PolymorphicCondBranch {
+                predicate: MatcherCondPredicate::Expr(Expr::Literal("test".into())),
+                effect: Effect {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
+            }],
+            fallback: None,
+        });
+        assert_eq!(doc_text(&m.to_doc()), "(when (\"test\" (effect :allow)))");
+    }
+
+    #[test]
+    fn arg_matcher_to_doc_unless_with_branch() {
+        let m = ArgMatcher::Unless(PolymorphicCondArm {
+            branches: vec![PolymorphicCondBranch {
+                predicate: MatcherCondPredicate::BoolExpr(BoolExpr::Has(FactQuery::Presence {
+                    key: ":test".into(),
+                    vector_syntax: false,
+                })),
+                effect: Effect {
+                    decision: Decision::Deny,
+                    reason: None,
+                },
+            }],
+            fallback: None,
+        });
+        assert_eq!(
+            doc_text(&m.to_doc()),
+            "(unless ((has :test) (effect :deny)))"
+        );
+    }
+
+    #[test]
+    fn arg_matcher_to_doc_if_with_else() {
+        let m = ArgMatcher::If {
+            test: Box::new(MatcherCondPredicate::Expr(Expr::Wildcard)),
+            then_effect: Effect {
+                decision: Decision::Allow,
+                reason: None,
+            },
+            else_effect: Some(Effect {
+                decision: Decision::Ask,
+                reason: Some("confirm".into()),
+            }),
+        };
+        assert_eq!(
+            doc_text(&m.to_doc()),
+            "(if * (effect :allow) (effect :ask \"confirm\"))"
+        );
+    }
+
+    // --- PolymorphicCondBranch and PolymorphicCondArm tests ---
+
+    #[test]
+    fn polymorphic_cond_branch_fields() {
+        let branch = PolymorphicCondBranch {
+            predicate: MatcherCondPredicate::Expr(Expr::Wildcard),
+            effect: Effect {
+                decision: Decision::Allow,
+                reason: None,
+            },
+        };
+        assert!(matches!(
+            branch.predicate,
+            MatcherCondPredicate::Expr(Expr::Wildcard)
+        ));
+    }
+
+    // --- PositionalArg tests ---
+
+    #[test]
+    fn positional_arg_with_quantifier_optional() {
+        let arg = PositionalArg::with_quantifier(Expr::Wildcard, Quantifier::Optional);
+        assert!(matches!(arg.quantifier, Quantifier::Optional));
+        assert!(!arg.recursive);
+    }
+
+    #[test]
+    fn positional_arg_with_quantifier_one_or_more() {
+        let arg = PositionalArg::with_quantifier(Expr::Literal("x".into()), Quantifier::OneOrMore);
+        assert!(matches!(arg.quantifier, Quantifier::OneOrMore));
+    }
+
+    #[test]
+    fn positional_arg_with_quantifier_zero_or_more() {
+        let arg = PositionalArg::with_quantifier(Expr::Wildcard, Quantifier::ZeroOrMore);
+        assert!(matches!(arg.quantifier, Quantifier::ZeroOrMore));
+    }
+
+    // --- Wrapper tests ---
+
+    #[test]
+    fn wrapper_fields() {
+        let w = Wrapper {
+            command: "sudo".into(),
+            steps: vec![WrapperStep::Positional {
+                patterns: vec![],
+                capture: true,
+            }],
+        };
+        assert_eq!(w.command, "sudo");
+        assert_eq!(w.steps.len(), 1);
+    }
 }
 
 // ── Property-based tests ────────────────────────────────────────────
@@ -2709,6 +3504,137 @@ mod prop_tests {
                 (ExprF::Or(c1), ExprF::Or(c2)) => prop_assert_eq!(c1.len(), c2.len()),
                 _ => prop_assert!(false, "map_ref_mut and map_ref produced different results"),
             }
+        }
+    }
+
+    // --- Property tests for quote_string escaping (lines 111-126) ---
+
+    proptest! {
+        #[test]
+        fn quote_string_escapes_backslash(s in "[a-z]{0,10}") {
+            let with_backslash = format!("{}\\{}", s, s);
+            let quoted = quote_string(&with_backslash);
+            // Backslashes should be escaped as \\
+            let escaped_count = quoted.matches("\\\\").count();
+            prop_assert_eq!(escaped_count, 1);
+        }
+
+        #[test]
+        fn quote_string_escapes_double_quote(s in "[a-z\"]{0,20}") {
+            let quoted = quote_string(&s);
+            // Result should be surrounded by quotes
+            prop_assert!(quoted.starts_with('"'));
+            prop_assert!(quoted.ends_with('"'));
+            // Any double quote should be escaped as \"
+            let escaped_count = quoted.matches("\\\"").count();
+            let original_quote_count = s.matches('"').count();
+            prop_assert_eq!(escaped_count, original_quote_count);
+        }
+
+        #[test]
+        fn quote_string_escapes_newline(s in "[a-z]{0,10}") {
+            let with_newline = format!("{}\n{}", s, s);
+            let quoted = quote_string(&with_newline);
+            // Newlines should be escaped as \n
+            let escaped_count = quoted.matches("\\n").count();
+            prop_assert_eq!(escaped_count, 1);
+        }
+
+        #[test]
+        fn quote_string_escapes_carriage_return(s in "[a-z]{0,10}") {
+            let with_cr = format!("{}\r{}", s, s);
+            let quoted = quote_string(&with_cr);
+            // Carriage returns should be escaped as \r
+            let escaped_count = quoted.matches("\\r").count();
+            prop_assert_eq!(escaped_count, 1);
+        }
+
+        #[test]
+        fn quote_string_escapes_tab(s in "[a-z]{0,10}") {
+            let with_tab = format!("{}\t{}", s, s);
+            let quoted = quote_string(&with_tab);
+            // Tabs should be escaped as \t
+            let escaped_count = quoted.matches("\\t").count();
+            prop_assert_eq!(escaped_count, 1);
+        }
+
+        #[test]
+        fn quote_string_is_reversible_for_safe_strings(s in "[a-zA-Z0-9_-]{0,30}") {
+            let quoted = quote_string(&s);
+            // For strings without special chars, we can verify structure
+            prop_assert!(quoted.starts_with('"'));
+            prop_assert!(quoted.ends_with('"'));
+            let inner = &quoted[1..quoted.len()-1];
+            prop_assert_eq!(inner, s);
+        }
+    }
+
+    // --- ExprBranchF functor property tests (lines 686-709) ---
+
+    fn arb_expr_branch_f() -> impl Strategy<Value = ExprBranchF<String, Effect>> {
+        ("[a-z]{1,10}", arb_decision()).prop_map(|(test, decision)| ExprBranchF {
+            test,
+            effect: Effect {
+                decision,
+                reason: None,
+            },
+        })
+    }
+
+    proptest! {
+        // Functor identity law: map(|x| x) preserves structure
+        #[test]
+        fn expr_branch_f_map_identity(branch in arb_expr_branch_f()) {
+            let mapped: ExprBranchF<String, Effect> = branch.map_ref(&mut |x: &String| x.clone());
+
+            // Test field should be preserved
+            prop_assert_eq!(mapped.test, branch.test);
+            // Effect should be preserved
+            prop_assert_eq!(mapped.effect.decision, branch.effect.decision);
+        }
+
+        // Functor composition law: map(f).map(g) == map(|x| g(f(x)))
+        #[test]
+        fn expr_branch_f_map_composition(branch in arb_expr_branch_f()) {
+            // f: add prefix
+            let mut f = |x: &String| format!("f_{}", x);
+            // g: add suffix
+            let mut g = |x: &String| format!("{}_g", x);
+
+            // Composition: apply f then g separately
+            let step1: ExprBranchF<String, Effect> = branch.map_ref(&mut f);
+            let composed_separate = step1.map(&mut |x| g(&x));
+
+            // Composition: apply g(f(x)) directly
+            let composed_together = branch.map_ref(&mut |x| g(&f(&x)));
+
+            prop_assert_eq!(composed_separate.test, composed_together.test);
+            prop_assert_eq!(composed_separate.effect.decision, composed_together.effect.decision);
+        }
+
+        // map vs map_ref equivalence
+        #[test]
+        fn expr_branch_f_map_and_map_ref_equivalent(branch in arb_expr_branch_f()) {
+            let mut transform = |x: &String| format!("xformed_{}", x);
+
+            let via_ref = branch.map_ref(&mut transform);
+            let cloned = branch.clone();
+            let mut transform2 = |x: String| format!("xformed_{}", x);
+            let via_owned = cloned.map(&mut transform2);
+
+            prop_assert_eq!(via_ref.test, via_owned.test);
+            prop_assert_eq!(via_ref.effect.decision, via_owned.effect.decision);
+        }
+
+        // map_ref_mut matches map_ref for non-mutating operations
+        #[test]
+        fn expr_branch_f_map_ref_mut_matches_map_ref(branch in arb_expr_branch_f()) {
+            let mut cloned = branch.clone();
+            let via_mut = cloned.map_ref_mut(&mut |x| format!("mut_{}", x));
+            let via_ref = branch.map_ref(&mut |x: &String| format!("mut_{}", x));
+
+            prop_assert_eq!(via_mut.test, via_ref.test);
+            prop_assert_eq!(via_mut.effect.decision, via_ref.effect.decision);
         }
     }
 
