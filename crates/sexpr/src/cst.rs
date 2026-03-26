@@ -435,9 +435,53 @@ impl PrettyCtx {
 
 impl CstNode<TriviaAnn> {
     fn pretty_write(&self, ctx: &mut PrettyCtx) {
+        self.pretty_write_internal(ctx, false);
+    }
+
+    /// Write node but skip leading whitespace (preserve comments).
+    fn pretty_write_skip_leading_whitespace(&self, ctx: &mut PrettyCtx) {
+        self.pretty_write_internal(ctx, true);
+    }
+
+    /// Write node completely fresh without any trivia (for cond clauses).
+    fn pretty_write_fresh(&self, ctx: &mut PrettyCtx) {
+        match &self.shape {
+            ShapeF::Atom(s) => {
+                ctx.write_str(s);
+            }
+            ShapeF::Str(s) => {
+                ctx.write_str(&quote_string(s));
+            }
+            ShapeF::List(children) => {
+                ctx.write_str("(");
+                for (i, child) in children.iter().enumerate() {
+                    if i > 0 {
+                        ctx.write_str(" ");
+                    }
+                    child.pretty_write_fresh(ctx);
+                }
+                ctx.write_str(")");
+            }
+            ShapeF::Vector(children) => {
+                ctx.write_str("[");
+                for (i, child) in children.iter().enumerate() {
+                    if i > 0 {
+                        ctx.write_str(" ");
+                    }
+                    child.pretty_write_fresh(ctx);
+                }
+                ctx.write_str("]");
+            }
+        }
+    }
+
+    fn pretty_write_internal(&self, ctx: &mut PrettyCtx, skip_whitespace: bool) {
         // Write leading trivia (comments/whitespace before this node)
         for trivia in &self.ann.leading {
             match trivia {
+                Trivia::Whitespace(_) if skip_whitespace => {
+                    // Skip whitespace when requested (but keep comments)
+                }
                 Trivia::Whitespace(s) => {
                     ctx.write_str(s);
                 }
@@ -462,31 +506,57 @@ impl CstNode<TriviaAnn> {
                 ctx.write_str(&quote_string(s));
             }
             ShapeF::List(children) => {
+                // Check if this is a cond form that needs special handling
+                let is_cond = children.first().and_then(|c| c.as_atom()) == Some("cond");
+
                 ctx.write_str("(");
 
-                // Calculate indent for children: head position + 1 (for the opening paren)
-                let child_indent = head_col + 1;
-                ctx.push_indent(child_indent);
+                if is_cond && children.len() > 1 {
+                    // Special formatting for cond: always break clauses onto separate lines
+                    // Format: (cond
+                    //          ((test) (body))
+                    //          (else (body)))
+                    let body_indent = head_col + 2;
 
-                for (i, child) in children.iter().enumerate() {
-                    // Check if we need to add a newline before this child
-                    if i > 0 && child.ann.leading.is_empty() {
-                        // Estimate child width (rough approximation)
-                        let child_width = estimate_width(child);
-
-                        if ctx.col + 1 + child_width > ctx.width && ctx.col > child_indent {
-                            // Would exceed width, add newline and indent
-                            ctx.write_newline();
-                            ctx.write_indent();
-                        } else {
-                            ctx.write_str(" ");
-                        }
+                    // Write "cond" head (without leading whitespace for clean break)
+                    if let Some(head) = children.first() {
+                        head.pretty_write(ctx);
                     }
 
-                    child.pretty_write(ctx);
+                    // Each clause on its own line with fresh formatting (no trivia)
+                    for clause in &children[1..] {
+                        ctx.write_newline();
+                        ctx.write_str(&" ".repeat(body_indent));
+                        // For cond clauses, format fresh without trivia to avoid spacing issues
+                        clause.pretty_write_fresh(ctx);
+                    }
+                } else {
+                    // Standard list formatting
+                    // Calculate indent for children: head position + 1 (for the opening paren)
+                    let child_indent = head_col + 1;
+                    ctx.push_indent(child_indent);
+
+                    for (i, child) in children.iter().enumerate() {
+                        // Check if we need to add a newline before this child
+                        if i > 0 && child.ann.leading.is_empty() {
+                            // Estimate child width (rough approximation)
+                            let child_width = estimate_width(child);
+
+                            if ctx.col + 1 + child_width > ctx.width && ctx.col > child_indent {
+                                // Would exceed width, add newline and indent
+                                ctx.write_newline();
+                                ctx.write_indent();
+                            } else {
+                                ctx.write_str(" ");
+                            }
+                        }
+
+                        child.pretty_write(ctx);
+                    }
+
+                    ctx.pop_indent();
                 }
 
-                ctx.pop_indent();
                 ctx.write_str(")");
             }
             ShapeF::Vector(children) => {
@@ -1645,5 +1715,131 @@ mod proptests {
         assert!(pretty.contains(";; comment"));
         assert!(pretty.contains('['));
         assert!(pretty.contains(']'));
+    }
+
+    // ── Cond formatting tests ──────────────────────────────────────────
+
+    #[test]
+    fn pretty_serialize_cond_always_breaks_clauses() {
+        // Cond always breaks clauses onto separate lines for readability
+        let input = "(cond ((test) (effect)))";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+
+        let pretty = nodes[0].pretty_serialize(80);
+        // Should always have newline even for short cond
+        assert!(
+            pretty.contains("\n"),
+            "Cond should always break clauses\nGot: {}",
+            pretty
+        );
+        assert!(
+            pretty.contains("((test)"),
+            "Clause should be on its own line\nGot: {}",
+            pretty
+        );
+    }
+
+    #[test]
+    fn pretty_serialize_cond_clauses_on_separate_lines() {
+        // Each cond clause should be on its own line when cond breaks
+        let input = "(cond ((test1) (effect1)) ((test2) (effect2)) (else (effect3)))";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+
+        // Cond always breaks with clauses on separate lines
+        let pretty = nodes[0].pretty_serialize(80);
+
+        // Should have newlines for each clause (2 spaces indent)
+        assert!(
+            pretty.contains("\n  ((test1)"),
+            "First clause should start on new line with proper indent\nGot: {}",
+            pretty
+        );
+        assert!(
+            pretty.contains("\n  ((test2)"),
+            "Second clause should start on new line with proper indent\nGot: {}",
+            pretty
+        );
+        assert!(
+            pretty.contains("\n  (else"),
+            "Else clause should start on new line with proper indent\nGot: {}",
+            pretty
+        );
+    }
+
+    #[test]
+    fn pretty_serialize_cond_clauses_properly_indented() {
+        // Cond clauses should each be on their own line with proper indentation
+        let input = r#"(rule "cmd" (cond ((anywhere "--eval") (effect :ask "Dangerous")) (else (effect :allow))))"#;
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+
+        let pretty = nodes[0].pretty_serialize(80);
+
+        // Should have cond with clauses on separate lines
+        let lines: Vec<&str> = pretty.lines().collect();
+
+        // Find the cond line and verify clauses follow on separate lines
+        let cond_idx = lines.iter().position(|l| l.contains("(cond"));
+        let clause1_idx = lines.iter().position(|l| l.contains("((anywhere"));
+        let clause2_idx = lines.iter().position(|l| l.contains("(else"));
+
+        assert!(cond_idx.is_some(), "Should have cond\nGot:\n{}", pretty);
+        assert!(
+            clause1_idx.is_some(),
+            "Should have first clause\nGot:\n{}",
+            pretty
+        );
+        assert!(
+            clause2_idx.is_some(),
+            "Should have else clause\nGot:\n{}",
+            pretty
+        );
+
+        // Clauses should come after cond
+        if let (Some(c_idx), Some(cl1_idx), Some(cl2_idx)) = (cond_idx, clause1_idx, clause2_idx) {
+            assert!(cl1_idx > c_idx, "First clause should come after cond");
+            assert!(
+                cl2_idx > cl1_idx,
+                "Else clause should come after first clause"
+            );
+        }
+    }
+
+    #[test]
+    fn pretty_serialize_cond_no_extra_space_after_opening() {
+        // There should be no space between ( and ( when a clause starts
+        let input = "(cond ((test) (effect)) (else (effect)))";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+
+        // Force break with narrow width
+        let pretty = nodes[0].pretty_serialize(20);
+
+        // Should not have "( (" pattern (space between parens)
+        assert!(
+            !pretty.contains("( ("),
+            "Should not have space between opening parens of cond clause\nGot:\n{}",
+            pretty
+        );
+    }
+
+    #[test]
+    fn pretty_serialize_cond_else_clause_formatting() {
+        // Else clause should format the same as other clauses
+        let input = "(cond ((test) (effect)) (else (effect :allow)))";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+
+        // Cond always breaks
+        let pretty = nodes[0].pretty_serialize(80);
+
+        // Else clause should be on its own line with proper indent (2 spaces)
+        assert!(
+            pretty.contains("\n  (else"),
+            "Else clause should be properly indented on new line\nGot:\n{}",
+            pretty
+        );
     }
 }
