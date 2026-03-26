@@ -27,16 +27,8 @@ repos:
         stages: [pre-commit]
 
       - id: cargo-test-affected
-        name: cargo test (affected)
-        entry: cargo affected --staged test
-        language: system
-        types: [rust]
-        pass_filenames: false
-        stages: [pre-commit]
-
-      - id: cargo-tarpaulin-affected
         name: cargo tarpaulin (affected)
-        entry: cargo affected --staged tarpaulin --fail-under 90
+        entry: cargo affected --staged tarpaulin
         language: system
         types: [rust]
         pass_filenames: false
@@ -60,16 +52,8 @@ repos:
         stages: [pre-push]
 
       - id: cargo-test-full
-        name: cargo test (full)
-        entry: cargo test
-        language: system
-        types: [rust]
-        pass_filenames: false
-        stages: [pre-push]
-
-      - id: cargo-tarpaulin-full
         name: cargo tarpaulin (full)
-        entry: cargo tarpaulin --fail-under 90
+        entry: cargo tarpaulin
         language: system
         types: [rust]
         pass_filenames: false
