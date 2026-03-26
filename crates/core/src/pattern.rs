@@ -1,8 +1,201 @@
 // Argument and command patterns for the unified rule DSL.
 
 use crate::ast::Effect;
-use crate::types::Expr;
-use crate::Quantifier;
+use crate::doc::Doc;
+use crate::primitives::{Keyword, ToDoc};
+
+/// How many arguments a positional expression consumes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Quantifier {
+    /// Match exactly one arg.
+    One,
+    /// Match zero or one arg: `(? e)`
+    Optional,
+    /// Match one or more args: `(+ e)`
+    OneOrMore,
+    /// Match zero or more args: `(* e)`
+    ZeroOrMore,
+}
+
+impl Quantifier {
+    /// Minimum number of args this quantifier requires.
+    pub fn min(self) -> usize {
+        match self {
+            Quantifier::One | Quantifier::OneOrMore => 1,
+            Quantifier::Optional | Quantifier::ZeroOrMore => 0,
+        }
+    }
+
+    /// Whether this quantifier consumes multiple args.
+    pub fn is_repeating(self) -> bool {
+        matches!(self, Quantifier::OneOrMore | Quantifier::ZeroOrMore)
+    }
+}
+
+/// An expression that matches a single string, optionally carrying effects.
+///
+/// This type uses the fixpoint-of-functor pattern internally, enabling generic
+/// traversals via the `ExprF` base functor.
+#[derive(Clone)]
+pub enum Expr<E: std::fmt::Debug + ToDoc = Effect> {
+    /// Exact string match.
+    Literal(String),
+    /// Regex match.
+    Regex(regex::Regex),
+    /// Matches any string.
+    Wildcard,
+    /// All sub-expressions must match.
+    And(Vec<Expr<E>>),
+    /// Any sub-expression must match.
+    Or(Vec<Expr<E>>),
+    /// Inverts the match result.
+    Not(Box<Expr<E>>),
+    /// Branches with effects; first matching branch wins.
+    Cond(Vec<ExprBranch<E>>),
+    /// Bind the matched value to a fact key.
+    Bind { key: Keyword, expr: Box<Expr<E>> },
+}
+
+/// A branch in an expression-level cond.
+#[derive(Debug, Clone)]
+pub struct ExprBranch<E: std::fmt::Debug + ToDoc = Effect> {
+    pub test: Expr<E>,
+    pub effect: E,
+}
+
+impl<E: std::fmt::Debug + ToDoc> Expr<E> {
+    /// Check if the expression matches the given text (ignoring effects).
+    pub fn is_match(&self, text: &str) -> bool {
+        match self {
+            Expr::Literal(s) => text == s,
+            Expr::Regex(re) => re.is_match(text),
+            Expr::Wildcard => true,
+            Expr::And(exprs) => exprs.iter().all(|e| e.is_match(text)),
+            Expr::Or(exprs) => exprs.iter().any(|e| e.is_match(text)),
+            Expr::Not(expr) => !expr.is_match(text),
+            Expr::Cond(branches) => branches.iter().any(|b| b.test.is_match(text)),
+            Expr::Bind { expr, .. } => expr.is_match(text),
+        }
+    }
+
+    /// Returns true if this is the wildcard expression.
+    pub fn is_wildcard(&self) -> bool {
+        matches!(self, Expr::Wildcard)
+    }
+
+    /// Find the effect associated with a matching condition branch.
+    ///
+    /// Searches through And, Or, and Not expressions to find a Cond branch
+    /// where the test matches the given text. Returns the effect if found.
+    pub fn find_effect(&self, text: &str) -> Option<&E> {
+        match self {
+            Expr::Literal(_) | Expr::Regex(_) | Expr::Wildcard => None,
+            Expr::And(exprs) => exprs.iter().find_map(|e| e.find_effect(text)),
+            Expr::Or(exprs) => exprs.iter().find_map(|e| e.find_effect(text)),
+            Expr::Not(expr) => expr.find_effect(text),
+            Expr::Cond(branches) => branches
+                .iter()
+                .find(|b| b.test.is_match(text))
+                .map(|b| &b.effect),
+            Expr::Bind { expr, .. } => expr.find_effect(text),
+        }
+    }
+
+    /// Convert to a Doc representation.
+    pub fn to_doc(&self) -> Doc {
+        match self {
+            Expr::Literal(s) => Doc::atom(format!("\"{s}\"")),
+            Expr::Regex(re) => Doc::list(vec![
+                Doc::atom("regex"),
+                Doc::atom(format!("\"{}\"", re.as_str())),
+            ]),
+            Expr::Wildcard => Doc::atom("*"),
+            Expr::And(exprs) => {
+                let mut cs = vec![Doc::atom("and")];
+                cs.extend(exprs.iter().map(|e| e.to_doc()));
+                if exprs.len() > 4 {
+                    Doc::broken_list(cs)
+                } else {
+                    Doc::list(cs)
+                }
+            }
+            Expr::Or(exprs) => {
+                let mut cs = vec![Doc::atom("or")];
+                cs.extend(exprs.iter().map(|e| e.to_doc()));
+                if exprs.len() > 4 {
+                    Doc::broken_list(cs)
+                } else {
+                    Doc::list(cs)
+                }
+            }
+            Expr::Not(inner) => Doc::list(vec![Doc::atom("not"), inner.to_doc()]),
+            Expr::Cond(branches) => {
+                let mut cs = vec![Doc::atom("cond")];
+                for b in branches {
+                    cs.push(Doc::list(vec![b.test.to_doc(), b.effect.to_doc()]));
+                }
+                Doc::list(cs)
+            }
+            Expr::Bind { key, expr } => Doc::vector(vec![key.to_doc(), expr.to_doc()]),
+        }
+    }
+}
+
+impl std::fmt::Display for Expr {
+    #[coverage(off)]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Expr::Literal(s) => write!(f, "\"{s}\""),
+            Expr::Regex(re) => write!(f, "(regex \"{}\")", re.as_str()),
+            Expr::Wildcard => write!(f, "*"),
+            Expr::And(exprs) => {
+                write!(f, "(and")?;
+                for e in exprs {
+                    write!(f, " {e}")?;
+                }
+                write!(f, ")")
+            }
+            Expr::Or(exprs) => {
+                write!(f, "(or")?;
+                for e in exprs {
+                    write!(f, " {e}")?;
+                }
+                write!(f, ")")
+            }
+            Expr::Not(inner) => write!(f, "(not {inner})"),
+            Expr::Cond(branches) => {
+                write!(f, "(cond")?;
+                for b in branches {
+                    write!(f, " ({} {})", b.test, b.effect)?;
+                }
+                write!(f, ")")
+            }
+            Expr::Bind { key, expr } => {
+                write!(f, "[{key} {expr}]")
+            }
+        }
+    }
+}
+
+impl<E: std::fmt::Debug + ToDoc> std::fmt::Debug for Expr<E> {
+    #[coverage(off)]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Expr::Literal(s) => f.debug_tuple("Literal").field(s).finish(),
+            Expr::Regex(re) => f.debug_tuple("Regex").field(&re.as_str()).finish(),
+            Expr::Wildcard => write!(f, "Wildcard"),
+            Expr::And(exprs) => f.debug_tuple("And").field(exprs).finish(),
+            Expr::Or(exprs) => f.debug_tuple("Or").field(exprs).finish(),
+            Expr::Not(expr) => f.debug_tuple("Not").field(expr).finish(),
+            Expr::Cond(branches) => f.debug_tuple("Cond").field(branches).finish(),
+            Expr::Bind { key, expr } => f
+                .debug_struct("Bind")
+                .field("key", key)
+                .field("expr", expr)
+                .finish(),
+        }
+    }
+}
 
 /// Pattern for matching commands in rules.
 /// Position 1 of a rule is always the command pattern.
@@ -157,7 +350,6 @@ impl ArgPattern {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::Expr;
 
     #[test]
     fn command_pattern_literal_matches_exactly() {
@@ -276,5 +468,49 @@ mod tests {
         assert!(
             matches!(pattern, ArgPattern::Exact { continuation: Some(_), patterns } if patterns.len() == 1)
         );
+    }
+
+    #[test]
+    fn quantifier_one_has_min_1() {
+        assert_eq!(Quantifier::One.min(), 1);
+        assert!(!Quantifier::One.is_repeating());
+    }
+
+    #[test]
+    fn quantifier_optional_has_min_0() {
+        assert_eq!(Quantifier::Optional.min(), 0);
+        assert!(!Quantifier::Optional.is_repeating());
+    }
+
+    #[test]
+    fn quantifier_one_or_more_has_min_1() {
+        assert_eq!(Quantifier::OneOrMore.min(), 1);
+        assert!(Quantifier::OneOrMore.is_repeating());
+    }
+
+    #[test]
+    fn quantifier_zero_or_more_has_min_0() {
+        assert_eq!(Quantifier::ZeroOrMore.min(), 0);
+        assert!(Quantifier::ZeroOrMore.is_repeating());
+    }
+
+    #[test]
+    fn expr_literal_matches() {
+        let expr = Expr::<Effect>::Literal("test".into());
+        assert!(expr.is_match("test"));
+        assert!(!expr.is_match("other"));
+    }
+
+    #[test]
+    fn expr_wildcard_matches_anything() {
+        let expr = Expr::<Effect>::Wildcard;
+        assert!(expr.is_match("anything"));
+        assert!(expr.is_match(""));
+    }
+
+    #[test]
+    fn expr_is_wildcard_works() {
+        assert!(Expr::<Effect>::Wildcard.is_wildcard());
+        assert!(!Expr::<Effect>::Literal("test".into()).is_wildcard());
     }
 }

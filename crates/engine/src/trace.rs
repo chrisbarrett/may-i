@@ -6,7 +6,9 @@
 
 use may_i_core::ast::{Effect, Predicate, Rule};
 use may_i_core::pattern::ArgPattern;
-use may_i_core::types::{Decision, EvalResult};
+use may_i_core::Decision;
+
+use crate::EvalResult;
 
 /// A trace entry representing one step in the evaluation process.
 #[derive(Debug, Clone)]

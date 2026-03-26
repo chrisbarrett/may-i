@@ -3,8 +3,8 @@
 
 use crate::doc::Doc;
 use crate::pattern::{ArgPattern, CommandPattern};
+use crate::primitives::{Decision, ToDoc};
 use crate::span::Span;
-use crate::types::{Decision, ToDoc};
 
 /// A value with source span tracking.
 #[derive(Debug, Clone)]
@@ -198,6 +198,30 @@ impl Effect {
     }
 }
 
+impl std::fmt::Display for Effect {
+    #[coverage(off)]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Effect::Allow(None) => write!(f, "(effect :allow)"),
+            Effect::Allow(Some(r)) => write!(f, "(effect :allow \"{}\")", r),
+            Effect::Ask(None) => write!(f, "(effect :ask)"),
+            Effect::Ask(Some(r)) => write!(f, "(effect :ask \"{}\")", r),
+            Effect::Deny(None) => write!(f, "(effect :deny)"),
+            Effect::Deny(Some(r)) => write!(f, "(effect :deny \"{}\")", r),
+            Effect::CommandPattern(_) => write!(f, "<command-pattern>"),
+            Effect::ArgPattern(_) => write!(f, "<arg-pattern>"),
+            Effect::And { .. } => write!(f, "<and-effect>"),
+            Effect::Or { .. } => write!(f, "<or-effect>"),
+            Effect::Not { .. } => write!(f, "<not-effect>"),
+            Effect::When { .. } => write!(f, "<when-effect>"),
+            Effect::Unless { .. } => write!(f, "<unless-effect>"),
+            Effect::If { .. } => write!(f, "<if-effect>"),
+            Effect::Cond { .. } => write!(f, "<cond-effect>"),
+            Effect::MayI { .. } => write!(f, "<may-i-effect>"),
+        }
+    }
+}
+
 /// Predicate for use in conditional contexts (when/unless/if/cond).
 /// Predicates evaluate to Match/NoMatch for branching decisions.
 #[derive(Debug, Clone)]
@@ -239,7 +263,7 @@ impl Predicate {
 
     /// Create a fact value check with a literal pattern.
     pub fn fact_value(key: impl Into<String>, value: impl Into<String>) -> Self {
-        use crate::types::FactPattern;
+        use crate::predicates::FactPattern;
         Predicate::Fact(FactQuery::Value {
             key: key.into(),
             pattern: FactPattern::Literal(value.into()),
@@ -278,8 +302,8 @@ impl Predicate {
 /// A predicate with source span tracking.
 pub type SpannedPredicate = Spanned<Predicate>;
 
-/// Fact query types (re-exported from v1 types).
-pub use crate::types::FactQuery;
+/// Fact query types (re-exported from predicates module).
+pub use crate::predicates::FactQuery;
 
 /// A named predicate definition.
 /// Syntax: `(define NAME PREDICATE)`
@@ -378,7 +402,7 @@ pub struct Check {
     pub expected: Decision,
 
     /// Context facts for the test.
-    pub context: crate::types::ContextFacts,
+    pub context: crate::context::ContextFacts,
 
     /// Source span for error reporting.
     pub span: Span,
@@ -603,7 +627,7 @@ mod tests {
 
     #[test]
     fn predicate_fact_value_creates_correctly() {
-        use crate::types::FactPattern;
+        use crate::predicates::FactPattern;
         let pred = Predicate::fact_value(":opencode/agent", "build");
         assert!(matches!(
             pred,

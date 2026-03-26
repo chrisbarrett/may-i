@@ -4,7 +4,7 @@
 // Task 2.5: Implement unified predicate parser that dispatches to fact or arg parsers
 
 use may_i_core::ast::Predicate;
-use may_i_core::types::FactQuery;
+use may_i_core::predicates::FactQuery;
 use may_i_sexpr::{RawError, Sexpr};
 
 /// Parse a unified predicate from an s-expression.
@@ -158,7 +158,7 @@ fn parse_context_key(sexpr: &Sexpr) -> Result<String, RawError> {
 }
 
 /// Parse a fact pattern for value matching.
-use may_i_core::types::FactPattern;
+use may_i_core::predicates::FactPattern;
 
 fn parse_fact_pattern(sexpr: &Sexpr) -> Result<FactPattern, RawError> {
     match sexpr {
@@ -227,7 +227,7 @@ fn parse_fact_pattern(sexpr: &Sexpr) -> Result<FactPattern, RawError> {
 mod tests {
     use super::*;
     use may_i_core::pattern::ArgPattern;
-    use may_i_core::types::FactPattern;
+use may_i_core::predicates::FactPattern;
     use may_i_sexpr::RawError;
 
     fn parse_pred(input: &str) -> Result<Predicate, RawError> {

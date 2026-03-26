@@ -3,7 +3,7 @@
 
 use may_i_core::Span;
 use may_i_core::ast::{Check, Config, SecurityConfig};
-use may_i_core::types::{ContextFacts, Decision};
+use may_i_core::{ContextFacts, Decision};
 use may_i_sexpr::{RawError, Sexpr};
 
 /// Parse a config from an s-expression string.
@@ -305,7 +305,7 @@ fn parse_check_items(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use may_i_core::types::Decision;
+    use may_i_core::Decision;
 
     #[test]
     fn parse_empty_config() {

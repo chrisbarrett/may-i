@@ -3,5 +3,4 @@ harnesses.
 
 Run `cargo fmt` before staging files.
 
-If tarpaulin tests fail, inspect the output to determine what files needs extra
-tests.
+If tarpaulin tests fail, inspect `lcov.info` to see what was uncovered.

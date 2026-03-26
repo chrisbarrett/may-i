@@ -3,12 +3,12 @@
 
 use may_i_core::ast::{Effect, EffectResult, Predicate, Rule};
 use may_i_core::pattern::{ArgPattern, CommandPattern, PositionalArg};
-use may_i_core::types::{ContextFacts, Decision, EvalResult};
-use may_i_core::types::{FactPattern, FactQuery};
+use may_i_core::{ContextFacts, Decision, FactPattern, FactQuery};
 
 use crate::trace::{
     EffectTrace, PredicateResult as TracePredicateResult, PredicateTrace, TraceEntry,
 };
+use crate::EvalResult;
 
 /// Maximum recursion depth for (may-i ...) evaluation.
 pub const DEFAULT_RECURSION_LIMIT: usize = 10;
@@ -256,14 +256,14 @@ fn evaluate_fact_query(query: &FactQuery, ctx: &EvalContext) -> PredicateResult 
         FactQuery::Value { key, pattern } => {
             if let Some(value) = ctx.facts.get(key) {
                 match value {
-                    may_i_core::types::ContextValue::Scalar(s) => {
+                    may_i_core::ContextValue::Scalar(s) => {
                         if match_fact_pattern(pattern, s) {
                             PredicateResult::Match
                         } else {
                             PredicateResult::NoMatch
                         }
                     }
-                    may_i_core::types::ContextValue::Present => PredicateResult::NoMatch,
+                    may_i_core::ContextValue::Present => PredicateResult::NoMatch,
                 }
             } else {
                 PredicateResult::NoMatch
@@ -325,12 +325,12 @@ fn evaluate_arg_pattern_predicate(pattern: &ArgPattern, ctx: &EvalContext) -> Pr
         ArgPattern::Anywhere(exprs) => {
             for expr in exprs {
                 match expr {
-                    may_i_core::types::Expr::Literal(s) => {
+                    may_i_core::pattern::Expr::Literal(s) => {
                         if ctx.args.iter().any(|arg| arg == s) {
                             return PredicateResult::Match;
                         }
                     }
-                    may_i_core::types::Expr::Wildcard => {
+                    may_i_core::pattern::Expr::Wildcard => {
                         // Wildcard matches anything
                         return PredicateResult::Match;
                     }
@@ -342,13 +342,13 @@ fn evaluate_arg_pattern_predicate(pattern: &ArgPattern, ctx: &EvalContext) -> Pr
         ArgPattern::Forbidden(exprs) => {
             for expr in exprs {
                 match expr {
-                    may_i_core::types::Expr::Literal(s) => {
+                    may_i_core::pattern::Expr::Literal(s) => {
                         if ctx.args.iter().any(|arg| arg == s) {
                             // Found the forbidden pattern - this is a constraint violation
                             return PredicateResult::NoMatch;
                         }
                     }
-                    may_i_core::types::Expr::Wildcard => {
+                    may_i_core::pattern::Expr::Wildcard => {
                         // Wildcard forbidden means any arg is forbidden
                         if !ctx.args.is_empty() {
                             return PredicateResult::NoMatch;
@@ -364,14 +364,14 @@ fn evaluate_arg_pattern_predicate(pattern: &ArgPattern, ctx: &EvalContext) -> Pr
             if *position > 0 && *position <= ctx.args.len() {
                 let arg = &ctx.args[*position - 1];
                 match pattern {
-                    may_i_core::types::Expr::Literal(s) => {
+                    may_i_core::pattern::Expr::Literal(s) => {
                         if arg == s {
                             PredicateResult::Match
                         } else {
                             PredicateResult::NoMatch
                         }
                     }
-                    may_i_core::types::Expr::Wildcard => PredicateResult::Match,
+                    may_i_core::pattern::Expr::Wildcard => PredicateResult::Match,
                     _ => PredicateResult::NoMatch, // Other variants not supported in At
                 }
             } else {
@@ -395,14 +395,14 @@ fn match_positional_patterns(args: &[&String], patterns: &[PositionalArg]) -> (b
         let arg = args[i];
 
         match &pattern.quantifier {
-            may_i_core::types::Quantifier::One => {
+            may_i_core::Quantifier::One => {
                 let (matched, f) = match_expr_with_binding(&pattern.pattern, arg);
                 facts = facts.merge(&f);
                 if !matched {
                     return (false, facts);
                 }
             }
-            may_i_core::types::Quantifier::Optional => {
+            may_i_core::Quantifier::Optional => {
                 // Optional pattern - if arg exists, it must match
                 if i < args.len() {
                     let (matched, f) = match_expr_with_binding(&pattern.pattern, arg);
@@ -412,7 +412,7 @@ fn match_positional_patterns(args: &[&String], patterns: &[PositionalArg]) -> (b
                     }
                 }
             }
-            may_i_core::types::Quantifier::OneOrMore => {
+            may_i_core::Quantifier::OneOrMore => {
                 // OneOrMore pattern - at least one arg must match, then continue
                 if i >= args.len() {
                     return (false, facts);
@@ -426,7 +426,7 @@ fn match_positional_patterns(args: &[&String], patterns: &[PositionalArg]) -> (b
                 }
                 return (true, facts);
             }
-            may_i_core::types::Quantifier::ZeroOrMore => {
+            may_i_core::Quantifier::ZeroOrMore => {
                 // ZeroOrMore pattern - all remaining args must match
                 for arg in args.iter().skip(i) {
                     let (matched, f) = match_expr_with_binding(&pattern.pattern, arg);
@@ -446,11 +446,11 @@ fn match_positional_patterns(args: &[&String], patterns: &[PositionalArg]) -> (b
 /// Match a single expression against a value, capturing bound facts.
 /// Returns (matched, bound_facts) where bound_facts contains any facts
 /// captured from Expr::Bind expressions.
-fn match_expr_with_binding<E: std::fmt::Debug + may_i_core::types::ToDoc>(
-    expr: &may_i_core::types::Expr<E>,
+fn match_expr_with_binding<E: std::fmt::Debug + may_i_core::ToDoc>(
+    expr: &may_i_core::pattern::Expr<E>,
     value: &str,
 ) -> (bool, ContextFacts) {
-    use may_i_core::types::Expr;
+    use may_i_core::pattern::Expr;
     let mut facts = ContextFacts::default();
 
     let matched = match expr {
@@ -655,7 +655,7 @@ fn evaluate_arg_pattern_effect(
                     let consumed_count = patterns
                         .iter()
                         .map(|p| match p.quantifier {
-                            may_i_core::types::Quantifier::One => 1,
+                            may_i_core::Quantifier::One => 1,
                             _ => 1, // For now, treat all as consuming 1
                         })
                         .sum::<usize>();
@@ -707,12 +707,12 @@ fn evaluate_arg_pattern_effect(
         ArgPattern::Anywhere(exprs) => {
             for expr in exprs {
                 match expr {
-                    may_i_core::types::Expr::Literal(s) => {
+                    may_i_core::pattern::Expr::Literal(s) => {
                         if ctx.args.iter().any(|arg| arg == s) {
                             return EffectResult::Decision(Decision::Allow, None);
                         }
                     }
-                    may_i_core::types::Expr::Wildcard => {
+                    may_i_core::pattern::Expr::Wildcard => {
                         return EffectResult::Decision(Decision::Allow, None);
                     }
                     _ => {}
@@ -723,12 +723,12 @@ fn evaluate_arg_pattern_effect(
         ArgPattern::Forbidden(exprs) => {
             for expr in exprs {
                 match expr {
-                    may_i_core::types::Expr::Literal(s) => {
+                    may_i_core::pattern::Expr::Literal(s) => {
                         if ctx.args.iter().any(|arg| arg == s) {
                             return EffectResult::Decision(Decision::Deny, None);
                         }
                     }
-                    may_i_core::types::Expr::Wildcard => {
+                    may_i_core::pattern::Expr::Wildcard => {
                         if !ctx.args.is_empty() {
                             return EffectResult::Decision(Decision::Deny, None);
                         }
@@ -742,14 +742,14 @@ fn evaluate_arg_pattern_effect(
             if *position > 0 && *position <= ctx.args.len() {
                 let arg = &ctx.args[*position - 1];
                 match pattern {
-                    may_i_core::types::Expr::Literal(s) => {
+                    may_i_core::pattern::Expr::Literal(s) => {
                         if arg == s {
                             EffectResult::Decision(Decision::Allow, None)
                         } else {
                             EffectResult::Nil
                         }
                     }
-                    may_i_core::types::Expr::Wildcard => {
+                    may_i_core::pattern::Expr::Wildcard => {
                         EffectResult::Decision(Decision::Allow, None)
                     }
                     _ => EffectResult::Nil,
@@ -1251,7 +1251,8 @@ mod tests {
     #[test]
     fn fact_binding_captures_matched_value() {
         // When matching a Bind expression, the matched value should be captured
-        use may_i_core::types::{Effect, Expr, Keyword};
+        use may_i_core::ast::Effect;
+        use may_i_core::{Expr, Keyword};
 
         let bind_expr: Expr<Effect> = Expr::Bind {
             key: Keyword::new(":ssh/host").unwrap(),
@@ -1273,7 +1274,7 @@ mod tests {
         // the bound fact should be available in the continuation
         use may_i_core::ast::Effect;
         use may_i_core::pattern::{ArgPattern, PositionalArg};
-        use may_i_core::types::{Expr, Keyword, Quantifier};
+        use may_i_core::{Expr, Keyword, Quantifier};
 
         // Build: (positional [:ssh/host] . (may-i *))
         // Simple binding - [:kw] is equivalent to [:kw *]
@@ -1316,7 +1317,7 @@ mod tests {
 
     #[test]
     fn match_expr_with_binding_and_expr() {
-        use may_i_core::types::{Expr, Keyword};
+        use may_i_core::{Expr, Keyword};
 
         // Test And expression with Bind - all must match
         let and_expr: Expr<Effect> = Expr::And(vec![
@@ -1340,7 +1341,7 @@ mod tests {
 
     #[test]
     fn match_expr_with_binding_or_expr() {
-        use may_i_core::types::{Expr, Keyword};
+        use may_i_core::{Expr, Keyword};
 
         // Test Or expression with Bind
         let or_expr: Expr<Effect> = Expr::Or(vec![
@@ -1364,7 +1365,7 @@ mod tests {
 
     #[test]
     fn match_expr_with_binding_not_expr() {
-        use may_i_core::types::{Expr, Keyword};
+        use may_i_core::{Expr, Keyword};
 
         // Test Not expression - should not bind from inner
         let not_expr: Expr<Effect> = Expr::Not(Box::new(Expr::Bind {
@@ -1385,7 +1386,7 @@ mod tests {
 
     #[test]
     fn match_expr_with_binding_nested_bind() {
-        use may_i_core::types::{Expr, Keyword};
+        use may_i_core::{Expr, Keyword};
 
         // Test Bind wrapping another Bind
         let nested_bind: Expr<Effect> = Expr::Bind {
@@ -1404,7 +1405,7 @@ mod tests {
 
     #[test]
     fn match_expr_with_binding_bind_no_match() {
-        use may_i_core::types::{Expr, Keyword};
+        use may_i_core::{Expr, Keyword};
 
         // Bind with inner expr that doesn't match - should not bind
         let bind_expr: Expr<Effect> = Expr::Bind {
@@ -1420,7 +1421,7 @@ mod tests {
     #[test]
     fn match_positional_patterns_with_binding() {
         use may_i_core::pattern::PositionalArg;
-        use may_i_core::types::{Expr, Keyword, Quantifier};
+        use may_i_core::{Expr, Keyword, Quantifier};
 
         // Test positional patterns with fact binding
         let patterns = vec![
@@ -1455,7 +1456,7 @@ mod tests {
     #[test]
     fn match_positional_patterns_no_match_with_binding() {
         use may_i_core::pattern::PositionalArg;
-        use may_i_core::types::{Expr, Keyword, Quantifier};
+        use may_i_core::{Expr, Keyword, Quantifier};
 
         // Test that facts are still captured even when pattern fails later
         let patterns = vec![
@@ -1487,7 +1488,7 @@ mod tests {
     #[test]
     fn match_positional_patterns_optional_with_binding() {
         use may_i_core::pattern::PositionalArg;
-        use may_i_core::types::{Expr, Keyword, Quantifier};
+        use may_i_core::{Expr, Keyword, Quantifier};
 
         // Test optional pattern with binding - arg present and matches
         let patterns = vec![PositionalArg {
@@ -1510,7 +1511,7 @@ mod tests {
     #[test]
     fn match_positional_patterns_one_or_more_with_binding() {
         use may_i_core::pattern::PositionalArg;
-        use may_i_core::types::{Expr, Keyword, Quantifier};
+        use may_i_core::{Expr, Keyword, Quantifier};
 
         // Test OneOrMore pattern with binding
         let patterns = vec![PositionalArg {
@@ -1535,7 +1536,7 @@ mod tests {
     #[test]
     fn match_positional_patterns_zero_or_more_with_binding() {
         use may_i_core::pattern::PositionalArg;
-        use may_i_core::types::{Expr, Keyword, Quantifier};
+        use may_i_core::{Expr, Keyword, Quantifier};
 
         // Test ZeroOrMore pattern with binding - matches all remaining
         let patterns = vec![PositionalArg {
@@ -1560,7 +1561,7 @@ mod tests {
     #[test]
     fn match_positional_patterns_not_enough_args() {
         use may_i_core::pattern::PositionalArg;
-        use may_i_core::types::{Expr, Keyword, Quantifier};
+        use may_i_core::{Expr, Keyword, Quantifier};
 
         // Test pattern with more patterns than args
         let patterns = vec![
@@ -1592,7 +1593,7 @@ mod tests {
     #[test]
     fn match_positional_patterns_one_or_more_no_args() {
         use may_i_core::pattern::PositionalArg;
-        use may_i_core::types::{Expr, Quantifier};
+        use may_i_core::{Expr, Quantifier};
 
         // Test OneOrMore fails with no args
         let patterns = vec![PositionalArg {
@@ -1609,7 +1610,7 @@ mod tests {
 
     #[test]
     fn match_expr_with_binding_regex() {
-        use may_i_core::types::Expr;
+        use may_i_core::pattern::Expr;
 
         // Test Regex matching
         let expr: Expr<Effect> = Expr::Regex(regex::Regex::new("^prod-").unwrap());
@@ -1624,7 +1625,7 @@ mod tests {
 
     #[test]
     fn match_expr_with_binding_literal() {
-        use may_i_core::types::Expr;
+        use may_i_core::pattern::Expr;
 
         // Test Literal matching
         let expr: Expr<Effect> = Expr::Literal("exact".to_string());
@@ -1639,7 +1640,7 @@ mod tests {
 
     #[test]
     fn match_expr_with_binding_empty_and() {
-        use may_i_core::types::Expr;
+        use may_i_core::pattern::Expr;
 
         // Test empty And expression
         let expr: Expr<Effect> = Expr::And(vec![]);
@@ -1649,7 +1650,7 @@ mod tests {
 
     #[test]
     fn match_expr_with_binding_empty_or() {
-        use may_i_core::types::Expr;
+        use may_i_core::pattern::Expr;
 
         // Test empty Or expression
         let expr: Expr<Effect> = Expr::Or(vec![]);
@@ -1659,7 +1660,7 @@ mod tests {
 
     #[test]
     fn match_expr_with_binding_and_all_fail() {
-        use may_i_core::types::Expr;
+        use may_i_core::pattern::Expr;
 
         // Test And where all fail
         let expr: Expr<Effect> = Expr::And(vec![
@@ -1672,7 +1673,7 @@ mod tests {
 
     #[test]
     fn match_expr_with_binding_or_all_fail() {
-        use may_i_core::types::Expr;
+        use may_i_core::pattern::Expr;
 
         // Test Or where all fail
         let expr: Expr<Effect> = Expr::Or(vec![

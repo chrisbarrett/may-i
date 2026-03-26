@@ -3,7 +3,8 @@
 use std::io::Read;
 
 use may_i_config as config;
-use may_i_core::{ContextFacts, EvalResult};
+use may_i_core::ContextFacts;
+use may_i_engine::EvalResult;
 use may_i_engine as engine;
 use miette::Context;
 

@@ -4,7 +4,8 @@
 use may_i_core::Quantifier;
 use may_i_core::ast::Effect;
 use may_i_core::pattern::{ArgPattern, PositionalArg};
-use may_i_core::types::{Expr, Keyword};
+use may_i_core::pattern::{Expr, ExprBranch};
+use may_i_core::primitives::Keyword;
 use may_i_sexpr::{RawError, Sexpr};
 
 /// Parse a simple expression pattern from an s-expression.
@@ -69,7 +70,7 @@ fn parse_expr(sexpr: &Sexpr) -> Result<Expr<Effect>, RawError> {
                                 ));
                             }
                             let effect = crate::effect::parse_effect(&branch_list[1])?.value;
-                            branches.push(may_i_core::types::ExprBranch {
+                            branches.push(ExprBranch {
                                 test: Expr::Wildcard,
                                 effect,
                             });
@@ -83,7 +84,7 @@ fn parse_expr(sexpr: &Sexpr) -> Result<Expr<Effect>, RawError> {
                             }
                             let test = parse_expr(&branch_list[0])?;
                             let effect = crate::effect::parse_effect(&branch_list[1])?.value;
-                            branches.push(may_i_core::types::ExprBranch { test, effect });
+                            branches.push(ExprBranch { test, effect });
                         }
                     }
                     Ok(Expr::Cond(branches))
@@ -100,11 +101,11 @@ fn parse_expr(sexpr: &Sexpr) -> Result<Expr<Effect>, RawError> {
                     let then_eff = crate::effect::parse_effect(&list[2])?.value;
                     let else_eff = crate::effect::parse_effect(&list[3])?.value;
                     let branches = vec![
-                        may_i_core::types::ExprBranch {
+                        ExprBranch {
                             test: pred,
                             effect: then_eff,
                         },
-                        may_i_core::types::ExprBranch {
+                        ExprBranch {
                             test: Expr::Wildcard,
                             effect: else_eff,
                         },
@@ -121,7 +122,7 @@ fn parse_expr(sexpr: &Sexpr) -> Result<Expr<Effect>, RawError> {
                     }
                     let pred = parse_expr(&list[1])?;
                     let eff = crate::effect::parse_effect(&list[2])?.value;
-                    let branches = vec![may_i_core::types::ExprBranch {
+                    let branches = vec![ExprBranch {
                         test: pred,
                         effect: eff,
                     }];
@@ -137,7 +138,7 @@ fn parse_expr(sexpr: &Sexpr) -> Result<Expr<Effect>, RawError> {
                     }
                     let pred = parse_expr(&list[1])?;
                     let eff = crate::effect::parse_effect(&list[2])?.value;
-                    let branches = vec![may_i_core::types::ExprBranch {
+                    let branches = vec![ExprBranch {
                         test: Expr::Not(Box::new(pred)),
                         effect: eff,
                     }];

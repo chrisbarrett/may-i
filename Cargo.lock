@@ -563,15 +563,6 @@ dependencies = [
 [[package]]
 name = "may-i-output"
 version = "0.1.0"
-dependencies = [
- "colored",
- "may-i-core",
- "may-i-pp",
- "may-i-sexpr",
- "serde",
- "serde_json",
- "terminal_size",
-]
 
 [[package]]
 name = "may-i-pp"

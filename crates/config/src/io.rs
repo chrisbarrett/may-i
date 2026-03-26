@@ -2,7 +2,6 @@
 
 use std::path::{Path, PathBuf};
 
-use may_i_core::legacy::Config;
 use miette::{Context, IntoDiagnostic};
 
 /// Load and parse a config file at the given path.
@@ -52,7 +51,7 @@ pub fn resolve_path(override_path: Option<&Path>) -> miette::Result<PathBuf> {
 ///
 /// **DEPRECATED**: v1 configuration format is no longer supported.
 /// Use `load` for new configs or run `may-i migrate` to convert.
-pub fn load_legacy(_path: &Path) -> miette::Result<Config> {
+pub fn load_legacy(_path: &Path) -> miette::Result<may_i_core::ast::Config> {
     miette::bail!(
         "Legacy configuration format is no longer supported. \
          Run `may-i migrate` to update your configuration to the current format."
