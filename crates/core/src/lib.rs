@@ -1,3 +1,5 @@
+#![feature(coverage_attribute)]
+
 pub mod ast;
 pub mod doc;
 pub mod legacy;
@@ -6,7 +8,7 @@ pub mod span;
 pub mod types;
 
 pub use doc::{Doc, DocF, LayoutHint};
-pub use span::{Span, offset_to_line_col};
+pub use span::{offset_to_line_col, Span};
 
 // Re-export canonical types
 pub use ast::{

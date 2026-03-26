@@ -1,8 +1,8 @@
 // Argument and command patterns for the unified rule DSL.
 
-use crate::Quantifier;
 use crate::ast::Effect;
 use crate::types::Expr;
+use crate::Quantifier;
 
 /// Pattern for matching commands in rules.
 /// Position 1 of a rule is always the command pattern.

@@ -1,7 +1,7 @@
 // Shared domain types for authorization rules and configuration.
 
 use crate::doc::Doc;
-use crate::span::{Span, offset_to_line_col};
+use crate::span::{offset_to_line_col, Span};
 
 /// A validated keyword string that starts with `:`.
 ///
@@ -43,6 +43,7 @@ impl Keyword {
 }
 
 impl std::fmt::Display for Keyword {
+    #[coverage(off)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
     }
@@ -187,6 +188,7 @@ impl FactPattern {
 }
 
 impl std::fmt::Debug for FactPattern {
+    #[coverage(off)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             FactPattern::Literal(value) => f.debug_tuple("Literal").field(value).finish(),
@@ -273,6 +275,7 @@ impl ContextExpr {
 }
 
 impl std::fmt::Debug for ContextExpr {
+    #[coverage(off)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ContextExpr::Alias(name) => f.debug_tuple("Alias").field(name).finish(),
@@ -357,6 +360,7 @@ impl Decision {
 }
 
 impl std::fmt::Display for Decision {
+    #[coverage(off)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Decision::Allow => write!(f, "allow"),
@@ -387,6 +391,7 @@ impl ToDoc for Effect {
 }
 
 impl std::fmt::Display for Effect {
+    #[coverage(off)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.reason {
             Some(r) => write!(f, "(effect :{} \"{}\")", self.decision, r),
@@ -424,132 +429,11 @@ pub enum Expr<E: std::fmt::Debug + ToDoc = Effect> {
     Bind { key: Keyword, expr: Box<Expr<E>> },
 }
 
-/// Base functor for expression types.
-///
-/// `ExprF<R, E>` represents the shape of an expression where:
-/// - `R` is the type of recursive children
-/// - `E` is the effect type carried in `Cond` branches
-///
-/// This enables generic traversals via `map`, `map_ref`, and `map_ref_mut` operations.
-#[derive(Debug)]
-pub enum ExprF<R, E: std::fmt::Debug + ToDoc = Effect> {
-    /// Exact string match.
-    Literal(String),
-    /// Regex match.
-    Regex(regex::Regex),
-    /// Matches any string.
-    Wildcard,
-    /// All sub-expressions must match.
-    And(Vec<R>),
-    /// Any sub-expression must match.
-    Or(Vec<R>),
-    /// Inverts the match result.
-    Not(Box<R>),
-    /// Branches with effects; first matching branch wins.
-    Cond(Vec<ExprBranchF<R, E>>),
-    /// Bind the matched value to a fact key.
-    Bind { key: Keyword, expr: Box<R> },
-}
-
-impl<R: Clone, E: std::fmt::Debug + ToDoc + Clone> Clone for ExprF<R, E> {
-    fn clone(&self) -> Self {
-        match self {
-            ExprF::Literal(s) => ExprF::Literal(s.clone()),
-            ExprF::Regex(re) => ExprF::Regex(re.clone()),
-            ExprF::Wildcard => ExprF::Wildcard,
-            ExprF::And(children) => ExprF::And(children.clone()),
-            ExprF::Or(children) => ExprF::Or(children.clone()),
-            ExprF::Not(child) => ExprF::Not(child.clone()),
-            ExprF::Cond(branches) => ExprF::Cond(branches.clone()),
-            ExprF::Bind { key, expr } => ExprF::Bind {
-                key: key.clone(),
-                expr: expr.clone(),
-            },
-        }
-    }
-}
-
 /// A branch in an expression-level cond.
 #[derive(Debug, Clone)]
 pub struct ExprBranch<E: std::fmt::Debug + ToDoc = Effect> {
     pub test: Expr<E>,
     pub effect: E,
-}
-
-/// Base functor for expression branches.
-///
-/// `ExprBranchF<R, E>` represents a branch in a conditional expression
-/// where `R` is the recursive test expression type.
-#[derive(Debug, Clone)]
-pub struct ExprBranchF<R, E: std::fmt::Debug + ToDoc = Effect> {
-    pub test: R,
-    pub effect: E,
-}
-
-impl<R, E: std::fmt::Debug + ToDoc + Clone> ExprF<R, E> {
-    /// Map over the recursive children of this expression.
-    ///
-    /// Transforms an `ExprF<R, E>` into `ExprF<S, E>` by applying `f` to each
-    /// recursive child of type `R` to produce a value of type `S`.
-    pub fn map<S>(self, mut f: impl FnMut(R) -> S) -> ExprF<S, E> {
-        match self {
-            ExprF::Literal(s) => ExprF::Literal(s),
-            ExprF::Regex(re) => ExprF::Regex(re),
-            ExprF::Wildcard => ExprF::Wildcard,
-            ExprF::And(children) => ExprF::And(children.into_iter().map(f).collect()),
-            ExprF::Or(children) => ExprF::Or(children.into_iter().map(f).collect()),
-            ExprF::Not(child) => ExprF::Not(Box::new(f(*child))),
-            ExprF::Cond(branches) => {
-                ExprF::Cond(branches.into_iter().map(|b| b.map(&mut f)).collect())
-            }
-            ExprF::Bind { key, expr } => ExprF::Bind {
-                key,
-                expr: Box::new(f(*expr)),
-            },
-        }
-    }
-
-    /// Map over the recursive children by reference.
-    ///
-    /// Like `map`, but operates on references to children without consuming self.
-    pub fn map_ref<S>(&self, mut f: impl FnMut(&R) -> S) -> ExprF<S, E> {
-        match self {
-            ExprF::Literal(s) => ExprF::Literal(s.clone()),
-            ExprF::Regex(re) => ExprF::Regex(re.clone()),
-            ExprF::Wildcard => ExprF::Wildcard,
-            ExprF::And(children) => ExprF::And(children.iter().map(&mut f).collect()),
-            ExprF::Or(children) => ExprF::Or(children.iter().map(&mut f).collect()),
-            ExprF::Not(child) => ExprF::Not(Box::new(f(child))),
-            ExprF::Cond(branches) => {
-                ExprF::Cond(branches.iter().map(|b| b.map_ref(&mut f)).collect())
-            }
-            ExprF::Bind { key, expr } => ExprF::Bind {
-                key: key.clone(),
-                expr: Box::new(f(expr)),
-            },
-        }
-    }
-
-    /// Map over the recursive children by mutable reference.
-    ///
-    /// Like `map`, but operates on mutable references to children.
-    pub fn map_ref_mut<S>(&mut self, mut f: impl FnMut(&mut R) -> S) -> ExprF<S, E> {
-        match self {
-            ExprF::Literal(s) => ExprF::Literal(s.clone()),
-            ExprF::Regex(re) => ExprF::Regex(re.clone()),
-            ExprF::Wildcard => ExprF::Wildcard,
-            ExprF::And(children) => ExprF::And(children.iter_mut().map(&mut f).collect()),
-            ExprF::Or(children) => ExprF::Or(children.iter_mut().map(&mut f).collect()),
-            ExprF::Not(child) => ExprF::Not(Box::new(f(child))),
-            ExprF::Cond(branches) => {
-                ExprF::Cond(branches.iter_mut().map(|b| b.map_ref_mut(&mut f)).collect())
-            }
-            ExprF::Bind { key, expr } => ExprF::Bind {
-                key: key.clone(),
-                expr: Box::new(f(expr)),
-            },
-        }
-    }
 }
 
 impl<E: std::fmt::Debug + ToDoc> Expr<E> {
@@ -630,6 +514,7 @@ impl<E: std::fmt::Debug + ToDoc> Expr<E> {
 }
 
 impl std::fmt::Display for Expr {
+    #[coverage(off)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Expr::Literal(s) => write!(f, "\"{s}\""),
@@ -665,6 +550,7 @@ impl std::fmt::Display for Expr {
 }
 
 impl<E: std::fmt::Debug + ToDoc> std::fmt::Debug for Expr<E> {
+    #[coverage(off)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Expr::Literal(s) => f.debug_tuple("Literal").field(s).finish(),
@@ -679,32 +565,6 @@ impl<E: std::fmt::Debug + ToDoc> std::fmt::Debug for Expr<E> {
                 .field("key", key)
                 .field("expr", expr)
                 .finish(),
-        }
-    }
-}
-
-impl<R, E: std::fmt::Debug + ToDoc + Clone> ExprBranchF<R, E> {
-    /// Map over the test expression in this branch.
-    pub fn map<S>(self, f: &mut impl FnMut(R) -> S) -> ExprBranchF<S, E> {
-        ExprBranchF {
-            test: f(self.test),
-            effect: self.effect,
-        }
-    }
-
-    /// Map over the test expression by reference.
-    pub fn map_ref<S>(&self, f: &mut impl FnMut(&R) -> S) -> ExprBranchF<S, E> {
-        ExprBranchF {
-            test: f(&self.test),
-            effect: self.effect.clone(),
-        }
-    }
-
-    /// Map over the test expression by mutable reference.
-    pub fn map_ref_mut<S>(&mut self, f: &mut impl FnMut(&mut R) -> S) -> ExprBranchF<S, E> {
-        ExprBranchF {
-            test: f(&mut self.test),
-            effect: self.effect.clone(),
         }
     }
 }
@@ -945,6 +805,7 @@ impl PosExpr {
 }
 
 impl std::fmt::Debug for PosExpr {
+    #[coverage(off)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.quantifier {
             Quantifier::One => write!(f, "{:?}", self.expr),
@@ -1282,6 +1143,7 @@ impl CommandMatcher {
 }
 
 impl std::fmt::Debug for CommandMatcher {
+    #[coverage(off)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CommandMatcher::Exact(s) => f.debug_tuple("Exact").field(s).finish(),
@@ -1368,6 +1230,28 @@ mod tests {
         }]);
         assert!(e.is_match("a"));
         assert!(!e.is_match("b"));
+    }
+
+    // --- Expr::is_match Bind variant (line 450) ---
+
+    #[test]
+    fn expr_bind_delegates_to_inner() {
+        let e: Expr = Expr::Bind {
+            key: Keyword::new_unchecked(":test"),
+            expr: Box::new(Expr::Literal("inner".into())),
+        };
+        assert!(e.is_match("inner"));
+        assert!(!e.is_match("other"));
+    }
+
+    #[test]
+    fn expr_bind_with_wildcard_matches_anything() {
+        let e: Expr = Expr::Bind {
+            key: Keyword::new_unchecked(":host"),
+            expr: Box::new(Expr::Wildcard),
+        };
+        assert!(e.is_match("anything"));
+        assert!(e.is_match("something"));
     }
 
     // --- Expr::is_wildcard ---
@@ -1531,13 +1415,11 @@ mod tests {
 
     #[test]
     fn pos_expr_is_wildcard_delegates() {
-        assert!(
-            PosExpr {
-                quantifier: Quantifier::ZeroOrMore,
-                expr: Expr::Wildcard
-            }
-            .is_wildcard()
-        );
+        assert!(PosExpr {
+            quantifier: Quantifier::ZeroOrMore,
+            expr: Expr::Wildcard
+        }
+        .is_wildcard());
         assert!(!PosExpr::one(Expr::Literal("x".into())).is_wildcard());
     }
 
@@ -2662,6 +2544,39 @@ mod tests {
         assert!(!m.has_effect());
     }
 
+    // --- ArgMatcher::has_effect for When/Unless/If (lines 912-914) ---
+
+    #[test]
+    fn arg_matcher_has_effect_when_returns_true() {
+        let m = ArgMatcher::When(PolymorphicCondArm {
+            branches: vec![],
+            fallback: None,
+        });
+        assert!(m.has_effect());
+    }
+
+    #[test]
+    fn arg_matcher_has_effect_unless_returns_true() {
+        let m = ArgMatcher::Unless(PolymorphicCondArm {
+            branches: vec![],
+            fallback: None,
+        });
+        assert!(m.has_effect());
+    }
+
+    #[test]
+    fn arg_matcher_has_effect_if_returns_true() {
+        let m = ArgMatcher::If {
+            test: Box::new(MatcherCondPredicate::Expr(Expr::Wildcard)),
+            then_effect: Effect {
+                decision: Decision::Allow,
+                reason: None,
+            },
+            else_effect: None,
+        };
+        assert!(m.has_effect());
+    }
+
     // --- WrapperPattern tests (lines 338) ---
 
     #[test]
@@ -3385,128 +3300,6 @@ mod prop_tests {
         }
     }
 
-    // ── Functor laws ─────────────────────────────────────────────────
-
-    // Simple strategy for testing functor operations - just literals and wildcards
-    // (avoiding recursive structure due to trait bound complexity)
-    fn arb_simple_exprf() -> impl Strategy<Value = ExprF<String, Effect>> {
-        prop_oneof![
-            "[a-z]{1,8}".prop_map(ExprF::Literal),
-            Just(ExprF::Wildcard),
-            prop::collection::vec("[a-z]{1,5}", 1..4).prop_map(ExprF::And),
-            prop::collection::vec("[a-z]{1,5}", 1..4).prop_map(ExprF::Or),
-        ]
-    }
-
-    proptest! {
-        // Functor identity law: map(id) == id
-        // For any functor f, f.map(|x| x) should be equivalent to f
-        #[test]
-        fn exprf_map_identity(functor in arb_simple_exprf()) {
-            let mapped = functor.map_ref(|x| x.clone());
-
-            // Verify variant is preserved
-            let variant_matches = matches!(
-                (&functor, &mapped),
-                (ExprF::Literal(_), ExprF::Literal(_)) |
-                (ExprF::Wildcard, ExprF::Wildcard) |
-                (ExprF::And(_), ExprF::And(_)) |
-                (ExprF::Or(_), ExprF::Or(_))
-            );
-            prop_assert!(variant_matches, "Identity map changed the variant type");
-
-            // Verify children count is preserved
-            match (&functor, &mapped) {
-                (ExprF::And(c1), ExprF::And(c2)) => prop_assert_eq!(c1.len(), c2.len()),
-                (ExprF::Or(c1), ExprF::Or(c2)) => prop_assert_eq!(c1.len(), c2.len()),
-                _ => {}
-            }
-        }
-
-        // Functor composition law: map(f).map(g) == map(|x| g(f(x)))
-        // Mapping with f then g should equal mapping with their composition
-        #[test]
-        fn exprf_map_composition(functor in arb_simple_exprf()) {
-            // f: duplicate the string (takes &String, returns String)
-            let f = |x: &String| format!("{}_{}", x, x);
-            // g: wrap in brackets (takes &String, returns String)
-            let g = |x: &String| format!("[{}]", x);
-
-            // Composition: apply f then g separately
-            // First map_ref applies f, but returns ExprF<String> with String children
-            // Second map_ref needs to work on String (not &String), so we use map
-            let step1: ExprF<String, Effect> = functor.map_ref(f);
-            // Use map for second step since we have owned Strings
-            let composed_separate = step1.map(|x| g(&x));
-
-            // Composition: apply g(f(x)) directly
-            let composed_together = functor.map_ref(|x| g(&f(x)));
-
-            // Both should produce the same structure
-            match (&composed_separate, &composed_together) {
-                (ExprF::Literal(s1), ExprF::Literal(s2)) => prop_assert_eq!(s1, s2),
-                (ExprF::Wildcard, ExprF::Wildcard) => prop_assert!(true),
-                (ExprF::And(c1), ExprF::And(c2)) => prop_assert_eq!(c1.len(), c2.len()),
-                (ExprF::Or(c1), ExprF::Or(c2)) => prop_assert_eq!(c1.len(), c2.len()),
-                _ => prop_assert!(false, "Mismatched variants after composition"),
-            }
-        }
-
-        // Functor preserves structure: map only transforms children, not shape
-        #[test]
-        fn exprf_map_preserves_structure(functor in arb_simple_exprf()) {
-            let transformed = functor.map_ref(|x| format!("mapped_{}", x));
-
-            // Shape should be identical (same variant, same child count)
-            let shape_matches = match (&functor, &transformed) {
-                (ExprF::Literal(_), ExprF::Literal(_)) => true,
-                (ExprF::Wildcard, ExprF::Wildcard) => true,
-                (ExprF::And(c1), ExprF::And(c2)) => c1.len() == c2.len(),
-                (ExprF::Or(c1), ExprF::Or(c2)) => c1.len() == c2.len(),
-                _ => false,
-            };
-            prop_assert!(shape_matches, "Map changed the functor structure");
-        }
-
-        // map vs map_ref equivalence: both should produce same result
-        #[test]
-        fn exprf_map_and_map_ref_equivalent(functor in arb_simple_exprf()) {
-            let transform = |x: &String| format!("xformed_{}", x);
-
-            // Using map_ref (takes &R, returns S)
-            let via_ref = functor.map_ref(transform);
-
-            // Using map (takes R, returns S) - need to clone first
-            let cloned = functor.clone();
-            let via_owned = cloned.map(|x| transform(&x));
-
-            // Check that both produce same variant and structure
-            match (&via_ref, &via_owned) {
-                (ExprF::Literal(s1), ExprF::Literal(s2)) => prop_assert_eq!(s1, s2),
-                (ExprF::Wildcard, ExprF::Wildcard) => prop_assert!(true),
-                (ExprF::And(c1), ExprF::And(c2)) => prop_assert_eq!(c1.len(), c2.len()),
-                (ExprF::Or(c1), ExprF::Or(c2)) => prop_assert_eq!(c1.len(), c2.len()),
-                _ => prop_assert!(false, "map and map_ref produced different structures"),
-            }
-        }
-
-        // Test that map_ref_mut behaves like map_ref for non-mutating operations
-        #[test]
-        fn exprf_map_ref_mut_matches_map_ref(functor in arb_simple_exprf()) {
-            let mut cloned = functor.clone();
-            let via_mut = cloned.map_ref_mut(|x| format!("mut_{}", x));
-            let via_ref = functor.map_ref(|x| format!("mut_{}", x));
-
-            match (&via_mut, &via_ref) {
-                (ExprF::Literal(s1), ExprF::Literal(s2)) => prop_assert_eq!(s1, s2),
-                (ExprF::Wildcard, ExprF::Wildcard) => prop_assert!(true),
-                (ExprF::And(c1), ExprF::And(c2)) => prop_assert_eq!(c1.len(), c2.len()),
-                (ExprF::Or(c1), ExprF::Or(c2)) => prop_assert_eq!(c1.len(), c2.len()),
-                _ => prop_assert!(false, "map_ref_mut and map_ref produced different results"),
-            }
-        }
-    }
-
     // --- Property tests for quote_string escaping (lines 111-126) ---
 
     proptest! {
@@ -3569,73 +3362,49 @@ mod prop_tests {
         }
     }
 
-    // --- ExprBranchF functor property tests (lines 686-709) ---
+    // --- Unit tests for has_expr_effect (lines 1062-1064) ---
 
-    fn arb_expr_branch_f() -> impl Strategy<Value = ExprBranchF<String, Effect>> {
-        ("[a-z]{1,10}", arb_decision()).prop_map(|(test, decision)| ExprBranchF {
-            test,
-            effect: Effect {
-                decision,
-                reason: None,
-            },
-        })
+    #[test]
+    fn has_expr_effect_cond_returns_true() {
+        let e = Expr::Cond(vec![ExprBranch {
+            test: Expr::Literal("test".into()),
+            effect: Effect { decision: Decision::Allow, reason: None },
+        }]);
+        assert!(has_expr_effect(&e));
     }
 
-    proptest! {
-        // Functor identity law: map(|x| x) preserves structure
-        #[test]
-        fn expr_branch_f_map_identity(branch in arb_expr_branch_f()) {
-            let mapped: ExprBranchF<String, Effect> = branch.map_ref(&mut |x: &String| x.clone());
+    #[test]
+    fn has_expr_effect_not_with_cond_returns_true() {
+        let e = Expr::Not(Box::new(Expr::Cond(vec![ExprBranch {
+            test: Expr::Literal("test".into()),
+            effect: Effect { decision: Decision::Allow, reason: None },
+        }])));
+        assert!(has_expr_effect(&e));
+    }
 
-            // Test field should be preserved
-            prop_assert_eq!(mapped.test, branch.test);
-            // Effect should be preserved
-            prop_assert_eq!(mapped.effect.decision, branch.effect.decision);
-        }
+    #[test]
+    fn has_expr_effect_bind_with_cond_returns_true() {
+        let e = Expr::Bind {
+            key: Keyword::new_unchecked(":test"),
+            expr: Box::new(Expr::Cond(vec![])),
+        };
+        assert!(has_expr_effect(&e));
+    }
 
-        // Functor composition law: map(f).map(g) == map(|x| g(f(x)))
-        #[test]
-        fn expr_branch_f_map_composition(branch in arb_expr_branch_f()) {
-            // f: add prefix
-            let mut f = |x: &String| format!("f_{}", x);
-            // g: add suffix
-            let mut g = |x: &String| format!("{}_g", x);
-
-            // Composition: apply f then g separately
-            let step1: ExprBranchF<String, Effect> = branch.map_ref(&mut f);
-            let composed_separate = step1.map(&mut |x| g(&x));
-
-            // Composition: apply g(f(x)) directly
-            let composed_together = branch.map_ref(&mut |x| g(&f(&x)));
-
-            prop_assert_eq!(composed_separate.test, composed_together.test);
-            prop_assert_eq!(composed_separate.effect.decision, composed_together.effect.decision);
-        }
-
-        // map vs map_ref equivalence
-        #[test]
-        fn expr_branch_f_map_and_map_ref_equivalent(branch in arb_expr_branch_f()) {
-            let mut transform = |x: &String| format!("xformed_{}", x);
-
-            let via_ref = branch.map_ref(&mut transform);
-            let cloned = branch.clone();
-            let mut transform2 = |x: String| format!("xformed_{}", x);
-            let via_owned = cloned.map(&mut transform2);
-
-            prop_assert_eq!(via_ref.test, via_owned.test);
-            prop_assert_eq!(via_ref.effect.decision, via_owned.effect.decision);
-        }
-
-        // map_ref_mut matches map_ref for non-mutating operations
-        #[test]
-        fn expr_branch_f_map_ref_mut_matches_map_ref(branch in arb_expr_branch_f()) {
-            let mut cloned = branch.clone();
-            let via_mut = cloned.map_ref_mut(&mut |x| format!("mut_{}", x));
-            let via_ref = branch.map_ref(&mut |x: &String| format!("mut_{}", x));
-
-            prop_assert_eq!(via_mut.test, via_ref.test);
-            prop_assert_eq!(via_mut.effect.decision, via_ref.effect.decision);
-        }
+    #[test]
+    fn has_expr_effect_deeply_nested_returns_true() {
+        let e = Expr::And(vec![
+            Expr::Or(vec![
+                Expr::Not(Box::new(Expr::Bind {
+                    key: Keyword::new_unchecked(":deep"),
+                    expr: Box::new(Expr::Cond(vec![ExprBranch {
+                        test: Expr::Literal("test".into()),
+                        effect: Effect { decision: Decision::Allow, reason: None },
+                    }])),
+                })),
+            ]),
+        ]);
+        assert!(has_expr_effect(&e));
     }
 
     // --- Tests for Keyword type ---
