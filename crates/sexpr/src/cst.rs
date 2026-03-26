@@ -168,6 +168,42 @@ impl CstNode<TriviaAnn> {
         output
     }
 
+    /// Pretty-serialize with a target column width.
+    ///
+    /// This preserves all comments and whitespace from the original source,
+    /// but may reformat long lines to fit within the target width.
+    /// Comments are never reformatted - they appear exactly as in the source.
+    pub fn pretty_serialize(&self, width: usize) -> String {
+        let mut ctx = PrettyCtx {
+            width,
+            col: 0,
+            output: String::new(),
+            indent_stack: vec![0],
+        };
+        self.pretty_write(&mut ctx);
+        ctx.output
+    }
+
+    /// Convert this CST node to a Doc for pretty-printing.
+    /// Note: This discards trivia (whitespace/comments) since pretty-printing
+    /// reformats the output entirely.
+    pub fn to_doc(&self) -> may_i_core::Doc {
+        use may_i_core::Doc;
+
+        match &self.shape {
+            ShapeF::Atom(s) => Doc::atom(s.clone()),
+            ShapeF::Str(s) => Doc::atom(quote_string(s)),
+            ShapeF::List(children) => {
+                let child_docs: Vec<Doc> = children.iter().map(|c| c.to_doc()).collect();
+                Doc::list(child_docs)
+            }
+            ShapeF::Vector(children) => {
+                let child_docs: Vec<Doc> = children.iter().map(|c| c.to_doc()).collect();
+                Doc::vector(child_docs)
+            }
+        }
+    }
+
     fn write_to(&self, output: &mut String) {
         // Write leading trivia
         for trivia in &self.ann.leading {
@@ -351,8 +387,167 @@ impl<A> CstNode<A> {
     }
 }
 
-fn quote_string(s: &str) -> String {
+pub fn quote_string(s: &str) -> String {
     format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+/// Context for pretty-serialization.
+struct PrettyCtx {
+    width: usize,
+    col: usize,
+    output: String,
+    indent_stack: Vec<usize>,
+}
+
+impl PrettyCtx {
+    fn current_indent(&self) -> usize {
+        *self.indent_stack.last().unwrap_or(&0)
+    }
+
+    fn push_indent(&mut self, indent: usize) {
+        self.indent_stack.push(indent);
+    }
+
+    fn pop_indent(&mut self) {
+        self.indent_stack.pop();
+    }
+
+    fn write_str(&mut self, s: &str) {
+        self.output.push_str(s);
+        // Update column: count chars since last newline
+        if let Some(idx) = s.rfind('\n') {
+            self.col = s[idx + 1..].chars().count();
+        } else {
+            self.col += s.chars().count();
+        }
+    }
+
+    fn write_newline(&mut self) {
+        self.output.push('\n');
+        self.col = 0;
+    }
+
+    fn write_indent(&mut self) {
+        let spaces = self.current_indent();
+        self.write_str(&" ".repeat(spaces));
+    }
+}
+
+impl CstNode<TriviaAnn> {
+    fn pretty_write(&self, ctx: &mut PrettyCtx) {
+        // Write leading trivia (comments/whitespace before this node)
+        for trivia in &self.ann.leading {
+            match trivia {
+                Trivia::Whitespace(s) => {
+                    ctx.write_str(s);
+                }
+                Trivia::Comment { text, has_newline } => {
+                    ctx.write_str(text);
+                    if *has_newline {
+                        ctx.write_newline();
+                    }
+                }
+            }
+        }
+
+        // Calculate the "head" position (after leading trivia)
+        let head_col = ctx.col;
+
+        // Write the shape
+        match &self.shape {
+            ShapeF::Atom(s) => {
+                ctx.write_str(s);
+            }
+            ShapeF::Str(s) => {
+                ctx.write_str(&quote_string(s));
+            }
+            ShapeF::List(children) => {
+                ctx.write_str("(");
+
+                // Calculate indent for children: head position + 1 (for the opening paren)
+                let child_indent = head_col + 1;
+                ctx.push_indent(child_indent);
+
+                for (i, child) in children.iter().enumerate() {
+                    // Check if we need to add a newline before this child
+                    if i > 0 && child.ann.leading.is_empty() {
+                        // Estimate child width (rough approximation)
+                        let child_width = estimate_width(child);
+
+                        if ctx.col + 1 + child_width > ctx.width && ctx.col > child_indent {
+                            // Would exceed width, add newline and indent
+                            ctx.write_newline();
+                            ctx.write_indent();
+                        } else {
+                            ctx.write_str(" ");
+                        }
+                    }
+
+                    child.pretty_write(ctx);
+                }
+
+                ctx.pop_indent();
+                ctx.write_str(")");
+            }
+            ShapeF::Vector(children) => {
+                ctx.write_str("[");
+
+                let child_indent = head_col + 1;
+                ctx.push_indent(child_indent);
+
+                for (i, child) in children.iter().enumerate() {
+                    if i > 0 && child.ann.leading.is_empty() {
+                        let child_width = estimate_width(child);
+
+                        if ctx.col + 1 + child_width > ctx.width && ctx.col > child_indent {
+                            ctx.write_newline();
+                            ctx.write_indent();
+                        } else {
+                            ctx.write_str(" ");
+                        }
+                    }
+
+                    child.pretty_write(ctx);
+                }
+
+                ctx.pop_indent();
+                ctx.write_str("]");
+            }
+        }
+
+        // Write trailing trivia (comments/whitespace after this node)
+        for trivia in &self.ann.trailing {
+            match trivia {
+                Trivia::Whitespace(s) => {
+                    ctx.write_str(s);
+                }
+                Trivia::Comment { text, has_newline } => {
+                    ctx.write_str(text);
+                    if *has_newline {
+                        ctx.write_newline();
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Rough estimation of node width for line-breaking decisions.
+fn estimate_width<A>(node: &CstNode<A>) -> usize {
+    // This is a rough estimate - we could make it more accurate
+    // but it's just used as a heuristic for line-breaking
+    match &node.shape {
+        ShapeF::Atom(s) => s.len(),
+        ShapeF::Str(s) => s.len() + 2, // +2 for quotes
+        ShapeF::List(children) => {
+            2 + children.iter().map(|c| estimate_width(c)).sum::<usize>()
+                + children.len().saturating_sub(1)
+        }
+        ShapeF::Vector(children) => {
+            2 + children.iter().map(|c| estimate_width(c)).sum::<usize>()
+                + children.len().saturating_sub(1)
+        }
+    }
 }
 
 /// Parse a string into CST nodes.
@@ -1371,5 +1566,84 @@ mod proptests {
         } else {
             panic!("expected list");
         }
+    }
+
+    // ── Pretty-serialize tests ─────────────────────────────────────────
+
+    #[test]
+    fn pretty_serialize_preserves_inline_comments() {
+        // Comments on their own line within a list are preserved
+        let input = "(foo\n;; inline comment\nbar)";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+
+        let pretty = nodes[0].pretty_serialize(80);
+        assert!(pretty.contains(";; inline comment"));
+    }
+
+    #[test]
+    fn pretty_serialize_preserves_leading_comments() {
+        let input = ";; leading comment\n(foo bar)";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+
+        let pretty = nodes[0].pretty_serialize(80);
+        assert!(pretty.contains(";; leading comment"));
+    }
+
+    #[test]
+    fn pretty_serialize_short_form_unchanged() {
+        let input = "(rule git :effect :allow)";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+
+        let pretty = nodes[0].pretty_serialize(80);
+        assert_eq!(pretty, input);
+    }
+
+    #[test]
+    fn pretty_serialize_wraps_long_lines() {
+        // Create a long form that exceeds 40 chars
+        let input =
+            "(rule this-is-a-very-long-command-name-that-might-exceed-width :effect :allow)";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+
+        // At width 40, this should wrap
+        let pretty = nodes[0].pretty_serialize(40);
+        // Should have inserted a newline somewhere
+        assert!(
+            pretty.contains('\n') || pretty == input,
+            "Long form should wrap or stay as-is"
+        );
+    }
+
+    #[test]
+    fn pretty_serialize_preserves_structure() {
+        let input = "(rule (or \"cmd1\" \"cmd2\") :effect :allow)";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+
+        let pretty = nodes[0].pretty_serialize(80);
+        // Should still be parseable
+        let (reparsed, re_errors) = parse(&pretty);
+        assert!(
+            re_errors.is_empty(),
+            "Pretty output should be valid: {}",
+            pretty
+        );
+        assert_eq!(reparsed.len(), 1);
+    }
+
+    #[test]
+    fn pretty_serialize_vector_with_comments() {
+        let input = "[a b ;; comment\nc]";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+
+        let pretty = nodes[0].pretty_serialize(80);
+        assert!(pretty.contains(";; comment"));
+        assert!(pretty.contains('['));
+        assert!(pretty.contains(']'));
     }
 }

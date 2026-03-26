@@ -218,6 +218,76 @@ impl Format {
     }
 }
 
+/// Detect appropriate column width from existing source code.
+///
+/// Analyzes the source to determine the predominant line length,
+/// then snaps to the nearest preset width (80, 100, 120, or 200).
+///
+/// This helps migrated output match the existing code style.
+pub fn detect_column_width(source: &str) -> usize {
+    let mut code_line_lengths: Vec<usize> = Vec::new();
+
+    for line in source.lines() {
+        let trimmed = line.trim_start();
+
+        // Skip empty lines and comment-only lines
+        if trimmed.is_empty() || trimmed.starts_with(';') {
+            continue;
+        }
+
+        // Find the end of actual code (before trailing comments)
+        // Be careful not to match semicolons inside strings
+        let mut in_string = false;
+        let mut code_end = line.len();
+
+        for (i, c) in line.chars().enumerate() {
+            match c {
+                '"' => in_string = !in_string,
+                ';' if !in_string => {
+                    code_end = i;
+                    break;
+                }
+                _ => {}
+            }
+        }
+
+        // Measure the visible width of the code portion
+        let code_line = &line[..code_end];
+        let visible_width = code_line.chars().count();
+
+        if visible_width > 0 {
+            code_line_lengths.push(visible_width);
+        }
+    }
+
+    if code_line_lengths.is_empty() {
+        return 100; // Default
+    }
+
+    // Sort and find 95th percentile
+    code_line_lengths.sort_unstable();
+    let idx = ((code_line_lengths.len() as f64) * 0.95) as usize;
+    let idx = idx.min(code_line_lengths.len() - 1);
+
+    let width = code_line_lengths[idx];
+
+    // Snap to nearest preset
+    snap_to_preset(width)
+}
+
+/// Snap a width to the nearest preset (80, 100, 120, 200).
+fn snap_to_preset(width: usize) -> usize {
+    if width <= 90 {
+        80
+    } else if width <= 110 {
+        100
+    } else if width <= 170 {
+        120
+    } else {
+        200
+    }
+}
+
 // ── Rendering ───────────────────────────────────────────────────────
 
 /// Pretty-print a Doc with the given format settings.
@@ -1209,6 +1279,106 @@ mod tests {
             assert!(result.contains("dimmed"));
             assert!(result.contains("bright"));
         });
+    }
+}
+
+// ── Column width detection tests ────────────────────────────────────
+
+#[cfg(test)]
+mod width_tests {
+    use super::*;
+
+    #[test]
+    fn test_detect_column_width_empty_source() {
+        // Empty source should default to 100
+        assert_eq!(detect_column_width(""), 100);
+        assert_eq!(detect_column_width("   \n  \n"), 100);
+    }
+
+    #[test]
+    fn test_detect_column_width_only_comments() {
+        // Comment-only source should default to 100
+        let source = ";; comment\n; another comment\n";
+        assert_eq!(detect_column_width(source), 100);
+    }
+
+    #[test]
+    fn test_detect_column_width_snap_to_80() {
+        // Lines around 75-85 columns should snap to 80
+        let line_75 = "(rule ".to_string() + &"x".repeat(70) + ")\n";
+        assert_eq!(detect_column_width(&line_75), 80);
+
+        let line_85 = "(rule ".to_string() + &"x".repeat(80) + ")\n";
+        assert_eq!(detect_column_width(&line_85), 80);
+    }
+
+    #[test]
+    fn test_detect_column_width_snap_to_100() {
+        // Lines around 91-110 columns should snap to 100
+        let line_91 = "(rule ".to_string() + &"x".repeat(84) + ")\n";
+        assert_eq!(detect_column_width(&line_91), 100);
+
+        // 91 chars: "(rule " (7) + 84 x's + ")" (1) = 92 chars, snap to 100
+        let line_110 = "(rule ".to_string() + &"x".repeat(103) + ")\n";
+        assert_eq!(detect_column_width(&line_110), 100);
+    }
+
+    #[test]
+    fn test_detect_column_width_snap_to_120() {
+        // Lines around 115-135 columns should snap to 120
+        let line_115 = "(rule ".to_string() + &"x".repeat(110) + ")\n";
+        assert_eq!(detect_column_width(&line_115), 120);
+
+        let line_135 = "(rule ".to_string() + &"x".repeat(130) + ")\n";
+        assert_eq!(detect_column_width(&line_135), 120);
+    }
+
+    #[test]
+    fn test_detect_column_width_snap_to_200() {
+        // Lines above 170 columns should snap to 200
+        let line_170 = "(rule ".to_string() + &"x".repeat(165) + ")\n";
+        assert_eq!(detect_column_width(&line_170), 200);
+
+        let line_250 = "(rule ".to_string() + &"x".repeat(245) + ")\n";
+        assert_eq!(detect_column_width(&line_250), 200);
+    }
+
+    #[test]
+    fn test_detect_column_width_excludes_trailing_comments() {
+        // Trailing comments should not be counted in line length
+        let line = "(rule git :effect :allow)    ;; this is a comment\n";
+        // Code portion is only ~27 chars, should snap to 80
+        assert_eq!(detect_column_width(line), 80);
+    }
+
+    #[test]
+    fn test_detect_column_width_ignores_semicolons_in_strings() {
+        // Semicolons inside strings should not be treated as comments
+        let line = r#"(rule "some;value" :effect :allow)"#;
+        // Should measure full line, not stop at the semicolon in the string
+        let width = detect_column_width(line);
+        assert!(
+            width > 30,
+            "Should count past the semicolon in string, got {}",
+            width
+        );
+    }
+
+    #[test]
+    fn test_detect_column_width_95th_percentile() {
+        // Mix of short and long lines - should use 95th percentile
+        let mut source = String::new();
+        // 95 short lines (~27 chars)
+        for _ in 0..95 {
+            source.push_str("(rule git :effect :allow)\n");
+        }
+        // 5 very long lines (~202 chars: "(rule " + 195 x's + ")")
+        for _ in 0..5 {
+            source.push_str(&("(rule ".to_string() + &"x".repeat(195) + ")\n"));
+        }
+        // With 100 lines, 95th percentile is at index 95 (0-indexed)
+        // Index 95 is the first long line (202 chars), which snaps to 200
+        assert_eq!(detect_column_width(&source), 200);
     }
 }
 

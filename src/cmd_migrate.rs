@@ -29,6 +29,8 @@ use std::path::Path;
 use colored::Colorize;
 use may_i_config::v2::migrate::{migrate_forms, validate_migration};
 use may_i_output::shorten_home;
+use may_i_pp::detect_column_width;
+
 use may_i_sexpr::parse_cst;
 use similar::{ChangeTag, TextDiff};
 
@@ -202,10 +204,13 @@ pub fn cmd_migrate_with_handler(
     // Migrate the forms
     let migrated_forms = migrate_forms(original_forms.clone());
 
-    // Generate output text
+    // Detect appropriate column width from existing code style
+    let column_width = detect_column_width(&source);
+
+    // Generate pretty-printed output preserving comments
     let output_text = migrated_forms
         .iter()
-        .map(|f| f.serialize())
+        .map(|f| f.pretty_serialize(column_width))
         .collect::<Vec<_>>()
         .join("");
 
