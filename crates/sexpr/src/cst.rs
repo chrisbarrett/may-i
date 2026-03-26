@@ -435,53 +435,9 @@ impl PrettyCtx {
 
 impl CstNode<TriviaAnn> {
     fn pretty_write(&self, ctx: &mut PrettyCtx) {
-        self.pretty_write_internal(ctx, false);
-    }
-
-    /// Write node but skip leading whitespace (preserve comments).
-    fn pretty_write_skip_leading_whitespace(&self, ctx: &mut PrettyCtx) {
-        self.pretty_write_internal(ctx, true);
-    }
-
-    /// Write node completely fresh without any trivia (for cond clauses).
-    fn pretty_write_fresh(&self, ctx: &mut PrettyCtx) {
-        match &self.shape {
-            ShapeF::Atom(s) => {
-                ctx.write_str(s);
-            }
-            ShapeF::Str(s) => {
-                ctx.write_str(&quote_string(s));
-            }
-            ShapeF::List(children) => {
-                ctx.write_str("(");
-                for (i, child) in children.iter().enumerate() {
-                    if i > 0 {
-                        ctx.write_str(" ");
-                    }
-                    child.pretty_write_fresh(ctx);
-                }
-                ctx.write_str(")");
-            }
-            ShapeF::Vector(children) => {
-                ctx.write_str("[");
-                for (i, child) in children.iter().enumerate() {
-                    if i > 0 {
-                        ctx.write_str(" ");
-                    }
-                    child.pretty_write_fresh(ctx);
-                }
-                ctx.write_str("]");
-            }
-        }
-    }
-
-    fn pretty_write_internal(&self, ctx: &mut PrettyCtx, skip_whitespace: bool) {
         // Write leading trivia (comments/whitespace before this node)
         for trivia in &self.ann.leading {
             match trivia {
-                Trivia::Whitespace(_) if skip_whitespace => {
-                    // Skip whitespace when requested (but keep comments)
-                }
                 Trivia::Whitespace(s) => {
                     ctx.write_str(s);
                 }
@@ -518,7 +474,7 @@ impl CstNode<TriviaAnn> {
                     //          (else (body)))
                     let body_indent = head_col + 2;
 
-                    // Write "cond" head (without leading whitespace for clean break)
+                    // Write "cond" head
                     if let Some(head) = children.first() {
                         head.pretty_write(ctx);
                     }
@@ -541,7 +497,6 @@ impl CstNode<TriviaAnn> {
                         if i > 0 && child.ann.leading.is_empty() {
                             // Estimate child width (rough approximation)
                             let child_width = estimate_width(child);
-
                             if ctx.col + 1 + child_width > ctx.width && ctx.col > child_indent {
                                 // Would exceed width, add newline and indent
                                 ctx.write_newline();
@@ -550,13 +505,10 @@ impl CstNode<TriviaAnn> {
                                 ctx.write_str(" ");
                             }
                         }
-
                         child.pretty_write(ctx);
                     }
-
                     ctx.pop_indent();
                 }
-
                 ctx.write_str(")");
             }
             ShapeF::Vector(children) => {
@@ -568,7 +520,6 @@ impl CstNode<TriviaAnn> {
                 for (i, child) in children.iter().enumerate() {
                     if i > 0 && child.ann.leading.is_empty() {
                         let child_width = estimate_width(child);
-
                         if ctx.col + 1 + child_width > ctx.width && ctx.col > child_indent {
                             ctx.write_newline();
                             ctx.write_indent();
@@ -576,7 +527,6 @@ impl CstNode<TriviaAnn> {
                             ctx.write_str(" ");
                         }
                     }
-
                     child.pretty_write(ctx);
                 }
 
@@ -597,6 +547,38 @@ impl CstNode<TriviaAnn> {
                         ctx.write_newline();
                     }
                 }
+            }
+        }
+    }
+
+    /// Write node completely fresh without any trivia (for cond clauses).
+    fn pretty_write_fresh(&self, ctx: &mut PrettyCtx) {
+        match &self.shape {
+            ShapeF::Atom(s) => {
+                ctx.write_str(s);
+            }
+            ShapeF::Str(s) => {
+                ctx.write_str(&quote_string(s));
+            }
+            ShapeF::List(children) => {
+                ctx.write_str("(");
+                for (i, child) in children.iter().enumerate() {
+                    if i > 0 {
+                        ctx.write_str(" ");
+                    }
+                    child.pretty_write_fresh(ctx);
+                }
+                ctx.write_str(")");
+            }
+            ShapeF::Vector(children) => {
+                ctx.write_str("[");
+                for (i, child) in children.iter().enumerate() {
+                    if i > 0 {
+                        ctx.write_str(" ");
+                    }
+                    child.pretty_write_fresh(ctx);
+                }
+                ctx.write_str("]");
             }
         }
     }

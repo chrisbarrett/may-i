@@ -12,7 +12,7 @@ repos:
 
       - id: cargo-build-affected
         name: cargo build (affected)
-        entry: cargo affected --staged build
+        entry: env RUSTFLAGS="-D dead_code" cargo affected --staged build
         language: system
         types: [rust]
         pass_filenames: false
@@ -45,7 +45,7 @@ repos:
       # Pre-push hooks (full verification)
       - id: cargo-build-full
         name: cargo build (full)
-        entry: cargo build
+        entry: env RUSTFLAGS="-D dead_code" cargo build
         language: system
         types: [rust]
         pass_filenames: false
