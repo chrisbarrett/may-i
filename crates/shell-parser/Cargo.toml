@@ -8,3 +8,4 @@ serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 insta = "1"
+proptest = "1"

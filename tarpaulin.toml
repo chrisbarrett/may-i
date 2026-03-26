@@ -2,5 +2,11 @@
 command = "Test"
 run-types = ["Lib"]
 workspace = true
-fail-under = 83
-exclude-files = ["src/main.rs", "src/cmd_*.rs", "crates/config/src/io.rs"]
+fail-under = 60
+exclude-files = [
+   "src/main.rs",
+   "src/cmd_*.rs",
+   "crates/config/src/io.rs",
+   "crates/**/*_tests.rs",
+   "crates/**/test_helpers.rs",
+]

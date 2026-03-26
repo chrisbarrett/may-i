@@ -8,6 +8,8 @@ mod segment;
 pub use resolve::resolve_param_op;
 
 #[cfg(test)]
+mod test_helpers;
+#[cfg(test)]
 mod tests;
 
 pub use ast::*;
