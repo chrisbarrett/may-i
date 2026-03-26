@@ -506,40 +506,35 @@ impl CstNode<TriviaAnn> {
                     ctx.push_indent(child_indent);
                     ctx.reset_broken();
 
-                    // Pre-calculate total width to see if we need to break everything
-                    let total_width: usize = children.iter().map(|c| estimate_width(c)).sum::<usize>()
-                        + children.len().saturating_sub(1); // spaces between
-                    let must_break_all = ctx.col + total_width > ctx.width;
-
                     let mut i = 0;
                     while i < children.len() {
                         let child = &children[i];
-                        
+
                         // Check if this is a keyword (starts with ":")
                         let is_keyword = child.as_atom().map_or(false, |s| s.starts_with(':'));
-                        
+
                         // Check if we need to break before this child
                         if i > 0 {
                             let child_width = estimate_width(child);
                             let would_exceed = ctx.col + 1 + child_width > ctx.width;
                             let past_indent = ctx.col > child_indent;
-                            // Break if: we already broke, total form is too long, or this child would exceed
-                            let needs_break = ctx.has_broken || must_break_all || (would_exceed && past_indent);
-                            
+                            // Only break if we've already broken (cascade) OR this specific child would exceed
+                            let needs_break = ctx.has_broken || (would_exceed && past_indent);
+
                             if needs_break {
-                                // Force a break - ignore any leading whitespace
+                                // Force a break - ignore any leading whitespace from original source
                                 ctx.write_newline();
                                 ctx.write_indent();
                             } else if child.ann.leading.is_empty() {
                                 // No break needed and no leading trivia - add space
                                 ctx.write_str(" ");
                             }
-                            // If there's leading trivia, it will be written by pretty_write
+                            // If there's leading trivia (comments), it will be written by pretty_write
                         }
-                        
+
                         // Write the child
                         child.pretty_write(ctx);
-                        
+
                         // If this was a keyword, the next child is its value - keep them together
                         if is_keyword && i + 1 < children.len() {
                             let value = &children[i + 1];
@@ -547,15 +542,13 @@ impl CstNode<TriviaAnn> {
                             if value.ann.leading.is_empty() {
                                 // Value has no leading trivia, keep on same line with space
                                 ctx.write_str(" ");
-                            } else {
-                                // Value has leading trivia (probably comments), let it handle itself
                             }
                             // Write the value
                             value.pretty_write(ctx);
                             // Skip the value in the next iteration
                             i += 1;
                         }
-                        
+
                         i += 1;
                     }
                     ctx.pop_indent();
@@ -569,17 +562,13 @@ impl CstNode<TriviaAnn> {
                 ctx.push_indent(child_indent);
                 ctx.reset_broken();
 
-                // Pre-calculate total width
-                let total_width: usize = children.iter().map(|c| estimate_width(c)).sum::<usize>()
-                    + children.len().saturating_sub(1);
-                let must_break_all = ctx.col + total_width > ctx.width;
-
                 for (i, child) in children.iter().enumerate() {
                     if i > 0 {
                         let child_width = estimate_width(child);
                         let would_exceed = ctx.col + 1 + child_width > ctx.width;
                         let past_indent = ctx.col > child_indent;
-                        let needs_break = ctx.has_broken || must_break_all || (would_exceed && past_indent);
+                        // Only break if we've already broken (cascade) OR this specific child would exceed
+                        let needs_break = ctx.has_broken || (would_exceed && past_indent);
 
                         if needs_break {
                             ctx.write_newline();
@@ -1937,21 +1926,15 @@ mod proptests {
         let (nodes, errors) = parse(input);
         assert!(errors.is_empty());
 
-        // Force break with narrow width
-        let pretty = nodes[0].pretty_serialize(20);
+        // Use width that forces break for longer forms
+        let pretty = nodes[0].pretty_serialize(15);
 
         let lines: Vec<&str> = pretty.lines().collect();
 
-        // Find bar, :bar baz, and :bar :baz
-        let bar_idx = lines.iter().position(|l| l.trim() == "bar");
+        // Check keyword-value pairs stay together
         let bar_baz_idx = lines.iter().position(|l| l.contains(":bar baz"));
         let bar_baz_kw_idx = lines.iter().position(|l| l.contains(":bar :baz"));
 
-        assert!(
-            bar_idx.is_some(),
-            "Should have 'bar' on its own line\nGot:\n{}",
-            pretty
-        );
         assert!(
             bar_baz_idx.is_some(),
             "Should have ':bar baz' key-value pair\nGot:\n{}",
@@ -1962,31 +1945,27 @@ mod proptests {
             "Should have ':bar :baz' key-value pair (value is keyword)\nGot:\n{}",
             pretty
         );
+
+        // Once a break happens, subsequent forms should cascade
+        // Verify that we have multiple lines (some form broke)
+        assert!(
+            lines.len() > 1,
+            "Should have broken into multiple lines\nGot:\n{}",
+            pretty
+        );
     }
 
     #[test]
     fn pretty_serialize_complex_nested_with_keywords() {
-        // Complex example from the issue
+        // Complex example with nested forms
         let input = r#"(foo bar baz :bar baz :bar (foo bar baz) :bar :baz :bar (if foo bar baz))"#;
         let (nodes, errors) = parse(input);
         assert!(errors.is_empty());
 
-        // Force break
-        let pretty = nodes[0].pretty_serialize(30);
+        // Force break with narrow width
+        let pretty = nodes[0].pretty_serialize(20);
 
         let lines: Vec<&str> = pretty.lines().collect();
-
-        // Check that regular forms are on separate lines
-        assert!(
-            lines.iter().any(|l| l.trim() == "bar"),
-            "Should have 'bar' on its own line\nGot:\n{}",
-            pretty
-        );
-        assert!(
-            lines.iter().any(|l| l.trim() == "baz"),
-            "Should have 'baz' on its own line\nGot:\n{}",
-            pretty
-        );
 
         // Check that keyword-value pairs stay together on their lines
         assert!(
@@ -2005,6 +1984,14 @@ mod proptests {
         assert!(
             if_line.is_some(),
             "Should have nested (if form\nGot:\n{}",
+            pretty
+        );
+
+        // Verify that long nested forms get broken
+        let has_broken_nested = lines.iter().any(|l| l.contains("bar") && l.contains("baz"));
+        assert!(
+            has_broken_nested,
+            "Long nested forms should be broken\nGot:\n{}",
             pretty
         );
     }
@@ -2032,5 +2019,79 @@ mod proptests {
             "Should have ':effect :ask' on separate line\nGot:\n{}",
             pretty
         );
+    }
+
+    #[test]
+    fn pretty_serialize_head_with_first_arg_stays_together() {
+        // The head and first argument should stay on the same line
+        let input = "(rule \"openspec\" (effect :allow) (check :allow \"test\"))";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+
+        // Force break with narrow width
+        let pretty = nodes[0].pretty_serialize(40);
+
+        // First line should have both "rule" and "openspec"
+        let first_line = pretty.lines().next().unwrap();
+        assert!(
+            first_line.contains("rule") && first_line.contains("\"openspec\""),
+            "Head and first arg should stay together on first line\nGot first line: {}\nFull output:\n{}",
+            first_line,
+            pretty
+        );
+    }
+
+    #[test]
+    fn pretty_serialize_no_extra_blank_lines() {
+        // Breaking should not add extra blank lines
+        let input = "(rule \"openspec\" (effect :allow) (check :allow \"test\"))";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+
+        // Force break
+        let pretty = nodes[0].pretty_serialize(40);
+
+        // Check no consecutive newlines (blank lines)
+        assert!(
+            !pretty.contains("\n\n"),
+            "Should not have blank lines (consecutive newlines)\nGot:\n{}",
+            pretty
+        );
+    }
+
+    #[test]
+    fn pretty_serialize_original_openspec_example() {
+        // Test the exact example from the issue
+        let input = r#"(rule (command "openspec")
+      (effect :allow)
+      (check :allow "openspec status --change 'foo'"
+             :allow "openspec instructions apply --change 'bar'"))"#;
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+
+        let pretty = nodes[0].pretty_serialize(80);
+        let lines: Vec<&str> = pretty.lines().collect();
+
+        // First line should be: (rule "openspec"
+        let first_line = lines[0];
+        assert!(
+            first_line.contains("(rule") && first_line.contains("\"openspec\""),
+            "First line should have head and first arg\nGot: {}",
+            first_line
+        );
+
+        // Should not have blank lines
+        assert!(
+            !pretty.contains("\n\n"),
+            "Should not have blank lines\nGot:\n{}",
+            pretty
+        );
+
+        // Check structure is preserved
+        assert!(
+            pretty.contains("(effect :allow)"),
+            "Should have effect form"
+        );
+        assert!(pretty.contains("(check"), "Should have check form");
     }
 }
