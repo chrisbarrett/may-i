@@ -1,28 +1,28 @@
-//! Migration tool for converting v1 configs to v2 syntax using rewrite rules.
+//! Migration tool for converting v1 configs to canonical syntax using rewrite rules.
 //!
 //! This module provides rewrite rules that transform v1 s-expression syntax
-//! into v2 syntax. The rules are applied iteratively until convergence.
+//! into canonical syntax. The rules are applied iteratively until convergence.
 //!
 //! # Migration Pipeline
 //!
 //! 1. **Parse**: CST parses source, preserving trivia (comments/whitespace)
 //! 2. **Analyze**: Compare original vs migrated forms to create diff
 //! 3. **Migrate**: Apply rewrite rules until convergence
-//! 4. **Validate**: Parse output with v2 parser to ensure validity
+//! 4. **Validate**: Parse output with the canonical parser to ensure validity
 //!
 //! # String Type Preservation
 //!
 //! A critical implementation detail is distinguishing string literals from bare atoms.
 //! The CST represents `"~/.config"` as `Shape::Str` and `bare-atom` as `Shape::Atom`.
 //! During serialization, `Shape::Str` is always quoted while `Shape::Atom` is not.
-//! Without this distinction, valid v1 quoted paths produce invalid v2 unquoted output.
+//! Without this distinction, valid v1 quoted paths produce invalid canonical unquoted output.
 
 use may_i_sexpr::cst::{CstNode, Shape, TriviaAnn};
 
-/// A rewrite rule that transforms v1 syntax to v2.
+/// A rewrite rule that transforms v1 syntax to canonical.
 pub type RewriteFn = Box<dyn Fn(&CstNode) -> Option<Box<CstNode>>>;
 
-/// Get all v1→v2 migration rewrite rules.
+/// Get all v1→canonical migration rewrite rules.
 pub fn migration_rules() -> Vec<RewriteFn> {
     vec![
         // Rule: (rule (command X) ...) → (rule X ...)
@@ -481,7 +481,7 @@ fn wrapper_to_rule(node: &CstNode) -> Option<Box<CstNode>> {
     let mut positional_children = vec![Box::new(CstNode::atom("positional", Default::default()))];
 
     // Add each pattern as a direct child with proper spacing
-    // Note: [:key *] patterns are now preserved as-is for the v2 parser to handle
+    // Note: [:key *] patterns are now preserved as-is for the parser to handle
     for (i, pat) in patterns.iter().enumerate() {
         let mut pat = pat.clone();
 
@@ -577,7 +577,7 @@ fn defcontext_to_define(node: &CstNode) -> Option<Box<CstNode>> {
     )))
 }
 
-/// Transform v1 has expressions to v2 syntax.
+/// Transform v1 has expressions to canonical syntax.
 /// Converts (has :key "value") to (has [:key "value"])
 fn transform_has_expression(expr: &CstNode) -> Box<CstNode> {
     // Check if this is a (has ...) expression
@@ -904,10 +904,10 @@ pub fn migrate_forms(forms: Vec<Box<CstNode>>) -> Vec<Box<CstNode>> {
     forms.into_iter().map(migrate).collect()
 }
 
-/// Validate that migrated output can be parsed with the v2 parser.
+/// Validate that migrated output can be parsed with the canonical parser.
 /// Returns Ok(()) if valid, or Err with a list of validation errors.
 pub fn validate_migration(migrated_text: &str) -> Result<(), Vec<may_i_sexpr::RawError>> {
-    match super::config::parse_config(migrated_text) {
+    match crate::config::parse_config(migrated_text) {
         Ok(_) => Ok(()),
         Err(e) => Err(vec![e]),
     }

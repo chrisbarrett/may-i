@@ -1,22 +1,27 @@
+pub mod ast;
 pub mod doc;
+pub mod legacy;
+pub mod pattern;
 pub mod span;
 pub mod types;
-pub mod v2;
 
 pub use doc::{Doc, DocF, LayoutHint};
 pub use span::{Span, offset_to_line_col};
 
-// Re-export v2 types
-pub use v2::{
-    ArgPattern as V2ArgPattern, CommandPattern, Config as V2Config, Define, Effect as V2Effect,
-    PositionalArg, Predicate, Rule as V2Rule, SecurityConfig as V2SecurityConfig, Spanned,
+// Re-export canonical types
+pub use ast::{
+    Config, Define, Effect, EffectResult, FactQuery, Predicate, Rule, SecurityConfig, Spanned,
+    SpannedPredicate,
 };
+pub use pattern::{ArgPattern, CommandPattern, PositionalArg};
 
-// Re-export v1 types (used by CLI and legacy code)
+// Re-export types that are shared between legacy and canonical
+pub use types::{ContextFacts, Decision, ToDoc};
+
+// Legacy v1 types - deprecated, use types from crate root or legacy module
 pub use crate::types::{
-    ArgMatcher, BoolExpr, Check, CommandMatcher, CondArm, CondBranch, Config, ConfigWarning,
-    ContextExpr, ContextFacts, ContextFailureReason, ContextValue, Decision, Effect, EvalAnn,
-    EvalResult, Expr, ExprBranch, FactPattern, FactPatternEval, FactQuery, MatcherCondPredicate,
-    PolymorphicCondArm, PolymorphicCondBranch, PosExpr, Quantifier, Rule, RuleBody, SecurityConfig,
-    SourceInfo, ToDoc, TraceEntry, Wrapper, WrapperPattern, WrapperStep,
+    ArgMatcher, BoolExpr, Check, CommandMatcher, CondArm, CondBranch, ConfigWarning, ContextExpr,
+    ContextFailureReason, ContextValue, EvalAnn, EvalResult, Expr, ExprBranch, FactPattern,
+    FactPatternEval, Keyword, MatcherCondPredicate, PolymorphicCondArm, PolymorphicCondBranch,
+    PosExpr, Quantifier, RuleBody, SourceInfo, TraceEntry, Wrapper, WrapperPattern, WrapperStep,
 };

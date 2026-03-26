@@ -1,7 +1,7 @@
-// Rule and define parser for v2 unified DSL.
-// New syntax: (rule COMMAND-EFFECT EFFECT... [CHECK...])
+// Rule and define parser for the unified DSL.
+// Syntax: (rule COMMAND-EFFECT EFFECT... [CHECK...])
 
-use may_i_core::v2::ast::{Define, Effect, Rule, Spanned};
+use may_i_core::ast::{Define, Effect, Rule, Spanned};
 use may_i_sexpr::{RawError, Sexpr};
 
 /// Parse a rule from an s-expression.
@@ -34,7 +34,7 @@ pub fn parse_rule(sexpr: &Sexpr) -> Result<Spanned<Rule>, RawError> {
 
     // Parse command effect (position 1 in the list, after "rule")
     // This can be a command literal, command pattern, or effect
-    let command_effect = super::effect::parse_effect(&list[1])?;
+    let command_effect = crate::effect::parse_effect(&list[1])?;
 
     // Parse all remaining items - effects and checks
     let mut effects = Vec::new();
@@ -54,12 +54,12 @@ pub fn parse_rule(sexpr: &Sexpr) -> Result<Spanned<Rule>, RawError> {
             && let Some(tag) = lst[0].as_atom()
             && tag == "check"
         {
-            let check_items = super::config::parse_check(&lst[1..], sexpr.span())?;
+            let check_items = crate::config::parse_check(&lst[1..], sexpr.span())?;
             checks.extend(check_items);
             continue;
         }
 
-        let effect = super::effect::parse_effect(sexpr)?;
+        let effect = crate::effect::parse_effect(sexpr)?;
         effects.push(effect);
     }
 
@@ -163,7 +163,7 @@ pub fn parse_define(sexpr: &Sexpr) -> Result<Define, RawError> {
     }
 
     // Parse predicate
-    let predicate = super::predicate::parse_predicate(&list[2])?;
+    let predicate = crate::predicate::parse_predicate(&list[2])?;
 
     Ok(Define::new(
         name.to_string(),
@@ -202,11 +202,11 @@ fn is_reserved_define_name(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::*;
+    use may_i_core::ast::{Define, Effect, Predicate, Rule};
+    use may_i_core::pattern::CommandPattern;
     use may_i_core::span::Span;
-    use may_i_core::v2::ast::Effect;
-    use may_i_core::v2::ast::Predicate;
-    use may_i_core::v2::pattern::CommandPattern;
+    use may_i_sexpr::RawError;
 
     fn parse_rule_str(input: &str) -> Result<Rule, RawError> {
         let (forms, errors) = may_i_sexpr::parse(input);

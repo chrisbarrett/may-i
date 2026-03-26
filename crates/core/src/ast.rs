@@ -2,9 +2,9 @@
 // Redesigned for unified effect model where everything returns Decision | Nil.
 
 use crate::doc::Doc;
+use crate::pattern::{ArgPattern, CommandPattern};
 use crate::span::Span;
 use crate::types::{Decision, ToDoc};
-use crate::v2::pattern::{ArgPattern, CommandPattern};
 
 /// A value with source span tracking.
 #[derive(Debug, Clone)]
@@ -425,8 +425,8 @@ impl ToDoc for Effect {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pattern::{ArgPattern, CommandPattern};
     use crate::span::Span;
-    use crate::v2::pattern::{ArgPattern, CommandPattern};
 
     #[test]
     fn spanned_new_creates_correctly() {

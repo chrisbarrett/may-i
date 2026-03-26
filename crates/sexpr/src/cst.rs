@@ -511,7 +511,7 @@ impl CstNode<TriviaAnn> {
                         let child = &children[i];
 
                         // Check if this is a keyword (starts with ":")
-                        let is_keyword = child.as_atom().map_or(false, |s| s.starts_with(':'));
+                        let is_keyword = child.as_atom().is_some_and(|s| s.starts_with(':'));
 
                         // Check if we need to break before this child
                         if i > 0 {
@@ -598,38 +598,6 @@ impl CstNode<TriviaAnn> {
         }
     }
 
-    /// Write node completely fresh without any trivia (for cond clauses).
-    fn pretty_write_fresh(&self, ctx: &mut PrettyCtx) {
-        match &self.shape {
-            ShapeF::Atom(s) => {
-                ctx.write_str(s);
-            }
-            ShapeF::Str(s) => {
-                ctx.write_str(&quote_string(s));
-            }
-            ShapeF::List(children) => {
-                ctx.write_str("(");
-                for (i, child) in children.iter().enumerate() {
-                    if i > 0 {
-                        ctx.write_str(" ");
-                    }
-                    child.pretty_write_fresh(ctx);
-                }
-                ctx.write_str(")");
-            }
-            ShapeF::Vector(children) => {
-                ctx.write_str("[");
-                for (i, child) in children.iter().enumerate() {
-                    if i > 0 {
-                        ctx.write_str(" ");
-                    }
-                    child.pretty_write_fresh(ctx);
-                }
-                ctx.write_str("]");
-            }
-        }
-    }
-
     /// Write node preserving only comments, not whitespace.
     fn pretty_write_no_whitespace(&self, ctx: &mut PrettyCtx) {
         // Write only comment trivia, not whitespace
@@ -653,19 +621,19 @@ impl CstNode<TriviaAnn> {
             }
             ShapeF::List(children) => {
                 ctx.write_str("(");
-                
+
                 // Check if this is a cond form
                 let is_cond = children.first().and_then(|c| c.as_atom()) == Some("cond");
-                
+
                 if is_cond && children.len() > 1 {
                     // Special cond formatting: always break clauses
                     let body_indent = head_col + 2;
-                    
+
                     // Write "cond" head
                     if let Some(head) = children.first() {
                         head.pretty_write_no_whitespace(ctx);
                     }
-                    
+
                     // Each clause on its own line
                     for clause in &children[1..] {
                         ctx.write_newline();
@@ -681,7 +649,7 @@ impl CstNode<TriviaAnn> {
                     let mut i = 0;
                     while i < children.len() {
                         let child = &children[i];
-                        let is_keyword = child.as_atom().map_or(false, |s| s.starts_with(':'));
+                        let is_keyword = child.as_atom().is_some_and(|s| s.starts_with(':'));
 
                         if i > 0 {
                             let child_width = estimate_width(child);
@@ -713,7 +681,7 @@ impl CstNode<TriviaAnn> {
             }
             ShapeF::Vector(children) => {
                 ctx.write_str("[");
-                
+
                 let child_indent = head_col + 1;
                 ctx.push_indent(child_indent);
                 ctx.reset_broken();
@@ -2136,12 +2104,12 @@ mod proptests {
             "Should have ':effect :ask' on separate line\nGot:\n{}",
             pretty
         );
-        
+
         // After check breaks, :effect should come on a new line (cascading)
         let lines: Vec<&str> = pretty.lines().collect();
         let check_line = lines.iter().position(|l| l.contains("(check"));
         let effect_line = lines.iter().position(|l| l.contains(":effect"));
-        
+
         if let (Some(c_idx), Some(e_idx)) = (check_line, effect_line) {
             assert!(
                 e_idx > c_idx,

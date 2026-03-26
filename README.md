@@ -339,7 +339,7 @@ may-i eval --fact :client/opencode --fact :opencode/agent=build 'git status'
 ### Migration from v1
 
 If you have existing v1 configuration files, use the migration tool to convert
-them to v2 syntax:
+them to canonical syntax:
 
 ```bash
 may-i migrate ~/.config/may-i/config.lisp

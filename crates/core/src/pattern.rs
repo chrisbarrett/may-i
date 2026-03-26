@@ -1,8 +1,8 @@
 // Argument and command patterns for the unified rule DSL.
 
 use crate::Quantifier;
+use crate::ast::Effect;
 use crate::types::Expr;
-use crate::v2::ast::Effect;
 
 /// Pattern for matching commands in rules.
 /// Position 1 of a rule is always the command pattern.
@@ -72,7 +72,7 @@ pub enum ArgPattern {
     Positional {
         patterns: Vec<PositionalArg>,
         /// Optional continuation effect evaluated with remaining args.
-        continuation: Option<Box<crate::v2::ast::Effect>>,
+        continuation: Option<Box<crate::ast::Effect>>,
     },
 
     /// Like Positional, but requires exactly as many positional args as patterns.
@@ -80,7 +80,7 @@ pub enum ArgPattern {
     Exact {
         patterns: Vec<PositionalArg>,
         /// Optional continuation effect evaluated with remaining args.
-        continuation: Option<Box<crate::v2::ast::Effect>>,
+        continuation: Option<Box<crate::ast::Effect>>,
     },
 
     /// Token appears anywhere in argv.
@@ -111,7 +111,7 @@ impl ArgPattern {
     /// Create a positional pattern with a continuation effect.
     pub fn positional_with_continuation(
         exprs: Vec<Expr<Effect>>,
-        continuation: crate::v2::ast::Effect,
+        continuation: crate::ast::Effect,
     ) -> Self {
         ArgPattern::Positional {
             patterns: exprs.into_iter().map(PositionalArg::one).collect(),
@@ -130,7 +130,7 @@ impl ArgPattern {
     /// Create an exact pattern with a continuation effect.
     pub fn exact_with_continuation(
         exprs: Vec<Expr<Effect>>,
-        continuation: crate::v2::ast::Effect,
+        continuation: crate::ast::Effect,
     ) -> Self {
         ArgPattern::Exact {
             patterns: exprs.into_iter().map(PositionalArg::one).collect(),

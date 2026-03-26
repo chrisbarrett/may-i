@@ -1,4 +1,4 @@
-//! Migration command for converting v1 configs to v2 syntax.
+//! Migration command for converting v1 configs to canonical syntax.
 //!
 //! This module implements the `may-i migrate` subcommand with interactive
 //! prompting and simplified text-based diff display using the `similar` crate.
@@ -21,13 +21,13 @@
 //!
 //! Parse errors in the input file are returned with miette formatting,
 //! showing line numbers and source context. Validation errors from the
-//! v2 parser are similarly displayed with context from the output.
+//! canonical parser are similarly displayed with context from the output.
 
 use std::io::{self, IsTerminal, Write};
 use std::path::Path;
 
 use colored::Colorize;
-use may_i_config::v2::migrate::{migrate_forms, validate_migration};
+use may_i_config::migrate::{migrate_forms, validate_migration};
 use may_i_output::shorten_home;
 use may_i_pp::detect_column_width;
 
@@ -214,7 +214,7 @@ pub fn cmd_migrate_with_handler(
         .collect::<Vec<_>>()
         .join("");
 
-    // Validate migration output parses with v2 parser
+    // Validate migration output parses with canonical parser
     if let Err(validation_errors) = validate_migration(&output_text)
         && let Some(raw_err) = validation_errors.first()
     {

@@ -1,4 +1,4 @@
-// v2 evaluator module for unified rule DSL.
+// Evaluator module for unified rule DSL.
 
 pub mod eval;
 pub mod trace;
@@ -7,8 +7,7 @@ pub mod trace;
 mod integration_tests;
 
 pub use eval::{
-    DEFAULT_RECURSION_LIMIT, EvalContext, Evaluator, PredicateResult, evaluate_predicate,
-    evaluate_v2,
+    evaluate, evaluate_predicate, EvalContext, Evaluator, PredicateResult, DEFAULT_RECURSION_LIMIT,
 };
 pub use trace::{
     PredicateResult as TracePredicateResult, PredicateTrace, TraceBuilder, TraceEntry,

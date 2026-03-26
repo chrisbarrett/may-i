@@ -1,7 +1,7 @@
-// Command pattern parser for v2 DSL.
+// Command pattern parser for the unified DSL.
 // Task 2.1: Implement command pattern parser (literals, `or`, `regex`)
 
-use may_i_core::v2::pattern::CommandPattern;
+use may_i_core::pattern::CommandPattern;
 use may_i_sexpr::{RawError, Sexpr};
 
 /// Parse a command pattern from an atom string.
@@ -78,7 +78,9 @@ pub fn parse_command_pattern(sexpr: &Sexpr) -> Result<CommandPattern, RawError> 
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::*;
+    use may_i_core::pattern::CommandPattern;
+    use may_i_sexpr::RawError;
 
     fn parse(input: &str) -> Result<CommandPattern, RawError> {
         let (forms, errors) = may_i_sexpr::parse(input);

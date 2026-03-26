@@ -1,14 +1,13 @@
-// Argument pattern parser for v2 DSL.
+// Argument pattern parser for the unified DSL.
 // Task 2.3: Implement argument pattern parsers (`positional`, `exact`, `anywhere`, `forbidden`)
 
 use may_i_core::Quantifier;
+use may_i_core::ast::Effect;
+use may_i_core::pattern::{ArgPattern, PositionalArg};
 use may_i_core::types::{Expr, Keyword};
-use may_i_core::v2::ast::Effect;
-use may_i_core::v2::pattern::{ArgPattern, PositionalArg};
 use may_i_sexpr::{RawError, Sexpr};
 
 /// Parse a simple expression pattern from an s-expression.
-/// Uses V2Effect for cond branches.
 fn parse_expr(sexpr: &Sexpr) -> Result<Expr<Effect>, RawError> {
     match sexpr {
         Sexpr::Atom(s, _) if s == "*" => Ok(Expr::Wildcard),
@@ -69,7 +68,7 @@ fn parse_expr(sexpr: &Sexpr) -> Result<Expr<Effect>, RawError> {
                                     branch.span(),
                                 ));
                             }
-                            let effect = super::effect::parse_effect(&branch_list[1])?.value;
+                            let effect = crate::effect::parse_effect(&branch_list[1])?.value;
                             branches.push(may_i_core::types::ExprBranch {
                                 test: Expr::Wildcard,
                                 effect,
@@ -83,7 +82,7 @@ fn parse_expr(sexpr: &Sexpr) -> Result<Expr<Effect>, RawError> {
                                 ));
                             }
                             let test = parse_expr(&branch_list[0])?;
-                            let effect = super::effect::parse_effect(&branch_list[1])?.value;
+                            let effect = crate::effect::parse_effect(&branch_list[1])?.value;
                             branches.push(may_i_core::types::ExprBranch { test, effect });
                         }
                     }
@@ -98,8 +97,8 @@ fn parse_expr(sexpr: &Sexpr) -> Result<Expr<Effect>, RawError> {
                         ));
                     }
                     let pred = parse_expr(&list[1])?;
-                    let then_eff = super::effect::parse_effect(&list[2])?.value;
-                    let else_eff = super::effect::parse_effect(&list[3])?.value;
+                    let then_eff = crate::effect::parse_effect(&list[2])?.value;
+                    let else_eff = crate::effect::parse_effect(&list[3])?.value;
                     let branches = vec![
                         may_i_core::types::ExprBranch {
                             test: pred,
@@ -121,7 +120,7 @@ fn parse_expr(sexpr: &Sexpr) -> Result<Expr<Effect>, RawError> {
                         ));
                     }
                     let pred = parse_expr(&list[1])?;
-                    let eff = super::effect::parse_effect(&list[2])?.value;
+                    let eff = crate::effect::parse_effect(&list[2])?.value;
                     let branches = vec![may_i_core::types::ExprBranch {
                         test: pred,
                         effect: eff,
@@ -137,7 +136,7 @@ fn parse_expr(sexpr: &Sexpr) -> Result<Expr<Effect>, RawError> {
                         ));
                     }
                     let pred = parse_expr(&list[1])?;
-                    let eff = super::effect::parse_effect(&list[2])?.value;
+                    let eff = crate::effect::parse_effect(&list[2])?.value;
                     let branches = vec![may_i_core::types::ExprBranch {
                         test: Expr::Not(Box::new(pred)),
                         effect: eff,
@@ -263,7 +262,7 @@ fn parse_positional_form(
 ) -> Result<ArgPattern, RawError> {
     // Check for dot syntax: patterns before dot, continuation effect after
     let mut patterns: Vec<PositionalArg> = Vec::new();
-    let mut continuation: Option<may_i_core::v2::ast::Effect> = None;
+    let mut continuation: Option<may_i_core::ast::Effect> = None;
     let mut i = 0;
 
     while i < args.len() {
@@ -278,7 +277,7 @@ fn parse_positional_form(
                 ));
             }
             // Parse the continuation effect
-            let spanned_effect = super::effect::parse_effect(&args[i + 1])?;
+            let spanned_effect = crate::effect::parse_effect(&args[i + 1])?;
             continuation = Some(spanned_effect.value);
             i += 2;
             continue;

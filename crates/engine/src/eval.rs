@@ -1,12 +1,12 @@
-// v2 unified effect evaluator.
+// Unified effect evaluator.
 // All effect forms evaluate to EffectResult (Decision | Nil).
 
+use may_i_core::ast::{Effect, EffectResult, Predicate, Rule};
+use may_i_core::pattern::{ArgPattern, CommandPattern, PositionalArg};
 use may_i_core::types::{ContextFacts, Decision, EvalResult};
 use may_i_core::types::{FactPattern, FactQuery};
-use may_i_core::v2::ast::{Effect, EffectResult, Predicate, Rule};
-use may_i_core::v2::pattern::{ArgPattern, CommandPattern, PositionalArg};
 
-use crate::v2::trace::{
+use crate::trace::{
     EffectTrace, PredicateResult as TracePredicateResult, PredicateTrace, TraceEntry,
 };
 
@@ -70,12 +70,12 @@ impl<'a> EvalContext<'a> {
     }
 }
 
-/// Evaluate a command against v2 config and context.
-/// This is the main entry point for v2 evaluation.
-pub fn evaluate_v2(
+/// Evaluate a command against config and context.
+/// This is the main entry point for evaluation.
+pub fn evaluate(
     command: &str,
     args: &[String],
-    config: &may_i_core::v2::ast::Config,
+    config: &may_i_core::ast::Config,
     facts: &ContextFacts,
 ) -> EvalResult {
     let evaluator = Evaluator::new(&config.rules);
@@ -83,7 +83,7 @@ pub fn evaluate_v2(
     evaluator.evaluate(&ctx)
 }
 
-/// Evaluator for v2 rules with unified effect model.
+/// Evaluator for rules with unified effect model.
 pub struct Evaluator<'a> {
     rules: &'a [Rule],
 }
@@ -136,7 +136,7 @@ impl<'a> Evaluator<'a> {
         &self,
         rule: &Rule,
         ctx: &EvalContext,
-    ) -> (EffectResult, Option<crate::v2::trace::TraceEntry>) {
+    ) -> (EffectResult, Option<crate::trace::TraceEntry>) {
         // Step 1: Evaluate command effect - must return non-Nil for rule to apply
         let command_result = evaluate_effect(&rule.command_effect.value, ctx, self.rules);
 
@@ -233,7 +233,7 @@ pub fn evaluate_predicate_with_trace(
     predicate: &Predicate,
     ctx: &EvalContext,
 ) -> (PredicateResult, PredicateTrace) {
-    use crate::v2::trace::PredicateResult as TracePredResult;
+    use crate::trace::PredicateResult as TracePredResult;
 
     let result = evaluate_predicate(predicate, ctx);
     let trace_result = match result {
@@ -1160,11 +1160,8 @@ mod tests {
 
         // All non-Nil returns last
         let effects = vec![
-            may_i_core::v2::ast::Spanned::new(
-                Effect::Allow(None),
-                may_i_core::span::Span::new(0, 1),
-            ),
-            may_i_core::v2::ast::Spanned::new(Effect::Ask(None), may_i_core::span::Span::new(0, 1)),
+            may_i_core::ast::Spanned::new(Effect::Allow(None), may_i_core::span::Span::new(0, 1)),
+            may_i_core::ast::Spanned::new(Effect::Ask(None), may_i_core::span::Span::new(0, 1)),
         ];
         assert_eq!(
             evaluate_effect(&Effect::And { effects }, &ctx, rules),
@@ -1180,14 +1177,8 @@ mod tests {
 
         // Returns first non-Nil
         let effects = vec![
-            may_i_core::v2::ast::Spanned::new(
-                Effect::Allow(None),
-                may_i_core::span::Span::new(0, 1),
-            ),
-            may_i_core::v2::ast::Spanned::new(
-                Effect::Deny(None),
-                may_i_core::span::Span::new(0, 1),
-            ),
+            may_i_core::ast::Spanned::new(Effect::Allow(None), may_i_core::span::Span::new(0, 1)),
+            may_i_core::ast::Spanned::new(Effect::Deny(None), may_i_core::span::Span::new(0, 1)),
         ];
         assert_eq!(
             evaluate_effect(&Effect::Or { effects }, &ctx, rules),
@@ -1202,10 +1193,8 @@ mod tests {
         let rules: &[Rule] = &[];
 
         // Not of Allow returns Nil
-        let effect = may_i_core::v2::ast::Spanned::new(
-            Effect::Allow(None),
-            may_i_core::span::Span::new(0, 1),
-        );
+        let effect =
+            may_i_core::ast::Spanned::new(Effect::Allow(None), may_i_core::span::Span::new(0, 1));
         assert_eq!(
             evaluate_effect(
                 &Effect::Not {
@@ -1282,9 +1271,9 @@ mod tests {
     fn positional_with_fact_binding_binds_for_continuation() {
         // When a positional pattern with fact binding matches,
         // the bound fact should be available in the continuation
+        use may_i_core::ast::Effect;
+        use may_i_core::pattern::{ArgPattern, PositionalArg};
         use may_i_core::types::{Expr, Keyword, Quantifier};
-        use may_i_core::v2::ast::Effect;
-        use may_i_core::v2::pattern::{ArgPattern, PositionalArg};
 
         // Build: (positional [:ssh/host] . (may-i *))
         // Simple binding - [:kw] is equivalent to [:kw *]
@@ -1430,8 +1419,8 @@ mod tests {
 
     #[test]
     fn match_positional_patterns_with_binding() {
+        use may_i_core::pattern::PositionalArg;
         use may_i_core::types::{Expr, Keyword, Quantifier};
-        use may_i_core::v2::pattern::PositionalArg;
 
         // Test positional patterns with fact binding
         let patterns = vec![
@@ -1465,8 +1454,8 @@ mod tests {
 
     #[test]
     fn match_positional_patterns_no_match_with_binding() {
+        use may_i_core::pattern::PositionalArg;
         use may_i_core::types::{Expr, Keyword, Quantifier};
-        use may_i_core::v2::pattern::PositionalArg;
 
         // Test that facts are still captured even when pattern fails later
         let patterns = vec![
@@ -1497,8 +1486,8 @@ mod tests {
 
     #[test]
     fn match_positional_patterns_optional_with_binding() {
+        use may_i_core::pattern::PositionalArg;
         use may_i_core::types::{Expr, Keyword, Quantifier};
-        use may_i_core::v2::pattern::PositionalArg;
 
         // Test optional pattern with binding - arg present and matches
         let patterns = vec![PositionalArg {
@@ -1520,8 +1509,8 @@ mod tests {
 
     #[test]
     fn match_positional_patterns_one_or_more_with_binding() {
+        use may_i_core::pattern::PositionalArg;
         use may_i_core::types::{Expr, Keyword, Quantifier};
-        use may_i_core::v2::pattern::PositionalArg;
 
         // Test OneOrMore pattern with binding
         let patterns = vec![PositionalArg {
@@ -1545,8 +1534,8 @@ mod tests {
 
     #[test]
     fn match_positional_patterns_zero_or_more_with_binding() {
+        use may_i_core::pattern::PositionalArg;
         use may_i_core::types::{Expr, Keyword, Quantifier};
-        use may_i_core::v2::pattern::PositionalArg;
 
         // Test ZeroOrMore pattern with binding - matches all remaining
         let patterns = vec![PositionalArg {
@@ -1570,8 +1559,8 @@ mod tests {
 
     #[test]
     fn match_positional_patterns_not_enough_args() {
+        use may_i_core::pattern::PositionalArg;
         use may_i_core::types::{Expr, Keyword, Quantifier};
-        use may_i_core::v2::pattern::PositionalArg;
 
         // Test pattern with more patterns than args
         let patterns = vec![
@@ -1602,8 +1591,8 @@ mod tests {
 
     #[test]
     fn match_positional_patterns_one_or_more_no_args() {
+        use may_i_core::pattern::PositionalArg;
         use may_i_core::types::{Expr, Quantifier};
-        use may_i_core::v2::pattern::PositionalArg;
 
         // Test OneOrMore fails with no args
         let patterns = vec![PositionalArg {

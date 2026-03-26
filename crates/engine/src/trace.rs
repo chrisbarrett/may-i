@@ -1,12 +1,12 @@
-// Trace generation for v2 unified rule DSL evaluator.
+// Trace generation for the unified rule DSL evaluator.
 //
-// This module provides trace generation for the v2 evaluator, capturing
+// This module provides trace generation for the evaluator, capturing
 // evaluation steps in a hierarchical structure that mirrors the unified
 // predicate and effect syntax.
 
+use may_i_core::ast::{Effect, Predicate, Rule};
+use may_i_core::pattern::ArgPattern;
 use may_i_core::types::{Decision, EvalResult};
-use may_i_core::v2::ast::{Effect, Predicate, Rule};
-use may_i_core::v2::pattern::ArgPattern;
 
 /// A trace entry representing one step in the evaluation process.
 #[derive(Debug, Clone)]
@@ -532,13 +532,13 @@ mod tests {
 
     #[test]
     fn to_trace_result_converts_match() {
-        let result = to_trace_result(crate::v2::eval::PredicateResult::Match);
+        let result = to_trace_result(crate::eval::PredicateResult::Match);
         assert_eq!(result, PredicateResult::Match);
     }
 
     #[test]
     fn to_trace_result_converts_no_match() {
-        let result = to_trace_result(crate::v2::eval::PredicateResult::NoMatch);
+        let result = to_trace_result(crate::eval::PredicateResult::NoMatch);
         assert_eq!(result, PredicateResult::NoMatch);
     }
 }

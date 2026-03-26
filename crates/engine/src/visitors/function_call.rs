@@ -49,7 +49,7 @@ impl CommandVisitor for FunctionCallVisitor {
 mod tests {
     use super::*;
     use crate::var_env::VarEnv;
-    use may_i_core::{Config, ContextFacts};
+    use may_i_core::legacy::{Config, ContextFacts};
     use may_i_shell_parser::{self as parser, Command, SimpleCommand};
 
     fn simple_cmd(cmd: &str) -> SimpleCommand {

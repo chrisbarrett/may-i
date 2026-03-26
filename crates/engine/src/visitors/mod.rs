@@ -8,7 +8,7 @@ pub(crate) mod rule_match;
 pub(crate) mod wrapper_unwrap;
 
 use crate::var_env::VarEnv;
-use may_i_core::{Config, ContextFacts, Decision, EvalResult};
+use may_i_core::legacy::{Config, ContextFacts, Decision, EvalResult};
 use may_i_shell_parser::{Command, SimpleCommand};
 
 /// Maximum recursion depth for command substitution / eval / bash -c evaluation.

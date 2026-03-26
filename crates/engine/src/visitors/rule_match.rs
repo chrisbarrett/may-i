@@ -4,7 +4,7 @@
 use super::{CommandVisitor, VisitOutcome, VisitorContext};
 use crate::annotate::annotate_rule;
 use crate::matcher::*;
-use may_i_core::{Config, ContextFacts, Decision, Effect, EvalResult, TraceEntry};
+use may_i_core::legacy::{Config, ContextFacts, Decision, Effect, EvalResult, TraceEntry};
 use may_i_shell_parser::SimpleCommand;
 
 /// Terminal visitor: matches the resolved command against config rules.

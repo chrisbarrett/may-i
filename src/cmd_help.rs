@@ -19,7 +19,7 @@ OVERVIEW
 USAGE
     may-i eval 'COMMAND...'           Evaluate a command
     may-i check                       Validate config and run checks
-    may-i migrate FILE                Migrate v1 config to v2
+    may-i migrate FILE                Migrate v1 config to canonical syntax
     may-i help                        Show this help
 
 QUICK START
@@ -152,7 +152,7 @@ Validate with: may-i check
     print!(
         "{}",
         r#"
-Convert v1 configs to v2:
+Convert v1 configs to canonical syntax:
   may-i migrate ~/.config/may-i/config.lisp
 
 Options:
@@ -168,7 +168,6 @@ Options:
         r#"
   --json       Output as JSON
   --config F   Use specific config file
-  --v2         Use v2 unified DSL (default)
 "#
     );
 

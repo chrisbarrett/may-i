@@ -1,6 +1,6 @@
 // Config validation — run embedded checks against the engine.
 
-use may_i_core::{Config, ContextFacts, Decision, TraceEntry};
+use may_i_core::legacy::{Config, ContextFacts, Decision, TraceEntry};
 
 /// Result of evaluating a single embedded check.
 #[derive(Debug)]
@@ -16,12 +16,13 @@ pub struct CheckResult {
 }
 
 /// Run all embedded checks from config rules and compare against expected decisions.
+#[allow(deprecated)]
 pub fn run_checks(config: &Config) -> Vec<CheckResult> {
     let mut results = Vec::new();
 
     for rule in &config.rules {
         for check in &rule.checks {
-            let eval = crate::evaluate_with_context(&check.command, config, &check.context);
+            let eval = crate::evaluate_with_context_v1(&check.command, config, &check.context);
             let location = config
                 .source_info
                 .as_ref()
@@ -40,7 +41,7 @@ pub fn run_checks(config: &Config) -> Vec<CheckResult> {
     }
 
     for check in &config.checks {
-        let eval = crate::evaluate_with_context(&check.command, config, &check.context);
+        let eval = crate::evaluate_with_context_v1(&check.command, config, &check.context);
         let location = config
             .source_info
             .as_ref()
@@ -64,7 +65,7 @@ pub fn run_checks(config: &Config) -> Vec<CheckResult> {
 mod tests {
     use super::*;
     use may_i_core::Span;
-    use may_i_core::{Check, CommandMatcher, Effect, Rule, RuleBody};
+    use may_i_core::legacy::{Check, CommandMatcher, Effect, Rule, RuleBody};
 
     #[test]
     fn run_checks_passing() {

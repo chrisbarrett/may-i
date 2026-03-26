@@ -1,8 +1,8 @@
-// Define resolution and validation for v2 DSL.
+// Define resolution and validation for the unified DSL.
 // Tasks 3.1-3.5: Build resolution map, detect duplicates, undefined refs, cycles, and resolve.
 
+use may_i_core::ast::{Define, Effect, Predicate, Rule, Spanned};
 use may_i_core::span::Span;
-use may_i_core::v2::ast::{Define, Effect, Predicate, Rule, Spanned};
 use std::collections::{HashMap, HashSet};
 
 /// A resolution error with source span information.
@@ -275,8 +275,8 @@ fn collect_refs_from_effect_recursive(effect: &Effect, _span: Span, refs: &mut V
 }
 
 #[allow(dead_code)]
-fn format_command_pattern(pattern: &may_i_core::v2::pattern::CommandPattern) -> String {
-    use may_i_core::v2::pattern::CommandPattern;
+fn format_command_pattern(pattern: &may_i_core::pattern::CommandPattern) -> String {
+    use may_i_core::pattern::CommandPattern;
     match pattern {
         CommandPattern::Literal(s) => s.clone(),
         CommandPattern::Regex(_) => "(regex ...)".to_string(),
@@ -509,8 +509,7 @@ pub fn validate_and_resolve(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use may_i_core::v2::ast::{Define, Effect, Rule};
-    use may_i_core::v2::pattern::CommandPattern;
+    use may_i_core::pattern::CommandPattern;
 
     fn dummy_span() -> Span {
         Span::new(0, 0)
@@ -826,7 +825,7 @@ mod tests {
 
     #[test]
     fn format_command_pattern_handles_regex() {
-        use may_i_core::v2::pattern::CommandPattern;
+        use may_i_core::pattern::CommandPattern;
         let pattern = CommandPattern::Regex(regex::Regex::new("^git").unwrap());
         let formatted = format_command_pattern(&pattern);
         assert_eq!(formatted, "(regex ...)");
@@ -834,7 +833,7 @@ mod tests {
 
     #[test]
     fn format_command_pattern_handles_or() {
-        use may_i_core::v2::pattern::CommandPattern;
+        use may_i_core::pattern::CommandPattern;
         let pattern = CommandPattern::Or(vec![
             CommandPattern::Literal("git".to_string()),
             CommandPattern::Literal("gh".to_string()),

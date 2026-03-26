@@ -1,10 +1,10 @@
-// Unified predicate parser for v2 DSL.
+// Unified predicate parser for the unified DSL.
 // Task 2.2: Implement fact query parser for `(has ...)` forms
 // Task 2.4: Implement boolean combinator parsers (`and`, `or`, `not`)
 // Task 2.5: Implement unified predicate parser that dispatches to fact or arg parsers
 
+use may_i_core::ast::Predicate;
 use may_i_core::types::FactQuery;
-use may_i_core::v2::ast::Predicate;
 use may_i_sexpr::{RawError, Sexpr};
 
 /// Parse a unified predicate from an s-expression.
@@ -82,7 +82,7 @@ pub fn parse_predicate(sexpr: &Sexpr) -> Result<Predicate, RawError> {
 
         // Argument patterns - delegate to the argument pattern parser
         "positional" | "exact" | "anywhere" | "forbidden" | "=" => {
-            let arg_pattern = super::pattern::parse_arg_pattern(sexpr)?;
+            let arg_pattern = crate::pattern::parse_arg_pattern(sexpr)?;
             Ok(Predicate::Arg(arg_pattern))
         }
 
@@ -226,7 +226,9 @@ fn parse_fact_pattern(sexpr: &Sexpr) -> Result<FactPattern, RawError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use may_i_core::v2::pattern::ArgPattern;
+    use may_i_core::pattern::ArgPattern;
+    use may_i_core::types::FactPattern;
+    use may_i_sexpr::RawError;
 
     fn parse_pred(input: &str) -> Result<Predicate, RawError> {
         let (forms, errors) = may_i_sexpr::parse(input);

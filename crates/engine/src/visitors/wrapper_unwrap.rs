@@ -62,7 +62,7 @@ impl CommandVisitor for WrapperUnwrapVisitor {
 mod tests {
     use super::*;
     use crate::var_env::VarEnv;
-    use may_i_core::{Config, ContextFacts, Expr, Wrapper, WrapperPattern, WrapperStep};
+    use may_i_core::legacy::{Config, ContextFacts, Expr, Wrapper, WrapperPattern, WrapperStep};
     use may_i_shell_parser::{self as parser, Command};
 
     fn simple_cmd(cmd: &str) -> SimpleCommand {

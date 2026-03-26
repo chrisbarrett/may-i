@@ -2,26 +2,59 @@
 
 pub(crate) mod annotate;
 pub(crate) mod check;
+pub mod eval;
 pub(crate) mod matcher;
 pub(crate) mod var_env;
 pub(crate) mod visitors;
 
-// v2 evaluator for unified rule DSL
-pub mod v2;
+pub mod trace;
 
 use visitors::{CommandVisitor, MAX_EVAL_DEPTH, VisitOutcome, VisitorContext, dynamic_ask};
 
-use may_i_core::{Config, ContextFacts, Decision, EvalResult};
+use may_i_core::legacy::{Config, ContextFacts, Decision, EvalResult};
 use may_i_shell_parser::{self as parser, Command, SimpleCommand, Word};
 use var_env::{VarEnv, VarState, resolve_simple_command_with_var_env, resolve_word_with_var_env};
 
 pub use check::{CheckResult, run_checks};
 
-// Re-export v2 items
-pub use v2::{
-    DEFAULT_RECURSION_LIMIT, EvalContext, Evaluator, PredicateResult, TraceBuilder, TraceEntry,
-    evaluate_v2,
-};
+// Re-export canonical evaluator items
+pub use eval::{DEFAULT_RECURSION_LIMIT, EvalContext, Evaluator, PredicateResult, evaluate};
+pub use trace::{TraceBuilder, TraceEntry};
+
+/// Legacy v1 evaluator (deprecated - use `evaluate` from eval module).
+#[deprecated(
+    since = "0.2.0",
+    note = "Use the `evaluate` function from the eval module instead"
+)]
+#[allow(deprecated)]
+pub fn evaluate_v1(input: &str, config: &Config) -> EvalResult {
+    evaluate_with_context_v1(input, config, &ContextFacts::default())
+}
+
+#[deprecated(
+    since = "0.2.0",
+    note = "Use the evaluate function from the eval module instead"
+)]
+pub fn evaluate_with_context_v1(
+    input: &str,
+    config: &Config,
+    context: &ContextFacts,
+) -> EvalResult {
+    let ast = parser::parse(input);
+
+    // Seed environment from process, then ensure any vars listed in
+    // `(safe-env-vars ...)` are present as safe (opaque) even if absent.
+    let mut env = VarEnv::from_process_env();
+    if !config.security.safe_env_vars.is_empty() {
+        for name in &config.security.safe_env_vars {
+            if env.get(name).is_none() {
+                env.set(name.clone(), VarState::Opaque);
+            }
+        }
+    }
+
+    AstWalker::new(config).walk(&ast, &env, context).result
+}
 
 /// Result of walking an AST node: the evaluation result and the updated VarEnv.
 struct WalkResult {
@@ -476,30 +509,6 @@ impl<'a> AstWalker<'a> {
     }
 }
 
-// ── Public API ─────────────────────────────────────────────────────
-
-/// Evaluate a shell command string against the config.
-pub fn evaluate(input: &str, config: &Config) -> EvalResult {
-    evaluate_with_context(input, config, &ContextFacts::default())
-}
-
-pub fn evaluate_with_context(input: &str, config: &Config, context: &ContextFacts) -> EvalResult {
-    let ast = parser::parse(input);
-
-    // Seed environment from process, then ensure any vars listed in
-    // `(safe-env-vars ...)` are present as safe (opaque) even if absent.
-    let mut env = VarEnv::from_process_env();
-    if !config.security.safe_env_vars.is_empty() {
-        for name in &config.security.safe_env_vars {
-            if env.get(name).is_none() {
-                env.set(name.clone(), VarState::Opaque);
-            }
-        }
-    }
-
-    AstWalker::new(config).walk(&ast, &env, context).result
-}
-
 // ── Standalone helpers ─────────────────────────────────────────────
 
 /// Check if an arithmetic expression is safe: all variable references resolve to safe vars.
@@ -552,7 +561,7 @@ fn is_arithmetic_safe(expr: &str, env: &VarEnv) -> bool {
 mod lib_tests {
     use super::*;
     use may_i_core::Span;
-    use may_i_core::{CommandMatcher, Decision, Effect, EvalResult, Rule, RuleBody};
+    use may_i_core::legacy::{CommandMatcher, Decision, Effect, EvalResult, Rule, RuleBody};
 
     fn empty_config() -> Config {
         Config::default()
@@ -599,14 +608,14 @@ mod lib_tests {
     #[test]
     fn test_evaluate_simple_allow() {
         let config = allow_config();
-        let result = evaluate("echo hello", &config);
+        let result = evaluate_v1("echo hello", &config);
         assert_eq!(result.decision, Decision::Allow);
     }
 
     #[test]
     fn test_evaluate_simple_deny() {
         let config = deny_config();
-        let result = evaluate("rm -rf /", &config);
+        let result = evaluate_v1("rm -rf /", &config);
         assert_eq!(result.decision, Decision::Deny);
         assert!(result.reason.as_ref().unwrap().contains("dangerous"));
     }
@@ -614,7 +623,7 @@ mod lib_tests {
     #[test]
     fn test_evaluate_no_matching_rule_ask() {
         let config = empty_config();
-        let result = evaluate("unknown-cmd", &config);
+        let result = evaluate_v1("unknown-cmd", &config);
         assert_eq!(result.decision, Decision::Ask);
     }
 
@@ -622,42 +631,42 @@ mod lib_tests {
     fn test_evaluate_with_context_empty() {
         let config = allow_config();
         let context = ContextFacts::default();
-        let result = evaluate_with_context("echo hello", &config, &context);
+        let result = evaluate_with_context_v1("echo hello", &config, &context);
         assert_eq!(result.decision, Decision::Allow);
     }
 
     #[test]
     fn test_evaluate_assignment_command() {
         let config = allow_config();
-        let result = evaluate("FOO=bar echo hello", &config);
+        let result = evaluate_v1("FOO=bar echo hello", &config);
         assert_eq!(result.decision, Decision::Allow);
     }
 
     #[test]
     fn test_evaluate_sequence_commands() {
         let config = allow_config();
-        let result = evaluate("echo hello; echo world", &config);
+        let result = evaluate_v1("echo hello; echo world", &config);
         assert_eq!(result.decision, Decision::Allow);
     }
 
     #[test]
     fn test_evaluate_pipeline() {
         let config = allow_config();
-        let result = evaluate("echo hello | cat", &config);
+        let result = evaluate_v1("echo hello | cat", &config);
         assert_eq!(result.decision, Decision::Ask);
     }
 
     #[test]
     fn test_evaluate_subshell() {
         let config = allow_config();
-        let result = evaluate("(echo hello)", &config);
+        let result = evaluate_v1("(echo hello)", &config);
         assert_eq!(result.decision, Decision::Allow);
     }
 
     #[test]
     fn test_evaluate_background() {
         let config = allow_config();
-        let result = evaluate("echo hello &", &config);
+        let result = evaluate_v1("echo hello &", &config);
         assert_eq!(result.decision, Decision::Allow);
     }
 
@@ -666,7 +675,7 @@ mod lib_tests {
         // Test that if statement structure is handled correctly
         // The condition command (echo x) is evaluated, then body
         let config = allow_config();
-        let result = evaluate("if echo x; then echo hello; fi", &config);
+        let result = evaluate_v1("if echo x; then echo hello; fi", &config);
         // echo is allowed, so both condition and body are allowed
         assert_eq!(result.decision, Decision::Allow);
     }
@@ -674,63 +683,63 @@ mod lib_tests {
     #[test]
     fn test_evaluate_while_loop_with_echo() {
         let config = allow_config();
-        let result = evaluate("while echo x; do echo hello; done", &config);
+        let result = evaluate_v1("while echo x; do echo hello; done", &config);
         assert_eq!(result.decision, Decision::Allow);
     }
 
     #[test]
     fn test_evaluate_for_loop() {
         let config = allow_config();
-        let result = evaluate("for x in a b c; do echo $x; done", &config);
+        let result = evaluate_v1("for x in a b c; do echo $x; done", &config);
         assert_eq!(result.decision, Decision::Allow);
     }
 
     #[test]
     fn test_evaluate_case_statement() {
         let config = allow_config();
-        let result = evaluate("case x in x) echo hello ;; esac", &config);
+        let result = evaluate_v1("case x in x) echo hello ;; esac", &config);
         assert_eq!(result.decision, Decision::Allow);
     }
 
     #[test]
     fn test_evaluate_function_definition() {
         let config = allow_config();
-        let result = evaluate("myfunc() { echo hello; }", &config);
+        let result = evaluate_v1("myfunc() { echo hello; }", &config);
         assert_eq!(result.decision, Decision::Allow);
     }
 
     #[test]
     fn test_evaluate_and_list() {
         let config = allow_config();
-        let result = evaluate("echo hello && echo world", &config);
+        let result = evaluate_v1("echo hello && echo world", &config);
         assert_eq!(result.decision, Decision::Allow);
     }
 
     #[test]
     fn test_evaluate_or_list() {
         let config = allow_config();
-        let result = evaluate("echo hello || echo world", &config);
+        let result = evaluate_v1("echo hello || echo world", &config);
         assert_eq!(result.decision, Decision::Allow);
     }
 
     #[test]
     fn test_evaluate_brace_group() {
         let config = allow_config();
-        let result = evaluate("{ echo hello; echo world; }", &config);
+        let result = evaluate_v1("{ echo hello; echo world; }", &config);
         assert_eq!(result.decision, Decision::Allow);
     }
 
     #[test]
     fn test_evaluate_redirected_command() {
         let config = allow_config();
-        let result = evaluate("echo hello > /tmp/test.txt", &config);
+        let result = evaluate_v1("echo hello > /tmp/test.txt", &config);
         assert_eq!(result.decision, Decision::Allow);
     }
 
     #[test]
     fn test_evaluate_elif_branches() {
         let config = allow_config();
-        let result = evaluate(
+        let result = evaluate_v1(
             "if echo x; then echo a; elif echo y; then echo hello; fi",
             &config,
         );
@@ -740,7 +749,7 @@ mod lib_tests {
     #[test]
     fn test_evaluate_until_loop_with_echo() {
         let config = allow_config();
-        let result = evaluate("until echo x; do echo hello; done", &config);
+        let result = evaluate_v1("until echo x; do echo hello; done", &config);
         assert_eq!(result.decision, Decision::Allow);
     }
 
@@ -807,28 +816,28 @@ mod lib_tests {
     #[test]
     fn test_evaluate_empty_input() {
         let config = empty_config();
-        let result = evaluate("", &config);
+        let result = evaluate_v1("", &config);
         assert_eq!(result.decision, Decision::Allow);
     }
 
     #[test]
     fn test_evaluate_whitespace_only() {
         let config = empty_config();
-        let result = evaluate("   ", &config);
+        let result = evaluate_v1("   ", &config);
         assert_eq!(result.decision, Decision::Allow);
     }
 
     #[test]
     fn test_evaluate_assignment_only() {
         let config = empty_config();
-        let result = evaluate("FOO=bar", &config);
+        let result = evaluate_v1("FOO=bar", &config);
         assert_eq!(result.decision, Decision::Allow);
     }
 
     #[test]
     fn test_evaluate_else_branch() {
         let config = allow_config();
-        let result = evaluate("if echo x; then echo skip; else echo hello; fi", &config);
+        let result = evaluate_v1("if echo x; then echo skip; else echo hello; fi", &config);
         assert_eq!(result.decision, Decision::Allow);
     }
 
@@ -836,7 +845,7 @@ mod lib_tests {
     fn test_evaluate_no_else_branch_empty_config() {
         // When condition is not in config, returns Ask
         let config = empty_config();
-        let result = evaluate("if echo x; then echo hello; fi", &config);
+        let result = evaluate_v1("if echo x; then echo hello; fi", &config);
         // echo not in config, so Ask
         assert_eq!(result.decision, Decision::Ask);
     }
@@ -844,7 +853,7 @@ mod lib_tests {
     #[test]
     fn test_evaluate_empty_for_loop() {
         let config = empty_config();
-        let result = evaluate("for x in; do echo $x; done", &config);
+        let result = evaluate_v1("for x in; do echo $x; done", &config);
         // No iterations, no commands evaluated
         assert_eq!(result.decision, Decision::Allow);
     }
@@ -854,7 +863,7 @@ mod lib_tests {
         // Create a config that denies 'rm'
         let config = deny_config();
         // Sequence where second command is denied
-        let result = evaluate("echo hello; rm -rf /", &config);
+        let result = evaluate_v1("echo hello; rm -rf /", &config);
         // Should return Deny because rm is in the sequence
         assert_eq!(result.decision, Decision::Deny);
     }
@@ -863,7 +872,7 @@ mod lib_tests {
     fn test_evaluate_pipeline_returns_aggregate() {
         // Pipeline returns aggregated result
         let config = allow_config();
-        let result = evaluate("echo hello | cat | wc -l", &config);
+        let result = evaluate_v1("echo hello | cat | wc -l", &config);
         // cat and wc are not in config, so should ask
         assert_eq!(result.decision, Decision::Ask);
     }
@@ -871,7 +880,7 @@ mod lib_tests {
     #[test]
     fn test_evaluate_deny_in_and_list() {
         let config = deny_config();
-        let result = evaluate("rm -rf / && echo hello", &config);
+        let result = evaluate_v1("rm -rf / && echo hello", &config);
         // First command denies, so whole and-list denies
         assert_eq!(result.decision, Decision::Deny);
     }
@@ -879,7 +888,7 @@ mod lib_tests {
     #[test]
     fn test_evaluate_deny_in_or_list() {
         let config = deny_config();
-        let result = evaluate("rm -rf / || echo hello", &config);
+        let result = evaluate_v1("rm -rf / || echo hello", &config);
         // First command denies
         assert_eq!(result.decision, Decision::Deny);
     }
@@ -887,7 +896,7 @@ mod lib_tests {
     #[test]
     fn test_evaluate_background_with_deny() {
         let config = deny_config();
-        let result = evaluate("rm -rf / &", &config);
+        let result = evaluate_v1("rm -rf / &", &config);
         // Background still evaluates the command
         assert_eq!(result.decision, Decision::Deny);
     }
@@ -895,49 +904,49 @@ mod lib_tests {
     #[test]
     fn test_evaluate_subshell_with_deny() {
         let config = deny_config();
-        let result = evaluate("(rm -rf /)", &config);
+        let result = evaluate_v1("(rm -rf /)", &config);
         assert_eq!(result.decision, Decision::Deny);
     }
 
     #[test]
     fn test_evaluate_deny_in_if_body() {
         let config = deny_config();
-        let result = evaluate("if echo x; then rm -rf /; fi", &config);
+        let result = evaluate_v1("if echo x; then rm -rf /; fi", &config);
         assert_eq!(result.decision, Decision::Deny);
     }
 
     #[test]
     fn test_evaluate_deny_in_while_body() {
         let config = deny_config();
-        let result = evaluate("while echo x; do rm -rf /; done", &config);
+        let result = evaluate_v1("while echo x; do rm -rf /; done", &config);
         assert_eq!(result.decision, Decision::Deny);
     }
 
     #[test]
     fn test_evaluate_deny_in_for_body() {
         let config = deny_config();
-        let result = evaluate("for x in a; do rm -rf /; done", &config);
+        let result = evaluate_v1("for x in a; do rm -rf /; done", &config);
         assert_eq!(result.decision, Decision::Deny);
     }
 
     #[test]
     fn test_evaluate_deny_in_case_body() {
         let config = deny_config();
-        let result = evaluate("case x in x) rm -rf / ;; esac", &config);
+        let result = evaluate_v1("case x in x) rm -rf / ;; esac", &config);
         assert_eq!(result.decision, Decision::Deny);
     }
 
     #[test]
     fn test_evaluate_deny_in_function_body() {
         let config = deny_config();
-        let result = evaluate("myfunc() { rm -rf /; }; myfunc", &config);
+        let result = evaluate_v1("myfunc() { rm -rf /; }; myfunc", &config);
         assert_eq!(result.decision, Decision::Deny);
     }
 
     #[test]
     fn test_evaluate_deny_in_brace_group() {
         let config = deny_config();
-        let result = evaluate("{ rm -rf /; }", &config);
+        let result = evaluate_v1("{ rm -rf /; }", &config);
         assert_eq!(result.decision, Decision::Deny);
     }
 

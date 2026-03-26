@@ -5,11 +5,12 @@
 // structural scaffolding gets `None`. The renderer can then fold these
 // annotated trees to produce two-column trace output.
 
-use may_i_core::{
+use may_i_core::legacy::{
     ArgMatcher, BoolExpr, CommandMatcher, CondArm, ContextExpr, ContextFacts, ContextFailureReason,
-    ContextValue, Doc, DocF, Effect, EvalAnn, Expr, ExprBranch, FactPattern, FactPatternEval,
-    FactQuery, LayoutHint, MatcherCondPredicate, PolymorphicCondArm, PosExpr, Rule, RuleBody,
+    ContextValue, Effect, EvalAnn, Expr, ExprBranch, FactPattern, FactPatternEval, FactQuery,
+    MatcherCondPredicate, PolymorphicCondArm, PosExpr, Rule, RuleBody,
 };
+use may_i_core::{Doc, DocF, LayoutHint};
 
 use crate::matcher::{
     MatchOutcome, ResolvedArg, command_matches, expr_matches_resolved, extract_positional_args,

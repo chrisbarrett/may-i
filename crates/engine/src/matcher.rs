@@ -1,7 +1,7 @@
 // Rule matching — given a resolved command and config, find the applicable rule.
 // Pure matching logic: no AST walking, no variable resolution.
 
-use may_i_core::{CommandMatcher, Config, ContextFacts, Effect, Expr, WrapperStep};
+use may_i_core::legacy::{CommandMatcher, Config, ContextFacts, Effect, Expr, WrapperStep};
 use may_i_shell_parser::{SimpleCommand, Word};
 
 /// A resolved argument that may be a known literal or an opaque (safe but unknown) value.

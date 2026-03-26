@@ -1,7 +1,8 @@
-// Effect parser for v2 unified DSL.
+// Effect parser for the unified DSL.
 // All effect forms evaluate to Decision | Nil.
 
-use may_i_core::v2::ast::{Effect, Spanned};
+use crate::is_reserved_keyword;
+use may_i_core::ast::{Effect, Spanned};
 use may_i_sexpr::{RawError, Sexpr};
 
 /// Parse an effect from an s-expression list.
@@ -21,9 +22,9 @@ pub fn parse_effect(sexpr: &Sexpr) -> Result<Spanned<Effect>, RawError> {
             ":ask" => return Ok(Spanned::new(Effect::Ask(None), sexpr.span())),
             ":deny" => return Ok(Spanned::new(Effect::Deny(None), sexpr.span())),
             _ => {
-                if !super::is_reserved_keyword(atom) {
+                if !is_reserved_keyword(atom) {
                     // This is a command literal - treat as CommandPattern effect
-                    let pattern = super::command::parse_command_pattern_from_atom(atom)?;
+                    let pattern = crate::command::parse_command_pattern_from_atom(atom)?;
                     return Ok(Spanned::new(Effect::CommandPattern(pattern), sexpr.span()));
                 }
             }
@@ -75,7 +76,7 @@ pub fn parse_effect(sexpr: &Sexpr) -> Result<Spanned<Effect>, RawError> {
         "not" => parse_not(&list[1..], sexpr.span())?,
         // Pattern effects
         "positional" | "exact" | "anywhere" | "forbidden" | "=" => {
-            let pattern = super::pattern::parse_arg_pattern(sexpr)?;
+            let pattern = crate::pattern::parse_arg_pattern(sexpr)?;
             Effect::ArgPattern(pattern)
         }
         // "or" can be either a command pattern or an effect combinator
@@ -92,10 +93,10 @@ pub fn parse_effect(sexpr: &Sexpr) -> Result<Spanned<Effect>, RawError> {
                                     s.span(),
                                 )
                             })
-                            .and_then(super::command::parse_command_pattern_from_atom)
+                            .and_then(crate::command::parse_command_pattern_from_atom)
                     })
                     .collect();
-                Effect::CommandPattern(may_i_core::v2::pattern::CommandPattern::Or(patterns?))
+                Effect::CommandPattern(may_i_core::pattern::CommandPattern::Or(patterns?))
             } else {
                 // It's an effect combinator
                 parse_or(&list[1..], sexpr.span())?
@@ -103,7 +104,7 @@ pub fn parse_effect(sexpr: &Sexpr) -> Result<Spanned<Effect>, RawError> {
         }
         other => {
             // Try to parse as a command pattern (for complex command patterns)
-            if let Ok(pattern) = super::command::parse_command_pattern(sexpr) {
+            if let Ok(pattern) = crate::command::parse_command_pattern(sexpr) {
                 Effect::CommandPattern(pattern)
             } else {
                 return Err(
@@ -168,14 +169,14 @@ fn parse_may_i(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawErro
 
     // Allow bare `*` as shorthand for `(positional *)` - pass everything unconsumed down
     let pattern = if let Some("*") = args[0].as_atom() {
+        use may_i_core::pattern::{ArgPattern, PositionalArg};
         use may_i_core::types::Expr;
-        use may_i_core::v2::pattern::{ArgPattern, PositionalArg};
         ArgPattern::Positional {
             patterns: vec![PositionalArg::one(Expr::Wildcard)],
             continuation: None,
         }
     } else {
-        super::pattern::parse_arg_pattern(&args[0])?
+        crate::pattern::parse_arg_pattern(&args[0])?
     };
     Ok(Effect::MayI { pattern })
 }
@@ -228,7 +229,7 @@ fn parse_cond(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawError
             ));
         }
 
-        let predicate = super::predicate::parse_predicate(&branch_list[0])?;
+        let predicate = crate::predicate::parse_predicate(&branch_list[0])?;
         let effect = parse_effect(&branch_list[1])?;
 
         branches.push((Spanned::new(predicate, branch_list[0].span()), effect));
@@ -246,7 +247,7 @@ fn parse_when(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawError
         ));
     }
 
-    let predicate = super::predicate::parse_predicate(&args[0])?;
+    let predicate = crate::predicate::parse_predicate(&args[0])?;
     let effect = parse_effect(&args[1])?;
 
     Ok(Effect::When {
@@ -264,7 +265,7 @@ fn parse_unless(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawErr
         ));
     }
 
-    let predicate = super::predicate::parse_predicate(&args[0])?;
+    let predicate = crate::predicate::parse_predicate(&args[0])?;
     let effect = parse_effect(&args[1])?;
 
     Ok(Effect::Unless {
@@ -282,7 +283,7 @@ fn parse_if(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawError> 
         ));
     }
 
-    let predicate = super::predicate::parse_predicate(&args[0])?;
+    let predicate = crate::predicate::parse_predicate(&args[0])?;
     let then_effect = parse_effect(&args[1])?;
     let else_effect = parse_effect(&args[2])?;
 
@@ -348,8 +349,10 @@ fn parse_not(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawError>
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use may_i_core::v2::pattern::ArgPattern;
+    use crate::*;
+    use may_i_core::ast::Effect;
+    use may_i_core::pattern::ArgPattern;
+    use may_i_sexpr::RawError;
 
     fn parse_effect_str(input: &str) -> Result<Effect, RawError> {
         let (forms, errors) = may_i_sexpr::parse(input);

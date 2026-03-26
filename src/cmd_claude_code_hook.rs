@@ -7,10 +7,7 @@ use may_i_core::{ContextFacts, EvalResult};
 use may_i_engine as engine;
 use miette::Context;
 
-pub fn cmd_claude_code_hook(
-    use_v2: bool,
-    config_path: Option<&std::path::Path>,
-) -> miette::Result<()> {
+pub fn cmd_claude_code_hook(config_path: Option<&std::path::Path>) -> miette::Result<()> {
     let mut input = String::new();
     std::io::stdin()
         .take(65536)
@@ -29,22 +26,15 @@ pub fn cmd_claude_code_hook(
 
     let config_file = config::resolve_path(config_path)?;
 
-    let result = if use_v2 {
-        // Task 7.3: Use v2 evaluator
-        let v2_config = config::load_v2(&config_file)?;
-        let context = build_context(&payload);
-        let args: Vec<String> = command
-            .split_whitespace()
-            .skip(1)
-            .map(String::from)
-            .collect();
-        let cmd = command.split_whitespace().next().unwrap_or(&command);
-        engine::v2::evaluate_v2(cmd, &args, &v2_config, &context)
-    } else {
-        let config = config::load(&config_file)?;
-        let context = build_context(&payload);
-        engine::evaluate_with_context(&command, &config, &context)
-    };
+    let canonical_config = config::load(&config_file)?;
+    let context = build_context(&payload);
+    let args: Vec<String> = command
+        .split_whitespace()
+        .skip(1)
+        .map(String::from)
+        .collect();
+    let cmd = command.split_whitespace().next().unwrap_or(&command);
+    let result = engine::eval::evaluate(cmd, &args, &canonical_config, &context);
 
     let response = render_response(result);
 

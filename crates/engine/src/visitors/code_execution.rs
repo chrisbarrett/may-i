@@ -155,7 +155,7 @@ impl CodeExecutionVisitor {
 mod tests {
     use super::*;
     use crate::var_env::VarEnv;
-    use may_i_core::Config;
+    use may_i_core::legacy::Config;
     use may_i_shell_parser::{self as parser, Command};
 
     fn test_context() -> VisitorContext<'static> {

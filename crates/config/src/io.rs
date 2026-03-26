@@ -2,16 +2,16 @@
 
 use std::path::{Path, PathBuf};
 
-use may_i_core::Config;
+use may_i_core::legacy::Config;
 use miette::{Context, IntoDiagnostic};
 
-/// Load and parse a v2 config file at the given path.
-pub fn load_v2(path: &Path) -> miette::Result<may_i_core::v2::ast::Config> {
+/// Load and parse a config file at the given path.
+pub fn load(path: &Path) -> miette::Result<may_i_core::ast::Config> {
     let content = std::fs::read_to_string(path)
         .into_diagnostic()
         .wrap_err_with(|| format!("Failed to read {}", path.display()))?;
 
-    crate::v2::parse_config(&content)
+    crate::parse_config(&content)
         .map_err(|e| crate::ConfigError::from_raw(e, &content, &path.display().to_string()).into())
 }
 
@@ -48,11 +48,11 @@ pub fn resolve_path(override_path: Option<&Path>) -> miette::Result<PathBuf> {
     }
 }
 
-/// Load and parse a legacy v1 config file at the given path.
+/// Load a legacy v1 config file (deprecated, always fails).
 ///
 /// **DEPRECATED**: v1 configuration format is no longer supported.
-/// Use `load_v2` for new configs or run `may-i migrate` to convert.
-pub fn load(_path: &Path) -> miette::Result<Config> {
+/// Use `load` for new configs or run `may-i migrate` to convert.
+pub fn load_legacy(_path: &Path) -> miette::Result<Config> {
     miette::bail!(
         "Legacy configuration format is no longer supported. \
          Run `may-i migrate` to update your configuration to the current format."
@@ -84,32 +84,32 @@ mod tests {
     use std::io::Write;
 
     #[test]
-    fn test_load_v2_success() {
+    fn test_load_success() {
         let mut temp_file = tempfile::NamedTempFile::new().unwrap();
         writeln!(temp_file, r#"(safe-env-vars "HOME")"#).unwrap();
-        let result = load_v2(temp_file.path());
+        let result = load(temp_file.path());
         assert!(result.is_ok());
     }
 
     #[test]
-    fn test_load_v2_file_not_found() {
+    fn test_load_file_not_found() {
         let path = PathBuf::from("/nonexistent/path/config.lisp");
-        let result = load_v2(&path);
+        let result = load(&path);
         assert!(result.is_err());
     }
 
     #[test]
-    fn test_load_v2_parse_error() {
+    fn test_load_parse_error() {
         let mut temp_file = tempfile::NamedTempFile::new().unwrap();
         writeln!(temp_file, "(invalid").unwrap();
-        let result = load_v2(temp_file.path());
+        let result = load(temp_file.path());
         assert!(result.is_err());
     }
 
     #[test]
-    fn test_load_v1_deprecated() {
+    fn test_load_legacy_deprecated() {
         let path = PathBuf::from("/tmp/test.lisp");
-        let result = load(&path);
+        let result = load_legacy(&path);
         assert!(result.is_err());
         let err_msg = format!("{}", result.unwrap_err());
         assert!(err_msg.contains("no longer supported"));

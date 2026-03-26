@@ -12,7 +12,7 @@ fn create_temp_config(content: &str) -> NamedTempFile {
 
 #[test]
 fn test_trivia_extraction() {
-    use may_i_config::v2::migrate::{extract_leading_context, extract_trailing_context};
+    use may_i_config::migrate::{extract_leading_context, extract_trailing_context};
     use may_i_sexpr::parse_cst;
 
     let source = r#";; Comment before
@@ -36,22 +36,22 @@ fn test_trivia_extraction() {
 
 #[test]
 fn test_migration_analysis_no_changes() {
-    use may_i_config::v2::migrate::analyze_migration;
+    use may_i_config::migrate::analyze_migration;
 
-    // Already v2 syntax (new unified style) - no changes needed
+    // Already canonical syntax (unified style) - no changes needed
     let source = "(rule git :effect :allow)";
     let analysis = analyze_migration(source);
 
     assert!(
         analysis.diffs.is_empty(),
-        "Already v2 syntax should have no diffs"
+        "Already canonical syntax should have no diffs"
     );
     assert_eq!(analysis.unchanged_count, 1, "Should have 1 unchanged form");
 }
 
 #[test]
 fn test_migration_analysis_with_changes() {
-    use may_i_config::v2::migrate::analyze_migration;
+    use may_i_config::migrate::analyze_migration;
 
     // v1 syntax that needs migration
     let source = "(rule (command git) (effect :allow))";
@@ -77,7 +77,7 @@ fn test_migration_analysis_with_changes() {
 
 #[test]
 fn test_migration_analysis_multiple_forms() {
-    use may_i_config::v2::migrate::analyze_migration;
+    use may_i_config::migrate::analyze_migration;
 
     let source = r#"
 (rule (command git) (effect :allow))
@@ -87,7 +87,7 @@ fn test_migration_analysis_multiple_forms() {
 
     let analysis = analyze_migration(source);
 
-    // Should detect changes in first two forms (v1 syntax), last one is already new v2 syntax
+    // Should detect changes in first two forms (v1 syntax), last one is already canonical syntax
     assert!(analysis.diffs.len() >= 2, "Should have at least 2 diffs");
     assert!(
         analysis.unchanged_count >= 1,
@@ -97,7 +97,7 @@ fn test_migration_analysis_multiple_forms() {
 
 #[test]
 fn test_check_unhandled_cases_no_false_positives() {
-    use may_i_config::v2::migrate::check_unhandled_cases;
+    use may_i_config::migrate::check_unhandled_cases;
 
     // Comments containing words like "wrapper" should not be flagged
     let source = r#"
@@ -114,7 +114,7 @@ fn test_check_unhandled_cases_no_false_positives() {
 
 #[test]
 fn test_check_unhandled_cases_real_issues() {
-    use may_i_config::v2::migrate::check_unhandled_cases;
+    use may_i_config::migrate::check_unhandled_cases;
 
     // A form that can't be migrated (malformed)
     let source = r#"
@@ -128,7 +128,7 @@ fn test_check_unhandled_cases_real_issues() {
 
 #[test]
 fn test_migration_diff_struct() {
-    use may_i_config::v2::migrate::{MigrationDiff, Span};
+    use may_i_config::migrate::{MigrationDiff, Span};
 
     let diff = MigrationDiff {
         before: "(rule (command git) (effect :allow))".to_string(),
@@ -160,7 +160,7 @@ fn test_terminal_width_detection() {
 
 #[test]
 fn test_side_by_side_vs_vertical_layout() {
-    use may_i_config::v2::migrate::{MigrationAnalysis, MigrationDiff, Span};
+    use may_i_config::migrate::{MigrationAnalysis, MigrationDiff, Span};
 
     let analysis = MigrationAnalysis {
         diffs: vec![MigrationDiff {
@@ -181,7 +181,7 @@ fn test_side_by_side_vs_vertical_layout() {
 
 #[test]
 fn test_error_context_display() {
-    use may_i_config::v2::migrate::{MigrationError, Span};
+    use may_i_config::migrate::{MigrationError, Span};
 
     let error = MigrationError {
         message: "unexpected character: '~'".to_string(),
@@ -199,7 +199,7 @@ fn test_error_context_display() {
 
 #[test]
 fn test_diff_output_simple_migration() {
-    use may_i_config::v2::migrate::analyze_migration;
+    use may_i_config::migrate::analyze_migration;
 
     let source = "(rule (command git) (effect :allow))\n";
     let analysis = analyze_migration(source);
@@ -227,7 +227,7 @@ fn test_diff_output_simple_migration() {
 
 #[test]
 fn test_diff_output_multiple_changes() {
-    use may_i_config::v2::migrate::analyze_migration;
+    use may_i_config::migrate::analyze_migration;
 
     let source = r#"(rule (command git) (effect :allow))
 (rule (command ls) (effect :allow))
@@ -251,7 +251,7 @@ fn test_diff_output_multiple_changes() {
 
 #[test]
 fn test_diff_output_no_changes() {
-    use may_i_config::v2::migrate::analyze_migration;
+    use may_i_config::migrate::analyze_migration;
 
     let source = "(rule git :effect :allow)\n";
     let analysis = analyze_migration(source);
@@ -259,7 +259,7 @@ fn test_diff_output_no_changes() {
     // Verify the analysis structure
     assert!(
         analysis.diffs.is_empty(),
-        "Should have no diffs for v2 syntax"
+        "Should have no diffs for canonical syntax"
     );
     assert_eq!(analysis.unchanged_count, 1, "Should have 1 unchanged form");
     assert!(analysis.errors.is_empty(), "Should have no errors");

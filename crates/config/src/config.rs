@@ -1,12 +1,12 @@
-// Config parser for v2 DSL.
+// Config parser for the unified DSL.
 // Task 2.10: Implement safe-env-vars and check parsers (preserve existing behavior)
 
 use may_i_core::Span;
+use may_i_core::ast::{Check, Config, SecurityConfig};
 use may_i_core::types::{ContextFacts, Decision};
-use may_i_core::v2::ast::{Check, Config, SecurityConfig};
 use may_i_sexpr::{RawError, Sexpr};
 
-/// Parse a v2 config from an s-expression string.
+/// Parse a config from an s-expression string.
 pub fn parse_config(input: &str) -> Result<Config, RawError> {
     let (forms, errors) = may_i_sexpr::parse(input);
     if let Some(err) = errors.into_iter().next() {
@@ -30,11 +30,11 @@ pub fn parse_config(input: &str) -> Result<Config, RawError> {
 
         match tag {
             "rule" => {
-                let rule = super::rule::parse_rule(form)?;
+                let rule = crate::rule::parse_rule(form)?;
                 config.rules.push(rule.value);
             }
             "define" => {
-                let define = super::rule::parse_define(form)?;
+                let define = crate::rule::parse_define(form)?;
                 config.defines.push(define);
             }
             "safe-env-vars" => {
@@ -305,6 +305,7 @@ fn parse_check_items(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use may_i_core::types::Decision;
 
     #[test]
     fn parse_empty_config() {

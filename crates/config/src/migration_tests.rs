@@ -1,7 +1,6 @@
-// Comprehensive migration tool tests for v1 to v2 syntax conversion.
-// Task 7.7: Write comprehensive migration tool tests
+// Comprehensive migration tool tests for v1 to canonical syntax conversion.
 
-use crate::v2::migrate::{check_unhandled_cases, migrate, migrate_forms, validate_migration};
+use crate::migrate::{check_unhandled_cases, migrate, migrate_forms, validate_migration};
 use may_i_sexpr::parse_cst;
 
 fn parse_single(input: &str) -> Box<may_i_sexpr::cst::CstNode> {
@@ -238,7 +237,7 @@ fn migration_complex_real_world_config() {
     assert!(!output.contains("(context"));
     assert!(!output.contains("(args"));
 
-    // v2 forms should be present
+    // Canonical forms should be present
     assert!(output.contains("define"));
     assert!(output.contains("rule"));
 }
@@ -283,11 +282,11 @@ fn migration_args_with_cond() {
 
 #[test]
 fn validate_migration_reports_errors() {
-    let invalid_v2 = r#"
+    let invalid_config = r#"
         (rule "git" (effect :invalid-decision))
     "#;
 
-    let result = validate_migration(invalid_v2);
+    let result = validate_migration(invalid_config);
     assert!(result.is_err());
 
     let errors = result.unwrap_err();
