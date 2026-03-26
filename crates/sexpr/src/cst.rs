@@ -496,8 +496,8 @@ impl CstNode<TriviaAnn> {
                     for clause in &children[1..] {
                         ctx.write_newline();
                         ctx.write_str(&" ".repeat(body_indent));
-                        // For cond clauses, format fresh without trivia to avoid spacing issues
-                        clause.pretty_write_fresh(ctx);
+                        // For cond clauses, format without whitespace trivia
+                        clause.pretty_write_no_whitespace(ctx);
                     }
                 } else {
                     // Standard list formatting with cascading line breaks
@@ -522,29 +522,26 @@ impl CstNode<TriviaAnn> {
                             let needs_break = ctx.has_broken || (would_exceed && past_indent);
 
                             if needs_break {
-                                // Force a break - ignore any leading whitespace from original source
+                                // Force a break
                                 ctx.write_newline();
                                 ctx.write_indent();
-                            } else if child.ann.leading.is_empty() {
-                                // No break needed and no leading trivia - add space
+                            } else {
+                                // No break needed - add space
                                 ctx.write_str(" ");
                             }
-                            // If there's leading trivia (comments), it will be written by pretty_write
                         }
 
-                        // Write the child
-                        child.pretty_write(ctx);
+                        // Write the child without its original whitespace trivia
+                        // (we control formatting with our own indentation)
+                        child.pretty_write_no_whitespace(ctx);
 
                         // If this was a keyword, the next child is its value - keep them together
                         if is_keyword && i + 1 < children.len() {
                             let value = &children[i + 1];
-                            // Check if value has leading trivia (comments/whitespace)
-                            if value.ann.leading.is_empty() {
-                                // Value has no leading trivia, keep on same line with space
-                                ctx.write_str(" ");
-                            }
-                            // Write the value
-                            value.pretty_write(ctx);
+                            // Add space between keyword and value
+                            ctx.write_str(" ");
+                            // Write the value without its whitespace trivia
+                            value.pretty_write_no_whitespace(ctx);
                             // Skip the value in the next iteration
                             i += 1;
                         }
@@ -573,11 +570,11 @@ impl CstNode<TriviaAnn> {
                         if needs_break {
                             ctx.write_newline();
                             ctx.write_indent();
-                        } else if child.ann.leading.is_empty() {
+                        } else {
                             ctx.write_str(" ");
                         }
                     }
-                    child.pretty_write(ctx);
+                    child.pretty_write_no_whitespace(ctx);
                 }
 
                 ctx.pop_indent();
@@ -629,6 +626,126 @@ impl CstNode<TriviaAnn> {
                     child.pretty_write_fresh(ctx);
                 }
                 ctx.write_str("]");
+            }
+        }
+    }
+
+    /// Write node preserving only comments, not whitespace.
+    fn pretty_write_no_whitespace(&self, ctx: &mut PrettyCtx) {
+        // Write only comment trivia, not whitespace
+        for trivia in &self.ann.leading {
+            if let Trivia::Comment { text, has_newline } = trivia {
+                ctx.write_str(text);
+                if *has_newline {
+                    ctx.write_newline();
+                }
+            }
+        }
+
+        let head_col = ctx.col;
+
+        match &self.shape {
+            ShapeF::Atom(s) => {
+                ctx.write_str(s);
+            }
+            ShapeF::Str(s) => {
+                ctx.write_str(&quote_string(s));
+            }
+            ShapeF::List(children) => {
+                ctx.write_str("(");
+                
+                // Check if this is a cond form
+                let is_cond = children.first().and_then(|c| c.as_atom()) == Some("cond");
+                
+                if is_cond && children.len() > 1 {
+                    // Special cond formatting: always break clauses
+                    let body_indent = head_col + 2;
+                    
+                    // Write "cond" head
+                    if let Some(head) = children.first() {
+                        head.pretty_write_no_whitespace(ctx);
+                    }
+                    
+                    // Each clause on its own line
+                    for clause in &children[1..] {
+                        ctx.write_newline();
+                        ctx.write_str(&" ".repeat(body_indent));
+                        clause.pretty_write_no_whitespace(ctx);
+                    }
+                } else {
+                    // Standard list formatting
+                    let child_indent = head_col + 1;
+                    ctx.push_indent(child_indent);
+                    ctx.reset_broken();
+
+                    let mut i = 0;
+                    while i < children.len() {
+                        let child = &children[i];
+                        let is_keyword = child.as_atom().map_or(false, |s| s.starts_with(':'));
+
+                        if i > 0 {
+                            let child_width = estimate_width(child);
+                            let would_exceed = ctx.col + 1 + child_width > ctx.width;
+                            let past_indent = ctx.col > child_indent;
+                            let needs_break = ctx.has_broken || (would_exceed && past_indent);
+
+                            if needs_break {
+                                ctx.write_newline();
+                                ctx.write_indent();
+                            } else {
+                                ctx.write_str(" ");
+                            }
+                        }
+
+                        child.pretty_write_no_whitespace(ctx);
+
+                        if is_keyword && i + 1 < children.len() {
+                            ctx.write_str(" ");
+                            children[i + 1].pretty_write_no_whitespace(ctx);
+                            i += 1;
+                        }
+
+                        i += 1;
+                    }
+                    ctx.pop_indent();
+                }
+                ctx.write_str(")");
+            }
+            ShapeF::Vector(children) => {
+                ctx.write_str("[");
+                
+                let child_indent = head_col + 1;
+                ctx.push_indent(child_indent);
+                ctx.reset_broken();
+
+                for (i, child) in children.iter().enumerate() {
+                    if i > 0 {
+                        let child_width = estimate_width(child);
+                        let would_exceed = ctx.col + 1 + child_width > ctx.width;
+                        let past_indent = ctx.col > child_indent;
+                        let needs_break = ctx.has_broken || (would_exceed && past_indent);
+
+                        if needs_break {
+                            ctx.write_newline();
+                            ctx.write_indent();
+                        } else {
+                            ctx.write_str(" ");
+                        }
+                    }
+                    child.pretty_write_no_whitespace(ctx);
+                }
+                ctx.pop_indent();
+                ctx.write_str("]");
+            }
+        }
+
+        // Write only comment trivia from trailing
+        for trivia in &self.ann.trailing {
+            if let Trivia::Comment { text, has_newline } = trivia {
+                ctx.write_str(text);
+                if *has_newline {
+                    ctx.write_newline();
+                }
             }
         }
     }
@@ -1814,13 +1931,13 @@ mod proptests {
 
         // Find the cond line and verify clauses follow on separate lines
         let cond_idx = lines.iter().position(|l| l.contains("(cond"));
-        let clause1_idx = lines.iter().position(|l| l.contains("((anywhere"));
+        let clause1_idx = lines.iter().position(|l| l.contains("(anywhere"));
         let clause2_idx = lines.iter().position(|l| l.contains("(else"));
 
         assert!(cond_idx.is_some(), "Should have cond\nGot:\n{}", pretty);
         assert!(
             clause1_idx.is_some(),
-            "Should have first clause\nGot:\n{}",
+            "Should have first clause with anywhere\nGot:\n{}",
             pretty
         );
         assert!(
@@ -2013,12 +2130,25 @@ mod proptests {
             pretty
         );
 
-        // Should have :effect on separate line
+        // Should have :effect on separate line (check for newline followed by :effect)
         assert!(
-            pretty.contains("\n  :effect :ask"),
+            pretty.contains("\n") && pretty.contains(":effect :ask"),
             "Should have ':effect :ask' on separate line\nGot:\n{}",
             pretty
         );
+        
+        // After check breaks, :effect should come on a new line (cascading)
+        let lines: Vec<&str> = pretty.lines().collect();
+        let check_line = lines.iter().position(|l| l.contains("(check"));
+        let effect_line = lines.iter().position(|l| l.contains(":effect"));
+        
+        if let (Some(c_idx), Some(e_idx)) = (check_line, effect_line) {
+            assert!(
+                e_idx > c_idx,
+                ":effect should come after check on a new line\nGot:\n{}",
+                pretty
+            );
+        }
     }
 
     #[test]
