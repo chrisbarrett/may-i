@@ -1,49 +1,14 @@
 // Integration tests for migration diff functionality
 
-// Import the mock prompt handler from cmd_migrate
-mod mock {
-    use std::cell::RefCell;
-    use std::io;
+use std::io::Write;
+use tempfile::NamedTempFile;
 
-    pub trait PromptHandler {
-        fn is_tty(&self) -> bool;
-        fn prompt(&self, message: &str) -> io::Result<String>;
-    }
-
-    pub struct MockPromptHandler {
-        responses: Vec<String>,
-        response_index: RefCell<usize>,
-        is_tty: bool,
-    }
-
-    impl MockPromptHandler {
-        pub fn new(responses: Vec<String>, is_tty: bool) -> Self {
-            Self {
-                responses,
-                response_index: RefCell::new(0),
-                is_tty,
-            }
-        }
-    }
-
-    impl PromptHandler for MockPromptHandler {
-        fn is_tty(&self) -> bool {
-            self.is_tty
-        }
-
-        fn prompt(&self, _message: &str) -> io::Result<String> {
-            let idx = *self.response_index.borrow();
-            if idx < self.responses.len() {
-                *self.response_index.borrow_mut() += 1;
-                Ok(self.responses[idx].clone())
-            } else {
-                Ok("".to_string())
-            }
-        }
-    }
+/// Helper to create a temp config file with given content
+fn create_temp_config(content: &str) -> NamedTempFile {
+    let mut file = NamedTempFile::new().unwrap();
+    file.write_all(content.as_bytes()).unwrap();
+    file
 }
-
-use mock::{MockPromptHandler, PromptHandler};
 
 #[test]
 fn test_trivia_extraction() {
@@ -162,22 +127,6 @@ fn test_check_unhandled_cases_real_issues() {
 }
 
 #[test]
-fn test_prompt_handler_mock() {
-    let handler = MockPromptHandler::new(vec!["y".to_string()], true);
-
-    assert!(handler.is_tty(), "Should report as TTY");
-
-    let response = handler.prompt("Apply? ").unwrap();
-    assert_eq!(response, "y");
-}
-
-#[test]
-fn test_prompt_handler_not_tty() {
-    let handler = MockPromptHandler::new(vec![], false);
-    assert!(!handler.is_tty(), "Should report as not TTY");
-}
-
-#[test]
 fn test_migration_diff_struct() {
     use may_i_config::v2::migrate::{MigrationDiff, Span};
 
@@ -244,4 +193,74 @@ fn test_error_context_display() {
     assert_eq!(error.span.start, 10);
     assert_eq!(error.span.end, 11);
     assert!(!error.context_before.is_empty());
+}
+
+// Snapshot tests for migration diff output
+
+#[test]
+fn test_diff_output_simple_migration() {
+    use may_i_config::v2::migrate::analyze_migration;
+
+    let source = "(rule (command git) (effect :allow))\n";
+    let analysis = analyze_migration(source);
+
+    // Verify the analysis structure
+    assert_eq!(analysis.diffs.len(), 1, "Should have 1 diff");
+    assert_eq!(analysis.unchanged_count, 0, "Should have 0 unchanged forms");
+    assert!(analysis.errors.is_empty(), "Should have no errors");
+
+    // Verify the diff content
+    let diff = &analysis.diffs[0];
+    assert!(
+        diff.before.contains("(command git)"),
+        "Before should have command wrapper"
+    );
+    assert!(
+        !diff.after.contains("(command"),
+        "After should not have command wrapper"
+    );
+    assert!(
+        diff.after.contains("git :effect"),
+        "After should have inlined command"
+    );
+}
+
+#[test]
+fn test_diff_output_multiple_changes() {
+    use may_i_config::v2::migrate::analyze_migration;
+
+    let source = r#"(rule (command git) (effect :allow))
+(rule (command ls) (effect :allow))
+"#;
+    let analysis = analyze_migration(source);
+
+    // Verify the analysis structure
+    assert_eq!(analysis.diffs.len(), 2, "Should have 2 diffs");
+    assert_eq!(analysis.unchanged_count, 0, "Should have 0 unchanged forms");
+    assert!(analysis.errors.is_empty(), "Should have no errors");
+
+    // Verify both diffs are present
+    let commands: Vec<&str> = analysis
+        .diffs
+        .iter()
+        .map(|d| d.after.split_whitespace().nth(1).unwrap_or(""))
+        .collect();
+    assert!(commands.contains(&"git"), "Should have git command");
+    assert!(commands.contains(&"ls"), "Should have ls command");
+}
+
+#[test]
+fn test_diff_output_no_changes() {
+    use may_i_config::v2::migrate::analyze_migration;
+
+    let source = "(rule git :effect :allow)\n";
+    let analysis = analyze_migration(source);
+
+    // Verify the analysis structure
+    assert!(
+        analysis.diffs.is_empty(),
+        "Should have no diffs for v2 syntax"
+    );
+    assert_eq!(analysis.unchanged_count, 1, "Should have 1 unchanged form");
+    assert!(analysis.errors.is_empty(), "Should have no errors");
 }

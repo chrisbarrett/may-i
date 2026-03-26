@@ -522,6 +522,7 @@ dependencies = [
  "predicates",
  "serde",
  "serde_json",
+ "similar",
  "tempfile",
  "terminal_size",
 ]
@@ -567,11 +568,9 @@ dependencies = [
  "may-i-core",
  "may-i-pp",
  "may-i-sexpr",
- "minus",
  "serde",
  "serde_json",
  "terminal_size",
- "unicode-width 0.2.2",
 ]
 
 [[package]]

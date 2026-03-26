@@ -1,19 +1,21 @@
 //! Migration command for converting v1 configs to v2 syntax.
 //!
 //! This module implements the `may-i migrate` subcommand with interactive
-//! prompting and detailed diff display.
+//! prompting and simplified text-based diff display using the `similar` crate.
 //!
 //! # Interactive Mode
 //!
-//! When running in a TTY, the command shows a form-by-form diff and prompts
+//! When running in a TTY, the command shows a unified diff and prompts
 //! for confirmation before applying changes. Use `--yes` to skip the prompt
 //! for non-interactive usage (required in CI/CD).
 //!
-//! # Diff Layout
+//! # Diff Format
 //!
-//! The diff display adapts to terminal width:
-//! - ≥80 columns: Side-by-side layout showing before/after
-//! - <80 columns: Vertical layout showing before then after
+//! The diff display shows:
+//! - File path header with `~` for HOME directory
+//! - Removed lines prefixed with `-` (red in TTY mode)
+//! - Added lines prefixed with `+` (green in TTY mode)
+//! - 3 lines of context around changes
 //!
 //! # Error Handling
 //!
@@ -24,10 +26,11 @@
 use std::io::{self, IsTerminal, Write};
 use std::path::Path;
 
+use colored::Colorize;
 use may_i_config::v2::migrate::{migrate_forms, validate_migration};
-use may_i_output::diff_renderer::{DiffConfig, display_with_pager, render_diff, should_use_pager};
-use may_i_sexpr::diff::compute_diff;
+use may_i_output::shorten_home;
 use may_i_sexpr::parse_cst;
+use similar::{ChangeTag, TextDiff};
 
 /// Abstract terminal interaction behind a trait for testability.
 pub trait PromptHandler {
@@ -90,6 +93,73 @@ impl PromptHandler for MockPromptHandler {
     }
 }
 
+/// Generate a unified text diff between original and migrated content.
+///
+/// The diff includes:
+/// - File path header with `~` for HOME directory
+/// - Removed lines with `-` prefix
+/// - Added lines with `+` prefix
+/// - 3 lines of context around changes
+/// - Colors when stdout is TTY and NO_COLOR is not set
+fn generate_diff(original: &str, migrated: &str, config_path: &Path, use_color: bool) -> String {
+    let diff = TextDiff::from_lines(original, migrated);
+    let mut output = String::new();
+
+    // Add file path header
+    let display_path = shorten_home(config_path);
+    output.push_str(&format!("{}:\n", display_path));
+
+    // Track if we've seen any changes
+    let mut has_changes = false;
+
+    // Generate diff with context
+    for group in diff.grouped_ops(3) {
+        for op in group {
+            for change in diff.iter_changes(&op) {
+                has_changes = true;
+                let change_tag: ChangeTag = change.tag();
+                let (prefix, line) = match change_tag {
+                    ChangeTag::Delete => {
+                        let line = change.value().trim_end_matches('\n');
+                        if use_color {
+                            ("-".red().to_string(), line.red().to_string())
+                        } else {
+                            ("-".to_string(), line.to_string())
+                        }
+                    }
+                    ChangeTag::Insert => {
+                        let line = change.value().trim_end_matches('\n');
+                        if use_color {
+                            ("+".green().to_string(), line.green().to_string())
+                        } else {
+                            ("+".to_string(), line.to_string())
+                        }
+                    }
+                    ChangeTag::Equal => {
+                        let line = change.value().trim_end_matches('\n');
+                        (" ".to_string(), line.to_string())
+                    }
+                };
+                output.push_str(&format!("{}{}\n", prefix, line));
+            }
+        }
+    }
+
+    if has_changes { output } else { String::new() }
+}
+
+/// Check if color output should be used.
+///
+/// Returns true only if:
+/// - stdout is a TTY
+/// - NO_COLOR environment variable is not set
+fn should_use_color() -> bool {
+    if std::env::var("NO_COLOR").is_ok() {
+        return false;
+    }
+    io::stdout().is_terminal()
+}
+
 /// Run the migration command.
 pub fn cmd_migrate(
     config_path: Option<&Path>,
@@ -129,13 +199,6 @@ pub fn cmd_migrate_with_handler(
         .into());
     }
 
-    // Serialize original forms for comparison (before migration)
-    let original_text: String = original_forms
-        .iter()
-        .map(|f| f.serialize())
-        .collect::<Vec<_>>()
-        .join("");
-
     // Migrate the forms
     let migrated_forms = migrate_forms(original_forms.clone());
 
@@ -158,26 +221,14 @@ pub fn cmd_migrate_with_handler(
         .into());
     }
 
-    // Compute diff between original and migrated
-    let original_flat: Vec<_> = original_forms.into_iter().map(|b| *b).collect();
-    let migrated_flat: Vec<_> = migrated_forms.into_iter().map(|b| *b).collect();
-    let diff_nodes = compute_diff(original_flat, migrated_flat);
-
     // Check if there are any changes by comparing serialized output
-    // This avoids showing diffs for formatting-only changes
-    let has_changes = original_text != output_text;
+    let has_changes = source != output_text;
 
-    // Show diff if requested or if changes exist and not auto-confirmed
+    // Show diff if changes exist and not auto-confirmed
     if has_changes && !yes {
-        let config = DiffConfig::default();
-        let diff_output = render_diff(&diff_nodes, &config);
-
-        // Determine if we should use the pager
-        let use_pager = should_use_pager(diff_output.lines().count());
-
-        // Display with pager if appropriate
-        if let Err(e) = display_with_pager(&diff_output, use_pager) {
-            eprintln!("Warning: Failed to display with pager: {e}");
+        let use_color = should_use_color();
+        let diff_output = generate_diff(&source, &output_text, &config_file, use_color);
+        if !diff_output.is_empty() {
             println!("{}", diff_output);
         }
     }
@@ -186,19 +237,16 @@ pub fn cmd_migrate_with_handler(
     if has_changes && !yes {
         if !handler.is_tty() {
             return Err(miette::miette!(
-                "Migration would modify {} form(s). Use --yes to confirm non-interactive execution.",
-                diff_nodes
-                    .iter()
-                    .filter(|n| !n.ann.change.is_unchanged())
-                    .count()
+                "Config file would be modified. Use --yes to confirm non-interactive execution."
             ));
         }
 
         let response = handler
-            .prompt("Apply migration? [Y/n] ")
+            .prompt("Apply migration? [y/N] ")
             .map_err(|e| miette::miette!("Failed to read prompt response: {e}"))?;
 
-        if !response.is_empty() && !response.to_lowercase().starts_with('y') {
+        // Default to No (cancel) if user just presses Enter
+        if response.is_empty() || !response.to_lowercase().starts_with('y') {
             println!("Migration cancelled.");
             return Ok(());
         }
@@ -247,5 +295,154 @@ mod tests {
         assert_eq!(handler.prompt("Test: ").unwrap(), "yes");
         assert_eq!(handler.prompt("Test: ").unwrap(), "no");
         assert_eq!(handler.prompt("Test: ").unwrap(), ""); // Exhausted responses
+    }
+
+    #[test]
+    fn test_should_use_color_respects_no_color() {
+        // Save original value
+        let original = std::env::var("NO_COLOR").ok();
+
+        // Test with NO_COLOR set
+        unsafe {
+            std::env::set_var("NO_COLOR", "1");
+        }
+        assert!(!should_use_color());
+
+        // Test with NO_COLOR unset
+        unsafe {
+            std::env::remove_var("NO_COLOR");
+        }
+        // Result depends on whether stdout is a TTY in test environment
+        let _ = should_use_color();
+
+        // Restore original value
+        unsafe {
+            match original {
+                Some(val) => std::env::set_var("NO_COLOR", val),
+                None => std::env::remove_var("NO_COLOR"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_generate_diff_with_changes() {
+        let original = "(rule (command git) (effect :allow))\n";
+        let migrated = "(rule git :effect :allow)\n";
+        let path = Path::new("/home/user/.config/may-i/config.lisp");
+
+        let diff = generate_diff(original, migrated, path, false);
+
+        assert!(diff.contains("config.lisp"));
+        assert!(diff.contains("-"));
+        assert!(diff.contains("+"));
+    }
+
+    #[test]
+    fn test_generate_diff_no_changes() {
+        let original = "(rule git :effect :allow)\n";
+        let path = Path::new("/home/user/.config/may-i/config.lisp");
+
+        let diff = generate_diff(original, original, path, false);
+
+        assert!(diff.is_empty());
+    }
+
+    #[test]
+    fn test_generate_diff_with_colors() {
+        let original = "(old)\n";
+        let migrated = "(new)\n";
+        let path = Path::new("/home/user/.config/may-i/config.lisp");
+
+        // Test with colors enabled
+        let diff = generate_diff(original, migrated, path, true);
+
+        assert!(diff.contains("config.lisp"));
+        assert!(diff.contains("-"));
+        assert!(diff.contains("+"));
+        // When use_color=true, the function attempts to colorize
+        // (actual ANSI codes depend on the colored crate's behavior in test env)
+    }
+
+    #[test]
+    fn test_generate_diff_without_colors() {
+        let original = "(old)\n";
+        let migrated = "(new)\n";
+        let path = Path::new("/home/user/.config/may-i/config.lisp");
+
+        // Test with colors disabled
+        let diff = generate_diff(original, migrated, path, false);
+
+        assert!(diff.contains("config.lisp"));
+        assert!(diff.contains("-"));
+        assert!(diff.contains("+"));
+        // No ANSI color codes
+        assert!(!diff.contains("\x1b["));
+    }
+
+    #[test]
+    fn test_generate_diff_with_context() {
+        let original = "line1\nline2\nline3\n(old)\nline5\nline6\nline7\n";
+        let migrated = "line1\nline2\nline3\n(new)\nline5\nline6\nline7\n";
+        let path = Path::new("test.lisp");
+
+        let diff = generate_diff(original, migrated, path, false);
+
+        // Should have context lines
+        assert!(diff.contains("line2"));
+        assert!(diff.contains("line3"));
+        assert!(diff.contains("line5"));
+        assert!(diff.contains("line6"));
+    }
+
+    #[test]
+    fn test_generate_diff_absolute_path() {
+        let original = "(a)\n";
+        let migrated = "(b)\n";
+        let path = Path::new("/etc/may-i/config.lisp");
+
+        let diff = generate_diff(original, migrated, path, false);
+
+        // Should show absolute path (no ~ substitution since it's outside HOME)
+        assert!(diff.contains("/etc/may-i/config.lisp"));
+    }
+
+    #[test]
+    fn test_generate_diff_home_path() {
+        let original = "(a)\n";
+        let migrated = "(b)\n";
+
+        // Create a path that looks like it's in home directory
+        if let Ok(home) = std::env::var("HOME") {
+            let home_path = Path::new(&home).join(".config/may-i/config.lisp");
+            let diff = generate_diff(original, migrated, &home_path, false);
+
+            // Should show ~ prefix
+            assert!(diff.contains("~/.config/may-i/config.lisp"));
+        }
+    }
+
+    #[test]
+    fn test_should_use_color_no_color_set() {
+        // Save original
+        let original = std::env::var("NO_COLOR").ok();
+
+        unsafe {
+            std::env::set_var("NO_COLOR", "1");
+        }
+        assert!(!should_use_color());
+
+        // Restore
+        unsafe {
+            match original {
+                Some(val) => std::env::set_var("NO_COLOR", val),
+                None => std::env::remove_var("NO_COLOR"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_mock_handler_tty_false() {
+        let handler = MockPromptHandler::new(vec!["y".to_string()], false);
+        assert!(!handler.is_tty());
     }
 }
