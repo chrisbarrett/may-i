@@ -10,3 +10,6 @@ exclude-files = [
    "crates/**/*_tests.rs",
    "crates/**/test_helpers.rs",
 ]
+
+[report]
+out = ["Html", "Stdout", "Lcov"]

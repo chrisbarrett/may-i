@@ -1,4 +1,7 @@
 /target
 /result
+
+# Coverage
 *.profraw
 tarpaulin-report.*
+lcov.info
