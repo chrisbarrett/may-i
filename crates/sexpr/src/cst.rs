@@ -174,12 +174,7 @@ impl CstNode<TriviaAnn> {
     /// but may reformat long lines to fit within the target width.
     /// Comments are never reformatted - they appear exactly as in the source.
     pub fn pretty_serialize(&self, width: usize) -> String {
-        let mut ctx = PrettyCtx {
-            width,
-            col: 0,
-            output: String::new(),
-            indent_stack: vec![0],
-        };
+        let mut ctx = PrettyCtx::new(width);
         self.pretty_write(&mut ctx);
         ctx.output
     }
@@ -397,9 +392,21 @@ struct PrettyCtx {
     col: usize,
     output: String,
     indent_stack: Vec<usize>,
+    /// Track if we've broken the current list onto multiple lines
+    has_broken: bool,
 }
 
 impl PrettyCtx {
+    fn new(width: usize) -> Self {
+        Self {
+            width,
+            col: 0,
+            output: String::new(),
+            indent_stack: vec![0],
+            has_broken: false,
+        }
+    }
+
     fn current_indent(&self) -> usize {
         *self.indent_stack.last().unwrap_or(&0)
     }
@@ -425,11 +432,17 @@ impl PrettyCtx {
     fn write_newline(&mut self) {
         self.output.push('\n');
         self.col = 0;
+        self.has_broken = true;
     }
 
     fn write_indent(&mut self) {
         let spaces = self.current_indent();
         self.write_str(&" ".repeat(spaces));
+    }
+
+    /// Reset broken state when entering a new list
+    fn reset_broken(&mut self) {
+        self.has_broken = false;
     }
 }
 
@@ -487,25 +500,63 @@ impl CstNode<TriviaAnn> {
                         clause.pretty_write_fresh(ctx);
                     }
                 } else {
-                    // Standard list formatting
+                    // Standard list formatting with cascading line breaks
                     // Calculate indent for children: head position + 1 (for the opening paren)
                     let child_indent = head_col + 1;
                     ctx.push_indent(child_indent);
+                    ctx.reset_broken();
 
-                    for (i, child) in children.iter().enumerate() {
-                        // Check if we need to add a newline before this child
-                        if i > 0 && child.ann.leading.is_empty() {
-                            // Estimate child width (rough approximation)
+                    // Pre-calculate total width to see if we need to break everything
+                    let total_width: usize = children.iter().map(|c| estimate_width(c)).sum::<usize>()
+                        + children.len().saturating_sub(1); // spaces between
+                    let must_break_all = ctx.col + total_width > ctx.width;
+
+                    let mut i = 0;
+                    while i < children.len() {
+                        let child = &children[i];
+                        
+                        // Check if this is a keyword (starts with ":")
+                        let is_keyword = child.as_atom().map_or(false, |s| s.starts_with(':'));
+                        
+                        // Check if we need to break before this child
+                        if i > 0 {
                             let child_width = estimate_width(child);
-                            if ctx.col + 1 + child_width > ctx.width && ctx.col > child_indent {
-                                // Would exceed width, add newline and indent
+                            let would_exceed = ctx.col + 1 + child_width > ctx.width;
+                            let past_indent = ctx.col > child_indent;
+                            // Break if: we already broke, total form is too long, or this child would exceed
+                            let needs_break = ctx.has_broken || must_break_all || (would_exceed && past_indent);
+                            
+                            if needs_break {
+                                // Force a break - ignore any leading whitespace
                                 ctx.write_newline();
                                 ctx.write_indent();
-                            } else {
+                            } else if child.ann.leading.is_empty() {
+                                // No break needed and no leading trivia - add space
                                 ctx.write_str(" ");
                             }
+                            // If there's leading trivia, it will be written by pretty_write
                         }
+                        
+                        // Write the child
                         child.pretty_write(ctx);
+                        
+                        // If this was a keyword, the next child is its value - keep them together
+                        if is_keyword && i + 1 < children.len() {
+                            let value = &children[i + 1];
+                            // Check if value has leading trivia (comments/whitespace)
+                            if value.ann.leading.is_empty() {
+                                // Value has no leading trivia, keep on same line with space
+                                ctx.write_str(" ");
+                            } else {
+                                // Value has leading trivia (probably comments), let it handle itself
+                            }
+                            // Write the value
+                            value.pretty_write(ctx);
+                            // Skip the value in the next iteration
+                            i += 1;
+                        }
+                        
+                        i += 1;
                     }
                     ctx.pop_indent();
                 }
@@ -516,14 +567,24 @@ impl CstNode<TriviaAnn> {
 
                 let child_indent = head_col + 1;
                 ctx.push_indent(child_indent);
+                ctx.reset_broken();
+
+                // Pre-calculate total width
+                let total_width: usize = children.iter().map(|c| estimate_width(c)).sum::<usize>()
+                    + children.len().saturating_sub(1);
+                let must_break_all = ctx.col + total_width > ctx.width;
 
                 for (i, child) in children.iter().enumerate() {
-                    if i > 0 && child.ann.leading.is_empty() {
+                    if i > 0 {
                         let child_width = estimate_width(child);
-                        if ctx.col + 1 + child_width > ctx.width && ctx.col > child_indent {
+                        let would_exceed = ctx.col + 1 + child_width > ctx.width;
+                        let past_indent = ctx.col > child_indent;
+                        let needs_break = ctx.has_broken || must_break_all || (would_exceed && past_indent);
+
+                        if needs_break {
                             ctx.write_newline();
                             ctx.write_indent();
-                        } else {
+                        } else if child.ann.leading.is_empty() {
                             ctx.write_str(" ");
                         }
                     }
@@ -1821,6 +1882,154 @@ mod proptests {
         assert!(
             pretty.contains("\n  (else"),
             "Else clause should be properly indented on new line\nGot:\n{}",
+            pretty
+        );
+    }
+
+    // ── Cascading line break tests ─────────────────────────────────────
+
+    #[test]
+    fn pretty_serialize_cascading_line_breaks() {
+        // Once a form breaks, all subsequent forms at same level must break
+        // This test uses :effect and :ask keywords to verify cascading breaks
+        let input = r#"(rule "openspec" :effect :allow (check :allow "openspec status --change 'foo'" :allow "openspec instructions apply --change 'bar'"))"#;
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+
+        // Use width that forces the check form to break
+        let pretty = nodes[0].pretty_serialize(60);
+
+        // The rule form should break with each child on its own line
+        let lines: Vec<&str> = pretty.lines().collect();
+
+        // Find the line with "openspec" (command)
+        let cmd_idx = lines.iter().position(|l| l.contains("\"openspec\""));
+        // Find the line with (check
+        let check_idx = lines.iter().position(|l| l.contains("(check"));
+
+        assert!(
+            cmd_idx.is_some(),
+            "Should have command on its own line\nGot:\n{}",
+            pretty
+        );
+        assert!(
+            check_idx.is_some(),
+            "Should have check form on its own line\nGot:\n{}",
+            pretty
+        );
+
+        // Once check breaks, any subsequent forms should also be on their own lines
+        // In this case, if there were more forms after check, they would break too
+        // For this test, we just verify that check broke onto its own line
+        // and that the :effect keyword stayed with its value :allow
+        let effect_allow_idx = lines.iter().position(|l| l.contains(":effect :allow"));
+        assert!(
+            effect_allow_idx.is_some(),
+            ":effect :allow should be on same line (key-value pair)\nGot:\n{}",
+            pretty
+        );
+    }
+
+    #[test]
+    fn pretty_serialize_keyword_value_pairs() {
+        // Keywords introduce key-value pairs
+        let input = "(foo bar :bar baz :bar :baz)";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+
+        // Force break with narrow width
+        let pretty = nodes[0].pretty_serialize(20);
+
+        let lines: Vec<&str> = pretty.lines().collect();
+
+        // Find bar, :bar baz, and :bar :baz
+        let bar_idx = lines.iter().position(|l| l.trim() == "bar");
+        let bar_baz_idx = lines.iter().position(|l| l.contains(":bar baz"));
+        let bar_baz_kw_idx = lines.iter().position(|l| l.contains(":bar :baz"));
+
+        assert!(
+            bar_idx.is_some(),
+            "Should have 'bar' on its own line\nGot:\n{}",
+            pretty
+        );
+        assert!(
+            bar_baz_idx.is_some(),
+            "Should have ':bar baz' key-value pair\nGot:\n{}",
+            pretty
+        );
+        assert!(
+            bar_baz_kw_idx.is_some(),
+            "Should have ':bar :baz' key-value pair (value is keyword)\nGot:\n{}",
+            pretty
+        );
+    }
+
+    #[test]
+    fn pretty_serialize_complex_nested_with_keywords() {
+        // Complex example from the issue
+        let input = r#"(foo bar baz :bar baz :bar (foo bar baz) :bar :baz :bar (if foo bar baz))"#;
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+
+        // Force break
+        let pretty = nodes[0].pretty_serialize(30);
+
+        let lines: Vec<&str> = pretty.lines().collect();
+
+        // Check that regular forms are on separate lines
+        assert!(
+            lines.iter().any(|l| l.trim() == "bar"),
+            "Should have 'bar' on its own line\nGot:\n{}",
+            pretty
+        );
+        assert!(
+            lines.iter().any(|l| l.trim() == "baz"),
+            "Should have 'baz' on its own line\nGot:\n{}",
+            pretty
+        );
+
+        // Check that keyword-value pairs stay together on their lines
+        assert!(
+            lines.iter().any(|l| l.contains(":bar baz")),
+            "Should have ':bar baz' on same line\nGot:\n{}",
+            pretty
+        );
+        assert!(
+            lines.iter().any(|l| l.contains(":bar :baz")),
+            "Should have ':bar :baz' on same line\nGot:\n{}",
+            pretty
+        );
+
+        // Check that nested form in keyword value is formatted correctly
+        let if_line = lines.iter().find(|l| l.contains("(if foo"));
+        assert!(
+            if_line.is_some(),
+            "Should have nested (if form\nGot:\n{}",
+            pretty
+        );
+    }
+
+    #[test]
+    fn pretty_serialize_no_compression_after_break() {
+        // After a form breaks, subsequent keywords shouldn't be compressed onto previous lines
+        let input = "(rule \"cmd\" (check :allow \"test\") :effect :ask)";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+
+        // Force check to break
+        let pretty = nodes[0].pretty_serialize(35);
+
+        // Should NOT have :effect on same line as closing paren of check
+        assert!(
+            !pretty.contains(") :effect"),
+            ":effect should be on its own line, not compressed\nGot:\n{}",
+            pretty
+        );
+
+        // Should have :effect on separate line
+        assert!(
+            pretty.contains("\n  :effect :ask"),
+            "Should have ':effect :ask' on separate line\nGot:\n{}",
             pretty
         );
     }
