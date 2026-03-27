@@ -513,7 +513,6 @@ dependencies = [
  "may-i-config",
  "may-i-core",
  "may-i-engine",
- "may-i-output",
  "may-i-pp",
  "may-i-sexpr",
  "may-i-shell-parser",
@@ -559,10 +558,6 @@ dependencies = [
  "proptest",
  "regex",
 ]
-
-[[package]]
-name = "may-i-output"
-version = "0.1.0"
 
 [[package]]
 name = "may-i-pp"

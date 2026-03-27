@@ -28,7 +28,6 @@ use std::path::Path;
 
 use colored::Colorize;
 use may_i_config::migrate::{migrate_forms, validate_migration};
-use may_i_output::shorten_home;
 use may_i_pp::detect_column_width;
 
 use may_i_sexpr::parse_cst;
@@ -93,6 +92,16 @@ impl PromptHandler for MockPromptHandler {
             Ok("".to_string())
         }
     }
+}
+
+/// Shorten a path by replacing the home directory with `~`.
+fn shorten_home(path: &std::path::Path) -> String {
+    let path_str = path.to_string_lossy();
+    if let Ok(home) = std::env::var("HOME")
+        && let Some(rest) = path_str.strip_prefix(&home) {
+            return format!("~{}", rest);
+        }
+    path_str.to_string()
 }
 
 /// Generate a unified text diff between original and migrated content.
