@@ -1,0 +1,12 @@
+id: engine-core-property-tests
+schema: spec-driven
+name: Improve Engine and Core Test Coverage with Property Tests
+created: "2025-03-27"
+artifacts:
+  proposal: proposal.md
+  design: design.md
+  tasks: tasks.md
+  specs:
+    - specs/engine-property-tests.md
+    - specs/core-pattern-property-tests.md
+    - specs/generator-implementation.md
