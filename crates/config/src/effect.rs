@@ -169,8 +169,8 @@ fn parse_may_i(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawErro
 
     // Allow bare `*` as shorthand for `(positional *)` - pass everything unconsumed down
     let pattern = if let Some("*") = args[0].as_atom() {
-        use may_i_core::pattern::{ArgPattern, PositionalArg};
         use may_i_core::pattern::Expr;
+        use may_i_core::pattern::{ArgPattern, PositionalArg};
         ArgPattern::Positional {
             patterns: vec![PositionalArg::one(Expr::Wildcard)],
             continuation: None,

@@ -227,7 +227,7 @@ fn parse_fact_pattern(sexpr: &Sexpr) -> Result<FactPattern, RawError> {
 mod tests {
     use super::*;
     use may_i_core::pattern::ArgPattern;
-use may_i_core::predicates::FactPattern;
+    use may_i_core::predicates::FactPattern;
     use may_i_sexpr::RawError;
 
     fn parse_pred(input: &str) -> Result<Predicate, RawError> {

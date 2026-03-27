@@ -5,10 +5,10 @@ use may_i_core::ast::{Effect, EffectResult, Predicate, Rule};
 use may_i_core::pattern::{ArgPattern, CommandPattern, PositionalArg};
 use may_i_core::{ContextFacts, Decision, FactPattern, FactQuery};
 
+use crate::EvalResult;
 use crate::trace::{
     EffectTrace, PredicateResult as TracePredicateResult, PredicateTrace, TraceEntry,
 };
-use crate::EvalResult;
 
 /// Maximum recursion depth for (may-i ...) evaluation.
 pub const DEFAULT_RECURSION_LIMIT: usize = 10;

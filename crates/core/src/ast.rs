@@ -573,10 +573,12 @@ mod tests {
 
         assert!(Effect::And { effects: vec![] }.is_combinator());
         assert!(Effect::Or { effects: vec![] }.is_combinator());
-        assert!(Effect::Not {
-            effect: Box::new(effect.clone())
-        }
-        .is_combinator());
+        assert!(
+            Effect::Not {
+                effect: Box::new(effect.clone())
+            }
+            .is_combinator()
+        );
         assert!(!Effect::Allow(None).is_combinator());
         assert!(!Effect::CommandPattern(CommandPattern::Literal("git".into())).is_combinator());
     }
@@ -587,30 +589,38 @@ mod tests {
         let pred = Spanned::new(Predicate::fact_presence("test"), span);
         let effect = Spanned::new(Effect::Allow(None), span);
 
-        assert!(Effect::When {
-            predicate: pred.clone(),
-            effect: Box::new(effect.clone()),
-        }
-        .is_conditional());
+        assert!(
+            Effect::When {
+                predicate: pred.clone(),
+                effect: Box::new(effect.clone()),
+            }
+            .is_conditional()
+        );
 
-        assert!(Effect::Unless {
-            predicate: pred.clone(),
-            effect: Box::new(effect.clone()),
-        }
-        .is_conditional());
+        assert!(
+            Effect::Unless {
+                predicate: pred.clone(),
+                effect: Box::new(effect.clone()),
+            }
+            .is_conditional()
+        );
 
-        assert!(Effect::If {
-            predicate: pred.clone(),
-            then_effect: Box::new(effect.clone()),
-            else_effect: Box::new(effect.clone()),
-        }
-        .is_conditional());
+        assert!(
+            Effect::If {
+                predicate: pred.clone(),
+                then_effect: Box::new(effect.clone()),
+                else_effect: Box::new(effect.clone()),
+            }
+            .is_conditional()
+        );
 
-        assert!(Effect::Cond {
-            branches: vec![],
-            fallback: None,
-        }
-        .is_conditional());
+        assert!(
+            Effect::Cond {
+                branches: vec![],
+                fallback: None,
+            }
+            .is_conditional()
+        );
 
         assert!(!Effect::Allow(None).is_conditional());
     }

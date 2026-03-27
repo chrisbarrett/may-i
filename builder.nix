@@ -8,9 +8,9 @@ let
     ];
   };
 
-  craneLib = (inputs.crane.mkLib pkgs).overrideToolchain (p:
-    p.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml
-  );
+  rustToolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+
+  craneLib = (inputs.crane.mkLib pkgs).overrideToolchain (_: rustToolchain);
 
   # Include non-Rust files needed for the build
   extraFileFilter = path: type:
@@ -79,6 +79,10 @@ in
 
     shellHook = ''
       prek install
+    '' + pkgs.lib.optionalString pkgs.stdenv.isDarwin ''
+      # Workaround: rust-overlay symlinks rustfmt into a separate derivation
+      # that lacks librustc_driver. Point dyld at the combined toolchain's lib.
+      export DYLD_LIBRARY_PATH="${rustToolchain}/lib"
     '';
   };
 }

@@ -4,9 +4,9 @@
 // evaluation steps in a hierarchical structure that mirrors the unified
 // predicate and effect syntax.
 
+use may_i_core::Decision;
 use may_i_core::ast::{Effect, Predicate, Rule};
 use may_i_core::pattern::ArgPattern;
-use may_i_core::Decision;
 
 use crate::EvalResult;
 

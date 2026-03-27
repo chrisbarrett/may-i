@@ -4,8 +4,8 @@ use std::io::Read;
 
 use may_i_config as config;
 use may_i_core::ContextFacts;
-use may_i_engine::EvalResult;
 use may_i_engine as engine;
+use may_i_engine::EvalResult;
 use miette::Context;
 
 pub fn cmd_claude_code_hook(config_path: Option<&std::path::Path>) -> miette::Result<()> {

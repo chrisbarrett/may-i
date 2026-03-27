@@ -1,10 +1,10 @@
 // Config validation — run embedded checks against the engine.
 
+use crate::EvalResult;
+use crate::trace::TraceEntry;
 use may_i_core::ast::Config;
 use may_i_core::{ContextFacts, Decision};
 use may_i_shell_parser::{self as parser, Command, Word, WordPart};
-use crate::trace::TraceEntry;
-use crate::EvalResult;
 
 /// Result of evaluating a single embedded check.
 #[derive(Debug)]
@@ -23,14 +23,14 @@ pub struct CheckResult {
 /// For now, this only handles simple commands (not compound commands).
 fn evaluate_simple(input: &str, config: &Config, context: &ContextFacts) -> EvalResult {
     let cmd = parser::parse(input);
-    
+
     match cmd {
         Command::Simple(sc) if !sc.words.is_empty() => {
             // Extract command name from first word
             let cmd_name = word_to_string(&sc.words[0]);
             // Extract arguments
             let args: Vec<String> = sc.words[1..].iter().map(word_to_string).collect();
-            
+
             crate::eval::evaluate(&cmd_name, &args, config, context)
         }
         Command::Simple(_) => {
@@ -40,7 +40,10 @@ fn evaluate_simple(input: &str, config: &Config, context: &ContextFacts) -> Eval
         _ => {
             // Compound commands - for now return Ask
             // Full compound evaluation will be implemented in task 14
-            EvalResult::new(Decision::Ask, Some("Compound commands not yet supported in checks".into()))
+            EvalResult::new(
+                Decision::Ask,
+                Some("Compound commands not yet supported in checks".into()),
+            )
         }
     }
 }
@@ -113,7 +116,10 @@ mod tests {
     fn create_test_rule(name: &str, effect: Effect) -> Rule {
         use may_i_core::ast::Spanned;
         Rule {
-            command_effect: Spanned::new(Effect::CommandPattern(CommandPattern::Literal(name.into())), Span::new(0, 0)),
+            command_effect: Spanned::new(
+                Effect::CommandPattern(CommandPattern::Literal(name.into())),
+                Span::new(0, 0),
+            ),
             effects: vec![Spanned::new(effect, Span::new(0, 0))],
             checks: vec![],
             span: Span::new(0, 0),
@@ -123,10 +129,7 @@ mod tests {
     #[test]
     fn run_checks_passing() {
         let config = Config {
-            rules: vec![create_test_rule(
-                "ls",
-                Effect::Allow(Some("listed".into())),
-            )],
+            rules: vec![create_test_rule("ls", Effect::Allow(Some("listed".into())))],
             ..Config::default()
         };
 
@@ -144,10 +147,7 @@ mod tests {
     #[test]
     fn run_checks_failing() {
         let config = Config {
-            rules: vec![create_test_rule(
-                "ls",
-                Effect::Deny(Some("denied".into())),
-            )],
+            rules: vec![create_test_rule("ls", Effect::Deny(Some("denied".into())))],
             ..Config::default()
         };
 
