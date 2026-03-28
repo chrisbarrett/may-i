@@ -283,13 +283,6 @@ pub enum ArgPattern {
     /// Token must NOT appear anywhere in argv.
     /// Syntax: `(forbidden PATTERN ...)`
     Forbidden(Vec<Expr<Effect>>),
-
-    /// Match a literal string at a specific position (1-indexed).
-    /// Syntax: `(= N PATTERN)`
-    At {
-        position: usize,
-        pattern: Expr<Effect>,
-    },
 }
 
 impl ArgPattern {
@@ -339,11 +332,6 @@ impl ArgPattern {
     /// Create a forbidden pattern.
     pub fn forbidden(exprs: Vec<Expr<Effect>>) -> Self {
         ArgPattern::Forbidden(exprs)
-    }
-
-    /// Create an at-position pattern.
-    pub fn at(position: usize, pattern: Expr<Effect>) -> Self {
-        ArgPattern::At { position, pattern }
     }
 }
 
@@ -423,12 +411,6 @@ mod tests {
     fn arg_pattern_forbidden_creates_correctly() {
         let pattern = ArgPattern::forbidden(vec![Expr::Literal("--dangerous".into())]);
         assert!(matches!(pattern, ArgPattern::Forbidden(exprs) if exprs.len() == 1));
-    }
-
-    #[test]
-    fn arg_pattern_at_creates_correctly() {
-        let pattern = ArgPattern::at(2, Expr::Literal("file.txt".into()));
-        assert!(matches!(pattern, ArgPattern::At { position: 2, .. }));
     }
 
     #[test]

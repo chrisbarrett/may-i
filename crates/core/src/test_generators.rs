@@ -7,7 +7,7 @@
 use proptest::prelude::*;
 
 use crate::ast::Effect;
-use crate::context::{ContextFacts, ContextValue};
+use crate::context::ContextFacts;
 use crate::pattern::{ArgPattern, CommandPattern, Expr, PositionalArg, Quantifier};
 use crate::predicates::{FactPattern, FactQuery};
 use crate::primitives::{Decision, Keyword};
@@ -26,22 +26,21 @@ pub fn any_decision() -> impl Strategy<Value = Decision> {
     ]
 }
 
-/// Generate ContextValue variants.
-pub fn any_context_value() -> impl Strategy<Value = ContextValue> {
-    prop_oneof![
-        Just(ContextValue::Present),
-        "[a-zA-Z0-9_-]{1,30}".prop_map(ContextValue::Scalar),
-    ]
-}
-
 /// Generate ContextFacts with 0-10 entries.
 pub fn any_context_facts() -> impl Strategy<Value = ContextFacts> {
-    prop::collection::vec((any_keyword(), any_context_value()), 0..10).prop_map(|entries| {
+    prop::collection::vec(
+        (
+            any_keyword(),
+            prop_oneof![Just(None), "[a-zA-Z0-9_-]{1,30}".prop_map(Some),],
+        ),
+        0..10,
+    )
+    .prop_map(|entries| {
         let mut facts = ContextFacts::default();
         for (k, v) in entries {
             match v {
-                ContextValue::Present => facts.insert_present(k.as_str()),
-                ContextValue::Scalar(s) => facts.insert_scalar(k.as_str(), s),
+                None => facts.insert_present(k.as_str()),
+                Some(s) => facts.insert_scalar(k.as_str(), s),
             }
         }
         facts
@@ -181,8 +180,6 @@ pub fn any_arg_pattern(depth: u32) -> BoxedStrategy<ArgPattern> {
         }),
         prop::collection::vec(any_expr(expr_depth), 1..4).prop_map(ArgPattern::Anywhere),
         prop::collection::vec(any_expr(expr_depth), 1..4).prop_map(ArgPattern::Forbidden),
-        (1..10usize, any_expr(expr_depth))
-            .prop_map(|(position, pattern)| ArgPattern::At { position, pattern }),
     ]
     .boxed()
 }
@@ -291,11 +288,12 @@ mod context_facts_tests {
         #![proptest_config(ProptestConfig { cases: 256, max_shrink_iters: 50, .. ProptestConfig::default() })]
 
         #[test]
-        fn has_returns_true_for_inserted_keys(key in any_keyword(), value in any_context_value()) {
+        fn has_returns_true_for_inserted_keys(key in any_keyword(), has_value: bool, value in "[a-zA-Z0-9]{1,20}") {
             let mut facts = ContextFacts::default();
-            match &value {
-                ContextValue::Present => facts.insert_present(key.as_str()),
-                ContextValue::Scalar(s) => facts.insert_scalar(key.as_str(), s.clone()),
+            if has_value {
+                facts.insert_scalar(key.as_str(), &value);
+            } else {
+                facts.insert_present(key.as_str());
             }
             prop_assert!(facts.has(key.as_str()));
         }
@@ -335,7 +333,7 @@ mod context_facts_tests {
         }
 
         #[test]
-        fn merge_later_values_overwrite(
+        fn merge_unions_sets(
             key in any_keyword(),
             val1 in "[a-z]{1,10}",
             val2 in "[a-z]{1,10}",
@@ -345,7 +343,8 @@ mod context_facts_tests {
             let mut b = ContextFacts::default();
             b.insert_scalar(key.as_str(), &val2);
             let merged = a.merge(&b);
-            prop_assert_eq!(merged.get_scalar(key.as_str()), Some(val2.as_str()));
+            prop_assert!(merged.contains(key.as_str(), &val1));
+            prop_assert!(merged.contains(key.as_str(), &val2));
         }
 
         #[test]

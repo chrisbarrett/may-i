@@ -254,16 +254,11 @@ fn evaluate_fact_query(query: &FactQuery, ctx: &EvalContext) -> PredicateResult 
             }
         }
         FactQuery::Value { key, pattern } => {
-            if let Some(value) = ctx.facts.get(key) {
-                match value {
-                    may_i_core::ContextValue::Scalar(s) => {
-                        if match_fact_pattern(pattern, s) {
-                            PredicateResult::Match
-                        } else {
-                            PredicateResult::NoMatch
-                        }
-                    }
-                    may_i_core::ContextValue::Present => PredicateResult::NoMatch,
+            if let Some(set) = ctx.facts.get(key) {
+                if set.iter().any(|s| match_fact_pattern(pattern, s)) {
+                    PredicateResult::Match
+                } else {
+                    PredicateResult::NoMatch
                 }
             } else {
                 PredicateResult::NoMatch
@@ -359,24 +354,6 @@ fn evaluate_arg_pattern_predicate(pattern: &ArgPattern, ctx: &EvalContext) -> Pr
             }
             // Didn't find any forbidden patterns - constraint satisfied
             PredicateResult::Match
-        }
-        ArgPattern::At { position, pattern } => {
-            if *position > 0 && *position <= ctx.args.len() {
-                let arg = &ctx.args[*position - 1];
-                match pattern {
-                    may_i_core::pattern::Expr::Literal(s) => {
-                        if arg == s {
-                            PredicateResult::Match
-                        } else {
-                            PredicateResult::NoMatch
-                        }
-                    }
-                    may_i_core::pattern::Expr::Wildcard => PredicateResult::Match,
-                    _ => PredicateResult::NoMatch, // Other variants not supported in At
-                }
-            } else {
-                PredicateResult::NoMatch
-            }
         }
     }
 }
@@ -612,10 +589,13 @@ pub(crate) fn evaluate_effect(effect: &Effect, ctx: &EvalContext, rules: &[Rule]
             match extract_inner_command(pattern, ctx.args) {
                 Some((inner_cmd, inner_args)) => {
                     let evaluator = Evaluator::new(rules);
+                    // Push the current command name onto the :via fact set
+                    let mut inner_facts = ctx.facts.clone();
+                    inner_facts.push(":via", ctx.command);
                     let inner_ctx = EvalContext {
                         command: &inner_cmd,
                         args: &inner_args,
-                        facts: ctx.facts,
+                        facts: &inner_facts,
                         recursion_depth: ctx.recursion_depth + 1,
                         recursion_limit: ctx.recursion_limit,
                     };
@@ -737,26 +717,6 @@ fn evaluate_arg_pattern_effect(
                 }
             }
             EffectResult::Decision(Decision::Allow, None)
-        }
-        ArgPattern::At { position, pattern } => {
-            if *position > 0 && *position <= ctx.args.len() {
-                let arg = &ctx.args[*position - 1];
-                match pattern {
-                    may_i_core::pattern::Expr::Literal(s) => {
-                        if arg == s {
-                            EffectResult::Decision(Decision::Allow, None)
-                        } else {
-                            EffectResult::Nil
-                        }
-                    }
-                    may_i_core::pattern::Expr::Wildcard => {
-                        EffectResult::Decision(Decision::Allow, None)
-                    }
-                    _ => EffectResult::Nil,
-                }
-            } else {
-                EffectResult::Nil
-            }
         }
     }
 }
@@ -1529,8 +1489,9 @@ mod tests {
         let (matched, facts) = match_positional_patterns(&args, &patterns);
 
         assert!(matched);
-        // OneOrMore only binds the last matched value in this implementation
-        assert_eq!(facts.get_scalar(":items"), Some("b"));
+        // OneOrMore accumulates all matched values into the set
+        assert!(facts.contains(":items", "a"));
+        assert!(facts.contains(":items", "b"));
     }
 
     #[test]
@@ -1554,8 +1515,9 @@ mod tests {
         let (matched, facts) = match_positional_patterns(&args, &patterns);
 
         assert!(matched);
-        // ZeroOrMore binds the last matched value
-        assert_eq!(facts.get_scalar(":rest"), Some("b"));
+        // ZeroOrMore accumulates all matched values into the set
+        assert!(facts.contains(":rest", "a"));
+        assert!(facts.contains(":rest", "b"));
     }
 
     #[test]
@@ -1682,5 +1644,142 @@ mod tests {
         ]);
         let (matched, _) = match_expr_with_binding(&expr, "c");
         assert!(!matched);
+    }
+
+    #[test]
+    fn may_i_pushes_via_fact() {
+        use may_i_core::ast::{Predicate, Rule, Spanned};
+        use may_i_core::pattern::{ArgPattern, CommandPattern};
+        use may_i_core::span::Span;
+
+        let s = Span::new(0, 1);
+        let may_i_effect = Effect::MayI {
+            pattern: ArgPattern::Positional {
+                patterns: vec![],
+                continuation: None,
+            },
+        };
+
+        // Rule for "rm": (when (fact? [:via "sudo"]) :deny)
+        let inner_rule = Rule::new(
+            Spanned::new(
+                Effect::CommandPattern(CommandPattern::Literal("rm".to_string())),
+                s,
+            ),
+            vec![Spanned::new(
+                Effect::When {
+                    predicate: Spanned::new(
+                        Predicate::Fact(may_i_core::FactQuery::Value {
+                            key: ":via".to_string(),
+                            pattern: may_i_core::FactPattern::Literal("sudo".to_string()),
+                        }),
+                        s,
+                    ),
+                    effect: Box::new(Spanned::new(Effect::Deny(Some("via sudo".to_string())), s)),
+                },
+                s,
+            )],
+            vec![],
+            s,
+        );
+
+        // Rule for "sudo": (may-i *)
+        let sudo_rule = Rule::new(
+            Spanned::new(
+                Effect::CommandPattern(CommandPattern::Literal("sudo".to_string())),
+                s,
+            ),
+            vec![Spanned::new(may_i_effect, s)],
+            vec![],
+            s,
+        );
+
+        let rules = vec![inner_rule, sudo_rule];
+        let facts = ContextFacts::default();
+        let args = vec!["rm".to_string(), "-rf".to_string()];
+        let ctx = EvalContext::new("sudo", &args, &facts);
+        let evaluator = Evaluator::new(&rules);
+        let result = evaluator.evaluate(&ctx);
+        // The inner "rm" evaluation should see :via = {"sudo"} and match the deny rule
+        assert_eq!(result.decision, Decision::Deny);
+    }
+
+    #[test]
+    fn may_i_nested_wrappers_accumulate_via() {
+        use may_i_core::ast::{Predicate, Rule, Spanned};
+        use may_i_core::pattern::{ArgPattern, CommandPattern};
+        use may_i_core::span::Span;
+
+        let s = Span::new(0, 1);
+        let may_i_effect = Effect::MayI {
+            pattern: ArgPattern::Positional {
+                patterns: vec![],
+                continuation: None,
+            },
+        };
+
+        // Rule for "rm": (when (and (fact? [:via "sudo"]) (fact? [:via "ssh"])) :deny)
+        let inner_rule = Rule::new(
+            Spanned::new(
+                Effect::CommandPattern(CommandPattern::Literal("rm".to_string())),
+                s,
+            ),
+            vec![Spanned::new(
+                Effect::When {
+                    predicate: Spanned::new(
+                        Predicate::And(vec![
+                            Predicate::Fact(may_i_core::FactQuery::Value {
+                                key: ":via".to_string(),
+                                pattern: may_i_core::FactPattern::Literal("sudo".to_string()),
+                            }),
+                            Predicate::Fact(may_i_core::FactQuery::Value {
+                                key: ":via".to_string(),
+                                pattern: may_i_core::FactPattern::Literal("ssh".to_string()),
+                            }),
+                        ]),
+                        s,
+                    ),
+                    effect: Box::new(Spanned::new(Effect::Deny(Some("via both".to_string())), s)),
+                },
+                s,
+            )],
+            vec![],
+            s,
+        );
+
+        let ssh_rule = Rule::new(
+            Spanned::new(
+                Effect::CommandPattern(CommandPattern::Literal("ssh".to_string())),
+                s,
+            ),
+            vec![Spanned::new(may_i_effect.clone(), s)],
+            vec![],
+            s,
+        );
+
+        let sudo_rule = Rule::new(
+            Spanned::new(
+                Effect::CommandPattern(CommandPattern::Literal("sudo".to_string())),
+                s,
+            ),
+            vec![Spanned::new(may_i_effect, s)],
+            vec![],
+            s,
+        );
+
+        let rules = vec![inner_rule, ssh_rule, sudo_rule];
+        let facts = ContextFacts::default();
+        // sudo ssh rm -rf /
+        let args = vec![
+            "ssh".to_string(),
+            "rm".to_string(),
+            "-rf".to_string(),
+            "/".to_string(),
+        ];
+        let ctx = EvalContext::new("sudo", &args, &facts);
+        let evaluator = Evaluator::new(&rules);
+        let result = evaluator.evaluate(&ctx);
+        // Inner "rm" should see :via = {"sudo", "ssh"} and match the deny rule
+        assert_eq!(result.decision, Decision::Deny);
     }
 }

@@ -21,7 +21,7 @@ pub use span::{Span, offset_to_line_col};
 pub use primitives::{Decision, Keyword, ToDoc};
 
 // Re-export context types
-pub use context::{ContextFacts, ContextValue};
+pub use context::ContextFacts;
 
 // Re-export predicate types
 pub use predicates::{FactPattern, FactQuery};

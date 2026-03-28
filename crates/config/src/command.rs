@@ -197,4 +197,20 @@ mod tests {
         let err = parse(r#"["test"]"#).expect_err("expected error");
         assert!(format!("{err}").contains("command pattern does not support vector syntax"));
     }
+
+    #[test]
+    fn rejects_non_selector_forms_in_command_position() {
+        // positional, exact, anywhere, forbidden, etc. are not valid command selectors
+        let err = parse(r#"(positional "test")"#).expect_err("expected error");
+        assert!(format!("{err}").contains("unknown command pattern form"));
+
+        let err = parse(r#"(exact "test")"#).expect_err("expected error");
+        assert!(format!("{err}").contains("unknown command pattern form"));
+
+        let err = parse(r#"(anywhere "test")"#).expect_err("expected error");
+        assert!(format!("{err}").contains("unknown command pattern form"));
+
+        let err = parse(r#"(forbidden "test")"#).expect_err("expected error");
+        assert!(format!("{err}").contains("unknown command pattern form"));
+    }
 }

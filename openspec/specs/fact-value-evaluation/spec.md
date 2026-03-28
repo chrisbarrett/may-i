@@ -1,73 +1,52 @@
-## ADDED Requirements
+## MODIFIED Requirements
 
-### Requirement: Presence query returns Match when key exists
-`FactQuery::Presence` SHALL return Match when the key exists in context facts (regardless of whether the value is Scalar or Present), NoMatch when absent.
+### Requirement: FactQuery::Presence evaluates against stored facts
+`FactQuery::Presence` SHALL return Match when the queried key exists in the fact store (the set may be empty or populated). (CHANGED: fact store is now set-based; presence checks key existence regardless of set contents)
 
-#### Scenario: Key exists as Present
-- **WHEN** evaluating `(fact? :via/ssh)` against facts containing `:via/ssh` as Present
+#### Scenario: Key present with values
+- **GIVEN** fact store contains `:via` = `{"sudo", "ssh"}`
+- **WHEN** evaluating `FactQuery::Presence { key: ":via" }`
 - **THEN** it SHALL return Match
 
-#### Scenario: Key exists as Scalar
-- **WHEN** evaluating `(fact? :env)` against facts containing `[:env "prod"]`
+#### Scenario: Key present with empty set
+- **GIVEN** fact store contains `:client/claude-code` with empty set
+- **WHEN** evaluating `FactQuery::Presence { key: ":client/claude-code" }`
 - **THEN** it SHALL return Match
 
 #### Scenario: Key absent
-- **WHEN** evaluating `(fact? :via/ssh)` against empty facts
+- **GIVEN** fact store does not contain `:via`
+- **WHEN** evaluating `FactQuery::Presence { key: ":via" }`
 - **THEN** it SHALL return NoMatch
 
-### Requirement: Value query matches scalar against pattern
-`FactQuery::Value` SHALL return Match when the key exists as a Scalar and its value matches the FactPattern, NoMatch otherwise.
+### Requirement: FactQuery::Value evaluates as set-membership test
+`FactQuery::Value` SHALL return Match when the queried key exists and the pattern matches any member of the set at that key. (CHANGED: previously matched a single scalar value; now tests set membership)
 
-#### Scenario: Scalar matches literal pattern
-- **WHEN** evaluating `(fact? [:env "prod"])` against facts containing `[:env "prod"]`
+#### Scenario: Literal matches a set member
+- **GIVEN** fact store contains `:via` = `{"sudo", "ssh"}`
+- **WHEN** evaluating `FactQuery::Value { key: ":via", pattern: Literal("ssh") }`
 - **THEN** it SHALL return Match
 
-#### Scenario: Scalar does not match literal pattern
-- **WHEN** evaluating `(fact? [:env "prod"])` against facts containing `[:env "staging"]`
+#### Scenario: Literal does not match any member
+- **GIVEN** fact store contains `:via` = `{"sudo"}`
+- **WHEN** evaluating `FactQuery::Value { key: ":via", pattern: Literal("ssh") }`
 - **THEN** it SHALL return NoMatch
 
-#### Scenario: Key exists as Present (non-scalar) returns NoMatch
-- **WHEN** evaluating `(fact? [:env "prod"])` against facts containing `:env` as Present (no scalar value)
+#### Scenario: Regex matches any set member
+- **GIVEN** fact store contains `:ssh/host` = `{"prod-server-01"}`
+- **WHEN** evaluating `FactQuery::Value { key: ":ssh/host", pattern: Regex("^prod-") }`
+- **THEN** it SHALL return Match
+
+#### Scenario: Wildcard matches if set is non-empty
+- **GIVEN** fact store contains `:ssh/host` = `{"prod-1"}`
+- **WHEN** evaluating `FactQuery::Value { key: ":ssh/host", pattern: Wildcard }`
+- **THEN** it SHALL return Match
+
+#### Scenario: Wildcard does not match empty set
+- **GIVEN** fact store contains `:client/claude-code` with empty set
+- **WHEN** evaluating `FactQuery::Value { key: ":client/claude-code", pattern: Wildcard }`
 - **THEN** it SHALL return NoMatch
 
-#### Scenario: Key absent returns NoMatch
-- **WHEN** evaluating `(fact? [:env "prod"])` against empty facts
+#### Scenario: Missing key returns NoMatch
+- **GIVEN** fact store does not contain `:ssh/host`
+- **WHEN** evaluating `FactQuery::Value { key: ":ssh/host", pattern: Literal("prod") }`
 - **THEN** it SHALL return NoMatch
-
-### Requirement: FactPattern::Regex matches scalar values
-`FactPattern::Regex` SHALL match against the scalar value using regex semantics.
-
-#### Scenario: Regex matches
-- **WHEN** matching `FactPattern::Regex("^prod")` against scalar value `"prod-server-01"`
-- **THEN** it SHALL return true
-
-#### Scenario: Regex does not match
-- **WHEN** matching `FactPattern::Regex("^prod")` against scalar value `"staging-server"`
-- **THEN** it SHALL return false
-
-### Requirement: FactPattern boolean combinators
-`FactPattern::And`, `FactPattern::Or`, and `FactPattern::Not` SHALL compose pattern matching with standard boolean semantics.
-
-#### Scenario: And requires all patterns match
-- **WHEN** matching `FactPattern::And([Literal("prod"), Regex("^prod")])` against `"prod"`
-- **THEN** it SHALL return true
-
-#### Scenario: And fails when one pattern mismatches
-- **WHEN** matching `FactPattern::And([Literal("prod"), Literal("staging")])` against `"prod"`
-- **THEN** it SHALL return false
-
-#### Scenario: Or requires any pattern match
-- **WHEN** matching `FactPattern::Or([Literal("prod"), Literal("staging")])` against `"staging"`
-- **THEN** it SHALL return true
-
-#### Scenario: Or fails when no patterns match
-- **WHEN** matching `FactPattern::Or([Literal("prod"), Literal("staging")])` against `"dev"`
-- **THEN** it SHALL return false
-
-#### Scenario: Not inverts match result
-- **WHEN** matching `FactPattern::Not(Literal("prod"))` against `"staging"`
-- **THEN** it SHALL return true
-
-#### Scenario: Not inverts to false
-- **WHEN** matching `FactPattern::Not(Literal("prod"))` against `"prod"`
-- **THEN** it SHALL return false

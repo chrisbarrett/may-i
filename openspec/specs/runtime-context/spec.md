@@ -1,27 +1,31 @@
-## ADDED Requirements
+## MODIFIED Requirements
 
 ### Requirement: ContextFacts available in context module
-The `ContextFacts` struct SHALL be defined in `crates/core/src/context.rs` and re-exported from `may_i_core`.
+The `ContextFacts` struct SHALL be defined in `crates/core/src/context.rs` and re-exported from `may_i_core`. (CHANGED: internal representation is now `Map<Keyword, Set<String>>` instead of Present/Scalar enum)
 
 #### Scenario: ContextFacts can store presence facts
-- **WHEN** calling `context.insert_present(":via/ssh")`
-- **THEN** the key is marked as present
+- **WHEN** inserting presence fact `:via/ssh`
+- **THEN** the key SHALL exist in the store with an empty set
 
 #### Scenario: ContextFacts can store scalar values
-- **WHEN** calling `context.insert_scalar(":env", "prod")`
-- **THEN** the key stores the scalar value
+- **WHEN** inserting fact `[:env "prod"]`
+- **THEN** the key `:env` SHALL contain set `{"prod"}`
 
-#### Scenario: ContextFacts can be queried
-- **WHEN** calling `context.get(":env")` on a populated context
-- **THEN** it returns the stored value
+#### Scenario: ContextFacts can accumulate set values
+- **WHEN** inserting `[:via "sudo"]` then `[:via "ssh"]`
+- **THEN** the key `:via` SHALL contain set `{"sudo", "ssh"}`
 
-### Requirement: ContextValue enum available in context module
-The `ContextValue` enum (Present, Scalar) SHALL be defined in `crates/core/src/context.rs`.
+#### Scenario: ContextFacts can be queried for presence
+- **WHEN** calling `context.contains_key(":env")` on a populated context
+- **THEN** it SHALL return true if the key exists
 
-#### Scenario: ContextValue distinguishes presence from value
-- **WHEN** matching on `ContextValue::Present`
-- **THEN** it indicates the key exists without a value
+#### Scenario: ContextFacts can be queried for membership
+- **WHEN** calling `context.contains(":via", "ssh")` on a context with `:via` = `{"sudo", "ssh"}`
+- **THEN** it SHALL return true
 
-#### Scenario: ContextValue stores scalar strings
-- **WHEN** matching on `ContextValue::Scalar(s)`
-- **THEN** `s` contains the stored string value
+### Requirement: ContextValue enum removed
+The `ContextValue` enum (Present, Scalar) SHALL be removed. All facts are stored as sets. (CHANGED: previously distinguished Present from Scalar; now unified as sets)
+
+#### Scenario: No variant distinction
+- **WHEN** storing any fact
+- **THEN** the internal representation SHALL be a `Set<String>` at the given key

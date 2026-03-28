@@ -1,26 +1,22 @@
-## ADDED Requirements
+## MODIFIED Requirements
 
-### Requirement: Decision enum available in primitives module
-The `Decision` enum (Allow, Ask, Deny) SHALL be defined in `crates/core/src/primitives.rs` and re-exported from `may_i_core`.
+### Requirement: Core types available in primitives module
+The primitives module SHALL provide `Decision` enum (Allow, Ask, Deny), `ToDoc` trait, and `Keyword` struct. (CHANGED: `ContextValue` is no longer a primitive type — facts are stored as sets directly in `ContextFacts`)
 
-#### Scenario: Decision can be imported from primitives
-- **WHEN** code imports `use may_i_core::Decision`
-- **THEN** the `Decision` enum is available for use
-
-### Requirement: ToDoc trait available in primitives module
-The `ToDoc` trait SHALL be defined in `crates/core/src/primitives.rs` and re-exported from `may_i_core`.
-
-#### Scenario: ToDoc can be implemented for custom types
-- **WHEN** a type implements the `ToDoc` trait
-- **THEN** it can be converted to a `Doc` representation
-
-### Requirement: Keyword type available in primitives module
-The `Keyword` struct (validated string starting with `:`) SHALL be defined in `crates/core/src/primitives.rs` and re-exported from `may_i_core`.
+#### Scenario: Decision enum has three variants
+- **WHEN** matching on `Decision`
+- **THEN** the variants SHALL be `Allow`, `Ask`, and `Deny`
 
 #### Scenario: Keyword validates colon prefix
-- **WHEN** creating a Keyword with `Keyword::new(":test")`
-- **THEN** it succeeds and stores the string
+- **WHEN** creating a `Keyword` with `":ssh/host"`
+- **THEN** construction SHALL succeed
 
-#### Scenario: Keyword rejects non-colon strings
-- **WHEN** creating a Keyword with `Keyword::new("invalid")`
-- **THEN** it returns an error
+#### Scenario: Keyword rejects missing colon
+- **WHEN** creating a `Keyword` with `"ssh/host"`
+- **THEN** construction SHALL fail
+
+## REMOVED Requirements
+
+### Requirement: ContextValue enum in primitives
+**Reason**: Replaced by set-based fact model where all facts are `Map<Keyword, Set<String>>`
+**Migration**: Use `ContextFacts` methods directly instead of matching on `ContextValue::Present`/`ContextValue::Scalar`

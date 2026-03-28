@@ -7,7 +7,7 @@
 use arbitrary::{Arbitrary, Unstructured};
 
 use crate::ast::{Check, Config, Define, Effect, Predicate, Rule, SecurityConfig, Spanned};
-use crate::context::{ContextFacts, ContextValue};
+use crate::context::ContextFacts;
 use crate::pattern::{ArgPattern, CommandPattern, Expr, ExprBranch, PositionalArg, Quantifier};
 use crate::predicates::{FactPattern, FactQuery};
 use crate::primitives::{Decision, Keyword};
@@ -69,26 +69,16 @@ impl<'a> Arbitrary<'a> for Keyword {
     }
 }
 
-impl<'a> Arbitrary<'a> for ContextValue {
-    fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
-        if u.arbitrary()? {
-            Ok(ContextValue::Present)
-        } else {
-            Ok(ContextValue::Scalar(arb_alpha(u, 15)?))
-        }
-    }
-}
-
 impl<'a> Arbitrary<'a> for ContextFacts {
     fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
         let count = u.int_in_range(0..=5)?;
         let mut facts = ContextFacts::default();
         for _ in 0..count {
             let key = Keyword::arbitrary(u)?;
-            let value = ContextValue::arbitrary(u)?;
-            match value {
-                ContextValue::Present => facts.insert_present(key.as_str()),
-                ContextValue::Scalar(s) => facts.insert_scalar(key.as_str(), s),
+            if u.arbitrary()? {
+                facts.insert_present(key.as_str());
+            } else {
+                facts.insert_scalar(key.as_str(), arb_alpha(u, 15)?);
             }
         }
         Ok(facts)
@@ -243,7 +233,7 @@ impl<'a> Arbitrary<'a> for PositionalArg {
 
 impl<'a> Arbitrary<'a> for ArgPattern {
     fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
-        match u.int_in_range(0..=4)? {
+        match u.int_in_range(0..=3)? {
             0 => {
                 let count = u.int_in_range(0..=3)?;
                 let patterns = (0..count)
@@ -271,17 +261,13 @@ impl<'a> Arbitrary<'a> for ArgPattern {
                     .collect::<arbitrary::Result<Vec<_>>>()?;
                 Ok(ArgPattern::Anywhere(exprs))
             }
-            3 => {
+            _ => {
                 let count = u.int_in_range(1..=3)?;
                 let exprs = (0..count)
                     .map(|_| Expr::arbitrary(u))
                     .collect::<arbitrary::Result<Vec<_>>>()?;
                 Ok(ArgPattern::Forbidden(exprs))
             }
-            _ => Ok(ArgPattern::At {
-                position: u.int_in_range(1..=5)?,
-                pattern: Expr::arbitrary(u)?,
-            }),
         }
     }
 }

@@ -8,6 +8,17 @@ use may_i_core::pattern::{Expr, ExprBranch};
 use may_i_core::primitives::Keyword;
 use may_i_sexpr::{RawError, Sexpr};
 
+/// Check if an expression tree contains any Bind nodes.
+fn contains_bind<E: std::fmt::Debug + may_i_core::ToDoc>(expr: &Expr<E>) -> bool {
+    match expr {
+        Expr::Bind { .. } => true,
+        Expr::And(exprs) | Expr::Or(exprs) => exprs.iter().any(contains_bind),
+        Expr::Not(inner) => contains_bind(inner),
+        Expr::Cond(branches) => branches.iter().any(|b| contains_bind(&b.test)),
+        Expr::Literal(_) | Expr::Regex(_) | Expr::Wildcard => false,
+    }
+}
+
 /// Parse a simple expression pattern from an s-expression.
 fn parse_expr(sexpr: &Sexpr) -> Result<Expr<Effect>, RawError> {
     match sexpr {
@@ -219,38 +230,25 @@ pub fn parse_arg_pattern(sexpr: &Sexpr) -> Result<ArgPattern, RawError> {
         }
         "forbidden" => {
             let exprs: Result<Vec<Expr<Effect>>, _> = list[1..].iter().map(parse_expr).collect();
-            Ok(ArgPattern::Forbidden(exprs?))
-        }
-        "=" => {
-            // Position-specific match: (= N PATTERN)
-            if list.len() != 3 {
-                return Err(RawError::new(
-                    "= must have exactly a position number and a pattern",
-                    sexpr.span(),
-                ));
+            let exprs = exprs?;
+            for (i, expr) in exprs.iter().enumerate() {
+                if contains_bind(expr) {
+                    let span = if i + 1 < list.len() {
+                        list[i + 1].span()
+                    } else {
+                        sexpr.span()
+                    };
+                    return Err(RawError::new(
+                        "fact binding is not valid in forbidden patterns",
+                        span,
+                    ));
+                }
             }
-
-            let pos_str = list[1]
-                .as_atom()
-                .ok_or_else(|| RawError::new("position must be a number", list[1].span()))?;
-
-            let position: usize = pos_str.parse().map_err(|_| {
-                RawError::new("position must be a positive integer", list[1].span())
-            })?;
-
-            if position == 0 {
-                return Err(RawError::new(
-                    "position must be 1 or greater (1-indexed)",
-                    list[1].span(),
-                ));
-            }
-
-            let pattern = parse_expr(&list[2])?;
-            Ok(ArgPattern::At { position, pattern })
+            Ok(ArgPattern::Forbidden(exprs))
         }
         other => Err(
             RawError::new(format!("unknown argument pattern: {other}"), list[0].span())
-                .with_help("valid argument patterns: positional, exact, anywhere, forbidden, ="),
+                .with_help("valid argument patterns: positional, exact, anywhere, forbidden"),
         ),
     }
 }
@@ -441,14 +439,9 @@ mod tests {
     }
 
     #[test]
-    fn parse_at_position() {
-        let pattern = parse_arg(r#"(= 1 "git")"#).unwrap();
-        match pattern {
-            ArgPattern::At { position, .. } => {
-                assert_eq!(position, 1);
-            }
-            _ => panic!("expected At"),
-        }
+    fn forbidden_rejects_bind() {
+        let err = parse_arg(r#"(forbidden [:key *])"#).expect_err("expected error");
+        assert!(format!("{err}").contains("not valid in forbidden"));
     }
 
     #[test]
@@ -465,12 +458,6 @@ mod tests {
             }
             _ => panic!("expected Positional"),
         }
-    }
-
-    #[test]
-    fn position_zero_is_error() {
-        let err = parse_arg(r#"(= 0 "test")"#).expect_err("expected error");
-        assert!(format!("{err}").contains("1 or greater"));
     }
 
     #[test]
@@ -502,12 +489,6 @@ mod tests {
     fn parse_empty_list_error() {
         let err = parse_arg(r#"()"#).expect_err("expected error");
         assert!(format!("{err}").contains("empty argument pattern"));
-    }
-
-    #[test]
-    fn parse_invalid_position_type_error() {
-        let err = parse_arg(r#"(= "one" "test")"#).expect_err("expected error");
-        assert!(format!("{err}").contains("position must be a positive integer"));
     }
 
     #[test]
@@ -610,12 +591,6 @@ mod tests {
     fn parse_unknown_arg_pattern_error() {
         let err = parse_arg(r#"(unknown "test")"#).expect_err("expected error");
         assert!(format!("{err}").contains("unknown argument pattern"));
-    }
-
-    #[test]
-    fn parse_with_too_many_args_error() {
-        let err = parse_arg(r#"(= 1 "a" "b")"#).expect_err("expected error");
-        assert!(format!("{err}").contains("= must have exactly"));
     }
 
     #[test]
