@@ -302,7 +302,8 @@ fn resolve_rule_predicates(
     defines: &[Define],
     define_map: &DefineMap,
 ) -> Result<Rule, ResolutionError> {
-    // Resolve predicates within all effects
+    let resolved_command = resolve_effect_predicates(&rule.command_effect, defines, define_map)?;
+
     let resolved_effects: Result<Vec<_>, _> = rule
         .effects
         .iter()
@@ -310,7 +311,7 @@ fn resolve_rule_predicates(
         .collect();
 
     Ok(Rule {
-        command_effect: rule.command_effect.clone(),
+        command_effect: resolved_command,
         effects: resolved_effects?,
         checks: rule.checks.clone(),
         span: rule.span,
@@ -413,10 +414,11 @@ fn resolve_single_predicate(
 ) -> Result<Spanned<Predicate>, ResolutionError> {
     let resolved = match &predicate.value {
         Predicate::Named(name) => {
-            // Get the define and inline it
+            // Get the define and inline it, then resolve recursively
+            // since the inlined body may itself contain Named references.
             if let Some((idx, _)) = define_map.get(name) {
-                // Clone the predicate from the define (we keep the original span)
-                defines[idx].predicate.value.clone()
+                let inlined = Spanned::new(defines[idx].predicate.value.clone(), predicate.span);
+                return resolve_single_predicate(&inlined, defines, define_map);
             } else {
                 // This shouldn't happen if we checked for undefined refs first
                 return Err(ResolutionError::new(

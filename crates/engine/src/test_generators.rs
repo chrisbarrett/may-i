@@ -392,7 +392,7 @@ mod effect_eval_tests {
         };
         let rules = [rule];
         let evaluator = Evaluator::new(&rules);
-        let result = evaluator.evaluate(ctx);
+        let result = evaluator.evaluate(&mut crate::fold::PureFold, ctx);
         EffectResult::Decision(result.decision, result.reason)
     }
 
@@ -773,7 +773,7 @@ mod effect_eval_tests {
             ctx.recursion_depth = 1;
 
             let evaluator = Evaluator::new(&[]);
-            let result = evaluator.evaluate(&ctx);
+            let result = evaluator.evaluate(&mut crate::fold::PureFold, &ctx);
             prop_assert_eq!(result.decision, Decision::Ask, "Should return Ask when recursion limit hit");
         }
 

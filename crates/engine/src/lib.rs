@@ -2,8 +2,7 @@
 
 pub(crate) mod check;
 pub mod eval;
-
-pub mod trace;
+pub mod fold;
 
 #[cfg(test)]
 mod test_generators;
@@ -17,23 +16,18 @@ pub use check::{CheckResult, run_checks};
 pub struct EvalResult {
     pub decision: Decision,
     pub reason: Option<String>,
-    pub trace: Vec<trace::TraceEntry>,
 }
 
 impl EvalResult {
     /// Create a new EvalResult with the given decision and optional reason.
     pub fn new(decision: Decision, reason: Option<String>) -> Self {
-        Self {
-            decision,
-            reason,
-            trace: vec![],
-        }
+        Self { decision, reason }
     }
 }
 
 // Re-export canonical evaluator items
 pub use eval::{DEFAULT_RECURSION_LIMIT, EvalContext, Evaluator, PredicateResult, evaluate};
-pub use trace::TraceBuilder;
+pub use fold::{ChildResult, EvalFold, PureFold};
 
 /// Aggregate multiple results: most restrictive decision wins.
 pub fn aggregate_results(results: Vec<EvalResult>) -> EvalResult {

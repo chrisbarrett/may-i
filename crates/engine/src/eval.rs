@@ -6,9 +6,7 @@ use may_i_core::pattern::{ArgPattern, CommandPattern, PositionalArg};
 use may_i_core::{ContextFacts, Decision, FactPattern, FactQuery};
 
 use crate::EvalResult;
-use crate::trace::{
-    EffectTrace, PredicateResult as TracePredicateResult, PredicateTrace, TraceEntry,
-};
+use crate::fold::{ArgMatchDetail, ChildResult, EvalFold, PureFold, build_fact_detail};
 
 /// Maximum recursion depth for (may-i ...) evaluation.
 pub const DEFAULT_RECURSION_LIMIT: usize = 10;
@@ -70,7 +68,7 @@ impl<'a> EvalContext<'a> {
     }
 }
 
-/// Evaluate a command against config and context.
+/// Evaluate a command against config and context using PureFold.
 /// This is the main entry point for evaluation.
 pub fn evaluate(
     command: &str,
@@ -78,9 +76,21 @@ pub fn evaluate(
     config: &may_i_core::ast::Config,
     facts: &ContextFacts,
 ) -> EvalResult {
+    let mut fold = PureFold;
+    evaluate_with_fold(command, args, config, facts, &mut fold)
+}
+
+/// Evaluate a command against config and context using a custom fold.
+pub fn evaluate_with_fold<F: EvalFold>(
+    command: &str,
+    args: &[String],
+    config: &may_i_core::ast::Config,
+    facts: &ContextFacts,
+    fold: &mut F,
+) -> EvalResult {
     let evaluator = Evaluator::new(&config.rules);
     let ctx = EvalContext::new(command, args, facts);
-    evaluator.evaluate(&ctx)
+    evaluator.evaluate(fold, &ctx)
 }
 
 /// Evaluator for rules with unified effect model.
@@ -96,7 +106,7 @@ impl<'a> Evaluator<'a> {
 
     /// Evaluate a command against all rules.
     /// Returns the first matching rule's effect, or ask if none match.
-    pub fn evaluate(&self, ctx: &EvalContext) -> EvalResult {
+    pub fn evaluate<F: EvalFold>(&self, fold: &mut F, ctx: &EvalContext) -> EvalResult {
         // If depth exceeded, return ask
         if ctx.is_depth_exceeded() {
             return EvalResult::new(
@@ -110,137 +120,145 @@ impl<'a> Evaluator<'a> {
 
         // Evaluate rules in order, return first non-Nil result
         for rule in self.rules {
-            let (result, _trace) = self.evaluate_rule_with_trace(rule, ctx);
+            let out = self.evaluate_rule(fold, rule, ctx);
+            let result = F::effect_result(&out);
 
-            // Convert EffectResult to EvalResult
             match result {
                 EffectResult::Decision(decision, reason) => {
-                    let eval_result = EvalResult::new(decision, reason);
-                    // TODO: Add trace integration
-                    return eval_result;
+                    return EvalResult::new(*decision, reason.clone());
                 }
                 EffectResult::Nil => {
-                    // Rule didn't match, continue to next
                     continue;
                 }
             }
         }
 
         // No rules matched - return ask
-        EvalResult::new(Decision::Ask, Some("no matching rule found".to_string()))
+        let reason = "no matching rule found";
+        let _out = fold.default_ask(reason);
+        EvalResult::new(Decision::Ask, Some(reason.to_string()))
     }
 
-    /// Evaluate a rule with tracing.
-    /// Returns (EffectResult, trace) where EffectResult is Decision | Nil.
-    fn evaluate_rule_with_trace(
+    /// Evaluate a single rule. Returns the fold output.
+    fn evaluate_rule<F: EvalFold>(
         &self,
+        fold: &mut F,
         rule: &Rule,
         ctx: &EvalContext,
-    ) -> (EffectResult, Option<crate::trace::TraceEntry>) {
+    ) -> F::EffectOut {
         // Step 1: Evaluate command effect - must return non-Nil for rule to apply
-        let command_result = evaluate_effect(&rule.command_effect.value, ctx, self.rules);
+        let command_out = evaluate_effect_fold(fold, &rule.command_effect.value, ctx, self.rules);
+        let command_result = F::effect_result(&command_out);
 
         if command_result.is_nil() {
-            // Command didn't match - rule doesn't apply
-            let trace = TraceEntry::RuleEvaluation {
-                rule: Box::new(rule.clone()),
-                matched: false,
-                effect: None,
-                predicate_traces: vec![],
-                effect_trace: None,
-            };
-            return (EffectResult::Nil, Some(trace));
+            return fold.rule_skipped(rule);
         }
 
         // Step 2: Evaluate subsequent effects in sequence
-        let mut effect_traces = Vec::new();
-
+        let mut last_out = command_out;
         for effect in &rule.effects {
-            let (result, trace) = evaluate_effect_with_trace(&effect.value, ctx, self.rules);
-            effect_traces.push(trace);
+            let out = evaluate_effect_fold(fold, &effect.value, ctx, self.rules);
+            let result = F::effect_result(&out);
 
             match result {
                 EffectResult::Decision(_, _) => {
-                    // Found a terminal decision
-                    let trace = TraceEntry::RuleEvaluation {
-                        rule: Box::new(rule.clone()),
-                        matched: true,
-                        effect: Some(effect.value.clone()),
-                        predicate_traces: vec![],
-                        effect_trace: Some(Box::new(effect_traces.last().unwrap().clone())),
-                    };
-                    return (result, Some(trace));
+                    let line = None;
+                    return fold.rule_matched(rule, line, out);
                 }
                 EffectResult::Nil => {
-                    // Effect returned Nil, continue to next
+                    last_out = out;
                 }
             }
         }
 
         // Step 3: All effects returned Nil, default to :ask
-        // The evaluator applies (or ... (effect :ask)) at the top level
-        let ask_effect = Effect::Ask(None);
-        let (ask_result, ask_trace) = evaluate_effect_with_trace(&ask_effect, ctx, self.rules);
-        effect_traces.push(ask_trace);
-
-        let trace = TraceEntry::RuleEvaluation {
-            rule: Box::new(rule.clone()),
-            matched: true,
-            effect: Some(ask_effect),
-            predicate_traces: vec![],
-            effect_trace: Some(Box::new(effect_traces.last().unwrap().clone())),
-        };
-
-        (ask_result, Some(trace))
+        let ask_result = EffectResult::Decision(Decision::Ask, None);
+        let ask_out = fold.effect_terminal(&Effect::Ask(None), ask_result);
+        let line = None;
+        let _ = last_out;
+        fold.rule_matched(rule, line, ask_out)
     }
 }
 
-/// Evaluate a predicate against the context.
-/// Predicates are used in conditional contexts (when/unless/if/cond).
+/// Evaluate a predicate against the context (non-generic, uses PureFold).
 pub fn evaluate_predicate(predicate: &Predicate, ctx: &EvalContext) -> PredicateResult {
-    match predicate {
-        Predicate::Fact(query) => evaluate_fact_query(query, ctx),
-        Predicate::Arg(pattern) => evaluate_arg_pattern_predicate(pattern, ctx),
-        Predicate::And(predicates) => {
-            for p in predicates {
-                if evaluate_predicate(p, ctx) == PredicateResult::NoMatch {
-                    return PredicateResult::NoMatch;
-                }
-            }
-            PredicateResult::Match
-        }
-        Predicate::Or(predicates) => {
-            for p in predicates {
-                if evaluate_predicate(p, ctx) == PredicateResult::Match {
-                    return PredicateResult::Match;
-                }
-            }
-            PredicateResult::NoMatch
-        }
-        Predicate::Not(inner) => match evaluate_predicate(inner, ctx) {
-            PredicateResult::Match => PredicateResult::NoMatch,
-            PredicateResult::NoMatch => PredicateResult::Match,
-        },
-        Predicate::Named(_) => {
-            // Named predicates should have been resolved before evaluation
-            panic!("Named predicates should be resolved before evaluation")
-        }
-    }
+    let mut fold = PureFold;
+    let out = evaluate_predicate_fold(&mut fold, predicate, ctx);
+    PureFold::predicate_result(&out)
 }
 
-/// Evaluate a predicate with tracing.
-pub fn evaluate_predicate_with_trace(
+/// Evaluate a predicate with a fold.
+pub fn evaluate_predicate_fold<F: EvalFold>(
+    fold: &mut F,
     predicate: &Predicate,
     ctx: &EvalContext,
-) -> (PredicateResult, PredicateTrace) {
-    use crate::trace::PredicateResult as TracePredResult;
+) -> F::PredicateOut {
+    match predicate {
+        Predicate::Fact(query) => {
+            let result = evaluate_fact_query(query, ctx);
+            let detail = build_fact_detail(query, ctx.facts);
+            fold.predicate_fact(query, result, detail)
+        }
+        Predicate::Arg(pattern) => {
+            let result = evaluate_arg_pattern_predicate(pattern, ctx);
+            fold.predicate_arg(pattern, ctx.args, result)
+        }
+        Predicate::And(predicates) => {
+            let mut children = Vec::new();
+            let mut result = PredicateResult::Match;
+            let mut short_circuited = false;
 
-    let result = evaluate_predicate(predicate, ctx);
-    let trace_result = match result {
-        PredicateResult::Match => TracePredResult::Match,
-        PredicateResult::NoMatch => TracePredResult::NoMatch,
-    };
-    (result, PredicateTrace::new(predicate.clone(), trace_result))
+            for p in predicates {
+                if short_circuited {
+                    children.push(ChildResult::Skipped);
+                } else {
+                    let out = evaluate_predicate_fold(fold, p, ctx);
+                    let r = F::predicate_result(&out);
+                    if r == PredicateResult::NoMatch {
+                        result = PredicateResult::NoMatch;
+                        short_circuited = true;
+                    }
+                    children.push(ChildResult::Evaluated(out));
+                }
+            }
+            fold.predicate_and(children, result)
+        }
+        Predicate::Or(predicates) => {
+            let mut children = Vec::new();
+            let mut result = PredicateResult::NoMatch;
+            let mut short_circuited = false;
+
+            for p in predicates {
+                if short_circuited {
+                    children.push(ChildResult::Skipped);
+                } else {
+                    let out = evaluate_predicate_fold(fold, p, ctx);
+                    let r = F::predicate_result(&out);
+                    if r == PredicateResult::Match {
+                        result = PredicateResult::Match;
+                        short_circuited = true;
+                    }
+                    children.push(ChildResult::Evaluated(out));
+                }
+            }
+            fold.predicate_or(children, result)
+        }
+        Predicate::Not(inner) => {
+            let out = evaluate_predicate_fold(fold, inner, ctx);
+            let r = F::predicate_result(&out);
+            let result = match r {
+                PredicateResult::Match => PredicateResult::NoMatch,
+                PredicateResult::NoMatch => PredicateResult::Match,
+            };
+            fold.predicate_not(out, result)
+        }
+        Predicate::Named(name) => {
+            panic!(
+                "Named predicates should be resolved before evaluation: '{}'",
+                name
+            )
+        }
+    }
 }
 
 /// Evaluate a fact query against the context.
@@ -479,109 +497,202 @@ fn match_expr_with_binding<E: std::fmt::Debug + may_i_core::ToDoc>(
     (matched, facts)
 }
 
-/// Evaluate an effect to produce an EffectResult (Decision | Nil).
-/// This is the core of the unified effect model.
-pub(crate) fn evaluate_effect(effect: &Effect, ctx: &EvalContext, rules: &[Rule]) -> EffectResult {
+/// Evaluate an effect to produce an EffectResult (convenience, uses PureFold).
+pub fn evaluate_effect(effect: &Effect, ctx: &EvalContext, rules: &[Rule]) -> EffectResult {
+    evaluate_effect_fold(&mut PureFold, effect, ctx, rules)
+}
+
+/// Evaluate an effect with a fold, producing `F::EffectOut`.
+pub fn evaluate_effect_fold<F: EvalFold>(
+    fold: &mut F,
+    effect: &Effect,
+    ctx: &EvalContext,
+    rules: &[Rule],
+) -> F::EffectOut {
     match effect {
-        // Terminal effects return a decision with reason
-        Effect::Allow(reason) => EffectResult::Decision(Decision::Allow, reason.clone()),
-        Effect::Ask(reason) => EffectResult::Decision(Decision::Ask, reason.clone()),
-        Effect::Deny(reason) => EffectResult::Decision(Decision::Deny, reason.clone()),
+        // Terminal effects
+        Effect::Allow(reason) => fold.effect_terminal(
+            effect,
+            EffectResult::Decision(Decision::Allow, reason.clone()),
+        ),
+        Effect::Ask(reason) => fold.effect_terminal(
+            effect,
+            EffectResult::Decision(Decision::Ask, reason.clone()),
+        ),
+        Effect::Deny(reason) => fold.effect_terminal(
+            effect,
+            EffectResult::Decision(Decision::Deny, reason.clone()),
+        ),
 
-        // Pattern effects return Allow on match, Nil otherwise
+        // Command pattern
         Effect::CommandPattern(pattern) => {
-            let matches = match pattern {
-                CommandPattern::Literal(s) => s == ctx.command,
-                CommandPattern::Regex(re) => re.is_match(ctx.command),
-                CommandPattern::Or(patterns) => patterns.iter().any(|p| {
-                    match p {
-                        CommandPattern::Literal(s) => s == ctx.command,
-                        CommandPattern::Regex(re) => re.is_match(ctx.command),
-                        CommandPattern::Or(_) => false, // Nested or not expected
-                    }
-                }),
-            };
-            if matches {
-                EffectResult::Decision(Decision::Allow, None)
-            } else {
-                EffectResult::Nil
-            }
+            let matched = match_command_pattern(pattern, ctx.command);
+            fold.effect_command_match(pattern, ctx.command, matched)
         }
-        Effect::ArgPattern(pattern) => evaluate_arg_pattern_effect(pattern, ctx, rules),
 
-        // Combinators with Nil handling
+        // Arg pattern
+        Effect::ArgPattern(pattern) => evaluate_arg_pattern_effect_fold(fold, pattern, ctx, rules),
+
+        // Combinators
         Effect::And { effects } => {
-            // Evaluate left-to-right, return first Nil or last effect's result
+            let mut children = Vec::new();
             let mut last_result = EffectResult::Decision(Decision::Allow, None);
-            for effect in effects {
-                let result = evaluate_effect(&effect.value, ctx, rules);
-                if result.is_nil() {
-                    return EffectResult::Nil;
+            let mut short_circuited = false;
+
+            for child in effects {
+                if short_circuited {
+                    children.push(ChildResult::Skipped);
+                } else {
+                    let out = evaluate_effect_fold(fold, &child.value, ctx, rules);
+                    let result = F::effect_result(&out).clone();
+                    if result.is_nil() {
+                        short_circuited = true;
+                        last_result = EffectResult::Nil;
+                    } else {
+                        last_result = result;
+                    }
+                    children.push(ChildResult::Evaluated(out));
                 }
-                last_result = result;
             }
-            last_result
+
+            let final_result = if short_circuited {
+                EffectResult::Nil
+            } else {
+                last_result
+            };
+            fold.effect_and(children, final_result)
         }
+
         Effect::Or { effects } => {
-            // Evaluate left-to-right, return first non-Nil or Nil
-            for effect in effects {
-                let result = evaluate_effect(&effect.value, ctx, rules);
-                if !result.is_nil() {
-                    return result;
+            let mut children = Vec::new();
+            let mut final_result = EffectResult::Nil;
+            let mut short_circuited = false;
+
+            for child in effects {
+                if short_circuited {
+                    children.push(ChildResult::Skipped);
+                } else {
+                    let out = evaluate_effect_fold(fold, &child.value, ctx, rules);
+                    let result = F::effect_result(&out).clone();
+                    if !result.is_nil() {
+                        final_result = result;
+                        short_circuited = true;
+                    }
+                    children.push(ChildResult::Evaluated(out));
                 }
             }
-            EffectResult::Nil
+
+            fold.effect_or(children, final_result)
         }
-        Effect::Not { effect } => {
-            // Invert Allow/Nil, pass through Ask/Deny
-            let result = evaluate_effect(&effect.value, ctx, rules);
-            match result {
+
+        Effect::Not { effect: inner } => {
+            let out = evaluate_effect_fold(fold, &inner.value, ctx, rules);
+            let result = F::effect_result(&out).clone();
+            let inverted = match result {
                 EffectResult::Nil => EffectResult::Decision(Decision::Allow, None),
                 EffectResult::Decision(Decision::Allow, _) => EffectResult::Nil,
                 EffectResult::Decision(ask_or_deny, reason) => {
                     EffectResult::Decision(ask_or_deny, reason)
                 }
-            }
+            };
+            fold.effect_not(out, inverted)
         }
 
         // Conditionals
-        Effect::When { predicate, effect } => {
-            if evaluate_predicate(&predicate.value, ctx) == PredicateResult::Match {
-                evaluate_effect(&effect.value, ctx, rules)
+        Effect::When {
+            predicate,
+            effect: body,
+        } => {
+            let pred_out = evaluate_predicate_fold(fold, &predicate.value, ctx);
+            let pred_result = F::predicate_result(&pred_out);
+            let (body_child, result) = if pred_result == PredicateResult::Match {
+                let body_out = evaluate_effect_fold(fold, &body.value, ctx, rules);
+                let body_result = F::effect_result(&body_out).clone();
+                (ChildResult::Evaluated(body_out), body_result)
             } else {
-                EffectResult::Nil
-            }
+                (ChildResult::Skipped, EffectResult::Nil)
+            };
+            fold.effect_when(pred_out, body_child, result)
         }
-        Effect::Unless { predicate, effect } => {
-            if evaluate_predicate(&predicate.value, ctx) == PredicateResult::NoMatch {
-                evaluate_effect(&effect.value, ctx, rules)
+
+        Effect::Unless {
+            predicate,
+            effect: body,
+        } => {
+            let pred_out = evaluate_predicate_fold(fold, &predicate.value, ctx);
+            let pred_result = F::predicate_result(&pred_out);
+            let (body_child, result) = if pred_result == PredicateResult::NoMatch {
+                let body_out = evaluate_effect_fold(fold, &body.value, ctx, rules);
+                let body_result = F::effect_result(&body_out).clone();
+                (ChildResult::Evaluated(body_out), body_result)
             } else {
-                EffectResult::Nil
-            }
+                (ChildResult::Skipped, EffectResult::Nil)
+            };
+            fold.effect_unless(pred_out, body_child, result)
         }
+
         Effect::If {
             predicate,
             then_effect,
             else_effect,
         } => {
-            if evaluate_predicate(&predicate.value, ctx) == PredicateResult::Match {
-                evaluate_effect(&then_effect.value, ctx, rules)
+            let pred_out = evaluate_predicate_fold(fold, &predicate.value, ctx);
+            let pred_result = F::predicate_result(&pred_out);
+            let (then_child, else_child, result) = if pred_result == PredicateResult::Match {
+                let then_out = evaluate_effect_fold(fold, &then_effect.value, ctx, rules);
+                let then_result = F::effect_result(&then_out).clone();
+                (
+                    ChildResult::Evaluated(then_out),
+                    ChildResult::Skipped,
+                    then_result,
+                )
             } else {
-                evaluate_effect(&else_effect.value, ctx, rules)
-            }
+                let else_out = evaluate_effect_fold(fold, &else_effect.value, ctx, rules);
+                let else_result = F::effect_result(&else_out).clone();
+                (
+                    ChildResult::Skipped,
+                    ChildResult::Evaluated(else_out),
+                    else_result,
+                )
+            };
+            fold.effect_if(pred_out, then_child, else_child, result)
         }
+
         Effect::Cond { branches, fallback } => {
+            let mut fold_branches = Vec::new();
+            let mut found = false;
+            let mut result = EffectResult::Nil;
+
             for (predicate, branch_effect) in branches {
-                if evaluate_predicate(&predicate.value, ctx) == PredicateResult::Match {
-                    return evaluate_effect(&branch_effect.value, ctx, rules);
+                if found {
+                    // Skip remaining branches
+                    let pred_out = evaluate_predicate_fold(fold, &predicate.value, ctx);
+                    fold_branches.push((pred_out, ChildResult::Skipped));
+                } else {
+                    let pred_out = evaluate_predicate_fold(fold, &predicate.value, ctx);
+                    let pred_result = F::predicate_result(&pred_out);
+                    if pred_result == PredicateResult::Match {
+                        let body_out = evaluate_effect_fold(fold, &branch_effect.value, ctx, rules);
+                        result = F::effect_result(&body_out).clone();
+                        fold_branches.push((pred_out, ChildResult::Evaluated(body_out)));
+                        found = true;
+                    } else {
+                        fold_branches.push((pred_out, ChildResult::Skipped));
+                    }
                 }
             }
-            // No branch matched - use fallback or return Nil
-            if let Some(fb) = fallback {
-                evaluate_effect(&fb.value, ctx, rules)
+
+            let fb = if found {
+                fallback.as_ref().map(|_| ChildResult::Skipped)
+            } else if let Some(fb) = fallback {
+                let fb_out = evaluate_effect_fold(fold, &fb.value, ctx, rules);
+                result = F::effect_result(&fb_out).clone();
+                Some(ChildResult::Evaluated(fb_out))
             } else {
-                EffectResult::Nil
-            }
+                None
+            };
+
+            fold.effect_cond(fold_branches, fb, result)
         }
 
         // Recursion
@@ -589,7 +700,6 @@ pub(crate) fn evaluate_effect(effect: &Effect, ctx: &EvalContext, rules: &[Rule]
             match extract_inner_command(pattern, ctx.args) {
                 Some((inner_cmd, inner_args)) => {
                     let evaluator = Evaluator::new(rules);
-                    // Push the current command name onto the :via fact set
                     let mut inner_facts = ctx.facts.clone();
                     inner_facts.push(":via", ctx.command);
                     let inner_ctx = EvalContext {
@@ -599,24 +709,40 @@ pub(crate) fn evaluate_effect(effect: &Effect, ctx: &EvalContext, rules: &[Rule]
                         recursion_depth: ctx.recursion_depth + 1,
                         recursion_limit: ctx.recursion_limit,
                     };
-                    let eval_result = evaluator.evaluate(&inner_ctx);
-                    EffectResult::Decision(eval_result.decision, eval_result.reason)
+                    let eval_result = evaluator.evaluate(fold, &inner_ctx);
+                    let inner_result =
+                        EffectResult::Decision(eval_result.decision, eval_result.reason);
+                    // For the fold, we build a synthetic terminal output representing the inner result
+                    let inner_out =
+                        fold.effect_terminal(&Effect::Allow(None), inner_result.clone());
+                    fold.effect_may_i(&inner_cmd, &inner_args, inner_result, inner_out)
                 }
-                None => {
-                    // Pattern didn't match - return Nil
-                    EffectResult::Nil
-                }
+                None => fold.effect_may_i_no_match(pattern),
             }
         }
     }
 }
 
-/// Evaluate an arg pattern as an effect (returns EffectResult).
-fn evaluate_arg_pattern_effect(
+/// Check if a command pattern matches a command string.
+fn match_command_pattern(pattern: &CommandPattern, command: &str) -> bool {
+    match pattern {
+        CommandPattern::Literal(s) => s == command,
+        CommandPattern::Regex(re) => re.is_match(command),
+        CommandPattern::Or(patterns) => patterns.iter().any(|p| match p {
+            CommandPattern::Literal(s) => s == command,
+            CommandPattern::Regex(re) => re.is_match(command),
+            CommandPattern::Or(_) => false,
+        }),
+    }
+}
+
+/// Evaluate an arg pattern as an effect with a fold.
+fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
+    fold: &mut F,
     pattern: &ArgPattern,
     ctx: &EvalContext,
     rules: &[Rule],
-) -> EffectResult {
+) -> F::EffectOut {
     match pattern {
         ArgPattern::Positional {
             patterns,
@@ -631,12 +757,11 @@ fn evaluate_arg_pattern_effect(
             let (matched, bound_facts) = match_positional_patterns(&positional_args, patterns);
             if matched {
                 if let Some(cont) = continuation {
-                    // Calculate remaining args after consuming matched patterns
                     let consumed_count = patterns
                         .iter()
                         .map(|p| match p.quantifier {
                             may_i_core::Quantifier::One => 1,
-                            _ => 1, // For now, treat all as consuming 1
+                            _ => 1,
                         })
                         .sum::<usize>();
                     let remaining_args: Vec<String> = ctx
@@ -646,13 +771,35 @@ fn evaluate_arg_pattern_effect(
                         .skip(consumed_count)
                         .map(|s| s.to_string())
                         .collect();
-                    // Evaluate continuation with remaining args and bound facts
-                    evaluate_effect_with_owned_args(cont, ctx, rules, remaining_args, bound_facts)
+                    evaluate_effect_with_owned_args_fold(
+                        fold,
+                        cont,
+                        ctx,
+                        rules,
+                        remaining_args,
+                        bound_facts,
+                    )
                 } else {
-                    EffectResult::Decision(Decision::Allow, None)
+                    let detail = ArgMatchDetail {
+                        search_tokens: patterns
+                            .iter()
+                            .map(|p| format!("{:?}", p.pattern))
+                            .collect(),
+                        arg_set: ctx.args.to_vec(),
+                        matched: true,
+                    };
+                    fold.effect_arg_match(pattern, ctx.args, true, detail)
                 }
             } else {
-                EffectResult::Nil
+                let detail = ArgMatchDetail {
+                    search_tokens: patterns
+                        .iter()
+                        .map(|p| format!("{:?}", p.pattern))
+                        .collect(),
+                    arg_set: ctx.args.to_vec(),
+                    matched: false,
+                };
+                fold.effect_arg_match(pattern, ctx.args, false, detail)
             }
         }
         ArgPattern::Exact {
@@ -666,71 +813,115 @@ fn evaluate_arg_pattern_effect(
                 .collect();
 
             let (matched, bound_facts) = match_positional_patterns(&positional_args, patterns);
-            if positional_args.len() == patterns.len() && matched {
+            let exact_match = positional_args.len() == patterns.len() && matched;
+            if exact_match {
                 if let Some(cont) = continuation {
-                    // For exact patterns, no positional args remain after exact match
-                    // But we should still pass any flags that weren't part of the pattern
                     let remaining_args: Vec<String> = ctx
                         .args
                         .iter()
                         .filter(|arg| arg.starts_with('-'))
                         .map(|s| s.to_string())
                         .collect();
-                    evaluate_effect_with_owned_args(cont, ctx, rules, remaining_args, bound_facts)
+                    evaluate_effect_with_owned_args_fold(
+                        fold,
+                        cont,
+                        ctx,
+                        rules,
+                        remaining_args,
+                        bound_facts,
+                    )
                 } else {
-                    EffectResult::Decision(Decision::Allow, None)
+                    let detail = ArgMatchDetail {
+                        search_tokens: patterns
+                            .iter()
+                            .map(|p| format!("{:?}", p.pattern))
+                            .collect(),
+                        arg_set: ctx.args.to_vec(),
+                        matched: true,
+                    };
+                    fold.effect_arg_match(pattern, ctx.args, true, detail)
                 }
             } else {
-                EffectResult::Nil
+                let detail = ArgMatchDetail {
+                    search_tokens: patterns
+                        .iter()
+                        .map(|p| format!("{:?}", p.pattern))
+                        .collect(),
+                    arg_set: ctx.args.to_vec(),
+                    matched: false,
+                };
+                fold.effect_arg_match(pattern, ctx.args, false, detail)
             }
         }
         ArgPattern::Anywhere(exprs) => {
+            let mut matched = false;
+            let mut search_tokens = Vec::new();
             for expr in exprs {
                 match expr {
                     may_i_core::pattern::Expr::Literal(s) => {
+                        search_tokens.push(s.clone());
                         if ctx.args.iter().any(|arg| arg == s) {
-                            return EffectResult::Decision(Decision::Allow, None);
+                            matched = true;
                         }
                     }
                     may_i_core::pattern::Expr::Wildcard => {
-                        return EffectResult::Decision(Decision::Allow, None);
+                        search_tokens.push("*".to_string());
+                        matched = true;
                     }
                     _ => {}
                 }
             }
-            EffectResult::Nil
+            let detail = ArgMatchDetail {
+                search_tokens,
+                arg_set: ctx.args.to_vec(),
+                matched,
+            };
+            fold.effect_arg_match(pattern, ctx.args, matched, detail)
         }
         ArgPattern::Forbidden(exprs) => {
+            let mut found_forbidden = false;
+            let mut search_tokens = Vec::new();
             for expr in exprs {
                 match expr {
                     may_i_core::pattern::Expr::Literal(s) => {
+                        search_tokens.push(s.clone());
                         if ctx.args.iter().any(|arg| arg == s) {
-                            return EffectResult::Decision(Decision::Deny, None);
+                            found_forbidden = true;
                         }
                     }
                     may_i_core::pattern::Expr::Wildcard => {
+                        search_tokens.push("*".to_string());
                         if !ctx.args.is_empty() {
-                            return EffectResult::Decision(Decision::Deny, None);
+                            found_forbidden = true;
                         }
                     }
                     _ => {}
                 }
             }
-            EffectResult::Decision(Decision::Allow, None)
+            if found_forbidden {
+                fold.effect_terminal(
+                    &Effect::ArgPattern(pattern.clone()),
+                    EffectResult::Decision(Decision::Deny, None),
+                )
+            } else {
+                fold.effect_terminal(
+                    &Effect::ArgPattern(pattern.clone()),
+                    EffectResult::Decision(Decision::Allow, None),
+                )
+            }
         }
     }
 }
 
-/// Helper to evaluate an effect with owned args.
-fn evaluate_effect_with_owned_args(
+/// Helper to evaluate an effect with owned args and a fold.
+fn evaluate_effect_with_owned_args_fold<F: EvalFold>(
+    fold: &mut F,
     effect: &Effect,
     ctx: &EvalContext,
     rules: &[Rule],
     owned_args: Vec<String>,
     bound_facts: ContextFacts,
-) -> EffectResult {
-    let _args_ref: Vec<&str> = owned_args.iter().map(|s| s.as_str()).collect();
-    // Merge bound facts into the context facts
+) -> F::EffectOut {
     let merged_facts = ctx.facts.merge(&bound_facts);
     let inner_ctx = EvalContext {
         command: ctx.command,
@@ -739,7 +930,7 @@ fn evaluate_effect_with_owned_args(
         recursion_depth: ctx.recursion_depth,
         recursion_limit: ctx.recursion_limit,
     };
-    evaluate_effect(effect, &inner_ctx, rules)
+    evaluate_effect_fold(fold, effect, &inner_ctx, rules)
 }
 
 /// Extract inner command from args based on pattern (for may-i recursion).
@@ -769,295 +960,6 @@ fn extract_inner_command(pattern: &ArgPattern, args: &[String]) -> Option<(Strin
             }
         }
         _ => None,
-    }
-}
-
-/// Evaluate an effect with tracing.
-fn evaluate_effect_with_trace(
-    effect: &Effect,
-    ctx: &EvalContext,
-    rules: &[Rule],
-) -> (EffectResult, EffectTrace) {
-    match effect {
-        // Terminal effects
-        Effect::Allow(reason) => {
-            let result = EffectResult::Decision(Decision::Allow, reason.clone());
-            let trace = EffectTrace::Terminal {
-                effect: effect.clone(),
-                decision: Decision::Allow,
-                reason: reason.clone(),
-            };
-            (result, trace)
-        }
-        Effect::Ask(reason) => {
-            let result = EffectResult::Decision(Decision::Ask, reason.clone());
-            let trace = EffectTrace::Terminal {
-                effect: effect.clone(),
-                decision: Decision::Ask,
-                reason: reason.clone(),
-            };
-            (result, trace)
-        }
-        Effect::Deny(reason) => {
-            let result = EffectResult::Decision(Decision::Deny, reason.clone());
-            let trace = EffectTrace::Terminal {
-                effect: effect.clone(),
-                decision: Decision::Deny,
-                reason: reason.clone(),
-            };
-            (result, trace)
-        }
-
-        // Pattern effects
-        Effect::CommandPattern(_pattern) => {
-            let result = evaluate_effect(effect, ctx, rules);
-            let trace = EffectTrace::Terminal {
-                effect: effect.clone(),
-                decision: result.decision().unwrap_or(Decision::Allow),
-                reason: None,
-            };
-            (result, trace)
-        }
-        Effect::ArgPattern(arg_pattern) => {
-            let result = evaluate_arg_pattern_effect(arg_pattern, ctx, rules);
-            let trace = EffectTrace::Terminal {
-                effect: effect.clone(),
-                decision: result.decision().unwrap_or(Decision::Allow),
-                reason: None,
-            };
-            (result, trace)
-        }
-
-        // Combinators with nested traces
-        Effect::And { effects } => {
-            let mut effect_traces = Vec::new();
-            let mut last_result = EffectResult::Decision(Decision::Allow, None);
-
-            for effect in effects {
-                let (result, trace) = evaluate_effect_with_trace(&effect.value, ctx, rules);
-                effect_traces.push(trace);
-                if result.is_nil() {
-                    let decision = last_result.decision().unwrap_or(Decision::Allow);
-                    let trace = EffectTrace::And {
-                        effects: effect_traces,
-                        decision,
-                        reason: None,
-                    };
-                    return (EffectResult::Nil, trace);
-                }
-                last_result = result;
-            }
-
-            let decision = last_result.decision().unwrap_or(Decision::Allow);
-            let trace = EffectTrace::And {
-                effects: effect_traces,
-                decision,
-                reason: last_result.reason().cloned(),
-            };
-            (last_result, trace)
-        }
-
-        Effect::Or { effects } => {
-            let mut effect_traces = Vec::new();
-
-            for effect in effects {
-                let (result, trace) = evaluate_effect_with_trace(&effect.value, ctx, rules);
-                effect_traces.push(trace);
-                if !result.is_nil() {
-                    let decision = result.decision().unwrap_or(Decision::Allow);
-                    let trace = EffectTrace::Or {
-                        effects: effect_traces,
-                        decision,
-                        reason: result.reason().cloned(),
-                    };
-                    return (result, trace);
-                }
-            }
-
-            let trace = EffectTrace::Or {
-                effects: effect_traces,
-                decision: Decision::Allow,
-                reason: None,
-            };
-            (EffectResult::Nil, trace)
-        }
-
-        Effect::Not {
-            effect: inner_effect,
-        } => {
-            let (inner_result, inner_trace) =
-                evaluate_effect_with_trace(&inner_effect.value, ctx, rules);
-
-            let result = match inner_result {
-                EffectResult::Nil => EffectResult::Decision(Decision::Allow, None),
-                EffectResult::Decision(Decision::Allow, _) => EffectResult::Nil,
-                EffectResult::Decision(ask_or_deny, reason) => {
-                    EffectResult::Decision(ask_or_deny, reason)
-                }
-            };
-
-            let decision = result.decision().unwrap_or(Decision::Allow);
-            let trace = EffectTrace::Not {
-                effect: Box::new(inner_trace),
-                decision,
-                reason: result.reason().cloned(),
-            };
-            (result, trace)
-        }
-
-        // Conditionals with nested traces
-        Effect::When {
-            predicate,
-            effect: inner_effect,
-        } => {
-            let pred_result = evaluate_predicate(&predicate.value, ctx);
-            let (effect_result, effect_trace) =
-                evaluate_effect_with_trace(&inner_effect.value, ctx, rules);
-
-            let result = if pred_result == PredicateResult::Match {
-                effect_result
-            } else {
-                EffectResult::Nil
-            };
-
-            let decision = result.decision().unwrap_or(Decision::Allow);
-            let trace = EffectTrace::When {
-                predicate: predicate.value.clone(),
-                predicate_result: match pred_result {
-                    PredicateResult::Match => TracePredicateResult::Match,
-                    PredicateResult::NoMatch => TracePredicateResult::NoMatch,
-                },
-                effect: Box::new(effect_trace),
-                decision,
-                reason: result.reason().cloned(),
-            };
-            (result, trace)
-        }
-
-        Effect::Unless {
-            predicate,
-            effect: inner_effect,
-        } => {
-            let pred_result = evaluate_predicate(&predicate.value, ctx);
-            let (effect_result, effect_trace) =
-                evaluate_effect_with_trace(&inner_effect.value, ctx, rules);
-
-            let result = if pred_result == PredicateResult::NoMatch {
-                effect_result
-            } else {
-                EffectResult::Nil
-            };
-
-            let decision = result.decision().unwrap_or(Decision::Allow);
-            let trace = EffectTrace::Unless {
-                predicate: predicate.value.clone(),
-                predicate_result: match pred_result {
-                    PredicateResult::Match => TracePredicateResult::Match,
-                    PredicateResult::NoMatch => TracePredicateResult::NoMatch,
-                },
-                effect: Box::new(effect_trace),
-                decision,
-                reason: result.reason().cloned(),
-            };
-            (result, trace)
-        }
-
-        Effect::If {
-            predicate,
-            then_effect,
-            else_effect,
-        } => {
-            let pred_result = evaluate_predicate(&predicate.value, ctx);
-            let (then_result, then_trace) =
-                evaluate_effect_with_trace(&then_effect.value, ctx, rules);
-            let (else_result, else_trace) =
-                evaluate_effect_with_trace(&else_effect.value, ctx, rules);
-
-            let result = if pred_result == PredicateResult::Match {
-                then_result
-            } else {
-                else_result
-            };
-
-            let decision = result.decision().unwrap_or(Decision::Allow);
-            let trace = EffectTrace::If {
-                predicate: predicate.value.clone(),
-                predicate_result: match pred_result {
-                    PredicateResult::Match => TracePredicateResult::Match,
-                    PredicateResult::NoMatch => TracePredicateResult::NoMatch,
-                },
-                then_effect: Box::new(then_trace),
-                else_effect: Some(Box::new(else_trace)),
-                decision,
-                reason: result.reason().cloned(),
-            };
-            (result, trace)
-        }
-
-        Effect::Cond { branches, fallback } => {
-            let mut branch_traces = Vec::new();
-
-            for (predicate, branch_effect) in branches {
-                let pred_result = evaluate_predicate(&predicate.value, ctx);
-                let (effect_result, effect_trace) =
-                    evaluate_effect_with_trace(&branch_effect.value, ctx, rules);
-
-                branch_traces.push((
-                    predicate.value.clone(),
-                    match pred_result {
-                        PredicateResult::Match => TracePredicateResult::Match,
-                        PredicateResult::NoMatch => TracePredicateResult::NoMatch,
-                    },
-                    Box::new(effect_trace),
-                ));
-
-                if pred_result == PredicateResult::Match {
-                    let decision = effect_result.decision().unwrap_or(Decision::Allow);
-                    let trace = EffectTrace::Case {
-                        branches: branch_traces,
-                        fallback: fallback.as_ref().map(|fb| {
-                            let (_, trace) = evaluate_effect_with_trace(&fb.value, ctx, rules);
-                            Box::new(trace)
-                        }),
-                        decision,
-                        reason: effect_result.reason().cloned(),
-                    };
-                    return (effect_result, trace);
-                }
-            }
-
-            // No branch matched - use fallback
-            if let Some(fb) = fallback {
-                let (result, trace) = evaluate_effect_with_trace(&fb.value, ctx, rules);
-                let decision = result.decision().unwrap_or(Decision::Allow);
-                let wrapped_trace = EffectTrace::Case {
-                    branches: branch_traces,
-                    fallback: Some(Box::new(trace)),
-                    decision,
-                    reason: result.reason().cloned(),
-                };
-                (result, wrapped_trace)
-            } else {
-                let trace = EffectTrace::Case {
-                    branches: branch_traces,
-                    fallback: None,
-                    decision: Decision::Allow,
-                    reason: None,
-                };
-                (EffectResult::Nil, trace)
-            }
-        }
-
-        // Recursion
-        Effect::MayI { pattern: _ } => {
-            let result = evaluate_effect(effect, ctx, rules);
-            let trace = EffectTrace::Terminal {
-                effect: effect.clone(),
-                decision: result.decision().unwrap_or(Decision::Allow),
-                reason: None,
-            };
-            (result, trace)
-        }
     }
 }
 
@@ -1699,7 +1601,7 @@ mod tests {
         let args = vec!["rm".to_string(), "-rf".to_string()];
         let ctx = EvalContext::new("sudo", &args, &facts);
         let evaluator = Evaluator::new(&rules);
-        let result = evaluator.evaluate(&ctx);
+        let result = evaluator.evaluate(&mut PureFold, &ctx);
         // The inner "rm" evaluation should see :via = {"sudo"} and match the deny rule
         assert_eq!(result.decision, Decision::Deny);
     }
@@ -1778,7 +1680,7 @@ mod tests {
         ];
         let ctx = EvalContext::new("sudo", &args, &facts);
         let evaluator = Evaluator::new(&rules);
-        let result = evaluator.evaluate(&ctx);
+        let result = evaluator.evaluate(&mut PureFold, &ctx);
         // Inner "rm" should see :via = {"sudo", "ssh"} and match the deny rule
         assert_eq!(result.decision, Decision::Deny);
     }

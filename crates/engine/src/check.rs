@@ -1,7 +1,6 @@
 // Config validation — run embedded checks against the engine.
 
 use crate::EvalResult;
-use crate::trace::TraceEntry;
 use may_i_core::ast::Config;
 use may_i_core::{ContextFacts, Decision};
 use may_i_shell_parser::{self as parser, Command, Word, WordPart};
@@ -15,7 +14,6 @@ pub struct CheckResult {
     pub passed: bool,
     pub context: ContextFacts,
     pub reason: Option<String>,
-    pub trace: Vec<TraceEntry>,
     pub location: Option<String>,
 }
 
@@ -82,7 +80,6 @@ pub fn run_checks(config: &Config) -> Vec<CheckResult> {
                 passed: eval.decision == check.expected,
                 context: check.context.clone(),
                 reason: eval.reason,
-                trace: eval.trace,
                 location,
             });
         }
@@ -98,7 +95,6 @@ pub fn run_checks(config: &Config) -> Vec<CheckResult> {
             passed: eval.decision == check.expected,
             context: check.context.clone(),
             reason: eval.reason,
-            trace: eval.trace,
             location,
         });
     }
