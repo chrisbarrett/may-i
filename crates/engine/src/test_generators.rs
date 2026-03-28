@@ -12,6 +12,23 @@ use may_i_core::{ContextFacts, Decision, Span};
 // Re-export core generators.
 pub use may_i_core::test_generators::*;
 
+/// Shell keywords that the parser treats as tokens rather than command names.
+/// Generated command names must avoid these to prevent parse mismatches in
+/// check tests (where the shell parser is invoked on the command string).
+const SHELL_KEYWORDS: &[&str] = &[
+    "if", "then", "elif", "else", "fi", "for", "in", "while", "until", "do", "done", "case",
+    "esac", "function",
+];
+
+fn is_shell_keyword(s: &str) -> bool {
+    SHELL_KEYWORDS.contains(&s)
+}
+
+/// Generate a command name that is not a shell keyword.
+fn any_command_name() -> impl Strategy<Value = String> {
+    "[a-zA-Z][a-zA-Z0-9]{0,9}".prop_filter("not a shell keyword", |s| !is_shell_keyword(s))
+}
+
 fn dummy_span() -> Span {
     Span::new(0, 0)
 }
@@ -927,7 +944,7 @@ mod check_tests {
 
         #[test]
         fn check_allow_evaluates_correctly(
-            cmd_name in "[a-zA-Z][a-zA-Z0-9]{0,9}",
+            cmd_name in any_command_name(),
         ) {
             let config = Config {
                 rules: vec![Rule {
@@ -955,7 +972,7 @@ mod check_tests {
         // 4.4.3 Test: Failing checks have passed=false
         #[test]
         fn failing_check_has_passed_false(
-            cmd_name in "[a-zA-Z][a-zA-Z0-9]{0,9}",
+            cmd_name in any_command_name(),
         ) {
             let config = Config {
                 rules: vec![Rule {
@@ -983,7 +1000,7 @@ mod check_tests {
         // 4.4.5 Test: Check with expected=Ask evaluates correctly
         #[test]
         fn check_ask_evaluates_correctly(
-            cmd_name in "[a-zA-Z][a-zA-Z0-9]{0,9}",
+            cmd_name in any_command_name(),
         ) {
             // No rules match -> default Ask
             let config = Config {
@@ -1005,7 +1022,7 @@ mod check_tests {
         // 4.4.7 Property: Check result matches expected decision
         #[test]
         fn check_result_matches_expected(
-            cmd_name in "[a-zA-Z][a-zA-Z0-9]{0,9}",
+            cmd_name in any_command_name(),
             decision in any_decision(),
         ) {
             let effect = match decision {
@@ -1039,7 +1056,7 @@ mod check_tests {
 
         #[test]
         fn check_deny_evaluates_correctly(
-            cmd_name in "[a-zA-Z][a-zA-Z0-9]{0,9}",
+            cmd_name in any_command_name(),
         ) {
             let config = Config {
                 rules: vec![Rule {
@@ -1199,7 +1216,6 @@ mod edge_case_tests {
     }
 }
 
-#[cfg(test)]
 #[cfg(test)]
 mod additional_properties {
     use super::*;
@@ -1401,5 +1417,122 @@ mod integration_tests {
         // And returns last = Allow("and-second")
         assert_eq!(result.decision, Decision::Allow);
         assert_eq!(result.reason, Some("and-second".to_string()));
+    }
+}
+
+#[cfg(test)]
+mod fold_properties {
+    use super::*;
+    use crate::eval::{self, EvalContext, Evaluator};
+    use crate::fold::PureFold;
+    use may_i_core::ast::EffectResult;
+
+    fn make_ctx<'a>(
+        command: &'a str,
+        args: &'a [String],
+        facts: &'a ContextFacts,
+    ) -> EvalContext<'a> {
+        EvalContext::new(command, args, facts)
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: 256, max_shrink_iters: 50, .. ProptestConfig::default() })]
+
+        // Property: PureFold is an identity — evaluate_effect_fold with PureFold
+        // produces the same result as the convenience evaluate_effect wrapper.
+        #[test]
+        fn pure_fold_is_identity(
+            effect in any_effect(2).prop_filter("no MayI", |e| !contains_may_i(e)),
+            data in any_eval_context_data(),
+        ) {
+            let (cmd, args, facts) = data;
+            let ctx = make_ctx(&cmd, &args, &facts);
+
+            let direct = eval::evaluate_effect(&effect, &ctx, &[]);
+            let via_fold = eval::evaluate_effect_fold(&mut PureFold, &effect, &ctx, &[]);
+
+            prop_assert_eq!(direct, via_fold,
+                "PureFold should produce identical result to direct evaluation");
+        }
+
+        // Property: PureFold identity holds at whole-config level too.
+        #[test]
+        fn pure_fold_agrees_with_evaluate(
+            config in any_config(3),
+            data in any_eval_context_data(),
+        ) {
+            let (cmd, args, facts) = data;
+            let result_convenience = eval::evaluate(&cmd, &args, &config, &facts);
+
+            let ctx = EvalContext::new(&cmd, &args, &facts);
+            let evaluator = Evaluator::new(&config.rules);
+            let result_fold = evaluator.evaluate(&mut PureFold, &ctx);
+
+            prop_assert_eq!(result_convenience.decision, result_fold.decision);
+            prop_assert_eq!(result_convenience.reason, result_fold.reason);
+        }
+
+        // Property: Forbidden pattern yields Deny when any forbidden token is
+        // present in args, Allow when none are present.
+        #[test]
+        fn forbidden_pattern_semantics(
+            tokens in prop::collection::vec("[a-zA-Z][a-zA-Z0-9]{0,9}", 1..4),
+            extra_args in prop::collection::vec("[a-zA-Z][a-zA-Z0-9]{0,9}", 0..3),
+            include_forbidden: bool,
+        ) {
+            let pattern = may_i_core::pattern::ArgPattern::Forbidden(
+                tokens.iter().map(|t| may_i_core::pattern::Expr::Literal(t.clone())).collect(),
+            );
+            let effect = Effect::ArgPattern(pattern);
+
+            let mut args = extra_args.clone();
+            // Ensure no accidental overlap when testing absence.
+            if !include_forbidden {
+                args.retain(|a| !tokens.contains(a));
+            } else {
+                // Inject one of the forbidden tokens.
+                args.push(tokens[0].clone());
+            }
+
+            let facts = ContextFacts::default();
+            let ctx = make_ctx("test", &args, &facts);
+            let result = eval::evaluate_effect(&effect, &ctx, &[]);
+
+            let any_present = args.iter().any(|a| tokens.contains(a));
+            if any_present {
+                prop_assert_eq!(result.decision(), Some(Decision::Deny),
+                    "Forbidden token present → should Deny");
+            } else {
+                prop_assert_eq!(result.decision(), Some(Decision::Allow),
+                    "No forbidden token → should Allow");
+            }
+        }
+    }
+
+    fn contains_may_i(effect: &Effect) -> bool {
+        match effect {
+            Effect::MayI { .. } => true,
+            Effect::And { effects } | Effect::Or { effects } => {
+                effects.iter().any(|e| contains_may_i(&e.value))
+            }
+            Effect::Not { effect } => contains_may_i(&effect.value),
+            Effect::When { effect, .. } | Effect::Unless { effect, .. } => {
+                contains_may_i(&effect.value)
+            }
+            Effect::If {
+                then_effect,
+                else_effect,
+                ..
+            } => contains_may_i(&then_effect.value) || contains_may_i(&else_effect.value),
+            Effect::Cond {
+                branches, fallback, ..
+            } => {
+                branches.iter().any(|(_, e)| contains_may_i(&e.value))
+                    || fallback
+                        .as_ref()
+                        .map_or(false, |f| contains_may_i(&f.value))
+            }
+            _ => false,
+        }
     }
 }

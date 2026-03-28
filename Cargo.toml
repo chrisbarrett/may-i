@@ -26,5 +26,7 @@ similar = "2"
 [dev-dependencies]
 assert_cmd = "2"
 insta = "1"
+may-i-engine = { path = "crates/engine", features = ["test-generators"] }
 predicates = "3"
+proptest = "1"
 tempfile = "3"

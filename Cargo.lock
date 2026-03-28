@@ -525,6 +525,7 @@ dependencies = [
  "miette",
  "minus",
  "predicates",
+ "proptest",
  "serde",
  "serde_json",
  "similar",

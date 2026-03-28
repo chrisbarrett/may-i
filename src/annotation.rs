@@ -546,3 +546,41 @@ impl EvalFold for TracingFold {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use may_i_engine::eval::{EvalContext, Evaluator};
+    use may_i_engine::fold::PureFold;
+    use may_i_engine::test_generators::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: 256, max_shrink_iters: 50, .. ProptestConfig::default() })]
+
+        // Property: TracingFold produces the same decision as PureFold.
+        // The fold parameterisation must not alter evaluation semantics.
+        #[test]
+        fn tracing_fold_agrees_with_pure_fold(
+            config in any_config(3),
+            data in any_eval_context_data(),
+        ) {
+            let (cmd, args, facts) = data;
+            let ctx = EvalContext::new(&cmd, &args, &facts);
+
+            let evaluator = Evaluator::new(&config.rules);
+
+            let pure_result = evaluator.evaluate(&mut PureFold, &ctx);
+            let tracing_result = evaluator.evaluate(&mut TracingFold::new(), &ctx);
+
+            prop_assert_eq!(
+                pure_result.decision, tracing_result.decision,
+                "TracingFold must produce the same decision as PureFold"
+            );
+            prop_assert_eq!(
+                pure_result.reason, tracing_result.reason,
+                "TracingFold must produce the same reason as PureFold"
+            );
+        }
+    }
+}

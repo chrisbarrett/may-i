@@ -4,8 +4,8 @@ pub(crate) mod check;
 pub mod eval;
 pub mod fold;
 
-#[cfg(test)]
-mod test_generators;
+#[cfg(any(test, feature = "test-generators"))]
+pub mod test_generators;
 
 use may_i_core::Decision;
 
