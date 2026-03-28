@@ -1,15 +1,5 @@
 // Integration tests for migration diff functionality
 
-use std::io::Write;
-use tempfile::NamedTempFile;
-
-/// Helper to create a temp config file with given content
-fn create_temp_config(content: &str) -> NamedTempFile {
-    let mut file = NamedTempFile::new().unwrap();
-    file.write_all(content.as_bytes()).unwrap();
-    file
-}
-
 #[test]
 fn test_trivia_extraction() {
     use may_i_config::migrate::{extract_leading_context, extract_trailing_context};

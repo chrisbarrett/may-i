@@ -5,6 +5,9 @@ pub mod eval;
 
 pub mod trace;
 
+#[cfg(test)]
+mod test_generators;
+
 use may_i_core::Decision;
 
 pub use check::{CheckResult, run_checks};
@@ -47,11 +50,6 @@ pub fn aggregate_results(results: Vec<EvalResult>) -> EvalResult {
 #[cfg(test)]
 mod lib_tests {
     use super::*;
-    use may_i_core::ast::Config;
-
-    fn empty_config() -> Config {
-        Config::default()
-    }
 
     #[test]
     fn test_aggregate_results_single() {

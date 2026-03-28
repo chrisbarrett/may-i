@@ -6,8 +6,13 @@ edition = "2024"
 [dependencies]
 may-i-shell-parser = { path = "../shell-parser" }
 may-i-core = { path = "../core" }
+arbitrary = { version = "1", optional = true }
+
+[features]
+arbitrary = ["dep:arbitrary", "may-i-core/arbitrary"]
 
 [dev-dependencies]
 may-i-config = { path = "../config" }
+may-i-core = { path = "../core", features = ["test-generators"] }
 proptest = "1"
 regex = "1"

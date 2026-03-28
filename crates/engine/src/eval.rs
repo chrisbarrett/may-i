@@ -504,7 +504,7 @@ fn match_expr_with_binding<E: std::fmt::Debug + may_i_core::ToDoc>(
 
 /// Evaluate an effect to produce an EffectResult (Decision | Nil).
 /// This is the core of the unified effect model.
-fn evaluate_effect(effect: &Effect, ctx: &EvalContext, rules: &[Rule]) -> EffectResult {
+pub(crate) fn evaluate_effect(effect: &Effect, ctx: &EvalContext, rules: &[Rule]) -> EffectResult {
     match effect {
         // Terminal effects return a decision with reason
         Effect::Allow(reason) => EffectResult::Decision(Decision::Allow, reason.clone()),

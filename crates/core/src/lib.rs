@@ -8,8 +8,14 @@ pub mod predicates;
 pub mod primitives;
 pub mod span;
 
+#[cfg(any(test, feature = "test-generators"))]
+pub mod test_generators;
+
+#[cfg(feature = "arbitrary")]
+mod arbitrary_impls;
+
 pub use doc::{Doc, DocF, LayoutHint};
-pub use span::{offset_to_line_col, Span};
+pub use span::{Span, offset_to_line_col};
 
 // Re-export primitive types
 pub use primitives::{Decision, Keyword, ToDoc};

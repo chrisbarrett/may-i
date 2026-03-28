@@ -5,6 +5,12 @@ edition = "2024"
 
 [dependencies]
 regex = "1"
+proptest = { version = "1", optional = true }
+arbitrary = { version = "1", optional = true }
 
 [dev-dependencies]
 proptest = "1"
+
+[features]
+test-generators = ["proptest"]
+arbitrary = ["dep:arbitrary"]

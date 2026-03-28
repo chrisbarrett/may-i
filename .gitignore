@@ -1,6 +1,10 @@
 /target
 /result
 
+# Fuzz
+fuzz/artifacts/
+fuzz/corpus/
+
 # Coverage
 *.profraw
 tarpaulin-report.*

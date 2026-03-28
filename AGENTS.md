@@ -3,4 +3,10 @@ harnesses.
 
 Run `cargo fmt` before staging files.
 
-If tarpaulin tests fail, inspect `lcov.info` to see what was uncovered.
+## Testing
+
+Prefer property tests; fall back to targeted unit tests for hard-to-hit
+branches.
+
+If tarpaulin coverage is under threshold, inspect `lcov.info` to see what was
+uncovered.

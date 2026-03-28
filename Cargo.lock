@@ -83,6 +83,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5f0e0fee31ef5ed1ba1316088939cea399010ed7731dba877ed44aeb407a75ea"
 
 [[package]]
+name = "arbitrary"
+version = "1.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1"
+
+[[package]]
 name = "assert_cmd"
 version = "2.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -544,6 +550,7 @@ dependencies = [
 name = "may-i-core"
 version = "0.1.0"
 dependencies = [
+ "arbitrary",
  "proptest",
  "regex",
 ]
@@ -552,6 +559,7 @@ dependencies = [
 name = "may-i-engine"
 version = "0.1.0"
 dependencies = [
+ "arbitrary",
  "may-i-config",
  "may-i-core",
  "may-i-shell-parser",
