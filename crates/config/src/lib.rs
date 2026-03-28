@@ -13,7 +13,7 @@ pub mod rule;
 mod migration_tests;
 
 pub use command::{parse_command_pattern, parse_command_pattern_from_atom};
-pub use config::parse_config;
+pub use config::{parse_config, parse_config_from_sexprs};
 pub use effect::parse_effect;
 pub use errors::ConfigError;
 pub use io::{load, load_legacy, resolve_path};

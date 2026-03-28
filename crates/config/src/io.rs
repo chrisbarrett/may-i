@@ -5,13 +5,51 @@ use std::path::{Path, PathBuf};
 use miette::{Context, IntoDiagnostic};
 
 /// Load and parse a config file at the given path.
+///
+/// If normal parsing fails, attempts transparent migration from legacy v1
+/// syntax. On successful migration, prints a warning to stderr. If migration
+/// also fails, returns the original parse error.
 pub fn load(path: &Path) -> miette::Result<may_i_core::ast::Config> {
     let content = std::fs::read_to_string(path)
         .into_diagnostic()
         .wrap_err_with(|| format!("Failed to read {}", path.display()))?;
 
-    crate::parse_config(&content)
-        .map_err(|e| crate::ConfigError::from_raw(e, &content, &path.display().to_string()).into())
+    let filename = path.display().to_string();
+
+    // Fast path: try canonical parsing first.
+    match crate::parse_config(&content) {
+        Ok(config) => Ok(config),
+        Err(original_err) => {
+            // Slow path: attempt transparent migration from legacy syntax.
+            match try_migrate_and_parse(&content) {
+                Some(config) => {
+                    eprintln!(
+                        "Config auto-migrated from legacy format. Run `may-i migrate` to update permanently."
+                    );
+                    Ok(config)
+                }
+                None => {
+                    // Migration failed or didn't help; return the original error.
+                    Err(crate::ConfigError::from_raw(original_err, &content, &filename).into())
+                }
+            }
+        }
+    }
+}
+
+/// Attempt to parse a config by migrating legacy CST forms to canonical syntax.
+///
+/// Returns `Some(config)` if migration succeeds, `None` otherwise.
+fn try_migrate_and_parse(content: &str) -> Option<may_i_core::ast::Config> {
+    let (cst_nodes, cst_errors) = may_i_sexpr::parse_cst(content);
+    if !cst_errors.is_empty() {
+        return None;
+    }
+
+    let migrated = crate::migrate::migrate_forms(cst_nodes);
+    let sexprs: Vec<_> = migrated.iter().map(|n| n.to_sexpr()).collect();
+
+    crate::parse_config_from_sexprs(&sexprs).ok()
 }
 
 /// Resolve the config file path.
@@ -103,6 +141,95 @@ mod tests {
         writeln!(temp_file, "(invalid").unwrap();
         let result = load(temp_file.path());
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_load_legacy_wrapper_config_succeeds() {
+        let mut temp_file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            temp_file,
+            r#"(wrapper "ssh" (positional [:host *] :command+args))"#
+        )
+        .unwrap();
+        let result = load(temp_file.path());
+        assert!(result.is_ok(), "legacy config should load via migration");
+    }
+
+    #[test]
+    fn test_load_canonical_config_skips_migration() {
+        let mut temp_file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            temp_file,
+            r#"(rule "git" (positional "status") :effect (effect :allow))"#
+        )
+        .unwrap();
+        let result = load(temp_file.path());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_load_invalid_config_returns_original_error() {
+        let mut temp_file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(temp_file, "(unknown-form)").unwrap();
+        let result = load(temp_file.path());
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("unknown top-level form"),
+            "should return original error, got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn test_migrated_config_preserves_spans_for_error_reporting() {
+        // A legacy config with a valid wrapper followed by an unknown form.
+        // The wrapper should migrate fine, but the unknown form should cause
+        // an error whose span points to the correct position in the original source.
+        let input = r#"(wrapper "ssh" (positional [:host *] :command+args))
+(bad-form)"#;
+
+        let (cst_nodes, errors) = may_i_sexpr::parse_cst(input);
+        assert!(errors.is_empty());
+
+        let migrated = crate::migrate::migrate_forms(cst_nodes);
+        let sexprs: Vec<_> = migrated.iter().map(|n| n.to_sexpr()).collect();
+
+        let err = crate::parse_config_from_sexprs(&sexprs).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("unknown top-level form"),
+            "expected 'unknown top-level form', got: {msg}"
+        );
+
+        // The span should point into the original source text where "bad-form" is.
+        let bad_form_offset = input.find("bad-form").unwrap();
+        assert!(
+            err.span.start >= bad_form_offset
+                && err.span.start < bad_form_offset + "bad-form".len(),
+            "span start {} should be within bad-form at offset {}",
+            err.span.start,
+            bad_form_offset
+        );
+    }
+
+    #[test]
+    fn test_spans_flow_through_cst_migrate_sexpr_ast() {
+        // Verify spans are preserved through the full chain for a valid legacy config.
+        let input = r#"(wrapper "ssh" (positional [:host *] :command+args))"#;
+
+        let (cst_nodes, errors) = may_i_sexpr::parse_cst(input);
+        assert!(errors.is_empty());
+
+        // Verify CST node spans point into the original source
+        let original_span = cst_nodes[0].ann.span;
+        assert_eq!(original_span.start, 0);
+
+        let migrated = crate::migrate::migrate_forms(cst_nodes);
+        let sexprs: Vec<_> = migrated.iter().map(|n| n.to_sexpr()).collect();
+
+        // The migrated forms should parse successfully
+        let config = crate::parse_config_from_sexprs(&sexprs).unwrap();
+        assert!(!config.rules.is_empty(), "should have at least one rule");
     }
 
     #[test]

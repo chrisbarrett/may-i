@@ -13,9 +13,17 @@ pub fn parse_config(input: &str) -> Result<Config, RawError> {
         return Err(err);
     }
 
+    parse_config_from_sexprs(&forms)
+}
+
+/// Parse a config from pre-parsed Sexpr forms.
+///
+/// This enables parsing from migrated CST forms that have been converted to
+/// Sexpr, without re-serializing to text.
+pub fn parse_config_from_sexprs(forms: &[Sexpr]) -> Result<Config, RawError> {
     let mut config = Config::default();
 
-    for form in &forms {
+    for form in forms {
         let list = form
             .as_list()
             .ok_or_else(|| RawError::new("top-level form must be a list", form.span()))?;
