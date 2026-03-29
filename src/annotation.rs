@@ -509,21 +509,10 @@ impl EvalFold for TracingFold {
         (out.0, doc)
     }
 
-    fn rule_skipped(&mut self, rule: &Rule) -> Self::EffectOut {
-        let rule_doc = unannotated_to_ann(rule_to_doc(rule));
-        let ann = Some(Ann::RuleMatch {
-            matched: false,
-            line: None,
-        });
-        let doc = Doc {
-            ann,
-            ..dim(rule_doc)
-        };
-        self.traces.push(TraceEntry::Rule {
-            doc: doc.clone(),
-            line: None,
-        });
-        (EffectResult::Nil, doc)
+    fn rule_skipped(&mut self, _rule: &Rule) -> Self::EffectOut {
+        // Don't add skipped (non-matching) rules to the trace — they are
+        // out of scope for the command being evaluated and just add noise.
+        (EffectResult::Nil, plain_atom("…"))
     }
 
     fn default_ask(&mut self, reason: &str) -> Self::EffectOut {
