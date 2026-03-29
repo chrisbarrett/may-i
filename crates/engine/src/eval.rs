@@ -493,10 +493,50 @@ fn match_expr_with_binding<E: std::fmt::Debug + may_i_core::ToDoc>(
                 false
             }
         }
-        _ => false, // Cond not supported in simple matching
+        Expr::Cond(branches) => {
+            // Match if any branch's test expression matches the value
+            branches
+                .iter()
+                .any(|b| match_expr_with_binding(&b.test, value).0)
+        }
     };
 
     (matched, facts)
+}
+
+/// Find the effect from a matching Expr::Cond branch for a given arg value.
+/// Returns the effect from the first branch whose test matches, or the wildcard
+/// (else) branch's effect if no specific branch matches.
+fn find_cond_branch_effect<'a>(
+    branches: &'a [may_i_core::pattern::ExprBranch<Effect>],
+    value: &str,
+) -> Option<&'a Effect> {
+    for branch in branches {
+        if match_expr_with_binding(&branch.test, value).0 {
+            return Some(&branch.effect);
+        }
+    }
+    None
+}
+
+/// If the last positional pattern is an Expr::Cond, find the matching branch's
+/// effect for the last consumed arg. Returns None if the last pattern isn't a Cond
+/// or no branch matched.
+fn resolve_trailing_cond_effect<'a>(
+    patterns: &'a [may_i_core::pattern::PositionalArg],
+    positional_args: &[&String],
+    consumed: usize,
+) -> Option<&'a Effect> {
+    if consumed == 0 {
+        return None;
+    }
+    let last_pattern = patterns.last()?;
+    if let may_i_core::pattern::Expr::Cond(branches) = &last_pattern.pattern {
+        let last_arg = positional_args.get(consumed - 1)?;
+        find_cond_branch_effect(branches, last_arg)
+    } else {
+        None
+    }
 }
 
 /// Evaluate an effect to produce an EffectResult (convenience, uses PureFold).
@@ -759,7 +799,11 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
             let (matched, consumed, bound_facts) =
                 match_positional_patterns(&positional_args, patterns);
             if matched {
-                if let Some(cont) = continuation {
+                // Check for explicit continuation first, then trailing Expr::Cond
+                let effective_continuation = continuation
+                    .as_deref()
+                    .or_else(|| resolve_trailing_cond_effect(patterns, &positional_args, consumed));
+                if let Some(cont) = effective_continuation {
                     let remaining_args: Vec<String> = ctx
                         .args
                         .iter()
@@ -812,7 +856,10 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                 match_positional_patterns(&positional_args, patterns);
             let exact_match = consumed == positional_args.len() && matched;
             if exact_match {
-                if let Some(cont) = continuation {
+                let effective_continuation = continuation
+                    .as_deref()
+                    .or_else(|| resolve_trailing_cond_effect(patterns, &positional_args, consumed));
+                if let Some(cont) = effective_continuation {
                     let remaining_args: Vec<String> = ctx
                         .args
                         .iter()
