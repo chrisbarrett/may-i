@@ -1500,11 +1500,12 @@ mod fold_properties {
 
             let any_present = args.iter().any(|a| tokens.contains(a));
             if any_present {
-                prop_assert_eq!(result.decision(), Some(Decision::Deny),
-                    "Forbidden token present → should Deny");
+                // Forbidden token found → predicate fails → Nil
+                prop_assert_eq!(result.decision(), None,
+                    "Forbidden token present → should be Nil (predicate fails)");
             } else {
                 prop_assert_eq!(result.decision(), Some(Decision::Allow),
-                    "No forbidden token → should Allow");
+                    "No forbidden token → should Allow (predicate passes)");
             }
         }
     }

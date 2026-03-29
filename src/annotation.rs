@@ -529,7 +529,7 @@ impl EvalFold for TracingFold {
             matched: true,
             line,
         });
-        let docs = vec![command_out.1, out.1];
+        let docs = vec![plain_atom("rule"), command_out.1, out.1];
         let doc = ann_list_break(docs, ann);
         self.traces.push(TraceEntry::Rule {
             doc: doc.clone(),

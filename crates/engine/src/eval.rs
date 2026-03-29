@@ -88,14 +88,91 @@ pub fn evaluate_with_fold<F: EvalFold>(
     facts: &ContextFacts,
     fold: &mut F,
 ) -> EvalResult {
+    let expanded = expand_combined_flags(args);
     let evaluator = Evaluator::new(&config.rules);
-    let ctx = EvalContext::new(command, args, facts);
+    let ctx = EvalContext::new(command, &expanded, facts);
     evaluator.evaluate(fold, &ctx)
+}
+
+/// Expand combined short flags (e.g. `-rf` → `-r`, `-f`).
+///
+/// Only expands args that start with a single `-` followed by multiple
+/// ASCII letters. Long options (`--foo`) and args with non-letter characters
+/// (e.g. `-1`, `-p8080`) are left unchanged.
+fn expand_combined_flags(args: &[String]) -> Vec<String> {
+    let mut out = Vec::with_capacity(args.len());
+    for arg in args {
+        if arg.starts_with('-')
+            && !arg.starts_with("--")
+            && arg.len() > 2
+            && arg[1..].chars().all(|c| c.is_ascii_alphabetic())
+        {
+            for ch in arg[1..].chars() {
+                out.push(format!("-{ch}"));
+            }
+        } else {
+            out.push(arg.clone());
+        }
+    }
+    out
+}
+
+/// Extract positional (non-flag) arguments from the argument list.
+///
+/// Handles `--` as an option terminator: `--` itself is included as a
+/// positional arg, and all subsequent args are positional regardless of
+/// prefix. Long options (`--foo`) consume the following arg as their value.
+fn positional_args(args: &[String]) -> Vec<&String> {
+    let mut result = Vec::new();
+    let mut iter = args.iter().peekable();
+    let mut past_terminator = false;
+
+    while let Some(arg) = iter.next() {
+        if past_terminator {
+            result.push(arg);
+        } else if arg == "--" {
+            result.push(arg);
+            past_terminator = true;
+        } else if arg.starts_with("--") {
+            // Long option — skip its value (next arg) if present.
+            // We assume long options that look like --opt=val are a single
+            // arg, so only skip the next arg if it doesn't contain '='.
+            if !arg.contains('=') {
+                iter.next(); // skip value
+            }
+        } else if arg.starts_with('-') {
+            // Short flag(s) — already expanded by expand_combined_flags.
+            // Don't skip the next arg; short flags that take values (like
+            // `-o file`) are ambiguous without command-specific knowledge,
+            // but this matches the oracle's behaviour for most commands.
+        } else {
+            result.push(arg);
+        }
+    }
+    result
 }
 
 /// Evaluator for rules with unified effect model.
 pub struct Evaluator<'a> {
     rules: &'a [Rule],
+}
+
+/// Check if an effect is a pure arg-matching predicate/guard.
+///
+/// ArgPattern effects (anywhere, forbidden, positional, exact) are predicates
+/// that gate the rule. When they return Nil (no match), the rule is skipped.
+/// When they return Decision::Allow (match), execution continues to the next
+/// effect rather than treating it as a terminal.
+///
+/// Or/And/Not wrapping only arg predicates also act as predicates.
+fn is_arg_predicate(effect: &Effect) -> bool {
+    match effect {
+        Effect::ArgPattern(_) => true,
+        Effect::Or { effects } => effects.iter().all(|e| is_arg_predicate(&e.value)),
+        Effect::And { effects } => effects.iter().all(|e| is_arg_predicate(&e.value)),
+        Effect::Not { effect: inner } => is_arg_predicate(&inner.value),
+        _ => false,
+    }
 }
 
 impl<'a> Evaluator<'a> {
@@ -154,25 +231,49 @@ impl<'a> Evaluator<'a> {
             return fold.rule_skipped(rule);
         }
 
-        // Step 2: Evaluate subsequent effects in sequence
+        // Step 2: Evaluate subsequent effects in sequence.
+        // Nil from any effect means "no match" → skip rule.
+        // ArgPattern Allow (no reason) is a passed predicate → continue.
+        // Any other Decision is a terminal → return as rule result.
+        let mut last_predicate_out: Option<F::EffectOut> = None;
         for effect in &rule.effects {
             let out = evaluate_effect_fold(fold, &effect.value, ctx, self.rules);
             let result = F::effect_result(&out);
 
             match result {
+                EffectResult::Nil => {
+                    return fold.rule_skipped(rule);
+                }
+                EffectResult::Decision(Decision::Allow, None)
+                    if is_arg_predicate(&effect.value) =>
+                {
+                    // ArgPattern Allow with no reason means "predicate passed,
+                    // continue to the next effect". Allow with a reason comes
+                    // from an embedded continuation (trailing Expr::Cond) and
+                    // IS a terminal.
+                    last_predicate_out = Some(out);
+                }
                 EffectResult::Decision(_, _) => {
                     let line = None;
                     return fold.rule_matched(rule, line, command_out, out);
                 }
-                EffectResult::Nil => {}
             }
         }
 
-        // Step 3: All effects returned Nil, default to :ask
-        let ask_result = EffectResult::Decision(Decision::Ask, None);
-        let ask_out = fold.effect_terminal(&Effect::Ask(None), ask_result);
-        let line = None;
-        fold.rule_matched(rule, line, command_out, ask_out)
+        // Step 3: No terminal effect fired.
+        if let Some(pred_out) = last_predicate_out {
+            // All predicates passed but no terminal → use last predicate result.
+            let line = None;
+            fold.rule_matched(rule, line, command_out, pred_out)
+        } else if rule.effects.is_empty() {
+            // Bare command match → default to :ask.
+            let ask_result = EffectResult::Decision(Decision::Ask, None);
+            let ask_out = fold.effect_terminal(&Effect::Ask(None), ask_result);
+            let line = None;
+            fold.rule_matched(rule, line, command_out, ask_out)
+        } else {
+            fold.rule_skipped(rule)
+        }
     }
 }
 
@@ -301,11 +402,7 @@ fn evaluate_arg_pattern_predicate(pattern: &ArgPattern, ctx: &EvalContext) -> Pr
             continuation: _,
         } => {
             // Match positional args against patterns
-            let positional_args: Vec<&String> = ctx
-                .args
-                .iter()
-                .filter(|arg| !arg.starts_with('-'))
-                .collect();
+            let positional_args: Vec<&String> = positional_args(ctx.args);
 
             let (matched, _, _) = match_positional_patterns(&positional_args, patterns);
             if matched {
@@ -318,11 +415,7 @@ fn evaluate_arg_pattern_predicate(pattern: &ArgPattern, ctx: &EvalContext) -> Pr
             patterns,
             continuation: _,
         } => {
-            let positional_args: Vec<&String> = ctx
-                .args
-                .iter()
-                .filter(|arg| !arg.starts_with('-'))
-                .collect();
+            let positional_args: Vec<&String> = positional_args(ctx.args);
 
             let (matched, consumed, _) = match_positional_patterns(&positional_args, patterns);
             if consumed == positional_args.len() && matched {
@@ -333,40 +426,18 @@ fn evaluate_arg_pattern_predicate(pattern: &ArgPattern, ctx: &EvalContext) -> Pr
         }
         ArgPattern::Anywhere(exprs) => {
             for expr in exprs {
-                match expr {
-                    may_i_core::pattern::Expr::Literal(s) => {
-                        if ctx.args.iter().any(|arg| arg == s) {
-                            return PredicateResult::Match;
-                        }
-                    }
-                    may_i_core::pattern::Expr::Wildcard => {
-                        // Wildcard matches anything
-                        return PredicateResult::Match;
-                    }
-                    _ => {} // Other variants not supported in Anywhere
+                if ctx.args.iter().any(|arg| expr.is_match(arg)) {
+                    return PredicateResult::Match;
                 }
             }
             PredicateResult::NoMatch
         }
         ArgPattern::Forbidden(exprs) => {
             for expr in exprs {
-                match expr {
-                    may_i_core::pattern::Expr::Literal(s) => {
-                        if ctx.args.iter().any(|arg| arg == s) {
-                            // Found the forbidden pattern - this is a constraint violation
-                            return PredicateResult::NoMatch;
-                        }
-                    }
-                    may_i_core::pattern::Expr::Wildcard => {
-                        // Wildcard forbidden means any arg is forbidden
-                        if !ctx.args.is_empty() {
-                            return PredicateResult::NoMatch;
-                        }
-                    }
-                    _ => {} // Other variants not supported in Forbidden
+                if ctx.args.iter().any(|arg| expr.is_match(arg)) {
+                    return PredicateResult::NoMatch;
                 }
             }
-            // Didn't find any forbidden patterns - constraint satisfied
             PredicateResult::Match
         }
     }
@@ -376,68 +447,122 @@ fn evaluate_arg_pattern_predicate(pattern: &ArgPattern, ctx: &EvalContext) -> Pr
 /// Returns (matched, consumed_count, bound_facts) where consumed_count is the
 /// number of args consumed and bound_facts contains any facts captured from
 /// Expr::Bind expressions in the patterns.
+///
+/// Uses backtracking for Optional/ZeroOrMore/OneOrMore quantifiers: tries the
+/// greedy match first, then progressively shorter matches if subsequent
+/// patterns fail.
 fn match_positional_patterns(
     args: &[&String],
     patterns: &[PositionalArg],
 ) -> (bool, usize, ContextFacts) {
-    let mut facts = ContextFacts::default();
-    let mut arg_idx = 0;
+    match_positional_recursive(args, patterns, 0, 0, ContextFacts::default())
+}
 
-    for pattern in patterns.iter() {
-        match &pattern.quantifier {
-            may_i_core::Quantifier::One => {
-                if arg_idx >= args.len() {
-                    return (false, arg_idx, facts);
-                }
-                let (matched, f) = match_expr_with_binding(&pattern.pattern, args[arg_idx]);
-                facts = facts.merge(&f);
-                if !matched {
-                    return (false, arg_idx, facts);
-                }
-                arg_idx += 1;
-            }
-            may_i_core::Quantifier::Optional => {
-                if arg_idx < args.len() {
-                    let (matched, f) = match_expr_with_binding(&pattern.pattern, args[arg_idx]);
-                    if matched {
-                        facts = facts.merge(&f);
-                        arg_idx += 1;
-                    }
-                }
-            }
-            may_i_core::Quantifier::ZeroOrMore => {
-                while arg_idx < args.len() {
-                    let (matched, f) = match_expr_with_binding(&pattern.pattern, args[arg_idx]);
-                    if !matched {
-                        break;
-                    }
-                    facts = facts.merge(&f);
-                    arg_idx += 1;
-                }
-            }
-            may_i_core::Quantifier::OneOrMore => {
-                if arg_idx >= args.len() {
-                    return (false, arg_idx, facts);
-                }
-                let (matched, f) = match_expr_with_binding(&pattern.pattern, args[arg_idx]);
-                if !matched {
-                    return (false, arg_idx, facts);
-                }
-                facts = facts.merge(&f);
-                arg_idx += 1;
-                while arg_idx < args.len() {
-                    let (matched, f) = match_expr_with_binding(&pattern.pattern, args[arg_idx]);
-                    if !matched {
-                        break;
-                    }
-                    facts = facts.merge(&f);
-                    arg_idx += 1;
-                }
-            }
-        }
+fn match_positional_recursive(
+    args: &[&String],
+    patterns: &[PositionalArg],
+    pat_idx: usize,
+    arg_idx: usize,
+    facts: ContextFacts,
+) -> (bool, usize, ContextFacts) {
+    // All patterns consumed → success
+    if pat_idx >= patterns.len() {
+        return (true, arg_idx, facts);
     }
 
-    (true, arg_idx, facts)
+    let pattern = &patterns[pat_idx];
+
+    match &pattern.quantifier {
+        may_i_core::Quantifier::One => {
+            if arg_idx >= args.len() {
+                return (false, arg_idx, facts);
+            }
+            let (matched, f) = match_expr_with_binding(&pattern.pattern, args[arg_idx]);
+            if !matched {
+                return (false, arg_idx, facts);
+            }
+            match_positional_recursive(args, patterns, pat_idx + 1, arg_idx + 1, facts.merge(&f))
+        }
+        may_i_core::Quantifier::Optional => {
+            // Try consuming one arg first (greedy), then try skipping
+            if arg_idx < args.len() {
+                let (matched, f) = match_expr_with_binding(&pattern.pattern, args[arg_idx]);
+                if matched {
+                    let result = match_positional_recursive(
+                        args,
+                        patterns,
+                        pat_idx + 1,
+                        arg_idx + 1,
+                        facts.merge(&f),
+                    );
+                    if result.0 {
+                        return result;
+                    }
+                }
+            }
+            // Skip (consume zero)
+            match_positional_recursive(args, patterns, pat_idx + 1, arg_idx, facts)
+        }
+        may_i_core::Quantifier::ZeroOrMore => {
+            // Count maximum matching args
+            let mut max_consume = 0;
+            while arg_idx + max_consume < args.len() {
+                let (matched, _) =
+                    match_expr_with_binding(&pattern.pattern, args[arg_idx + max_consume]);
+                if !matched {
+                    break;
+                }
+                max_consume += 1;
+            }
+            // Try from greedy (max) down to 0, backtracking
+            for consume in (0..=max_consume).rev() {
+                let mut f = facts.clone();
+                for i in 0..consume {
+                    let (_, fi) = match_expr_with_binding(&pattern.pattern, args[arg_idx + i]);
+                    f = f.merge(&fi);
+                }
+                let result =
+                    match_positional_recursive(args, patterns, pat_idx + 1, arg_idx + consume, f);
+                if result.0 {
+                    return result;
+                }
+            }
+            (false, arg_idx, facts)
+        }
+        may_i_core::Quantifier::OneOrMore => {
+            if arg_idx >= args.len() {
+                return (false, arg_idx, facts);
+            }
+            let (first_matched, _) = match_expr_with_binding(&pattern.pattern, args[arg_idx]);
+            if !first_matched {
+                return (false, arg_idx, facts);
+            }
+            // Count maximum matching args (starting from 1)
+            let mut max_consume = 1;
+            while arg_idx + max_consume < args.len() {
+                let (matched, _) =
+                    match_expr_with_binding(&pattern.pattern, args[arg_idx + max_consume]);
+                if !matched {
+                    break;
+                }
+                max_consume += 1;
+            }
+            // Try from greedy (max) down to 1, backtracking
+            for consume in (1..=max_consume).rev() {
+                let mut f = facts.clone();
+                for i in 0..consume {
+                    let (_, fi) = match_expr_with_binding(&pattern.pattern, args[arg_idx + i]);
+                    f = f.merge(&fi);
+                }
+                let result =
+                    match_positional_recursive(args, patterns, pat_idx + 1, arg_idx + consume, f);
+                if result.0 {
+                    return result;
+                }
+            }
+            (false, arg_idx, facts)
+        }
+    }
 }
 
 /// Match a single expression against a value, capturing bound facts.
@@ -790,11 +915,7 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
             patterns,
             continuation,
         } => {
-            let positional_args: Vec<&String> = ctx
-                .args
-                .iter()
-                .filter(|arg| !arg.starts_with('-'))
-                .collect();
+            let positional_args: Vec<&String> = positional_args(ctx.args);
 
             let (matched, consumed, bound_facts) =
                 match_positional_patterns(&positional_args, patterns);
@@ -804,10 +925,8 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                     .as_deref()
                     .or_else(|| resolve_trailing_cond_effect(patterns, &positional_args, consumed));
                 if let Some(cont) = effective_continuation {
-                    let remaining_args: Vec<String> = ctx
-                        .args
-                        .iter()
-                        .filter(|arg| !arg.starts_with('-'))
+                    let remaining_args: Vec<String> = self::positional_args(ctx.args)
+                        .into_iter()
                         .skip(consumed)
                         .map(|s| s.to_string())
                         .collect();
@@ -846,11 +965,7 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
             patterns,
             continuation,
         } => {
-            let positional_args: Vec<&String> = ctx
-                .args
-                .iter()
-                .filter(|arg| !arg.starts_with('-'))
-                .collect();
+            let positional_args: Vec<&String> = positional_args(ctx.args);
 
             let (matched, consumed, bound_facts) =
                 match_positional_patterns(&positional_args, patterns);
@@ -899,20 +1014,11 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
         }
         ArgPattern::Anywhere(exprs) => {
             let mut matched = false;
-            let mut search_tokens = Vec::new();
+            let search_tokens: Vec<String> = exprs.iter().map(|e| format!("{e:?}")).collect();
             for expr in exprs {
-                match expr {
-                    may_i_core::pattern::Expr::Literal(s) => {
-                        search_tokens.push(s.clone());
-                        if ctx.args.iter().any(|arg| arg == s) {
-                            matched = true;
-                        }
-                    }
-                    may_i_core::pattern::Expr::Wildcard => {
-                        search_tokens.push("*".to_string());
-                        matched = true;
-                    }
-                    _ => {}
+                if ctx.args.iter().any(|arg| expr.is_match(arg)) {
+                    matched = true;
+                    break;
                 }
             }
             let detail = ArgMatchDetail {
@@ -924,35 +1030,19 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
         }
         ArgPattern::Forbidden(exprs) => {
             let mut found_forbidden = false;
-            let mut search_tokens = Vec::new();
+            let search_tokens: Vec<String> = exprs.iter().map(|e| format!("{e:?}")).collect();
             for expr in exprs {
-                match expr {
-                    may_i_core::pattern::Expr::Literal(s) => {
-                        search_tokens.push(s.clone());
-                        if ctx.args.iter().any(|arg| arg == s) {
-                            found_forbidden = true;
-                        }
-                    }
-                    may_i_core::pattern::Expr::Wildcard => {
-                        search_tokens.push("*".to_string());
-                        if !ctx.args.is_empty() {
-                            found_forbidden = true;
-                        }
-                    }
-                    _ => {}
+                if ctx.args.iter().any(|arg| expr.is_match(arg)) {
+                    found_forbidden = true;
+                    break;
                 }
             }
-            if found_forbidden {
-                fold.effect_terminal(
-                    &Effect::ArgPattern(pattern.clone()),
-                    EffectResult::Decision(Decision::Deny, None),
-                )
-            } else {
-                fold.effect_terminal(
-                    &Effect::ArgPattern(pattern.clone()),
-                    EffectResult::Decision(Decision::Allow, None),
-                )
-            }
+            let detail = ArgMatchDetail {
+                search_tokens,
+                arg_set: ctx.args.to_vec(),
+                matched: !found_forbidden,
+            };
+            fold.effect_arg_match(pattern, ctx.args, !found_forbidden, detail)
         }
     }
 }
