@@ -155,7 +155,6 @@ impl<'a> Evaluator<'a> {
         }
 
         // Step 2: Evaluate subsequent effects in sequence
-        let mut last_out = command_out;
         for effect in &rule.effects {
             let out = evaluate_effect_fold(fold, &effect.value, ctx, self.rules);
             let result = F::effect_result(&out);
@@ -163,11 +162,9 @@ impl<'a> Evaluator<'a> {
             match result {
                 EffectResult::Decision(_, _) => {
                     let line = None;
-                    return fold.rule_matched(rule, line, out);
+                    return fold.rule_matched(rule, line, command_out, out);
                 }
-                EffectResult::Nil => {
-                    last_out = out;
-                }
+                EffectResult::Nil => {}
             }
         }
 
@@ -175,8 +172,7 @@ impl<'a> Evaluator<'a> {
         let ask_result = EffectResult::Decision(Decision::Ask, None);
         let ask_out = fold.effect_terminal(&Effect::Ask(None), ask_result);
         let line = None;
-        let _ = last_out;
-        fold.rule_matched(rule, line, ask_out)
+        fold.rule_matched(rule, line, command_out, ask_out)
     }
 }
 

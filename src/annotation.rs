@@ -130,16 +130,6 @@ fn fact_query_to_doc(query: &FactQuery) -> Doc<()> {
     query.to_doc()
 }
 
-fn rule_to_doc(rule: &Rule) -> Doc<()> {
-    use may_i_core::ToDoc;
-    let mut cs = vec![Doc::atom("rule")];
-    cs.push(rule.command_effect.value.to_doc());
-    for effect in &rule.effects {
-        cs.push(effect.value.to_doc());
-    }
-    Doc::broken_list(cs)
-}
-
 /// A single trace entry produced by the fold.
 #[derive(Clone)]
 pub enum TraceEntry {
@@ -207,13 +197,52 @@ impl EvalFold for TracingFold {
     fn effect_command_match(
         &mut self,
         pattern: &CommandPattern,
-        _cmd: &str,
+        cmd: &str,
         matched: bool,
     ) -> Self::EffectOut {
-        let doc = unannotated_to_ann(command_pattern_to_doc(pattern));
-        let ann_doc = Doc {
-            ann: Some(Ann::CommandMatch { matched }),
-            ..doc
+        let ann_doc = match pattern {
+            CommandPattern::Or(sub_patterns) => {
+                // Show only matching sub-patterns; dim and elide the rest.
+                let mut cs: Vec<ADoc> = vec![plain_atom("or")];
+                let mut has_pre_ellipsis = false;
+                let mut has_post_match = false;
+                let mut seen_match = false;
+                for sub in sub_patterns {
+                    let sub_matched = sub.is_match(cmd);
+                    if sub_matched {
+                        let sub_doc = unannotated_to_ann(command_pattern_to_doc(sub));
+                        cs.push(Doc {
+                            ann: Some(Ann::CommandMatch { matched: true }),
+                            ..sub_doc
+                        });
+                        seen_match = true;
+                        has_post_match = false;
+                    } else if !seen_match {
+                        if !has_pre_ellipsis {
+                            cs.push(dim(plain_atom("…")));
+                            has_pre_ellipsis = true;
+                        }
+                    } else {
+                        has_post_match = true;
+                    }
+                }
+                if has_post_match {
+                    cs.push(dim(plain_atom("…")));
+                }
+                Doc {
+                    ann: Some(Ann::CommandMatch { matched }),
+                    node: DocF::List(cs),
+                    layout: LayoutHint::Auto,
+                    dimmed: false,
+                }
+            }
+            _ => {
+                let doc = unannotated_to_ann(command_pattern_to_doc(pattern));
+                Doc {
+                    ann: Some(Ann::CommandMatch { matched }),
+                    ..doc
+                }
+            }
         };
         let result = if matched {
             EffectResult::Decision(Decision::Allow, None)
@@ -491,16 +520,16 @@ impl EvalFold for TracingFold {
 
     fn rule_matched(
         &mut self,
-        rule: &Rule,
+        _rule: &Rule,
         line: Option<usize>,
+        command_out: Self::EffectOut,
         out: Self::EffectOut,
     ) -> Self::EffectOut {
-        let rule_doc = unannotated_to_ann(rule_to_doc(rule));
         let ann = Some(Ann::RuleMatch {
             matched: true,
             line,
         });
-        let docs = vec![rule_doc, out.1];
+        let docs = vec![command_out.1, out.1];
         let doc = ann_list_break(docs, ann);
         self.traces.push(TraceEntry::Rule {
             doc: doc.clone(),

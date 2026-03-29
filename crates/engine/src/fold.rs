@@ -155,6 +155,7 @@ pub trait EvalFold {
         &mut self,
         rule: &Rule,
         line: Option<usize>,
+        command_out: Self::EffectOut,
         out: Self::EffectOut,
     ) -> Self::EffectOut;
     fn rule_skipped(&mut self, rule: &Rule) -> Self::EffectOut;
@@ -337,6 +338,7 @@ impl EvalFold for PureFold {
         &mut self,
         _rule: &Rule,
         _line: Option<usize>,
+        _command_out: EffectResult,
         out: EffectResult,
     ) -> EffectResult {
         out

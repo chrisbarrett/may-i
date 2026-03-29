@@ -272,9 +272,12 @@ fn render_annotated_rule(doc: &Doc<Option<Ann>>, line: Option<usize>, layout: &L
         }
     }
 
-    // Place outcome annotation on the "(effect" line if possible.
+    // Place outcome annotation on a "(effect" line only if collect_annotations
+    // didn't already place the same EffectDecision annotation somewhere.
+    let already_has_effect_decision = annotations.iter().any(|(_, text)| text.starts_with("→ :"));
     if let Some(out) = outcome
         && matched
+        && !already_has_effect_decision
     {
         let mut placed = false;
         for (i, stripped) in stripped_lines.iter().enumerate() {
@@ -331,7 +334,16 @@ fn collect_annotations_inner(doc: &Doc<Option<Ann>>, out: &mut Vec<(String, Stri
 /// Format an annotation into (search_needle, right_column_text).
 fn format_annotation(doc: &Doc<Option<Ann>>, ann: &Ann) -> Option<(String, String)> {
     match ann {
-        Ann::CommandMatch { .. } => None,
+        Ann::CommandMatch { matched } => {
+            // Only annotate leaf command matches; compound patterns (Or)
+            // annotate their matching children instead.
+            if matches!(doc.node, DocF::Atom(_)) {
+                let needle = node_text(doc);
+                Some((needle, verdict(*matched)))
+            } else {
+                None
+            }
+        }
         Ann::RuleMatch { .. } => None,
         Ann::Combinator { .. } => None,
 
@@ -632,7 +644,7 @@ fn has_any_annotation(doc: &Doc<Option<Ann>>) -> bool {
 
 fn has_any_visible_annotation(doc: &Doc<Option<Ann>>) -> bool {
     if let Some(ann) = &doc.ann
-        && !matches!(ann, Ann::CommandMatch { .. } | Ann::RuleMatch { .. })
+        && !matches!(ann, Ann::RuleMatch { .. })
     {
         return true;
     }
