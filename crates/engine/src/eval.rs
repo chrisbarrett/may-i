@@ -99,7 +99,7 @@ pub fn evaluate_with_fold<F: EvalFold>(
 /// Only expands args that start with a single `-` followed by multiple
 /// ASCII letters. Long options (`--foo`) and args with non-letter characters
 /// (e.g. `-1`, `-p8080`) are left unchanged.
-fn expand_combined_flags(args: &[String]) -> Vec<String> {
+pub fn expand_combined_flags(args: &[String]) -> Vec<String> {
     let mut out = Vec::with_capacity(args.len());
     for arg in args {
         if arg.starts_with('-')
@@ -122,7 +122,7 @@ fn expand_combined_flags(args: &[String]) -> Vec<String> {
 /// Handles `--` as an option terminator: `--` itself is included as a
 /// positional arg, and all subsequent args are positional regardless of
 /// prefix. Long options (`--foo`) consume the following arg as their value.
-fn positional_args(args: &[String]) -> Vec<&String> {
+pub fn positional_args(args: &[String]) -> Vec<&String> {
     let mut result = Vec::new();
     let mut iter = args.iter().peekable();
     let mut past_terminator = false;
@@ -451,7 +451,7 @@ fn evaluate_arg_pattern_predicate(pattern: &ArgPattern, ctx: &EvalContext) -> Pr
 /// Uses backtracking for Optional/ZeroOrMore/OneOrMore quantifiers: tries the
 /// greedy match first, then progressively shorter matches if subsequent
 /// patterns fail.
-fn match_positional_patterns(
+pub fn match_positional_patterns(
     args: &[&String],
     patterns: &[PositionalArg],
 ) -> (bool, usize, ContextFacts) {
