@@ -307,7 +307,7 @@ fn evaluate_arg_pattern_predicate(pattern: &ArgPattern, ctx: &EvalContext) -> Pr
                 .filter(|arg| !arg.starts_with('-'))
                 .collect();
 
-            let (matched, _) = match_positional_patterns(&positional_args, patterns);
+            let (matched, _, _) = match_positional_patterns(&positional_args, patterns);
             if matched {
                 PredicateResult::Match
             } else {
@@ -324,8 +324,8 @@ fn evaluate_arg_pattern_predicate(pattern: &ArgPattern, ctx: &EvalContext) -> Pr
                 .filter(|arg| !arg.starts_with('-'))
                 .collect();
 
-            let (matched, _) = match_positional_patterns(&positional_args, patterns);
-            if positional_args.len() == patterns.len() && matched {
+            let (matched, consumed, _) = match_positional_patterns(&positional_args, patterns);
+            if consumed == positional_args.len() && matched {
                 PredicateResult::Match
             } else {
                 PredicateResult::NoMatch
@@ -373,65 +373,71 @@ fn evaluate_arg_pattern_predicate(pattern: &ArgPattern, ctx: &EvalContext) -> Pr
 }
 
 /// Match positional patterns against args, capturing bound facts.
-/// Returns (matched, bound_facts) where bound_facts contains any facts
-/// captured from Expr::Bind expressions in the patterns.
-fn match_positional_patterns(args: &[&String], patterns: &[PositionalArg]) -> (bool, ContextFacts) {
+/// Returns (matched, consumed_count, bound_facts) where consumed_count is the
+/// number of args consumed and bound_facts contains any facts captured from
+/// Expr::Bind expressions in the patterns.
+fn match_positional_patterns(
+    args: &[&String],
+    patterns: &[PositionalArg],
+) -> (bool, usize, ContextFacts) {
     let mut facts = ContextFacts::default();
+    let mut arg_idx = 0;
 
-    if args.len() < patterns.len() {
-        return (false, facts);
-    }
-
-    for (i, pattern) in patterns.iter().enumerate() {
-        let arg = args[i];
-
+    for pattern in patterns.iter() {
         match &pattern.quantifier {
             may_i_core::Quantifier::One => {
-                let (matched, f) = match_expr_with_binding(&pattern.pattern, arg);
+                if arg_idx >= args.len() {
+                    return (false, arg_idx, facts);
+                }
+                let (matched, f) = match_expr_with_binding(&pattern.pattern, args[arg_idx]);
                 facts = facts.merge(&f);
                 if !matched {
-                    return (false, facts);
+                    return (false, arg_idx, facts);
                 }
+                arg_idx += 1;
             }
             may_i_core::Quantifier::Optional => {
-                // Optional pattern - if arg exists, it must match
-                if i < args.len() {
-                    let (matched, f) = match_expr_with_binding(&pattern.pattern, arg);
-                    facts = facts.merge(&f);
-                    if !matched {
-                        return (false, facts);
+                if arg_idx < args.len() {
+                    let (matched, f) = match_expr_with_binding(&pattern.pattern, args[arg_idx]);
+                    if matched {
+                        facts = facts.merge(&f);
+                        arg_idx += 1;
                     }
+                }
+            }
+            may_i_core::Quantifier::ZeroOrMore => {
+                while arg_idx < args.len() {
+                    let (matched, f) = match_expr_with_binding(&pattern.pattern, args[arg_idx]);
+                    if !matched {
+                        break;
+                    }
+                    facts = facts.merge(&f);
+                    arg_idx += 1;
                 }
             }
             may_i_core::Quantifier::OneOrMore => {
-                // OneOrMore pattern - at least one arg must match, then continue
-                if i >= args.len() {
-                    return (false, facts);
+                if arg_idx >= args.len() {
+                    return (false, arg_idx, facts);
                 }
-                for arg in args.iter().skip(i) {
-                    let (matched, f) = match_expr_with_binding(&pattern.pattern, arg);
-                    facts = facts.merge(&f);
+                let (matched, f) = match_expr_with_binding(&pattern.pattern, args[arg_idx]);
+                if !matched {
+                    return (false, arg_idx, facts);
+                }
+                facts = facts.merge(&f);
+                arg_idx += 1;
+                while arg_idx < args.len() {
+                    let (matched, f) = match_expr_with_binding(&pattern.pattern, args[arg_idx]);
                     if !matched {
-                        return (false, facts);
+                        break;
                     }
-                }
-                return (true, facts);
-            }
-            may_i_core::Quantifier::ZeroOrMore => {
-                // ZeroOrMore pattern - all remaining args must match
-                for arg in args.iter().skip(i) {
-                    let (matched, f) = match_expr_with_binding(&pattern.pattern, arg);
                     facts = facts.merge(&f);
-                    if !matched {
-                        return (false, facts);
-                    }
+                    arg_idx += 1;
                 }
-                return (true, facts);
             }
         }
     }
 
-    (true, facts)
+    (true, arg_idx, facts)
 }
 
 /// Match a single expression against a value, capturing bound facts.
@@ -750,21 +756,15 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                 .filter(|arg| !arg.starts_with('-'))
                 .collect();
 
-            let (matched, bound_facts) = match_positional_patterns(&positional_args, patterns);
+            let (matched, consumed, bound_facts) =
+                match_positional_patterns(&positional_args, patterns);
             if matched {
                 if let Some(cont) = continuation {
-                    let consumed_count = patterns
-                        .iter()
-                        .map(|p| match p.quantifier {
-                            may_i_core::Quantifier::One => 1,
-                            _ => 1,
-                        })
-                        .sum::<usize>();
                     let remaining_args: Vec<String> = ctx
                         .args
                         .iter()
                         .filter(|arg| !arg.starts_with('-'))
-                        .skip(consumed_count)
+                        .skip(consumed)
                         .map(|s| s.to_string())
                         .collect();
                     evaluate_effect_with_owned_args_fold(
@@ -808,8 +808,9 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                 .filter(|arg| !arg.starts_with('-'))
                 .collect();
 
-            let (matched, bound_facts) = match_positional_patterns(&positional_args, patterns);
-            let exact_match = positional_args.len() == patterns.len() && matched;
+            let (matched, consumed, bound_facts) =
+                match_positional_patterns(&positional_args, patterns);
+            let exact_match = consumed == positional_args.len() && matched;
             if exact_match {
                 if let Some(cont) = continuation {
                     let remaining_args: Vec<String> = ctx
@@ -1304,7 +1305,7 @@ mod tests {
         let arg1 = "git".to_string();
         let arg2 = "push".to_string();
         let args: Vec<&String> = vec![&arg1, &arg2];
-        let (matched, facts) = match_positional_patterns(&args, &patterns);
+        let (matched, _, facts) = match_positional_patterns(&args, &patterns);
 
         assert!(matched);
         assert_eq!(facts.get_scalar(":cmd"), Some("git"));
@@ -1336,7 +1337,7 @@ mod tests {
         let arg1 = "server".to_string();
         let arg2 = "wrong".to_string();
         let args: Vec<&String> = vec![&arg1, &arg2];
-        let (matched, facts) = match_positional_patterns(&args, &patterns);
+        let (matched, _, facts) = match_positional_patterns(&args, &patterns);
 
         assert!(!matched);
         // First arg was still bound before the failure
@@ -1360,7 +1361,7 @@ mod tests {
 
         let arg1 = "value".to_string();
         let args: Vec<&String> = vec![&arg1];
-        let (matched, facts) = match_positional_patterns(&args, &patterns);
+        let (matched, _, facts) = match_positional_patterns(&args, &patterns);
 
         assert!(matched);
         assert_eq!(facts.get_scalar(":opt"), Some("value"));
@@ -1384,7 +1385,7 @@ mod tests {
         let arg1 = "a".to_string();
         let arg2 = "b".to_string();
         let args: Vec<&String> = vec![&arg1, &arg2];
-        let (matched, facts) = match_positional_patterns(&args, &patterns);
+        let (matched, _, facts) = match_positional_patterns(&args, &patterns);
 
         assert!(matched);
         // OneOrMore accumulates all matched values into the set
@@ -1410,7 +1411,7 @@ mod tests {
         let arg1 = "a".to_string();
         let arg2 = "b".to_string();
         let args: Vec<&String> = vec![&arg1, &arg2];
-        let (matched, facts) = match_positional_patterns(&args, &patterns);
+        let (matched, _, facts) = match_positional_patterns(&args, &patterns);
 
         assert!(matched);
         // ZeroOrMore accumulates all matched values into the set
@@ -1445,7 +1446,7 @@ mod tests {
 
         let arg1 = "only".to_string();
         let args: Vec<&String> = vec![&arg1];
-        let (matched, _) = match_positional_patterns(&args, &patterns);
+        let (matched, _, _) = match_positional_patterns(&args, &patterns);
 
         assert!(!matched);
     }
@@ -1463,9 +1464,172 @@ mod tests {
         }];
 
         let args: Vec<&String> = vec![];
-        let (matched, _) = match_positional_patterns(&args, &patterns);
+        let (matched, _, _) = match_positional_patterns(&args, &patterns);
 
         assert!(!matched);
+    }
+
+    #[test]
+    fn match_positional_optional_patterns_skip_to_required() {
+        use may_i_core::pattern::PositionalArg;
+        use may_i_core::{Expr, Quantifier};
+
+        // (? "a") (? "b") "c" with args ["c"] -> match, consumed=1
+        let patterns = vec![
+            PositionalArg {
+                quantifier: Quantifier::Optional,
+                pattern: Expr::Literal("a".to_string()),
+                recursive: false,
+            },
+            PositionalArg {
+                quantifier: Quantifier::Optional,
+                pattern: Expr::Literal("b".to_string()),
+                recursive: false,
+            },
+            PositionalArg {
+                quantifier: Quantifier::One,
+                pattern: Expr::Literal("c".to_string()),
+                recursive: false,
+            },
+        ];
+
+        let arg1 = "c".to_string();
+        let args: Vec<&String> = vec![&arg1];
+        let (matched, consumed, _) = match_positional_patterns(&args, &patterns);
+        assert!(matched);
+        assert_eq!(consumed, 1);
+    }
+
+    #[test]
+    fn match_positional_optional_then_required_both_present() {
+        use may_i_core::pattern::PositionalArg;
+        use may_i_core::{Expr, Quantifier};
+
+        // (? "a") "b" with args ["a", "b"] -> match, consumed=2
+        let patterns = vec![
+            PositionalArg {
+                quantifier: Quantifier::Optional,
+                pattern: Expr::Literal("a".to_string()),
+                recursive: false,
+            },
+            PositionalArg {
+                quantifier: Quantifier::One,
+                pattern: Expr::Literal("b".to_string()),
+                recursive: false,
+            },
+        ];
+
+        let arg1 = "a".to_string();
+        let arg2 = "b".to_string();
+        let args: Vec<&String> = vec![&arg1, &arg2];
+        let (matched, consumed, _) = match_positional_patterns(&args, &patterns);
+        assert!(matched);
+        assert_eq!(consumed, 2);
+    }
+
+    #[test]
+    fn match_positional_optional_skipped_required_present() {
+        use may_i_core::pattern::PositionalArg;
+        use may_i_core::{Expr, Quantifier};
+
+        // (? "a") "b" with args ["b"] -> match, consumed=1
+        let patterns = vec![
+            PositionalArg {
+                quantifier: Quantifier::Optional,
+                pattern: Expr::Literal("a".to_string()),
+                recursive: false,
+            },
+            PositionalArg {
+                quantifier: Quantifier::One,
+                pattern: Expr::Literal("b".to_string()),
+                recursive: false,
+            },
+        ];
+
+        let arg1 = "b".to_string();
+        let args: Vec<&String> = vec![&arg1];
+        let (matched, consumed, _) = match_positional_patterns(&args, &patterns);
+        assert!(matched);
+        assert_eq!(consumed, 1);
+    }
+
+    #[test]
+    fn match_positional_optional_present_required_missing() {
+        use may_i_core::pattern::PositionalArg;
+        use may_i_core::{Expr, Quantifier};
+
+        // (? "a") "b" with args ["a"] -> no match (required "b" missing)
+        let patterns = vec![
+            PositionalArg {
+                quantifier: Quantifier::Optional,
+                pattern: Expr::Literal("a".to_string()),
+                recursive: false,
+            },
+            PositionalArg {
+                quantifier: Quantifier::One,
+                pattern: Expr::Literal("b".to_string()),
+                recursive: false,
+            },
+        ];
+
+        let arg1 = "a".to_string();
+        let args: Vec<&String> = vec![&arg1];
+        let (matched, _, _) = match_positional_patterns(&args, &patterns);
+        assert!(!matched);
+    }
+
+    #[test]
+    fn match_positional_zero_or_more_then_required() {
+        use may_i_core::pattern::PositionalArg;
+        use may_i_core::{Expr, Quantifier};
+
+        // (* "a") "b" with args ["a", "a", "b"] -> match, consumed=3
+        let patterns = vec![
+            PositionalArg {
+                quantifier: Quantifier::ZeroOrMore,
+                pattern: Expr::Literal("a".to_string()),
+                recursive: false,
+            },
+            PositionalArg {
+                quantifier: Quantifier::One,
+                pattern: Expr::Literal("b".to_string()),
+                recursive: false,
+            },
+        ];
+
+        let arg1 = "a".to_string();
+        let arg2 = "a".to_string();
+        let arg3 = "b".to_string();
+        let args: Vec<&String> = vec![&arg1, &arg2, &arg3];
+        let (matched, consumed, _) = match_positional_patterns(&args, &patterns);
+        assert!(matched);
+        assert_eq!(consumed, 3);
+    }
+
+    #[test]
+    fn match_positional_zero_or_more_skipped_then_required() {
+        use may_i_core::pattern::PositionalArg;
+        use may_i_core::{Expr, Quantifier};
+
+        // (* "a") "b" with args ["b"] -> match, consumed=1
+        let patterns = vec![
+            PositionalArg {
+                quantifier: Quantifier::ZeroOrMore,
+                pattern: Expr::Literal("a".to_string()),
+                recursive: false,
+            },
+            PositionalArg {
+                quantifier: Quantifier::One,
+                pattern: Expr::Literal("b".to_string()),
+                recursive: false,
+            },
+        ];
+
+        let arg1 = "b".to_string();
+        let args: Vec<&String> = vec![&arg1];
+        let (matched, consumed, _) = match_positional_patterns(&args, &patterns);
+        assert!(matched);
+        assert_eq!(consumed, 1);
     }
 
     #[test]
