@@ -235,7 +235,7 @@ impl<'a> Evaluator<'a> {
         // Nil from any effect means "no match" → skip rule.
         // ArgPattern Allow (no reason) is a passed predicate → continue.
         // Any other Decision is a terminal → return as rule result.
-        let mut last_predicate_out: Option<F::EffectOut> = None;
+        let mut effect_outs: Vec<F::EffectOut> = Vec::new();
         for effect in &rule.effects {
             let out = evaluate_effect_fold(fold, &effect.value, ctx, self.rules);
             let result = F::effect_result(&out);
@@ -251,26 +251,27 @@ impl<'a> Evaluator<'a> {
                     // continue to the next effect". Allow with a reason comes
                     // from an embedded continuation (trailing Expr::Cond) and
                     // IS a terminal.
-                    last_predicate_out = Some(out);
+                    effect_outs.push(out);
                 }
                 EffectResult::Decision(_, _) => {
+                    effect_outs.push(out);
                     let line = None;
-                    return fold.rule_matched(rule, line, command_out, out);
+                    return fold.rule_matched(rule, line, command_out, effect_outs);
                 }
             }
         }
 
         // Step 3: No terminal effect fired.
-        if let Some(pred_out) = last_predicate_out {
+        if !effect_outs.is_empty() {
             // All predicates passed but no terminal → use last predicate result.
             let line = None;
-            fold.rule_matched(rule, line, command_out, pred_out)
+            fold.rule_matched(rule, line, command_out, effect_outs)
         } else if rule.effects.is_empty() {
             // Bare command match → default to :ask.
             let ask_result = EffectResult::Decision(Decision::Ask, None);
             let ask_out = fold.effect_terminal(&Effect::Ask(None), ask_result);
             let line = None;
-            fold.rule_matched(rule, line, command_out, ask_out)
+            fold.rule_matched(rule, line, command_out, vec![ask_out])
         } else {
             fold.rule_skipped(rule)
         }
@@ -779,7 +780,7 @@ pub fn evaluate_effect_fold<F: EvalFold>(
             } else {
                 (ChildResult::Skipped, EffectResult::Nil)
             };
-            fold.effect_when(pred_out, body_child, result)
+            fold.effect_when(pred_out, body_child, &body.value, result)
         }
 
         Effect::Unless {
@@ -795,7 +796,7 @@ pub fn evaluate_effect_fold<F: EvalFold>(
             } else {
                 (ChildResult::Skipped, EffectResult::Nil)
             };
-            fold.effect_unless(pred_out, body_child, result)
+            fold.effect_unless(pred_out, body_child, &body.value, result)
         }
 
         Effect::If {
@@ -930,20 +931,23 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                         .skip(consumed)
                         .map(|s| s.to_string())
                         .collect();
-                    evaluate_effect_with_owned_args_fold(
+                    let cont_out = evaluate_effect_with_owned_args_fold(
                         fold,
                         cont,
                         ctx,
                         rules,
                         remaining_args,
                         bound_facts,
-                    )
+                    );
+                    let detail = ArgMatchDetail {
+                        search_tokens: vec![],
+                        arg_set: ctx.args.to_vec(),
+                        matched: true,
+                    };
+                    fold.effect_arg_continuation(pattern, ctx.args, detail, cont_out)
                 } else {
                     let detail = ArgMatchDetail {
-                        search_tokens: patterns
-                            .iter()
-                            .map(|p| format!("{:?}", p.pattern))
-                            .collect(),
+                        search_tokens: vec![],
                         arg_set: ctx.args.to_vec(),
                         matched: true,
                     };
@@ -951,10 +955,7 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                 }
             } else {
                 let detail = ArgMatchDetail {
-                    search_tokens: patterns
-                        .iter()
-                        .map(|p| format!("{:?}", p.pattern))
-                        .collect(),
+                    search_tokens: vec![],
                     arg_set: ctx.args.to_vec(),
                     matched: false,
                 };
@@ -981,20 +982,23 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                         .filter(|arg| arg.starts_with('-'))
                         .map(|s| s.to_string())
                         .collect();
-                    evaluate_effect_with_owned_args_fold(
+                    let cont_out = evaluate_effect_with_owned_args_fold(
                         fold,
                         cont,
                         ctx,
                         rules,
                         remaining_args,
                         bound_facts,
-                    )
+                    );
+                    let detail = ArgMatchDetail {
+                        search_tokens: vec![],
+                        arg_set: ctx.args.to_vec(),
+                        matched: true,
+                    };
+                    fold.effect_arg_continuation(pattern, ctx.args, detail, cont_out)
                 } else {
                     let detail = ArgMatchDetail {
-                        search_tokens: patterns
-                            .iter()
-                            .map(|p| format!("{:?}", p.pattern))
-                            .collect(),
+                        search_tokens: vec![],
                         arg_set: ctx.args.to_vec(),
                         matched: true,
                     };
@@ -1002,10 +1006,7 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                 }
             } else {
                 let detail = ArgMatchDetail {
-                    search_tokens: patterns
-                        .iter()
-                        .map(|p| format!("{:?}", p.pattern))
-                        .collect(),
+                    search_tokens: vec![],
                     arg_set: ctx.args.to_vec(),
                     matched: false,
                 };
@@ -1014,7 +1015,7 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
         }
         ArgPattern::Anywhere(exprs) => {
             let mut matched = false;
-            let search_tokens: Vec<String> = exprs.iter().map(|e| format!("{e:?}")).collect();
+            let search_tokens: Vec<String> = exprs.iter().map(|e| format!("{e}")).collect();
             for expr in exprs {
                 if ctx.args.iter().any(|arg| expr.is_match(arg)) {
                     matched = true;
@@ -1030,7 +1031,7 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
         }
         ArgPattern::Forbidden(exprs) => {
             let mut found_forbidden = false;
-            let search_tokens: Vec<String> = exprs.iter().map(|e| format!("{e:?}")).collect();
+            let search_tokens: Vec<String> = exprs.iter().map(|e| format!("{e}")).collect();
             for expr in exprs {
                 if ctx.args.iter().any(|arg| expr.is_match(arg)) {
                     found_forbidden = true;

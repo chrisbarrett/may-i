@@ -383,6 +383,9 @@ pub struct Config {
 
     /// Validation checks.
     pub checks: Vec<Check>,
+
+    /// Source text for span-to-line conversion (populated by the config loader).
+    pub source_text: Option<String>,
 }
 
 /// Security configuration.

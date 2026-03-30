@@ -28,7 +28,7 @@ pub fn cmd_eval(
     config.rules = resolved_rules;
 
     if json_mode {
-        let mut fold = TracingFold::new();
+        let mut fold = TracingFold::new().with_source_text(config.source_text.clone());
         let args: Vec<String> = command
             .split_whitespace()
             .skip(1)
@@ -90,7 +90,7 @@ fn evaluate_segments(
     let segments = parser::segment(command);
 
     if segments.is_empty() {
-        let mut fold = TracingFold::new();
+        let mut fold = TracingFold::new().with_source_text(config.source_text.clone());
         let args: Vec<String> = command
             .split_whitespace()
             .skip(1)
@@ -109,7 +109,7 @@ fn evaluate_segments(
         if seg.is_operator {
             display_parts.push(format!(" {text} "));
         } else {
-            let mut fold = TracingFold::new();
+            let mut fold = TracingFold::new().with_source_text(config.source_text.clone());
             let args: Vec<String> = text.split_whitespace().skip(1).map(String::from).collect();
             let cmd = text.split_whitespace().next().unwrap_or(text);
             let result = engine::eval::evaluate_with_fold(cmd, &args, config, context, &mut fold);

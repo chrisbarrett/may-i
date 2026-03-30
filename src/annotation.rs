@@ -4,7 +4,8 @@
 
 use may_i_core::ast::{Effect, EffectResult, Rule};
 use may_i_core::doc::{Doc, DocF, LayoutHint};
-use may_i_core::pattern::{ArgPattern, CommandPattern};
+use may_i_core::pattern::{ArgPattern, CommandPattern, Quantifier};
+use may_i_core::primitives::ToDoc;
 use may_i_core::{Decision, FactQuery};
 
 use may_i_engine::eval::PredicateResult;
@@ -76,6 +77,35 @@ fn unannotated_to_ann(doc: Doc<()>) -> ADoc {
     doc.map(&|()| None)
 }
 
+/// Convert an Effect to an annotated Doc, adding static EffectDecision
+/// annotations on terminal effect nodes. Used for rendering unevaluated
+/// (skipped) bodies in `when`/`unless`.
+fn effect_to_static_ann_doc(effect: &Effect) -> ADoc {
+    let doc = unannotated_to_ann(effect.to_doc());
+    annotate_terminal_effects(doc, effect)
+}
+
+fn annotate_terminal_effects(doc: ADoc, effect: &Effect) -> ADoc {
+    match effect {
+        Effect::Allow(reason) | Effect::Ask(reason) | Effect::Deny(reason) => {
+            let decision = match effect {
+                Effect::Allow(_) => Decision::Allow,
+                Effect::Ask(_) => Decision::Ask,
+                Effect::Deny(_) => Decision::Deny,
+                _ => unreachable!(),
+            };
+            Doc {
+                ann: Some(Ann::EffectDecision {
+                    decision,
+                    reason: reason.clone(),
+                }),
+                ..doc
+            }
+        }
+        _ => doc,
+    }
+}
+
 fn dim(mut doc: ADoc) -> ADoc {
     doc.dimmed = true;
     doc
@@ -100,17 +130,26 @@ fn command_pattern_to_doc(pattern: &CommandPattern) -> Doc<()> {
     }
 }
 
+fn positional_arg_to_doc(p: &may_i_core::pattern::PositionalArg) -> Doc<()> {
+    let inner = p.pattern.to_doc();
+    match p.quantifier {
+        Quantifier::One => inner,
+        Quantifier::Optional => Doc::list(vec![Doc::atom("?"), inner]),
+        Quantifier::OneOrMore => Doc::list(vec![Doc::atom("+"), inner]),
+        Quantifier::ZeroOrMore => Doc::list(vec![Doc::atom("*"), inner]),
+    }
+}
+
 fn arg_pattern_to_doc(pattern: &ArgPattern) -> Doc<()> {
-    // Simplified doc representation
     match pattern {
         ArgPattern::Positional { patterns, .. } => {
             let mut cs = vec![Doc::atom("positional")];
-            cs.extend(patterns.iter().map(|p| p.pattern.to_doc()));
+            cs.extend(patterns.iter().map(positional_arg_to_doc));
             Doc::list(cs)
         }
         ArgPattern::Exact { patterns, .. } => {
             let mut cs = vec![Doc::atom("exact")];
-            cs.extend(patterns.iter().map(|p| p.pattern.to_doc()));
+            cs.extend(patterns.iter().map(positional_arg_to_doc));
             Doc::list(cs)
         }
         ArgPattern::Anywhere(exprs) => {
@@ -145,11 +184,25 @@ pub enum TraceEntry {
 /// accumulates rule-level trace entries.
 pub struct TracingFold {
     pub traces: Vec<TraceEntry>,
+    source_text: Option<String>,
 }
 
 impl TracingFold {
     pub fn new() -> Self {
-        Self { traces: Vec::new() }
+        Self {
+            traces: Vec::new(),
+            source_text: None,
+        }
+    }
+
+    pub fn with_source_text(mut self, source_text: Option<String>) -> Self {
+        self.source_text = source_text;
+        self
+    }
+
+    fn line_of(&self, byte_offset: usize) -> Option<usize> {
+        let text = self.source_text.as_ref()?;
+        Some(text[..byte_offset.min(text.len())].matches('\n').count() + 1)
     }
 }
 
@@ -324,13 +377,15 @@ impl EvalFold for TracingFold {
         &mut self,
         pred: Self::PredicateOut,
         body: ChildResult<Self::EffectOut>,
+        body_effect: &Effect,
         result: EffectResult,
     ) -> Self::EffectOut {
         let body_doc = match body {
             ChildResult::Evaluated((_, doc)) => doc,
-            ChildResult::Skipped => dim(plain_atom("…")),
+            ChildResult::Skipped => dim(effect_to_static_ann_doc(body_effect)),
         };
-        let docs = vec![plain_atom("when"), pred.1, body_doc];
+        let inner = ann_list(vec![pred.1, body_doc], None);
+        let docs = vec![plain_atom("when"), inner];
         let ann = Some(Ann::Combinator {
             result_is_nil: result.is_nil(),
         });
@@ -341,13 +396,15 @@ impl EvalFold for TracingFold {
         &mut self,
         pred: Self::PredicateOut,
         body: ChildResult<Self::EffectOut>,
+        body_effect: &Effect,
         result: EffectResult,
     ) -> Self::EffectOut {
         let body_doc = match body {
             ChildResult::Evaluated((_, doc)) => doc,
-            ChildResult::Skipped => dim(plain_atom("…")),
+            ChildResult::Skipped => dim(effect_to_static_ann_doc(body_effect)),
         };
-        let docs = vec![plain_atom("unless"), pred.1, body_doc];
+        let inner = ann_list(vec![pred.1, body_doc], None);
+        let docs = vec![plain_atom("unless"), inner];
         let ann = Some(Ann::Combinator {
             result_is_nil: result.is_nil(),
         });
@@ -400,6 +457,43 @@ impl EvalFold for TracingFold {
             result_is_nil: result.is_nil(),
         });
         (result, ann_list_break(docs, ann))
+    }
+
+    fn effect_arg_continuation(
+        &mut self,
+        pattern: &ArgPattern,
+        args: &[String],
+        detail: ArgMatchDetail,
+        continuation: Self::EffectOut,
+    ) -> Self::EffectOut {
+        let result = continuation.0.clone();
+        let doc = unannotated_to_ann(arg_pattern_to_doc(pattern));
+        let ann_doc = Doc {
+            ann: Some(Ann::ArgMatch {
+                search_tokens: detail.search_tokens,
+                arg_set: detail.arg_set,
+                matched: detail.matched,
+            }),
+            ..doc
+        };
+        // Wrap: (positional ... continuation-doc)
+        let mut children = match ann_doc.node {
+            DocF::List(cs) => cs,
+            _ => vec![ann_doc],
+        };
+        children.push(continuation.1);
+        let _ = args;
+        let wrapper = Doc {
+            ann: Some(Ann::ArgMatch {
+                search_tokens: vec![],
+                arg_set: vec![],
+                matched: detail.matched,
+            }),
+            node: DocF::List(children),
+            layout: LayoutHint::AlwaysBreak,
+            dimmed: false,
+        };
+        (result, wrapper)
     }
 
     fn effect_may_i(
@@ -520,22 +614,33 @@ impl EvalFold for TracingFold {
 
     fn rule_matched(
         &mut self,
-        _rule: &Rule,
-        line: Option<usize>,
+        rule: &Rule,
+        _line: Option<usize>,
         command_out: Self::EffectOut,
-        out: Self::EffectOut,
+        effects: Vec<Self::EffectOut>,
     ) -> Self::EffectOut {
+        let line = self.line_of(rule.span.start);
         let ann = Some(Ann::RuleMatch {
             matched: true,
             line,
         });
-        let docs = vec![plain_atom("rule"), command_out.1, out.1];
+        let terminal_result = effects
+            .last()
+            .map(|e| e.0.clone())
+            .unwrap_or(EffectResult::Nil);
+        let command_doc = ann_list(vec![plain_atom("command"), command_out.1], None);
+        let mut args_children = vec![plain_atom("args")];
+        for effect in &effects {
+            args_children.push(effect.1.clone());
+        }
+        let args_doc = ann_list_break(args_children, None);
+        let docs = vec![plain_atom("rule"), command_doc, args_doc];
         let doc = ann_list_break(docs, ann);
         self.traces.push(TraceEntry::Rule {
             doc: doc.clone(),
             line,
         });
-        (out.0, doc)
+        (terminal_result, doc)
     }
 
     fn rule_skipped(&mut self, _rule: &Rule) -> Self::EffectOut {

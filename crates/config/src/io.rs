@@ -49,7 +49,9 @@ fn try_migrate_and_parse(content: &str) -> Option<may_i_core::ast::Config> {
     let migrated = crate::migrate::migrate_forms(cst_nodes);
     let sexprs: Vec<_> = migrated.iter().map(|n| n.to_sexpr()).collect();
 
-    crate::parse_config_from_sexprs(&sexprs).ok()
+    let mut config = crate::parse_config_from_sexprs(&sexprs).ok()?;
+    config.source_text = Some(content.to_string());
+    Some(config)
 }
 
 /// Resolve the config file path.

@@ -335,11 +335,11 @@ fn collect_annotations_inner(doc: &Doc<Option<Ann>>, out: &mut Vec<(String, Stri
 fn format_annotation(doc: &Doc<Option<Ann>>, ann: &Ann) -> Option<(String, String)> {
     match ann {
         Ann::CommandMatch { matched } => {
-            // Only annotate leaf command matches; compound patterns (Or)
-            // annotate their matching children instead.
-            if matches!(doc.node, DocF::Atom(_)) {
+            // Only annotate non-matching commands; matching is implied
+            // since skipped rules are not shown.
+            if !matched && matches!(doc.node, DocF::Atom(_)) {
                 let needle = node_text(doc);
-                Some((needle, verdict(*matched)))
+                Some((needle, verdict(false)))
             } else {
                 None
             }
@@ -369,8 +369,8 @@ fn format_annotation(doc: &Doc<Option<Ann>>, ann: &Ann) -> Option<(String, Strin
                 let arrow = if *matched { "→ yes" } else { "→ no" };
                 Some((needle, format!("{pattern} ∈ {{{truncated}}} {arrow}")))
             } else {
-                // Predicate arg match — simple verdict
-                Some((needle, verdict(*matched)))
+                // Predicate arg match — verdict is implied by structure
+                None
             }
         }
 
@@ -512,32 +512,6 @@ fn truncate_unevaluated(doc: &Doc<Option<Ann>>, keep: usize) -> Doc<Option<Ann>>
             let has_head = head.is_some();
             let args_unevaluated =
                 has_head && children[1..].iter().all(|c| !has_any_visible_annotation(c));
-            let is_control_flow =
-                matches!(head, Some("cond" | "and" | "or" | "if" | "when" | "unless"));
-            if is_control_flow && children.len() > 1 {
-                let tail_start = children[1..]
-                    .iter()
-                    .rposition(has_any_annotation)
-                    .map(|i| i + 2)
-                    .unwrap_or(1);
-                let tail_len = children.len() - tail_start;
-                if tail_len >= 1 {
-                    let ellipsis = Doc {
-                        ann: None,
-                        node: DocF::Atom("…".into()),
-                        layout: LayoutHint::Auto,
-                        dimmed: true,
-                    };
-                    let mut truncated: Vec<_> = children[..tail_start].to_vec();
-                    truncated.push(ellipsis);
-                    return Doc {
-                        ann: doc.ann.clone(),
-                        node: DocF::List(truncated),
-                        layout: doc.layout,
-                        dimmed: doc.dimmed,
-                    };
-                }
-            }
             if args_unevaluated && children.len() > keep + 2 {
                 let mut truncated = Vec::with_capacity(keep + 3);
                 truncated.push(children[0].clone());
@@ -628,17 +602,6 @@ fn dim_unevaluated_inner(doc: Doc<Option<Ann>>) -> (Doc<Option<Ann>>, usize) {
                 total,
             )
         }
-    }
-}
-
-fn has_any_annotation(doc: &Doc<Option<Ann>>) -> bool {
-    if doc.ann.is_some() {
-        return true;
-    }
-    if let DocF::List(children) | DocF::Vector(children) = &doc.node {
-        children.iter().any(has_any_annotation)
-    } else {
-        false
     }
 }
 

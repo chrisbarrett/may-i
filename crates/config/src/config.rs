@@ -13,7 +13,9 @@ pub fn parse_config(input: &str) -> Result<Config, RawError> {
         return Err(err);
     }
 
-    parse_config_from_sexprs(&forms)
+    let mut config = parse_config_from_sexprs(&forms)?;
+    config.source_text = Some(input.to_string());
+    Ok(config)
 }
 
 /// Parse a config from pre-parsed Sexpr forms.

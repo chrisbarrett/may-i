@@ -83,12 +83,14 @@ pub trait EvalFold {
         &mut self,
         pred: Self::PredicateOut,
         body: ChildResult<Self::EffectOut>,
+        body_effect: &Effect,
         result: EffectResult,
     ) -> Self::EffectOut;
     fn effect_unless(
         &mut self,
         pred: Self::PredicateOut,
         body: ChildResult<Self::EffectOut>,
+        body_effect: &Effect,
         result: EffectResult,
     ) -> Self::EffectOut;
     fn effect_if(
@@ -103,6 +105,13 @@ pub trait EvalFold {
         branches: Vec<(Self::PredicateOut, ChildResult<Self::EffectOut>)>,
         fallback: Option<ChildResult<Self::EffectOut>>,
         result: EffectResult,
+    ) -> Self::EffectOut;
+    fn effect_arg_continuation(
+        &mut self,
+        pattern: &ArgPattern,
+        args: &[String],
+        detail: ArgMatchDetail,
+        continuation: Self::EffectOut,
     ) -> Self::EffectOut;
     fn effect_may_i(
         &mut self,
@@ -156,7 +165,7 @@ pub trait EvalFold {
         rule: &Rule,
         line: Option<usize>,
         command_out: Self::EffectOut,
-        out: Self::EffectOut,
+        effects: Vec<Self::EffectOut>,
     ) -> Self::EffectOut;
     fn rule_skipped(&mut self, rule: &Rule) -> Self::EffectOut;
     fn default_ask(&mut self, reason: &str) -> Self::EffectOut;
@@ -236,6 +245,7 @@ impl EvalFold for PureFold {
         &mut self,
         _pred: PredicateResult,
         _body: ChildResult<EffectResult>,
+        _body_effect: &Effect,
         result: EffectResult,
     ) -> EffectResult {
         result
@@ -245,6 +255,7 @@ impl EvalFold for PureFold {
         &mut self,
         _pred: PredicateResult,
         _body: ChildResult<EffectResult>,
+        _body_effect: &Effect,
         result: EffectResult,
     ) -> EffectResult {
         result
@@ -267,6 +278,16 @@ impl EvalFold for PureFold {
         result: EffectResult,
     ) -> EffectResult {
         result
+    }
+
+    fn effect_arg_continuation(
+        &mut self,
+        _pattern: &ArgPattern,
+        _args: &[String],
+        _detail: ArgMatchDetail,
+        continuation: EffectResult,
+    ) -> EffectResult {
+        continuation
     }
 
     fn effect_may_i(
@@ -339,9 +360,9 @@ impl EvalFold for PureFold {
         _rule: &Rule,
         _line: Option<usize>,
         _command_out: EffectResult,
-        out: EffectResult,
+        effects: Vec<EffectResult>,
     ) -> EffectResult {
-        out
+        effects.into_iter().last().unwrap_or(EffectResult::Nil)
     }
 
     fn rule_skipped(&mut self, _rule: &Rule) -> EffectResult {
