@@ -1,0 +1,24 @@
+
+Trace
+
+  24: (rule                                │
+        (command "rm")                     │
+        (args (and (anywhere "-r")         │ "-r" ∈ {"-r", "-f", "/"} → yes
+                   (anywhere "/")))        │ "/" ∈ {"-r", "-f", "/"} → yes
+        (effect                            │ → :deny "Recursive deletion from root"
+          :deny                            │
+          "Recursive deletion from root")) │
+
+  107: (rule (command "ssh")            │
+             (args (positional          │
+                     [:ssh/host *]      │
+                     (may-i (positional │ `rm -rf /` → :deny "Recursive deletion from root"
+                              *)))))    │
+
+Result
+
+  ssh prod "rm -rf /"
+
+  → :deny "Recursive deletion from root"
+
+  config: tests/fixtures/v1/config.lisp

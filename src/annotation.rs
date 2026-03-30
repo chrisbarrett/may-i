@@ -34,6 +34,12 @@ pub enum Ann {
         decision: Decision,
         reason: Option<String>,
     },
+    /// Recursive evaluation (may-i) with inner command and result.
+    MayI {
+        inner_command: String,
+        decision: Decision,
+        reason: Option<String>,
+    },
     /// Quantifier/combinator result.
     Combinator { result_is_nil: bool },
     /// Rule-level annotation.
@@ -683,25 +689,29 @@ impl EvalFold for TracingFold {
 
     fn effect_may_i(
         &mut self,
+        pattern: &ArgPattern,
         inner_cmd: &str,
         inner_args: &[String],
         inner_result: EffectResult,
-        inner_out: Self::EffectOut,
+        _inner_out: Self::EffectOut,
     ) -> Self::EffectOut {
         let cmd_str = if inner_args.is_empty() {
             inner_cmd.to_string()
         } else {
             format!("{} {}", inner_cmd, inner_args.join(" "))
         };
-        let docs = vec![
-            plain_atom("may-i"),
-            plain_atom(format!("\"{}\"", cmd_str)),
-            inner_out.1,
-        ];
-        let ann = Some(Ann::Combinator {
-            result_is_nil: inner_result.is_nil(),
+        let (decision, reason) = match &inner_result {
+            EffectResult::Decision(d, r) => (*d, r.clone()),
+            EffectResult::Nil => (Decision::Ask, None),
+        };
+        let doc = unannotated_to_ann(arg_pattern_to_doc(pattern));
+        let docs = vec![plain_atom("may-i"), doc];
+        let ann = Some(Ann::MayI {
+            inner_command: cmd_str,
+            decision,
+            reason,
         });
-        (inner_result, ann_list_break(docs, ann))
+        (inner_result, ann_list(docs, ann))
     }
 
     fn effect_may_i_no_match(&mut self, pattern: &ArgPattern) -> Self::EffectOut {

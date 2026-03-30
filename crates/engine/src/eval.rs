@@ -897,7 +897,7 @@ pub fn evaluate_effect_fold<F: EvalFold>(
                     // For the fold, we build a synthetic terminal output representing the inner result
                     let inner_out =
                         fold.effect_terminal(&Effect::Allow(None), inner_result.clone());
-                    fold.effect_may_i(&inner_cmd, &inner_args, inner_result, inner_out)
+                    fold.effect_may_i(pattern, &inner_cmd, &inner_args, inner_result, inner_out)
                 }
                 None => fold.effect_may_i_no_match(pattern),
             }

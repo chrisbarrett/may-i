@@ -534,8 +534,9 @@ fn wrapper_to_rule(node: &CstNode) -> Option<Box<CstNode>> {
     Some(Box::new(CstNode::list(
         new_children,
         TriviaAnn {
+            leading: node.ann.leading.clone(),
             trailing: node.ann.trailing.clone(),
-            ..Default::default()
+            span: node.ann.span,
         },
     )))
 }
@@ -571,8 +572,9 @@ fn defcontext_to_define(node: &CstNode) -> Option<Box<CstNode>> {
     Some(Box::new(CstNode::list(
         new_children,
         TriviaAnn {
+            leading: node.ann.leading.clone(),
             trailing: node.ann.trailing.clone(),
-            ..Default::default()
+            span: node.ann.span,
         },
     )))
 }

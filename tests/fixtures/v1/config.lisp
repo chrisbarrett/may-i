@@ -102,3 +102,6 @@
                            (effect :deny))
                           ((or "build" "b" "check" "c" "test" "t" "fmt" "clippy")
                            (effect :allow)))))))
+
+;; Wrapper: ssh evaluates the inner command recursively
+(wrapper "ssh" (positional [:ssh/host *] :command+args))

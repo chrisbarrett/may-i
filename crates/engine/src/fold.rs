@@ -128,6 +128,7 @@ pub trait EvalFold {
     ) -> Self::EffectOut;
     fn effect_may_i(
         &mut self,
+        pattern: &ArgPattern,
         inner_cmd: &str,
         inner_args: &[String],
         inner_result: EffectResult,
@@ -314,6 +315,7 @@ impl EvalFold for PureFold {
 
     fn effect_may_i(
         &mut self,
+        _pattern: &ArgPattern,
         _inner_cmd: &str,
         _inner_args: &[String],
         _inner_result: EffectResult,

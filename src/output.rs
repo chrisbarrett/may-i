@@ -436,6 +436,19 @@ fn format_annotation(doc: &Doc<Option<Ann>>, ann: &Ann) -> Option<(String, Strin
         Ann::RuleMatch { .. } => None,
         Ann::Combinator { .. } => None,
 
+        Ann::MayI {
+            inner_command,
+            decision,
+            reason,
+        } => {
+            let keyword = format!(":{decision}");
+            let right = match reason {
+                Some(r) => format!("`{inner_command}` → {keyword} \"{r}\""),
+                None => format!("`{inner_command}` → {keyword}"),
+            };
+            Some((node_text(doc), right))
+        }
+
         Ann::EffectDecision { decision, reason } => {
             let keyword = format!(":{decision}");
             let right = match reason {
@@ -1042,6 +1055,16 @@ fn ann_to_json(ann: &Ann) -> serde_json::Value {
         Ann::Combinator { result_is_nil } => serde_json::json!({
             "type": "combinator",
             "result_is_nil": result_is_nil,
+        }),
+        Ann::MayI {
+            inner_command,
+            decision,
+            reason,
+        } => serde_json::json!({
+            "type": "may_i",
+            "inner_command": inner_command,
+            "decision": decision.to_string(),
+            "reason": reason,
         }),
         Ann::RuleMatch { matched, line } => serde_json::json!({
             "type": "rule_match",

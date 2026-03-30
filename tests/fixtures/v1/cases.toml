@@ -103,3 +103,7 @@ command = "cargo run -- test"
 [[case]]
 name = "cargo_affected_build"
 command = "cargo affected build"
+
+[[case]]
+name = "ssh_rm_rf"
+command = 'ssh prod "rm -rf /"'
