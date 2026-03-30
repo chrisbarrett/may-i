@@ -1,5 +1,7 @@
 // Eval subcommand — evaluate a command and print result with trace.
 
+use std::io::Write;
+
 use colored::Colorize;
 
 use may_i_config as config;
@@ -28,7 +30,9 @@ pub fn cmd_eval(
     config.rules = resolved_rules;
 
     if json_mode {
-        let mut fold = TracingFold::new().with_source_text(config.source_text.clone());
+        let mut fold = TracingFold::new()
+            .with_source_text(config.source_text.clone())
+            .with_pre_migration_forms(config.pre_migration_forms.clone());
         let args: Vec<String> = command
             .split_whitespace()
             .skip(1)
@@ -47,42 +51,61 @@ pub fn cmd_eval(
         );
     } else {
         let (result, traces, colored_command) = evaluate_segments(command, &config, &context);
-
-        if !traces.is_empty() {
-            println!("\n{}\n", "Trace".bold());
-            output::print_trace(&traces, "  ");
-        }
-
-        println!("\n{}\n", "Result".bold());
-        println!("  {colored_command}");
-        println!();
-        {
-            use may_i_pp::colorize_atom;
-            let keyword = format!(":{}", result.decision);
-            let colored_keyword = output::colorize_decision_keyword(&keyword);
-            match &result.reason {
-                Some(reason) => {
-                    let quoted = format!("\"{reason}\"");
-                    println!(
-                        "  {} {colored_keyword} {}",
-                        "→".dimmed(),
-                        colorize_atom(&quoted, true)
-                    );
-                }
-                None => println!("  {} {colored_keyword}", "→".dimmed()),
-            }
-        }
-        println!();
         let display_path = output::shorten_home(&config_file);
-        println!("  {} {}", "config:".dimmed(), display_path.dimmed());
+        write_eval_output(
+            &mut std::io::stdout(),
+            &traces,
+            &colored_command,
+            &result,
+            &display_path,
+        );
     }
 
     Ok(())
 }
 
+/// Render trace + result output to a writer.
+pub fn write_eval_output(
+    w: &mut impl Write,
+    traces: &[TraceEntry],
+    colored_command: &str,
+    result: &engine::EvalResult,
+    display_path: &str,
+) {
+    if !traces.is_empty() {
+        let _ = writeln!(w, "\n{}\n", "Trace".bold());
+        output::write_trace(w, traces, "  ");
+    }
+
+    let _ = writeln!(w, "\n{}\n", "Result".bold());
+    let _ = writeln!(w, "  {colored_command}");
+    let _ = writeln!(w);
+    {
+        use may_i_pp::colorize_atom;
+        let keyword = format!(":{}", result.decision);
+        let colored_keyword = output::colorize_decision_keyword(&keyword);
+        match &result.reason {
+            Some(reason) => {
+                let quoted = format!("\"{reason}\"");
+                let _ = writeln!(
+                    w,
+                    "  {} {colored_keyword} {}",
+                    "→".dimmed(),
+                    colorize_atom(&quoted, true)
+                );
+            }
+            None => {
+                let _ = writeln!(w, "  {} {colored_keyword}", "→".dimmed());
+            }
+        }
+    }
+    let _ = writeln!(w);
+    let _ = writeln!(w, "  {} {}", "config:".dimmed(), display_path.dimmed());
+}
+
 /// Evaluate each segment of a command, returning the aggregate result, traces,
 /// and a colorized display string.
-fn evaluate_segments(
+pub fn evaluate_segments(
     command: &str,
     config: &may_i_core::ast::Config,
     context: &may_i_core::ContextFacts,
@@ -90,7 +113,9 @@ fn evaluate_segments(
     let segments = parser::segment(command);
 
     if segments.is_empty() {
-        let mut fold = TracingFold::new().with_source_text(config.source_text.clone());
+        let mut fold = TracingFold::new()
+            .with_source_text(config.source_text.clone())
+            .with_pre_migration_forms(config.pre_migration_forms.clone());
         let args: Vec<String> = command
             .split_whitespace()
             .skip(1)
@@ -109,7 +134,9 @@ fn evaluate_segments(
         if seg.is_operator {
             display_parts.push(format!(" {text} "));
         } else {
-            let mut fold = TracingFold::new().with_source_text(config.source_text.clone());
+            let mut fold = TracingFold::new()
+                .with_source_text(config.source_text.clone())
+                .with_pre_migration_forms(config.pre_migration_forms.clone());
             let args: Vec<String> = text.split_whitespace().skip(1).map(String::from).collect();
             let cmd = text.split_whitespace().next().unwrap_or(text);
             let result = engine::eval::evaluate_with_fold(cmd, &args, config, context, &mut fold);
@@ -136,7 +163,7 @@ fn evaluate_segments(
             });
         }
         traces.extend(segment_traces.iter().cloned());
-        if eval.decision > aggregate_decision {
+        if eval.decision >= aggregate_decision {
             aggregate_decision = eval.decision;
             aggregate_reason = eval.reason.clone();
         }

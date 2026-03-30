@@ -20,4 +20,4 @@ Result
 
   → :ask "Network operation requires approval"
 
-  config: ~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp
+  config: tests/fixtures/v1/config.lisp

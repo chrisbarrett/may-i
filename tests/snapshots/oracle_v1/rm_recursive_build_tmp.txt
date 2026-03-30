@@ -9,24 +9,26 @@ Trace
           :deny                            │
           "Recursive deletion from root")) │
 
-  29: (rule                                          │
-        (command "rm")                               │
-        (context                                     │
-          (or                                        │
-            (has                                     │
-              [:claude-code/permission-mode          │ no
-                "acceptEdits"])                      │
-            (has [:opencode/agent                    │
-                   "build"])))                       │ yes
-        (args                                        │
-          (and                                       │
-            (anywhere "-r")                          │ "-r" ∈ {"-r", "/tmp/foo"} → yes
-            (if                                      │
-                (anywhere (regex                     │ (regex "^/tmp/.*") ∈ {"-r", "/tmp/foo"} → yes
-                            "^/tmp/.*"))             │
-              (effect                                │ → :allow "Deleting tmp files is allowed"
-                :allow                               │
-                "Deleting tmp files is allowed"))))) │
+  29: (rule                                            │
+        (command "rm")                                 │
+        (args                                          │
+          (when                                        │
+              ((and                                    │
+                 (or                                   │
+                   (has                                │ no
+                     [:claude-code/permission-mode     │
+                       "acceptEdits"])                 │
+                   (has [:opencode/agent               │ "build" -> yes
+                          "build"]))                   │
+                 (anywhere "-r"                        │
+                           "--recursive"))             │
+                (cond                                  │
+                  ((anywhere                           │
+                     (regex "^/tmp/.*"))               │
+                   (effect                             │ → :allow "Deleting tmp files is allowed"
+                     :allow                            │
+                     "Deleting tmp files is allowed")) │
+                  …)))))                               │
 
 Result
 
@@ -34,4 +36,4 @@ Result
 
   → :allow "Deleting tmp files is allowed"
 
-  config: ~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp
+  config: tests/fixtures/v1/config.lisp

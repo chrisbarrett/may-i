@@ -3,11 +3,11 @@
 
   [2m95: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"cargo"[0m[2m)[0m           [2m│[0m
             [2m([0m[34margs[0m [2m([0mor [2m([0m[34mwhen[0m             [2m│[0m
-                          [2m([0m[2m([0m[34mexact[0m[2m)[0m      [2m│[0m [2m[0m[2m→[0m [1;32m:allow[0m
+                          [2m([0m[2m([0m[34mexact[0m[2m)[0m      [2m│[0m
                             [2m([0m[34meffect[0m     [2m│[0m [2m[0m[2m→[0m [1;32m:allow[0m
                               [38;2;120;120;255m:allow[0m[2m)[0m[2m)[0m[2m)[0m [2m│[0m
-                      [2m…[0m[2m)[0m[2m)[0m[2m)[0m              [2m│[0m
-                                        [2m│[0m [2m[] = [] [0m[2m→[0m [1;32myes[0m
+                      [2m…[0m[2m)[0m[2m)[0m               [2m│[0m
+            [2m([0m[2meffect[0m [2m:ask[0m[2m)[0m[2m)[0m              [2m│[0m
 
 [1mResult[0m
 
@@ -15,4 +15,4 @@
 
   [2m→[0m [1;32m:allow[0m
 
-  [2mconfig:[0m [2m~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp[0m
+  [2mconfig:[0m [2mtests/fixtures/v1/config.lisp[0m

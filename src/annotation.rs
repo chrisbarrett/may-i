@@ -111,6 +111,132 @@ fn dim(mut doc: ADoc) -> ADoc {
     doc
 }
 
+/// Build the children of a rule doc: (rule (command ...) [(context ...)] (args ...) [(effect ...)])
+///
+/// Separates arg predicates from terminal effects and context predicates.
+/// The oracle shows these as siblings: (rule (command ...) (context ...) (args ...) (effect ...))
+fn build_rule_doc_children(
+    rule: &Rule,
+    command_out: (EffectResult, ADoc),
+    effects: Vec<(EffectResult, ADoc)>,
+) -> Vec<ADoc> {
+    use may_i_core::ast::Effect;
+    let command_doc = ann_list(vec![plain_atom("command"), command_out.1], None);
+    let mut docs = vec![plain_atom("rule"), command_doc];
+
+    // Separate effects into arg predicates and terminal/other effects.
+    // Context predicates (When/Unless wrapping a terminal) are extracted separately.
+    let mut args_children = vec![plain_atom("args")];
+    let mut terminal_doc: Option<ADoc> = None;
+    let mut context_docs: Vec<ADoc> = Vec::new();
+
+    for (i, effect_out) in effects.iter().enumerate() {
+        let effect = rule.effects.get(i).map(|e| &e.value);
+        match effect {
+            Some(Effect::When {
+                predicate,
+                effect: body,
+            }) if body.value.is_terminal() => {
+                // Context predicate wrapping terminal effect — extract both.
+                // The fold produced a single doc for the when(...) form.
+                // We need to split it into (context ...) and (effect ...) siblings.
+                // For now, extract from the evaluated doc.
+                extract_context_and_effect(&effect_out.1, &mut context_docs, &mut terminal_doc);
+            }
+            Some(Effect::Unless {
+                predicate,
+                effect: body,
+            }) if body.value.is_terminal() => {
+                extract_context_and_effect(&effect_out.1, &mut context_docs, &mut terminal_doc);
+            }
+            Some(eff) if eff.is_terminal() => {
+                terminal_doc = Some(effect_out.1.clone());
+            }
+            _ => {
+                args_children.push(effect_out.1.clone());
+            }
+        }
+    }
+
+    // If we didn't see all effects (rule_not_matched case), add remaining
+    // effects from the rule definition as dimmed (no annotations).
+    if terminal_doc.is_none() {
+        // Find the first un-evaluated effect.
+        let start_idx = effects.len();
+        for effect_def in rule.effects.iter().skip(start_idx) {
+            match &effect_def.value {
+                Effect::When {
+                    predicate,
+                    effect: body,
+                } if body.value.is_terminal() => {
+                    // Extract context predicate and terminal effect.
+                    let ctx_doc = dim(unannotated_to_ann(predicate.value.to_doc()));
+                    context_docs.push(ann_list_break(vec![plain_atom("context"), ctx_doc], None));
+                    terminal_doc = Some(dim(unannotated_to_ann(body.value.to_doc())));
+                }
+                Effect::Unless {
+                    predicate,
+                    effect: body,
+                } if body.value.is_terminal() => {
+                    let ctx_doc = dim(unannotated_to_ann(predicate.value.to_doc()));
+                    context_docs.push(ann_list_break(vec![plain_atom("context"), ctx_doc], None));
+                    terminal_doc = Some(dim(unannotated_to_ann(body.value.to_doc())));
+                }
+                eff if eff.is_terminal() => {
+                    terminal_doc = Some(dim(unannotated_to_ann(eff.to_doc())));
+                }
+                _ => {
+                    // Non-terminal, non-evaluated effect — add dimmed to args
+                    args_children.push(dim(unannotated_to_ann(effect_def.value.to_doc())));
+                }
+            }
+        }
+    }
+
+    // Add context docs before args.
+    for ctx_doc in context_docs {
+        docs.push(ctx_doc);
+    }
+
+    // Only add (args ...) if there are arg predicates beyond the head atom.
+    if args_children.len() > 1 {
+        let args_doc = ann_list_break(args_children, None);
+        docs.push(args_doc);
+    }
+
+    // Add terminal effect as sibling.
+    if let Some(eff_doc) = terminal_doc {
+        docs.push(eff_doc);
+    }
+
+    docs
+}
+
+/// Extract context predicate and terminal effect from a (when pred effect) doc.
+fn extract_context_and_effect(
+    when_doc: &ADoc,
+    context_docs: &mut Vec<ADoc>,
+    terminal_doc: &mut Option<ADoc>,
+) {
+    // The when doc structure is (when (pred-doc) (effect-doc))
+    if let DocF::List(children) = &when_doc.node {
+        // children: ["when", inner-list]
+        // inner-list: [pred-doc, effect-doc]
+        if children.len() == 2
+            && let DocF::List(inner) = &children[1].node
+            && inner.len() == 2
+        {
+            // pred is the context, effect is the terminal
+            let context = ann_list_break(vec![plain_atom("context"), inner[0].clone()], None);
+            context_docs.push(context);
+            *terminal_doc = Some(inner[1].clone());
+            return;
+        }
+    }
+    // Fallback: couldn't extract, use as-is
+    *terminal_doc = Some(when_doc.clone());
+}
+
 fn command_pattern_to_doc(pattern: &CommandPattern) -> Doc<()> {
     match pattern {
         CommandPattern::Literal(s) => Doc::atom(format!("\"{}\"", s)),
@@ -158,15 +284,16 @@ fn arg_pattern_to_doc(pattern: &ArgPattern) -> Doc<()> {
             Doc::list(cs)
         }
         ArgPattern::Forbidden(exprs) => {
-            let mut cs = vec![Doc::atom("forbidden")];
-            cs.extend(exprs.iter().map(|e| e.to_doc()));
-            Doc::list(cs)
+            // Render as (not (anywhere ...)) to match oracle output.
+            let mut inner = vec![Doc::atom("anywhere")];
+            inner.extend(exprs.iter().map(|e| e.to_doc()));
+            Doc::list(vec![Doc::atom("not"), Doc::list(inner)])
         }
     }
 }
 
 fn fact_query_to_doc(query: &FactQuery) -> Doc<()> {
-    query.to_doc()
+    Doc::list(vec![Doc::atom("has"), query.to_doc()])
 }
 
 /// A single trace entry produced by the fold.
@@ -175,7 +302,14 @@ pub enum TraceEntry {
     /// Header for a compound command segment.
     SegmentHeader { command: String, decision: Decision },
     /// A rule evaluation with its annotated doc tree.
-    Rule { doc: ADoc, line: Option<usize> },
+    Rule {
+        doc: ADoc,
+        line: Option<usize>,
+        /// Pre-migration Doc for display when the config was migrated.
+        /// The `doc` field still carries annotations; this field provides
+        /// the original source structure for the left column.
+        pre_migration_doc: Option<Doc<()>>,
+    },
     /// No matching rule — default ask.
     DefaultAsk { reason: String },
 }
@@ -185,6 +319,13 @@ pub enum TraceEntry {
 pub struct TracingFold {
     pub traces: Vec<TraceEntry>,
     source_text: Option<String>,
+    pre_migration_forms: Option<Vec<(may_i_core::Span, Doc<()>)>>,
+}
+
+impl Default for TracingFold {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TracingFold {
@@ -192,6 +333,7 @@ impl TracingFold {
         Self {
             traces: Vec::new(),
             source_text: None,
+            pre_migration_forms: None,
         }
     }
 
@@ -200,9 +342,26 @@ impl TracingFold {
         self
     }
 
+    pub fn with_pre_migration_forms(
+        mut self,
+        forms: Option<Vec<(may_i_core::Span, Doc<()>)>>,
+    ) -> Self {
+        self.pre_migration_forms = forms;
+        self
+    }
+
     fn line_of(&self, byte_offset: usize) -> Option<usize> {
         let text = self.source_text.as_ref()?;
         Some(text[..byte_offset.min(text.len())].matches('\n').count() + 1)
+    }
+
+    /// Find the pre-migration Doc whose span contains the given byte offset.
+    fn find_pre_migration_doc(&self, span: may_i_core::Span) -> Option<Doc<()>> {
+        let forms = self.pre_migration_forms.as_ref()?;
+        forms
+            .iter()
+            .find(|(form_span, _)| form_span.start <= span.start && span.start < form_span.end)
+            .map(|(_, doc)| doc.clone())
     }
 }
 
@@ -313,13 +472,39 @@ impl EvalFold for TracingFold {
         detail: ArgMatchDetail,
     ) -> Self::EffectOut {
         let doc = unannotated_to_ann(arg_pattern_to_doc(pattern));
-        let ann_doc = Doc {
-            ann: Some(Ann::ArgMatch {
-                search_tokens: detail.search_tokens,
-                arg_set: detail.arg_set,
-                matched,
-            }),
-            ..doc
+        let ann = Some(Ann::ArgMatch {
+            search_tokens: detail.search_tokens.clone(),
+            arg_set: detail.arg_set.clone(),
+            matched,
+        });
+        // For forbidden patterns (rendered as (not (anywhere ...))),
+        // also annotate the inner (anywhere ...) node so truncation logic
+        // can see it. The inner matched is inverted: forbidden matched=true
+        // means no tokens found, but the inner anywhere matched should be false.
+        let ann_doc = if matches!(pattern, ArgPattern::Forbidden(_)) {
+            if let DocF::List(mut children) = doc.node {
+                if children.len() == 2 {
+                    let inner_ann = Some(Ann::ArgMatch {
+                        search_tokens: detail.search_tokens.clone(),
+                        arg_set: detail.arg_set.clone(),
+                        matched: !matched,
+                    });
+                    children[1] = Doc {
+                        ann: inner_ann,
+                        ..children[1].clone()
+                    };
+                }
+                Doc {
+                    ann,
+                    node: DocF::List(children),
+                    layout: doc.layout,
+                    dimmed: doc.dimmed,
+                }
+            } else {
+                Doc { ann, ..doc }
+            }
+        } else {
+            Doc { ann, ..doc }
         };
         let result = if matched {
             EffectResult::Decision(Decision::Allow, None)
@@ -620,6 +805,7 @@ impl EvalFold for TracingFold {
         effects: Vec<Self::EffectOut>,
     ) -> Self::EffectOut {
         let line = self.line_of(rule.span.start);
+        let pre_migration_doc = self.find_pre_migration_doc(rule.span);
         let ann = Some(Ann::RuleMatch {
             matched: true,
             line,
@@ -628,24 +814,43 @@ impl EvalFold for TracingFold {
             .last()
             .map(|e| e.0.clone())
             .unwrap_or(EffectResult::Nil);
-        let command_doc = ann_list(vec![plain_atom("command"), command_out.1], None);
-        let mut args_children = vec![plain_atom("args")];
-        for effect in &effects {
-            args_children.push(effect.1.clone());
-        }
-        let args_doc = ann_list_break(args_children, None);
-        let docs = vec![plain_atom("rule"), command_doc, args_doc];
+
+        let docs = build_rule_doc_children(rule, command_out, effects);
         let doc = ann_list_break(docs, ann);
         self.traces.push(TraceEntry::Rule {
             doc: doc.clone(),
             line,
+            pre_migration_doc,
         });
         (terminal_result, doc)
     }
 
+    fn rule_not_matched(
+        &mut self,
+        rule: &Rule,
+        command_out: Self::EffectOut,
+        effects: Vec<Self::EffectOut>,
+    ) -> Self::EffectOut {
+        // Command matched but args/context didn't — still show in trace.
+        let line = self.line_of(rule.span.start);
+        let pre_migration_doc = self.find_pre_migration_doc(rule.span);
+        let ann = Some(Ann::RuleMatch {
+            matched: false,
+            line,
+        });
+
+        let docs = build_rule_doc_children(rule, command_out, effects);
+        let doc = ann_list_break(docs, ann);
+        self.traces.push(TraceEntry::Rule {
+            doc: doc.clone(),
+            line,
+            pre_migration_doc,
+        });
+        (EffectResult::Nil, doc)
+    }
+
     fn rule_skipped(&mut self, _rule: &Rule) -> Self::EffectOut {
-        // Don't add skipped (non-matching) rules to the trace — they are
-        // out of scope for the command being evaluated and just add noise.
+        // Command didn't match at all — don't add to trace.
         (EffectResult::Nil, plain_atom("…"))
     }
 

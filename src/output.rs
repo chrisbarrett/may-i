@@ -3,6 +3,8 @@
 // Recovered from v0.0.3 and adapted for the new Ann enum and EvalFold-based
 // trace system.
 
+use std::io::Write;
+
 use colored::Colorize;
 use may_i_core::doc::{Doc, DocF, LayoutHint};
 use may_i_pp::{Format, colorize_atom, pretty, visible_len};
@@ -100,16 +102,22 @@ pub enum Element {
 // ── Rendering ──────────────────────────────────────────────────────
 
 pub fn render_elements(indent: &str, elements: &[Element]) {
+    write_elements(&mut std::io::stdout(), indent, elements);
+}
+
+pub fn write_elements(w: &mut impl Write, indent: &str, elements: &[Element]) {
     for element in elements {
         match element {
-            Element::Blank => println!(),
+            Element::Blank => {
+                let _ = writeln!(w);
+            }
             Element::Separator { label } => {
-                print_separator(indent, label.as_ref().map(|(s, w)| (s.as_str(), *w)));
+                write_separator(w, indent, label.as_ref().map(|(s, w)| (s.as_str(), *w)));
             }
             Element::Table(rows) => {
                 let divider_col = compute_divider_col(rows);
                 for row in rows {
-                    print_row(indent, row, divider_col);
+                    write_row(w, indent, row, divider_col);
                 }
             }
         }
@@ -126,7 +134,7 @@ fn compute_divider_col(rows: &[Row]) -> usize {
     max_left + 1
 }
 
-fn print_row(indent: &str, row: &Row, divider_col: usize) {
+fn write_row(w: &mut impl Write, indent: &str, row: &Row, divider_col: usize) {
     if row.left.content.is_empty() && row.right.content.is_empty() {
         return;
     }
@@ -146,7 +154,8 @@ fn print_row(indent: &str, row: &Row, divider_col: usize) {
         format!(" {}", colorize_right(&row.right.content))
     };
 
-    println!(
+    let _ = writeln!(
+        w,
         "{indent}{:lead$}{}{:trail$}{}{}",
         "",
         row.left.content,
@@ -159,6 +168,10 @@ fn print_row(indent: &str, row: &Row, divider_col: usize) {
 // ── Separator ──────────────────────────────────────────────────────
 
 pub fn print_separator(indent: &str, label: Option<(&str, usize)>) {
+    write_separator(&mut std::io::stdout(), indent, label);
+}
+
+pub fn write_separator(w: &mut impl Write, indent: &str, label: Option<(&str, usize)>) {
     let usable = term_width().saturating_sub(indent.len());
 
     match label {
@@ -168,7 +181,8 @@ pub fn print_separator(indent: &str, label: Option<(&str, usize)>) {
             let used = visible_len(prefix) + label_width + visible_len(mid);
             let remaining = usable.saturating_sub(used);
             let suffix = "─".repeat(remaining);
-            println!(
+            let _ = writeln!(
+                w,
                 "{indent}{}{}{}{}",
                 prefix.dimmed(),
                 colored_label,
@@ -178,7 +192,7 @@ pub fn print_separator(indent: &str, label: Option<(&str, usize)>) {
         }
         None => {
             let rule = "─".repeat(usable);
-            println!("{indent}{}", rule.dimmed());
+            let _ = writeln!(w, "{indent}{}", rule.dimmed());
         }
     }
 }
@@ -186,6 +200,10 @@ pub fn print_separator(indent: &str, label: Option<(&str, usize)>) {
 // ── Trace rendering ────────────────────────────────────────────────
 
 pub fn print_trace(entries: &[TraceEntry], indent: &str) {
+    write_trace(&mut std::io::stdout(), entries, indent);
+}
+
+pub fn write_trace(w: &mut impl Write, entries: &[TraceEntry], indent: &str) {
     let layout = detect_layout();
     let mut elements: Vec<Element> = Vec::new();
     let mut first = true;
@@ -199,7 +217,11 @@ pub fn print_trace(entries: &[TraceEntry], indent: &str) {
                 }
                 elements.push(segment_header_element(command, *decision));
             }
-            TraceEntry::Rule { doc, line } => {
+            TraceEntry::Rule {
+                doc,
+                line,
+                pre_migration_doc: _,
+            } => {
                 if !first {
                     elements.push(Element::Blank);
                 }
@@ -223,7 +245,7 @@ pub fn print_trace(entries: &[TraceEntry], indent: &str) {
         first = false;
     }
 
-    render_elements(indent, &elements);
+    write_elements(w, indent, &elements);
 }
 
 fn segment_header_element(command: &str, decision: may_i_core::Decision) -> Element {
@@ -243,7 +265,7 @@ fn segment_header_element(command: &str, decision: may_i_core::Decision) -> Elem
 // ── Annotated Doc renderer ─────────────────────────────────────────
 
 fn render_annotated_rule(doc: &Doc<Option<Ann>>, line: Option<usize>, layout: &Layout) -> Vec<Row> {
-    let doc = dim_unevaluated(truncate_unevaluated(doc, 2));
+    let doc = dim_unevaluated(truncate_unevaluated(&truncate_matched_anywhere(doc), 2));
     let fmt = Format {
         width: layout.left_width,
         color: true,
@@ -319,10 +341,77 @@ fn collect_annotations(doc: &Doc<Option<Ann>>) -> Vec<(String, String)> {
 }
 
 fn collect_annotations_inner(doc: &Doc<Option<Ann>>, out: &mut Vec<(String, String)>) {
-    if let Some(ann) = &doc.ann
-        && let Some(pair) = format_annotation(doc, ann)
-    {
-        out.push(pair);
+    if let Some(ann) = &doc.ann {
+        // Generate per-token annotations for anywhere/forbidden patterns.
+        if let Ann::ArgMatch {
+            search_tokens,
+            arg_set,
+            matched,
+        } = ann
+        {
+            // Generate positional comparison annotations.
+            if search_tokens.is_empty() && !arg_set.is_empty() {
+                let positional = extract_positional_args(arg_set);
+                collect_positional_annotations(doc, &positional, out);
+                // Don't return — still recurse for child annotations
+            }
+            if !search_tokens.is_empty() {
+                let quoted_set = quote_arg_set(arg_set);
+                // Determine if this is a "forbidden" pattern.
+                // For forbidden: matched=true means "no forbidden args found"
+                // so each token should show "→ no". For anywhere: matched=true
+                // means "at least one token was found in args".
+                let is_forbidden = is_forbidden_pattern(doc);
+                if is_forbidden {
+                    if *matched {
+                        // Forbidden passed: no forbidden tokens found → show all "→ no"
+                        for token in search_tokens {
+                            let arrow = "→ no";
+                            out.push((
+                                token.clone(),
+                                format!("{token} ∈ {{{quoted_set}}} {arrow}"),
+                            ));
+                        }
+                    } else {
+                        // Forbidden failed: at least one token found.
+                        // After truncation, only first matching token remains in doc.
+                        // Show only that token's annotation.
+                        for token in search_tokens {
+                            let found = arg_set.iter().any(|a| {
+                                let unquoted = token.trim_matches('"');
+                                a == unquoted
+                            });
+                            if found {
+                                out.push((
+                                    token.clone(),
+                                    format!("{token} ∈ {{{quoted_set}}} → yes"),
+                                ));
+                                break;
+                            }
+                        }
+                    }
+                } else if *matched {
+                    // Anywhere: when matched, show only the first matching token.
+                    let first_token = &search_tokens[0];
+                    let arrow = "→ yes";
+                    out.push((
+                        first_token.clone(),
+                        format!("{first_token} ∈ {{{quoted_set}}} {arrow}"),
+                    ));
+                } else {
+                    // Anywhere: when not matched, show each token individually
+                    for token in search_tokens {
+                        let arrow = "→ no";
+                        out.push((token.clone(), format!("{token} ∈ {{{quoted_set}}} {arrow}")));
+                    }
+                }
+                // Don't recurse into children for annotated arg patterns
+                return;
+            }
+        }
+        if let Some(pair) = format_annotation(doc, ann) {
+            out.push(pair);
+        }
     }
     if let DocF::List(children) = &doc.node {
         for child in children {
@@ -356,22 +445,10 @@ fn format_annotation(doc: &Doc<Option<Ann>>, ann: &Ann) -> Option<(String, Strin
             Some((node_text(doc), right))
         }
 
-        Ann::ArgMatch {
-            search_tokens,
-            arg_set,
-            matched,
-        } => {
-            let needle = node_text(doc);
-            if !search_tokens.is_empty() {
-                // Anywhere-style: show set membership
-                let pattern = search_tokens.join(", ");
-                let truncated = truncate_list(arg_set, 4);
-                let arrow = if *matched { "→ yes" } else { "→ no" };
-                Some((needle, format!("{pattern} ∈ {{{truncated}}} {arrow}")))
-            } else {
-                // Predicate arg match — verdict is implied by structure
-                None
-            }
+        Ann::ArgMatch { .. } => {
+            // Arg match annotations are handled by collect_annotations_inner
+            // which generates per-token annotations for anywhere/forbidden patterns.
+            None
         }
 
         Ann::FactQuery {
@@ -481,7 +558,7 @@ fn find_line(stripped_lines: &[String], needle: &str, search_from: &mut usize) -
     None
 }
 
-fn strip_ansi(s: &str) -> String {
+pub fn strip_ansi(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     let mut in_escape = false;
     for ch in s.chars() {
@@ -500,7 +577,57 @@ fn strip_ansi(s: &str) -> String {
 
 // ── Tree manipulation ──────────────────────────────────────────────
 
+/// For `(anywhere ...)` / `(forbidden ...)` patterns with a successful ArgMatch,
+/// truncate to only the first matching token.
+fn truncate_matched_anywhere(doc: &Doc<Option<Ann>>) -> Doc<Option<Ann>> {
+    if let Some(Ann::ArgMatch {
+        matched: true,
+        search_tokens,
+        ..
+    }) = &doc.ann
+        && !search_tokens.is_empty()
+        && !is_forbidden_pattern(doc)
+        && let DocF::List(children) = &doc.node
+    {
+        // Check if head is "anywhere"
+        let head = children.first().and_then(|c| c.as_atom());
+        if matches!(head, Some("anywhere")) && children.len() > 2 {
+            // Keep head + first matching token only
+            let truncated = vec![children[0].clone(), children[1].clone()];
+            return Doc {
+                ann: doc.ann.clone(),
+                node: DocF::List(truncated),
+                layout: doc.layout,
+                dimmed: doc.dimmed,
+            };
+        }
+    }
+    // Recurse into children
+    match &doc.node {
+        DocF::List(children) => Doc {
+            ann: doc.ann.clone(),
+            node: DocF::List(children.iter().map(truncate_matched_anywhere).collect()),
+            layout: doc.layout,
+            dimmed: doc.dimmed,
+        },
+        DocF::Vector(children) => Doc {
+            ann: doc.ann.clone(),
+            node: DocF::Vector(children.iter().map(truncate_matched_anywhere).collect()),
+            layout: doc.layout,
+            dimmed: doc.dimmed,
+        },
+        DocF::Atom(_) => doc.clone(),
+    }
+}
+
 fn truncate_unevaluated(doc: &Doc<Option<Ann>>, keep: usize) -> Doc<Option<Ann>> {
+    // Don't truncate inside anywhere/forbidden patterns — their children
+    // are individual search tokens that should all be visible.
+    if let Some(Ann::ArgMatch { search_tokens, .. }) = &doc.ann
+        && !search_tokens.is_empty()
+    {
+        return doc.clone();
+    }
     match &doc.node {
         DocF::Atom(_) => doc.clone(),
         DocF::List(children) => {
@@ -616,6 +743,117 @@ fn has_any_visible_annotation(doc: &Doc<Option<Ann>>) -> bool {
     } else {
         false
     }
+}
+
+/// Extract positional (non-flag) arguments from the argument list.
+/// Mirrors `eval::positional_args` logic.
+fn extract_positional_args(args: &[String]) -> Vec<&str> {
+    let mut result = Vec::new();
+    let mut iter = args.iter().peekable();
+    let mut past_terminator = false;
+
+    while let Some(arg) = iter.next() {
+        if past_terminator {
+            result.push(arg.as_str());
+        } else if arg == "--" {
+            result.push(arg.as_str());
+            past_terminator = true;
+        } else if arg.starts_with("--") {
+            if !arg.contains('=') {
+                iter.next();
+            }
+        } else if arg.starts_with('-') {
+            // Short flag — skip
+        } else {
+            result.push(arg.as_str());
+        }
+    }
+    result
+}
+
+/// Generate positional comparison annotations for a positional/exact pattern doc.
+/// Walks the doc's child pattern atoms and generates `"actual" = "pattern" → yes/no`.
+fn collect_positional_annotations(
+    doc: &Doc<Option<Ann>>,
+    positional_args: &[&str],
+    out: &mut Vec<(String, String)>,
+) {
+    if let DocF::List(children) = &doc.node {
+        let head = children.first().and_then(|c| c.as_atom());
+        if !matches!(head, Some("positional" | "exact")) {
+            return;
+        }
+        // For positional patterns, the first positional arg is compared against
+        // each pattern element in sequence. Walk the pattern children (skip head atom).
+        if let Some(first_arg) = positional_args.first() {
+            for child in children.iter().skip(1) {
+                collect_pattern_comparisons(child, first_arg, out);
+            }
+        }
+    }
+}
+
+/// Generate comparison annotations for a pattern element within a positional match.
+fn collect_pattern_comparisons(
+    pattern_doc: &Doc<Option<Ann>>,
+    actual_arg: &str,
+    out: &mut Vec<(String, String)>,
+) {
+    match &pattern_doc.node {
+        DocF::Atom(s) => {
+            // String literal pattern — compare against actual arg.
+            if s.starts_with('"') && s.ends_with('"') {
+                let pattern_text = &s[1..s.len() - 1];
+                let matched = actual_arg == pattern_text;
+                let arrow = if matched { "→ yes" } else { "→ no" };
+                out.push((s.clone(), format!("\"{}\" = {} {arrow}", actual_arg, s)));
+            }
+        }
+        DocF::List(children) => {
+            // Check for (or "a" "b" ...) or (? pattern)
+            let head = children.first().and_then(|c| c.as_atom());
+            match head {
+                Some("or") => {
+                    // Generate comparison for each alternative
+                    for child in children.iter().skip(1) {
+                        collect_pattern_comparisons(child, actual_arg, out);
+                    }
+                }
+                Some("?" | "+" | "*") => {
+                    // Quantifier — compare against inner pattern
+                    if let Some(inner) = children.get(1) {
+                        collect_pattern_comparisons(inner, actual_arg, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        _ => {}
+    }
+}
+
+fn is_forbidden_pattern(doc: &Doc<Option<Ann>>) -> bool {
+    if let DocF::List(children) = &doc.node
+        && let Some(head) = children.first().and_then(|c| c.as_atom())
+    {
+        if head == "forbidden" {
+            return true;
+        }
+        // Forbidden is rendered as (not (anywhere ...))
+        if head == "not"
+            && let Some(inner) = children.get(1)
+            && let DocF::List(inner_children) = &inner.node
+            && let Some(inner_head) = inner_children.first().and_then(|c| c.as_atom())
+        {
+            return inner_head == "anywhere";
+        }
+    }
+    false
+}
+
+fn quote_arg_set(items: &[String]) -> String {
+    let quoted: Vec<String> = items.iter().map(|s| format!("\"{}\"", s)).collect();
+    truncate_list(&quoted, 4)
 }
 
 fn truncate_list(items: &[String], max: usize) -> String {
@@ -743,7 +981,7 @@ pub fn trace_to_json(entries: &[TraceEntry]) -> Vec<serde_json::Value> {
                 "type": "default_ask",
                 "reason": reason,
             }),
-            TraceEntry::Rule { doc, line } => {
+            TraceEntry::Rule { doc, line, .. } => {
                 let mut annotations = Vec::new();
                 collect_json_annotations(doc, &mut annotations);
                 serde_json::json!({

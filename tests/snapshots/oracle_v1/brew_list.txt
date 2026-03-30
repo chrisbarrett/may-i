@@ -1,17 +1,15 @@
 
 Trace
 
-  74: (rule                                         │
-        (command "brew")                            │
-        (args                                       │
-          (cond                                     │
-            ((positional "install")                 │ "list" = "install" → no
-             (effect                                │ → :allow
-               :deny                                │
-               "Package installation not allowed")) │
-            ((positional (or "list" …))             │ → :allow
-             (effect :allow)))))                    │
-                                                    │ "list" = "list" → yes
+  74: (rule (command "brew")             │
+            (args (cond                  │
+                    ((positional         │
+                       "install")        │ "list" = "install" → no
+                     …)                  │
+                    ((positional         │
+                       (or "list"        │ "list" = "list" → yes
+                           "search"))    │ "list" = "search" → no
+                     (effect :allow))))) │ → :allow
 
 Result
 
@@ -19,4 +17,4 @@ Result
 
   → :allow
 
-  config: ~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp
+  config: tests/fixtures/v1/config.lisp

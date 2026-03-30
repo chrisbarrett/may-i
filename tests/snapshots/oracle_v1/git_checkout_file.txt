@@ -24,13 +24,20 @@ Trace
         (command "git")                                            │
         (context                                                   │
           (or                                                      │
-            (has                                                   │
-              [:claude-code/permission-mode                        │ no
+            (has                                                   │ no
+              [:claude-code/permission-mode                        │
                 "plan"])                                           │
-            (has                                                   │
-              [:opencode/agent "plan"])))                          │ no
-        (args (or …))                                              │
-        (effect                                                    │
+            (has                                                   │ no
+              [:opencode/agent "plan"])))                          │
+        (args (or (positional (or                                  │
+                                "switch"                           │ "checkout" = "switch" → no
+                                "restore"                          │ "checkout" = "restore" → no
+                                …                                  │
+                                "clone"))                          │ "checkout" = "clone" → no
+                  (positional "checkout"                           │ "checkout" = "checkout" → yes
+                              "--")                                │ "checkout" = "--" → no
+                  …))                                              │
+        (effect                                                    │ → :ask "git mutation requires approval in non-writing agents"
           :ask                                                     │
           "git mutation requires approval in non-writing agents")) │
 
@@ -43,4 +50,4 @@ Result
 
   → :allow
 
-  config: ~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp
+  config: tests/fixtures/v1/config.lisp

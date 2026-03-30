@@ -79,28 +79,43 @@ The `colored` crate respects `CLICOLOR_FORCE` or programmatic override. The test
 sets `colored::control::set_override(true)` before rendering to match the oracle
 capture environment.
 
-### 6. Source recovery approach (v1-source-recovery): span-based extraction
+### 6. Source recovery approach (v1-source-recovery): pre-migration CST
 
-When `config.source_text` contains V1 source (detectable because migration was
-applied), the trace renderer extracts original source text at each rule's span
-rather than pretty-printing from V2 AST `to_doc()`.
+When a config is loaded via transparent CST-rewrite migration, the trace
+renderer displays the original source structure by retaining the pre-migration
+CST nodes alongside the migrated V2 AST.
 
 The approach:
 
-1. For each rule, extract `source_text[rule.span.start..rule.span.end]` to get
-   the original V1 s-expression.
-2. Pretty-print this V1 text as the left column of the trace.
-3. Overlay eval annotations (match results, decisions) from the TracingFold onto
-   the rendered lines using the existing `find_line` needle-matching approach.
+1. During `try_migrate_and_parse`, clone the parsed CstNodes **before** calling
+   `migrate_forms`. Store them as `config.pre_migration_cst`.
+2. When rendering a rule's trace, match the rule to its pre-migration CstNode by
+   span overlap (`rule.span` indexes into `source_text`, which is the original
+   content; CstNode spans point into the same content).
+3. Convert the matched CstNode to `Doc<Option<Ann>>` via `CstNode::to_doc()`,
+   then apply truncation/dimming and overlay TracingFold annotations using the
+   existing `find_line` needle-matching approach.
 
 This decouples display structure from eval structure. Annotations are produced by
-eval on the V2 AST; display comes from original source.
+eval on the V2 AST; display comes from original source CST.
+
+**Why this generalises**: The migration system uses CST rewrites. Any future
+migration pipeline (V2→V3, etc.) has the same structure: parse → rewrite → parse
+AST. Storing the pre-rewrite CST is a one-line change in the pipeline. The
+renderer doesn't need to know which rewrites happened.
 
 **Alternative considered**: Reverse-transforming V2 Doc trees to look like V1.
 Rejected — fragile, requires an inverse for every migration rule.
 
-**Alternative considered**: Carrying parallel V1 CST alongside V2 AST. Rejected
-— doubles data, complicates the config struct.
+**Alternative considered**: Span-based source text extraction (parse
+`source_text[rule.span]` into V1 text). Rejected — requires re-parsing
+extracted text fragments, and the CstNodes are already available before
+migration runs. Storing them directly is simpler and avoids re-parsing.
+
+**Alternative considered**: Maintaining an ordered log of rewrites to invert.
+Rejected — rule ordering/interaction makes inversion non-trivial, and some
+rewrites add information (e.g. `rule_add_default_effect`), making inversion
+lossy.
 
 ## Risks / Trade-offs
 

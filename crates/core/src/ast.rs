@@ -176,6 +176,15 @@ impl Effect {
         matches!(self, Effect::Allow(_) | Effect::Ask(_) | Effect::Deny(_))
     }
 
+    /// Check if this effect would match the given command name.
+    /// Only meaningful for CommandPattern effects.
+    pub fn matches_command(&self, command: &str) -> bool {
+        match self {
+            Effect::CommandPattern(pattern) => pattern.is_match(command),
+            _ => false,
+        }
+    }
+
     /// Check if this is a pattern effect.
     pub fn is_pattern(&self) -> bool {
         matches!(self, Effect::CommandPattern(_) | Effect::ArgPattern(_))
@@ -299,6 +308,27 @@ impl Predicate {
     }
 }
 
+impl ToDoc for Predicate {
+    fn to_doc(&self) -> Doc {
+        match self {
+            Predicate::Fact(query) => Doc::list(vec![Doc::atom("has"), query.to_doc()]),
+            Predicate::Arg(_) => Doc::atom("<arg-predicate>"),
+            Predicate::Named(name) => Doc::atom(name.clone()),
+            Predicate::And(preds) => {
+                let mut cs = vec![Doc::atom("and")];
+                cs.extend(preds.iter().map(|p| p.to_doc()));
+                Doc::broken_list(cs)
+            }
+            Predicate::Or(preds) => {
+                let mut cs = vec![Doc::atom("or")];
+                cs.extend(preds.iter().map(|p| p.to_doc()));
+                Doc::broken_list(cs)
+            }
+            Predicate::Not(pred) => Doc::list(vec![Doc::atom("not"), pred.to_doc()]),
+        }
+    }
+}
+
 /// A predicate with source span tracking.
 pub type SpannedPredicate = Spanned<Predicate>;
 
@@ -386,6 +416,12 @@ pub struct Config {
 
     /// Source text for span-to-line conversion (populated by the config loader).
     pub source_text: Option<String>,
+
+    /// Pre-migration Doc trees for each top-level form, paired with their
+    /// original source spans. Present when the config was loaded via
+    /// transparent CST-rewrite migration. Used by the trace renderer to
+    /// display original source structure instead of the rewritten V2 AST.
+    pub pre_migration_forms: Option<Vec<(Span, crate::Doc)>>,
 }
 
 /// Security configuration.

@@ -11,4 +11,4 @@ Result
 
   → :allow "Read-only access"
 
-  config: ~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp
+  config: tests/fixtures/v1/config.lisp

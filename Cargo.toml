@@ -4,7 +4,7 @@ exclude = ["fuzz"]
 
 [package]
 name = "may-i"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 
 [dependencies]
@@ -30,3 +30,4 @@ may-i-engine = { path = "crates/engine", features = ["test-generators"] }
 predicates = "3"
 proptest = "1"
 tempfile = "3"
+toml = "0.8"

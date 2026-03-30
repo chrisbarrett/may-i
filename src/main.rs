@@ -4,15 +4,10 @@ use std::io::IsTerminal;
 
 use clap::{CommandFactory, Parser, Subcommand};
 
-mod annotation;
-mod cmd_check;
 mod cmd_claude_code_hook;
-mod cmd_eval;
 mod cmd_help;
 mod cmd_migrate;
 mod cmd_parse;
-mod output;
-mod runtime_facts;
 
 #[derive(Parser)]
 #[command(
@@ -88,10 +83,10 @@ fn run() -> miette::Result<()> {
 
     match cli.command {
         Some(Command::Eval { command, facts }) => {
-            cmd_eval::cmd_eval(&command, &facts, cli.json, cli.config.as_deref())?
+            may_i::cmd_eval::cmd_eval(&command, &facts, cli.json, cli.config.as_deref())?
         }
         Some(Command::Check { verbose }) => {
-            cmd_check::cmd_check(cli.json, verbose, cli.config.as_deref())?
+            may_i::cmd_check::cmd_check(cli.json, verbose, cli.config.as_deref())?
         }
         Some(Command::Parse { command, file }) => cmd_parse::cmd_parse(command, file, cli.json)?,
         Some(Command::Migrate { output, yes }) => {

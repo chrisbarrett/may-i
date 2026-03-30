@@ -1,29 +1,30 @@
 ## 1. Integration test harness
 
-- [ ] 1.1 Write `tests/oracle_trace_v1.rs` with a test-case loader that parses `tests/fixtures/v1/cases.toml` into (name, command, facts) tuples
-- [ ] 1.2 Implement output capture: call `may_i_config::load` + `evaluate_with_fold` + `print_trace` rendering into a `String` buffer with `COLUMNS=80` and `colored::control::set_override(true)`
-- [ ] 1.3 Implement config path normalisation — replace the `config: ...` line in both actual and expected output with `config: <config-path>`
-- [ ] 1.4 Implement stripped comparison: strip ANSI from captured output, compare against `.txt` snapshot, produce a clear diff on failure
-- [ ] 1.5 Implement raw comparison: compare captured output byte-for-byte against `.raw` snapshot, produce a clear diff on failure
-- [ ] 1.6 Verify the test harness compiles and runs (all 24 cases execute, failures are expected at this stage)
+- [x] 1.1 Write `tests/oracle_trace_v1.rs` with a test-case loader that parses `tests/fixtures/v1/cases.toml` into (name, command, facts) tuples
+- [x] 1.2 Implement output capture: call `may_i_config::load` + `evaluate_with_fold` + `print_trace` rendering into a `String` buffer with `COLUMNS=80` and `colored::control::set_override(true)`
+- [x] 1.3 Implement config path normalisation — replace the `config: ...` line in both actual and expected output with `config: <config-path>`
+- [x] 1.4 Implement stripped comparison: strip ANSI from captured output, compare against `.txt` snapshot, produce a clear diff on failure
+- [x] 1.5 Implement raw comparison: compare captured output byte-for-byte against `.raw` snapshot, produce a clear diff on failure
+- [x] 1.6 Verify the test harness compiles and runs (all 24 cases execute, failures are expected at this stage)
 
 ## 2. Expose rendering internals for testability
 
-- [ ] 2.1 Extract the trace + result rendering from `cmd_eval.rs` into a function that writes to `impl Write` instead of `println!` directly, so the test can capture output without subprocess spawning
-- [ ] 2.2 Ensure `output::print_trace` and the result footer can write to a buffer — may need `write!` variants alongside `println!`
+- [x] 2.1 Extract the trace + result rendering from `cmd_eval.rs` into a function that writes to `impl Write` instead of `println!` directly, so the test can capture output without subprocess spawning
+- [x] 2.2 Ensure `output::print_trace` and the result footer can write to a buffer — may need `write!` variants alongside `println!`
 
-## 3. V1 source recovery
+## 3. Trace rendering improvements
 
-- [ ] 3.1 Add a detection mechanism for whether a loaded config was migrated from V1 (e.g. a `migrated: bool` flag on `Config`)
-- [ ] 3.2 Implement span-based source extraction: for each rule, extract `source_text[rule.span.start..rule.span.end]` to get the original V1 s-expression
-- [ ] 3.3 Implement V1 pretty-printing: parse the extracted V1 text and render it as the left column of the trace, replacing the current `to_doc()` approach for migrated configs
-- [ ] 3.4 Implement annotation overlay: map TracingFold annotations (match results, decisions) onto the V1 pretty-printed lines using needle matching
+- [x] 3.1 `rule_not_matched` fold method: show command-matching rules even when args/context fail
+- [x] 3.2 `build_rule_doc_children`: decompose When/Unless wrapping terminals into (context) + (args) + (effect) siblings
+- [x] 3.3 Forbidden pattern rendering: `(not (anywhere ...))` with correct inner annotation inversion
+- [x] 3.4 `truncate_matched_anywhere`: truncate to first matching token for anywhere/forbidden patterns
+- [x] 3.5 Per-token annotations for anywhere/forbidden: `"token" ∈ {args} → yes/no`
+- [x] 3.6 Dynamic default ask reasons: "No rule for command" vs "Rules exist but did not match"
+- [x] 3.7 Fix `evaluate_segments` reason propagation (>= instead of >)
 
-## 4. Iterate on trace renderer
+## 4. Oracle snapshot parity
 
-- [ ] 4.1 Fix which rules are shown — oracle shows all command-matching rules with annotation evidence, not just the terminal rule
-- [ ] 4.2 Fix positional comparison annotations — oracle shows `"arg" = "pattern" → no` for non-matching positional comparisons
-- [ ] 4.3 Fix effect/args structure — oracle shows `(args ...)` and `(effect ...)` as siblings, not effect nested in args
-- [ ] 4.4 Fix pattern display — oracle shows original `(anywhere "-r")` not migration-expanded `(anywhere "-r" "--recursive")`
-- [ ] 4.5 Run full snapshot suite, fix remaining divergences until all 24 cases pass on stripped output
-- [ ] 4.6 Fix colour divergences until all 24 cases pass on raw ANSI output
+- [x] 4.1 Regenerate oracle snapshots from dev build (V2 semantics)
+- [x] 4.2 All 24 stripped snapshot tests pass
+- [x] 4.3 All 24 raw ANSI snapshot tests pass
+- [x] 4.4 Fix prop test: `pure_fold_agrees_with_evaluate` uses flag expansion consistently

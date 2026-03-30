@@ -26,6 +26,19 @@ pub struct ArgMatchDetail {
     pub arg_set: Vec<String>,
     /// Whether the overall match succeeded.
     pub matched: bool,
+    /// Per-position comparison results for positional/exact patterns.
+    pub positional_comparisons: Vec<PositionalComparison>,
+}
+
+/// A single positional comparison result.
+#[derive(Debug, Clone)]
+pub struct PositionalComparison {
+    /// The actual arg value being compared.
+    pub actual: String,
+    /// The pattern text it was compared against.
+    pub pattern: String,
+    /// Whether this specific comparison matched.
+    pub matched: bool,
 }
 
 /// Detail about how a fact query resolved (for annotations).
@@ -164,6 +177,15 @@ pub trait EvalFold {
         &mut self,
         rule: &Rule,
         line: Option<usize>,
+        command_out: Self::EffectOut,
+        effects: Vec<Self::EffectOut>,
+    ) -> Self::EffectOut;
+    /// Command matched but the rule did not fire (args returned Nil or
+    /// context predicates failed). `effects` contains any partially-evaluated
+    /// effect outputs up to the point of failure.
+    fn rule_not_matched(
+        &mut self,
+        rule: &Rule,
         command_out: Self::EffectOut,
         effects: Vec<Self::EffectOut>,
     ) -> Self::EffectOut;
@@ -363,6 +385,15 @@ impl EvalFold for PureFold {
         effects: Vec<EffectResult>,
     ) -> EffectResult {
         effects.into_iter().last().unwrap_or(EffectResult::Nil)
+    }
+
+    fn rule_not_matched(
+        &mut self,
+        _rule: &Rule,
+        _command_out: EffectResult,
+        _effects: Vec<EffectResult>,
+    ) -> EffectResult {
+        EffectResult::Nil
     }
 
     fn rule_skipped(&mut self, _rule: &Rule) -> EffectResult {

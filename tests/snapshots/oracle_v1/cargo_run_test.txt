@@ -1,24 +1,29 @@
 
 Trace
 
-  95: (rule                                │
-        (command "cargo")                  │
-        (args (or                          │
-                (when                      │
-                    ((exact) (effect       │ → :allow
-                               :allow)))   │
-                (positional                │
-                  (? "affected")           │ "run" = "affected" → no
-                  (? (or "watch"           │ "run" = "watch" → no
-                         "run"             │ "run" = "run" → yes
-                         …))               │
-                  (? "--")                 │ "--" = "--" → yes
-                  (cond                    │
-                    ((or …)                │ → :allow
-                     (effect :deny))       │
-                    ((or …)                │
-                     (effect :allow))))))) │
-                                           │ 3 extra args
+  95: (rule (command "cargo")            │
+            (args                        │
+              (or                        │
+                (when                    │
+                    ((exact) (effect     │
+                               :allow))) │
+                (positional              │
+                  (? "affected")         │
+                  (? (or "watch"         │
+                         "run"           │
+                         "r"))           │
+                  (? "--")               │
+                  (cond                  │
+                    ((or "install"       │
+                         "uninstall")    │
+                     (effect :deny))     │
+                    ((or "build"         │
+                         "b"             │
+                         …               │
+                         "clippy")       │
+                     (effect :allow)))   │ → :allow
+                  (effect :allow))))     │ → :allow
+            (effect :ask))               │
 
 Result
 
@@ -26,4 +31,4 @@ Result
 
   → :allow
 
-  config: ~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp
+  config: tests/fixtures/v1/config.lisp

@@ -196,6 +196,7 @@ impl<'a> Evaluator<'a> {
         }
 
         // Evaluate rules in order, return first non-Nil result
+        let mut any_command_matched = false;
         for rule in self.rules {
             let out = self.evaluate_rule(fold, rule, ctx);
             let result = F::effect_result(&out);
@@ -205,15 +206,26 @@ impl<'a> Evaluator<'a> {
                     return EvalResult::new(*decision, reason.clone());
                 }
                 EffectResult::Nil => {
+                    // Track whether any rule's command pattern matched.
+                    if rule.command_effect.value.matches_command(ctx.command) {
+                        any_command_matched = true;
+                    }
                     continue;
                 }
             }
         }
 
-        // No rules matched - return ask
-        let reason = "no matching rule found";
-        let _out = fold.default_ask(reason);
-        EvalResult::new(Decision::Ask, Some(reason.to_string()))
+        // No rules matched - return ask with a descriptive reason
+        let reason = if any_command_matched {
+            format!(
+                "Rules for `{}` exist but context or arguments did not match any patterns",
+                ctx.command
+            )
+        } else {
+            format!("No rule for command `{}`", ctx.command)
+        };
+        let _out = fold.default_ask(&reason);
+        EvalResult::new(Decision::Ask, Some(reason))
     }
 
     /// Evaluate a single rule. Returns the fold output.
@@ -242,7 +254,8 @@ impl<'a> Evaluator<'a> {
 
             match result {
                 EffectResult::Nil => {
-                    return fold.rule_skipped(rule);
+                    effect_outs.push(out);
+                    return fold.rule_not_matched(rule, command_out, effect_outs);
                 }
                 EffectResult::Decision(Decision::Allow, None)
                     if is_arg_predicate(&effect.value) =>
@@ -273,7 +286,7 @@ impl<'a> Evaluator<'a> {
             let line = None;
             fold.rule_matched(rule, line, command_out, vec![ask_out])
         } else {
-            fold.rule_skipped(rule)
+            fold.rule_not_matched(rule, command_out, effect_outs)
         }
     }
 }
@@ -943,6 +956,7 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                         search_tokens: vec![],
                         arg_set: ctx.args.to_vec(),
                         matched: true,
+                        positional_comparisons: vec![],
                     };
                     fold.effect_arg_continuation(pattern, ctx.args, detail, cont_out)
                 } else {
@@ -950,6 +964,7 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                         search_tokens: vec![],
                         arg_set: ctx.args.to_vec(),
                         matched: true,
+                        positional_comparisons: vec![],
                     };
                     fold.effect_arg_match(pattern, ctx.args, true, detail)
                 }
@@ -958,6 +973,7 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                     search_tokens: vec![],
                     arg_set: ctx.args.to_vec(),
                     matched: false,
+                    positional_comparisons: vec![],
                 };
                 fold.effect_arg_match(pattern, ctx.args, false, detail)
             }
@@ -994,6 +1010,7 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                         search_tokens: vec![],
                         arg_set: ctx.args.to_vec(),
                         matched: true,
+                        positional_comparisons: vec![],
                     };
                     fold.effect_arg_continuation(pattern, ctx.args, detail, cont_out)
                 } else {
@@ -1001,6 +1018,7 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                         search_tokens: vec![],
                         arg_set: ctx.args.to_vec(),
                         matched: true,
+                        positional_comparisons: vec![],
                     };
                     fold.effect_arg_match(pattern, ctx.args, true, detail)
                 }
@@ -1009,6 +1027,7 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                     search_tokens: vec![],
                     arg_set: ctx.args.to_vec(),
                     matched: false,
+                    positional_comparisons: vec![],
                 };
                 fold.effect_arg_match(pattern, ctx.args, false, detail)
             }
@@ -1026,6 +1045,7 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                 search_tokens,
                 arg_set: ctx.args.to_vec(),
                 matched,
+                positional_comparisons: vec![],
             };
             fold.effect_arg_match(pattern, ctx.args, matched, detail)
         }
@@ -1042,6 +1062,7 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                 search_tokens,
                 arg_set: ctx.args.to_vec(),
                 matched: !found_forbidden,
+                positional_comparisons: vec![],
             };
             fold.effect_arg_match(pattern, ctx.args, !found_forbidden, detail)
         }

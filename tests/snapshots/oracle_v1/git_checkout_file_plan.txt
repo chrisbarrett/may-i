@@ -24,20 +24,18 @@ Trace
         (command "git")                                            │
         (context                                                   │
           (or                                                      │
-            (has                                                   │
-              [:claude-code/permission-mode                        │ no
-                "plan"])                                           │ yes
-            (has                                                   │
+            (has                                                   │ no
+              [:claude-code/permission-mode                        │
+                "plan"])                                           │
+            (has                                                   │ "plan" -> yes
               [:opencode/agent "plan"])))                          │
         (args (or (positional (or                                  │
                                 "switch"                           │ "checkout" = "switch" → no
                                 "restore"                          │ "checkout" = "restore" → no
-                                "merge"                            │ "checkout" = "merge" → no
-                                "rebase"                           │ "checkout" = "rebase" → no
-                                "pull"                             │ "checkout" = "pull" → no
+                                …                                  │
                                 "clone"))                          │ "checkout" = "clone" → no
                   (positional "checkout"                           │ "checkout" = "checkout" → yes
-                              "--")                                │ "--" = "--" → yes
+                              "--")                                │ "checkout" = "--" → no
                   …))                                              │
         (effect                                                    │ → :ask "git mutation requires approval in non-writing agents"
           :ask                                                     │
@@ -49,4 +47,4 @@ Result
 
   → :ask "git mutation requires approval in non-writing agents"
 
-  config: ~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp
+  config: tests/fixtures/v1/config.lisp

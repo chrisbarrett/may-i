@@ -59,13 +59,22 @@ are produced by evaluating the V2 AST.
 - **THEN** the annotation `→ :deny "Recursive deletion from root"` appears on
   the `(effect` line in the V1 source display
 
-### Requirement: Source recovery uses preserved spans
+### Requirement: Source recovery uses pre-migration CST
 
-The source recovery mechanism SHALL use `config.source_text` (original V1
-content) and `rule.span` (byte offsets into original source) to extract the
-original s-expression text for each rule.
+The source recovery mechanism SHALL use pre-migration CstNodes stored on the
+Config during transparent migration. Each rule is matched to its pre-migration
+CstNode by span overlap, and the CstNode is converted to a Doc for display.
 
-#### Scenario: Span extraction yields original text
-- **WHEN** `rule.span` is `{start: 100, end: 200}`
-- **AND** `config.source_text` contains V1 source
-- **THEN** `source_text[100..200]` yields the original V1 rule s-expression
+#### Scenario: Pre-migration CST stored during migration
+- **WHEN** a config is loaded via `try_migrate_and_parse`
+- **THEN** `config.pre_migration_cst` contains the CstNodes from before
+  rewrite rules were applied
+
+#### Scenario: Rule matched to pre-migration CstNode
+- **WHEN** `rule.span` overlaps a pre-migration CstNode's span
+- **THEN** that CstNode is used for display instead of the V2 AST Doc
+
+#### Scenario: Native canonical config has no pre-migration CST
+- **WHEN** a config parses directly as canonical syntax (no migration)
+- **THEN** `config.pre_migration_cst` is `None`
+- **AND** rendering uses the standard V2 AST Doc

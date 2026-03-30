@@ -1,22 +1,29 @@
 
 Trace
 
-  95: (rule (command "cargo")             │
-            (args                         │
-              (or                         │
-                (when                     │
-                    ((exact) (effect      │ → :deny
-                               :allow)))  │
-                (positional               │
-                  (? "affected")          │ "install" = "affected" → no
-                  (? (or "watch"          │ "install" = "watch" → no
-                         "run"            │ "install" = "run" → no
-                         "r"))            │ "install" = "r" → no
-                  (? "--")                │ "install" = "--" → no
-                  (cond                   │
-                    ((or …)               │ → :deny
-                     (effect :deny))))))) │
-                                          │ 2 extra args
+  95: (rule (command "cargo")            │
+            (args                        │
+              (or                        │
+                (when                    │
+                    ((exact) (effect     │
+                               :allow))) │
+                (positional              │
+                  (? "affected")         │
+                  (? (or "watch"         │
+                         "run"           │
+                         "r"))           │
+                  (? "--")               │
+                  (cond                  │
+                    ((or "install"       │
+                         "uninstall")    │
+                     (effect :deny))     │
+                    ((or "build"         │
+                         "b"             │
+                         …               │
+                         "clippy")       │
+                     (effect :allow)))   │ → :allow
+                  (effect :deny))))      │ → :deny
+            (effect :ask))               │
 
 Result
 
@@ -24,4 +31,4 @@ Result
 
   → :deny
 
-  config: ~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp
+  config: tests/fixtures/v1/config.lisp

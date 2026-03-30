@@ -18,4 +18,4 @@ Result
 
   → :allow "GET request (no mutating flags)"
 
-  config: ~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp
+  config: tests/fixtures/v1/config.lisp

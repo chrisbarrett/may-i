@@ -9,27 +9,26 @@ Trace
           :deny                            │
           "Recursive deletion from root")) │
 
-  29: (rule                                                     │
-        (command "rm")                                          │
-        (context                                                │
-          (or                                                   │
-            (has                                                │
-              [:claude-code/permission-mode                     │ no
-                "acceptEdits"])                                 │
-            (has [:opencode/agent                               │
-                   "build"])))                                  │ yes
-        (args                                                   │
-          (and                                                  │
-            (anywhere "-r")                                     │ "-r" ∈ {"-r", "/other/path"} → yes
-            (if                                                 │
-                (anywhere (regex                                │ (regex "^/tmp/.*") ∈ {"-r", "/other/path"} → no
-                            "^/tmp/.*"))                        │
-              (effect                                           │ → :ask "Recursive deletion requires confirmation"
-                :allow                                          │
-                "Deleting tmp files is allowed")                │
-              (effect                                           │
-                :ask                                            │
-                "Recursive deletion requires confirmation"))))) │
+  29: (rule                                                         │
+        (command "rm")                                              │
+        (args                                                       │
+          (when                                                     │
+              ((and                                                 │
+                 (or                                                │
+                   (has                                             │ no
+                     [:claude-code/permission-mode                  │
+                       "acceptEdits"])                              │
+                   (has [:opencode/agent                            │ "build" -> yes
+                          "build"]))                                │
+                 (anywhere "-r"                                     │
+                           "--recursive"))                          │
+                (cond                                               │
+                  ((anywhere                                        │
+                     (regex "^/tmp/.*"))                            │
+                   …)                                               │
+                  (effect                                           │ → :ask "Recursive deletion requires confirmation"
+                   :ask                                             │
+                   "Recursive deletion requires confirmation")))))) │
 
 Result
 
@@ -37,4 +36,4 @@ Result
 
   → :ask "Recursive deletion requires confirmation"
 
-  config: ~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp
+  config: tests/fixtures/v1/config.lisp

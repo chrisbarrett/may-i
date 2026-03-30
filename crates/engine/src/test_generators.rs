@@ -171,6 +171,7 @@ pub fn any_config(size: usize) -> BoxedStrategy<Config> {
             security: SecurityConfig::default(),
             checks: vec![],
             source_text: None,
+            pre_migration_forms: None,
         })
         .boxed()
 }
@@ -1465,7 +1466,9 @@ mod fold_properties {
             let (cmd, args, facts) = data;
             let result_convenience = eval::evaluate(&cmd, &args, &config, &facts);
 
-            let ctx = EvalContext::new(&cmd, &args, &facts);
+            // Must expand flags to match the convenience wrapper's behavior.
+            let expanded = eval::expand_combined_flags(&args);
+            let ctx = EvalContext::new(&cmd, &expanded, &facts);
             let evaluator = Evaluator::new(&config.rules);
             let result_fold = evaluator.evaluate(&mut PureFold, &ctx);
 

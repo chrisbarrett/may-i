@@ -46,11 +46,18 @@ fn try_migrate_and_parse(content: &str) -> Option<may_i_core::ast::Config> {
         return None;
     }
 
+    // Capture pre-migration Doc trees before rewriting.
+    let pre_migration_forms: Vec<(may_i_core::Span, may_i_core::Doc)> = cst_nodes
+        .iter()
+        .map(|node| (node.ann.span, node.to_doc()))
+        .collect();
+
     let migrated = crate::migrate::migrate_forms(cst_nodes);
     let sexprs: Vec<_> = migrated.iter().map(|n| n.to_sexpr()).collect();
 
     let mut config = crate::parse_config_from_sexprs(&sexprs).ok()?;
     config.source_text = Some(content.to_string());
+    config.pre_migration_forms = Some(pre_migration_forms);
     Some(config)
 }
 
