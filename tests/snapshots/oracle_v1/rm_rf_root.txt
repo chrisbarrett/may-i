@@ -1,0 +1,18 @@
+
+Trace
+
+  24: (rule                                │
+        (command "rm")                     │
+        (args (and (anywhere "-r")         │ "-r" ∈ {"-r", "-f", "/"} → yes
+                   (anywhere "/")))        │ "/" ∈ {"-r", "-f", "/"} → yes
+        (effect                            │ → :deny "Recursive deletion from root"
+          :deny                            │
+          "Recursive deletion from root")) │
+
+Result
+
+  rm -rf /
+
+  → :deny "Recursive deletion from root"
+
+  config: ~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp

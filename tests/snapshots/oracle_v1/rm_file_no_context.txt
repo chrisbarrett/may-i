@@ -1,0 +1,45 @@
+
+Trace
+
+  24: (rule                                │
+        (command "rm")                     │
+        (args (and (anywhere               │
+                     "-r"                  │ "-r" ∈ {"foo"} → no
+                     "--recursive")        │ "--recursive" ∈ {"foo"} → no
+                   …))                     │
+        (effect                            │
+          :deny                            │
+          "Recursive deletion from root")) │
+
+  29: (rule                                 │
+        (command "rm")                      │
+        (context                            │
+          (or                               │
+            (has                            │
+              [:claude-code/permission-mode │ no
+                "acceptEdits"])             │
+            (has [:opencode/agent           │ no
+                   "build"])))              │
+        (args (and …)))                     │
+
+  37: (rule                                   │
+        (command "rm")                        │
+        (context                              │
+          (or                                 │
+            (has                              │
+              [:claude-code/permission-mode   │ no
+                "acceptEdits"])               │
+            (has [:opencode/agent             │ no
+                   "build"])))                │
+        (effect                               │
+          :allow                              │
+          "Non-recursive delete is allowed")) │
+                             No matching rule │ → :ask (default)
+
+Result
+
+  rm foo
+
+  → :ask "Rules for `rm` exist but context or arguments did not match any patterns"
+
+  config: ~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp

@@ -1,0 +1,20 @@
+
+Trace
+
+  74: (rule                                            │
+        (command "brew")                               │
+        (args                                          │
+          (cond                                        │
+            ((positional "install")                    │ → :deny
+             (effect                                   │ → :deny "Package installation not allowed"
+               :deny                                   │
+               "Package installation not allowed"))))) │
+                                                       │ "install" = "install" → yes
+
+Result
+
+  brew install foo
+
+  → :deny "Package installation not allowed"
+
+  config: ~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp

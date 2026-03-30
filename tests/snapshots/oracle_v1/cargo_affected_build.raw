@@ -1,0 +1,29 @@
+
+[1mTrace[0m
+
+  [2m95: [0m[2m([0m[34mrule[0m                                [2m│[0m
+        [2m([0m[34mcommand[0m [32m"cargo"[0m[2m)[0m                  [2m│[0m
+        [2m([0m[34margs[0m [2m([0mor                          [2m│[0m
+                [2m([0m[34mwhen[0m                      [2m│[0m
+                    [2m([0m[2m([0m[34mexact[0m[2m)[0m [2m([0m[34meffect[0m       [2m│[0m [2m[0m[2m→[0m [1;32m:allow[0m
+                               [38;2;120;120;255m:allow[0m[2m)[0m[2m)[0m[2m)[0m   [2m│[0m
+                [2m([0m[34mpositional[0m                [2m│[0m
+                  [2m([0m? [32m"affected"[0m[2m)[0m           [2m│[0m [2m"affected" = "affected" [0m[2m→[0m [1;32myes[0m
+                  [2m([0m? [2m([0mor [32m"watch"[0m           [2m│[0m [2m"build" = "watch" [0m[2m→[0m [33mno[0m
+                         [32m"run"[0m             [2m│[0m [2m"build" = "run" [0m[2m→[0m [33mno[0m
+                         [32m"r"[0m[2m)[0m[2m)[0m             [2m│[0m [2m"build" = "r" [0m[2m→[0m [33mno[0m
+                  [2m([0m? [32m"--"[0m[2m)[0m                 [2m│[0m [2m"build" = "--" [0m[2m→[0m [33mno[0m
+                  [2m([0m[34mcond[0m                    [2m│[0m
+                    [2m([0m[2m([0m[2mor[0m [2m…[0m[2m)[0m                [2m│[0m [2m[0m[2m→[0m [1;32m:allow[0m
+                     [2m([0m[34meffect[0m [38;2;120;120;255m:deny[0m[2m)[0m[2m)[0m       [2m│[0m
+                    [2m([0m[2m([0m[2mor[0m [2m…[0m[2m)[0m                [2m│[0m
+                     [2m([0m[34meffect[0m [38;2;120;120;255m:allow[0m[2m)[0m[2m)[0m[2m)[0m[2m)[0m[2m)[0m[2m)[0m[2m)[0m [2m│[0m
+                                           [2m│[0m [2m2 extra args[0m
+
+[1mResult[0m
+
+  [4;32mcargo affected build[0m
+
+  [2m→[0m [1;32m:allow[0m
+
+  [2mconfig:[0m [2m~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp[0m

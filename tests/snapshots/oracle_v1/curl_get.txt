@@ -1,0 +1,21 @@
+
+Trace
+
+  65: (rule                                   │
+        (command "curl")                      │
+        (args (not                            │
+                (anywhere "-d"                │ "-d" ∈ {"https://example.com"} → no
+                          "--data"            │ "--data" ∈ {"https://example.com"} → no
+                          "-X"                │ "-X" ∈ {"https://example.com"} → no
+                          "--request")))      │ "--request" ∈ {"https://example.com"} → no
+        (effect                               │ → :allow "GET request (no mutating flags)"
+          :allow                              │
+          "GET request (no mutating flags)")) │
+
+Result
+
+  curl https://example.com
+
+  → :allow "GET request (no mutating flags)"
+
+  config: ~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp

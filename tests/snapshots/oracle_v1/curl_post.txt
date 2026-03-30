@@ -1,0 +1,23 @@
+
+Trace
+
+  65: (rule                                   │
+        (command "curl")                      │
+        (args (not (anywhere "-d")))          │ "-d" ∈ {"-d", "data", "https://example.com"} → yes
+        (effect                               │
+          :allow                              │
+          "GET request (no mutating flags)")) │
+
+  69: (rule                                       │
+        (command "curl")                          │
+        (effect                                   │ → :ask "Network operation requires approval"
+          :ask                                    │
+          "Network operation requires approval")) │
+
+Result
+
+  curl -d data https://example.com
+
+  → :ask "Network operation requires approval"
+
+  config: ~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp

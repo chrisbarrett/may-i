@@ -1,0 +1,21 @@
+
+[1mTrace[0m
+
+  [2m83: [0m[2m([0m[34mrule[0m                                [2m│[0m
+        [2m([0m[34mcommand[0m [32m"mv"[0m[2m)[0m                     [2m│[0m
+        [2m([0m[34margs[0m                              [2m│[0m
+          [2m([0m[34mif[0m                              [2m│[0m
+              [2m([0m[34manywhere[0m [32m"-f"[0m               [2m│[0m [2m"-f" ∈ {"a", "b"} [0m[2m→[0m [33mno[0m
+                        [32m"--force"[0m[2m)[0m         [2m│[0m [2m"--force" ∈ {"a", "b"} [0m[2m→[0m [33mno[0m
+            [2m([0m[34meffect[0m                        [2m│[0m [2m[0m[2m→[0m [1;32m:allow[0m
+              [38;2;120;120;255m:ask[0m                         [2m│[0m
+              [32m"Force move is destructive"[0m[2m)[0m [2m│[0m
+            [2m([0m[34meffect[0m [38;2;120;120;255m:allow[0m[2m)[0m[2m)[0m[2m)[0m[2m)[0m             [2m│[0m
+
+[1mResult[0m
+
+  [4;32mmv a b[0m
+
+  [2m→[0m [1;32m:allow[0m
+
+  [2mconfig:[0m [2m~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp[0m

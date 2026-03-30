@@ -1,0 +1,105 @@
+# Oracle snapshot test cases for V1 config format.
+#
+# Each [[case]] entry defines a command to evaluate and its snapshot name.
+# The oracle snapshots in tests/snapshots/oracle_v1/ were generated from the
+# `may-i` binary (previous release) with COLUMNS=80 and CLICOLOR_FORCE=1.
+
+[[case]]
+name = "rm_rf_root"
+command = "rm -rf /"
+
+[[case]]
+name = "rm_file_no_context"
+command = "rm foo"
+
+[[case]]
+name = "rm_recursive_build_tmp"
+command = "rm -r /tmp/foo"
+facts = [":opencode/agent=build"]
+
+[[case]]
+name = "rm_recursive_build_other"
+command = "rm -r /other/path"
+facts = [":opencode/agent=build"]
+
+[[case]]
+name = "rm_file_build"
+command = "rm foo"
+facts = [":opencode/agent=build"]
+
+[[case]]
+name = "git_status"
+command = "git status"
+
+[[case]]
+name = "git_push_force"
+command = "git push --force"
+
+[[case]]
+name = "git_reset_hard"
+command = "git reset --hard"
+
+[[case]]
+name = "git_checkout_file"
+command = "git checkout -- main.ts"
+
+[[case]]
+name = "git_checkout_file_plan"
+command = "git checkout -- main.ts"
+facts = [":opencode/agent=plan"]
+
+[[case]]
+name = "curl_get"
+command = "curl https://example.com"
+
+[[case]]
+name = "curl_post"
+command = "curl -d data https://example.com"
+
+[[case]]
+name = "brew_install"
+command = "brew install foo"
+
+[[case]]
+name = "brew_list"
+command = "brew list"
+
+[[case]]
+name = "mv_force"
+command = "mv -f a b"
+
+[[case]]
+name = "mv_normal"
+command = "mv a b"
+
+[[case]]
+name = "cat_file"
+command = "cat foo"
+
+[[case]]
+name = "unknown_cmd"
+command = "unknown-cmd arg"
+
+[[case]]
+name = "cargo_build"
+command = "cargo build"
+
+[[case]]
+name = "cargo_test"
+command = "cargo test"
+
+[[case]]
+name = "cargo_flags_only"
+command = "cargo --list"
+
+[[case]]
+name = "cargo_install"
+command = "cargo install foo"
+
+[[case]]
+name = "cargo_run_test"
+command = "cargo run -- test"
+
+[[case]]
+name = "cargo_affected_build"
+command = "cargo affected build"

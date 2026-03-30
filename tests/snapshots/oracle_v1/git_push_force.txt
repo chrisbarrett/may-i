@@ -1,0 +1,29 @@
+
+Trace
+
+  43: (rule (command "git")           │
+            (args (and (positional    │
+                         "reset")     │ "push" = "reset" → no
+                       …))            │
+            (effect                   │
+              :ask                    │
+              "Dangerous git reset")) │
+
+  47: (rule (command "git")               │
+            (args (or (positional         │
+                        "remote")         │ "push" = "remote" → no
+                      (positional         │
+                        (or "clean"       │ "push" = "clean" → no
+                            "gc"          │ "push" = "gc" → no
+                            "push"))))    │ "push" = "push" → yes
+            (effect                       │ → :ask "Dangerous git operation"
+              :ask                        │
+              "Dangerous git operation")) │
+
+Result
+
+  git push --force
+
+  → :ask "Dangerous git operation"
+
+  config: ~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp

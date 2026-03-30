@@ -1,0 +1,37 @@
+
+Trace
+
+  24: (rule                                │
+        (command "rm")                     │
+        (args (and (anywhere "-r")         │ "-r" ∈ {"-r", "/tmp/foo"} → yes
+                   (anywhere "/")))        │ "/" ∈ {"-r", "/tmp/foo"} → no
+        (effect                            │
+          :deny                            │
+          "Recursive deletion from root")) │
+
+  29: (rule                                          │
+        (command "rm")                               │
+        (context                                     │
+          (or                                        │
+            (has                                     │
+              [:claude-code/permission-mode          │ no
+                "acceptEdits"])                      │
+            (has [:opencode/agent                    │
+                   "build"])))                       │ yes
+        (args                                        │
+          (and                                       │
+            (anywhere "-r")                          │ "-r" ∈ {"-r", "/tmp/foo"} → yes
+            (if                                      │
+                (anywhere (regex                     │ (regex "^/tmp/.*") ∈ {"-r", "/tmp/foo"} → yes
+                            "^/tmp/.*"))             │
+              (effect                                │ → :allow "Deleting tmp files is allowed"
+                :allow                               │
+                "Deleting tmp files is allowed"))))) │
+
+Result
+
+  rm -r /tmp/foo
+
+  → :allow "Deleting tmp files is allowed"
+
+  config: ~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp

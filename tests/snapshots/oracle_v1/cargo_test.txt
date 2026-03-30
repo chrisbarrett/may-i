@@ -1,0 +1,29 @@
+
+Trace
+
+  95: (rule                                │
+        (command "cargo")                  │
+        (args (or                          │
+                (when                      │
+                    ((exact) (effect       │ → :allow
+                               :allow)))   │
+                (positional                │
+                  (? "affected")           │ "test" = "affected" → no
+                  (? (or "watch"           │ "test" = "watch" → no
+                         "run"             │ "test" = "run" → no
+                         "r"))             │ "test" = "r" → no
+                  (? "--")                 │ "test" = "--" → no
+                  (cond                    │
+                    ((or …)                │ → :allow
+                     (effect :deny))       │
+                    ((or …)                │
+                     (effect :allow))))))) │
+                                           │ 1 extra args
+
+Result
+
+  cargo test
+
+  → :allow
+
+  config: ~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp

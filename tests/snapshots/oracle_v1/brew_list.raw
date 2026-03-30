@@ -1,0 +1,22 @@
+
+[1mTrace[0m
+
+  [2m74: [0m[2m([0m[34mrule[0m                                         [2m│[0m
+        [2m([0m[34mcommand[0m [32m"brew"[0m[2m)[0m                            [2m│[0m
+        [2m([0m[34margs[0m                                       [2m│[0m
+          [2m([0m[34mcond[0m                                     [2m│[0m
+            [2m([0m[2m([0m[34mpositional[0m [32m"install"[0m[2m)[0m                 [2m│[0m [2m"list" = "install" [0m[2m→[0m [33mno[0m
+             [2m([0m[34meffect[0m                                [2m│[0m [2m[0m[2m→[0m [1;32m:allow[0m
+               [38;2;120;120;255m:deny[0m                                [2m│[0m
+               [32m"Package installation not allowed"[0m[2m)[0m[2m)[0m [2m│[0m
+            [2m([0m[2m([0m[34mpositional[0m [2m([0mor [32m"list"[0m [2m…[0m[2m)[0m[2m)[0m             [2m│[0m [2m[0m[2m→[0m [1;32m:allow[0m
+             [2m([0m[34meffect[0m [38;2;120;120;255m:allow[0m[2m)[0m[2m)[0m[2m)[0m[2m)[0m[2m)[0m                    [2m│[0m
+                                                    [2m│[0m [2m"list" = "list" [0m[2m→[0m [1;32myes[0m
+
+[1mResult[0m
+
+  [4;32mbrew list[0m
+
+  [2m→[0m [1;32m:allow[0m
+
+  [2mconfig:[0m [2m~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp[0m

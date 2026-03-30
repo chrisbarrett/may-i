@@ -1,0 +1,40 @@
+
+Trace
+
+  24: (rule                                │
+        (command "rm")                     │
+        (args (and (anywhere "-r")         │ "-r" ∈ {"-r", "/other/path"} → yes
+                   (anywhere "/")))        │ "/" ∈ {"-r", "/other/path"} → no
+        (effect                            │
+          :deny                            │
+          "Recursive deletion from root")) │
+
+  29: (rule                                                     │
+        (command "rm")                                          │
+        (context                                                │
+          (or                                                   │
+            (has                                                │
+              [:claude-code/permission-mode                     │ no
+                "acceptEdits"])                                 │
+            (has [:opencode/agent                               │
+                   "build"])))                                  │ yes
+        (args                                                   │
+          (and                                                  │
+            (anywhere "-r")                                     │ "-r" ∈ {"-r", "/other/path"} → yes
+            (if                                                 │
+                (anywhere (regex                                │ (regex "^/tmp/.*") ∈ {"-r", "/other/path"} → no
+                            "^/tmp/.*"))                        │
+              (effect                                           │ → :ask "Recursive deletion requires confirmation"
+                :allow                                          │
+                "Deleting tmp files is allowed")                │
+              (effect                                           │
+                :ask                                            │
+                "Recursive deletion requires confirmation"))))) │
+
+Result
+
+  rm -r /other/path
+
+  → :ask "Recursive deletion requires confirmation"
+
+  config: ~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp

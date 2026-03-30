@@ -1,0 +1,21 @@
+
+Trace
+
+  83: (rule                                │
+        (command "mv")                     │
+        (args                              │
+          (if                              │
+              (anywhere "-f"               │ "-f" ∈ {"a", "b"} → no
+                        "--force")         │ "--force" ∈ {"a", "b"} → no
+            (effect                        │ → :allow
+              :ask                         │
+              "Force move is destructive") │
+            (effect :allow))))             │
+
+Result
+
+  mv a b
+
+  → :allow
+
+  config: ~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp

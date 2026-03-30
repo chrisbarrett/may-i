@@ -1,0 +1,52 @@
+
+Trace
+
+  43: (rule (command "git")           │
+            (args (and (positional    │
+                         "reset")     │ "checkout" = "reset" → no
+                       …))            │
+            (effect                   │
+              :ask                    │
+              "Dangerous git reset")) │
+
+  47: (rule (command "git")               │
+            (args (or (positional         │
+                        "remote")         │ "checkout" = "remote" → no
+                      (positional         │
+                        (or "clean"       │ "checkout" = "clean" → no
+                            "gc"          │ "checkout" = "gc" → no
+                            "push"))))    │ "checkout" = "push" → no
+            (effect                       │
+              :ask                        │
+              "Dangerous git operation")) │
+
+  52: (rule                                                        │
+        (command "git")                                            │
+        (context                                                   │
+          (or                                                      │
+            (has                                                   │
+              [:claude-code/permission-mode                        │ no
+                "plan"])                                           │ yes
+            (has                                                   │
+              [:opencode/agent "plan"])))                          │
+        (args (or (positional (or                                  │
+                                "switch"                           │ "checkout" = "switch" → no
+                                "restore"                          │ "checkout" = "restore" → no
+                                "merge"                            │ "checkout" = "merge" → no
+                                "rebase"                           │ "checkout" = "rebase" → no
+                                "pull"                             │ "checkout" = "pull" → no
+                                "clone"))                          │ "checkout" = "clone" → no
+                  (positional "checkout"                           │ "checkout" = "checkout" → yes
+                              "--")                                │ "--" = "--" → yes
+                  …))                                              │
+        (effect                                                    │ → :ask "git mutation requires approval in non-writing agents"
+          :ask                                                     │
+          "git mutation requires approval in non-writing agents")) │
+
+Result
+
+  git checkout -- main.ts
+
+  → :ask "git mutation requires approval in non-writing agents"
+
+  config: ~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp

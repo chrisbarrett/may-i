@@ -1,0 +1,12 @@
+
+[1mTrace[0m
+
+  [3;33mNo matching rule[0m [2m│[0m [2m[0m[2m→[0m [1;33m:ask[0m (default)
+
+[1mResult[0m
+
+  [4;33munknown-cmd arg[0m
+
+  [2m→[0m [1;33m:ask[0m [32m"No rule for command `unknown-cmd`"[0m
+
+  [2mconfig:[0m [2m~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp[0m

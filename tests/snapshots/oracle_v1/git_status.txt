@@ -1,0 +1,46 @@
+
+Trace
+
+  43: (rule (command "git")           │
+            (args (and (positional    │
+                         "reset")     │ "status" = "reset" → no
+                       …))            │
+            (effect                   │
+              :ask                    │
+              "Dangerous git reset")) │
+
+  47: (rule (command "git")               │
+            (args (or (positional         │
+                        "remote")         │ "status" = "remote" → no
+                      (positional         │
+                        (or "clean"       │ "status" = "clean" → no
+                            "gc"          │ "status" = "gc" → no
+                            "push"))))    │ "status" = "push" → no
+            (effect                       │
+              :ask                        │
+              "Dangerous git operation")) │
+
+  52: (rule                                                        │
+        (command "git")                                            │
+        (context                                                   │
+          (or                                                      │
+            (has                                                   │
+              [:claude-code/permission-mode                        │ no
+                "plan"])                                           │
+            (has                                                   │
+              [:opencode/agent "plan"])))                          │ no
+        (args (or …))                                              │
+        (effect                                                    │
+          :ask                                                     │
+          "git mutation requires approval in non-writing agents")) │
+
+  60: (rule (command "git")  │
+            (effect :allow)) │ → :allow
+
+Result
+
+  git status
+
+  → :allow
+
+  config: ~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp
