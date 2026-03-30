@@ -883,9 +883,10 @@ pub fn evaluate_effect_fold<F: EvalFold>(
                     let evaluator = Evaluator::new(rules);
                     let mut inner_facts = ctx.facts.clone();
                     inner_facts.push(":via", ctx.command);
+                    let expanded_inner = expand_combined_flags(&inner_args);
                     let inner_ctx = EvalContext {
                         command: &inner_cmd,
-                        args: &inner_args,
+                        args: &expanded_inner,
                         facts: &inner_facts,
                         recursion_depth: ctx.recursion_depth + 1,
                         recursion_limit: ctx.recursion_limit,
@@ -1089,33 +1090,34 @@ fn evaluate_effect_with_owned_args_fold<F: EvalFold>(
     evaluate_effect_fold(fold, effect, &inner_ctx, rules)
 }
 
-/// Extract inner command from args based on pattern (for may-i recursion).
-fn extract_inner_command(pattern: &ArgPattern, args: &[String]) -> Option<(String, Vec<String>)> {
-    // For now, simple implementation: take remaining positional args after pattern match
-    // Full implementation would need to properly handle the pattern
-    match pattern {
-        ArgPattern::Positional { .. } | ArgPattern::Exact { .. } => {
-            // Extract first positional arg as command, rest as args
-            let positional: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
-            if positional.is_empty() {
-                None
-            } else {
-                let cmd = positional[0].clone();
-                let remaining: Vec<String> = positional[1..].iter().map(|s| (*s).clone()).collect();
-                Some((cmd, remaining))
-            }
+/// Extract inner command from args for may-i recursion.
+///
+/// The remaining args may contain a quoted string like `"rm -rf /"` that
+/// represents a complete sub-command. We join all args into a single string
+/// and re-parse through the shell parser to correctly handle quoting.
+fn extract_inner_command(_pattern: &ArgPattern, args: &[String]) -> Option<(String, Vec<String>)> {
+    if args.is_empty() {
+        return None;
+    }
+
+    // Join remaining args and re-parse as a shell command to handle cases
+    // like ssh host "rm -rf /" where the quoted string is a single arg
+    // containing a full command.
+    let joined = args.join(" ");
+    let parsed = may_i_shell_parser::parse(&joined);
+
+    match parsed {
+        may_i_shell_parser::Command::Simple(sc) if !sc.words.is_empty() => {
+            let cmd = sc.words[0].to_str();
+            let inner_args: Vec<String> = sc.words[1..].iter().map(|w| w.to_str()).collect();
+            Some((cmd, inner_args))
         }
-        ArgPattern::Anywhere(_) => {
-            // Take all args as inner command
-            if args.is_empty() {
-                None
-            } else {
-                let cmd = args[0].clone();
-                let remaining: Vec<String> = args[1..].to_vec();
-                Some((cmd, remaining))
-            }
+        _ => {
+            // Fallback: use first arg as command, rest as args
+            let cmd = args[0].clone();
+            let remaining = args[1..].to_vec();
+            Some((cmd, remaining))
         }
-        _ => None,
     }
 }
 

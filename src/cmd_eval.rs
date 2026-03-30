@@ -13,6 +13,24 @@ use crate::annotation::{TraceEntry, TracingFold};
 use crate::output;
 use crate::runtime_facts::parse_cli_facts;
 
+/// Parse a simple command string into (command_name, args) using the shell
+/// parser, which correctly handles quoting. Falls back to split_whitespace
+/// for non-simple commands.
+fn parse_command_args(text: &str) -> (String, Vec<String>) {
+    match parser::parse(text) {
+        parser::Command::Simple(sc) if !sc.words.is_empty() => {
+            let cmd = sc.words[0].to_str();
+            let args: Vec<String> = sc.words[1..].iter().map(|w| w.to_str()).collect();
+            (cmd, args)
+        }
+        _ => {
+            let cmd = text.split_whitespace().next().unwrap_or(text).to_string();
+            let args: Vec<String> = text.split_whitespace().skip(1).map(String::from).collect();
+            (cmd, args)
+        }
+    }
+}
+
 pub fn cmd_eval(
     command: &str,
     raw_facts: &[String],
@@ -33,13 +51,8 @@ pub fn cmd_eval(
         let mut fold = TracingFold::new()
             .with_source_text(config.source_text.clone())
             .with_pre_migration_forms(config.pre_migration_forms.clone());
-        let args: Vec<String> = command
-            .split_whitespace()
-            .skip(1)
-            .map(String::from)
-            .collect();
-        let cmd = command.split_whitespace().next().unwrap_or(command);
-        let result = engine::eval::evaluate_with_fold(cmd, &args, &config, &context, &mut fold);
+        let (cmd, args) = parse_command_args(command);
+        let result = engine::eval::evaluate_with_fold(&cmd, &args, &config, &context, &mut fold);
         let json = serde_json::json!({
             "decision": result.decision.to_string(),
             "reason": result.reason.unwrap_or_default(),
@@ -116,13 +129,8 @@ pub fn evaluate_segments(
         let mut fold = TracingFold::new()
             .with_source_text(config.source_text.clone())
             .with_pre_migration_forms(config.pre_migration_forms.clone());
-        let args: Vec<String> = command
-            .split_whitespace()
-            .skip(1)
-            .map(String::from)
-            .collect();
-        let cmd = command.split_whitespace().next().unwrap_or(command);
-        let result = engine::eval::evaluate_with_fold(cmd, &args, config, context, &mut fold);
+        let (cmd, args) = parse_command_args(command);
+        let result = engine::eval::evaluate_with_fold(&cmd, &args, config, context, &mut fold);
         return (result, fold.traces, command.to_string());
     }
 
@@ -137,9 +145,8 @@ pub fn evaluate_segments(
             let mut fold = TracingFold::new()
                 .with_source_text(config.source_text.clone())
                 .with_pre_migration_forms(config.pre_migration_forms.clone());
-            let args: Vec<String> = text.split_whitespace().skip(1).map(String::from).collect();
-            let cmd = text.split_whitespace().next().unwrap_or(text);
-            let result = engine::eval::evaluate_with_fold(cmd, &args, config, context, &mut fold);
+            let (cmd, args) = parse_command_args(text);
+            let result = engine::eval::evaluate_with_fold(&cmd, &args, config, context, &mut fold);
             let colored = match result.decision {
                 Decision::Allow => text.green().underline().to_string(),
                 Decision::Ask => text.yellow().underline().to_string(),
