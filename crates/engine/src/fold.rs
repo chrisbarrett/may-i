@@ -126,6 +126,9 @@ pub trait EvalFold {
         detail: ArgMatchDetail,
         continuation: Self::EffectOut,
     ) -> Self::EffectOut;
+    /// Called before a recursive may-i evaluation begins.
+    /// TracingFold uses this to track where inner traces start.
+    fn begin_recursive_eval(&mut self) {}
     fn effect_may_i(
         &mut self,
         pattern: &ArgPattern,

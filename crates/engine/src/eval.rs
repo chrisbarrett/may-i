@@ -891,6 +891,7 @@ pub fn evaluate_effect_fold<F: EvalFold>(
                         recursion_depth: ctx.recursion_depth + 1,
                         recursion_limit: ctx.recursion_limit,
                     };
+                    fold.begin_recursive_eval();
                     let eval_result = evaluator.evaluate(fold, &inner_ctx);
                     let inner_result =
                         EffectResult::Decision(eval_result.decision, eval_result.reason);

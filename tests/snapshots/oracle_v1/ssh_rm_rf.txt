@@ -1,6 +1,12 @@
 
 Trace
 
+  107: (rule (command "ssh")            │
+             (args (positional          │
+                     [:ssh/host *]      │
+                     (may-i (positional │ `rm -rf /` → :deny "Recursive deletion from root"
+                              *)))))    │
+
   24: (rule                                │
         (command "rm")                     │
         (args (and (anywhere "-r")         │ "-r" ∈ {"-r", "-f", "/"} → yes
@@ -8,12 +14,6 @@ Trace
         (effect                            │ → :deny "Recursive deletion from root"
           :deny                            │
           "Recursive deletion from root")) │
-
-  107: (rule (command "ssh")            │
-             (args (positional          │
-                     [:ssh/host *]      │
-                     (may-i (positional │ `rm -rf /` → :deny "Recursive deletion from root"
-                              *)))))    │
 
 Result
 

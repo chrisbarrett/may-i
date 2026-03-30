@@ -326,6 +326,11 @@ pub struct TracingFold {
     pub traces: Vec<TraceEntry>,
     source_text: Option<String>,
     pre_migration_forms: Option<Vec<(may_i_core::Span, Doc<()>)>>,
+    /// Stack of trace positions saved before recursive may-i evaluations.
+    recursive_trace_starts: Vec<usize>,
+    /// Inner traces extracted from recursive evaluations, waiting to be
+    /// appended after the outer rule's trace entry.
+    pending_inner_traces: Vec<Vec<TraceEntry>>,
 }
 
 impl Default for TracingFold {
@@ -340,6 +345,8 @@ impl TracingFold {
             traces: Vec::new(),
             source_text: None,
             pre_migration_forms: None,
+            recursive_trace_starts: Vec::new(),
+            pending_inner_traces: Vec::new(),
         }
     }
 
@@ -687,6 +694,10 @@ impl EvalFold for TracingFold {
         (result, wrapper)
     }
 
+    fn begin_recursive_eval(&mut self) {
+        self.recursive_trace_starts.push(self.traces.len());
+    }
+
     fn effect_may_i(
         &mut self,
         pattern: &ArgPattern,
@@ -695,6 +706,12 @@ impl EvalFold for TracingFold {
         inner_result: EffectResult,
         _inner_out: Self::EffectOut,
     ) -> Self::EffectOut {
+        // Extract inner traces that were added during recursive evaluation.
+        if let Some(start) = self.recursive_trace_starts.pop() {
+            let inner_traces: Vec<TraceEntry> = self.traces.drain(start..).collect();
+            self.pending_inner_traces.push(inner_traces);
+        }
+
         let cmd_str = if inner_args.is_empty() {
             inner_cmd.to_string()
         } else {
@@ -832,6 +849,11 @@ impl EvalFold for TracingFold {
             line,
             pre_migration_doc,
         });
+        // Append inner traces from recursive may-i evaluations after the
+        // outer rule, so the trace reads in evaluation order.
+        if let Some(inner) = self.pending_inner_traces.pop() {
+            self.traces.extend(inner);
+        }
         (terminal_result, doc)
     }
 
@@ -856,6 +878,9 @@ impl EvalFold for TracingFold {
             line,
             pre_migration_doc,
         });
+        if let Some(inner) = self.pending_inner_traces.pop() {
+            self.traces.extend(inner);
+        }
         (EffectResult::Nil, doc)
     }
 
