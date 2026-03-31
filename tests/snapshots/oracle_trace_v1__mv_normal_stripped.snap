@@ -1,0 +1,23 @@
+---
+source: tests/oracle_trace_v1.rs
+expression: normalised
+---
+
+Trace
+
+                                  command │ mv a b
+  83: (rule (command "mv")                │
+            (args (cond                   │
+                    ((anywhere "-f"       │
+                               "--force") │
+                     …)                   │
+                    (effect               │ → :allow
+                     :allow))))           │
+
+Result
+
+  mv a b
+
+  → :allow
+
+  config: <config-path>

@@ -1,0 +1,45 @@
+---
+source: tests/oracle_trace_v1.rs
+expression: normalised
+---
+
+Trace
+
+                                           command │ rm -r /tmp/foo
+                                             facts │ :opencode/agent "build"
+  24: (rule                                        │
+        (command "rm")                             │
+        (args (and (anywhere "-r")                 │ "-r" ∈ {"-r", "/tmp/foo"} → yes
+                   (anywhere "/")))                │ "/" ∈ {"-r", "/tmp/foo"} → no
+        (effect                                    │
+          :deny                                    │
+          "Recursive deletion from root"))         │
+                                                   │
+  29: (rule                                        │
+        (command "rm")                             │
+        (args                                      │
+          (when                                    │
+              (and                                 │
+                (or                                │
+                  (has                             │ no
+                    [:claude-code/permission-mode  │
+                      "acceptEdits"])              │
+                  (has [:opencode/agent            │ "build" → yes
+                         "build"]))                │
+                (anywhere "-r"                     │
+                          "--recursive"))          │
+            (cond                                  │
+              ((anywhere (regex                    │
+                           "^/tmp/.*"))            │
+               (effect                             │ → :allow "Deleting tmp files is allowed"
+                 :allow                            │
+                 "Deleting tmp files is allowed")) │
+              …))))                                │
+
+Result
+
+  rm -r /tmp/foo
+
+  → :allow "Deleting tmp files is allowed"
+
+  config: <config-path>

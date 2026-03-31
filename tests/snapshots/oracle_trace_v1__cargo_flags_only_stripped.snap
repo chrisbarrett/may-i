@@ -1,0 +1,21 @@
+---
+source: tests/oracle_trace_v1.rs
+expression: normalised
+---
+
+Trace
+
+                                 command │ cargo --list
+  95: (rule (command "cargo")            │
+            (args (or (when (exact)      │
+                        (effect :allow)) │ → :allow
+                      …))                │
+            (effect :ask))               │
+
+Result
+
+  cargo --list
+
+  → :allow
+
+  config: <config-path>

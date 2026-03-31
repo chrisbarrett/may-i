@@ -1,0 +1,24 @@
+---
+source: tests/oracle_trace_v1.rs
+expression: normalised
+---
+
+Trace
+
+                              command │ git reset --hard
+  43: (rule (command "git")           │
+            (args (and (positional    │
+                         "reset")     │ "reset" = "reset" → yes
+                       (anywhere      │
+                         "--hard")))  │ "--hard" ∈ {"reset", "--hard"} → yes
+            (effect                   │ → :ask "Dangerous git reset"
+              :ask                    │
+              "Dangerous git reset")) │
+
+Result
+
+  git reset --hard
+
+  → :ask "Dangerous git reset"
+
+  config: <config-path>

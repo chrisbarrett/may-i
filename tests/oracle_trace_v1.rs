@@ -1,8 +1,8 @@
 // Oracle trace snapshot tests for V1 config format.
 //
 // Each test case evaluates a command against the V1 fixture config and
-// compares the rendered trace output against oracle snapshots captured
-// from the previous release binary with COLUMNS=80 and CLICOLOR_FORCE=1.
+// compares the rendered trace output against insta snapshots.
+// Two variants per case: stripped (human-readable) and raw (with ANSI codes).
 
 use std::path::Path;
 
@@ -27,12 +27,6 @@ struct Case {
 fn fixture_dir() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/v1")
-        .leak()
-}
-
-fn snapshot_dir() -> &'static Path {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/snapshots/oracle_v1")
         .leak()
 }
 
@@ -100,60 +94,18 @@ fn normalise_config_path(s: &str) -> String {
     result
 }
 
-fn load_snapshot(name: &str, ext: &str) -> String {
-    let path = snapshot_dir().join(format!("{name}.{ext}"));
-    std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("failed to read snapshot {}: {e}", path.display()))
-}
-
-/// Produce a unified diff between expected and actual, for clear failure output.
-fn unified_diff(expected: &str, actual: &str, label: &str) -> String {
-    use similar::TextDiff;
-    let diff = TextDiff::from_lines(expected, actual);
-    let mut output = String::new();
-    for change in diff.iter_all_changes() {
-        let sign = match change.tag() {
-            similar::ChangeTag::Delete => "-",
-            similar::ChangeTag::Insert => "+",
-            similar::ChangeTag::Equal => " ",
-        };
-        output.push_str(&format!("{sign}{change}"));
-    }
-    if output.lines().all(|l| l.starts_with(' ')) {
-        String::new() // no diff
-    } else {
-        format!("=== {label} diff ===\n{output}")
-    }
-}
-
 #[test]
 fn oracle_v1_stripped_snapshots() {
     let cases = load_cases();
     let config = load_config();
-    let mut failures = Vec::new();
 
     for case in &cases {
         let raw_output = render_output(&case.command, &config, &case.facts);
         let output_str = String::from_utf8_lossy(&raw_output);
         let stripped = output::strip_ansi(&output_str);
-        let normalised_actual = normalise_config_path(&stripped);
+        let normalised = normalise_config_path(&stripped);
 
-        let expected = load_snapshot(&case.name, "txt");
-        let normalised_expected = normalise_config_path(&expected);
-
-        if normalised_actual != normalised_expected {
-            let diff = unified_diff(&normalised_expected, &normalised_actual, &case.name);
-            failures.push(format!("FAIL (stripped): {}\n{diff}", case.name));
-        }
-    }
-
-    if !failures.is_empty() {
-        panic!(
-            "{}/{} stripped snapshot(s) failed:\n\n{}",
-            failures.len(),
-            cases.len(),
-            failures.join("\n\n")
-        );
+        insta::assert_snapshot!(format!("{}_stripped", case.name), normalised);
     }
 }
 
@@ -161,33 +113,12 @@ fn oracle_v1_stripped_snapshots() {
 fn oracle_v1_raw_snapshots() {
     let cases = load_cases();
     let config = load_config();
-    let mut failures = Vec::new();
 
     for case in &cases {
         let raw_output = render_output(&case.command, &config, &case.facts);
         let output_str = String::from_utf8_lossy(&raw_output);
-        let normalised_actual = normalise_config_path(&output_str.as_ref());
+        let normalised = normalise_config_path(&output_str.as_ref());
 
-        let expected = load_snapshot(&case.name, "raw");
-        let normalised_expected = normalise_config_path(&expected);
-
-        if normalised_actual != normalised_expected {
-            // For raw comparison, strip ANSI from both sides for readable diff
-            let diff = unified_diff(
-                &output::strip_ansi(&normalised_expected),
-                &output::strip_ansi(&normalised_actual),
-                &format!("{} (raw, showing stripped for readability)", case.name),
-            );
-            failures.push(format!("FAIL (raw): {}\n{diff}", case.name));
-        }
-    }
-
-    if !failures.is_empty() {
-        panic!(
-            "{}/{} raw snapshot(s) failed:\n\n{}",
-            failures.len(),
-            cases.len(),
-            failures.join("\n\n")
-        );
+        insta::assert_snapshot!(format!("{}_raw", case.name), normalised);
     }
 }

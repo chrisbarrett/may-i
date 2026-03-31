@@ -1,0 +1,25 @@
+---
+source: tests/oracle_trace_v1.rs
+expression: normalised
+---
+
+Trace
+
+                                 command │ brew list
+  74: (rule (command "brew")             │
+            (args (cond                  │
+                    ((positional         │
+                       "install")        │ "list" = "install" → no
+                     …)                  │
+                    ((positional         │
+                       (or "list"        │ "list" = "list" → yes
+                           "search"))    │ "list" = "search" → no
+                     (effect :allow))))) │ → :allow
+
+Result
+
+  brew list
+
+  → :allow
+
+  config: <config-path>

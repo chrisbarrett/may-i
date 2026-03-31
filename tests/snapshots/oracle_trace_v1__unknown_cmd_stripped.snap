@@ -1,0 +1,16 @@
+---
+source: tests/oracle_trace_v1.rs
+expression: normalised
+---
+
+Trace
+
+  No matching rule │ → :ask (default)
+
+Result
+
+  unknown-cmd arg
+
+  → :ask "No rule for command `unknown-cmd`"
+
+  config: <config-path>

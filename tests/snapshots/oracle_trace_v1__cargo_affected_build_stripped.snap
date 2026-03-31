@@ -1,0 +1,37 @@
+---
+source: tests/oracle_trace_v1.rs
+expression: normalised
+---
+
+Trace
+
+                                 command │ cargo affected build
+  95: (rule (command "cargo")            │
+            (args                        │
+              (or (when (exact)          │
+                    (effect :allow))     │ → :allow
+                  (positional            │
+                    (? "affected")       │
+                    (? (or "watch"       │
+                           "run"         │
+                           "r"))         │
+                    (? "--")             │
+                    (cond                │
+                      ((or "install"     │
+                           "uninstall")  │
+                       (effect :deny))   │
+                      ((or "build"       │
+                           "b"           │
+                           …             │
+                           "clippy")     │
+                       (effect :allow))) │ → :allow
+                    (effect :allow))))   │
+            (effect :ask))               │
+
+Result
+
+  cargo affected build
+
+  → :allow
+
+  config: <config-path>

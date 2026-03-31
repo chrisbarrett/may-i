@@ -1,0 +1,23 @@
+---
+source: tests/oracle_trace_v1.rs
+expression: normalised
+---
+
+Trace
+
+                                   command │ rm -rf /
+  24: (rule                                │
+        (command "rm")                     │
+        (args (and (anywhere "-r")         │ "-r" ∈ {"-r", "-f", "/"} → yes
+                   (anywhere "/")))        │ "/" ∈ {"-r", "-f", "/"} → yes
+        (effect                            │ → :deny "Recursive deletion from root"
+          :deny                            │
+          "Recursive deletion from root")) │
+
+Result
+
+  rm -rf /
+
+  → :deny "Recursive deletion from root"
+
+  config: <config-path>

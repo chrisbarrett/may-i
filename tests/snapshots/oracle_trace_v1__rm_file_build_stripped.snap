@@ -1,0 +1,54 @@
+---
+source: tests/oracle_trace_v1.rs
+expression: normalised
+---
+
+Trace
+
+                                          command │ rm foo
+                                            facts │ :opencode/agent "build"
+  24: (rule                                       │
+        (command "rm")                            │
+        (args (and (anywhere                      │
+                     "-r"                         │ "-r" ∈ {"foo"} → no
+                     "--recursive")               │ "--recursive" ∈ {"foo"} → no
+                   …))                            │
+        (effect                                   │
+          :deny                                   │
+          "Recursive deletion from root"))        │
+                                                  │
+  29: (rule                                       │
+        (command "rm")                            │
+        (args                                     │
+          (when                                   │
+              (and                                │
+                (or                               │
+                  (has                            │ no
+                    [:claude-code/permission-mode │
+                      "acceptEdits"])             │
+                  (has [:opencode/agent           │ "build" → yes
+                         "build"]))               │
+                (anywhere "-r"                    │
+                          "--recursive"))         │
+            <cond-effect>)))                      │
+                                                  │
+  37: (rule                                       │
+        (command "rm")                            │
+        (when                                     │
+            (or                                   │
+              (has                                │ no
+                [:claude-code/permission-mode     │
+                  "acceptEdits"])                 │
+              (has [:opencode/agent               │ "build" → yes
+                     "build"]))                   │
+          (effect                                 │ → :allow "Non-recursive delete is allowed"
+            :allow                                │
+            "Non-recursive delete is allowed")))  │
+
+Result
+
+  rm foo
+
+  → :allow "Non-recursive delete is allowed"
+
+  config: <config-path>

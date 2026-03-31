@@ -709,8 +709,7 @@ impl EvalFold for TracingFold {
             ChildResult::Evaluated((_, doc)) => doc,
             ChildResult::Skipped => dim(effect_to_static_ann_doc(body_effect)),
         };
-        let inner = ann_list(vec![pred.1, body_doc], None);
-        let docs = vec![plain_atom("when"), inner];
+        let docs = vec![plain_atom("when"), pred.1, body_doc];
         let ann = Some(Ann::Combinator {
             result_is_nil: result.is_nil(),
         });
@@ -728,8 +727,7 @@ impl EvalFold for TracingFold {
             ChildResult::Evaluated((_, doc)) => doc,
             ChildResult::Skipped => dim(effect_to_static_ann_doc(body_effect)),
         };
-        let inner = ann_list(vec![pred.1, body_doc], None);
-        let docs = vec![plain_atom("unless"), inner];
+        let docs = vec![plain_atom("unless"), pred.1, body_doc];
         let ann = Some(Ann::Combinator {
             result_is_nil: result.is_nil(),
         });
