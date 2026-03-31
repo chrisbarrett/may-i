@@ -234,20 +234,14 @@ fn extract_context_and_effect(
     context_docs: &mut Vec<ADoc>,
     terminal_doc: &mut Option<ADoc>,
 ) {
-    // The when doc structure is (when (pred-doc) (effect-doc))
-    if let DocF::List(children) = &when_doc.node {
-        // children: ["when", inner-list]
-        // inner-list: [pred-doc, effect-doc]
-        if children.len() == 2
-            && let DocF::List(inner) = &children[1].node
-            && inner.len() == 2
-        {
-            // pred is the context, effect is the terminal
-            let context = ann_list_break(vec![plain_atom("context"), inner[0].clone()], None);
-            context_docs.push(context);
-            *terminal_doc = Some(inner[1].clone());
-            return;
-        }
+    // The when doc structure is (when pred-doc effect-doc)
+    if let DocF::List(children) = &when_doc.node
+        && children.len() == 3
+    {
+        let context = ann_list_break(vec![plain_atom("context"), children[1].clone()], None);
+        context_docs.push(context);
+        *terminal_doc = Some(children[2].clone());
+        return;
     }
     // Fallback: couldn't extract, use as-is
     *terminal_doc = Some(when_doc.clone());

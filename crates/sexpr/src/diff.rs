@@ -18,19 +18,17 @@ pub enum ChangeType {
     Deleted,
 }
 
+#[cfg(test)]
 impl ChangeType {
-    /// Check if this change type is "unchanged".
-    pub fn is_unchanged(&self) -> bool {
+    fn is_unchanged(&self) -> bool {
         matches!(self, ChangeType::Unchanged)
     }
 
-    /// Check if this change type is "modified".
-    pub fn is_modified(&self) -> bool {
+    fn is_modified(&self) -> bool {
         matches!(self, ChangeType::Modified { .. })
     }
 
-    /// Check if this change type is "deleted".
-    pub fn is_deleted(&self) -> bool {
+    fn is_deleted(&self) -> bool {
         matches!(self, ChangeType::Deleted)
     }
 }

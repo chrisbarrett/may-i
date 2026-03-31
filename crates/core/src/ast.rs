@@ -43,7 +43,6 @@ impl EffectResult {
         matches!(self, EffectResult::Nil)
     }
 
-    /// Check if this is a terminal decision.
     pub fn is_decision(&self) -> bool {
         matches!(self, EffectResult::Decision(_, _))
     }
@@ -185,21 +184,21 @@ impl Effect {
         }
     }
 
-    /// Check if this is a pattern effect.
-    pub fn is_pattern(&self) -> bool {
+    #[cfg(test)]
+    fn is_pattern(&self) -> bool {
         matches!(self, Effect::CommandPattern(_) | Effect::ArgPattern(_))
     }
 
-    /// Check if this is a combinator effect.
-    pub fn is_combinator(&self) -> bool {
+    #[cfg(test)]
+    fn is_combinator(&self) -> bool {
         matches!(
             self,
             Effect::And { .. } | Effect::Or { .. } | Effect::Not { .. }
         )
     }
 
-    /// Check if this is a conditional effect.
-    pub fn is_conditional(&self) -> bool {
+    #[cfg(test)]
+    fn is_conditional(&self) -> bool {
         matches!(
             self,
             Effect::When { .. } | Effect::Unless { .. } | Effect::If { .. } | Effect::Cond { .. }
@@ -270,8 +269,8 @@ impl Predicate {
         })
     }
 
-    /// Create a fact value check with a literal pattern.
-    pub fn fact_value(key: impl Into<String>, value: impl Into<String>) -> Self {
+    #[cfg(test)]
+    fn fact_value(key: impl Into<String>, value: impl Into<String>) -> Self {
         use crate::predicates::FactPattern;
         Predicate::Fact(FactQuery::Value {
             key: key.into(),

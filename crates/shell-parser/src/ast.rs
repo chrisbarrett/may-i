@@ -472,11 +472,6 @@ impl Word {
         out
     }
 
-    /// Returns true if this word contains any opaque parts.
-    pub fn has_opaque_parts(&self) -> bool {
-        has_opaque_in(&self.parts)
-    }
-
     /// Returns true if all parts are static (Literal/SingleQuoted/AnsiCQuoted).
     pub fn is_literal(&self) -> bool {
         !has_dynamic_in(&self.parts) && !has_opaque_in(&self.parts)
@@ -577,39 +572,6 @@ impl SimpleCommand {
                 ""
             }
         })
-    }
-
-    /// Like `command_name`, but returns `None` for empty names too.
-    pub fn nonempty_command_name(&self) -> Option<&str> {
-        self.command_name().filter(|s| !s.is_empty())
-    }
-
-    /// Apply a transform to every Word in assignments, command words, and
-    /// file-redirect targets, returning a new SimpleCommand.
-    pub fn map_words(&self, f: impl Fn(&Word) -> Word) -> SimpleCommand {
-        SimpleCommand {
-            assignments: self
-                .assignments
-                .iter()
-                .map(|a| Assignment {
-                    name: a.name.clone(),
-                    value: f(&a.value),
-                })
-                .collect(),
-            words: self.words.iter().map(&f).collect(),
-            redirections: self
-                .redirections
-                .iter()
-                .map(|r| Redirection {
-                    fd: r.fd,
-                    kind: r.kind.clone(),
-                    target: match &r.target {
-                        RedirectionTarget::File(w) => RedirectionTarget::File(f(w)),
-                        other => other.clone(),
-                    },
-                })
-                .collect(),
-        }
     }
 
     /// The arguments (all words after the first).

@@ -53,16 +53,6 @@ impl<R> ShapeF<R> {
             ShapeF::Vector(children) => ShapeF::Vector(children.iter().map(f).collect()),
         }
     }
-
-    /// Map by reference with mutable function.
-    pub fn map_ref_mut<S>(&self, f: &mut impl FnMut(&R) -> S) -> ShapeF<S> {
-        match self {
-            ShapeF::Atom(s) => ShapeF::Atom(s.clone()),
-            ShapeF::Str(s) => ShapeF::Str(s.clone()),
-            ShapeF::List(children) => ShapeF::List(children.iter().map(f).collect()),
-            ShapeF::Vector(children) => ShapeF::Vector(children.iter().map(f).collect()),
-        }
-    }
 }
 
 /// Trivia annotation for CST nodes.
@@ -102,17 +92,18 @@ pub enum Trivia {
 }
 
 impl Trivia {
-    pub fn has_newline(&self) -> bool {
-        match self {
-            Trivia::Whitespace(s) => s.contains('\n'),
-            Trivia::Comment { has_newline, .. } => *has_newline,
-        }
-    }
-
     pub fn as_str(&self) -> &str {
         match self {
             Trivia::Whitespace(s) => s,
             Trivia::Comment { text, .. } => text,
+        }
+    }
+
+    #[cfg(test)]
+    fn has_newline(&self) -> bool {
+        match self {
+            Trivia::Whitespace(s) => s.contains('\n'),
+            Trivia::Comment { has_newline, .. } => *has_newline,
         }
     }
 }
@@ -279,14 +270,6 @@ impl<A> CstNode<A> {
     pub fn as_list(&self) -> Option<&[Box<CstNode<A>>]> {
         match &self.shape {
             ShapeF::List(children) => Some(children),
-            _ => None,
-        }
-    }
-
-    /// Get vector children if this is a vector.
-    pub fn as_vector(&self) -> Option<&[Box<CstNode<A>>]> {
-        match &self.shape {
-            ShapeF::Vector(children) => Some(children),
             _ => None,
         }
     }

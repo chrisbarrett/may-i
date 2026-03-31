@@ -26,8 +26,8 @@ impl Quantifier {
         }
     }
 
-    /// Whether this quantifier consumes multiple args.
-    pub fn is_repeating(self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn is_repeating(self) -> bool {
         matches!(self, Quantifier::OneOrMore | Quantifier::ZeroOrMore)
     }
 }
@@ -78,16 +78,13 @@ impl<E: std::fmt::Debug + ToDoc> Expr<E> {
         }
     }
 
-    /// Returns true if this is the wildcard expression.
-    pub fn is_wildcard(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn is_wildcard(&self) -> bool {
         matches!(self, Expr::Wildcard)
     }
 
-    /// Find the effect associated with a matching condition branch.
-    ///
-    /// Searches through And, Or, and Not expressions to find a Cond branch
-    /// where the test matches the given text. Returns the effect if found.
-    pub fn find_effect(&self, text: &str) -> Option<&E> {
+    #[cfg(test)]
+    pub(crate) fn find_effect(&self, text: &str) -> Option<&E> {
         match self {
             Expr::Literal(_) | Expr::Regex(_) | Expr::Wildcard => None,
             Expr::And(exprs) => exprs.iter().find_map(|e| e.find_effect(text)),
@@ -294,8 +291,8 @@ impl ArgPattern {
         }
     }
 
-    /// Create a positional pattern with a continuation effect.
-    pub fn positional_with_continuation(
+    #[cfg(test)]
+    pub(crate) fn positional_with_continuation(
         exprs: Vec<Expr<Effect>>,
         continuation: crate::ast::Effect,
     ) -> Self {
@@ -313,8 +310,8 @@ impl ArgPattern {
         }
     }
 
-    /// Create an exact pattern with a continuation effect.
-    pub fn exact_with_continuation(
+    #[cfg(test)]
+    pub(crate) fn exact_with_continuation(
         exprs: Vec<Expr<Effect>>,
         continuation: crate::ast::Effect,
     ) -> Self {

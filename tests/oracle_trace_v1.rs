@@ -117,7 +117,7 @@ fn oracle_v1_raw_snapshots() {
     for case in &cases {
         let raw_output = render_output(&case.command, &config, &case.facts);
         let output_str = String::from_utf8_lossy(&raw_output);
-        let normalised = normalise_config_path(&output_str.as_ref());
+        let normalised = normalise_config_path(output_str.as_ref());
 
         insta::assert_snapshot!(format!("{}_raw", case.name), normalised);
     }

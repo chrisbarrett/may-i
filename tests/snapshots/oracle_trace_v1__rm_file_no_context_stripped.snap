@@ -32,16 +32,16 @@ Trace
                                                   │
   37: (rule                                       │
         (command "rm")                            │
-        (when                                     │
-            (or                                   │
-              (has                                │ no
-                [:claude-code/permission-mode     │
-                  "acceptEdits"])                 │
-              (has [:opencode/agent               │ no
-                     "build"]))                   │
-          (effect                                 │ → :allow "Non-recursive delete is allowed"
-            :allow                                │
-            "Non-recursive delete is allowed")))  │
+        (context                                  │
+          (or                                     │
+            (has                                  │ no
+              [:claude-code/permission-mode       │
+                "acceptEdits"])                   │
+            (has [:opencode/agent                 │ no
+                   "build"])))                    │
+        (effect                                   │ → :allow "Non-recursive delete is allowed"
+          :allow                                  │
+          "Non-recursive delete is allowed"))     │
                                  No matching rule │ → :ask (default)
 
 Result

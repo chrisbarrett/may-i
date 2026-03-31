@@ -27,10 +27,10 @@ fn doc_from_sexpr(sexpr: &may_i_sexpr::Sexpr) -> Doc {
     }
 }
 
-// ── S-expression string parser ──────────────────────────────────────
+// ── S-expression string parser (test-only) ─────────────────────────
 
-/// Parse an s-expression string (e.g. `(command "curl")`) into a Doc tree.
-pub fn parse_sexpr(input: &str) -> Doc {
+#[cfg(test)]
+fn parse_sexpr(input: &str) -> Doc {
     let tokens = tokenize(input);
     if tokens.is_empty() {
         return Doc::atom("");
@@ -39,6 +39,7 @@ pub fn parse_sexpr(input: &str) -> Doc {
     doc
 }
 
+#[cfg(test)]
 fn tokenize(input: &str) -> Vec<&str> {
     let mut tokens = Vec::new();
     let bytes = input.as_bytes();
@@ -96,6 +97,7 @@ fn tokenize(input: &str) -> Vec<&str> {
     tokens
 }
 
+#[cfg(test)]
 fn parse_tokens(tokens: &[&str], pos: usize) -> (Doc, usize) {
     if pos >= tokens.len() {
         return (Doc::atom(""), pos);
@@ -110,53 +112,10 @@ fn parse_tokens(tokens: &[&str], pos: usize) -> (Doc, usize) {
         }
         if i < tokens.len() {
             i += 1;
-        } // skip )
+        }
         (Doc::list(children), i)
     } else {
         (Doc::atom(tokens[pos]), pos + 1)
-    }
-}
-
-// ── Doc transforms ─────────────────────────────────────────────────
-
-/// Truncate long lists in a Doc tree, keeping the first `keep`
-/// and last 1 elements with an `…` ellipsis in between.
-pub fn truncate_long_lists(doc: &Doc, keep: usize) -> Doc {
-    match &doc.node {
-        DocF::Atom(_) => doc.clone(),
-        DocF::List(children) => {
-            let children: Vec<Doc> = children
-                .iter()
-                .map(|c| truncate_long_lists(c, keep))
-                .collect();
-            let has_head = children.first().is_some_and(|c| c.as_atom().is_some());
-            if has_head && children.len() > keep + 2 {
-                let mut truncated = Vec::with_capacity(keep + 3);
-                truncated.push(children[0].clone());
-                truncated.extend(children[1..=keep].iter().cloned());
-                truncated.push(Doc::atom("…"));
-                truncated.push(children.last().unwrap().clone());
-                Doc::list(truncated)
-            } else {
-                Doc {
-                    ann: (),
-                    node: DocF::List(children),
-                    layout: doc.layout,
-                    dimmed: false,
-                }
-            }
-        }
-        DocF::Vector(children) => Doc {
-            ann: (),
-            node: DocF::Vector(
-                children
-                    .iter()
-                    .map(|c| truncate_long_lists(c, keep))
-                    .collect(),
-            ),
-            layout: doc.layout,
-            dimmed: false,
-        },
     }
 }
 

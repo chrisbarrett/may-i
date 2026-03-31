@@ -66,11 +66,8 @@ impl Layout {
         Layout::Indent(n, Box::new(inner))
     }
 
-    pub fn center(inner: Layout) -> Layout {
-        Layout::Center(Box::new(inner))
-    }
-
-    pub fn labeled_box(title: impl Into<String>, body: Layout) -> Layout {
+    #[cfg(test)]
+    fn labeled_box(title: impl Into<String>, body: Layout) -> Layout {
         Layout::LabeledBox {
             title: Some(title.into()),
             body: Box::new(body),
@@ -153,7 +150,8 @@ impl ColRow {
         }
     }
 
-    pub fn with_align(mut self, align: ColAlign) -> Self {
+    #[cfg(test)]
+    fn with_align(mut self, align: ColAlign) -> Self {
         self.left_align = align;
         self
     }
@@ -205,7 +203,7 @@ fn render_layout(w: &mut impl Write, layout: &Layout, indent: usize, term: &Term
     }
 }
 
-pub fn render_to_string(layout: &Layout, indent: usize, term: &Terminal) -> String {
+pub(crate) fn render_to_string(layout: &Layout, indent: usize, term: &Terminal) -> String {
     let mut buf = Vec::new();
     render_layout(&mut buf, layout, indent, term);
     let s = String::from_utf8_lossy(&buf).into_owned();

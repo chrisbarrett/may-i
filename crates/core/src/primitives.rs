@@ -34,11 +34,6 @@ impl Keyword {
     pub fn as_str(&self) -> &str {
         &self.0
     }
-
-    /// Convert into the inner String.
-    pub fn into_string(self) -> String {
-        self.0
-    }
 }
 
 impl std::fmt::Display for Keyword {
@@ -61,13 +56,6 @@ pub enum Decision {
     Allow,
     Ask,
     Deny,
-}
-
-impl Decision {
-    /// Returns the more restrictive of two decisions.
-    pub fn most_restrictive(self, other: Self) -> Self {
-        self.max(other)
-    }
 }
 
 impl std::fmt::Display for Decision {
