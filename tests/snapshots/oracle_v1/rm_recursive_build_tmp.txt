@@ -11,7 +11,6 @@ Trace
           :deny                                        │
           "Recursive deletion from root"))             │
                                                        │
-                                                 facts │ :opencode/agent "build"
   29: (rule                                            │
         (command "rm")                                 │
         (args                                          │

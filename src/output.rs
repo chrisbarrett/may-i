@@ -116,7 +116,8 @@ pub fn trace_to_layout(entries: &[TraceEntry], command: &str, indent: usize) -> 
 
     // Accumulate rows for consecutive rules that share a command context.
     let mut current_rows: Vec<ColRow> = Vec::new();
-    // Track last-shown facts to avoid repeating identical facts rows.
+    // Track last-shown facts within a group to skip identical repeats.
+    let mut last_shown_facts: Option<&Vec<(String, String)>> = None;
 
     // Flush accumulated rows into a Columns layout.
     let flush_rows = |rows: &mut Vec<ColRow>, children: &mut Vec<Layout>| {
@@ -146,6 +147,7 @@ pub fn trace_to_layout(entries: &[TraceEntry], command: &str, indent: usize) -> 
                 if inner_command.is_some() || pending_command.is_some() {
                     // Flush previous group before starting a new command context.
                     flush_rows(&mut current_rows, &mut children);
+                    last_shown_facts = None;
                     if !first {
                         children.push(Layout::Blank);
                     }
@@ -160,9 +162,11 @@ pub fn trace_to_layout(entries: &[TraceEntry], command: &str, indent: usize) -> 
                 } else if let Some(cmd) = inner_command {
                     current_rows.extend(command_row(cmd, &geom));
                 }
-                if !facts.is_empty() {
+                // Show facts, but skip if identical to the previous rule in this group.
+                if !facts.is_empty() && last_shown_facts.as_ref() != Some(&facts) {
                     current_rows.extend(facts_rows(facts));
                 }
+                last_shown_facts = Some(facts);
                 current_rows.extend(render_annotated_rule(doc, *line, &geom));
             }
             TraceEntry::DefaultAsk { .. } => {
