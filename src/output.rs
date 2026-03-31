@@ -30,6 +30,88 @@ fn detect_column_geometry() -> ColumnGeometry {
     }
 }
 
+// ── Facts rows (2-column layout) ──────────────────────────────────
+
+fn facts_rows(facts: &[(String, String)], geom: &ColumnGeometry) -> Vec<ColRow> {
+    // Build colored pairs and measure their visible widths.
+    let pairs: Vec<(String, usize)> = facts
+        .iter()
+        .map(|(key, value)| {
+            let quoted = format!("\"{value}\"");
+            let colored = format!(
+                "{} {}",
+                colorize_atom(key, true),
+                colorize_atom(&quoted, true)
+            );
+            let width = key.len() + 1 + quoted.len();
+            (colored, width)
+        })
+        .collect();
+
+    let sep = ", ".dimmed().to_string();
+    let sep_width = 2;
+
+    // Available width for the right column (after divider + space).
+    let right_avail = term_width()
+        .saturating_sub(geom.left_width + 1) // divider col
+        .saturating_sub(2); // " │ " padding
+
+    // Word-wrap pairs into lines, breaking before a keyword.
+    let mut lines: Vec<(String, usize)> = Vec::new();
+    let mut cur = String::new();
+    let mut cur_width = 0;
+
+    for (i, (colored, width)) in pairs.iter().enumerate() {
+        let need_sep = !cur.is_empty();
+        let addition = if need_sep { sep_width + width } else { *width };
+
+        if !cur.is_empty() && cur_width + addition > right_avail {
+            lines.push((cur, cur_width));
+            cur = String::new();
+            cur_width = 0;
+        }
+
+        if !cur.is_empty() {
+            cur.push_str(&sep);
+            cur_width += sep_width;
+        }
+        cur.push_str(colored);
+        cur_width += width;
+
+        if i == pairs.len() - 1 {
+            lines.push((cur.clone(), cur_width));
+        }
+    }
+
+    let label = "facts";
+    let label_width = label.len();
+    let label_colored = label.dimmed().to_string();
+
+    lines
+        .iter()
+        .enumerate()
+        .map(|(i, (text, _))| {
+            if i == 0 {
+                let mut row = ColRow::new(&label_colored, label_width, text);
+                row.left_align = ColAlign::Right;
+                row
+            } else {
+                let mut row = ColRow::new("", 0, text);
+                row.left_align = ColAlign::Right;
+                row
+            }
+        })
+        .collect()
+}
+
+fn command_row(cmd: &str, _geom: &ColumnGeometry) -> Vec<ColRow> {
+    let label = "command";
+    let label_colored = label.dimmed().to_string();
+    let mut row = ColRow::new(label_colored, label.len(), cmd.bold().to_string());
+    row.left_align = ColAlign::Right;
+    vec![row]
+}
+
 // ── Separator (public convenience for cmd_check) ──────────────────
 
 pub fn print_separator(indent: &str, label: Option<(&str, usize)>) {
@@ -73,7 +155,6 @@ pub fn trace_to_layout(
 ) -> Layout {
     let geom = detect_column_geometry();
     let mut children: Vec<Layout> = Vec::new();
-    let mut prev_was_box = false;
     let mut first = true;
 
     // Determine if trace has segment headers (compound commands).
@@ -81,12 +162,15 @@ pub fn trace_to_layout(
         .iter()
         .any(|e| matches!(e, TraceEntry::SegmentHeader { .. }));
 
-    // For single-command traces, show initial facts at the top.
-    // For compound commands, facts are shown inside each segment section.
-    if !initial_facts.is_empty() && !has_segments {
-        children.push(Layout::facts_box(initial_facts));
-        prev_was_box = true;
-    }
+    // Determine which facts to prepend to the first rule in each section.
+    // For single-command traces, initial facts go on the first rule.
+    // For compound commands, initial facts go on the first rule after each segment header.
+    let mut pending_facts: Option<&[(String, String)]> =
+        if !initial_facts.is_empty() && !has_segments {
+            Some(initial_facts)
+        } else {
+            None
+        };
 
     for entry in entries {
         match entry {
@@ -96,10 +180,8 @@ pub fn trace_to_layout(
                     children.push(Layout::Blank);
                 }
                 children.push(segment_header_layout(command, *decision));
-                prev_was_box = false;
                 if !initial_facts.is_empty() {
-                    children.push(Layout::facts_box(initial_facts));
-                    prev_was_box = true;
+                    pending_facts = Some(initial_facts);
                 }
             }
             TraceEntry::Rule {
@@ -107,15 +189,25 @@ pub fn trace_to_layout(
                 line,
                 pre_migration_doc: _,
                 facts,
+                inner_command,
             } => {
-                if !first && !prev_was_box {
+                if !first {
                     children.push(Layout::Blank);
                 }
-                prev_was_box = false;
-                if !facts.is_empty() {
-                    children.push(Layout::facts_box(facts));
+                let mut rows = Vec::new();
+                // Prepend any pending initial/segment facts.
+                if let Some(pf) = pending_facts.take() {
+                    rows.extend(facts_rows(pf, &geom));
                 }
-                let rows = render_annotated_rule(doc, *line, &geom);
+                // Prepend per-rule facts (from recursive eval).
+                if !facts.is_empty() {
+                    rows.extend(facts_rows(facts, &geom));
+                }
+                // Show the inner command being evaluated in recursive may-i.
+                if let Some(cmd) = inner_command {
+                    rows.extend(command_row(cmd, &geom));
+                }
+                rows.extend(render_annotated_rule(doc, *line, &geom));
                 if !rows.is_empty() {
                     children.push(Layout::Columns(rows));
                 }
@@ -131,7 +223,6 @@ pub fn trace_to_layout(
                 } else {
                     children.push(Layout::Columns(vec![row]));
                 }
-                prev_was_box = false;
             }
         }
         first = false;

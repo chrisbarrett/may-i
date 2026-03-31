@@ -428,6 +428,9 @@ pub enum TraceEntry {
         /// Context facts that were active when this rule was evaluated.
         /// Non-empty only for recursive evaluations where facts were bound.
         facts: Vec<(String, String)>,
+        /// The command being evaluated, when this rule is inside a recursive
+        /// `may-i` evaluation.
+        inner_command: Option<String>,
     },
     /// No matching rule — default ask.
     DefaultAsk { reason: String },
@@ -442,8 +445,9 @@ pub struct TracingFold {
     /// Stack of trace positions saved before recursive may-i evaluations.
     recursive_trace_starts: Vec<usize>,
     /// Inner traces extracted from recursive evaluations, waiting to be
-    /// appended after the outer rule's trace entry.
-    pending_inner_traces: Vec<Vec<TraceEntry>>,
+    /// appended after the outer rule's trace entry. Each entry is
+    /// (inner_command, traces).
+    pending_inner_traces: Vec<(String, Vec<TraceEntry>)>,
     /// Initial facts from the evaluation context, used to compute deltas.
     initial_facts: ContextFacts,
 }
@@ -482,6 +486,15 @@ impl TracingFold {
     ) -> Self {
         self.pre_migration_forms = forms;
         self
+    }
+
+    /// Append inner traces from a recursive may-i evaluation, tagging the
+    /// first entry with the inner command string.
+    fn append_inner_traces(&mut self, (cmd, mut traces): (String, Vec<TraceEntry>)) {
+        if let Some(TraceEntry::Rule { inner_command, .. }) = traces.first_mut() {
+            *inner_command = Some(cmd);
+        }
+        self.traces.extend(traces);
     }
 
     fn line_of(&self, byte_offset: usize) -> Option<usize> {
@@ -829,17 +842,19 @@ impl EvalFold for TracingFold {
         inner_result: EffectResult,
         _inner_out: Self::EffectOut,
     ) -> Self::EffectOut {
-        // Extract inner traces that were added during recursive evaluation.
-        if let Some(start) = self.recursive_trace_starts.pop() {
-            let inner_traces: Vec<TraceEntry> = self.traces.drain(start..).collect();
-            self.pending_inner_traces.push(inner_traces);
-        }
-
         let cmd_str = if inner_args.is_empty() {
             inner_cmd.to_string()
         } else {
             format!("{} {}", inner_cmd, inner_args.join(" "))
         };
+
+        // Extract inner traces that were added during recursive evaluation.
+        if let Some(start) = self.recursive_trace_starts.pop() {
+            let inner_traces: Vec<TraceEntry> = self.traces.drain(start..).collect();
+            self.pending_inner_traces
+                .push((cmd_str.clone(), inner_traces));
+        }
+
         let (decision, reason) = match &inner_result {
             EffectResult::Decision(d, r) => (*d, r.clone()),
             EffectResult::Nil => (Decision::Ask, None),
@@ -973,11 +988,12 @@ impl EvalFold for TracingFold {
             line,
             pre_migration_doc,
             facts: facts_delta(facts, &self.initial_facts),
+            inner_command: None,
         });
         // Append inner traces from recursive may-i evaluations after the
         // outer rule, so the trace reads in evaluation order.
         if let Some(inner) = self.pending_inner_traces.pop() {
-            self.traces.extend(inner);
+            self.append_inner_traces(inner);
         }
         (terminal_result, doc)
     }
@@ -1004,9 +1020,10 @@ impl EvalFold for TracingFold {
             line,
             pre_migration_doc,
             facts: facts_delta(facts, &self.initial_facts),
+            inner_command: None,
         });
         if let Some(inner) = self.pending_inner_traces.pop() {
-            self.traces.extend(inner);
+            self.append_inner_traces(inner);
         }
         (EffectResult::Nil, doc)
     }

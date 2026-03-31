@@ -1,9 +1,7 @@
 
 [1mTrace[0m
 
-                           [2m┌─facts─[0m[2m─────────────────[0m[2m┐[0m
-                           [2m│[0m [38;2;120;120;255m:opencode/agent[0m [32m"plan"[0m [2m│[0m
-                           [2m└[0m[2m────────────────────────┘[0m
+                                [2mfacts[0m [2m│[0m [38;2;120;120;255m:opencode/agent[0m [32m"plan"[0m
   [2m43: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"git"[0m[2m)[0m           [2m│[0m
             [2m([0m[34margs[0m [2m([0mand [2m([0m[34mpositional[0m    [2m│[0m
                          [32m"reset"[0m[2m)[0m     [2m│[0m [2m"checkout" = "reset" [0m[2m→[0m [33mno[0m
@@ -50,4 +48,4 @@
 
   [2m→[0m [1;33m:ask[0m [32m"git mutation requires approval in non-writing agents"[0m
 
-  [2mconfig:[0m [2mtests/fixtures/v1/config.lisp[0m
+  [2mconfig:[0m [2m~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp[0m

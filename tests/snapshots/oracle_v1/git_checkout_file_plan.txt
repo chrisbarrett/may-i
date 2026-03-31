@@ -1,9 +1,7 @@
 
 Trace
 
-                           ┌─facts──────────────────┐
-                           │ :opencode/agent "plan" │
-                           └────────────────────────┘
+                                facts │ :opencode/agent "plan"
   43: (rule (command "git")           │
             (args (and (positional    │
                          "reset")     │ "checkout" = "reset" → no
@@ -50,4 +48,4 @@ Result
 
   → :ask "git mutation requires approval in non-writing agents"
 
-  config: tests/fixtures/v1/config.lisp
+  config: ~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp

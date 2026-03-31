@@ -1,9 +1,7 @@
 
 [1mTrace[0m
 
-                          [2m┌─facts─[0m[2m──────────────────[0m[2m┐[0m
-                          [2m│[0m [38;2;120;120;255m:opencode/agent[0m [32m"build"[0m [2m│[0m
-                          [2m└[0m[2m─────────────────────────┘[0m
+                                     [2mfacts[0m [2m│[0m [38;2;120;120;255m:opencode/agent[0m [32m"build"[0m
   [2m24: [0m[2m([0m[34mrule[0m                                [2m│[0m
         [2m([0m[34mcommand[0m [32m"rm"[0m[2m)[0m                     [2m│[0m
         [2m([0m[34margs[0m [2m([0mand [2m([0m[34manywhere[0m [32m"-r"[0m[2m)[0m         [2m│[0m [2m"-r" ∈ {"-r", "/tmp/foo"} [0m[2m→[0m [1;32myes[0m
@@ -39,4 +37,4 @@
 
   [2m→[0m [1;32m:allow[0m [32m"Deleting tmp files is allowed"[0m
 
-  [2mconfig:[0m [2mtests/fixtures/v1/config.lisp[0m
+  [2mconfig:[0m [2m~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp[0m

@@ -7,7 +7,7 @@
 use std::io::Write;
 
 use colored::Colorize;
-use may_i_pp::{colorize_atom, visible_len};
+use may_i_pp::visible_len;
 
 // ── Terminal geometry ─────────────────────────────────────────────
 
@@ -61,21 +61,6 @@ impl Layout {
             title: Some(title.into()),
             body: Box::new(body),
         }
-    }
-
-    pub fn facts_box(facts: &[(String, String)]) -> Layout {
-        let max_key = facts.iter().map(|(k, _)| k.len()).max().unwrap_or(0);
-        let lines: Vec<String> = facts
-            .iter()
-            .map(|(key, value)| {
-                let colored_key = colorize_atom(key, true);
-                let colored_value = colorize_atom(&format!("\"{value}\""), true);
-                let pad_key = max_key - key.len();
-                format!("{colored_key}{:pad_key$} {colored_value}", "")
-            })
-            .collect();
-        let body = Layout::Stack(lines.into_iter().map(Layout::Text).collect());
-        Layout::Center(Box::new(Layout::labeled_box("facts", body)))
     }
 }
 
@@ -405,23 +390,6 @@ mod tests {
         assert!(
             widths.windows(2).all(|w| w[0] == w[1]),
             "all box lines should be same width, got {widths:?}"
-        );
-    }
-
-    #[test]
-    fn facts_box_renders_key_value_pairs() {
-        let facts = vec![
-            (":key".to_string(), "val".to_string()),
-            (":longer-key".to_string(), "v".to_string()),
-        ];
-        let layout = Layout::facts_box(&facts);
-        let s = render_to_string(&layout, 0);
-        let stripped = strip_ansi(&s);
-        assert!(stripped.contains("facts"), "should have facts label");
-        assert!(stripped.contains(":key"), "should contain first key");
-        assert!(
-            stripped.contains(":longer-key"),
-            "should contain second key"
         );
     }
 

@@ -1,9 +1,7 @@
 
 Trace
 
-                          ┌─facts───────────────────┐
-                          │ :opencode/agent "build" │
-                          └─────────────────────────┘
+                                     facts │ :opencode/agent "build"
   24: (rule                                │
         (command "rm")                     │
         (args (and (anywhere "-r")         │ "-r" ∈ {"-r", "/other/path"} → yes
@@ -39,4 +37,4 @@ Result
 
   → :ask "Recursive deletion requires confirmation"
 
-  config: tests/fixtures/v1/config.lisp
+  config: ~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp
