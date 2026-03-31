@@ -107,3 +107,7 @@ command = "cargo affected build"
 [[case]]
 name = "ssh_rm_rf"
 command = 'ssh prod "rm -rf /"'
+
+[[case]]
+name = "timeout_echo"
+command = "timeout 30 echo hello"

@@ -3,7 +3,7 @@
 
   [2m107: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"ssh"[0m[2m)[0m            [2m│[0m
              [2m([0m[34margs[0m [2m([0m[34mpositional[0m          [2m│[0m
-                     [2m[[0m[2m:ssh/host[0m [2m*[0m[2m][0m      [2m│[0m
+                     [2m[[0m[38;2;120;120;255m:ssh/host[0m *[2m][0m      [2m│[0m [2m:ssh/host := "prod"[0m
                      [2m([0mmay-i [2m([0m[2mpositional[0m [2m│[0m [2m`rm -rf /` [0m[2m→[0m [1;31m:deny[0m [32m"Recursive deletion from root"[0m
                               [2m*[0m[2m)[0m[2m)[0m[2m)[0m[2m)[0m[2m)[0m    [2m│[0m
 

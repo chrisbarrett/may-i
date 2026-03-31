@@ -9,7 +9,9 @@ use may_i_core::primitives::ToDoc;
 use may_i_core::{Decision, FactQuery};
 
 use may_i_engine::eval::PredicateResult;
-use may_i_engine::fold::{ArgMatchDetail, ChildResult, EvalFold, FactDetail};
+use may_i_engine::fold::{
+    ArgMatchDetail, ChildResult, EvalFold, FactDetail, PositionalElementDetail,
+};
 
 /// Annotation carried on each Doc node in a trace.
 #[derive(Debug, Clone)]
@@ -39,6 +41,14 @@ pub enum Ann {
         inner_command: String,
         decision: Decision,
         reason: Option<String>,
+    },
+    /// Bind expression matched with captured value.
+    BindMatch { key: String, value: Option<String> },
+    /// Regex match result.
+    RegexMatch {
+        pattern: String,
+        actual: String,
+        matched: bool,
     },
     /// Quantifier/combinator result.
     Combinator { result_is_nil: bool },
@@ -302,6 +312,106 @@ fn fact_query_to_doc(query: &FactQuery) -> Doc<()> {
     Doc::list(vec![Doc::atom("has"), query.to_doc()])
 }
 
+/// Annotate a positional/exact pattern doc with per-element match details
+/// (bindings, regex matches). Walks the doc children (skipping the head atom)
+/// and matches them against the element details by index.
+fn annotate_positional_elements(doc: ADoc, elements: &[PositionalElementDetail]) -> ADoc {
+    if elements.is_empty() {
+        return doc;
+    }
+    match doc.node {
+        DocF::List(children) if !children.is_empty() => {
+            let head = children.first().and_then(|c| c.as_atom());
+            if !matches!(head, Some("positional" | "exact")) {
+                return Doc {
+                    node: DocF::List(children),
+                    ..doc
+                };
+            }
+            let mut new_children = vec![children[0].clone()];
+            let mut elem_idx = 0;
+            for child in children.into_iter().skip(1) {
+                if elem_idx < elements.len() {
+                    new_children.push(annotate_pattern_element(child, &elements[elem_idx]));
+                    elem_idx += 1;
+                } else {
+                    new_children.push(child);
+                }
+            }
+            Doc {
+                node: DocF::List(new_children),
+                ..doc
+            }
+        }
+        _ => doc,
+    }
+}
+
+/// Annotate a single pattern element (which may be a vector for binds,
+/// an atom for literals/wildcards, or a list for regex/quantifiers).
+fn annotate_pattern_element(doc: ADoc, detail: &PositionalElementDetail) -> ADoc {
+    // Handle bind: doc is a Vector [":key", expr]
+    if let Some(bind) = &detail.binding
+        && let DocF::Vector(children) = &doc.node
+    {
+        let mut new_children = children.clone();
+        // Annotate the inner expression if there's detail
+        if new_children.len() >= 2
+            && let Some(inner) = &bind.inner_match
+        {
+            new_children[1] = annotate_expr_match(new_children[1].clone(), inner);
+        }
+        return Doc {
+            ann: Some(Ann::BindMatch {
+                key: bind.key.clone(),
+                value: bind.value.clone(),
+            }),
+            node: DocF::Vector(new_children),
+            ..doc
+        };
+    }
+
+    // Handle regex/literal on non-bind expressions
+    if let Some(expr_match) = &detail.expr_match {
+        return annotate_expr_match(doc, expr_match);
+    }
+
+    // Handle quantifier wrappers: (? expr), (* expr), (+ expr)
+    if let DocF::List(children) = &doc.node {
+        let head = children.first().and_then(|c| c.as_atom());
+        if matches!(head, Some("?" | "+" | "*")) && children.len() >= 2 {
+            let mut new_children = children.clone();
+            new_children[1] = annotate_pattern_element(new_children[1].clone(), detail);
+            return Doc {
+                node: DocF::List(new_children),
+                ..doc
+            };
+        }
+    }
+
+    doc
+}
+
+/// Annotate an expression doc node with match detail (regex, literal).
+fn annotate_expr_match(doc: ADoc, detail: &may_i_engine::fold::ExprMatchDetail) -> ADoc {
+    use may_i_engine::fold::ExprMatchDetail;
+    match detail {
+        ExprMatchDetail::Regex {
+            pattern,
+            actual,
+            matched,
+        } => Doc {
+            ann: Some(Ann::RegexMatch {
+                pattern: pattern.clone(),
+                actual: actual.clone(),
+                matched: *matched,
+            }),
+            ..doc
+        },
+        _ => doc,
+    }
+}
+
 /// A single trace entry produced by the fold.
 #[derive(Clone)]
 pub enum TraceEntry {
@@ -485,6 +595,7 @@ impl EvalFold for TracingFold {
         detail: ArgMatchDetail,
     ) -> Self::EffectOut {
         let doc = unannotated_to_ann(arg_pattern_to_doc(pattern));
+        let doc = annotate_positional_elements(doc, &detail.positional_elements);
         let ann = Some(Ann::ArgMatch {
             search_tokens: detail.search_tokens.clone(),
             arg_set: detail.arg_set.clone(),
@@ -666,6 +777,7 @@ impl EvalFold for TracingFold {
     ) -> Self::EffectOut {
         let result = continuation.0.clone();
         let doc = unannotated_to_ann(arg_pattern_to_doc(pattern));
+        let doc = annotate_positional_elements(doc, &detail.positional_elements);
         let ann_doc = Doc {
             ann: Some(Ann::ArgMatch {
                 search_tokens: detail.search_tokens,

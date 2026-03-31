@@ -643,6 +643,132 @@ fn match_expr_with_binding<E: std::fmt::Debug + may_i_core::ToDoc>(
     (matched, facts)
 }
 
+/// Build per-element match details for positional patterns.
+/// Re-walks the patterns against the matched args to capture binding and
+/// expression match info for annotation purposes.
+fn build_positional_element_details(
+    args: &[&String],
+    patterns: &[PositionalArg],
+    matched: bool,
+    consumed: usize,
+) -> Vec<crate::fold::PositionalElementDetail> {
+    use may_i_core::pattern::Expr;
+
+    if !matched {
+        return vec![];
+    }
+
+    let mut details = Vec::new();
+    let mut arg_idx = 0;
+
+    for (pat_idx, pattern) in patterns.iter().enumerate() {
+        // Determine how many args this pattern consumed.
+        // For One quantifier: exactly 1 if matched
+        // For others: we need to re-match to find out
+        let (consume_count, element_matched) = match &pattern.quantifier {
+            may_i_core::Quantifier::One => {
+                if arg_idx < consumed {
+                    (1, true)
+                } else {
+                    (0, false)
+                }
+            }
+            may_i_core::Quantifier::Optional => {
+                if arg_idx < consumed {
+                    let (m, _) = match_expr_with_binding(&pattern.pattern, args[arg_idx]);
+                    if m { (1, true) } else { (0, true) }
+                } else {
+                    (0, true)
+                }
+            }
+            may_i_core::Quantifier::ZeroOrMore | may_i_core::Quantifier::OneOrMore => {
+                let mut count = 0;
+                let mut idx = arg_idx;
+                while idx < consumed {
+                    let (m, _) = match_expr_with_binding(&pattern.pattern, args[idx]);
+                    if m {
+                        count += 1;
+                        idx += 1;
+                    } else {
+                        break;
+                    }
+                }
+                // Check if remaining patterns can match remaining args
+                // (simplified: for the detail pass, just consume greedily)
+                (
+                    count,
+                    count > 0 || matches!(pattern.quantifier, may_i_core::Quantifier::ZeroOrMore),
+                )
+            }
+        };
+
+        let consumed_args: Vec<String> = (0..consume_count)
+            .map(|i| args[arg_idx + i].to_string())
+            .collect();
+
+        let binding = if let Expr::Bind { key, expr: inner } = &pattern.pattern
+            && !consumed_args.is_empty()
+        {
+            let value = consumed_args.first().map(|v| v.to_string());
+            let inner_match = value
+                .as_ref()
+                .and_then(|v| build_expr_match_detail(inner, v));
+            Some(crate::fold::BindDetail {
+                key: key.to_string(),
+                value,
+                inner_match,
+            })
+        } else {
+            None
+        };
+
+        let expr_match = if binding.is_none() && !consumed_args.is_empty() {
+            consumed_args
+                .first()
+                .and_then(|v| build_expr_match_detail(&pattern.pattern, v))
+        } else {
+            None
+        };
+
+        details.push(crate::fold::PositionalElementDetail {
+            pattern_index: pat_idx,
+            consumed_args,
+            binding,
+            expr_match,
+            matched: element_matched,
+        });
+
+        arg_idx += consume_count;
+    }
+
+    details
+}
+
+/// Build expression match detail for a single expression against a value.
+fn build_expr_match_detail<E: std::fmt::Debug + may_i_core::ToDoc>(
+    expr: &may_i_core::pattern::Expr<E>,
+    value: &str,
+) -> Option<crate::fold::ExprMatchDetail> {
+    use may_i_core::pattern::Expr;
+    match expr {
+        Expr::Literal(s) => Some(crate::fold::ExprMatchDetail::Literal {
+            expected: s.clone(),
+            actual: value.to_string(),
+            matched: s == value,
+        }),
+        Expr::Regex(re) => Some(crate::fold::ExprMatchDetail::Regex {
+            pattern: re.as_str().to_string(),
+            actual: value.to_string(),
+            matched: re.is_match(value),
+        }),
+        Expr::Wildcard => Some(crate::fold::ExprMatchDetail::Wildcard {
+            actual: value.to_string(),
+        }),
+        // For compound expressions, don't generate top-level detail
+        _ => None,
+    }
+}
+
 /// Find the effect from a matching Expr::Cond branch for a given arg value.
 /// Returns the effect from the first branch whose test matches, or the wildcard
 /// (else) branch's effect if no specific branch matches.
@@ -935,6 +1061,8 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
 
             let (matched, consumed, bound_facts) =
                 match_positional_patterns(&positional_args, patterns);
+            let elements =
+                build_positional_element_details(&positional_args, patterns, matched, consumed);
             if matched {
                 // Check for explicit continuation first, then trailing Expr::Cond
                 let effective_continuation = continuation
@@ -959,6 +1087,7 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                         arg_set: ctx.args.to_vec(),
                         matched: true,
                         positional_comparisons: vec![],
+                        positional_elements: elements,
                     };
                     fold.effect_arg_continuation(pattern, ctx.args, detail, cont_out)
                 } else {
@@ -967,6 +1096,7 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                         arg_set: ctx.args.to_vec(),
                         matched: true,
                         positional_comparisons: vec![],
+                        positional_elements: elements,
                     };
                     fold.effect_arg_match(pattern, ctx.args, true, detail)
                 }
@@ -976,6 +1106,7 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                     arg_set: ctx.args.to_vec(),
                     matched: false,
                     positional_comparisons: vec![],
+                    positional_elements: elements,
                 };
                 fold.effect_arg_match(pattern, ctx.args, false, detail)
             }
@@ -989,6 +1120,8 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
             let (matched, consumed, bound_facts) =
                 match_positional_patterns(&positional_args, patterns);
             let exact_match = consumed == positional_args.len() && matched;
+            let elements =
+                build_positional_element_details(&positional_args, patterns, exact_match, consumed);
             if exact_match {
                 let effective_continuation = continuation
                     .as_deref()
@@ -1013,6 +1146,7 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                         arg_set: ctx.args.to_vec(),
                         matched: true,
                         positional_comparisons: vec![],
+                        positional_elements: elements,
                     };
                     fold.effect_arg_continuation(pattern, ctx.args, detail, cont_out)
                 } else {
@@ -1021,6 +1155,7 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                         arg_set: ctx.args.to_vec(),
                         matched: true,
                         positional_comparisons: vec![],
+                        positional_elements: elements,
                     };
                     fold.effect_arg_match(pattern, ctx.args, true, detail)
                 }
@@ -1030,6 +1165,7 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                     arg_set: ctx.args.to_vec(),
                     matched: false,
                     positional_comparisons: vec![],
+                    positional_elements: elements,
                 };
                 fold.effect_arg_match(pattern, ctx.args, false, detail)
             }
@@ -1048,6 +1184,7 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                 arg_set: ctx.args.to_vec(),
                 matched,
                 positional_comparisons: vec![],
+                positional_elements: vec![],
             };
             fold.effect_arg_match(pattern, ctx.args, matched, detail)
         }
@@ -1065,6 +1202,7 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                 arg_set: ctx.args.to_vec(),
                 matched: !found_forbidden,
                 positional_comparisons: vec![],
+                positional_elements: vec![],
             };
             fold.effect_arg_match(pattern, ctx.args, !found_forbidden, detail)
         }

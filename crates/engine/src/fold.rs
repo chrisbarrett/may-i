@@ -28,6 +28,8 @@ pub struct ArgMatchDetail {
     pub matched: bool,
     /// Per-position comparison results for positional/exact patterns.
     pub positional_comparisons: Vec<PositionalComparison>,
+    /// Per-element match details for positional/exact patterns (bindings, regex, etc.).
+    pub positional_elements: Vec<PositionalElementDetail>,
 }
 
 /// A single positional comparison result.
@@ -39,6 +41,51 @@ pub struct PositionalComparison {
     pub pattern: String,
     /// Whether this specific comparison matched.
     pub matched: bool,
+}
+
+/// Detail about a single positional pattern element's match result.
+#[derive(Debug, Clone)]
+pub struct PositionalElementDetail {
+    /// Index of this pattern in the positional pattern list.
+    pub pattern_index: usize,
+    /// The arg values consumed by this pattern element.
+    pub consumed_args: Vec<String>,
+    /// If this was a Bind expression, the key and bound value.
+    pub binding: Option<BindDetail>,
+    /// If the inner expression was a Regex, the match detail.
+    pub expr_match: Option<ExprMatchDetail>,
+    /// Whether this element matched.
+    pub matched: bool,
+}
+
+/// Detail about a fact binding from a positional Bind expression.
+#[derive(Debug, Clone)]
+pub struct BindDetail {
+    /// The fact key (e.g. ":ssh/host").
+    pub key: String,
+    /// The value that was bound (if matched).
+    pub value: Option<String>,
+    /// Inner expression match detail (for regex/literal binds).
+    pub inner_match: Option<ExprMatchDetail>,
+}
+
+/// Detail about how an expression matched a value.
+#[derive(Debug, Clone)]
+pub enum ExprMatchDetail {
+    /// Literal equality check.
+    Literal {
+        expected: String,
+        actual: String,
+        matched: bool,
+    },
+    /// Regex match.
+    Regex {
+        pattern: String,
+        actual: String,
+        matched: bool,
+    },
+    /// Wildcard (always matches).
+    Wildcard { actual: String },
 }
 
 /// Detail about how a fact query resolved (for annotations).

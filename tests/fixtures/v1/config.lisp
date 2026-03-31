@@ -105,3 +105,6 @@
 
 ;; Wrapper: ssh evaluates the inner command recursively
 (wrapper "ssh" (positional [:ssh/host *] :command+args))
+
+;; Wrapper: timeout accepts a numeric first arg then evaluates the rest
+(wrapper "timeout" (positional (regex "^[0-9]+$")) :command+args)

@@ -449,6 +449,24 @@ fn format_annotation(doc: &Doc<Option<Ann>>, ann: &Ann) -> Option<(String, Strin
             Some((node_text(doc), right))
         }
 
+        Ann::BindMatch { key, value } => {
+            let right = match value {
+                Some(v) => format!("{key} := \"{v}\""),
+                None => format!("{key} — no match"),
+            };
+            Some((node_text(doc), right))
+        }
+
+        Ann::RegexMatch {
+            pattern,
+            actual,
+            matched,
+        } => {
+            let arrow = if *matched { "→ yes" } else { "→ no" };
+            let right = format!("\"{actual}\" ~ (regex \"{pattern}\") {arrow}");
+            Some((node_text(doc), right))
+        }
+
         Ann::EffectDecision { decision, reason } => {
             let keyword = format!(":{decision}");
             let right = match reason {
@@ -931,6 +949,23 @@ fn colorize_right(s: &str) -> String {
         } else {
             s.dimmed().to_string()
         }
+    } else if s.contains(":=") {
+        // Bind annotation: :key := "value"
+        s.dimmed().to_string()
+    } else if s.contains("~") {
+        // Regex match annotation: "actual" ~ (regex "pattern") → yes/no
+        if let Some(arrow_pos) = s.find("→") {
+            let before = &s[..arrow_pos];
+            let after = s[arrow_pos + "→".len()..].trim();
+            let colored_result = match after {
+                "yes" => "yes".green().bold().to_string(),
+                "no" => "no".yellow().to_string(),
+                other => other.to_string(),
+            };
+            format!("{}{} {colored_result}", before.dimmed(), "→".dimmed())
+        } else {
+            s.dimmed().to_string()
+        }
     } else if s.contains("∈") {
         // Arg match annotations: pattern ∈ {args} → yes/no
         if let Some(arrow_pos) = s.find("→") {
@@ -1051,6 +1086,21 @@ fn ann_to_json(ann: &Ann) -> serde_json::Value {
             "type": "effect_decision",
             "decision": decision.to_string(),
             "reason": reason,
+        }),
+        Ann::BindMatch { key, value } => serde_json::json!({
+            "type": "bind_match",
+            "key": key,
+            "value": value,
+        }),
+        Ann::RegexMatch {
+            pattern,
+            actual,
+            matched,
+        } => serde_json::json!({
+            "type": "regex_match",
+            "pattern": pattern,
+            "actual": actual,
+            "matched": matched,
         }),
         Ann::Combinator { result_is_nil } => serde_json::json!({
             "type": "combinator",
