@@ -1,7 +1,7 @@
 // Shared display helpers for trace output.
 //
-// Recovered from v0.0.3 and adapted for the new Ann enum and EvalFold-based
-// trace system.
+// Trace-specific rendering built on top of the `may_i_layout` crate's
+// declarative Layout primitives.
 
 use std::io::Write;
 
@@ -9,20 +9,15 @@ use colored::Colorize;
 use may_i_core::doc::{Doc, DocF, LayoutHint};
 use may_i_pp::{Format, colorize_atom, pretty, visible_len};
 
+pub use may_i_layout::{
+    ColAlign, ColRow, HRuleLabel, Layout, render_to_string, strip_ansi, term_width, write_layout,
+};
+
 use crate::annotation::{Ann, TraceEntry};
 
-// ── Terminal geometry ─────────────────────────────────────────────
+// ── Column geometry (trace-specific) ──────────────────────────────
 
 const MIN_TERM_WIDTH: usize = 40;
-const DIVIDER: &str = "│";
-
-fn term_width() -> usize {
-    std::env::var("COLUMNS")
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok())
-        .or_else(|| terminal_size::terminal_size().map(|(w, _)| w.0 as usize))
-        .unwrap_or(80)
-}
 
 struct ColumnGeometry {
     left_width: usize,
@@ -35,293 +30,6 @@ fn detect_column_geometry() -> ColumnGeometry {
     }
 }
 
-// ── Declarative layout types ──────────────────────────────────────
-
-/// Declarative layout tree for terminal output. Constructed by trace/check
-/// builders and rendered to a `Write` sink by `write_layout`.
-#[derive(Debug, Clone)]
-pub enum Layout {
-    /// Empty line.
-    Blank,
-    /// Horizontal rule spanning the terminal, with optional label.
-    HRule(Option<HRuleLabel>),
-    /// Two-column table with `│` divider.
-    Columns(Vec<ColRow>),
-    /// Center child in the terminal width.
-    Center(Box<Layout>),
-    /// Indent child by `n` spaces.
-    Indent(usize, Box<Layout>),
-    /// Vertical sequence of children.
-    Stack(Vec<Layout>),
-    /// Pre-formatted text line(s).
-    Text(String),
-    /// Box with optional title label and child layout.
-    LabeledBox {
-        title: Option<String>,
-        body: Box<Layout>,
-    },
-}
-
-impl Layout {
-    pub fn indent(n: usize, inner: Layout) -> Layout {
-        Layout::Indent(n, Box::new(inner))
-    }
-
-    pub fn center(inner: Layout) -> Layout {
-        Layout::Center(Box::new(inner))
-    }
-
-    pub fn labeled_box(title: impl Into<String>, body: Layout) -> Layout {
-        Layout::LabeledBox {
-            title: Some(title.into()),
-            body: Box::new(body),
-        }
-    }
-
-    pub fn facts_box(facts: &[(String, String)]) -> Layout {
-        let max_key = facts.iter().map(|(k, _)| k.len()).max().unwrap_or(0);
-        let lines: Vec<String> = facts
-            .iter()
-            .map(|(key, value)| {
-                let colored_key = colorize_atom(key, true);
-                let colored_value = colorize_atom(&format!("\"{value}\""), true);
-                let pad_key = max_key - key.len();
-                format!("{colored_key}{:pad_key$} {colored_value}", "")
-            })
-            .collect();
-        let body = Layout::Stack(lines.into_iter().map(Layout::Text).collect());
-        Layout::Center(Box::new(Layout::labeled_box("facts", body)))
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct HRuleLabel {
-    pub text: String,
-    pub visible_width: usize,
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum ColAlign {
-    #[default]
-    Left,
-    Right,
-}
-
-#[derive(Debug, Clone)]
-pub struct ColRow {
-    pub left: String,
-    pub left_width: usize,
-    pub left_align: ColAlign,
-    pub right: String,
-    pub right_precolored: bool,
-}
-
-impl ColRow {
-    pub fn trace(left: impl Into<String>, left_width: usize, right: impl Into<String>) -> Self {
-        Self {
-            left: left.into(),
-            left_width,
-            left_align: ColAlign::Left,
-            right: right.into(),
-            right_precolored: false,
-        }
-    }
-
-    pub fn kv(key: impl Into<String>, value: impl Into<String>) -> Self {
-        let key = key.into();
-        let len = key.len();
-        Self {
-            left: key,
-            left_width: len,
-            left_align: ColAlign::Left,
-            right: value.into(),
-            right_precolored: true,
-        }
-    }
-
-    fn is_elision(&self) -> bool {
-        self.left_width == 1 && self.left.contains('…')
-    }
-}
-
-// ── Layout renderer ───────────────────────────────────────────────
-
-pub fn write_layout(w: &mut impl Write, layout: &Layout) {
-    render_layout(w, layout, 0);
-}
-
-fn render_layout(w: &mut impl Write, layout: &Layout, indent: usize) {
-    match layout {
-        Layout::Blank => {
-            let _ = writeln!(w);
-        }
-        Layout::HRule(label) => {
-            write_hrule(w, indent, label.as_ref());
-        }
-        Layout::Columns(rows) => {
-            write_columns(w, indent, rows);
-        }
-        Layout::Center(inner) => {
-            let content = render_to_string(inner, 0);
-            let content_width = content.lines().map(visible_len).max().unwrap_or(0);
-            let tw = term_width();
-            let pad = tw.saturating_sub(content_width) / 2;
-            for line in content.lines() {
-                let _ = writeln!(w, "{:pad$}{line}", "");
-            }
-        }
-        Layout::Indent(n, inner) => {
-            render_layout(w, inner, indent + n);
-        }
-        Layout::Stack(children) => {
-            for child in children {
-                render_layout(w, child, indent);
-            }
-        }
-        Layout::Text(text) => {
-            let _ = writeln!(w, "{:indent$}{text}", "");
-        }
-        Layout::LabeledBox { title, body } => {
-            write_labeled_box(w, indent, title.as_deref(), body);
-        }
-    }
-}
-
-fn render_to_string(layout: &Layout, indent: usize) -> String {
-    let mut buf = Vec::new();
-    render_layout(&mut buf, layout, indent);
-    let s = String::from_utf8_lossy(&buf).into_owned();
-    // Trim trailing newline so callers get clean content.
-    if s.ends_with('\n') {
-        s[..s.len() - 1].to_string()
-    } else {
-        s
-    }
-}
-
-fn write_hrule(w: &mut impl Write, indent: usize, label: Option<&HRuleLabel>) {
-    let usable = term_width().saturating_sub(indent);
-    match label {
-        Some(label) => {
-            let prefix = "─── ";
-            let mid = " ";
-            let used = visible_len(prefix) + label.visible_width + visible_len(mid);
-            let remaining = usable.saturating_sub(used);
-            let suffix = "─".repeat(remaining);
-            let _ = writeln!(
-                w,
-                "{:indent$}{}{}{}{}",
-                "",
-                prefix.dimmed(),
-                label.text,
-                mid.dimmed(),
-                suffix.dimmed(),
-            );
-        }
-        None => {
-            let rule = "─".repeat(usable);
-            let _ = writeln!(w, "{:indent$}{}", "", rule.dimmed());
-        }
-    }
-}
-
-fn write_columns(w: &mut impl Write, indent: usize, rows: &[ColRow]) {
-    let divider_col = compute_divider_col(rows);
-    for row in rows {
-        write_col_row(w, indent, row, divider_col);
-    }
-}
-
-fn compute_divider_col(rows: &[ColRow]) -> usize {
-    let max_left = rows
-        .iter()
-        .filter(|r| !r.is_elision() && matches!(r.left_align, ColAlign::Left))
-        .map(|r| r.left_width)
-        .max()
-        .unwrap_or(0);
-    max_left + 1
-}
-
-fn write_col_row(w: &mut impl Write, indent: usize, row: &ColRow, divider_col: usize) {
-    if row.left.is_empty() && row.right.is_empty() {
-        return;
-    }
-
-    let gap = divider_col.saturating_sub(row.left_width);
-    let (lead, trail) = match row.left_align {
-        ColAlign::Right => (gap.saturating_sub(1), 1),
-        ColAlign::Left => (0, gap),
-    };
-
-    let right = if row.right.is_empty() {
-        String::new()
-    } else if row.right_precolored {
-        format!(" {}", row.right)
-    } else {
-        format!(" {}", colorize_right(&row.right))
-    };
-
-    let _ = writeln!(
-        w,
-        "{:indent$}{:lead$}{}{:trail$}{}{}",
-        "",
-        "",
-        row.left,
-        "",
-        DIVIDER.dimmed(),
-        right,
-    );
-}
-
-fn write_labeled_box(w: &mut impl Write, indent: usize, title: Option<&str>, body: &Layout) {
-    // Render body to measure its width.
-    let body_str = render_to_string(body, 0);
-    let inner_width = body_str.lines().map(visible_len).max().unwrap_or(0);
-
-    // Top border: ┌─title─...─┐ or ┌───...─┐
-    let top = match title {
-        Some(t) => {
-            let remaining = (inner_width + 2).saturating_sub(t.len() + 2);
-            format!(
-                "{}{}{}",
-                format!("┌─{t}─").dimmed(),
-                "─".repeat(remaining).dimmed(),
-                "┐".dimmed()
-            )
-        }
-        None => {
-            format!(
-                "{}{}",
-                "┌".dimmed(),
-                format!("{}┐", "─".repeat(inner_width + 2)).dimmed()
-            )
-        }
-    };
-    let _ = writeln!(w, "{:indent$}{top}", "");
-
-    // Content rows, padded to inner_width.
-    for line in body_str.lines() {
-        let pad_right = inner_width.saturating_sub(visible_len(line));
-        let _ = writeln!(
-            w,
-            "{:indent$}{} {line}{:pad_right$} {}",
-            "",
-            "│".dimmed(),
-            "",
-            "│".dimmed()
-        );
-    }
-
-    // Bottom border: └───...─┘
-    let _ = writeln!(
-        w,
-        "{:indent$}{}{}",
-        "",
-        "└".dimmed(),
-        format!("{}┘", "─".repeat(inner_width + 2)).dimmed()
-    );
-}
-
 // ── Separator (public convenience for cmd_check) ──────────────────
 
 pub fn print_separator(indent: &str, label: Option<(&str, usize)>) {
@@ -329,7 +37,9 @@ pub fn print_separator(indent: &str, label: Option<(&str, usize)>) {
         text: text.to_string(),
         visible_width: w,
     });
-    write_hrule(&mut std::io::stdout(), indent.len(), hrule_label.as_ref());
+    let layout = Layout::HRule(hrule_label);
+    let indented = Layout::Indent(indent.len(), Box::new(layout));
+    write_layout(&mut std::io::stdout(), &indented);
 }
 
 // ── Public convenience for cmd_check ──────────────────────────────
@@ -366,7 +76,14 @@ pub fn trace_to_layout(
     let mut prev_was_box = false;
     let mut first = true;
 
-    if !initial_facts.is_empty() {
+    // Determine if trace has segment headers (compound commands).
+    let has_segments = entries
+        .iter()
+        .any(|e| matches!(e, TraceEntry::SegmentHeader { .. }));
+
+    // For single-command traces, show initial facts at the top.
+    // For compound commands, facts are shown inside each segment section.
+    if !initial_facts.is_empty() && !has_segments {
         children.push(Layout::facts_box(initial_facts));
         prev_was_box = true;
     }
@@ -406,7 +123,7 @@ pub fn trace_to_layout(
             TraceEntry::DefaultAsk { .. } => {
                 let label = "No matching rule".italic().yellow().to_string();
                 let label_visible = "No matching rule".len();
-                let mut row = ColRow::trace(label, label_visible, "→ :ask (default)");
+                let mut row = ColRow::new(label, label_visible, colorize_right("→ :ask (default)"));
                 row.left_align = ColAlign::Right;
                 // Append to last Columns if possible, to share divider position.
                 if let Some(Layout::Columns(rows)) = children.last_mut() {
@@ -494,20 +211,21 @@ fn render_annotated_rule(
         }
     }
 
+    // Pre-colorize right column text before building ColRows.
     let mut rows: Vec<ColRow> = rendered_lines
         .iter()
         .enumerate()
         .map(|(i, sline)| {
-            ColRow::trace(
+            ColRow::new(
                 sline.to_string(),
                 visible_len(sline),
-                line_annotations[i].clone(),
+                colorize_right(&line_annotations[i]),
             )
         })
         .collect();
 
     for ann in &overflow {
-        rows.push(ColRow::trace("", 0, ann.clone()));
+        rows.push(ColRow::new("", 0, colorize_right(ann)));
     }
 
     rows
@@ -767,23 +485,6 @@ fn find_line(stripped_lines: &[String], needle: &str, search_from: &mut usize) -
         }
     }
     None
-}
-
-pub fn strip_ansi(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    let mut in_escape = false;
-    for ch in s.chars() {
-        if in_escape {
-            if ch == 'm' {
-                in_escape = false;
-            }
-        } else if ch == '\x1b' {
-            in_escape = true;
-        } else {
-            result.push(ch);
-        }
-    }
-    result
 }
 
 // ── Tree manipulation ──────────────────────────────────────────────
@@ -1081,6 +782,10 @@ fn truncate_list(items: &[String], max: usize) -> String {
 // ── Right-column colorization ──────────────────────────────────────
 
 fn colorize_right(s: &str) -> String {
+    if s.is_empty() {
+        return String::new();
+    }
+
     if s.starts_with("(effect ") || s.starts_with("(default ") {
         return colorize_effect_sexpr(s);
     }

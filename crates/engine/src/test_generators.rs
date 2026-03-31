@@ -1628,6 +1628,9 @@ mod fold_properties {
             opt_value in "[a-zA-Z]{1,8}",
             positional in "[a-zA-Z]{1,8}",
         ) {
+            // When opt_value == positional the assertions contradict, so skip.
+            prop_assume!(opt_value != positional);
+
             let args = vec![
                 format!("--{opt_name}"),
                 opt_value.clone(),

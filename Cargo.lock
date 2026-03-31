@@ -519,6 +519,7 @@ dependencies = [
  "may-i-config",
  "may-i-core",
  "may-i-engine",
+ "may-i-layout",
  "may-i-pp",
  "may-i-sexpr",
  "may-i-shell-parser",
@@ -567,6 +568,16 @@ dependencies = [
  "may-i-shell-parser",
  "proptest",
  "regex",
+]
+
+[[package]]
+name = "may-i-layout"
+version = "0.1.0"
+dependencies = [
+ "colored",
+ "may-i-pp",
+ "proptest",
+ "terminal_size",
 ]
 
 [[package]]

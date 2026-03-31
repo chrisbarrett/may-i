@@ -12,6 +12,7 @@ may-i-shell-parser = { path = "crates/shell-parser" }
 may-i-core = { path = "crates/core" }
 may-i-engine = { path = "crates/engine" }
 may-i-config = { path = "crates/config" }
+may-i-layout = { path = "crates/layout" }
 may-i-pp = { path = "crates/pp" }
 may-i-sexpr = { path = "crates/sexpr" }
 clap = { version = "4", features = ["derive"] }
