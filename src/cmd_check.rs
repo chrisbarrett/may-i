@@ -192,7 +192,7 @@ fn run_checks_with_traces(config: &may_i_core::ast::Config) -> Vec<CheckResultWi
             Command::Simple(sc) if !sc.words.is_empty() => {
                 let cmd_name = word_to_string(&sc.words[0]);
                 let args: Vec<String> = sc.words[1..].iter().map(word_to_string).collect();
-                let mut fold = TracingFold::new();
+                let mut fold = TracingFold::new().with_initial_facts(context);
                 let result =
                     engine::eval::evaluate_with_fold(&cmd_name, &args, config, context, &mut fold);
                 (result, fold.traces)

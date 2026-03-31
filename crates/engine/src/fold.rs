@@ -228,6 +228,7 @@ pub trait EvalFold {
         &mut self,
         rule: &Rule,
         line: Option<usize>,
+        facts: &ContextFacts,
         command_out: Self::EffectOut,
         effects: Vec<Self::EffectOut>,
     ) -> Self::EffectOut;
@@ -237,6 +238,7 @@ pub trait EvalFold {
     fn rule_not_matched(
         &mut self,
         rule: &Rule,
+        facts: &ContextFacts,
         command_out: Self::EffectOut,
         effects: Vec<Self::EffectOut>,
     ) -> Self::EffectOut;
@@ -433,6 +435,7 @@ impl EvalFold for PureFold {
         &mut self,
         _rule: &Rule,
         _line: Option<usize>,
+        _facts: &ContextFacts,
         _command_out: EffectResult,
         effects: Vec<EffectResult>,
     ) -> EffectResult {
@@ -442,6 +445,7 @@ impl EvalFold for PureFold {
     fn rule_not_matched(
         &mut self,
         _rule: &Rule,
+        _facts: &ContextFacts,
         _command_out: EffectResult,
         _effects: Vec<EffectResult>,
     ) -> EffectResult {

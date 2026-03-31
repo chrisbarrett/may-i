@@ -221,11 +221,16 @@ pub fn write_trace(w: &mut impl Write, entries: &[TraceEntry], indent: &str) {
                 doc,
                 line,
                 pre_migration_doc: _,
+                facts,
             } => {
                 if !first {
                     elements.push(Element::Blank);
                 }
-                let rows = render_annotated_rule(doc, *line, &layout);
+                let mut rows = Vec::new();
+                if !facts.is_empty() {
+                    rows.extend(render_facts(facts));
+                }
+                rows.extend(render_annotated_rule(doc, *line, &layout));
                 if !rows.is_empty() {
                     elements.push(Element::Table(rows));
                 }
@@ -246,6 +251,50 @@ pub fn write_trace(w: &mut impl Write, entries: &[TraceEntry], indent: &str) {
     }
 
     write_elements(w, indent, &elements);
+}
+
+fn render_facts(facts: &[(String, String)]) -> Vec<Row> {
+    // Find the widest key and value for box sizing.
+    let max_key = facts.iter().map(|(k, _)| k.len()).max().unwrap_or(0);
+    let inner_widths: Vec<usize> = facts
+        .iter()
+        .map(|(_, v)| max_key + 1 + v.len() + 2) // key_padded + space + "value"
+        .collect();
+    let inner_width = inner_widths.iter().copied().max().unwrap_or(0);
+
+    let mut rows = Vec::new();
+
+    // Top border
+    let top = format!("┌{}┐", "─".repeat(inner_width + 2));
+    let top_width = inner_width + 4;
+    let mut row = Row::trace(top, top_width, "");
+    row.left.align = Align::Right;
+    rows.push(row);
+
+    // Content rows
+    for (key, value) in facts {
+        let colored_key = colorize_atom(key, true);
+        let colored_value = colorize_atom(&format!("\"{value}\""), true);
+        let pad_key = max_key - key.len();
+        let line_visible = max_key + 1 + value.len() + 2;
+        let pad_right = inner_width - line_visible;
+        let content = format!(
+            "│ {colored_key}{:pad_key$} {colored_value}{:pad_right$} │",
+            "", ""
+        );
+        let mut row = Row::trace(content, inner_width + 4, "");
+        row.left.align = Align::Right;
+        row.left.precolored = true;
+        rows.push(row);
+    }
+
+    // Bottom border
+    let bottom = format!("└{}┘", "─".repeat(inner_width + 2));
+    let mut row = Row::trace(bottom, inner_width + 4, "");
+    row.left.align = Align::Right;
+    rows.push(row);
+
+    rows
 }
 
 fn segment_header_element(command: &str, decision: may_i_core::Decision) -> Element {

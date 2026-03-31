@@ -6,7 +6,7 @@ use may_i_core::ast::{Effect, EffectResult, Rule};
 use may_i_core::doc::{Doc, DocF, LayoutHint};
 use may_i_core::pattern::{ArgPattern, CommandPattern, Quantifier};
 use may_i_core::primitives::ToDoc;
-use may_i_core::{Decision, FactQuery};
+use may_i_core::{ContextFacts, Decision, FactQuery};
 
 use may_i_engine::eval::PredicateResult;
 use may_i_engine::fold::{
@@ -425,6 +425,9 @@ pub enum TraceEntry {
         /// The `doc` field still carries annotations; this field provides
         /// the original source structure for the left column.
         pre_migration_doc: Option<Doc<()>>,
+        /// Context facts that were active when this rule was evaluated.
+        /// Non-empty only for recursive evaluations where facts were bound.
+        facts: Vec<(String, String)>,
     },
     /// No matching rule — default ask.
     DefaultAsk { reason: String },
@@ -441,6 +444,8 @@ pub struct TracingFold {
     /// Inner traces extracted from recursive evaluations, waiting to be
     /// appended after the outer rule's trace entry.
     pending_inner_traces: Vec<Vec<TraceEntry>>,
+    /// Initial facts from the evaluation context, used to compute deltas.
+    initial_facts: ContextFacts,
 }
 
 impl Default for TracingFold {
@@ -457,7 +462,13 @@ impl TracingFold {
             pre_migration_forms: None,
             recursive_trace_starts: Vec::new(),
             pending_inner_traces: Vec::new(),
+            initial_facts: ContextFacts::default(),
         }
+    }
+
+    pub fn with_initial_facts(mut self, facts: &ContextFacts) -> Self {
+        self.initial_facts = facts.clone();
+        self
     }
 
     pub fn with_source_text(mut self, source_text: Option<String>) -> Self {
@@ -940,6 +951,7 @@ impl EvalFold for TracingFold {
         &mut self,
         rule: &Rule,
         _line: Option<usize>,
+        facts: &ContextFacts,
         command_out: Self::EffectOut,
         effects: Vec<Self::EffectOut>,
     ) -> Self::EffectOut {
@@ -960,6 +972,7 @@ impl EvalFold for TracingFold {
             doc: doc.clone(),
             line,
             pre_migration_doc,
+            facts: facts_delta(facts, &self.initial_facts),
         });
         // Append inner traces from recursive may-i evaluations after the
         // outer rule, so the trace reads in evaluation order.
@@ -972,6 +985,7 @@ impl EvalFold for TracingFold {
     fn rule_not_matched(
         &mut self,
         rule: &Rule,
+        facts: &ContextFacts,
         command_out: Self::EffectOut,
         effects: Vec<Self::EffectOut>,
     ) -> Self::EffectOut {
@@ -989,6 +1003,7 @@ impl EvalFold for TracingFold {
             doc: doc.clone(),
             line,
             pre_migration_doc,
+            facts: facts_delta(facts, &self.initial_facts),
         });
         if let Some(inner) = self.pending_inner_traces.pop() {
             self.traces.extend(inner);
@@ -1020,6 +1035,22 @@ impl EvalFold for TracingFold {
             doc,
         )
     }
+}
+
+/// Compute the delta between current facts and initial facts,
+/// returning (key, value) pairs for facts that were added during evaluation.
+fn facts_delta(facts: &ContextFacts, initial: &ContextFacts) -> Vec<(String, String)> {
+    let mut pairs = Vec::new();
+    for (key, values) in facts.iter() {
+        let initial_values = initial.get(key);
+        for value in values {
+            let is_new = initial_values.is_none_or(|iv| !iv.contains(value));
+            if is_new {
+                pairs.push((key.to_string(), value.clone()));
+            }
+        }
+    }
+    pairs
 }
 
 #[cfg(test)]

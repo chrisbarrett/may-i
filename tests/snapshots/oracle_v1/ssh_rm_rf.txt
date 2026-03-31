@@ -7,6 +7,10 @@ Trace
                      (may-i (positional │ `rm -rf /` → :deny "Recursive deletion from root"
                               *)))))    │
 
+                      ┌──────────────────┐ │
+                      │ :ssh/host "prod" │ │
+                      │ :via      "ssh"  │ │
+                      └──────────────────┘ │
   24: (rule                                │
         (command "rm")                     │
         (args (and (anywhere "-r")         │ "-r" ∈ {"-r", "-f", "/"} → yes

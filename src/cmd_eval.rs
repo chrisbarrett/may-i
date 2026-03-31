@@ -50,7 +50,8 @@ pub fn cmd_eval(
     if json_mode {
         let mut fold = TracingFold::new()
             .with_source_text(config.source_text.clone())
-            .with_pre_migration_forms(config.pre_migration_forms.clone());
+            .with_pre_migration_forms(config.pre_migration_forms.clone())
+            .with_initial_facts(&context);
         let (cmd, args) = parse_command_args(command);
         let result = engine::eval::evaluate_with_fold(&cmd, &args, &config, &context, &mut fold);
         let json = serde_json::json!({
@@ -128,7 +129,8 @@ pub fn evaluate_segments(
     if segments.is_empty() {
         let mut fold = TracingFold::new()
             .with_source_text(config.source_text.clone())
-            .with_pre_migration_forms(config.pre_migration_forms.clone());
+            .with_pre_migration_forms(config.pre_migration_forms.clone())
+            .with_initial_facts(context);
         let (cmd, args) = parse_command_args(command);
         let result = engine::eval::evaluate_with_fold(&cmd, &args, config, context, &mut fold);
         return (result, fold.traces, command.to_string());
@@ -144,7 +146,8 @@ pub fn evaluate_segments(
         } else {
             let mut fold = TracingFold::new()
                 .with_source_text(config.source_text.clone())
-                .with_pre_migration_forms(config.pre_migration_forms.clone());
+                .with_pre_migration_forms(config.pre_migration_forms.clone())
+                .with_initial_facts(context);
             let (cmd, args) = parse_command_args(text);
             let result = engine::eval::evaluate_with_fold(&cmd, &args, config, context, &mut fold);
             let colored = match result.decision {

@@ -255,7 +255,7 @@ impl<'a> Evaluator<'a> {
             match result {
                 EffectResult::Nil => {
                     effect_outs.push(out);
-                    return fold.rule_not_matched(rule, command_out, effect_outs);
+                    return fold.rule_not_matched(rule, ctx.facts, command_out, effect_outs);
                 }
                 EffectResult::Decision(Decision::Allow, None)
                     if is_arg_predicate(&effect.value) =>
@@ -269,7 +269,7 @@ impl<'a> Evaluator<'a> {
                 EffectResult::Decision(_, _) => {
                     effect_outs.push(out);
                     let line = None;
-                    return fold.rule_matched(rule, line, command_out, effect_outs);
+                    return fold.rule_matched(rule, line, ctx.facts, command_out, effect_outs);
                 }
             }
         }
@@ -278,15 +278,15 @@ impl<'a> Evaluator<'a> {
         if !effect_outs.is_empty() {
             // All predicates passed but no terminal → use last predicate result.
             let line = None;
-            fold.rule_matched(rule, line, command_out, effect_outs)
+            fold.rule_matched(rule, line, ctx.facts, command_out, effect_outs)
         } else if rule.effects.is_empty() {
             // Bare command match → default to :ask.
             let ask_result = EffectResult::Decision(Decision::Ask, None);
             let ask_out = fold.effect_terminal(&Effect::Ask(None), ask_result);
             let line = None;
-            fold.rule_matched(rule, line, command_out, vec![ask_out])
+            fold.rule_matched(rule, line, ctx.facts, command_out, vec![ask_out])
         } else {
-            fold.rule_not_matched(rule, command_out, effect_outs)
+            fold.rule_not_matched(rule, ctx.facts, command_out, effect_outs)
         }
     }
 }
