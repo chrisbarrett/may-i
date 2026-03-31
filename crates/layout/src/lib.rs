@@ -561,3 +561,78 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn item_strategy() -> impl Strategy<Value = ColItem> {
+        "[a-z]{1,10}".prop_map(|s| {
+            let w = s.len();
+            ColItem::new(s, w)
+        })
+    }
+
+    proptest! {
+        #[test]
+        fn breakable_preserves_all_items(
+            items in prop::collection::vec(item_strategy(), 1..20),
+            term_cols in 30..120usize,
+            label_width in 1..20usize,
+        ) {
+            unsafe { std::env::set_var("COLUMNS", &term_cols.to_string()) };
+
+            let label = "x".repeat(label_width);
+            let rows = vec![ColRow {
+                left: label.clone(),
+                left_width: label_width,
+                left_align: ColAlign::Right,
+                right: ColContent::Breakable {
+                    items: items.clone(),
+                    separator: ", ".into(),
+                    separator_width: 2,
+                },
+            }];
+            let layout = Layout::Columns(rows);
+            let s = render_to_string(&layout, 0);
+            let stripped = strip_ansi(&s);
+
+            // Every item text appears in the output.
+            for item in &items {
+                prop_assert!(
+                    stripped.contains(&item.text),
+                    "item {:?} missing from output: {stripped:?}",
+                    item.text
+                );
+            }
+
+            // Every line has a divider.
+            for line in stripped.lines() {
+                prop_assert!(
+                    line.contains('│'),
+                    "line missing divider: {line:?}"
+                );
+            }
+
+            let lines: Vec<&str> = stripped.lines().collect();
+            if lines.len() > 1 {
+                // Non-final lines should end with trailing separator.
+                for line in &lines[..lines.len() - 1] {
+                    let after_div = line.split('│').nth(1).unwrap().trim();
+                    prop_assert!(
+                        after_div.ends_with(','),
+                        "continued line should end with separator: {line:?}"
+                    );
+                }
+                // Final line should NOT end with separator.
+                let last = lines.last().unwrap();
+                let after_div = last.split('│').nth(1).unwrap().trim();
+                prop_assert!(
+                    !after_div.ends_with(','),
+                    "final line should not end with separator: {last:?}"
+                );
+            }
+        }
+    }
+}
