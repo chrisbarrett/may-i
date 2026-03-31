@@ -13,6 +13,7 @@ Trace
           :deny                                    │
           "Recursive deletion from root"))         │
                                                    │
+                                             facts │ :opencode/agent "build"
   29: (rule                                        │
         (command "rm")                             │
         (args                                      │
@@ -28,6 +29,7 @@ Trace
                            "--recursive"))         │
                 <cond-effect>))))                  │
                                                    │
+                                             facts │ :opencode/agent "build"
   37: (rule                                        │
         (command "rm")                             │
         (context                                   │

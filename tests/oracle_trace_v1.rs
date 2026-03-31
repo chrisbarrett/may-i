@@ -74,7 +74,6 @@ fn render_output(command: &str, config: &may_i_core::ast::Config, facts: &[Strin
         &mut buf,
         &traces,
         command,
-        &context,
         &colored_command,
         &result,
         &display_path,

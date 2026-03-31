@@ -11,6 +11,7 @@ Trace
               :ask                                                 │
               "Dangerous git reset"))                              │
                                                                    │
+                                                             facts │ :opencode/agent "plan"
   47: (rule (command "git")                                        │
             (args (or (positional                                  │
                         "remote")                                  │ "checkout" = "remote" → no
@@ -22,6 +23,7 @@ Trace
               :ask                                                 │
               "Dangerous git operation"))                          │
                                                                    │
+                                                             facts │ :opencode/agent "plan"
   52: (rule                                                        │
         (command "git")                                            │
         (context                                                   │

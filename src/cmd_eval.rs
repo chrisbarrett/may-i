@@ -50,8 +50,7 @@ pub fn cmd_eval(
     if json_mode {
         let mut fold = TracingFold::new()
             .with_source_text(config.source_text.clone())
-            .with_pre_migration_forms(config.pre_migration_forms.clone())
-            .with_initial_facts(&context);
+            .with_pre_migration_forms(config.pre_migration_forms.clone());
         let (cmd, args) = parse_command_args(command);
         let result = engine::eval::evaluate_with_fold(&cmd, &args, &config, &context, &mut fold);
         let json = serde_json::json!({
@@ -70,7 +69,6 @@ pub fn cmd_eval(
             &mut std::io::stdout(),
             &traces,
             command,
-            &context,
             &colored_command,
             &result,
             &display_path,
@@ -85,18 +83,13 @@ pub fn write_eval_output(
     w: &mut impl Write,
     traces: &[TraceEntry],
     command: &str,
-    initial_facts: &may_i_core::ContextFacts,
     colored_command: &str,
     result: &engine::EvalResult,
     display_path: &str,
 ) {
     if !traces.is_empty() {
         let _ = writeln!(w, "\n{}\n", "Trace".bold());
-        let fact_pairs: Vec<(String, String)> = initial_facts
-            .iter()
-            .flat_map(|(k, vs)| vs.iter().map(move |v| (k.to_string(), v.clone())))
-            .collect();
-        output::write_trace(w, traces, command, &fact_pairs, "  ");
+        output::write_trace(w, traces, command, "  ");
     }
 
     let _ = writeln!(w, "\n{}\n", "Result".bold());
@@ -137,8 +130,7 @@ pub fn evaluate_segments(
     if segments.is_empty() {
         let mut fold = TracingFold::new()
             .with_source_text(config.source_text.clone())
-            .with_pre_migration_forms(config.pre_migration_forms.clone())
-            .with_initial_facts(context);
+            .with_pre_migration_forms(config.pre_migration_forms.clone());
         let (cmd, args) = parse_command_args(command);
         let result = engine::eval::evaluate_with_fold(&cmd, &args, config, context, &mut fold);
         return (result, fold.traces, command.to_string());
@@ -154,8 +146,7 @@ pub fn evaluate_segments(
         } else {
             let mut fold = TracingFold::new()
                 .with_source_text(config.source_text.clone())
-                .with_pre_migration_forms(config.pre_migration_forms.clone())
-                .with_initial_facts(context);
+                .with_pre_migration_forms(config.pre_migration_forms.clone());
             let (cmd, args) = parse_command_args(text);
             let result = engine::eval::evaluate_with_fold(&cmd, &args, config, context, &mut fold);
             let colored = match result.decision {

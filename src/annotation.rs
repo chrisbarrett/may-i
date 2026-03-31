@@ -448,8 +448,6 @@ pub struct TracingFold {
     /// appended after the outer rule's trace entry. Each entry is
     /// (inner_command, traces).
     pending_inner_traces: Vec<(String, Vec<TraceEntry>)>,
-    /// Initial facts from the evaluation context, used to compute deltas.
-    initial_facts: ContextFacts,
 }
 
 impl Default for TracingFold {
@@ -466,13 +464,7 @@ impl TracingFold {
             pre_migration_forms: None,
             recursive_trace_starts: Vec::new(),
             pending_inner_traces: Vec::new(),
-            initial_facts: ContextFacts::default(),
         }
-    }
-
-    pub fn with_initial_facts(mut self, facts: &ContextFacts) -> Self {
-        self.initial_facts = facts.clone();
-        self
     }
 
     pub fn with_source_text(mut self, source_text: Option<String>) -> Self {
@@ -987,7 +979,7 @@ impl EvalFold for TracingFold {
             doc: doc.clone(),
             line,
             pre_migration_doc,
-            facts: facts_delta(facts, &self.initial_facts),
+            facts: flatten_facts(facts),
             inner_command: None,
         });
         // Append inner traces from recursive may-i evaluations after the
@@ -1019,7 +1011,7 @@ impl EvalFold for TracingFold {
             doc: doc.clone(),
             line,
             pre_migration_doc,
-            facts: facts_delta(facts, &self.initial_facts),
+            facts: flatten_facts(facts),
             inner_command: None,
         });
         if let Some(inner) = self.pending_inner_traces.pop() {
@@ -1054,20 +1046,12 @@ impl EvalFold for TracingFold {
     }
 }
 
-/// Compute the delta between current facts and initial facts,
-/// returning (key, value) pairs for facts that were added during evaluation.
-fn facts_delta(facts: &ContextFacts, initial: &ContextFacts) -> Vec<(String, String)> {
-    let mut pairs = Vec::new();
-    for (key, values) in facts.iter() {
-        let initial_values = initial.get(key);
-        for value in values {
-            let is_new = initial_values.is_none_or(|iv| !iv.contains(value));
-            if is_new {
-                pairs.push((key.to_string(), value.clone()));
-            }
-        }
-    }
-    pairs
+/// Flatten all facts into (key, value) pairs.
+fn flatten_facts(facts: &ContextFacts) -> Vec<(String, String)> {
+    facts
+        .iter()
+        .flat_map(|(k, vs)| vs.iter().map(move |v| (k.to_string(), v.clone())))
+        .collect()
 }
 
 #[cfg(test)]

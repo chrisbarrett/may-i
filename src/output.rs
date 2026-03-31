@@ -134,27 +134,16 @@ pub fn render_elements(indent: &str, elements: &[Layout]) {
 // ── Trace rendering ────────────────────────────────────────────────
 
 pub fn print_trace(entries: &[TraceEntry], command: &str, indent: &str) {
-    write_trace(&mut std::io::stdout(), entries, command, &[], indent);
+    write_trace(&mut std::io::stdout(), entries, command, indent);
 }
 
-pub fn write_trace(
-    w: &mut impl Write,
-    entries: &[TraceEntry],
-    command: &str,
-    initial_facts: &[(String, String)],
-    indent: &str,
-) {
-    let layout = trace_to_layout(entries, command, initial_facts, indent.len());
+pub fn write_trace(w: &mut impl Write, entries: &[TraceEntry], command: &str, indent: &str) {
+    let layout = trace_to_layout(entries, command, indent.len());
     write_layout(w, &layout);
 }
 
 /// Convert trace entries into a declarative layout tree.
-pub fn trace_to_layout(
-    entries: &[TraceEntry],
-    command: &str,
-    initial_facts: &[(String, String)],
-    indent: usize,
-) -> Layout {
+pub fn trace_to_layout(entries: &[TraceEntry], command: &str, indent: usize) -> Layout {
     let geom = detect_column_geometry();
     let mut children: Vec<Layout> = Vec::new();
     let mut first = true;
@@ -164,15 +153,6 @@ pub fn trace_to_layout(
         .iter()
         .any(|e| matches!(e, TraceEntry::SegmentHeader { .. }));
 
-    // Determine which facts/command to prepend to the first rule in each section.
-    // For single-command traces, initial facts go on the first rule.
-    // For compound commands, initial facts go on the first rule after each segment header.
-    let mut pending_facts: Option<&[(String, String)]> =
-        if !initial_facts.is_empty() && !has_segments {
-            Some(initial_facts)
-        } else {
-            None
-        };
     // Show the command on the first rule of each section.
     // For compound commands, this gets reset from each segment header.
     let mut pending_command: Option<&str> = if !has_segments { Some(command) } else { None };
@@ -180,7 +160,6 @@ pub fn trace_to_layout(
     // Accumulate rows for consecutive rules that share a command context.
     let mut current_rows: Vec<ColRow> = Vec::new();
     // Track last-shown facts to avoid repeating identical facts rows.
-    let mut last_facts: Option<&Vec<(String, String)>> = None;
 
     // Flush accumulated rows into a Columns layout.
     let flush_rows = |rows: &mut Vec<ColRow>, children: &mut Vec<Layout>| {
@@ -199,9 +178,6 @@ pub fn trace_to_layout(
                 }
                 children.push(segment_header_layout(command, *decision));
                 pending_command = Some(command);
-                if !initial_facts.is_empty() {
-                    pending_facts = Some(initial_facts);
-                }
             }
             TraceEntry::Rule {
                 doc,
@@ -213,7 +189,6 @@ pub fn trace_to_layout(
                 if inner_command.is_some() || pending_command.is_some() {
                     // Flush previous group before starting a new command context.
                     flush_rows(&mut current_rows, &mut children);
-                    last_facts = None;
                     if !first {
                         children.push(Layout::Blank);
                     }
@@ -228,13 +203,8 @@ pub fn trace_to_layout(
                 } else if let Some(cmd) = inner_command {
                     current_rows.extend(command_row(cmd, &geom));
                 }
-                // Show facts at start of group.
-                if let Some(pf) = pending_facts.take() {
-                    current_rows.extend(facts_rows(pf, &geom));
-                }
-                if !facts.is_empty() && last_facts != Some(facts) {
+                if !facts.is_empty() {
                     current_rows.extend(facts_rows(facts, &geom));
-                    last_facts = Some(facts);
                 }
                 current_rows.extend(render_annotated_rule(doc, *line, &geom));
             }
