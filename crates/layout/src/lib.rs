@@ -77,12 +77,45 @@ pub enum ColAlign {
     Right,
 }
 
+/// Content for the right-hand side of a `ColRow`.
+#[derive(Debug, Clone)]
+pub enum ColContent {
+    /// A single pre-formatted string.
+    Text(String),
+    /// A sequence of items that can be wrapped across multiple lines.
+    Breakable {
+        items: Vec<ColItem>,
+        /// Separator inserted between items on the same line (e.g. ", ").
+        separator: String,
+        /// Visible width of the separator.
+        separator_width: usize,
+    },
+}
+
+/// One atomic item in a `Breakable` content sequence.
+#[derive(Debug, Clone)]
+pub struct ColItem {
+    /// Rendered (possibly colored) text.
+    pub text: String,
+    /// Visible width of `text`.
+    pub width: usize,
+}
+
+impl ColItem {
+    pub fn new(text: impl Into<String>, width: usize) -> Self {
+        Self {
+            text: text.into(),
+            width,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ColRow {
     pub left: String,
     pub left_width: usize,
     pub left_align: ColAlign,
-    pub right: String,
+    pub right: ColContent,
 }
 
 impl ColRow {
@@ -91,7 +124,7 @@ impl ColRow {
             left: left.into(),
             left_width,
             left_align: ColAlign::Left,
-            right: right.into(),
+            right: ColContent::Text(right.into()),
         }
     }
 
@@ -102,7 +135,7 @@ impl ColRow {
             left: label,
             left_width: width,
             left_align: ColAlign::Right,
-            right: value.into(),
+            right: ColContent::Text(value.into()),
         }
     }
 
@@ -215,32 +248,87 @@ fn compute_divider_col(rows: &[ColRow]) -> usize {
 }
 
 fn write_col_row(w: &mut impl Write, indent: usize, row: &ColRow, divider_col: usize) {
-    if row.left.is_empty() && row.right.is_empty() {
-        return;
-    }
+    match &row.right {
+        ColContent::Text(text) => {
+            if row.left.is_empty() && text.is_empty() {
+                return;
+            }
+            let right = if text.is_empty() {
+                String::new()
+            } else {
+                format!(" {text}")
+            };
+            write_col_left(w, indent, row, divider_col);
+            let _ = writeln!(w, "{}{right}", DIVIDER.dimmed());
+        }
+        ColContent::Breakable {
+            items,
+            separator,
+            separator_width,
+        } => {
+            let right_avail = term_width()
+                .saturating_sub(indent + divider_col + 1) // divider
+                .saturating_sub(2); // " │ " padding → " " after divider
 
+            // Word-wrap items into lines.
+            let mut lines: Vec<String> = Vec::new();
+            let mut cur = String::new();
+            let mut cur_width = 0;
+
+            for (i, item) in items.iter().enumerate() {
+                let need_sep = !cur.is_empty();
+                let addition = if need_sep {
+                    separator_width + item.width
+                } else {
+                    item.width
+                };
+
+                if !cur.is_empty() && cur_width + addition > right_avail {
+                    // Trailing separator on continued lines.
+                    cur.push_str(separator);
+                    lines.push(cur);
+                    cur = String::new();
+                    cur_width = 0;
+                }
+
+                if !cur.is_empty() {
+                    cur.push_str(separator);
+                    cur_width += separator_width;
+                }
+                cur.push_str(&item.text);
+                cur_width += item.width;
+
+                if i == items.len() - 1 && !cur.is_empty() {
+                    lines.push(cur.clone());
+                }
+            }
+
+            if lines.is_empty() {
+                write_col_left(w, indent, row, divider_col);
+                let _ = writeln!(w, "{}", DIVIDER.dimmed());
+            } else {
+                for (i, line) in lines.iter().enumerate() {
+                    if i == 0 {
+                        write_col_left(w, indent, row, divider_col);
+                    } else {
+                        // Continuation lines: empty left, same divider position.
+                        let _ = write!(w, "{:indent$}{:divider_col$}", "", "");
+                    }
+                    let _ = writeln!(w, "{} {line}", DIVIDER.dimmed());
+                }
+            }
+        }
+    }
+}
+
+/// Write the left-hand side of a column row (label + alignment padding).
+fn write_col_left(w: &mut impl Write, indent: usize, row: &ColRow, divider_col: usize) {
     let gap = divider_col.saturating_sub(row.left_width);
     let (lead, trail) = match row.left_align {
         ColAlign::Right => (gap.saturating_sub(1), 1),
         ColAlign::Left => (0, gap),
     };
-
-    let right = if row.right.is_empty() {
-        String::new()
-    } else {
-        format!(" {}", row.right)
-    };
-
-    let _ = writeln!(
-        w,
-        "{:indent$}{:lead$}{}{:trail$}{}{}",
-        "",
-        "",
-        row.left,
-        "",
-        DIVIDER.dimmed(),
-        right,
-    );
+    let _ = write!(w, "{:indent$}{:lead$}{}{:trail$}", "", "", row.left, "",);
 }
 
 fn write_labeled_box(w: &mut impl Write, indent: usize, title: Option<&str>, body: &Layout) {
@@ -402,5 +490,74 @@ mod tests {
     #[test]
     fn strip_ansi_preserves_plain_text() {
         assert_eq!(strip_ansi("plain text"), "plain text");
+    }
+
+    #[test]
+    fn breakable_wraps_items_across_lines() {
+        unsafe { std::env::set_var("COLUMNS", "30") };
+        let rows = vec![ColRow {
+            left: "label".into(),
+            left_width: 5,
+            left_align: ColAlign::Right,
+            right: ColContent::Breakable {
+                items: vec![
+                    ColItem::new("aaaa", 4),
+                    ColItem::new("bbbb", 4),
+                    ColItem::new("cccc", 4),
+                    ColItem::new("dddd", 4),
+                    ColItem::new("eeee", 4),
+                ],
+                separator: ", ".into(),
+                separator_width: 2,
+            },
+        }];
+        let layout = Layout::Columns(rows);
+        let s = render_to_string(&layout, 0);
+        let stripped = strip_ansi(&s);
+        let lines: Vec<&str> = stripped.lines().collect();
+        // Should wrap across multiple lines
+        assert!(
+            lines.len() > 1,
+            "expected wrapping across multiple lines, got: {stripped:?}"
+        );
+        // All lines should have the divider
+        for line in &lines {
+            assert!(
+                line.contains('│'),
+                "each line should have divider: {line:?}"
+            );
+        }
+        // Non-final lines should have trailing separator (comma)
+        for line in &lines[..lines.len() - 1] {
+            let after_div = line.split('│').nth(1).unwrap().trim();
+            assert!(
+                after_div.ends_with(','),
+                "continued line should end with separator: {line:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn breakable_fits_on_one_line() {
+        unsafe { std::env::set_var("COLUMNS", "80") };
+        let rows = vec![ColRow {
+            left: "lbl".into(),
+            left_width: 3,
+            left_align: ColAlign::Right,
+            right: ColContent::Breakable {
+                items: vec![ColItem::new("a", 1), ColItem::new("b", 1)],
+                separator: ", ".into(),
+                separator_width: 2,
+            },
+        }];
+        let layout = Layout::Columns(rows);
+        let s = render_to_string(&layout, 0);
+        let stripped = strip_ansi(&s);
+        let lines: Vec<&str> = stripped.lines().collect();
+        assert_eq!(lines.len(), 1, "should fit on one line: {stripped:?}");
+        assert!(
+            stripped.contains("a, b"),
+            "items joined with separator: {stripped:?}"
+        );
     }
 }

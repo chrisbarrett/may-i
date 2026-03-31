@@ -10,7 +10,8 @@ use may_i_core::doc::{Doc, DocF, LayoutHint};
 use may_i_pp::{Format, colorize_atom, pretty, visible_len};
 
 pub use may_i_layout::{
-    ColAlign, ColRow, HRuleLabel, Layout, render_to_string, strip_ansi, term_width, write_layout,
+    ColAlign, ColContent, ColItem, ColRow, HRuleLabel, Layout, render_to_string, strip_ansi,
+    term_width, write_layout,
 };
 
 use crate::annotation::{Ann, TraceEntry};
@@ -32,9 +33,8 @@ fn detect_column_geometry() -> ColumnGeometry {
 
 // ── Facts rows (2-column layout) ──────────────────────────────────
 
-fn facts_rows(facts: &[(String, String)], geom: &ColumnGeometry) -> Vec<ColRow> {
-    // Build colored pairs and measure their visible widths.
-    let pairs: Vec<(String, usize)> = facts
+fn facts_rows(facts: &[(String, String)]) -> Vec<ColRow> {
+    let items: Vec<ColItem> = facts
         .iter()
         .map(|(key, value)| {
             let quoted = format!("\"{value}\"");
@@ -44,64 +44,21 @@ fn facts_rows(facts: &[(String, String)], geom: &ColumnGeometry) -> Vec<ColRow> 
                 colorize_atom(&quoted, true)
             );
             let width = key.len() + 1 + quoted.len();
-            (colored, width)
+            ColItem::new(colored, width)
         })
         .collect();
 
-    let sep = ", ".dimmed().to_string();
-    let sep_width = 2;
-
-    // Available width for the right column (after divider + space).
-    let right_avail = term_width()
-        .saturating_sub(geom.left_width + 1) // divider col
-        .saturating_sub(2); // " │ " padding
-
-    // Word-wrap pairs into lines, breaking before a keyword.
-    let mut lines: Vec<(String, usize)> = Vec::new();
-    let mut cur = String::new();
-    let mut cur_width = 0;
-
-    for (i, (colored, width)) in pairs.iter().enumerate() {
-        let need_sep = !cur.is_empty();
-        let addition = if need_sep { sep_width + width } else { *width };
-
-        if !cur.is_empty() && cur_width + addition > right_avail {
-            lines.push((cur, cur_width));
-            cur = String::new();
-            cur_width = 0;
-        }
-
-        if !cur.is_empty() {
-            cur.push_str(&sep);
-            cur_width += sep_width;
-        }
-        cur.push_str(colored);
-        cur_width += width;
-
-        if i == pairs.len() - 1 {
-            lines.push((cur.clone(), cur_width));
-        }
-    }
-
     let label = "facts";
-    let label_width = label.len();
-    let label_colored = label.dimmed().to_string();
-
-    lines
-        .iter()
-        .enumerate()
-        .map(|(i, (text, _))| {
-            if i == 0 {
-                let mut row = ColRow::new(&label_colored, label_width, text);
-                row.left_align = ColAlign::Right;
-                row
-            } else {
-                let mut row = ColRow::new("", 0, text);
-                row.left_align = ColAlign::Right;
-                row
-            }
-        })
-        .collect()
+    vec![ColRow {
+        left: label.dimmed().to_string(),
+        left_width: label.len(),
+        left_align: ColAlign::Right,
+        right: ColContent::Breakable {
+            items,
+            separator: ", ".dimmed().to_string(),
+            separator_width: 2,
+        },
+    }]
 }
 
 fn command_row(cmd: &str, _geom: &ColumnGeometry) -> Vec<ColRow> {
@@ -204,7 +161,7 @@ pub fn trace_to_layout(entries: &[TraceEntry], command: &str, indent: usize) -> 
                     current_rows.extend(command_row(cmd, &geom));
                 }
                 if !facts.is_empty() {
-                    current_rows.extend(facts_rows(facts, &geom));
+                    current_rows.extend(facts_rows(facts));
                 }
                 current_rows.extend(render_annotated_rule(doc, *line, &geom));
             }
