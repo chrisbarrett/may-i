@@ -1414,25 +1414,6 @@ mod proptests {
         }
     }
 
-    /// Strategy for generating valid atom characters
-    fn atom_char() -> impl Strategy<Value = char> {
-        prop_oneof!(
-            (b'a'..=b'z').prop_map(|c| c as char),
-            (b'A'..=b'Z').prop_map(|c| c as char),
-            (b'0'..=b'9').prop_map(|c| c as char),
-            Just('-'),
-            Just('_'),
-            Just('*'),
-            Just('.'),
-            Just('/'),
-            Just('^'),
-            Just(':'),
-            Just('+'),
-            Just('?'),
-            Just('=')
-        )
-    }
-
     /// Strategy for generating atom strings
     fn atom_string() -> impl Strategy<Value = String> {
         prop::string::string_regex("[a-zA-Z0-9-_*/.^:+?=]+").unwrap()

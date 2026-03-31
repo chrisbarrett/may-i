@@ -517,18 +517,6 @@ mod tests {
         Span::new(0, 0)
     }
 
-    fn create_rule_with_effect(effect: Effect) -> Rule {
-        Rule::new(
-            Spanned::new(
-                Effect::CommandPattern(CommandPattern::Literal("test".to_string())),
-                dummy_span(),
-            ),
-            vec![Spanned::new(effect, dummy_span())],
-            vec![],
-            dummy_span(),
-        )
-    }
-
     fn create_rule_with_conditional(predicate: Predicate, effect: Effect) -> Rule {
         let conditional_effect = Effect::When {
             predicate: Spanned::new(predicate, dummy_span()),

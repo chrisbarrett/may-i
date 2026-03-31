@@ -20,10 +20,10 @@
               [2m([0m[2m([0mand                                [2m│[0m
                  [2m([0mor                               [2m│[0m
                    [2m([0mhas                            [2m│[0m [33mno[0m
-                     [2m[[0m[2m:claude-code/permission-mode[0m [2m│[0m
-                       [2m"acceptEdits"[0m[2m][0m[2m)[0m             [2m│[0m
-                   [2m([0mhas [2m[[0m[2m:opencode/agent[0m           [2m│[0m [2m"build" [0m[2m->[0m [1;32myes[0m
-                          [2m"build"[0m[2m][0m[2m)[0m[2m)[0m               [2m│[0m
+                     [2m[[0m[38;2;120;120;255m:claude-code/permission-mode[0m [2m│[0m
+                       [32m"acceptEdits"[0m[2m][0m[2m)[0m             [2m│[0m
+                   [2m([0mhas [2m[[0m[38;2;120;120;255m:opencode/agent[0m           [2m│[0m [2m"build" [0m[2m->[0m [1;32myes[0m
+                          [32m"build"[0m[2m][0m[2m)[0m[2m)[0m               [2m│[0m
                  [2m([0m[34manywhere[0m [32m"-r"[0m                    [2m│[0m
                            [32m"--recursive"[0m[2m)[0m[2m)[0m         [2m│[0m
                 [2m<cond-effect>[0m[2m)[0m[2m)[0m[2m)[0m[2m)[0m                  [2m│[0m
@@ -33,10 +33,10 @@
         [2m([0mcontext                                   [2m│[0m
           [2m([0mor                                      [2m│[0m
             [2m([0mhas                                   [2m│[0m [33mno[0m
-              [2m[[0m[2m:claude-code/permission-mode[0m        [2m│[0m
-                [2m"acceptEdits"[0m[2m][0m[2m)[0m                    [2m│[0m
-            [2m([0mhas [2m[[0m[2m:opencode/agent[0m                  [2m│[0m [2m"build" [0m[2m->[0m [1;32myes[0m
-                   [2m"build"[0m[2m][0m[2m)[0m[2m)[0m[2m)[0m                     [2m│[0m
+              [2m[[0m[38;2;120;120;255m:claude-code/permission-mode[0m        [2m│[0m
+                [32m"acceptEdits"[0m[2m][0m[2m)[0m                    [2m│[0m
+            [2m([0mhas [2m[[0m[38;2;120;120;255m:opencode/agent[0m                  [2m│[0m [2m"build" [0m[2m->[0m [1;32myes[0m
+                   [32m"build"[0m[2m][0m[2m)[0m[2m)[0m[2m)[0m                     [2m│[0m
         [2m([0m[34meffect[0m                                    [2m│[0m [2m[0m[2m→[0m [1;32m:allow[0m [32m"Non-recursive delete is allowed"[0m
           [38;2;120;120;255m:allow[0m                                   [2m│[0m
           [32m"Non-recursive delete is allowed"[0m[2m)[0m[2m)[0m      [2m│[0m
@@ -47,4 +47,4 @@
 
   [2m→[0m [1;32m:allow[0m [32m"Non-recursive delete is allowed"[0m
 
-  [2mconfig:[0m [2m~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp[0m
+  [2mconfig:[0m [2mtests/fixtures/v1/config.lisp[0m

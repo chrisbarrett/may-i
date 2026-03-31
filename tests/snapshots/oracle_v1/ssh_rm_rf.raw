@@ -5,8 +5,8 @@
   [2m107: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"ssh"[0m[2m)[0m            [2m│[0m
              [2m([0m[34margs[0m [2m([0m[34mpositional[0m          [2m│[0m
                      [2m[[0m[38;2;120;120;255m:ssh/host[0m *[2m][0m      [2m│[0m [2mfacts +=[0m [38;2;120;120;255m:ssh/host[0m [32m"prod"[0m
-                     [2m([0mmay-i [2m([0m[2mpositional[0m [2m│[0m [2m`rm -rf /` [0m[2m→[0m [1;31m:deny[0m [32m"Recursive deletion from root"[0m
-                              [2m*[0m[2m)[0m[2m)[0m[2m)[0m[2m)[0m[2m)[0m    [2m│[0m
+                     [2m([0mmay-i [2m([0m[34mpositional[0m [2m│[0m [2m`rm -rf /` [0m[2m→[0m [1;31m:deny[0m [32m"Recursive deletion from root"[0m
+                              *[2m)[0m[2m)[0m[2m)[0m[2m)[0m[2m)[0m    [2m│[0m
 
                                    [2mcommand[0m [2m│[0m [1mrm -rf /[0m
                                      [2mfacts[0m [2m│[0m [38;2;120;120;255m:ssh/host[0m [32m"prod"[0m[2m, [0m[38;2;120;120;255m:via[0m [32m"ssh"[0m
@@ -24,4 +24,4 @@
 
   [2m→[0m [1;31m:deny[0m [32m"Recursive deletion from root"[0m
 
-  [2mconfig:[0m [2m~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp[0m
+  [2mconfig:[0m [2mtests/fixtures/v1/config.lisp[0m

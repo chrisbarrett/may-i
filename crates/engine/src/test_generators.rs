@@ -5,9 +5,12 @@
 
 use proptest::prelude::*;
 
-use may_i_core::ast::{Check, Config, Effect, Predicate, Rule, SecurityConfig, Spanned};
-use may_i_core::pattern::CommandPattern;
-use may_i_core::{ContextFacts, Decision, Span};
+#[cfg(test)]
+use may_i_core::ast::Check;
+use may_i_core::ast::{Config, Effect, Predicate, Rule, SecurityConfig, Spanned};
+use may_i_core::{ContextFacts, Span};
+#[cfg(test)]
+use may_i_core::{Decision, pattern::CommandPattern};
 
 // Re-export core generators.
 pub use may_i_core::test_generators::*;
@@ -15,16 +18,19 @@ pub use may_i_core::test_generators::*;
 /// Shell keywords that the parser treats as tokens rather than command names.
 /// Generated command names must avoid these to prevent parse mismatches in
 /// check tests (where the shell parser is invoked on the command string).
+#[cfg(test)]
 const SHELL_KEYWORDS: &[&str] = &[
     "if", "then", "elif", "else", "fi", "for", "in", "while", "until", "do", "done", "case",
     "esac", "function",
 ];
 
+#[cfg(test)]
 fn is_shell_keyword(s: &str) -> bool {
     SHELL_KEYWORDS.contains(&s)
 }
 
 /// Generate a command name that is not a shell keyword.
+#[cfg(test)]
 fn any_command_name() -> impl Strategy<Value = String> {
     "[a-zA-Z][a-zA-Z0-9]{0,9}".prop_filter("not a shell keyword", |s| !is_shell_keyword(s))
 }
@@ -1427,7 +1433,6 @@ mod fold_properties {
     use super::*;
     use crate::eval::{self, EvalContext, Evaluator};
     use crate::fold::PureFold;
-    use may_i_core::ast::EffectResult;
 
     fn make_ctx<'a>(
         command: &'a str,

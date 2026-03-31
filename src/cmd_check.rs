@@ -55,6 +55,7 @@ pub fn cmd_check(
             serde_json::to_string(&output).expect("response serialization is infallible")
         );
     } else {
+        let term = output::Terminal::detect();
         let mut failures = Vec::new();
 
         for r in &results {
@@ -88,7 +89,7 @@ pub fn cmd_check(
             let icon = "✗".red().bold().to_string();
             let label = format!("{icon} {}", r.command.bold());
             let label_width = 2 + r.command.len();
-            output::print_separator("", Some((&label, label_width)));
+            output::print_separator("", Some((&label, label_width)), &term);
             println!();
 
             let loc = r.location.as_deref().unwrap_or("<unknown>");
@@ -113,17 +114,17 @@ pub fn cmd_check(
                 let quoted = format!("\"{reason}\"");
                 rows.push(output::ColRow::kv("reason", colorize_atom(&quoted, true)));
             }
-            output::render_elements("  ", &[output::Layout::Columns(rows)]);
+            output::render_elements("  ", &[output::Layout::Columns(rows)], &term);
 
             if !r.traces.is_empty() {
                 println!("\n  {}\n", "Trace".bold());
-                output::print_trace(&r.traces, &r.command, "  ");
+                output::print_trace(&r.traces, &r.command, "  ", &term);
             }
         }
 
         if !failures.is_empty() {
             println!();
-            output::print_separator("", None);
+            output::print_separator("", None, &term);
         }
         println!("\n{}\n", "Summary".bold());
         let icon = if failed > 0 {

@@ -10,8 +10,7 @@ use may_i_core::doc::{Doc, DocF, LayoutHint};
 use may_i_pp::{Format, colorize_atom, pretty, visible_len};
 
 pub use may_i_layout::{
-    ColAlign, ColContent, ColItem, ColRow, HRuleLabel, Layout, render_to_string, strip_ansi,
-    term_width, write_layout,
+    ColAlign, ColContent, ColItem, ColRow, HRuleLabel, Layout, Terminal, strip_ansi, write_layout,
 };
 
 use crate::annotation::{Ann, TraceEntry};
@@ -24,8 +23,8 @@ struct ColumnGeometry {
     left_width: usize,
 }
 
-fn detect_column_geometry() -> ColumnGeometry {
-    let usable = term_width().saturating_sub(2).max(MIN_TERM_WIDTH);
+fn detect_column_geometry(term: &Terminal) -> ColumnGeometry {
+    let usable = term.width.saturating_sub(2).max(MIN_TERM_WIDTH);
     ColumnGeometry {
         left_width: usable / 2,
     }
@@ -71,37 +70,48 @@ fn command_row(cmd: &str, _geom: &ColumnGeometry) -> Vec<ColRow> {
 
 // ── Separator (public convenience for cmd_check) ──────────────────
 
-pub fn print_separator(indent: &str, label: Option<(&str, usize)>) {
+pub fn print_separator(indent: &str, label: Option<(&str, usize)>, term: &Terminal) {
     let hrule_label = label.map(|(text, w)| HRuleLabel {
         text: text.to_string(),
         visible_width: w,
     });
     let layout = Layout::HRule(hrule_label);
     let indented = Layout::Indent(indent.len(), Box::new(layout));
-    write_layout(&mut std::io::stdout(), &indented);
+    write_layout(&mut std::io::stdout(), &indented, term);
 }
 
 // ── Public convenience for cmd_check ──────────────────────────────
 
-pub fn render_elements(indent: &str, elements: &[Layout]) {
+pub fn render_elements(indent: &str, elements: &[Layout], term: &Terminal) {
     let layout = Layout::Indent(indent.len(), Box::new(Layout::Stack(elements.to_vec())));
-    write_layout(&mut std::io::stdout(), &layout);
+    write_layout(&mut std::io::stdout(), &layout, term);
 }
 
 // ── Trace rendering ────────────────────────────────────────────────
 
-pub fn print_trace(entries: &[TraceEntry], command: &str, indent: &str) {
-    write_trace(&mut std::io::stdout(), entries, command, indent);
+pub fn print_trace(entries: &[TraceEntry], command: &str, indent: &str, term: &Terminal) {
+    write_trace(&mut std::io::stdout(), entries, command, indent, term);
 }
 
-pub fn write_trace(w: &mut impl Write, entries: &[TraceEntry], command: &str, indent: &str) {
-    let layout = trace_to_layout(entries, command, indent.len());
-    write_layout(w, &layout);
+pub fn write_trace(
+    w: &mut impl Write,
+    entries: &[TraceEntry],
+    command: &str,
+    indent: &str,
+    term: &Terminal,
+) {
+    let layout = trace_to_layout(entries, command, indent.len(), term);
+    write_layout(w, &layout, term);
 }
 
 /// Convert trace entries into a declarative layout tree.
-pub fn trace_to_layout(entries: &[TraceEntry], command: &str, indent: usize) -> Layout {
-    let geom = detect_column_geometry();
+pub fn trace_to_layout(
+    entries: &[TraceEntry],
+    command: &str,
+    indent: usize,
+    term: &Terminal,
+) -> Layout {
+    let geom = detect_column_geometry(term);
     let mut children: Vec<Layout> = Vec::new();
     let mut first = true;
 
@@ -636,11 +646,20 @@ fn truncate_unevaluated(doc: &Doc<Option<Ann>>, keep: usize) -> Doc<Option<Ann>>
 }
 
 fn dim_unevaluated(doc: Doc<Option<Ann>>) -> Doc<Option<Ann>> {
-    dim_unevaluated_inner(doc).0
+    dim_unevaluated_inner(doc, false).0
 }
 
-fn dim_unevaluated_inner(doc: Doc<Option<Ann>>) -> (Doc<Option<Ann>>, usize) {
+/// Recursively dim nodes that were never evaluated.
+///
+/// `ancestor_annotated` is true when a parent node carries an annotation,
+/// meaning this subtree is part of an evaluated expression and should stay
+/// syntax-highlighted even if the children themselves have no annotations.
+fn dim_unevaluated_inner(
+    doc: Doc<Option<Ann>>,
+    ancestor_annotated: bool,
+) -> (Doc<Option<Ann>>, usize) {
     let self_score = usize::from(doc.ann.is_some());
+    let children_inherit = ancestor_annotated || self_score > 0;
     match doc.node {
         DocF::Atom(_) => (doc, self_score),
         DocF::List(children) => {
@@ -648,12 +667,12 @@ fn dim_unevaluated_inner(doc: Doc<Option<Ann>>) -> (Doc<Option<Ann>>, usize) {
             let children: Vec<_> = children
                 .into_iter()
                 .map(|c| {
-                    let (c, n) = dim_unevaluated_inner(c);
+                    let (c, n) = dim_unevaluated_inner(c, children_inherit);
                     total += n;
                     c
                 })
                 .collect();
-            let dimmed = doc.dimmed || total == 0;
+            let dimmed = doc.dimmed || (!ancestor_annotated && total == 0);
             (
                 Doc {
                     ann: doc.ann,
@@ -669,12 +688,12 @@ fn dim_unevaluated_inner(doc: Doc<Option<Ann>>) -> (Doc<Option<Ann>>, usize) {
             let children: Vec<_> = children
                 .into_iter()
                 .map(|c| {
-                    let (c, n) = dim_unevaluated_inner(c);
+                    let (c, n) = dim_unevaluated_inner(c, children_inherit);
                     total += n;
                     c
                 })
                 .collect();
-            let dimmed = doc.dimmed || total == 0;
+            let dimmed = doc.dimmed || (!ancestor_annotated && total == 0);
             (
                 Doc {
                     ann: doc.ann,

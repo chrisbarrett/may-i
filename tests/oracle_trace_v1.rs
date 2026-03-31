@@ -59,12 +59,9 @@ fn parse_facts(raw_facts: &[String]) -> may_i_core::ContextFacts {
 
 /// Render trace output for a command evaluation into a buffer.
 fn render_output(command: &str, config: &may_i_core::ast::Config, facts: &[String]) -> Vec<u8> {
-    // Pin terminal width and force colour output.
-    unsafe {
-        std::env::set_var("COLUMNS", "80");
-    }
     colored::control::set_override(true);
 
+    let term = output::Terminal::new(80);
     let context = parse_facts(facts);
     let (result, traces, colored_command) = evaluate_segments(command, config, &context);
     let display_path = output::shorten_home(&fixture_dir().join("config.lisp"));
@@ -77,6 +74,7 @@ fn render_output(command: &str, config: &may_i_core::ast::Config, facts: &[Strin
         &colored_command,
         &result,
         &display_path,
+        &term,
     );
     buf
 }

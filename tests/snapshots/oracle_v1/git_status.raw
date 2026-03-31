@@ -14,16 +14,16 @@
             [2m([0m[34margs[0m [2m([0mor [2m([0m[34mpositional[0m                                  [2m│[0m
                         [32m"remote"[0m[2m)[0m                                  [2m│[0m [2m"status" = "remote" [0m[2m→[0m [33mno[0m
                       [2m([0m[34mpositional[0m                                  [2m│[0m
-                        [2m([0m[2mor[0m [2m"clean"[0m                                [2m│[0m [2m"status" = "clean" [0m[2m→[0m [33mno[0m
-                            [2m"gc"[0m                                   [2m│[0m [2m"status" = "gc" [0m[2m→[0m [33mno[0m
-                            [2m"push"[0m[2m)[0m[2m)[0m[2m)[0m[2m)[0m                             [2m│[0m [2m"status" = "push" [0m[2m→[0m [33mno[0m
+                        [2m([0mor [32m"clean"[0m                                [2m│[0m [2m"status" = "clean" [0m[2m→[0m [33mno[0m
+                            [32m"gc"[0m                                   [2m│[0m [2m"status" = "gc" [0m[2m→[0m [33mno[0m
+                            [32m"push"[0m[2m)[0m[2m)[0m[2m)[0m[2m)[0m                             [2m│[0m [2m"status" = "push" [0m[2m→[0m [33mno[0m
             [2m([0m[2meffect[0m                                                [2m│[0m
               [2m:ask[0m                                                 [2m│[0m
               [2m"Dangerous git operation"[0m[2m)[0m[2m)[0m                          [2m│[0m
                                                                    [2m│[0m
   [2m52: [0m[2m([0m[34mrule[0m                                                        [2m│[0m
         [2m([0m[34mcommand[0m [32m"git"[0m[2m)[0m                                            [2m│[0m
-        [2m([0m[2mcontext[0m                                                   [2m│[0m
+        [2m([0mcontext                                                   [2m│[0m
           [2m([0m[2mor[0m                                                      [2m│[0m
             [2m([0m[2mhas[0m                                                   [2m│[0m
               [2m[[0m[2m:claude-code/permission-mode[0m                        [2m│[0m
@@ -31,10 +31,10 @@
             [2m([0m[2mhas[0m                                                   [2m│[0m
               [2m[[0m[2m:opencode/agent[0m [2m"plan"[0m[2m][0m[2m)[0m[2m)[0m[2m)[0m                          [2m│[0m
         [2m([0m[34margs[0m [2m([0mor                                                  [2m│[0m
-                [2m([0m[34mpositional[0m [2m([0m[2mor[0m [2m"switch"[0m                           [2m│[0m [2m"status" = "switch" [0m[2m→[0m [33mno[0m
-                                [2m"restore"[0m                          [2m│[0m [2m"status" = "restore" [0m[2m→[0m [33mno[0m
+                [2m([0m[34mpositional[0m [2m([0mor [32m"switch"[0m                           [2m│[0m [2m"status" = "switch" [0m[2m→[0m [33mno[0m
+                                [32m"restore"[0m                          [2m│[0m [2m"status" = "restore" [0m[2m→[0m [33mno[0m
                                 [2m…[0m                                  [2m│[0m
-                                [2m"clone"[0m[2m)[0m[2m)[0m                          [2m│[0m [2m"status" = "clone" [0m[2m→[0m [33mno[0m
+                                [32m"clone"[0m[2m)[0m[2m)[0m                          [2m│[0m [2m"status" = "clone" [0m[2m→[0m [33mno[0m
                 [2m([0m[34mpositional[0m [32m"checkout"[0m                             [2m│[0m [2m"status" = "checkout" [0m[2m→[0m [33mno[0m
                             [32m"--"[0m[2m)[0m                                  [2m│[0m [2m"status" = "--" [0m[2m→[0m [33mno[0m
                 [2m([0m[34mpositional[0m [32m"worktree"[0m[2m)[0m[2m)[0m[2m)[0m                          [2m│[0m [2m"status" = "worktree" [0m[2m→[0m [33mno[0m
@@ -51,4 +51,4 @@
 
   [2m→[0m [1;32m:allow[0m
 
-  [2mconfig:[0m [2m~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp[0m
+  [2mconfig:[0m [2mtests/fixtures/v1/config.lisp[0m

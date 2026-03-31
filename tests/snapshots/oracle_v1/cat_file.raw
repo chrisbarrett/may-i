@@ -12,4 +12,4 @@
 
   [2m→[0m [1;32m:allow[0m [32m"Read-only access"[0m
 
-  [2mconfig:[0m [2m~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp[0m
+  [2mconfig:[0m [2mtests/fixtures/v1/config.lisp[0m

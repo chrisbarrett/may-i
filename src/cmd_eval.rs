@@ -63,6 +63,7 @@ pub fn cmd_eval(
             serde_json::to_string(&json).expect("response serialization is infallible")
         );
     } else {
+        let term = output::Terminal::detect();
         let (result, traces, colored_command) = evaluate_segments(command, &config, &context);
         let display_path = output::shorten_home(&config_file);
         write_eval_output(
@@ -72,6 +73,7 @@ pub fn cmd_eval(
             &colored_command,
             &result,
             &display_path,
+            &term,
         );
     }
 
@@ -86,10 +88,11 @@ pub fn write_eval_output(
     colored_command: &str,
     result: &engine::EvalResult,
     display_path: &str,
+    term: &output::Terminal,
 ) {
     if !traces.is_empty() {
         let _ = writeln!(w, "\n{}\n", "Trace".bold());
-        output::write_trace(w, traces, command, "  ");
+        output::write_trace(w, traces, command, "  ", term);
     }
 
     let _ = writeln!(w, "\n{}\n", "Result".bold());
