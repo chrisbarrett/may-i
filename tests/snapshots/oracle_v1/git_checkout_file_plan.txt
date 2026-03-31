@@ -29,7 +29,7 @@ Trace
             (has                                                   │ no
               [:claude-code/permission-mode                        │
                 "plan"])                                           │
-            (has                                                   │ "plan" -> yes
+            (has                                                   │ "plan" → yes
               [:opencode/agent "plan"])))                          │
         (args (or (positional (or                                  │
                                 "switch"                           │ "checkout" = "switch" → no

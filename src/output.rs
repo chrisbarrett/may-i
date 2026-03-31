@@ -445,7 +445,7 @@ fn format_annotation(doc: &Doc<Option<Ann>>, ann: &Ann) -> Option<(String, Strin
                 Some(values) if !values.is_empty() => {
                     let observed_str = render_observed_value(&values[0]);
                     let arrow = if *matched { "yes" } else { "no" };
-                    Some((needle, format!("{observed_str} -> {arrow}")))
+                    Some((needle, format!("{observed_str} → {arrow}")))
                 }
                 _ => Some((needle, verdict(*matched))),
             }
@@ -883,20 +883,6 @@ fn colorize_right(s: &str) -> String {
             other => other.to_string(),
         };
         format!("{}{} {colored_result}", before.dimmed(), "→".dimmed())
-    } else if s.contains("->") {
-        // Fact query annotations use "->" instead of "→"
-        if let Some(arrow_pos) = s.find("->") {
-            let before = &s[..arrow_pos];
-            let after = s[arrow_pos + 2..].trim();
-            let colored_result = match after {
-                "yes" => "yes".green().bold().to_string(),
-                "no" => "no".yellow().to_string(),
-                other => other.to_string(),
-            };
-            format!("{}{} {colored_result}", before.dimmed(), "->".dimmed())
-        } else {
-            s.dimmed().to_string()
-        }
     } else if let Some(rest) = s.strip_prefix("facts += ") {
         // Bind annotation: facts += :key "value"
         // Colorize keyword and string to match expression syntax colors

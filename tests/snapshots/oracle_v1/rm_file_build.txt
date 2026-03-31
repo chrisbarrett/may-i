@@ -22,7 +22,7 @@ Trace
                    (has                            │ no
                      [:claude-code/permission-mode │
                        "acceptEdits"])             │
-                   (has [:opencode/agent           │ "build" -> yes
+                   (has [:opencode/agent           │ "build" → yes
                           "build"]))               │
                  (anywhere "-r"                    │
                            "--recursive"))         │
@@ -35,7 +35,7 @@ Trace
             (has                                   │ no
               [:claude-code/permission-mode        │
                 "acceptEdits"])                    │
-            (has [:opencode/agent                  │ "build" -> yes
+            (has [:opencode/agent                  │ "build" → yes
                    "build"])))                     │
         (effect                                    │ → :allow "Non-recursive delete is allowed"
           :allow                                   │
