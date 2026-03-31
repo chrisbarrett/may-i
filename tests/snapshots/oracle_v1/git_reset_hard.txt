@@ -1,6 +1,7 @@
 
 Trace
 
+                              command │ git reset --hard
   43: (rule (command "git")           │
             (args (and (positional    │
                          "reset")     │ "reset" = "reset" → yes
@@ -16,4 +17,4 @@ Result
 
   → :ask "Dangerous git reset"
 
-  config: tests/fixtures/v1/config.lisp
+  config: ~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp

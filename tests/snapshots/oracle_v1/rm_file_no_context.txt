@@ -1,6 +1,7 @@
 
 Trace
 
+                                   command │ rm foo
   24: (rule                                │
         (command "rm")                     │
         (args (and (anywhere               │
@@ -45,4 +46,4 @@ Result
 
   → :ask "Rules for `rm` exist but context or arguments did not match any patterns"
 
-  config: tests/fixtures/v1/config.lisp
+  config: ~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp

@@ -1,6 +1,7 @@
 
 Trace
 
+                                            command │ brew install foo
   74: (rule                                         │
         (command "brew")                            │
         (args                                       │
@@ -19,4 +20,4 @@ Result
 
   → :deny "Package installation not allowed"
 
-  config: tests/fixtures/v1/config.lisp
+  config: ~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp

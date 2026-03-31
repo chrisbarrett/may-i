@@ -1,6 +1,7 @@
 
 Trace
 
+                              command │ git status
   43: (rule (command "git")           │
             (args (and (positional    │
                          "reset")     │ "status" = "reset" → no
@@ -50,4 +51,4 @@ Result
 
   → :allow
 
-  config: tests/fixtures/v1/config.lisp
+  config: ~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp

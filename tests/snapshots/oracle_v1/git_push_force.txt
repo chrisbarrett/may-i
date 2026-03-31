@@ -1,6 +1,7 @@
 
 Trace
 
+                              command │ git push --force
   43: (rule (command "git")           │
             (args (and (positional    │
                          "reset")     │ "push" = "reset" → no
@@ -26,4 +27,4 @@ Result
 
   → :ask "Dangerous git operation"
 
-  config: tests/fixtures/v1/config.lisp
+  config: ~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp

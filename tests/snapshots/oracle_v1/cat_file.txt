@@ -1,6 +1,7 @@
 
 Trace
 
+                                 command │ cat foo
   90: (rule (command (or "cat" …))       │
             (effect :allow               │ → :allow "Read-only access"
                     "Read-only access")) │
@@ -11,4 +12,4 @@ Result
 
   → :allow "Read-only access"
 
-  config: tests/fixtures/v1/config.lisp
+  config: ~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp

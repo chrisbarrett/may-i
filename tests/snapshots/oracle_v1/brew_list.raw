@@ -1,6 +1,7 @@
 
 [1mTrace[0m
 
+                                 [2mcommand[0m [2m│[0m [1mbrew list[0m
   [2m74: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"brew"[0m[2m)[0m             [2m│[0m
             [2m([0m[34margs[0m [2m([0m[34mcond[0m                  [2m│[0m
                     [2m([0m[2m([0m[34mpositional[0m         [2m│[0m
@@ -17,4 +18,4 @@
 
   [2m→[0m [1;32m:allow[0m
 
-  [2mconfig:[0m [2mtests/fixtures/v1/config.lisp[0m
+  [2mconfig:[0m [2m~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp[0m

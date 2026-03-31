@@ -73,6 +73,7 @@ fn render_output(command: &str, config: &may_i_core::ast::Config, facts: &[Strin
     write_eval_output(
         &mut buf,
         &traces,
+        command,
         &context,
         &colored_command,
         &result,

@@ -1,6 +1,7 @@
 
 Trace
 
+                                     command │ mv -f a b
   83: (rule                                  │
         (command "mv")                       │
         (args                                │
@@ -17,4 +18,4 @@ Result
 
   → :ask "Force move is destructive"
 
-  config: tests/fixtures/v1/config.lisp
+  config: ~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp

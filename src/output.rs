@@ -133,23 +133,25 @@ pub fn render_elements(indent: &str, elements: &[Layout]) {
 
 // ── Trace rendering ────────────────────────────────────────────────
 
-pub fn print_trace(entries: &[TraceEntry], indent: &str) {
-    write_trace(&mut std::io::stdout(), entries, &[], indent);
+pub fn print_trace(entries: &[TraceEntry], command: &str, indent: &str) {
+    write_trace(&mut std::io::stdout(), entries, command, &[], indent);
 }
 
 pub fn write_trace(
     w: &mut impl Write,
     entries: &[TraceEntry],
+    command: &str,
     initial_facts: &[(String, String)],
     indent: &str,
 ) {
-    let layout = trace_to_layout(entries, initial_facts, indent.len());
+    let layout = trace_to_layout(entries, command, initial_facts, indent.len());
     write_layout(w, &layout);
 }
 
 /// Convert trace entries into a declarative layout tree.
 pub fn trace_to_layout(
     entries: &[TraceEntry],
+    command: &str,
     initial_facts: &[(String, String)],
     indent: usize,
 ) -> Layout {
@@ -162,7 +164,7 @@ pub fn trace_to_layout(
         .iter()
         .any(|e| matches!(e, TraceEntry::SegmentHeader { .. }));
 
-    // Determine which facts to prepend to the first rule in each section.
+    // Determine which facts/command to prepend to the first rule in each section.
     // For single-command traces, initial facts go on the first rule.
     // For compound commands, initial facts go on the first rule after each segment header.
     let mut pending_facts: Option<&[(String, String)]> =
@@ -171,6 +173,9 @@ pub fn trace_to_layout(
         } else {
             None
         };
+    // Show the command on the first rule of each section.
+    // For compound commands, this gets reset from each segment header.
+    let mut pending_command: Option<&str> = if !has_segments { Some(command) } else { None };
 
     for entry in entries {
         match entry {
@@ -180,6 +185,7 @@ pub fn trace_to_layout(
                     children.push(Layout::Blank);
                 }
                 children.push(segment_header_layout(command, *decision));
+                pending_command = Some(command);
                 if !initial_facts.is_empty() {
                     pending_facts = Some(initial_facts);
                 }
@@ -195,17 +201,19 @@ pub fn trace_to_layout(
                     children.push(Layout::Blank);
                 }
                 let mut rows = Vec::new();
+                // Show the command being evaluated.
+                if let Some(cmd) = pending_command.take() {
+                    rows.extend(command_row(cmd, &geom));
+                } else if let Some(cmd) = inner_command {
+                    rows.extend(command_row(cmd, &geom));
+                }
                 // Prepend any pending initial/segment facts.
                 if let Some(pf) = pending_facts.take() {
                     rows.extend(facts_rows(pf, &geom));
                 }
-                // Prepend per-rule facts (from recursive eval).
+                // Per-rule facts (from recursive eval).
                 if !facts.is_empty() {
                     rows.extend(facts_rows(facts, &geom));
-                }
-                // Show the inner command being evaluated in recursive may-i.
-                if let Some(cmd) = inner_command {
-                    rows.extend(command_row(cmd, &geom));
                 }
                 rows.extend(render_annotated_rule(doc, *line, &geom));
                 if !rows.is_empty() {

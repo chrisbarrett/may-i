@@ -1,6 +1,7 @@
 
 Trace
 
+                                  command │ mv a b
   83: (rule (command "mv")                │
             (args (cond                   │
                     ((anywhere "-f"       │
@@ -15,4 +16,4 @@ Result
 
   → :allow
 
-  config: tests/fixtures/v1/config.lisp
+  config: ~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp

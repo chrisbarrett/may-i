@@ -1,14 +1,15 @@
 
 Trace
 
+                                command │ ssh prod "rm -rf /"
   107: (rule (command "ssh")            │
              (args (positional          │
                      [:ssh/host *]      │ facts += :ssh/host "prod"
                      (may-i (positional │ `rm -rf /` → :deny "Recursive deletion from root"
                               *)))))    │
 
-                                     facts │ :ssh/host "prod", :via "ssh"
                                    command │ rm -rf /
+                                     facts │ :ssh/host "prod", :via "ssh"
   24: (rule                                │
         (command "rm")                     │
         (args (and (anywhere "-r")         │ "-r" ∈ {"-r", "-f", "/"} → yes

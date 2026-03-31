@@ -9,4 +9,4 @@ Result
 
   → :ask "No rule for command `unknown-cmd`"
 
-  config: tests/fixtures/v1/config.lisp
+  config: ~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp

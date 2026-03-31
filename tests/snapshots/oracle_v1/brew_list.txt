@@ -1,6 +1,7 @@
 
 Trace
 
+                                 command │ brew list
   74: (rule (command "brew")             │
             (args (cond                  │
                     ((positional         │
@@ -17,4 +18,4 @@ Result
 
   → :allow
 
-  config: tests/fixtures/v1/config.lisp
+  config: ~/src/chrisbarrett/may-i/tests/fixtures/v1/config.lisp

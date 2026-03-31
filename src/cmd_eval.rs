@@ -69,6 +69,7 @@ pub fn cmd_eval(
         write_eval_output(
             &mut std::io::stdout(),
             &traces,
+            command,
             &context,
             &colored_command,
             &result,
@@ -83,6 +84,7 @@ pub fn cmd_eval(
 pub fn write_eval_output(
     w: &mut impl Write,
     traces: &[TraceEntry],
+    command: &str,
     initial_facts: &may_i_core::ContextFacts,
     colored_command: &str,
     result: &engine::EvalResult,
@@ -94,7 +96,7 @@ pub fn write_eval_output(
             .iter()
             .flat_map(|(k, vs)| vs.iter().map(move |v| (k.to_string(), v.clone())))
             .collect();
-        output::write_trace(w, traces, &fact_pairs, "  ");
+        output::write_trace(w, traces, command, &fact_pairs, "  ");
     }
 
     let _ = writeln!(w, "\n{}\n", "Result".bold());

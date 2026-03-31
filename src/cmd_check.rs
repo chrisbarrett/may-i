@@ -117,7 +117,7 @@ pub fn cmd_check(
 
             if !r.traces.is_empty() {
                 println!("\n  {}\n", "Trace".bold());
-                output::print_trace(&r.traces, "  ");
+                output::print_trace(&r.traces, &r.command, "  ");
             }
         }
 
