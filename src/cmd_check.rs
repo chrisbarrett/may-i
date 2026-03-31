@@ -103,17 +103,17 @@ pub fn cmd_check(
             let expected_kw = format!(":{}", r.expected);
             let actual_kw = format!(":{}", r.actual);
             let mut rows = vec![
-                output::Row::kv("expected", output::colorize_decision_keyword(&expected_kw)),
-                output::Row::kv("actual", output::colorize_decision_keyword(&actual_kw)),
+                output::ColRow::kv("expected", output::colorize_decision_keyword(&expected_kw)),
+                output::ColRow::kv("actual", output::colorize_decision_keyword(&actual_kw)),
             ];
             if r.context.iter().next().is_some() {
-                rows.push(output::Row::kv("context", render_context(&r.context)));
+                rows.push(output::ColRow::kv("context", render_context(&r.context)));
             }
             if let Some(reason) = &r.reason {
                 let quoted = format!("\"{reason}\"");
-                rows.push(output::Row::kv("reason", colorize_atom(&quoted, true)));
+                rows.push(output::ColRow::kv("reason", colorize_atom(&quoted, true)));
             }
-            output::render_elements("  ", &[output::Element::Table(rows)]);
+            output::render_elements("  ", &[output::Layout::Columns(rows)]);
 
             if !r.traces.is_empty() {
                 println!("\n  {}\n", "Trace".bold());

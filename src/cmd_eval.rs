@@ -69,6 +69,7 @@ pub fn cmd_eval(
         write_eval_output(
             &mut std::io::stdout(),
             &traces,
+            &context,
             &colored_command,
             &result,
             &display_path,
@@ -82,13 +83,18 @@ pub fn cmd_eval(
 pub fn write_eval_output(
     w: &mut impl Write,
     traces: &[TraceEntry],
+    initial_facts: &may_i_core::ContextFacts,
     colored_command: &str,
     result: &engine::EvalResult,
     display_path: &str,
 ) {
     if !traces.is_empty() {
         let _ = writeln!(w, "\n{}\n", "Trace".bold());
-        output::write_trace(w, traces, "  ");
+        let fact_pairs: Vec<(String, String)> = initial_facts
+            .iter()
+            .flat_map(|(k, vs)| vs.iter().map(move |v| (k.to_string(), v.clone())))
+            .collect();
+        output::write_trace(w, traces, &fact_pairs, "  ");
     }
 
     let _ = writeln!(w, "\n{}\n", "Result".bold());

@@ -1,6 +1,9 @@
 
 Trace
 
+                          ┌─facts───────────────────┐
+                          │ :opencode/agent "build" │
+                          └─────────────────────────┘
   24: (rule                                │
         (command "rm")                     │
         (args (and (anywhere               │

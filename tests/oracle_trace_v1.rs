@@ -70,7 +70,14 @@ fn render_output(command: &str, config: &may_i_core::ast::Config, facts: &[Strin
     let display_path = output::shorten_home(&fixture_dir().join("config.lisp"));
 
     let mut buf = Vec::new();
-    write_eval_output(&mut buf, &traces, &colored_command, &result, &display_path);
+    write_eval_output(
+        &mut buf,
+        &traces,
+        &context,
+        &colored_command,
+        &result,
+        &display_path,
+    );
     buf
 }
 

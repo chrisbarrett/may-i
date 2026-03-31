@@ -1,6 +1,9 @@
 
 Trace
 
+                           ┌─facts──────────────────┐
+                           │ :opencode/agent "plan" │
+                           └────────────────────────┘
   43: (rule (command "git")           │
             (args (and (positional    │
                          "reset")     │ "checkout" = "reset" → no
