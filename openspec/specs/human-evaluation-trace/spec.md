@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Human trace renders compact evidence for context fact queries
-The human-readable evaluation trace SHALL preserve the written `fact?` query on the left and summarize context-fact evidence on the right using a single compact annotation. Presence queries MUST render only `yes` or `no`. Exact scalar queries MUST render `yes` on success, the observed scalar value on mismatch, and `no` when no scalar value is available. Pattern-based scalar queries MUST render the observed scalar value with the final verdict whenever a scalar value is available, and `no` otherwise. (CHANGED: syntax updated from `has` to `fact?`)
+The human-readable evaluation trace SHALL preserve the written `fact?` query on the left and summarize context-fact evidence on the right using a single compact annotation. Presence queries MUST render only `yes` or `no`. Exact scalar queries MUST render `yes` on success, the observed scalar value on mismatch, and `no` when no scalar value is available. Pattern-based scalar queries MUST render the observed scalar value with the final verdict whenever a scalar value is available, and `no` otherwise. (CHANGED: annotation data now carried via `Ann` enum produced by `TracingFold` instead of `EvalAnn` produced by `annotate.rs`)
 
 #### Scenario: Presence query renders only the verdict
 - **WHEN** a rendered trace includes `(fact? :via/ssh)` and the context contains `:via/ssh`
@@ -20,7 +20,7 @@ The human-readable evaluation trace SHALL preserve the written `fact?` query on 
 - **THEN** the right column for that query is `no`
 
 ### Requirement: Human trace places fact evidence on the decisive query line
-When a `fact?` query wraps across multiple rendered lines, the human-readable trace SHALL place the single right-column annotation on the line containing the decisive leaf that finalized the query result. Unevaluated branches from short-circuited value patterns MUST remain visible and dimmed. (CHANGED: syntax updated from `has` to `fact?`)
+When a `fact?` query wraps across multiple rendered lines, the human-readable trace SHALL place the single right-column annotation on the line containing the decisive leaf that finalized the query result. Unevaluated branches from short-circuited value patterns MUST remain visible and dimmed. (CHANGED: annotation placement logic now operates on `Doc<Option<Ann>>` trees from `TracingFold` instead of `Doc<Option<EvalAnn>>` from `annotate.rs`)
 
 #### Scenario: Wrapped regex query annotates the regex line
 - **WHEN** `(fact? [:ssh/host (regex "^prod-")])` wraps across multiple rendered lines and the context contains `:ssh/host` = `{"prod-1"}`
@@ -36,7 +36,7 @@ When a `fact?` query wraps across multiple rendered lines, the human-readable tr
 - **THEN** the annotation `no` appears on the rendered line nearest the key/value part of the query rather than on the closing delimiter line
 
 ### Requirement: JSON trace remains explicit for context fact queries
-Machine-readable trace output SHALL preserve full detail for `fact?` evaluation even when the human-readable trace is compressed. JSON annotations MUST distinguish presence, exact scalar, and pattern-based `fact?` queries; include canonicalized query source strings; and record explicit failure reasons such as `absent`, `no_matching_member`, and `pattern_mismatch`. Pattern-based JSON annotations MUST include both a structured pattern AST and a nested evaluation tree containing unevaluated children marked with `evaluated: false`. (CHANGED: syntax updated from `has` to `fact?`; failure reason `present_without_scalar` replaced by `no_matching_member` for set-based model)
+Machine-readable trace output SHALL preserve full detail for `fact?` evaluation even when the human-readable trace is compressed. JSON annotations MUST distinguish presence, exact scalar, and pattern-based `fact?` queries; include canonicalized query source strings; and record explicit failure reasons such as `absent`, `no_matching_member`, and `pattern_mismatch`. Pattern-based JSON annotations MUST include both a structured pattern AST and a nested evaluation tree containing unevaluated children marked with `evaluated: false`. (CHANGED: JSON annotations now serialised from `Ann` enum instead of `EvalAnn`)
 
 #### Scenario: Exact scalar absence records an explicit failure reason
 - **WHEN** JSON trace output includes evaluation for `(fact? [:opencode/agent "build"])` and the context does not include `:opencode/agent`
