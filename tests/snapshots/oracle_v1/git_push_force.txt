@@ -1,15 +1,15 @@
 
 Trace
 
-                              command │ git push --force
-  43: (rule (command "git")           │
-            (args (and (positional    │
-                         "reset")     │ "push" = "reset" → no
-                       …))            │
-            (effect                   │
-              :ask                    │
-              "Dangerous git reset")) │
-
+                                  command │ git push --force
+  43: (rule (command "git")               │
+            (args (and (positional        │
+                         "reset")         │ "push" = "reset" → no
+                       …))                │
+            (effect                       │
+              :ask                        │
+              "Dangerous git reset"))     │
+                                          │
   47: (rule (command "git")               │
             (args (or (positional         │
                         "remote")         │ "push" = "remote" → no

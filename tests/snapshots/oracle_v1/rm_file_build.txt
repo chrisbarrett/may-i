@@ -1,18 +1,18 @@
 
 Trace
 
-                                   command │ rm foo
-                                     facts │ :opencode/agent "build"
-  24: (rule                                │
-        (command "rm")                     │
-        (args (and (anywhere               │
-                     "-r"                  │ "-r" ∈ {"foo"} → no
-                     "--recursive")        │ "--recursive" ∈ {"foo"} → no
-                   …))                     │
-        (effect                            │
-          :deny                            │
-          "Recursive deletion from root")) │
-
+                                           command │ rm foo
+                                             facts │ :opencode/agent "build"
+  24: (rule                                        │
+        (command "rm")                             │
+        (args (and (anywhere                       │
+                     "-r"                          │ "-r" ∈ {"foo"} → no
+                     "--recursive")                │ "--recursive" ∈ {"foo"} → no
+                   …))                             │
+        (effect                                    │
+          :deny                                    │
+          "Recursive deletion from root"))         │
+                                                   │
   29: (rule                                        │
         (command "rm")                             │
         (args                                      │
@@ -27,19 +27,19 @@ Trace
                  (anywhere "-r"                    │
                            "--recursive"))         │
                 <cond-effect>))))                  │
-
-  37: (rule                                   │
-        (command "rm")                        │
-        (context                              │
-          (or                                 │
-            (has                              │ no
-              [:claude-code/permission-mode   │
-                "acceptEdits"])               │
-            (has [:opencode/agent             │ "build" -> yes
-                   "build"])))                │
-        (effect                               │ → :allow "Non-recursive delete is allowed"
-          :allow                              │
-          "Non-recursive delete is allowed")) │
+                                                   │
+  37: (rule                                        │
+        (command "rm")                             │
+        (context                                   │
+          (or                                      │
+            (has                                   │ no
+              [:claude-code/permission-mode        │
+                "acceptEdits"])                    │
+            (has [:opencode/agent                  │ "build" -> yes
+                   "build"])))                     │
+        (effect                                    │ → :allow "Non-recursive delete is allowed"
+          :allow                                   │
+          "Non-recursive delete is allowed"))      │
 
 Result
 

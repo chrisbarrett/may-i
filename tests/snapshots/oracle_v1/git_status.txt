@@ -1,26 +1,26 @@
 
 Trace
 
-                              command │ git status
-  43: (rule (command "git")           │
-            (args (and (positional    │
-                         "reset")     │ "status" = "reset" → no
-                       …))            │
-            (effect                   │
-              :ask                    │
-              "Dangerous git reset")) │
-
-  47: (rule (command "git")               │
-            (args (or (positional         │
-                        "remote")         │ "status" = "remote" → no
-                      (positional         │
-                        (or "clean"       │ "status" = "clean" → no
-                            "gc"          │ "status" = "gc" → no
-                            "push"))))    │ "status" = "push" → no
-            (effect                       │
-              :ask                        │
-              "Dangerous git operation")) │
-
+                                                           command │ git status
+  43: (rule (command "git")                                        │
+            (args (and (positional                                 │
+                         "reset")                                  │ "status" = "reset" → no
+                       …))                                         │
+            (effect                                                │
+              :ask                                                 │
+              "Dangerous git reset"))                              │
+                                                                   │
+  47: (rule (command "git")                                        │
+            (args (or (positional                                  │
+                        "remote")                                  │ "status" = "remote" → no
+                      (positional                                  │
+                        (or "clean"                                │ "status" = "clean" → no
+                            "gc"                                   │ "status" = "gc" → no
+                            "push"))))                             │ "status" = "push" → no
+            (effect                                                │
+              :ask                                                 │
+              "Dangerous git operation"))                          │
+                                                                   │
   52: (rule                                                        │
         (command "git")                                            │
         (context                                                   │
@@ -41,9 +41,9 @@ Trace
         (effect                                                    │
           :ask                                                     │
           "git mutation requires approval in non-writing agents")) │
-
-  60: (rule (command "git")  │
-            (effect :allow)) │ → :allow
+                                                                   │
+  60: (rule (command "git")                                        │
+            (effect :allow))                                       │ → :allow
 
 Result
 

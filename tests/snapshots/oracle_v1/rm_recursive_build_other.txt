@@ -1,16 +1,16 @@
 
 Trace
 
-                                   command │ rm -r /other/path
-                                     facts │ :opencode/agent "build"
-  24: (rule                                │
-        (command "rm")                     │
-        (args (and (anywhere "-r")         │ "-r" ∈ {"-r", "/other/path"} → yes
-                   (anywhere "/")))        │ "/" ∈ {"-r", "/other/path"} → no
-        (effect                            │
-          :deny                            │
-          "Recursive deletion from root")) │
-
+                                                            command │ rm -r /other/path
+                                                              facts │ :opencode/agent "build"
+  24: (rule                                                         │
+        (command "rm")                                              │
+        (args (and (anywhere "-r")                                  │ "-r" ∈ {"-r", "/other/path"} → yes
+                   (anywhere "/")))                                 │ "/" ∈ {"-r", "/other/path"} → no
+        (effect                                                     │
+          :deny                                                     │
+          "Recursive deletion from root"))                          │
+                                                                    │
   29: (rule                                                         │
         (command "rm")                                              │
         (args                                                       │

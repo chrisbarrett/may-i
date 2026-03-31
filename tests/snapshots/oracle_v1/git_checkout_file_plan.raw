@@ -1,27 +1,27 @@
 
 [1mTrace[0m
 
-                              [2mcommand[0m [2m│[0m [1mgit checkout -- main.ts[0m
-                                [2mfacts[0m [2m│[0m [38;2;120;120;255m:opencode/agent[0m [32m"plan"[0m
-  [2m43: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"git"[0m[2m)[0m           [2m│[0m
-            [2m([0m[34margs[0m [2m([0mand [2m([0m[34mpositional[0m    [2m│[0m
-                         [32m"reset"[0m[2m)[0m     [2m│[0m [2m"checkout" = "reset" [0m[2m→[0m [33mno[0m
-                       [2m…[0m[2m)[0m[2m)[0m            [2m│[0m
-            [2m([0m[2meffect[0m                   [2m│[0m
-              [2m:ask[0m                    [2m│[0m
-              [2m"Dangerous git reset"[0m[2m)[0m[2m)[0m [2m│[0m
-
-  [2m47: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"git"[0m[2m)[0m               [2m│[0m
-            [2m([0m[34margs[0m [2m([0mor [2m([0m[34mpositional[0m         [2m│[0m
-                        [32m"remote"[0m[2m)[0m         [2m│[0m [2m"checkout" = "remote" [0m[2m→[0m [33mno[0m
-                      [2m([0m[34mpositional[0m         [2m│[0m
-                        [2m([0m[2mor[0m [2m"clean"[0m       [2m│[0m [2m"checkout" = "clean" [0m[2m→[0m [33mno[0m
-                            [2m"gc"[0m          [2m│[0m [2m"checkout" = "gc" [0m[2m→[0m [33mno[0m
-                            [2m"push"[0m[2m)[0m[2m)[0m[2m)[0m[2m)[0m    [2m│[0m [2m"checkout" = "push" [0m[2m→[0m [33mno[0m
-            [2m([0m[2meffect[0m                       [2m│[0m
-              [2m:ask[0m                        [2m│[0m
-              [2m"Dangerous git operation"[0m[2m)[0m[2m)[0m [2m│[0m
-
+                                                           [2mcommand[0m [2m│[0m [1mgit checkout -- main.ts[0m
+                                                             [2mfacts[0m [2m│[0m [38;2;120;120;255m:opencode/agent[0m [32m"plan"[0m
+  [2m43: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"git"[0m[2m)[0m                                        [2m│[0m
+            [2m([0m[34margs[0m [2m([0mand [2m([0m[34mpositional[0m                                 [2m│[0m
+                         [32m"reset"[0m[2m)[0m                                  [2m│[0m [2m"checkout" = "reset" [0m[2m→[0m [33mno[0m
+                       [2m…[0m[2m)[0m[2m)[0m                                         [2m│[0m
+            [2m([0m[2meffect[0m                                                [2m│[0m
+              [2m:ask[0m                                                 [2m│[0m
+              [2m"Dangerous git reset"[0m[2m)[0m[2m)[0m                              [2m│[0m
+                                                                   [2m│[0m
+  [2m47: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"git"[0m[2m)[0m                                        [2m│[0m
+            [2m([0m[34margs[0m [2m([0mor [2m([0m[34mpositional[0m                                  [2m│[0m
+                        [32m"remote"[0m[2m)[0m                                  [2m│[0m [2m"checkout" = "remote" [0m[2m→[0m [33mno[0m
+                      [2m([0m[34mpositional[0m                                  [2m│[0m
+                        [2m([0m[2mor[0m [2m"clean"[0m                                [2m│[0m [2m"checkout" = "clean" [0m[2m→[0m [33mno[0m
+                            [2m"gc"[0m                                   [2m│[0m [2m"checkout" = "gc" [0m[2m→[0m [33mno[0m
+                            [2m"push"[0m[2m)[0m[2m)[0m[2m)[0m[2m)[0m                             [2m│[0m [2m"checkout" = "push" [0m[2m→[0m [33mno[0m
+            [2m([0m[2meffect[0m                                                [2m│[0m
+              [2m:ask[0m                                                 [2m│[0m
+              [2m"Dangerous git operation"[0m[2m)[0m[2m)[0m                          [2m│[0m
+                                                                   [2m│[0m
   [2m52: [0m[2m([0m[34mrule[0m                                                        [2m│[0m
         [2m([0m[34mcommand[0m [32m"git"[0m[2m)[0m                                            [2m│[0m
         [2m([0mcontext                                                   [2m│[0m

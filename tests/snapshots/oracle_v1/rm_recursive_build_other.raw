@@ -1,16 +1,16 @@
 
 [1mTrace[0m
 
-                                   [2mcommand[0m [2m│[0m [1mrm -r /other/path[0m
-                                     [2mfacts[0m [2m│[0m [38;2;120;120;255m:opencode/agent[0m [32m"build"[0m
-  [2m24: [0m[2m([0m[34mrule[0m                                [2m│[0m
-        [2m([0m[34mcommand[0m [32m"rm"[0m[2m)[0m                     [2m│[0m
-        [2m([0m[34margs[0m [2m([0mand [2m([0m[34manywhere[0m [32m"-r"[0m[2m)[0m         [2m│[0m [2m"-r" ∈ {"-r", "/other/path"} [0m[2m→[0m [1;32myes[0m
-                   [2m([0m[34manywhere[0m [32m"/"[0m[2m)[0m[2m)[0m[2m)[0m        [2m│[0m [2m"/" ∈ {"-r", "/other/path"} [0m[2m→[0m [33mno[0m
-        [2m([0m[2meffect[0m                            [2m│[0m
-          [2m:deny[0m                            [2m│[0m
-          [2m"Recursive deletion from root"[0m[2m)[0m[2m)[0m [2m│[0m
-
+                                                            [2mcommand[0m [2m│[0m [1mrm -r /other/path[0m
+                                                              [2mfacts[0m [2m│[0m [38;2;120;120;255m:opencode/agent[0m [32m"build"[0m
+  [2m24: [0m[2m([0m[34mrule[0m                                                         [2m│[0m
+        [2m([0m[34mcommand[0m [32m"rm"[0m[2m)[0m                                              [2m│[0m
+        [2m([0m[34margs[0m [2m([0mand [2m([0m[34manywhere[0m [32m"-r"[0m[2m)[0m                                  [2m│[0m [2m"-r" ∈ {"-r", "/other/path"} [0m[2m→[0m [1;32myes[0m
+                   [2m([0m[34manywhere[0m [32m"/"[0m[2m)[0m[2m)[0m[2m)[0m                                 [2m│[0m [2m"/" ∈ {"-r", "/other/path"} [0m[2m→[0m [33mno[0m
+        [2m([0m[2meffect[0m                                                     [2m│[0m
+          [2m:deny[0m                                                     [2m│[0m
+          [2m"Recursive deletion from root"[0m[2m)[0m[2m)[0m                          [2m│[0m
+                                                                    [2m│[0m
   [2m29: [0m[2m([0m[34mrule[0m                                                         [2m│[0m
         [2m([0m[34mcommand[0m [32m"rm"[0m[2m)[0m                                              [2m│[0m
         [2m([0m[34margs[0m                                                       [2m│[0m

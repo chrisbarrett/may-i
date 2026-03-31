@@ -177,9 +177,22 @@ pub fn trace_to_layout(
     // For compound commands, this gets reset from each segment header.
     let mut pending_command: Option<&str> = if !has_segments { Some(command) } else { None };
 
+    // Accumulate rows for consecutive rules that share a command context.
+    let mut current_rows: Vec<ColRow> = Vec::new();
+    // Track last-shown facts to avoid repeating identical facts rows.
+    let mut last_facts: Option<&Vec<(String, String)>> = None;
+
+    // Flush accumulated rows into a Columns layout.
+    let flush_rows = |rows: &mut Vec<ColRow>, children: &mut Vec<Layout>| {
+        if !rows.is_empty() {
+            children.push(Layout::Columns(std::mem::take(rows)));
+        }
+    };
+
     for entry in entries {
         match entry {
             TraceEntry::SegmentHeader { command, decision } => {
+                flush_rows(&mut current_rows, &mut children);
                 if !first {
                     children.push(Layout::Blank);
                     children.push(Layout::Blank);
@@ -197,44 +210,45 @@ pub fn trace_to_layout(
                 facts,
                 inner_command,
             } => {
-                if !first {
-                    children.push(Layout::Blank);
+                if inner_command.is_some() || pending_command.is_some() {
+                    // Flush previous group before starting a new command context.
+                    flush_rows(&mut current_rows, &mut children);
+                    last_facts = None;
+                    if !first {
+                        children.push(Layout::Blank);
+                    }
+                } else if !current_rows.is_empty() {
+                    // Visual separator between consecutive rules in the same group.
+                    current_rows.push(ColRow::new(" ", 1, ""));
                 }
-                let mut rows = Vec::new();
-                // Show the command being evaluated.
+
+                // Show the command being evaluated (only at start of group).
                 if let Some(cmd) = pending_command.take() {
-                    rows.extend(command_row(cmd, &geom));
+                    current_rows.extend(command_row(cmd, &geom));
                 } else if let Some(cmd) = inner_command {
-                    rows.extend(command_row(cmd, &geom));
+                    current_rows.extend(command_row(cmd, &geom));
                 }
-                // Prepend any pending initial/segment facts.
+                // Show facts at start of group.
                 if let Some(pf) = pending_facts.take() {
-                    rows.extend(facts_rows(pf, &geom));
+                    current_rows.extend(facts_rows(pf, &geom));
                 }
-                // Per-rule facts (from recursive eval).
-                if !facts.is_empty() {
-                    rows.extend(facts_rows(facts, &geom));
+                if !facts.is_empty() && last_facts != Some(facts) {
+                    current_rows.extend(facts_rows(facts, &geom));
+                    last_facts = Some(facts);
                 }
-                rows.extend(render_annotated_rule(doc, *line, &geom));
-                if !rows.is_empty() {
-                    children.push(Layout::Columns(rows));
-                }
+                current_rows.extend(render_annotated_rule(doc, *line, &geom));
             }
             TraceEntry::DefaultAsk { .. } => {
                 let label = "No matching rule".italic().yellow().to_string();
                 let label_visible = "No matching rule".len();
                 let mut row = ColRow::new(label, label_visible, colorize_right("→ :ask (default)"));
                 row.left_align = ColAlign::Right;
-                // Append to last Columns if possible, to share divider position.
-                if let Some(Layout::Columns(rows)) = children.last_mut() {
-                    rows.push(row);
-                } else {
-                    children.push(Layout::Columns(vec![row]));
-                }
+                current_rows.push(row);
             }
         }
         first = false;
     }
+    flush_rows(&mut current_rows, &mut children);
 
     Layout::Indent(indent, Box::new(Layout::Stack(children)))
 }

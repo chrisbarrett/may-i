@@ -1,15 +1,15 @@
 
 [1mTrace[0m
 
-                              [2mcommand[0m [2m│[0m [1mgit push --force[0m
-  [2m43: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"git"[0m[2m)[0m           [2m│[0m
-            [2m([0m[34margs[0m [2m([0mand [2m([0m[34mpositional[0m    [2m│[0m
-                         [32m"reset"[0m[2m)[0m     [2m│[0m [2m"push" = "reset" [0m[2m→[0m [33mno[0m
-                       [2m…[0m[2m)[0m[2m)[0m            [2m│[0m
-            [2m([0m[2meffect[0m                   [2m│[0m
-              [2m:ask[0m                    [2m│[0m
-              [2m"Dangerous git reset"[0m[2m)[0m[2m)[0m [2m│[0m
-
+                                  [2mcommand[0m [2m│[0m [1mgit push --force[0m
+  [2m43: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"git"[0m[2m)[0m               [2m│[0m
+            [2m([0m[34margs[0m [2m([0mand [2m([0m[34mpositional[0m        [2m│[0m
+                         [32m"reset"[0m[2m)[0m         [2m│[0m [2m"push" = "reset" [0m[2m→[0m [33mno[0m
+                       [2m…[0m[2m)[0m[2m)[0m                [2m│[0m
+            [2m([0m[2meffect[0m                       [2m│[0m
+              [2m:ask[0m                        [2m│[0m
+              [2m"Dangerous git reset"[0m[2m)[0m[2m)[0m     [2m│[0m
+                                          [2m│[0m
   [2m47: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"git"[0m[2m)[0m               [2m│[0m
             [2m([0m[34margs[0m [2m([0mor [2m([0m[34mpositional[0m         [2m│[0m
                         [32m"remote"[0m[2m)[0m         [2m│[0m [2m"push" = "remote" [0m[2m→[0m [33mno[0m
