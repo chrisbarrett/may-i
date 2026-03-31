@@ -451,7 +451,7 @@ fn format_annotation(doc: &Doc<Option<Ann>>, ann: &Ann) -> Option<(String, Strin
 
         Ann::BindMatch { key, value } => {
             let right = match value {
-                Some(v) => format!("{key} := \"{v}\""),
+                Some(v) => format!("facts += {key} \"{v}\""),
                 None => format!("{key} — no match"),
             };
             Some((node_text(doc), right))
@@ -949,9 +949,21 @@ fn colorize_right(s: &str) -> String {
         } else {
             s.dimmed().to_string()
         }
-    } else if s.contains(":=") {
-        // Bind annotation: :key := "value"
-        s.dimmed().to_string()
+    } else if let Some(rest) = s.strip_prefix("facts += ") {
+        // Bind annotation: facts += :key "value"
+        // Colorize keyword and string to match expression syntax colors
+        if let Some(space_pos) = rest.find(' ') {
+            let keyword = &rest[..space_pos];
+            let value = &rest[space_pos + 1..];
+            format!(
+                "{} {} {}",
+                "facts +=".dimmed(),
+                colorize_atom(keyword, true),
+                colorize_atom(value, true),
+            )
+        } else {
+            s.dimmed().to_string()
+        }
     } else if s.contains("~") {
         // Regex match annotation: "actual" ~ (regex "pattern") → yes/no
         if let Some(arrow_pos) = s.find("→") {

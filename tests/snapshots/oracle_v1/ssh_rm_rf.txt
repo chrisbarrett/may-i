@@ -3,7 +3,7 @@ Trace
 
   107: (rule (command "ssh")            │
              (args (positional          │
-                     [:ssh/host *]      │ :ssh/host := "prod"
+                     [:ssh/host *]      │ facts += :ssh/host "prod"
                      (may-i (positional │ `rm -rf /` → :deny "Recursive deletion from root"
                               *)))))    │
 
