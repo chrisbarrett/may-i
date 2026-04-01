@@ -27,8 +27,8 @@ repos:
         stages: [pre-commit]
 
       - id: cargo-test-affected
-        name: cargo tarpaulin (affected)
-        entry: cargo affected --staged tarpaulin
+        name: cargo test (affected)
+        entry: cargo affected --staged test
         language: system
         types: [rust]
         pass_filenames: false
