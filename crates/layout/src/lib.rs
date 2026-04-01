@@ -46,32 +46,17 @@ pub enum Layout {
     HRule(Option<HRuleLabel>),
     /// Two-column table with `│` divider.
     Columns(Vec<ColRow>),
-    /// Center child in the terminal width.
-    Center(Box<Layout>),
     /// Indent child by `n` spaces.
     Indent(usize, Box<Layout>),
     /// Vertical sequence of children.
     Stack(Vec<Layout>),
     /// Pre-formatted text line(s).
     Text(String),
-    /// Box with optional title label and child layout.
-    LabeledBox {
-        title: Option<String>,
-        body: Box<Layout>,
-    },
 }
 
 impl Layout {
     pub fn indent(n: usize, inner: Layout) -> Layout {
         Layout::Indent(n, Box::new(inner))
-    }
-
-    #[cfg(test)]
-    fn labeled_box(title: impl Into<String>, body: Layout) -> Layout {
-        Layout::LabeledBox {
-            title: Some(title.into()),
-            body: Box::new(body),
-        }
     }
 }
 
@@ -178,14 +163,6 @@ fn render_layout(w: &mut impl Write, layout: &Layout, indent: usize, term: &Term
         Layout::Columns(rows) => {
             write_columns(w, indent, rows, term);
         }
-        Layout::Center(inner) => {
-            let content = render_to_string(inner, 0, term);
-            let content_width = content.lines().map(visible_len).max().unwrap_or(0);
-            let pad = term.width.saturating_sub(content_width) / 2;
-            for line in content.lines() {
-                let _ = writeln!(w, "{:pad$}{line}", "");
-            }
-        }
         Layout::Indent(n, inner) => {
             render_layout(w, inner, indent + n, term);
         }
@@ -197,13 +174,11 @@ fn render_layout(w: &mut impl Write, layout: &Layout, indent: usize, term: &Term
         Layout::Text(text) => {
             let _ = writeln!(w, "{:indent$}{text}", "");
         }
-        Layout::LabeledBox { title, body } => {
-            write_labeled_box(w, indent, title.as_deref(), body, term);
-        }
     }
 }
 
-pub(crate) fn render_to_string(layout: &Layout, indent: usize, term: &Terminal) -> String {
+#[cfg(test)]
+fn render_to_string(layout: &Layout, indent: usize, term: &Terminal) -> String {
     let mut buf = Vec::new();
     render_layout(&mut buf, layout, indent, term);
     let s = String::from_utf8_lossy(&buf).into_owned();
@@ -349,57 +324,6 @@ fn write_col_left(w: &mut impl Write, indent: usize, row: &ColRow, divider_col: 
     let _ = write!(w, "{:indent$}{:lead$}{}{:trail$}", "", "", row.left, "",);
 }
 
-fn write_labeled_box(
-    w: &mut impl Write,
-    indent: usize,
-    title: Option<&str>,
-    body: &Layout,
-    term: &Terminal,
-) {
-    let body_str = render_to_string(body, 0, term);
-    let inner_width = body_str.lines().map(visible_len).max().unwrap_or(0);
-
-    let top = match title {
-        Some(t) => {
-            let remaining = (inner_width + 2).saturating_sub(t.len() + 2);
-            format!(
-                "{}{}{}",
-                format!("┌─{t}─").dimmed(),
-                "─".repeat(remaining).dimmed(),
-                "┐".dimmed()
-            )
-        }
-        None => {
-            format!(
-                "{}{}",
-                "┌".dimmed(),
-                format!("{}┐", "─".repeat(inner_width + 2)).dimmed()
-            )
-        }
-    };
-    let _ = writeln!(w, "{:indent$}{top}", "");
-
-    for line in body_str.lines() {
-        let pad_right = inner_width.saturating_sub(visible_len(line));
-        let _ = writeln!(
-            w,
-            "{:indent$}{} {line}{:pad_right$} {}",
-            "",
-            "│".dimmed(),
-            "",
-            "│".dimmed()
-        );
-    }
-
-    let _ = writeln!(
-        w,
-        "{:indent$}{}{}",
-        "",
-        "└".dimmed(),
-        format!("{}┘", "─".repeat(inner_width + 2)).dimmed()
-    );
-}
-
 // ── Helpers ───────────────────────────────────────────────────────
 
 pub fn strip_ansi(s: &str) -> String {
@@ -475,36 +399,6 @@ mod tests {
         let stripped = strip_ansi(lines[1]);
         // "text" should be right-aligned within the divider column
         assert!(stripped.starts_with("  text"), "got: {stripped:?}");
-    }
-
-    #[test]
-    fn labeled_box_has_title_in_border() {
-        let body = Layout::Text("content".into());
-        let layout = Layout::labeled_box("title", body);
-        let s = render_to_string(&layout, 0, &TERM);
-        let stripped = strip_ansi(&s);
-        assert!(stripped.contains("title"), "box should contain title");
-        assert!(stripped.contains("┌"), "box should have top border");
-        assert!(stripped.contains("┘"), "box should have bottom border");
-        assert!(stripped.contains("content"), "box should contain body");
-    }
-
-    #[test]
-    fn labeled_box_pads_content_to_width() {
-        let body = Layout::Stack(vec![
-            Layout::Text("short".into()),
-            Layout::Text("much longer line".into()),
-        ]);
-        let layout = Layout::labeled_box("t", body);
-        let s = render_to_string(&layout, 0, &TERM);
-        let stripped = strip_ansi(&s);
-        // All content lines should have right border at same column
-        let content_lines: Vec<&str> = stripped.lines().filter(|l| l.contains("│")).collect();
-        let widths: Vec<usize> = content_lines.iter().map(|l| l.len()).collect();
-        assert!(
-            widths.windows(2).all(|w| w[0] == w[1]),
-            "all box lines should be same width, got {widths:?}"
-        );
     }
 
     #[test]

@@ -274,16 +274,6 @@ fn collect_refs_from_effect_recursive(effect: &Effect, _span: Span, refs: &mut V
     }
 }
 
-#[allow(dead_code)]
-fn format_command_pattern(pattern: &may_i_core::pattern::CommandPattern) -> String {
-    use may_i_core::pattern::CommandPattern;
-    match pattern {
-        CommandPattern::Literal(s) => s.clone(),
-        CommandPattern::Regex(_) => "(regex ...)".to_string(),
-        CommandPattern::Or(_) => "(or ...)".to_string(),
-    }
-}
-
 /// Resolve all named predicates by inlining their definitions.
 /// Returns a new list of rules with all named predicates resolved.
 pub fn resolve_predicates(
@@ -811,24 +801,5 @@ mod tests {
 
         let result = validate_and_resolve(&rules, &defines);
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn format_command_pattern_handles_regex() {
-        use may_i_core::pattern::CommandPattern;
-        let pattern = CommandPattern::Regex(regex::Regex::new("^git").unwrap());
-        let formatted = format_command_pattern(&pattern);
-        assert_eq!(formatted, "(regex ...)");
-    }
-
-    #[test]
-    fn format_command_pattern_handles_or() {
-        use may_i_core::pattern::CommandPattern;
-        let pattern = CommandPattern::Or(vec![
-            CommandPattern::Literal("git".to_string()),
-            CommandPattern::Literal("gh".to_string()),
-        ]);
-        let formatted = format_command_pattern(&pattern);
-        assert_eq!(formatted, "(or ...)");
     }
 }
