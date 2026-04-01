@@ -1707,6 +1707,23 @@ mod annotated_line_tests {
         }
 
         #[test]
+        fn visible_len_ignores_ansi_escapes(s in "[a-zA-Z0-9 ()]{0,30}", codes in prop::collection::vec("\\x1b\\[[0-9;]{1,5}m", 0..5)) {
+            // Build a string with ANSI SGR sequences interleaved
+            let plain_len = s.chars().count();
+            let mut decorated = String::new();
+            for (i, ch) in s.chars().enumerate() {
+                if let Some(code) = codes.get(i % codes.len().max(1)) {
+                    decorated.push_str(code);
+                }
+                decorated.push(ch);
+            }
+            let vis = visible_len(&decorated);
+            prop_assert_eq!(vis, plain_len);
+            // Also: visible_len of plain string equals char count
+            prop_assert_eq!(visible_len(&s), plain_len);
+        }
+
+        #[test]
         fn annotated_line_visible_width_correct(doc in arb_doc(), width in 10..120usize) {
             let mut alb = AnnotatedLineBuilder::new();
             pretty_into(&doc, 0, width, &mut alb);

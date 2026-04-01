@@ -2141,6 +2141,291 @@ mod tests {
         assert_eq!(result.decision, Decision::Deny);
     }
 
+    // ── Property tests ────────────────────────────────────────────────
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig { cases: 256, max_shrink_iters: 50, .. Default::default() })]
+
+        #[test]
+        fn expr_cond_matches_iff_any_branch_test_matches(
+            branches_tests in proptest::collection::vec(
+                crate::test_generators::any_match_string(),
+                1..5,
+            ),
+            value in crate::test_generators::any_match_string(),
+        ) {
+            use may_i_core::pattern::{Expr, ExprBranch};
+
+            let branches: Vec<ExprBranch<Effect>> = branches_tests
+                .iter()
+                .map(|s| ExprBranch {
+                    test: Expr::Literal(s.clone()),
+                    effect: Effect::Allow(None),
+                })
+                .collect();
+
+            let expr = Expr::Cond(branches);
+            let (matched, _facts) = match_expr_with_binding(&expr, &value);
+            let expected = branches_tests.iter().any(|s| s == &value);
+            proptest::prop_assert_eq!(matched, expected);
+        }
+
+        #[test]
+        fn build_expr_match_detail_consistency(
+            expr in crate::test_generators::any_expr(2),
+            value in crate::test_generators::any_match_string(),
+        ) {
+            use may_i_core::pattern::Expr;
+
+            let detail = build_expr_match_detail(&expr, &value);
+            let (matched, _) = match_expr_with_binding(&expr, &value);
+
+            match &expr {
+                Expr::Literal(_) => {
+                    let d = detail.expect("Literal should produce detail");
+                    if let crate::fold::ExprMatchDetail::Literal { matched: dm, .. } = d {
+                        proptest::prop_assert_eq!(dm, matched);
+                    } else {
+                        return Err(proptest::test_runner::TestCaseError::Fail("expected Literal detail".into()));
+                    }
+                }
+                Expr::Wildcard => {
+                    let d = detail.expect("Wildcard should produce detail");
+                    let is_wildcard = matches!(d, crate::fold::ExprMatchDetail::Wildcard { .. });
+                    proptest::prop_assert!(is_wildcard);
+                }
+                // Compound expressions return None
+                _ => {
+                    proptest::prop_assert!(detail.is_none());
+                }
+            }
+        }
+    }
+
+    // --- Targeted branch-coverage unit tests ---
+
+    #[test]
+    fn build_expr_match_detail_regex() {
+        use may_i_core::pattern::Expr;
+
+        let expr: Expr<Effect> = Expr::Regex(regex::Regex::new("^prod").unwrap());
+        let detail = build_expr_match_detail(&expr, "prod-01");
+        match detail {
+            Some(crate::fold::ExprMatchDetail::Regex {
+                pattern,
+                actual,
+                matched,
+            }) => {
+                assert_eq!(pattern, "^prod");
+                assert_eq!(actual, "prod-01");
+                assert!(matched);
+            }
+            other => panic!("expected Regex detail, got {other:?}"),
+        }
+
+        let detail_miss = build_expr_match_detail(&expr, "dev-01");
+        match detail_miss {
+            Some(crate::fold::ExprMatchDetail::Regex { matched, .. }) => {
+                assert!(!matched);
+            }
+            other => panic!("expected Regex detail, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn match_command_pattern_or_with_regex() {
+        let re = regex::Regex::new("^git").unwrap();
+        let pat = CommandPattern::Or(vec![
+            CommandPattern::Literal("ls".into()),
+            CommandPattern::Regex(re),
+        ]);
+        assert!(match_command_pattern(&pat, "ls"));
+        assert!(match_command_pattern(&pat, "git-push"));
+        assert!(!match_command_pattern(&pat, "rm"));
+    }
+
+    #[test]
+    fn extract_inner_command_fallback_for_non_simple() {
+        // A compound command (with &&) should hit the fallback branch
+        let args = vec!["echo".to_string(), "&&".to_string(), "ls".to_string()];
+        let result = extract_inner_command(
+            &may_i_core::pattern::ArgPattern::Positional {
+                patterns: vec![],
+                continuation: None,
+            },
+            &args,
+        );
+        // Should return Some — either parsed or fallback
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn evaluate_fallback_reason_command_matched_but_args_failed() {
+        use may_i_core::ast::{Config, Rule, Spanned};
+        use may_i_core::pattern::{ArgPattern, CommandPattern, Expr, PositionalArg, Quantifier};
+        use may_i_core::span::Span;
+
+        let s = Span::new(0, 1);
+        // Rule: "ls" with (positional "specific-arg") — will not match "ls other"
+        let rule = Rule::new(
+            Spanned::new(
+                Effect::CommandPattern(CommandPattern::Literal("ls".into())),
+                s,
+            ),
+            vec![Spanned::new(
+                Effect::ArgPattern(ArgPattern::Positional {
+                    patterns: vec![PositionalArg {
+                        quantifier: Quantifier::One,
+                        pattern: Expr::Literal("specific-arg".into()),
+                        recursive: false,
+                    }],
+                    continuation: None,
+                }),
+                s,
+            )],
+            vec![],
+            s,
+        );
+
+        let config = Config {
+            rules: vec![rule],
+            ..Config::default()
+        };
+        let facts = ContextFacts::default();
+        let args = vec!["other".to_string()];
+        let result = evaluate("ls", &args, &config, &facts);
+        assert_eq!(result.decision, Decision::Ask);
+        assert!(
+            result.reason.as_ref().unwrap().contains("ls"),
+            "reason should mention the command: {:?}",
+            result.reason
+        );
+    }
+
+    #[test]
+    fn evaluate_rule_nil_short_circuits() {
+        use may_i_core::ast::{Rule, Spanned};
+        use may_i_core::pattern::{ArgPattern, CommandPattern, Expr};
+        use may_i_core::span::Span;
+
+        let s = Span::new(0, 1);
+        // Rule with (forbidden "bad") — if arg is present, Nil is returned
+        let rule = Rule::new(
+            Spanned::new(
+                Effect::CommandPattern(CommandPattern::Literal("test".into())),
+                s,
+            ),
+            vec![Spanned::new(
+                Effect::ArgPattern(ArgPattern::Forbidden(vec![Expr::Literal("bad".into())])),
+                s,
+            )],
+            vec![],
+            s,
+        );
+
+        let rules = vec![rule];
+        let facts = ContextFacts::default();
+        let args = vec!["bad".to_string()];
+        let ctx = EvalContext::new("test", &args, &facts);
+        let evaluator = Evaluator::new(&rules);
+        let result = evaluator.evaluate(&mut PureFold, &ctx);
+        // Forbidden found → Nil → rule_not_matched → falls through to ask
+        assert_eq!(result.decision, Decision::Ask);
+    }
+
+    #[test]
+    fn evaluate_rule_predicate_allow_continues() {
+        use may_i_core::ast::{Rule, Spanned};
+        use may_i_core::pattern::{ArgPattern, CommandPattern, Expr, PositionalArg, Quantifier};
+        use may_i_core::span::Span;
+
+        let s = Span::new(0, 1);
+        // Rule: "cmd" (positional "ok") :allow "done"
+        // The positional predicate matches, continues, then terminal fires.
+        let rule = Rule::new(
+            Spanned::new(
+                Effect::CommandPattern(CommandPattern::Literal("cmd".into())),
+                s,
+            ),
+            vec![
+                Spanned::new(
+                    Effect::ArgPattern(ArgPattern::Positional {
+                        patterns: vec![PositionalArg {
+                            quantifier: Quantifier::One,
+                            pattern: Expr::Literal("ok".into()),
+                            recursive: false,
+                        }],
+                        continuation: None,
+                    }),
+                    s,
+                ),
+                Spanned::new(Effect::Allow(Some("done".into())), s),
+            ],
+            vec![],
+            s,
+        );
+
+        let rules = vec![rule];
+        let facts = ContextFacts::default();
+        let args = vec!["ok".to_string()];
+        let ctx = EvalContext::new("cmd", &args, &facts);
+        let evaluator = Evaluator::new(&rules);
+        let result = evaluator.evaluate(&mut PureFold, &ctx);
+        assert_eq!(result.decision, Decision::Allow);
+        assert_eq!(result.reason.as_deref(), Some("done"));
+    }
+
+    #[test]
+    fn build_positional_element_details_with_bind() {
+        use may_i_core::Keyword;
+        use may_i_core::pattern::{Expr, PositionalArg, Quantifier};
+
+        let patterns = vec![PositionalArg {
+            quantifier: Quantifier::One,
+            pattern: Expr::Bind {
+                key: Keyword::new_unchecked(String::from(":host")),
+                expr: Box::new(Expr::Wildcard),
+            },
+            recursive: false,
+        }];
+
+        let arg = "prod-01".to_string();
+        let args: Vec<&String> = vec![&arg];
+        let details = build_positional_element_details(&args, &patterns, true, 1);
+        assert_eq!(details.len(), 1);
+        let detail = &details[0];
+        assert!(detail.binding.is_some());
+        let bind = detail.binding.as_ref().unwrap();
+        assert_eq!(bind.key, ":host");
+        assert_eq!(bind.value, Some("prod-01".to_string()));
+    }
+
+    #[test]
+    fn build_positional_element_details_with_cond_branch_index() {
+        use may_i_core::pattern::{Expr, ExprBranch, PositionalArg, Quantifier};
+
+        let patterns = vec![PositionalArg {
+            quantifier: Quantifier::One,
+            pattern: Expr::Cond(vec![
+                ExprBranch {
+                    test: Expr::Literal("a".into()),
+                    effect: Effect::Allow(None),
+                },
+                ExprBranch {
+                    test: Expr::Literal("b".into()),
+                    effect: Effect::Deny(None),
+                },
+            ]),
+            recursive: false,
+        }];
+
+        let arg = "b".to_string();
+        let args: Vec<&String> = vec![&arg];
+        let details = build_positional_element_details(&args, &patterns, true, 1);
+        assert_eq!(details.len(), 1);
+        assert_eq!(details[0].cond_branch_index, Some(1));
+    }
+
     // --- FactPattern combinator tests ---
 
     #[test]

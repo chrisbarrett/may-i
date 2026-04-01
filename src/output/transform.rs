@@ -620,6 +620,280 @@ mod tests {
         }
     }
 
+    // ── Property tests ────────────────────────────────────────────────
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig { cases: 256, max_shrink_iters: 50, .. Default::default() })]
+
+        #[test]
+        fn truncate_unevaluated_caps_children(
+            n in 5..30usize,
+            keep in 1..4usize,
+        ) {
+            // Build a list with head + n unannotated children (all None annotations)
+            let mut children = vec![atom("or")];
+            for i in 0..n {
+                children.push(atom(&format!("c{i}")));
+            }
+            let doc = list(children);
+            let result = truncate_unevaluated(&doc, keep);
+            if let DocF::List(cs) = &result.node {
+                // head + keep args + "…" + last = keep + 3
+                proptest::prop_assert_eq!(cs.len(), keep + 3);
+                // Second-to-last should be the ellipsis
+                proptest::prop_assert_eq!(cs[cs.len() - 2].as_atom(), Some("…"));
+            } else {
+                proptest::prop_assert!(false, "expected list");
+            }
+        }
+
+        #[test]
+        fn extract_positional_args_skips_flags(
+            positionals in proptest::collection::vec("[a-zA-Z][a-zA-Z0-9]{0,9}", 1..5),
+            short_flags in proptest::collection::vec("-[a-z]", 0..3),
+            long_flags in proptest::collection::vec("--[a-z]{2,8}", 0..3),
+        ) {
+            // Build args: positionals interleaved with flags
+            let mut args: Vec<String> = Vec::new();
+            for flag in &short_flags {
+                args.push(flag.clone());
+            }
+            for flag in &long_flags {
+                args.push(flag.clone());
+                args.push("val".into()); // long flags consume next arg
+            }
+            args.extend(positionals.iter().cloned());
+
+            let arg_refs: Vec<String> = args;
+            let result = extract_positional_args(&arg_refs);
+
+            // All original positionals should appear in result
+            for p in &positionals {
+                proptest::prop_assert!(result.contains(&p.as_str()),
+                    "positional {p:?} missing from result {result:?}");
+            }
+
+            // No flags should appear in result
+            for f in short_flags.iter().chain(long_flags.iter()) {
+                proptest::prop_assert!(!result.contains(&f.as_str()),
+                    "flag {f:?} should not be in result {result:?}");
+            }
+        }
+
+        #[test]
+        fn extract_positional_args_after_terminator(
+            before_flags in proptest::collection::vec("-[a-z]", 0..3),
+            after_args in proptest::collection::vec("-[a-z]{1,5}", 1..4),
+        ) {
+            let mut args: Vec<String> = before_flags.clone();
+            args.push("--".into());
+            args.extend(after_args.iter().cloned());
+
+            let result = extract_positional_args(&args);
+
+            // "--" itself is included
+            proptest::prop_assert!(result.contains(&"--"),
+                "terminator '--' should be in result");
+            // Everything after "--" is collected verbatim
+            for a in &after_args {
+                proptest::prop_assert!(result.contains(&a.as_str()),
+                    "post-terminator arg {a:?} missing from result {result:?}");
+            }
+        }
+
+        #[test]
+        fn distribute_positional_comparisons_annotates_quoted_atoms(
+            actual_arg in "[a-zA-Z0-9]{1,10}",
+            pattern_values in proptest::collection::vec("[a-zA-Z0-9]{1,10}", 1..5),
+        ) {
+            // Build (or "v1" "v2" ...) and distribute with actual_arg
+            let mut children = vec![atom("or")];
+            for v in &pattern_values {
+                children.push(atom(&format!("\"{v}\"")));
+            }
+            let doc = list(children);
+            let result = distribute_positional_comparisons(&doc, &actual_arg);
+
+            if let DocF::List(cs) = &result.node {
+                // Head "or" unchanged
+                proptest::prop_assert!(cs[0].ann.is_none());
+                // Each quoted child gets a PositionalMatch annotation
+                for (i, child) in cs[1..].iter().enumerate() {
+                    match &child.ann {
+                        Some(Ann::PositionalMatch { actual_arg: actual, pattern_text, matched }) => {
+                            proptest::prop_assert_eq!(actual, &actual_arg);
+                            let expected_text = format!("\"{}\"", &pattern_values[i]);
+                            proptest::prop_assert_eq!(pattern_text, &expected_text);
+                            proptest::prop_assert_eq!(*matched, actual_arg == pattern_values[i]);
+                        }
+                        other => proptest::prop_assert!(false, "expected PositionalMatch, got {other:?}"),
+                    }
+                }
+            } else {
+                proptest::prop_assert!(false, "expected list");
+            }
+        }
+
+        #[test]
+        fn distribute_positional_comparisons_handles_quantifier(
+            actual_arg in "[a-zA-Z0-9]{1,10}",
+            pattern_value in "[a-zA-Z0-9]{1,10}",
+            quantifier in proptest::sample::select(vec!["?", "+", "*"]),
+        ) {
+            // Build (? "value") and distribute
+            let inner = atom(&format!("\"{pattern_value}\""));
+            let doc = list(vec![atom(&quantifier), inner]);
+            let result = distribute_positional_comparisons(&doc, &actual_arg);
+
+            if let DocF::List(cs) = &result.node {
+                // Head quantifier unchanged
+                proptest::prop_assert!(cs[0].ann.is_none());
+                // Inner gets PositionalMatch
+                match &cs[1].ann {
+                    Some(Ann::PositionalMatch { matched, .. }) => {
+                        proptest::prop_assert_eq!(*matched, actual_arg == pattern_value);
+                    }
+                    other => proptest::prop_assert!(false, "expected PositionalMatch, got {other:?}"),
+                }
+            } else {
+                proptest::prop_assert!(false, "expected list");
+            }
+        }
+    }
+
+    // ── Targeted branch-coverage unit tests ──────────────────────────
+
+    #[test]
+    fn truncate_matched_anywhere_recurses_into_vector() {
+        let inner = list_ann(
+            Ann::ArgMatch {
+                search_tokens: vec!["a".into(), "b".into()],
+                arg_set: vec!["a".into()],
+                matched: true,
+            },
+            vec![atom("anywhere"), atom("a"), atom("b")],
+        );
+        let doc = vec_doc(vec![inner]);
+        let result = truncate_matched_anywhere(&doc);
+        match &result.node {
+            DocF::Vector(cs) => {
+                // Inner list should be truncated
+                if let DocF::List(inner_cs) = &cs[0].node {
+                    assert_eq!(
+                        inner_cs.len(),
+                        2,
+                        "anywhere should be truncated inside vector"
+                    );
+                } else {
+                    panic!("expected inner list");
+                }
+            }
+            _ => panic!("expected vector"),
+        }
+    }
+
+    #[test]
+    fn distribute_arg_annotations_recurses_into_vector() {
+        let inner = list_ann(
+            Ann::ArgMatch {
+                search_tokens: vec!["\"t1\"".into()],
+                arg_set: vec!["a".into()],
+                matched: true,
+            },
+            vec![atom("anywhere"), atom("\"t1\"")],
+        );
+        let doc = vec_doc(vec![inner]);
+        let result = distribute_arg_annotations(&doc);
+        match &result.node {
+            DocF::Vector(cs) => {
+                if let DocF::List(inner_cs) = &cs[0].node {
+                    // Token child should have its own ArgMatch
+                    assert!(matches!(&inner_cs[1].ann, Some(Ann::ArgMatch { .. })));
+                } else {
+                    panic!("expected inner list");
+                }
+            }
+            _ => panic!("expected vector"),
+        }
+    }
+
+    #[test]
+    fn distribute_positional_comparisons_non_quoted_atom_unchanged() {
+        // A non-quoted atom like a keyword should not get a PositionalMatch
+        let doc = atom("keyword");
+        let result = distribute_positional_comparisons(&doc, "anything");
+        assert!(result.ann.is_none());
+    }
+
+    #[test]
+    fn distribute_positional_comparisons_unknown_head_unchanged() {
+        // A list with an unknown head (not or/?/+/*) should be returned as-is
+        let doc = list(vec![atom("something"), atom("\"val\"")]);
+        let result = distribute_positional_comparisons(&doc, "val");
+        // Children should not be annotated
+        if let DocF::List(cs) = &result.node {
+            assert!(cs[1].ann.is_none());
+        } else {
+            panic!("expected list");
+        }
+    }
+
+    #[test]
+    fn distribute_to_token_children_unmatched_token_preserved() {
+        // A token that doesn't appear in search_tokens should be preserved as-is
+        let doc = list_ann(
+            Ann::ArgMatch {
+                search_tokens: vec!["\"t1\"".into()],
+                arg_set: vec!["a".into()],
+                matched: true,
+            },
+            vec![atom("anywhere"), atom("\"t1\""), atom("\"t2\"")],
+        );
+        let result = distribute_arg_annotations(&doc);
+        if let DocF::List(cs) = &result.node {
+            // "t2" not in search_tokens, should have no annotation
+            assert!(
+                cs[2].ann.is_none(),
+                "unmatched token should have no annotation"
+            );
+        } else {
+            panic!("expected list");
+        }
+    }
+
+    #[test]
+    fn distribute_to_token_children_non_atom_recurses() {
+        // A non-atom child in an anywhere list should be recursed into
+        let inner_list = list(vec![atom("nested")]);
+        let doc = list_ann(
+            Ann::ArgMatch {
+                search_tokens: vec!["\"t1\"".into()],
+                arg_set: vec!["a".into()],
+                matched: true,
+            },
+            vec![atom("anywhere"), atom("\"t1\""), inner_list],
+        );
+        let result = distribute_arg_annotations(&doc);
+        if let DocF::List(cs) = &result.node {
+            // Third child was a list — should have been recursed
+            assert!(matches!(&cs[2].node, DocF::List(_)));
+        } else {
+            panic!("expected list");
+        }
+    }
+
+    #[test]
+    fn distribute_positional_comparisons_vector_unchanged() {
+        // A Vector node should be returned unchanged
+        let doc = vec_doc(vec![atom("\"val\"")]);
+        let result = distribute_positional_comparisons(&doc, "val");
+        assert!(matches!(&result.node, DocF::Vector(_)));
+        // Children should not be annotated (vector is not recursed)
+        if let DocF::Vector(cs) = &result.node {
+            assert!(cs[0].ann.is_none());
+        }
+    }
+
     #[test]
     fn distribute_positional_adds_positional_match() {
         // Positional patterns have empty search_tokens — distributes PositionalMatch
