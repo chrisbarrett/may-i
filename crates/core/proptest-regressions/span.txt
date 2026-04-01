@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc e976fdb11a76eabf59a0203927a90213f32b48c4a37d3f5b7625acb1a909a0f0 # shrinks to source = "!Ⱥ\u{feff}\0\rÇ~do\u{a40d1}s\u{f2073}&¨o$🕴", offset = 30
+cc 7e6a3ecd7105d3a51e7a110c602cca84cf5f58ac011db024a2ff7474ec813b4e # shrinks to source = "$\u{8}\u{114e0}&\u{feff}\u{ee1b9}\"?䬱\u{feff}Ä&?/*\u{cfce2}ÿu&\u{8}%\u{a9570}\u{7c56a}\u{f2e88}\t:", offset = 49
