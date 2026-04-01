@@ -23,7 +23,7 @@ pub fn cmd_check(
             .map_err(|errs| miette::miette!("Predicate resolution failed: {}", errs[0].message))?;
     canonical_config.rules = resolved_rules;
 
-    let results = run_checks_with_traces(&canonical_config);
+    let results = run_checks_with_traces(&canonical_config, &config_file);
 
     let passed = results.iter().filter(|r| r.passed).count();
     let failed = results.len() - passed;
@@ -162,61 +162,37 @@ struct CheckResultWithTrace {
 }
 
 /// Run all checks using TracingFold to capture traces for failure reporting.
-fn run_checks_with_traces(config: &may_i_core::ast::Config) -> Vec<CheckResultWithTrace> {
-    use may_i_shell_parser::{self as parser, Command, Word, WordPart};
+fn run_checks_with_traces(
+    config: &may_i_core::ast::Config,
+    config_file: &std::path::Path,
+) -> Vec<CheckResultWithTrace> {
+    use may_i_core::span::offset_to_line_col;
 
-    fn word_to_string(word: &Word) -> String {
-        word.parts
-            .iter()
-            .map(|part| match part {
-                WordPart::Literal(s) => s.clone(),
-                WordPart::SingleQuoted(s) => s.clone(),
-                WordPart::DoubleQuoted(parts) => parts
-                    .iter()
-                    .map(|p| match p {
-                        WordPart::Literal(s) => s.clone(),
-                        _ => String::new(),
-                    })
-                    .collect(),
-                _ => String::new(),
-            })
-            .collect()
-    }
+    let file_str = config_file.display().to_string();
 
-    fn evaluate_with_trace(
-        input: &str,
-        config: &may_i_core::ast::Config,
-        context: &may_i_core::ContextFacts,
-    ) -> (engine::EvalResult, Vec<TraceEntry>) {
-        let cmd = parser::parse(input);
-        match cmd {
-            Command::Simple(sc) if !sc.words.is_empty() => {
-                let cmd_name = word_to_string(&sc.words[0]);
-                let args: Vec<String> = sc.words[1..].iter().map(word_to_string).collect();
-                let mut fold = TracingFold::new();
-                let result =
-                    engine::eval::evaluate_with_fold(&cmd_name, &args, config, context, &mut fold);
-                (result, fold.traces)
-            }
-            Command::Simple(_) => (
-                engine::EvalResult::new(may_i_core::Decision::Allow, None),
-                Vec::new(),
-            ),
-            _ => (
-                engine::EvalResult::new(
-                    may_i_core::Decision::Ask,
-                    Some("Compound commands not yet supported in checks".into()),
-                ),
-                Vec::new(),
-            ),
-        }
-    }
+    let make_location = |span: &may_i_core::Span| -> Option<String> {
+        config.source_text.as_ref().map(|source| {
+            let (line, col) = offset_to_line_col(source, span.start);
+            format!("{file_str}:{line}:{col}")
+        })
+    };
+
+    let evaluate_with_trace = |input: &str,
+                               context: &may_i_core::ContextFacts|
+     -> (engine::EvalResult, Vec<TraceEntry>) {
+        let (cmd, args) = crate::cmd_eval::parse_command_args(input);
+        let mut fold = TracingFold::new()
+            .with_source_text(config.source_text.clone())
+            .with_pre_migration_forms(config.pre_migration_forms.clone());
+        let result = engine::eval::evaluate_with_fold(&cmd, &args, config, context, &mut fold);
+        (result, fold.traces)
+    };
 
     let mut results = Vec::new();
 
     for rule in &config.rules {
         for check in &rule.checks {
-            let (eval, traces) = evaluate_with_trace(&check.command, config, &check.context);
+            let (eval, traces) = evaluate_with_trace(&check.command, &check.context);
             results.push(CheckResultWithTrace {
                 command: check.command.clone(),
                 expected: check.expected,
@@ -224,14 +200,14 @@ fn run_checks_with_traces(config: &may_i_core::ast::Config) -> Vec<CheckResultWi
                 passed: eval.decision == check.expected,
                 context: check.context.clone(),
                 reason: eval.reason,
-                location: None,
+                location: make_location(&check.span),
                 traces,
             });
         }
     }
 
     for check in &config.checks {
-        let (eval, traces) = evaluate_with_trace(&check.command, config, &check.context);
+        let (eval, traces) = evaluate_with_trace(&check.command, &check.context);
         results.push(CheckResultWithTrace {
             command: check.command.clone(),
             expected: check.expected,
@@ -239,7 +215,7 @@ fn run_checks_with_traces(config: &may_i_core::ast::Config) -> Vec<CheckResultWi
             passed: eval.decision == check.expected,
             context: check.context.clone(),
             reason: eval.reason,
-            location: None,
+            location: make_location(&check.span),
             traces,
         });
     }

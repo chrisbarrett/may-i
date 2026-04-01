@@ -131,7 +131,7 @@ impl ColRow {
         Self {
             left: label,
             left_width: width,
-            left_align: ColAlign::Right,
+            left_align: ColAlign::Left,
             right: ColContent::Text(value.into()),
         }
     }
@@ -227,7 +227,7 @@ fn write_columns(w: &mut impl Write, indent: usize, rows: &[ColRow], term: &Term
 fn compute_divider_col(rows: &[ColRow]) -> usize {
     let max_left = rows
         .iter()
-        .filter(|r| !r.is_elision() && matches!(r.left_align, ColAlign::Left))
+        .filter(|r| !r.is_elision())
         .map(|r| r.left_width)
         .max()
         .unwrap_or(0);
@@ -427,11 +427,11 @@ mod tests {
     }
 
     #[test]
-    fn kv_creates_right_aligned_row() {
+    fn kv_creates_left_aligned_row() {
         let row = ColRow::kv("key", "value");
         assert_eq!(row.left, "key");
         assert_eq!(row.left_width, 3);
-        assert!(matches!(row.left_align, ColAlign::Right));
+        assert!(matches!(row.left_align, ColAlign::Left));
     }
 
     #[test]

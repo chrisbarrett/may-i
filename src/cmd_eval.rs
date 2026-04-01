@@ -16,7 +16,7 @@ use crate::runtime_facts::parse_cli_facts;
 /// Parse a simple command string into (command_name, args) using the shell
 /// parser, which correctly handles quoting. Falls back to split_whitespace
 /// for non-simple commands.
-fn parse_command_args(text: &str) -> (String, Vec<String>) {
+pub(crate) fn parse_command_args(text: &str) -> (String, Vec<String>) {
     match parser::parse(text) {
         parser::Command::Simple(sc) if !sc.words.is_empty() => {
             let cmd = sc.words[0].to_str();
