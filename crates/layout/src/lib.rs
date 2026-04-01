@@ -402,6 +402,56 @@ mod tests {
     }
 
     #[test]
+    fn hrule_without_label() {
+        let layout = Layout::HRule(None);
+        let mut buf = Vec::new();
+        write_layout(&mut buf, &layout, &TERM);
+        let s = String::from_utf8(buf).unwrap();
+        let stripped = strip_ansi(&s);
+        assert!(stripped.contains("─"));
+    }
+
+    #[test]
+    fn hrule_with_label() {
+        let layout = Layout::HRule(Some(HRuleLabel {
+            text: "section".into(),
+            visible_width: 7,
+        }));
+        let mut buf = Vec::new();
+        write_layout(&mut buf, &layout, &TERM);
+        let s = String::from_utf8(buf).unwrap();
+        let stripped = strip_ansi(&s);
+        assert!(stripped.contains("section"));
+        assert!(stripped.contains("─"));
+    }
+
+    #[test]
+    fn kv_creates_right_aligned_row() {
+        let row = ColRow::kv("key", "value");
+        assert_eq!(row.left, "key");
+        assert_eq!(row.left_width, 3);
+        assert!(matches!(row.left_align, ColAlign::Right));
+    }
+
+    #[test]
+    fn breakable_with_empty_items() {
+        let rows = vec![ColRow {
+            left: "lbl".into(),
+            left_width: 3,
+            left_align: ColAlign::Left,
+            right: ColContent::Breakable {
+                items: vec![],
+                separator: ", ".into(),
+                separator_width: 2,
+            },
+        }];
+        let layout = Layout::Columns(rows);
+        let s = render_to_string(&layout, 0, &TERM);
+        let stripped = strip_ansi(&s);
+        assert!(stripped.contains("│"));
+    }
+
+    #[test]
     fn strip_ansi_removes_escape_codes() {
         let colored = format!("{}hello{}", "\x1b[31m", "\x1b[0m");
         assert_eq!(strip_ansi(&colored), "hello");

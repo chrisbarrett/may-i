@@ -9,6 +9,7 @@ exclude-files = [
    "crates/config/src/io.rs",
    "crates/**/*_tests.rs",
    "crates/**/test_helpers.rs",
+   "crates/core/src/arbitrary_impls.rs",
 ]
 
 [report]

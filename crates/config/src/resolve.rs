@@ -802,4 +802,275 @@ mod tests {
         let result = validate_and_resolve(&rules, &defines);
         assert!(result.is_err());
     }
+
+    // --- Effect variant resolution tests ---
+    // Each test wraps a Named predicate inside a different Effect variant
+    // to exercise the resolution and ref-collection arms.
+
+    fn create_rule_with_effect(effect: Effect) -> Rule {
+        Rule::new(
+            Spanned::new(
+                Effect::CommandPattern(CommandPattern::Literal("test".to_string())),
+                dummy_span(),
+            ),
+            vec![Spanned::new(effect, dummy_span())],
+            vec![],
+            dummy_span(),
+        )
+    }
+
+    #[test]
+    fn resolve_unless_with_named_predicate() {
+        let defines = vec![create_define("safe", Predicate::fact_presence(":safe"))];
+        let effect = Effect::Unless {
+            predicate: Spanned::new(Predicate::Named("safe".to_string()), dummy_span()),
+            effect: Box::new(Spanned::new(Effect::Deny(None), dummy_span())),
+        };
+        let rules = vec![create_rule_with_effect(effect)];
+        let define_map = DefineMap::from_defines(&defines).unwrap();
+
+        let resolved = resolve_predicates(&rules, &defines, &define_map).unwrap();
+        match &resolved[0].effects[0].value {
+            Effect::Unless { predicate, .. } => {
+                assert!(matches!(predicate.value, Predicate::Fact(_)));
+            }
+            _ => panic!("expected Unless effect"),
+        }
+    }
+
+    #[test]
+    fn resolve_if_with_named_predicate() {
+        let defines = vec![create_define("safe", Predicate::fact_presence(":safe"))];
+        let effect = Effect::If {
+            predicate: Spanned::new(Predicate::Named("safe".to_string()), dummy_span()),
+            then_effect: Box::new(Spanned::new(Effect::Allow(None), dummy_span())),
+            else_effect: Box::new(Spanned::new(Effect::Deny(None), dummy_span())),
+        };
+        let rules = vec![create_rule_with_effect(effect)];
+        let define_map = DefineMap::from_defines(&defines).unwrap();
+
+        let resolved = resolve_predicates(&rules, &defines, &define_map).unwrap();
+        match &resolved[0].effects[0].value {
+            Effect::If { predicate, .. } => {
+                assert!(matches!(predicate.value, Predicate::Fact(_)));
+            }
+            _ => panic!("expected If effect"),
+        }
+    }
+
+    #[test]
+    fn resolve_cond_with_named_predicate() {
+        let defines = vec![create_define("safe", Predicate::fact_presence(":safe"))];
+        let effect = Effect::Cond {
+            branches: vec![(
+                Spanned::new(Predicate::Named("safe".to_string()), dummy_span()),
+                Spanned::new(Effect::Allow(None), dummy_span()),
+            )],
+            fallback: Some(Box::new(Spanned::new(Effect::Deny(None), dummy_span()))),
+        };
+        let rules = vec![create_rule_with_effect(effect)];
+        let define_map = DefineMap::from_defines(&defines).unwrap();
+
+        let resolved = resolve_predicates(&rules, &defines, &define_map).unwrap();
+        match &resolved[0].effects[0].value {
+            Effect::Cond { branches, .. } => {
+                assert!(matches!(branches[0].0.value, Predicate::Fact(_)));
+            }
+            _ => panic!("expected Cond effect"),
+        }
+    }
+
+    #[test]
+    fn resolve_and_effect_with_named_predicate() {
+        let defines = vec![create_define("safe", Predicate::fact_presence(":safe"))];
+        let effect = Effect::And {
+            effects: vec![Spanned::new(
+                Effect::When {
+                    predicate: Spanned::new(Predicate::Named("safe".to_string()), dummy_span()),
+                    effect: Box::new(Spanned::new(Effect::Allow(None), dummy_span())),
+                },
+                dummy_span(),
+            )],
+        };
+        let rules = vec![create_rule_with_effect(effect)];
+        let define_map = DefineMap::from_defines(&defines).unwrap();
+
+        let resolved = resolve_predicates(&rules, &defines, &define_map).unwrap();
+        match &resolved[0].effects[0].value {
+            Effect::And { effects } => match &effects[0].value {
+                Effect::When { predicate, .. } => {
+                    assert!(matches!(predicate.value, Predicate::Fact(_)));
+                }
+                _ => panic!("expected When inside And"),
+            },
+            _ => panic!("expected And effect"),
+        }
+    }
+
+    #[test]
+    fn resolve_or_effect_with_named_predicate() {
+        let defines = vec![create_define("safe", Predicate::fact_presence(":safe"))];
+        let effect = Effect::Or {
+            effects: vec![Spanned::new(
+                Effect::When {
+                    predicate: Spanned::new(Predicate::Named("safe".to_string()), dummy_span()),
+                    effect: Box::new(Spanned::new(Effect::Allow(None), dummy_span())),
+                },
+                dummy_span(),
+            )],
+        };
+        let rules = vec![create_rule_with_effect(effect)];
+        let define_map = DefineMap::from_defines(&defines).unwrap();
+
+        let resolved = resolve_predicates(&rules, &defines, &define_map).unwrap();
+        match &resolved[0].effects[0].value {
+            Effect::Or { effects } => match &effects[0].value {
+                Effect::When { predicate, .. } => {
+                    assert!(matches!(predicate.value, Predicate::Fact(_)));
+                }
+                _ => panic!("expected When inside Or"),
+            },
+            _ => panic!("expected Or effect"),
+        }
+    }
+
+    #[test]
+    fn resolve_not_effect_with_named_predicate() {
+        let defines = vec![create_define("safe", Predicate::fact_presence(":safe"))];
+        let effect = Effect::Not {
+            effect: Box::new(Spanned::new(
+                Effect::When {
+                    predicate: Spanned::new(Predicate::Named("safe".to_string()), dummy_span()),
+                    effect: Box::new(Spanned::new(Effect::Allow(None), dummy_span())),
+                },
+                dummy_span(),
+            )),
+        };
+        let rules = vec![create_rule_with_effect(effect)];
+        let define_map = DefineMap::from_defines(&defines).unwrap();
+
+        let resolved = resolve_predicates(&rules, &defines, &define_map).unwrap();
+        match &resolved[0].effects[0].value {
+            Effect::Not { effect } => match &effect.value {
+                Effect::When { predicate, .. } => {
+                    assert!(matches!(predicate.value, Predicate::Fact(_)));
+                }
+                _ => panic!("expected When inside Not"),
+            },
+            _ => panic!("expected Not effect"),
+        }
+    }
+
+    #[test]
+    fn resolve_or_predicate_with_named() {
+        let defines = vec![
+            create_define("a", Predicate::fact_presence(":a")),
+            create_define("b", Predicate::fact_presence(":b")),
+        ];
+        let rules = vec![create_rule_with_conditional(
+            Predicate::Or(vec![
+                Predicate::Named("a".to_string()),
+                Predicate::Named("b".to_string()),
+            ]),
+            Effect::Allow(None),
+        )];
+        let define_map = DefineMap::from_defines(&defines).unwrap();
+
+        let resolved = resolve_predicates(&rules, &defines, &define_map).unwrap();
+        match &resolved[0].effects[0].value {
+            Effect::When { predicate, .. } => {
+                assert!(matches!(predicate.value, Predicate::Or(_)));
+                if let Predicate::Or(preds) = &predicate.value {
+                    assert!(preds.iter().all(|p| matches!(p, Predicate::Fact(_))));
+                }
+            }
+            _ => panic!("expected When effect"),
+        }
+    }
+
+    // --- Ref collection from effect variants ---
+
+    #[test]
+    fn collect_refs_from_if_effect() {
+        let effect = Spanned::new(
+            Effect::If {
+                predicate: Spanned::new(Predicate::Named("a".to_string()), dummy_span()),
+                then_effect: Box::new(Spanned::new(
+                    Effect::When {
+                        predicate: Spanned::new(Predicate::Named("b".to_string()), dummy_span()),
+                        effect: Box::new(Spanned::new(Effect::Allow(None), dummy_span())),
+                    },
+                    dummy_span(),
+                )),
+                else_effect: Box::new(Spanned::new(Effect::Deny(None), dummy_span())),
+            },
+            dummy_span(),
+        );
+
+        let refs = collect_named_refs_from_effect(&effect);
+        let names: Vec<&str> = refs.iter().map(|r| r.name.as_str()).collect();
+        assert!(names.contains(&"a"));
+        assert!(names.contains(&"b"));
+    }
+
+    #[test]
+    fn collect_refs_from_cond_effect() {
+        let effect = Spanned::new(
+            Effect::Cond {
+                branches: vec![(
+                    Spanned::new(Predicate::Named("a".to_string()), dummy_span()),
+                    Spanned::new(Effect::Allow(None), dummy_span()),
+                )],
+                fallback: Some(Box::new(Spanned::new(
+                    Effect::When {
+                        predicate: Spanned::new(Predicate::Named("b".to_string()), dummy_span()),
+                        effect: Box::new(Spanned::new(Effect::Deny(None), dummy_span())),
+                    },
+                    dummy_span(),
+                ))),
+            },
+            dummy_span(),
+        );
+
+        let refs = collect_named_refs_from_effect(&effect);
+        let names: Vec<&str> = refs.iter().map(|r| r.name.as_str()).collect();
+        assert!(names.contains(&"a"));
+        assert!(names.contains(&"b"));
+    }
+
+    #[test]
+    fn collect_refs_from_and_or_not_effects() {
+        let effect = Spanned::new(
+            Effect::And {
+                effects: vec![Spanned::new(
+                    Effect::Or {
+                        effects: vec![Spanned::new(
+                            Effect::Not {
+                                effect: Box::new(Spanned::new(
+                                    Effect::When {
+                                        predicate: Spanned::new(
+                                            Predicate::Named("x".to_string()),
+                                            dummy_span(),
+                                        ),
+                                        effect: Box::new(Spanned::new(
+                                            Effect::Allow(None),
+                                            dummy_span(),
+                                        )),
+                                    },
+                                    dummy_span(),
+                                )),
+                            },
+                            dummy_span(),
+                        )],
+                    },
+                    dummy_span(),
+                )],
+            },
+            dummy_span(),
+        );
+
+        let refs = collect_named_refs_from_effect(&effect);
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].name, "x");
+    }
 }

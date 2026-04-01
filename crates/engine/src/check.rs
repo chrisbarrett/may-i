@@ -157,4 +157,68 @@ mod tests {
         let eval = evaluate_simple(&check.command, &config, &check.context);
         assert_eq!(eval.decision, Decision::Deny);
     }
+
+    #[test]
+    fn compound_command_returns_ask() {
+        let config = Config::default();
+        let facts = ContextFacts::default();
+        let eval = evaluate_simple("ls && rm -rf /", &config, &facts);
+        assert_eq!(eval.decision, Decision::Ask);
+        assert!(eval.reason.unwrap().contains("Compound"));
+    }
+
+    #[test]
+    fn empty_command_returns_allow() {
+        let config = Config::default();
+        let facts = ContextFacts::default();
+        let eval = evaluate_simple("", &config, &facts);
+        assert_eq!(eval.decision, Decision::Allow);
+    }
+
+    #[test]
+    fn run_checks_collects_rule_and_config_checks() {
+        let s = Span::new(0, 0);
+        let rule = Rule {
+            command_effect: may_i_core::ast::Spanned::new(
+                Effect::CommandPattern(CommandPattern::Literal("echo".into())),
+                s,
+            ),
+            effects: vec![may_i_core::ast::Spanned::new(
+                Effect::Allow(Some("ok".into())),
+                s,
+            )],
+            checks: vec![Check {
+                command: "echo hi".into(),
+                expected: Decision::Allow,
+                context: ContextFacts::default(),
+                span: s,
+            }],
+            span: s,
+        };
+
+        let config = Config {
+            rules: vec![rule],
+            checks: vec![Check {
+                command: "echo bye".into(),
+                expected: Decision::Allow,
+                context: ContextFacts::default(),
+                span: s,
+            }],
+            ..Config::default()
+        };
+
+        let results = run_checks(&config);
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|r| r.passed));
+    }
+
+    #[test]
+    fn word_to_string_with_double_quoted() {
+        let word = Word {
+            parts: vec![WordPart::DoubleQuoted(vec![WordPart::Literal(
+                "hello world".into(),
+            )])],
+        };
+        assert_eq!(word_to_string(&word), "hello world");
+    }
 }

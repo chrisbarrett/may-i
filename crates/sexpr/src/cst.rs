@@ -2156,4 +2156,82 @@ mod proptests {
         );
         assert!(pretty.contains("(check"), "Should have check form");
     }
+
+    // --- Parser error path tests ---
+
+    #[test]
+    fn unclosed_list_produces_error() {
+        let (nodes, errors) = parse("(foo bar");
+        assert!(!errors.is_empty());
+        assert!(
+            errors[0].message.contains("unclosed"),
+            "expected unclosed error, got: {:?}",
+            errors[0].message
+        );
+        // Partial parse still produces a node
+        assert!(!nodes.is_empty());
+    }
+
+    #[test]
+    fn unterminated_string_produces_error() {
+        let (_, errors) = parse("\"hello");
+        assert!(!errors.is_empty());
+        assert!(
+            errors[0].message.contains("unterminated"),
+            "expected unterminated error, got: {:?}",
+            errors[0].message
+        );
+    }
+
+    #[test]
+    fn unexpected_character_produces_error() {
+        let (_, errors) = parse("~");
+        assert!(!errors.is_empty());
+        assert!(
+            errors[0].message.contains("unexpected"),
+            "expected unexpected char error, got: {:?}",
+            errors[0].message
+        );
+    }
+
+    #[test]
+    fn string_escape_sequences() {
+        let (nodes, errors) = parse(r#""hello\nworld\t\"end\\""#);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        // At CST level, strings are ShapeF::Str
+        match &nodes[0].shape {
+            ShapeF::Str(s) => {
+                assert_eq!(s, "hello\nworld\t\"end\\");
+            }
+            other => panic!("expected Str, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unknown_escape_produces_error() {
+        let (_, errors) = parse(r#""\z""#);
+        assert!(!errors.is_empty());
+        assert!(
+            errors[0].message.contains("unknown escape"),
+            "got: {:?}",
+            errors[0].message
+        );
+    }
+
+    #[test]
+    fn unterminated_escape_produces_error() {
+        let (_, errors) = parse(r#""hello\"#);
+        assert!(!errors.is_empty());
+    }
+
+    #[test]
+    fn pretty_serialize_vector_form() {
+        let input = "[a b c]";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+        let pretty = nodes[0].pretty_serialize(80);
+        assert!(pretty.contains("["));
+        assert!(pretty.contains("]"));
+        assert!(pretty.contains("a"));
+    }
 }

@@ -2144,4 +2144,216 @@ mod tests {
         // Inner "rm" should see :via = {"sudo", "ssh"} and match the deny rule
         assert_eq!(result.decision, Decision::Deny);
     }
+
+    // --- FactPattern combinator tests ---
+
+    #[test]
+    fn match_fact_pattern_and() {
+        let pat = FactPattern::And(vec![
+            FactPattern::Regex(regex::Regex::new("^prod").unwrap()),
+            FactPattern::Regex(regex::Regex::new("server$").unwrap()),
+        ]);
+        assert!(match_fact_pattern(&pat, "prod-server"));
+        assert!(!match_fact_pattern(&pat, "prod-host"));
+        assert!(!match_fact_pattern(&pat, "dev-server"));
+    }
+
+    #[test]
+    fn match_fact_pattern_or() {
+        let pat = FactPattern::Or(vec![
+            FactPattern::Literal("a".to_string()),
+            FactPattern::Literal("b".to_string()),
+        ]);
+        assert!(match_fact_pattern(&pat, "a"));
+        assert!(match_fact_pattern(&pat, "b"));
+        assert!(!match_fact_pattern(&pat, "c"));
+    }
+
+    #[test]
+    fn match_fact_pattern_not() {
+        let pat = FactPattern::Not(Box::new(FactPattern::Literal("bad".to_string())));
+        assert!(!match_fact_pattern(&pat, "bad"));
+        assert!(match_fact_pattern(&pat, "good"));
+    }
+
+    #[test]
+    fn match_fact_pattern_nested_combinators() {
+        // (and (not "exclude") (or "a" "b"))
+        let pat = FactPattern::And(vec![
+            FactPattern::Not(Box::new(FactPattern::Literal("exclude".to_string()))),
+            FactPattern::Or(vec![
+                FactPattern::Literal("a".to_string()),
+                FactPattern::Literal("b".to_string()),
+            ]),
+        ]);
+        assert!(match_fact_pattern(&pat, "a"));
+        assert!(match_fact_pattern(&pat, "b"));
+        assert!(!match_fact_pattern(&pat, "c"));
+        assert!(!match_fact_pattern(&pat, "exclude"));
+    }
+
+    // --- Backtracking tests ---
+
+    #[test]
+    fn zero_or_more_wildcard_backtracks_for_required() {
+        use may_i_core::pattern::PositionalArg;
+        use may_i_core::{Expr, Quantifier};
+
+        // (* *) "end" — wildcard * greedily consumes all, must backtrack for "end"
+        let patterns = vec![
+            PositionalArg {
+                quantifier: Quantifier::ZeroOrMore,
+                pattern: Expr::Wildcard,
+                recursive: false,
+            },
+            PositionalArg {
+                quantifier: Quantifier::One,
+                pattern: Expr::Literal("end".to_string()),
+                recursive: false,
+            },
+        ];
+
+        let args_owned: Vec<String> = vec!["a", "b", "c", "end"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let args: Vec<&String> = args_owned.iter().collect();
+        let (matched, consumed, _) = match_positional_patterns(&args, &patterns);
+        assert!(matched);
+        assert_eq!(consumed, 4);
+    }
+
+    #[test]
+    fn one_or_more_wildcard_backtracks_for_required() {
+        use may_i_core::pattern::PositionalArg;
+        use may_i_core::{Expr, Quantifier};
+
+        // (+ *) "end" — must consume at least 1, then backtrack for "end"
+        let patterns = vec![
+            PositionalArg {
+                quantifier: Quantifier::OneOrMore,
+                pattern: Expr::Wildcard,
+                recursive: false,
+            },
+            PositionalArg {
+                quantifier: Quantifier::One,
+                pattern: Expr::Literal("end".to_string()),
+                recursive: false,
+            },
+        ];
+
+        let args_owned: Vec<String> = vec!["x", "y", "end"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let args: Vec<&String> = args_owned.iter().collect();
+        let (matched, consumed, _) = match_positional_patterns(&args, &patterns);
+        assert!(matched);
+        assert_eq!(consumed, 3);
+    }
+
+    #[test]
+    fn one_or_more_wildcard_fails_when_only_required() {
+        use may_i_core::pattern::PositionalArg;
+        use may_i_core::{Expr, Quantifier};
+
+        // (+ *) "end" with args ["end"] — can't consume 1+ AND have "end" left
+        let patterns = vec![
+            PositionalArg {
+                quantifier: Quantifier::OneOrMore,
+                pattern: Expr::Wildcard,
+                recursive: false,
+            },
+            PositionalArg {
+                quantifier: Quantifier::One,
+                pattern: Expr::Literal("end".to_string()),
+                recursive: false,
+            },
+        ];
+
+        let args_owned = vec!["end".to_string()];
+        let args: Vec<&String> = args_owned.iter().collect();
+        let (matched, _, _) = match_positional_patterns(&args, &patterns);
+        assert!(!matched);
+    }
+
+    // --- check.rs coverage: compound commands and run_checks ---
+
+    #[test]
+    fn evaluate_empty_command() {
+        let config = may_i_core::ast::Config::default();
+        let facts = ContextFacts::default();
+        let result = crate::check::run_checks(&config);
+        assert!(result.is_empty());
+
+        // Also: assignment-only commands should be allowed
+        let result = crate::eval::evaluate("", &[], &config, &facts);
+        assert_eq!(result.decision, Decision::Ask);
+    }
+
+    #[test]
+    fn run_checks_with_rule_level_checks() {
+        use may_i_core::ast::{Check, Config, Rule, Spanned};
+        use may_i_core::pattern::CommandPattern;
+        use may_i_core::span::Span;
+
+        let s = Span::new(0, 1);
+        let rule = Rule {
+            command_effect: Spanned::new(
+                Effect::CommandPattern(CommandPattern::Literal("ls".into())),
+                s,
+            ),
+            effects: vec![Spanned::new(Effect::Allow(Some("ok".into())), s)],
+            checks: vec![Check {
+                command: "ls -la".into(),
+                expected: Decision::Allow,
+                context: ContextFacts::default(),
+                span: s,
+            }],
+            span: s,
+        };
+
+        let config = Config {
+            rules: vec![rule],
+            ..Config::default()
+        };
+
+        let results = crate::check::run_checks(&config);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].passed);
+    }
+
+    #[test]
+    fn run_checks_with_config_level_checks() {
+        use may_i_core::ast::{Check, Config, Rule, Spanned};
+        use may_i_core::pattern::CommandPattern;
+        use may_i_core::span::Span;
+
+        let s = Span::new(0, 1);
+        let rule = Rule {
+            command_effect: Spanned::new(
+                Effect::CommandPattern(CommandPattern::Literal("git".into())),
+                s,
+            ),
+            effects: vec![Spanned::new(Effect::Deny(Some("no git".into())), s)],
+            checks: vec![],
+            span: s,
+        };
+
+        let config = Config {
+            rules: vec![rule],
+            checks: vec![Check {
+                command: "git push".into(),
+                expected: Decision::Deny,
+                context: ContextFacts::default(),
+                span: s,
+            }],
+            ..Config::default()
+        };
+
+        let results = crate::check::run_checks(&config);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].passed);
+        assert_eq!(results[0].actual, Decision::Deny);
+    }
 }
