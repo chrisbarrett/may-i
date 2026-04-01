@@ -1086,6 +1086,7 @@ fn doc_to_json(doc: &Doc<Option<Ann>>) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use may_i_core::Decision;
     use may_i_core::doc::LayoutHint;
     use proptest::prelude::*;
 
@@ -2032,5 +2033,278 @@ mod tests {
             write_layout(&mut buf, &layout, &term);
             assert!(!buf.is_empty());
         }
+    }
+
+    // ── ann_to_json ─────────────────────────────────────────────────
+
+    #[test]
+    fn ann_to_json_command_match() {
+        let json = ann_to_json(&Ann::CommandMatch { matched: true });
+        assert_eq!(json["type"], "command_match");
+        assert_eq!(json["matched"], true);
+    }
+
+    #[test]
+    fn ann_to_json_arg_match() {
+        let json = ann_to_json(&Ann::ArgMatch {
+            search_tokens: vec!["t".into()],
+            arg_set: vec!["a".into()],
+            matched: false,
+        });
+        assert_eq!(json["type"], "arg_match");
+        assert_eq!(json["matched"], false);
+        assert_eq!(json["search_tokens"][0], "t");
+    }
+
+    #[test]
+    fn ann_to_json_fact_query() {
+        let json = ann_to_json(&Ann::FactQuery {
+            query_source: "src".into(),
+            matched: true,
+            observed: Some(vec!["val".into()]),
+            failure_reason: None,
+        });
+        assert_eq!(json["type"], "fact_query");
+        assert_eq!(json["matched"], true);
+        assert_eq!(json["observed"][0], "val");
+    }
+
+    #[test]
+    fn ann_to_json_effect_decision() {
+        let json = ann_to_json(&Ann::EffectDecision {
+            decision: Decision::Deny,
+            reason: Some("bad".into()),
+        });
+        assert_eq!(json["type"], "effect_decision");
+        assert!(json["decision"].as_str().unwrap().contains("deny"));
+        assert_eq!(json["reason"], "bad");
+    }
+
+    #[test]
+    fn ann_to_json_bind_match() {
+        let json = ann_to_json(&Ann::BindMatch {
+            key: ":host".into(),
+            value: Some("x".into()),
+        });
+        assert_eq!(json["type"], "bind_match");
+        assert_eq!(json["key"], ":host");
+    }
+
+    #[test]
+    fn ann_to_json_regex_match() {
+        let json = ann_to_json(&Ann::RegexMatch {
+            pattern: "foo.*".into(),
+            actual: "foobar".into(),
+            matched: true,
+        });
+        assert_eq!(json["type"], "regex_match");
+        assert_eq!(json["matched"], true);
+    }
+
+    #[test]
+    fn ann_to_json_combinator() {
+        let json = ann_to_json(&Ann::Combinator {
+            result_is_nil: true,
+        });
+        assert_eq!(json["type"], "combinator");
+        assert_eq!(json["result_is_nil"], true);
+    }
+
+    #[test]
+    fn ann_to_json_may_i() {
+        let json = ann_to_json(&Ann::MayI {
+            inner_command: "rm -rf".into(),
+            decision: Decision::Deny,
+            reason: Some("nope".into()),
+        });
+        assert_eq!(json["type"], "may_i");
+        assert_eq!(json["inner_command"], "rm -rf");
+    }
+
+    #[test]
+    fn ann_to_json_rule_match() {
+        let json = ann_to_json(&Ann::RuleMatch {
+            matched: true,
+            line: Some(42),
+        });
+        assert_eq!(json["type"], "rule_match");
+        assert_eq!(json["line"], 42);
+    }
+
+    // ── doc_to_json ─────────────────────────────────────────────────
+
+    #[test]
+    fn doc_to_json_atom() {
+        let json = doc_to_json(&atom("hello"));
+        assert_eq!(json, "hello");
+    }
+
+    #[test]
+    fn doc_to_json_list() {
+        let doc = list(vec![atom("a"), atom("b")]);
+        let json = doc_to_json(&doc);
+        assert!(json.is_array());
+        assert_eq!(json[0], "a");
+        assert_eq!(json[1], "b");
+    }
+
+    #[test]
+    fn doc_to_json_vector() {
+        let doc = vec_doc(vec![atom("x"), atom("y")]);
+        let json = doc_to_json(&doc);
+        assert_eq!(json["type"], "vector");
+        assert_eq!(json["children"][0], "x");
+    }
+
+    // ── collect_json_annotations ────────────────────────────────────
+
+    #[test]
+    fn collect_json_annotations_recurses() {
+        let inner = atom_ann("cmd", Ann::CommandMatch { matched: true });
+        let outer = list_ann(
+            Ann::RuleMatch {
+                matched: true,
+                line: Some(1),
+            },
+            vec![inner],
+        );
+        let mut out = Vec::new();
+        collect_json_annotations(&outer, &mut out);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0]["type"], "rule_match");
+        assert_eq!(out[1]["type"], "command_match");
+    }
+
+    // ── colorize_right branches ─────────────────────────────────────
+
+    #[test]
+    fn colorize_right_regex_match() {
+        let s = r#""actual" ~ (regex "pat") → yes"#;
+        let result = colorize_right(s);
+        assert!(result.contains("yes"));
+    }
+
+    #[test]
+    fn colorize_right_regex_no_match() {
+        let s = r#""actual" ~ (regex "pat") → no"#;
+        let result = colorize_right(s);
+        assert!(result.contains("no"));
+    }
+
+    #[test]
+    fn colorize_right_arg_in_set() {
+        let s = r#""t" ∈ {a, b} → yes"#;
+        let result = colorize_right(s);
+        assert!(result.contains("yes"));
+    }
+
+    #[test]
+    fn colorize_right_arg_not_in_set() {
+        let s = r#""t" ∈ {a, b} → no"#;
+        let result = colorize_right(s);
+        assert!(result.contains("no"));
+    }
+
+    #[test]
+    fn colorize_right_regex_without_arrow() {
+        let s = r#""actual" ~ (regex "pat")"#;
+        let result = colorize_right(s);
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn colorize_right_set_without_arrow() {
+        let s = r#""t" ∈ {a, b}"#;
+        let result = colorize_right(s);
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn colorize_right_facts_add() {
+        let s = "facts += :key value";
+        let result = colorize_right(s);
+        assert!(result.contains("facts"));
+    }
+
+    // ── truncate_unevaluated vector branch ──────────────────────────
+
+    #[test]
+    fn truncate_unevaluated_passes_through_vector() {
+        let doc = vec_doc(vec![atom("a"), atom("b")]);
+        let result = truncate_unevaluated(&doc, 2);
+        match &result.node {
+            DocF::Vector(cs) => assert_eq!(cs.len(), 2),
+            _ => panic!("expected vector"),
+        }
+    }
+
+    #[test]
+    fn truncate_unevaluated_skips_anywhere_pattern() {
+        let doc = Doc {
+            ann: Some(Ann::ArgMatch {
+                search_tokens: vec!["tok".into()],
+                arg_set: vec![],
+                matched: true,
+            }),
+            node: DocF::List(vec![
+                atom("anywhere"),
+                atom("a"),
+                atom("b"),
+                atom("c"),
+                atom("d"),
+                atom("e"),
+            ]),
+            layout: LayoutHint::Auto,
+            dimmed: false,
+        };
+        let result = truncate_unevaluated(&doc, 1);
+        // Should NOT truncate because search_tokens is non-empty
+        match &result.node {
+            DocF::List(cs) => assert_eq!(cs.len(), 6),
+            _ => panic!("expected list"),
+        }
+    }
+
+    // ── dim_unevaluated vector branch ───────────────────────────────
+
+    #[test]
+    fn dim_unevaluated_dims_vector_without_annotations() {
+        let doc = vec_doc(vec![atom("a"), atom("b")]);
+        let (result, _) = dim_unevaluated_inner(doc, false);
+        assert!(result.dimmed, "vector with no annotations should be dimmed");
+    }
+
+    #[test]
+    fn dim_unevaluated_preserves_annotated_vector() {
+        let inner = atom_ann("x", Ann::CommandMatch { matched: true });
+        let doc = vec_doc(vec![inner]);
+        let (result, score) = dim_unevaluated_inner(doc, false);
+        assert!(!result.dimmed);
+        assert!(score > 0);
+    }
+
+    // ── trace_to_json with Rule entry ───────────────────────────────
+
+    #[test]
+    fn trace_to_json_rule_entry() {
+        let doc = list_ann(
+            Ann::RuleMatch {
+                matched: true,
+                line: Some(5),
+            },
+            vec![atom_ann("\"git\"", Ann::CommandMatch { matched: true })],
+        );
+        let entries = vec![TraceEntry::Rule {
+            doc,
+            line: Some(5),
+            pre_migration_doc: None,
+            facts: vec![],
+            inner_command: None,
+        }];
+        let json = trace_to_json(&entries);
+        assert_eq!(json.len(), 1);
+        assert_eq!(json[0]["type"], "rule");
+        assert_eq!(json[0]["line"], 5);
+        assert!(json[0]["annotations"].as_array().unwrap().len() >= 1);
     }
 }

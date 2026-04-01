@@ -1049,16 +1049,55 @@ fn flatten_facts(facts: &ContextFacts) -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use may_i_engine::eval::{EvalContext, Evaluator};
+    use may_i_core::ast::{Config, Predicate, Spanned};
+    use may_i_core::pattern::PositionalArg;
+    use may_i_core::{FactQuery, Span};
+    use may_i_engine::eval::{EvalContext, Evaluator, evaluate_with_fold};
     use may_i_engine::fold::PureFold;
     use may_i_engine::test_generators::*;
     use proptest::prelude::*;
 
+    fn dummy_span() -> Span {
+        Span::new(0, 0)
+    }
+
+    fn spanned<T>(value: T) -> Spanned<T> {
+        Spanned::new(value, dummy_span())
+    }
+
+    fn make_config(rules: Vec<Rule>) -> Config {
+        Config {
+            rules,
+            ..Config::default()
+        }
+    }
+
+    fn make_rule(command: CommandPattern, effects: Vec<Effect>) -> Rule {
+        Rule::new(
+            spanned(Effect::CommandPattern(command)),
+            effects.into_iter().map(|e| spanned(e)).collect(),
+            vec![],
+            dummy_span(),
+        )
+    }
+
+    fn presence_query(key: &str) -> FactQuery {
+        FactQuery::Presence {
+            key: key.into(),
+            vector_syntax: false,
+        }
+    }
+
+    fn eval_tracing(config: &Config, cmd: &str, args: &[String]) -> Vec<TraceEntry> {
+        let facts = ContextFacts::default();
+        let mut fold = TracingFold::new();
+        evaluate_with_fold(cmd, args, config, &facts, &mut fold);
+        fold.traces
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig { cases: 256, max_shrink_iters: 50, .. ProptestConfig::default() })]
 
-        // Property: TracingFold produces the same decision as PureFold.
-        // The fold parameterisation must not alter evaluation semantics.
         #[test]
         fn tracing_fold_agrees_with_pure_fold(
             config in any_config(3),
@@ -1081,5 +1120,167 @@ mod tests {
                 "TracingFold must produce the same reason as PureFold"
             );
         }
+    }
+
+    #[test]
+    fn tracing_fold_default_ask() {
+        let config = make_config(vec![make_rule(
+            CommandPattern::Literal("other".into()),
+            vec![Effect::Allow(None)],
+        )]);
+        let entries = eval_tracing(&config, "git", &[]);
+        assert!(
+            entries
+                .iter()
+                .any(|e| matches!(e, TraceEntry::DefaultAsk { .. })),
+            "should produce DefaultAsk when no rule matches"
+        );
+    }
+
+    #[test]
+    fn tracing_fold_command_match_or() {
+        let config = make_config(vec![make_rule(
+            CommandPattern::Or(vec![
+                CommandPattern::Literal("git".into()),
+                CommandPattern::Literal("svn".into()),
+            ]),
+            vec![Effect::Allow(None)],
+        )]);
+        let entries = eval_tracing(&config, "git", &[]);
+        assert!(entries.iter().any(|e| matches!(e, TraceEntry::Rule { .. })));
+    }
+
+    #[test]
+    fn tracing_fold_with_source_text() {
+        let fold = TracingFold::new().with_source_text(Some("(rule \"git\" :allow)".into()));
+        assert!(fold.source_text.is_some());
+    }
+
+    #[test]
+    fn tracing_fold_with_pre_migration_forms() {
+        let forms = vec![(Span::new(0, 10), Doc::<()>::atom("test"))];
+        let fold = TracingFold::new().with_pre_migration_forms(Some(forms));
+        assert!(fold.pre_migration_forms.is_some());
+    }
+
+    #[test]
+    fn tracing_fold_cond_effect() {
+        let config = make_config(vec![make_rule(
+            CommandPattern::Literal("git".into()),
+            vec![Effect::Cond {
+                branches: vec![(
+                    spanned(Predicate::Fact(presence_query(":env"))),
+                    spanned(Effect::Allow(None)),
+                )],
+                fallback: Some(Box::new(spanned(Effect::Deny(Some(String::from(
+                    "no env",
+                )))))),
+            }],
+        )]);
+        let entries = eval_tracing(&config, "git", &[]);
+        assert!(entries.iter().any(|e| matches!(e, TraceEntry::Rule { .. })));
+    }
+
+    #[test]
+    fn tracing_fold_when_terminal_context() {
+        let config = make_config(vec![make_rule(
+            CommandPattern::Literal("git".into()),
+            vec![Effect::When {
+                predicate: spanned(Predicate::Fact(presence_query(":safe"))),
+                effect: Box::new(spanned(Effect::Allow(None))),
+            }],
+        )]);
+        let entries = eval_tracing(&config, "git", &[]);
+        assert!(entries.iter().any(|e| matches!(e, TraceEntry::Rule { .. })));
+    }
+
+    #[test]
+    fn tracing_fold_arg_continuation() {
+        let config = make_config(vec![make_rule(
+            CommandPattern::Literal("git".into()),
+            vec![
+                Effect::ArgPattern(ArgPattern::Positional {
+                    patterns: vec![PositionalArg {
+                        quantifier: Quantifier::One,
+                        pattern: may_i_core::pattern::Expr::Literal("push".into()),
+                        recursive: false,
+                    }],
+                    continuation: None,
+                }),
+                Effect::Allow(None),
+            ],
+        )]);
+        let entries = eval_tracing(&config, "git", &["push".to_string()]);
+        assert!(entries.iter().any(|e| matches!(e, TraceEntry::Rule { .. })));
+    }
+
+    #[test]
+    fn tracing_fold_effect_nil_on_false_predicate() {
+        let config = make_config(vec![make_rule(
+            CommandPattern::Literal("git".into()),
+            vec![Effect::When {
+                predicate: spanned(Predicate::Fact(presence_query(":nonexistent"))),
+                effect: Box::new(spanned(Effect::Allow(None))),
+            }],
+        )]);
+        let facts = ContextFacts::default();
+        let mut fold = TracingFold::new();
+        evaluate_with_fold("git", &[], &config, &facts, &mut fold);
+        assert!(!fold.traces.is_empty());
+    }
+
+    #[test]
+    fn tracing_fold_with_facts() {
+        let config = make_config(vec![make_rule(
+            CommandPattern::Literal("git".into()),
+            vec![Effect::When {
+                predicate: spanned(Predicate::Fact(presence_query(":safe"))),
+                effect: Box::new(spanned(Effect::Allow(None))),
+            }],
+        )]);
+        let mut facts = ContextFacts::default();
+        facts.insert_present(String::from(":safe"));
+        let mut fold = TracingFold::new();
+        evaluate_with_fold("git", &[], &config, &facts, &mut fold);
+        assert!(
+            fold.traces
+                .iter()
+                .any(|e| matches!(e, TraceEntry::Rule { .. }))
+        );
+    }
+
+    #[test]
+    fn flatten_facts_produces_pairs() {
+        let mut facts = ContextFacts::default();
+        facts.insert_scalar(String::from(":env"), String::from("prod"));
+        facts.insert_scalar(String::from(":host"), String::from("example.com"));
+        let pairs = flatten_facts(&facts);
+        assert_eq!(pairs.len(), 2);
+        assert!(pairs.iter().any(|(k, _)| k == ":env"));
+        assert!(pairs.iter().any(|(k, _)| k == ":host"));
+    }
+
+    #[test]
+    fn command_pattern_to_doc_or() {
+        let pat = CommandPattern::Or(vec![
+            CommandPattern::Literal("a".into()),
+            CommandPattern::Literal("b".into()),
+        ]);
+        let doc = command_pattern_to_doc(&pat);
+        match &doc.node {
+            DocF::List(cs) => assert_eq!(cs[0].as_atom(), Some("or")),
+            _ => panic!("expected list for or pattern"),
+        }
+    }
+
+    #[test]
+    fn command_pattern_to_doc_or_broken_when_large() {
+        let pat = CommandPattern::Or(
+            (0..6)
+                .map(|i| CommandPattern::Literal(format!("cmd{}", i)))
+                .collect(),
+        );
+        let doc = command_pattern_to_doc(&pat);
+        assert_eq!(doc.layout, LayoutHint::AlwaysBreak);
     }
 }
