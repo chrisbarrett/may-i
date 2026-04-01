@@ -1082,3 +1082,618 @@ fn doc_to_json(doc: &Doc<Option<Ann>>) -> serde_json::Value {
         }),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use may_i_core::doc::LayoutHint;
+    use proptest::prelude::*;
+
+    fn atom(s: &str) -> Doc<Option<Ann>> {
+        Doc {
+            ann: None,
+            node: DocF::Atom(s.into()),
+            layout: LayoutHint::Auto,
+            dimmed: false,
+        }
+    }
+
+    fn atom_ann(s: &str, ann: Ann) -> Doc<Option<Ann>> {
+        Doc {
+            ann: Some(ann),
+            node: DocF::Atom(s.into()),
+            layout: LayoutHint::Auto,
+            dimmed: false,
+        }
+    }
+
+    fn list(children: Vec<Doc<Option<Ann>>>) -> Doc<Option<Ann>> {
+        Doc {
+            ann: None,
+            node: DocF::List(children),
+            layout: LayoutHint::Auto,
+            dimmed: false,
+        }
+    }
+
+    fn list_ann(ann: Ann, children: Vec<Doc<Option<Ann>>>) -> Doc<Option<Ann>> {
+        Doc {
+            ann: Some(ann),
+            node: DocF::List(children),
+            layout: LayoutHint::Auto,
+            dimmed: false,
+        }
+    }
+
+    fn vec_doc(children: Vec<Doc<Option<Ann>>>) -> Doc<Option<Ann>> {
+        Doc {
+            ann: None,
+            node: DocF::Vector(children),
+            layout: LayoutHint::Auto,
+            dimmed: false,
+        }
+    }
+
+    // ── find_line ──────────────────────────────────────────────────
+
+    #[test]
+    fn find_line_exact_match() {
+        let lines = vec!["foo bar".into(), "baz".into()];
+        let mut from = 0;
+        assert_eq!(find_line(&lines, "baz", &mut from), Some(1));
+        assert_eq!(from, 2);
+    }
+
+    #[test]
+    fn find_line_fallback_to_first_token() {
+        let lines = vec!["hello world".into(), "other".into()];
+        let mut from = 0;
+        // "hello xyz" doesn't match, but first token "hello" does
+        assert_eq!(find_line(&lines, "hello xyz", &mut from), Some(0));
+    }
+
+    #[test]
+    fn find_line_returns_none_when_not_found() {
+        let lines = vec!["foo".into()];
+        let mut from = 0;
+        assert_eq!(find_line(&lines, "missing", &mut from), None);
+    }
+
+    // ── truncate_list ──────────────────────────────────────────────
+
+    #[test]
+    fn truncate_list_short() {
+        let items: Vec<String> = vec!["a".into(), "b".into()];
+        assert_eq!(truncate_list(&items, 4), "a, b");
+    }
+
+    #[test]
+    fn truncate_list_long() {
+        let items: Vec<String> = (0..6).map(|i| format!("item{i}")).collect();
+        let result = truncate_list(&items, 4);
+        assert!(result.contains("…"));
+        assert!(result.starts_with("item0"));
+        assert!(result.ends_with("item5"));
+    }
+
+    // ── render_observed_value ──────────────────────────────────────
+
+    #[test]
+    fn render_observed_value_short() {
+        assert_eq!(render_observed_value("hello"), "\"hello\"");
+    }
+
+    #[test]
+    fn render_observed_value_escapes() {
+        let v = render_observed_value("a\"b\\c\nd");
+        assert_eq!(v, r#""a\"b\\c\nd""#);
+    }
+
+    #[test]
+    fn render_observed_value_truncates_long() {
+        let long = "a".repeat(100);
+        let rendered = render_observed_value(&long);
+        assert!(rendered.len() < 100);
+        assert!(rendered.contains("…"));
+    }
+
+    // ── node_text ─────────────────────────────────────────────────
+
+    #[test]
+    fn node_text_atom() {
+        assert_eq!(node_text(&atom("hello")), "hello");
+    }
+
+    #[test]
+    fn node_text_list() {
+        let doc = list(vec![atom("a"), atom("b")]);
+        assert_eq!(node_text(&doc), "(a b)");
+    }
+
+    #[test]
+    fn node_text_vector() {
+        let doc = vec_doc(vec![atom("x"), atom("y")]);
+        assert_eq!(node_text(&doc), "[x y]");
+    }
+
+    // ── extract_outcome ───────────────────────────────────────────
+
+    #[test]
+    fn extract_outcome_finds_effect_decision() {
+        let child = atom_ann(
+            ":allow",
+            Ann::EffectDecision {
+                decision: may_i_core::Decision::Allow,
+                reason: None,
+            },
+        );
+        let doc = list(vec![atom("rule"), child]);
+        let outcome = extract_outcome(&doc);
+        assert!(outcome.is_some());
+        assert!(outcome.unwrap().contains(":allow"));
+    }
+
+    #[test]
+    fn extract_outcome_none_without_annotation() {
+        let doc = list(vec![atom("rule"), atom("body")]);
+        assert!(extract_outcome(&doc).is_none());
+    }
+
+    // ── has_match ─────────────────────────────────────────────────
+
+    #[test]
+    fn has_match_true() {
+        let doc = list_ann(
+            Ann::RuleMatch {
+                matched: true,
+                line: Some(1),
+            },
+            vec![atom("rule")],
+        );
+        assert!(has_match(&doc));
+    }
+
+    #[test]
+    fn has_match_false() {
+        let doc = list(vec![atom("rule")]);
+        assert!(!has_match(&doc));
+    }
+
+    // ── has_any_visible_annotation ────────────────────────────────
+
+    #[test]
+    fn visible_annotation_ignores_rule_match() {
+        let doc = list_ann(
+            Ann::RuleMatch {
+                matched: true,
+                line: None,
+            },
+            vec![atom("x")],
+        );
+        assert!(!has_any_visible_annotation(&doc));
+    }
+
+    #[test]
+    fn visible_annotation_detects_effect_decision() {
+        let doc = atom_ann(
+            "x",
+            Ann::EffectDecision {
+                decision: may_i_core::Decision::Allow,
+                reason: None,
+            },
+        );
+        assert!(has_any_visible_annotation(&doc));
+    }
+
+    // ── is_forbidden_pattern ──────────────────────────────────────
+
+    #[test]
+    fn is_forbidden_direct() {
+        let doc = list(vec![atom("forbidden"), atom("x")]);
+        assert!(is_forbidden_pattern(&doc));
+    }
+
+    #[test]
+    fn is_forbidden_via_not_anywhere() {
+        let inner = list(vec![atom("anywhere"), atom("x")]);
+        let doc = list(vec![atom("not"), inner]);
+        assert!(is_forbidden_pattern(&doc));
+    }
+
+    #[test]
+    fn not_forbidden_for_anywhere() {
+        let doc = list(vec![atom("anywhere"), atom("x")]);
+        assert!(!is_forbidden_pattern(&doc));
+    }
+
+    // ── dim_unevaluated ───────────────────────────────────────────
+
+    #[test]
+    fn dim_unevaluated_dims_unannotated() {
+        let doc = list(vec![atom("rule"), atom("body")]);
+        let dimmed = dim_unevaluated(doc);
+        assert!(dimmed.dimmed);
+    }
+
+    #[test]
+    fn dim_unevaluated_preserves_annotated() {
+        let child = atom_ann(
+            "x",
+            Ann::EffectDecision {
+                decision: may_i_core::Decision::Allow,
+                reason: None,
+            },
+        );
+        let doc = list(vec![atom("rule"), child]);
+        let dimmed = dim_unevaluated(doc);
+        assert!(!dimmed.dimmed);
+    }
+
+    // ── truncate_matched_anywhere ─────────────────────────────────
+
+    #[test]
+    fn truncate_anywhere_keeps_first_match() {
+        let doc = list_ann(
+            Ann::ArgMatch {
+                search_tokens: vec!["a".into(), "b".into(), "c".into()],
+                arg_set: vec!["a".into()],
+                matched: true,
+            },
+            vec![atom("anywhere"), atom("a"), atom("b"), atom("c")],
+        );
+        let truncated = truncate_matched_anywhere(&doc);
+        if let DocF::List(children) = &truncated.node {
+            assert_eq!(children.len(), 2); // head + first match
+        } else {
+            panic!("expected list");
+        }
+    }
+
+    #[test]
+    fn truncate_anywhere_preserves_unmatched() {
+        let doc = list_ann(
+            Ann::ArgMatch {
+                search_tokens: vec!["a".into()],
+                arg_set: vec![],
+                matched: false,
+            },
+            vec![atom("anywhere"), atom("a"), atom("b")],
+        );
+        let truncated = truncate_matched_anywhere(&doc);
+        if let DocF::List(children) = &truncated.node {
+            assert_eq!(children.len(), 3); // unchanged
+        } else {
+            panic!("expected list");
+        }
+    }
+
+    // ── extract_positional_args ───────────────────────────────────
+
+    #[test]
+    fn extract_positional_args_basic() {
+        let args = vec!["cmd".into(), "--flag".into(), "val".into(), "pos".into()];
+        let result = extract_positional_args(&args);
+        assert_eq!(result, vec!["cmd", "pos"]);
+    }
+
+    #[test]
+    fn extract_positional_args_with_terminator() {
+        let args = vec!["--opt".into(), "v".into(), "--".into(), "--not-flag".into()];
+        let result = extract_positional_args(&args);
+        assert_eq!(result, vec!["--", "--not-flag"]);
+    }
+
+    // ── colorize_right ────────────────────────────────────────────
+
+    #[test]
+    fn colorize_right_empty() {
+        assert_eq!(colorize_right(""), "");
+    }
+
+    #[test]
+    fn colorize_right_yes() {
+        let result = colorize_right("yes");
+        let stripped = strip_ansi(&result);
+        assert_eq!(stripped, "yes");
+    }
+
+    #[test]
+    fn colorize_right_no() {
+        let result = colorize_right("no");
+        let stripped = strip_ansi(&result);
+        assert_eq!(stripped, "no");
+    }
+
+    #[test]
+    fn colorize_right_arrow_keyword() {
+        let result = colorize_right("→ :allow");
+        let stripped = strip_ansi(&result);
+        assert!(stripped.contains(":allow"));
+    }
+
+    #[test]
+    fn colorize_right_arrow_keyword_with_reason() {
+        let result = colorize_right("→ :deny \"reason\"");
+        let stripped = strip_ansi(&result);
+        assert!(stripped.contains(":deny"));
+        assert!(stripped.contains("reason"));
+    }
+
+    #[test]
+    fn colorize_right_effect_sexpr() {
+        let result = colorize_right("(effect :allow)");
+        let stripped = strip_ansi(&result);
+        assert!(stripped.contains(":allow"));
+    }
+
+    #[test]
+    fn colorize_right_facts_bind() {
+        let result = colorize_right("facts += :key \"value\"");
+        let stripped = strip_ansi(&result);
+        assert!(stripped.contains(":key"));
+        assert!(stripped.contains("value"));
+    }
+
+    #[test]
+    fn colorize_right_regex() {
+        let result = colorize_right("\"val\" ~ (regex \"pat\") → yes");
+        let stripped = strip_ansi(&result);
+        assert!(stripped.contains("yes"));
+    }
+
+    #[test]
+    fn colorize_right_arg_match() {
+        let result = colorize_right("\"t\" ∈ {\"a\", \"b\"} → no");
+        let stripped = strip_ansi(&result);
+        assert!(stripped.contains("no"));
+    }
+
+    // ── colorize_decision_keyword ─────────────────────────────────
+
+    #[test]
+    fn colorize_decision_keywords() {
+        assert!(strip_ansi(&colorize_decision_keyword(":allow")).contains(":allow"));
+        assert!(strip_ansi(&colorize_decision_keyword(":ask")).contains(":ask"));
+        assert!(strip_ansi(&colorize_decision_keyword(":deny")).contains(":deny"));
+        assert_eq!(colorize_decision_keyword(":other"), ":other");
+    }
+
+    // ── format_annotation ─────────────────────────────────────────
+
+    #[test]
+    fn format_annotation_command_mismatch() {
+        let ann = Ann::CommandMatch { matched: false };
+        let doc = atom("git");
+        let result = format_annotation(&doc, &ann);
+        assert!(result.is_some());
+        let (needle, text) = result.unwrap();
+        assert_eq!(needle, "git");
+        assert_eq!(text, "no");
+    }
+
+    #[test]
+    fn format_annotation_command_match_returns_none() {
+        let ann = Ann::CommandMatch { matched: true };
+        let doc = atom("git");
+        assert!(format_annotation(&doc, &ann).is_none());
+    }
+
+    #[test]
+    fn format_annotation_may_i() {
+        let ann = Ann::MayI {
+            inner_command: "rm -rf /".into(),
+            decision: may_i_core::Decision::Deny,
+            reason: Some("dangerous".into()),
+        };
+        let doc = atom("(may-i *)");
+        let result = format_annotation(&doc, &ann).unwrap();
+        assert!(result.1.contains("rm -rf /"));
+        assert!(result.1.contains(":deny"));
+        assert!(result.1.contains("dangerous"));
+    }
+
+    #[test]
+    fn format_annotation_bind_match() {
+        let ann = Ann::BindMatch {
+            key: ":host".into(),
+            value: Some("prod".into()),
+        };
+        let doc = atom("[:host]");
+        let result = format_annotation(&doc, &ann).unwrap();
+        assert!(result.1.contains("facts +="));
+        assert!(result.1.contains(":host"));
+    }
+
+    #[test]
+    fn format_annotation_regex_match() {
+        let ann = Ann::RegexMatch {
+            pattern: "^prod".into(),
+            actual: "prod-01".into(),
+            matched: true,
+        };
+        let doc = atom("(regex)");
+        let result = format_annotation(&doc, &ann).unwrap();
+        assert!(result.1.contains("prod-01"));
+        assert!(result.1.contains("yes"));
+    }
+
+    #[test]
+    fn format_annotation_fact_query_with_observed() {
+        let ann = Ann::FactQuery {
+            query_source: "test".into(),
+            matched: true,
+            observed: Some(vec!["val".into()]),
+            failure_reason: None,
+        };
+        let doc = atom("(fact?)");
+        let result = format_annotation(&doc, &ann).unwrap();
+        assert!(result.1.contains("val"));
+        assert!(result.1.contains("yes"));
+    }
+
+    #[test]
+    fn format_annotation_fact_query_without_observed() {
+        let ann = Ann::FactQuery {
+            query_source: "test".into(),
+            matched: false,
+            observed: None,
+            failure_reason: None,
+        };
+        let doc = atom("(fact?)");
+        let result = format_annotation(&doc, &ann).unwrap();
+        assert_eq!(result.1, "no");
+    }
+
+    // ── JSON output ───────────────────────────────────────────────
+
+    #[test]
+    fn trace_to_json_segment_header() {
+        let entries = vec![TraceEntry::SegmentHeader {
+            command: "ls".into(),
+            decision: may_i_core::Decision::Allow,
+        }];
+        let json = trace_to_json(&entries);
+        assert_eq!(json.len(), 1);
+        assert_eq!(json[0]["type"], "segment_header");
+        assert_eq!(json[0]["command"], "ls");
+    }
+
+    #[test]
+    fn trace_to_json_default_ask() {
+        let entries = vec![TraceEntry::DefaultAsk {
+            reason: "no rules".into(),
+        }];
+        let json = trace_to_json(&entries);
+        assert_eq!(json[0]["type"], "default_ask");
+    }
+
+    #[test]
+    fn trace_to_json_rule() {
+        let doc = atom_ann("test", Ann::CommandMatch { matched: true });
+        let entries = vec![TraceEntry::Rule {
+            doc,
+            line: Some(1),
+            pre_migration_doc: None,
+            facts: vec![],
+            inner_command: None,
+        }];
+        let json = trace_to_json(&entries);
+        assert_eq!(json[0]["type"], "rule");
+        assert_eq!(json[0]["line"], 1);
+    }
+
+    // ── trace_to_layout ───────────────────────────────────────────
+
+    #[test]
+    fn trace_to_layout_empty() {
+        let term = Terminal::new(80);
+        let layout = trace_to_layout(&[], "ls", 0, &term);
+        // Should produce a layout without panicking
+        let mut buf = Vec::new();
+        write_layout(&mut buf, &layout, &term);
+    }
+
+    #[test]
+    fn trace_to_layout_with_default_ask() {
+        let term = Terminal::new(80);
+        let entries = vec![TraceEntry::DefaultAsk {
+            reason: "no rules".into(),
+        }];
+        let layout = trace_to_layout(&entries, "unknown", 0, &term);
+        let mut buf = Vec::new();
+        write_layout(&mut buf, &layout, &term);
+        let output = String::from_utf8(buf).unwrap();
+        let stripped = strip_ansi(&output);
+        assert!(stripped.contains("No matching rule"));
+    }
+
+    #[test]
+    fn trace_to_layout_with_segment_header() {
+        let term = Terminal::new(80);
+        let entries = vec![TraceEntry::SegmentHeader {
+            command: "ls".into(),
+            decision: may_i_core::Decision::Allow,
+        }];
+        let layout = trace_to_layout(&entries, "ls && echo done", 0, &term);
+        let mut buf = Vec::new();
+        write_layout(&mut buf, &layout, &term);
+        let output = String::from_utf8(buf).unwrap();
+        let stripped = strip_ansi(&output);
+        assert!(stripped.contains("ls"));
+    }
+
+    #[test]
+    fn write_trace_produces_output() {
+        let term = Terminal::new(80);
+        let entries = vec![TraceEntry::DefaultAsk {
+            reason: "test".into(),
+        }];
+        let mut buf = Vec::new();
+        write_trace(&mut buf, &entries, "cmd", "  ", &term);
+        assert!(!buf.is_empty());
+    }
+
+    // ── shorten_home ──────────────────────────────────────────────
+
+    #[test]
+    fn shorten_home_replaces_home_prefix() {
+        if let Ok(home) = std::env::var("HOME") {
+            let path = std::path::PathBuf::from(&home).join("foo/bar");
+            assert_eq!(shorten_home(&path), "~/foo/bar");
+        }
+    }
+
+    #[test]
+    fn shorten_home_preserves_non_home_path() {
+        let path = std::path::Path::new("/tmp/other");
+        assert_eq!(shorten_home(path), "/tmp/other");
+    }
+
+    // ── Property tests ────────────────────────────────────────────
+
+    proptest! {
+        #[test]
+        fn render_observed_value_always_quoted(s in "[ -~]{0,100}") {
+            let rendered = render_observed_value(&s);
+            prop_assert!(rendered.starts_with('"'));
+            prop_assert!(rendered.ends_with('"'));
+            prop_assert!(rendered.len() <= 42); // max 40 content + quotes
+        }
+
+        #[test]
+        fn truncate_list_preserves_short_lists(items in prop::collection::vec("[a-z]{1,5}", 1..4usize)) {
+            let result = truncate_list(&items, 4);
+            for item in &items {
+                prop_assert!(result.contains(item.as_str()));
+            }
+        }
+
+        #[test]
+        fn find_line_returns_valid_index(
+            lines in prop::collection::vec("[a-z ]{1,20}", 1..10usize),
+        ) {
+            if let Some(target) = lines.first() {
+                let mut from = 0;
+                if let Some(idx) = find_line(&lines, target, &mut from) {
+                    prop_assert!(idx < lines.len());
+                }
+            }
+        }
+
+        #[test]
+        fn node_text_atom_roundtrip(s in "[a-z]{1,10}") {
+            let doc = atom(&s);
+            prop_assert_eq!(node_text(&doc), s);
+        }
+
+        #[test]
+        fn colorize_right_never_panics(s in ".{0,50}") {
+            let _ = colorize_right(&s);
+        }
+
+        #[test]
+        fn colorize_decision_keyword_never_panics(s in ".{0,20}") {
+            let _ = colorize_decision_keyword(&s);
+        }
+    }
+}
