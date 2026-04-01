@@ -55,7 +55,8 @@ pub enum Layout {
 }
 
 impl Layout {
-    pub fn indent(n: usize, inner: Layout) -> Layout {
+    #[cfg(test)]
+    fn indent(n: usize, inner: Layout) -> Layout {
         Layout::Indent(n, Box::new(inner))
     }
 }

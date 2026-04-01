@@ -7,7 +7,7 @@ use may_i_shell_parser::{self as parser, Command, Word, WordPart};
 
 /// Result of evaluating a single embedded check.
 #[derive(Debug)]
-pub struct CheckResult {
+pub(crate) struct CheckResult {
     pub command: String,
     pub expected: Decision,
     pub actual: Decision,
@@ -66,7 +66,7 @@ fn word_to_string(word: &Word) -> String {
 }
 
 /// Run all embedded checks from config rules and compare against expected decisions.
-pub fn run_checks(config: &Config) -> Vec<CheckResult> {
+pub(crate) fn run_checks(config: &Config) -> Vec<CheckResult> {
     let mut results = Vec::new();
 
     for rule in &config.rules {

@@ -5,8 +5,7 @@
 // and s-expression string parsing.
 
 use colored::Colorize;
-
-pub use may_i_core::{Doc, DocF, LayoutHint};
+use may_i_core::{Doc, DocF, LayoutHint};
 
 // ── from_sexpr (test-only) ─────────────────────────────────────────
 
@@ -168,14 +167,7 @@ impl Default for Format {
     }
 }
 
-impl Format {
-    pub fn colored() -> Self {
-        Self {
-            color: true,
-            ..Self::default()
-        }
-    }
-}
+impl Format {}
 
 /// Detect appropriate column width from existing source code.
 ///

@@ -4,7 +4,11 @@ use std::io::Read;
 
 use may_i_shell_parser as parser;
 
-pub fn cmd_parse(command: Option<String>, file: Option<String>, json: bool) -> miette::Result<()> {
+pub(crate) fn cmd_parse(
+    command: Option<String>,
+    file: Option<String>,
+    json: bool,
+) -> miette::Result<()> {
     let input = if let Some(path) = file {
         if path == "-" {
             let mut buf = String::new();

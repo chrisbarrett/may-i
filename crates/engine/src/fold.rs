@@ -26,21 +26,8 @@ pub struct ArgMatchDetail {
     pub arg_set: Vec<String>,
     /// Whether the overall match succeeded.
     pub matched: bool,
-    /// Per-position comparison results for positional/exact patterns.
-    pub positional_comparisons: Vec<PositionalComparison>,
     /// Per-element match details for positional/exact patterns (bindings, regex, etc.).
     pub positional_elements: Vec<PositionalElementDetail>,
-}
-
-/// A single positional comparison result.
-#[derive(Debug, Clone)]
-pub struct PositionalComparison {
-    /// The actual arg value being compared.
-    pub actual: String,
-    /// The pattern text it was compared against.
-    pub pattern: String,
-    /// Whether this specific comparison matched.
-    pub matched: bool,
 }
 
 /// Detail about a single positional pattern element's match result.
@@ -462,7 +449,7 @@ impl EvalFold for PureFold {
 }
 
 /// Build a FactDetail for a fact query against the given context.
-pub fn build_fact_detail(query: &FactQuery, facts: &ContextFacts) -> FactDetail {
+pub(crate) fn build_fact_detail(query: &FactQuery, facts: &ContextFacts) -> FactDetail {
     match query {
         FactQuery::Presence { key, .. } => {
             if facts.has(key) {

@@ -38,8 +38,7 @@ pub enum FactPattern {
 }
 
 impl FactPattern {
-    /// Convert to a Doc representation.
-    pub fn to_doc(&self) -> Doc {
+    pub(crate) fn to_doc(&self) -> Doc {
         match self {
             FactPattern::Literal(value) => Doc::atom(quote_string(value)),
             FactPattern::Wildcard => Doc::atom("*"),
@@ -61,7 +60,6 @@ impl FactPattern {
         }
     }
 
-    /// Convert to source string representation.
     pub fn to_source(&self) -> String {
         match self {
             FactPattern::Literal(value) => quote_string(value),
@@ -85,7 +83,7 @@ impl FactPattern {
         }
     }
 
-    /// Check if this is a literal pattern.
+    #[cfg(any(test, feature = "test-generators"))]
     pub fn is_literal(&self) -> bool {
         matches!(self, FactPattern::Literal(_))
     }
@@ -115,8 +113,8 @@ pub enum FactQuery {
 }
 
 impl FactQuery {
-    /// Get the key being queried.
-    pub fn key(&self) -> &str {
+    #[cfg(test)]
+    pub(crate) fn key(&self) -> &str {
         match self {
             FactQuery::Presence { key, .. } | FactQuery::Value { key, .. } => key,
         }
@@ -139,7 +137,6 @@ impl FactQuery {
         }
     }
 
-    /// Convert to source string representation.
     pub fn to_source(&self) -> String {
         match self {
             FactQuery::Presence {

@@ -271,7 +271,7 @@ fn check_cat_heredoc(sc: &SimpleCommand) -> Option<String> {
 /// Abbreviate a string for use in error messages. Multi-line content is
 /// reduced to the first line with "…" appended; long single lines are
 /// truncated at 60 chars.
-pub fn abbreviate(s: &str) -> String {
+pub(crate) fn abbreviate(s: &str) -> String {
     let first_line = s.lines().next().unwrap_or(s);
     let is_multiline = s.contains('\n');
     if first_line.len() > 60 {
@@ -561,9 +561,7 @@ impl Command {
 }
 
 impl SimpleCommand {
-    /// The command name (first word), if any.
-    /// Returns `Some("")` when the first word has no literal leading part.
-    pub fn command_name(&self) -> Option<&str> {
+    pub(crate) fn command_name(&self) -> Option<&str> {
         self.words.first().map(|w| {
             // Return a reference to the first literal part
             if let Some(WordPart::Literal(s)) = w.parts.first() {
@@ -574,8 +572,8 @@ impl SimpleCommand {
         })
     }
 
-    /// The arguments (all words after the first).
-    pub fn args(&self) -> &[Word] {
+    #[cfg(test)]
+    pub(crate) fn args(&self) -> &[Word] {
         if self.words.len() > 1 {
             &self.words[1..]
         } else {

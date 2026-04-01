@@ -33,9 +33,9 @@ pub enum ShapeF<R> {
 /// This is a type alias for backward compatibility.
 pub type Shape = ShapeF<Box<CstNode>>;
 
+#[cfg(test)]
 impl<R> ShapeF<R> {
-    /// Functor map: transform children recursively.
-    pub fn map<S>(self, f: impl FnMut(R) -> S) -> ShapeF<S> {
+    fn map<S>(self, f: impl FnMut(R) -> S) -> ShapeF<S> {
         match self {
             ShapeF::Atom(s) => ShapeF::Atom(s),
             ShapeF::Str(s) => ShapeF::Str(s),
@@ -44,8 +44,7 @@ impl<R> ShapeF<R> {
         }
     }
 
-    /// Map by reference: transform children without consuming self.
-    pub fn map_ref<S>(&self, f: impl FnMut(&R) -> S) -> ShapeF<S> {
+    fn map_ref<S>(&self, f: impl FnMut(&R) -> S) -> ShapeF<S> {
         match self {
             ShapeF::Atom(s) => ShapeF::Atom(s.clone()),
             ShapeF::Str(s) => ShapeF::Str(s.clone()),
@@ -80,9 +79,6 @@ pub struct CstNode<A = TriviaAnn> {
     pub ann: A,
     pub shape: ShapeF<Box<CstNode<A>>>,
 }
-
-/// Type alias for backward compatibility - CST nodes with trivia annotations.
-pub type TriviaCstNode = CstNode<TriviaAnn>;
 
 /// Trivia types (comments and whitespace).
 #[derive(Debug, Clone, PartialEq)]
@@ -339,33 +335,31 @@ impl<A> CstNode<A> {
             }
         }
     }
+}
 
-    /// Map annotations (functor operation): transform A -> B.
-    pub fn map<B>(self, f: &mut impl FnMut(A) -> B) -> CstNode<B> {
+#[cfg(test)]
+impl<A: Clone> CstNode<A> {
+    fn map<B>(self, f: &mut impl FnMut(A) -> B) -> CstNode<B> {
         CstNode {
             ann: f(self.ann),
             shape: self.shape.map(|child| Box::new(child.map(f))),
         }
     }
 
-    /// Map annotations by reference.
-    pub fn map_ref<B>(&self, f: &mut impl FnMut(&A) -> B) -> CstNode<B> {
+    fn map_ref<B>(&self, f: &mut impl FnMut(&A) -> B) -> CstNode<B> {
         CstNode {
             ann: f(&self.ann),
             shape: self.shape.map_ref(|child| Box::new(child.map_ref(f))),
         }
     }
 
-    /// Bottom-up fold (catamorphism): reduce tree to a single value.
-    pub fn fold<B>(&self, alg: &mut impl FnMut(&ShapeF<B>, &A) -> B) -> B {
-        // First, recursively fold children
+    fn fold<B>(&self, alg: &mut impl FnMut(&ShapeF<B>, &A) -> B) -> B {
         let folded_shape = self.shape.map_ref(|child| child.fold(alg));
-        // Then apply algebra to this level
         alg(&folded_shape, &self.ann)
     }
 }
 
-pub fn quote_string(s: &str) -> String {
+fn quote_string(s: &str) -> String {
     format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
@@ -958,30 +952,6 @@ impl<'a> Parser<'a> {
 fn is_atom_char(c: char) -> bool {
     c.is_ascii_alphanumeric()
         || matches!(c, '-' | '_' | '*' | '.' | '/' | '^' | ':' | '+' | '?' | '=')
-}
-
-/// A visitor for traversing s-expressions without transforming.
-pub trait Visitor {
-    /// Called for each node during traversal.
-    /// Return true to continue traversing children, false to skip.
-    fn visit(&mut self, node: &CstNode<TriviaAnn>) -> bool;
-}
-
-impl CstNode<TriviaAnn> {
-    /// Accept a visitor and traverse the tree.
-    pub fn accept<V: Visitor>(&self, visitor: &mut V) {
-        if !visitor.visit(self) {
-            return;
-        }
-        match &self.shape {
-            ShapeF::Atom(_) | ShapeF::Str(_) => {}
-            ShapeF::List(children) | ShapeF::Vector(children) => {
-                for child in children {
-                    child.accept(visitor);
-                }
-            }
-        }
-    }
 }
 
 /// A rewrite rule for transforming s-expressions.

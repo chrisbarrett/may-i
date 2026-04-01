@@ -9,7 +9,7 @@ use crate::EvalResult;
 use crate::fold::{ArgMatchDetail, ChildResult, EvalFold, PureFold, build_fact_detail};
 
 /// Maximum recursion depth for (may-i ...) evaluation.
-pub const DEFAULT_RECURSION_LIMIT: usize = 10;
+pub(crate) const DEFAULT_RECURSION_LIMIT: usize = 10;
 
 /// The result of evaluating a predicate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,25 +46,15 @@ impl<'a> EvalContext<'a> {
     }
 
     /// Create a context with custom recursion limit.
-    pub fn with_recursion_limit(mut self, limit: usize) -> Self {
+    #[cfg(test)]
+    pub(crate) fn with_recursion_limit(mut self, limit: usize) -> Self {
         self.recursion_limit = limit;
         self
     }
 
     /// Check if we've exceeded the recursion limit.
-    pub fn is_depth_exceeded(&self) -> bool {
+    pub(crate) fn is_depth_exceeded(&self) -> bool {
         self.recursion_depth >= self.recursion_limit
-    }
-
-    /// Increment recursion depth for nested evaluation.
-    pub fn deeper(&self) -> Self {
-        Self {
-            command: self.command,
-            args: self.args,
-            facts: self.facts,
-            recursion_depth: self.recursion_depth + 1,
-            recursion_limit: self.recursion_limit,
-        }
     }
 }
 
@@ -99,7 +89,7 @@ pub fn evaluate_with_fold<F: EvalFold>(
 /// Only expands args that start with a single `-` followed by multiple
 /// ASCII letters. Long options (`--foo`) and args with non-letter characters
 /// (e.g. `-1`, `-p8080`) are left unchanged.
-pub fn expand_combined_flags(args: &[String]) -> Vec<String> {
+pub(crate) fn expand_combined_flags(args: &[String]) -> Vec<String> {
     let mut out = Vec::with_capacity(args.len());
     for arg in args {
         if arg.starts_with('-')
@@ -122,7 +112,7 @@ pub fn expand_combined_flags(args: &[String]) -> Vec<String> {
 /// Handles `--` as an option terminator: `--` itself is included as a
 /// positional arg, and all subsequent args are positional regardless of
 /// prefix. Long options (`--foo`) consume the following arg as their value.
-pub fn positional_args(args: &[String]) -> Vec<&String> {
+pub(crate) fn positional_args(args: &[String]) -> Vec<&String> {
     let mut result = Vec::new();
     let mut iter = args.iter().peekable();
     let mut past_terminator = false;
@@ -292,14 +282,15 @@ impl<'a> Evaluator<'a> {
 }
 
 /// Evaluate a predicate against the context (non-generic, uses PureFold).
-pub fn evaluate_predicate(predicate: &Predicate, ctx: &EvalContext) -> PredicateResult {
+#[cfg(test)]
+pub(crate) fn evaluate_predicate(predicate: &Predicate, ctx: &EvalContext) -> PredicateResult {
     let mut fold = PureFold;
     let out = evaluate_predicate_fold(&mut fold, predicate, ctx);
     PureFold::predicate_result(&out)
 }
 
 /// Evaluate a predicate with a fold.
-pub fn evaluate_predicate_fold<F: EvalFold>(
+pub(crate) fn evaluate_predicate_fold<F: EvalFold>(
     fold: &mut F,
     predicate: &Predicate,
     ctx: &EvalContext,
@@ -465,7 +456,7 @@ fn evaluate_arg_pattern_predicate(pattern: &ArgPattern, ctx: &EvalContext) -> Pr
 /// Uses backtracking for Optional/ZeroOrMore/OneOrMore quantifiers: tries the
 /// greedy match first, then progressively shorter matches if subsequent
 /// patterns fail.
-pub fn match_positional_patterns(
+pub(crate) fn match_positional_patterns(
     args: &[&String],
     patterns: &[PositionalArg],
 ) -> (bool, usize, ContextFacts) {
@@ -805,12 +796,13 @@ fn resolve_trailing_cond_effect<'a>(
 }
 
 /// Evaluate an effect to produce an EffectResult (convenience, uses PureFold).
-pub fn evaluate_effect(effect: &Effect, ctx: &EvalContext, rules: &[Rule]) -> EffectResult {
+#[cfg(test)]
+pub(crate) fn evaluate_effect(effect: &Effect, ctx: &EvalContext, rules: &[Rule]) -> EffectResult {
     evaluate_effect_fold(&mut PureFold, effect, ctx, rules)
 }
 
 /// Evaluate an effect with a fold, producing `F::EffectOut`.
-pub fn evaluate_effect_fold<F: EvalFold>(
+pub(crate) fn evaluate_effect_fold<F: EvalFold>(
     fold: &mut F,
     effect: &Effect,
     ctx: &EvalContext,
@@ -1086,7 +1078,6 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                         search_tokens: vec![],
                         arg_set: ctx.args.to_vec(),
                         matched: true,
-                        positional_comparisons: vec![],
                         positional_elements: elements,
                     };
                     fold.effect_arg_continuation(pattern, ctx.args, detail, cont_out)
@@ -1095,7 +1086,6 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                         search_tokens: vec![],
                         arg_set: ctx.args.to_vec(),
                         matched: true,
-                        positional_comparisons: vec![],
                         positional_elements: elements,
                     };
                     fold.effect_arg_match(pattern, ctx.args, true, detail)
@@ -1105,7 +1095,6 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                     search_tokens: vec![],
                     arg_set: ctx.args.to_vec(),
                     matched: false,
-                    positional_comparisons: vec![],
                     positional_elements: elements,
                 };
                 fold.effect_arg_match(pattern, ctx.args, false, detail)
@@ -1145,7 +1134,6 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                         search_tokens: vec![],
                         arg_set: ctx.args.to_vec(),
                         matched: true,
-                        positional_comparisons: vec![],
                         positional_elements: elements,
                     };
                     fold.effect_arg_continuation(pattern, ctx.args, detail, cont_out)
@@ -1154,7 +1142,6 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                         search_tokens: vec![],
                         arg_set: ctx.args.to_vec(),
                         matched: true,
-                        positional_comparisons: vec![],
                         positional_elements: elements,
                     };
                     fold.effect_arg_match(pattern, ctx.args, true, detail)
@@ -1164,7 +1151,6 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                     search_tokens: vec![],
                     arg_set: ctx.args.to_vec(),
                     matched: false,
-                    positional_comparisons: vec![],
                     positional_elements: elements,
                 };
                 fold.effect_arg_match(pattern, ctx.args, false, detail)
@@ -1183,7 +1169,6 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                 search_tokens,
                 arg_set: ctx.args.to_vec(),
                 matched,
-                positional_comparisons: vec![],
                 positional_elements: vec![],
             };
             fold.effect_arg_match(pattern, ctx.args, matched, detail)
@@ -1201,7 +1186,6 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                 search_tokens,
                 arg_set: ctx.args.to_vec(),
                 matched: !found_forbidden,
-                positional_comparisons: vec![],
                 positional_elements: vec![],
             };
             fold.effect_arg_match(pattern, ctx.args, !found_forbidden, detail)

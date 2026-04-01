@@ -42,7 +42,7 @@ pub fn cmd_eval(
     let context = parse_cli_facts(raw_facts)?;
 
     // Resolve named predicates before evaluation.
-    let (resolved_rules, _) =
+    let resolved_rules =
         may_i_config::resolve::validate_and_resolve(&config.rules, &config.defines)
             .map_err(|errs| miette::miette!("Predicate resolution failed: {}", errs[0].message))?;
     config.rules = resolved_rules;

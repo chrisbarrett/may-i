@@ -34,7 +34,7 @@ use may_i_sexpr::parse_cst;
 use similar::{ChangeTag, TextDiff};
 
 /// Abstract terminal interaction behind a trait for testability.
-pub trait PromptHandler {
+trait PromptHandler {
     /// Check if the input/output is a TTY
     fn is_tty(&self) -> bool;
     /// Prompt the user for input
@@ -42,7 +42,7 @@ pub trait PromptHandler {
 }
 
 /// Real prompt handler that interacts with the actual terminal.
-pub struct RealPromptHandler;
+struct RealPromptHandler;
 
 impl PromptHandler for RealPromptHandler {
     fn is_tty(&self) -> bool {
@@ -94,15 +94,8 @@ impl PromptHandler for MockPromptHandler {
     }
 }
 
-/// Shorten a path by replacing the home directory with `~`.
 fn shorten_home(path: &std::path::Path) -> String {
-    let path_str = path.to_string_lossy();
-    if let Ok(home) = std::env::var("HOME")
-        && let Some(rest) = path_str.strip_prefix(&home)
-    {
-        return format!("~{}", rest);
-    }
-    path_str.to_string()
+    may_i::output::shorten_home(path)
 }
 
 /// Generate a unified text diff between original and migrated content.
@@ -173,7 +166,7 @@ fn should_use_color() -> bool {
 }
 
 /// Run the migration command.
-pub fn cmd_migrate(
+pub(crate) fn cmd_migrate(
     config_path: Option<&Path>,
     output: Option<&str>,
     yes: bool,
@@ -183,7 +176,7 @@ pub fn cmd_migrate(
 }
 
 /// Run the migration command with a custom prompt handler (for testing).
-pub fn cmd_migrate_with_handler(
+fn cmd_migrate_with_handler(
     config_path: Option<&Path>,
     output: Option<&str>,
     yes: bool,

@@ -8,7 +8,7 @@ use may_i_engine as engine;
 use may_i_engine::EvalResult;
 use miette::Context;
 
-pub fn cmd_claude_code_hook(config_path: Option<&std::path::Path>) -> miette::Result<()> {
+pub(crate) fn cmd_claude_code_hook(config_path: Option<&std::path::Path>) -> miette::Result<()> {
     let mut input = String::new();
     std::io::stdin()
         .take(65536)

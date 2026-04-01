@@ -19,8 +19,8 @@ impl<T> Spanned<T> {
         Self { value, span }
     }
 
-    /// Map over the inner value, preserving the span.
-    pub fn map<U, F: FnOnce(T) -> U>(self, f: F) -> Spanned<U> {
+    #[cfg(test)]
+    pub(crate) fn map<U, F: FnOnce(T) -> U>(self, f: F) -> Spanned<U> {
         Spanned {
             value: f(self.value),
             span: self.span,
@@ -43,11 +43,12 @@ impl EffectResult {
         matches!(self, EffectResult::Nil)
     }
 
+    #[cfg(any(test, feature = "test-generators"))]
     pub fn is_decision(&self) -> bool {
         matches!(self, EffectResult::Decision(_, _))
     }
 
-    /// Get the decision if this is one, None otherwise.
+    #[cfg(any(test, feature = "test-generators"))]
     pub fn decision(&self) -> Option<Decision> {
         match self {
             EffectResult::Decision(d, _) => Some(*d),
@@ -55,7 +56,7 @@ impl EffectResult {
         }
     }
 
-    /// Get the reason if this is a decision, None otherwise.
+    #[cfg(any(test, feature = "test-generators"))]
     pub fn reason(&self) -> Option<&String> {
         match self {
             EffectResult::Decision(_, r) => r.as_ref(),
@@ -140,33 +141,33 @@ pub enum Effect {
 }
 
 impl Effect {
-    /// Create an allow effect.
-    pub fn allow(reason: Option<String>) -> Self {
+    #[cfg(test)]
+    pub(crate) fn allow(reason: Option<String>) -> Self {
         Effect::Allow(reason)
     }
 
-    /// Create an ask effect.
-    pub fn ask(reason: Option<String>) -> Self {
+    #[cfg(test)]
+    pub(crate) fn ask(reason: Option<String>) -> Self {
         Effect::Ask(reason)
     }
 
-    /// Create a deny effect.
-    pub fn deny(reason: Option<String>) -> Self {
+    #[cfg(test)]
+    pub(crate) fn deny(reason: Option<String>) -> Self {
         Effect::Deny(reason)
     }
 
-    /// Create a command pattern effect.
-    pub fn command_pattern(pattern: CommandPattern) -> Self {
+    #[cfg(test)]
+    pub(crate) fn command_pattern(pattern: CommandPattern) -> Self {
         Effect::CommandPattern(pattern)
     }
 
-    /// Create an argument pattern effect.
-    pub fn arg_pattern(pattern: ArgPattern) -> Self {
+    #[cfg(test)]
+    pub(crate) fn arg_pattern(pattern: ArgPattern) -> Self {
         Effect::ArgPattern(pattern)
     }
 
-    /// Create a may-i recursive evaluation effect.
-    pub fn may_i(pattern: ArgPattern) -> Self {
+    #[cfg(test)]
+    pub(crate) fn may_i(pattern: ArgPattern) -> Self {
         Effect::MayI { pattern }
     }
 
@@ -278,13 +279,13 @@ impl Predicate {
         })
     }
 
-    /// Create an argument pattern predicate.
-    pub fn arg(pattern: ArgPattern) -> Self {
+    #[cfg(test)]
+    pub(crate) fn arg(pattern: ArgPattern) -> Self {
         Predicate::Arg(pattern)
     }
 
-    /// Create an AND combination of predicates.
-    pub fn and(predicates: Vec<Predicate>) -> Self {
+    #[cfg(test)]
+    pub(crate) fn and(predicates: Vec<Predicate>) -> Self {
         if predicates.len() == 1 {
             predicates.into_iter().next().unwrap()
         } else {
@@ -292,8 +293,8 @@ impl Predicate {
         }
     }
 
-    /// Create an OR combination of predicates.
-    pub fn or(predicates: Vec<Predicate>) -> Self {
+    #[cfg(test)]
+    pub(crate) fn or(predicates: Vec<Predicate>) -> Self {
         if predicates.len() == 1 {
             predicates.into_iter().next().unwrap()
         } else {
@@ -301,8 +302,8 @@ impl Predicate {
         }
     }
 
-    /// Create a NOT predicate.
-    pub fn negate(predicate: Predicate) -> Self {
+    #[cfg(test)]
+    pub(crate) fn negate(predicate: Predicate) -> Self {
         Predicate::Not(Box::new(predicate))
     }
 }

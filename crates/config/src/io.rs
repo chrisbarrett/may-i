@@ -94,17 +94,6 @@ pub fn resolve_path(override_path: Option<&Path>) -> miette::Result<PathBuf> {
     }
 }
 
-/// Load a legacy v1 config file (deprecated, always fails).
-///
-/// **DEPRECATED**: v1 configuration format is no longer supported.
-/// Use `load` for new configs or run `may-i migrate` to convert.
-pub fn load_legacy(_path: &Path) -> miette::Result<may_i_core::ast::Config> {
-    miette::bail!(
-        "Legacy configuration format is no longer supported. \
-         Run `may-i migrate` to update your configuration to the current format."
-    )
-}
-
 /// Find an existing config file: `$MAYI_CONFIG` then XDG/default.
 fn env_or_default_path() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("MAYI_CONFIG") {
@@ -239,15 +228,6 @@ mod tests {
         // The migrated forms should parse successfully
         let config = crate::parse_config_from_sexprs(&sexprs).unwrap();
         assert!(!config.rules.is_empty(), "should have at least one rule");
-    }
-
-    #[test]
-    fn test_load_legacy_deprecated() {
-        let path = PathBuf::from("/tmp/test.lisp");
-        let result = load_legacy(&path);
-        assert!(result.is_err());
-        let err_msg = format!("{}", result.unwrap_err());
-        assert!(err_msg.contains("no longer supported"));
     }
 
     #[test]

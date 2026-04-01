@@ -18,8 +18,8 @@ pub enum Quantifier {
 }
 
 impl Quantifier {
-    /// Minimum number of args this quantifier requires.
-    pub fn min(self) -> usize {
+    #[cfg(test)]
+    pub(crate) fn min(self) -> usize {
         match self {
             Quantifier::One | Quantifier::OneOrMore => 1,
             Quantifier::Optional | Quantifier::ZeroOrMore => 0,
@@ -247,8 +247,8 @@ impl PositionalArg {
         }
     }
 
-    /// Mark this argument as the recursive evaluation target.
-    pub fn recursive(mut self) -> Self {
+    #[cfg(test)]
+    pub(crate) fn recursive(mut self) -> Self {
         self.recursive = true;
         self
     }
@@ -302,8 +302,8 @@ impl ArgPattern {
         }
     }
 
-    /// Create an exact positional pattern from expressions.
-    pub fn exact(exprs: Vec<Expr<Effect>>) -> Self {
+    #[cfg(test)]
+    pub(crate) fn exact(exprs: Vec<Expr<Effect>>) -> Self {
         ArgPattern::Exact {
             patterns: exprs.into_iter().map(PositionalArg::one).collect(),
             continuation: None,
@@ -321,13 +321,13 @@ impl ArgPattern {
         }
     }
 
-    /// Create an anywhere pattern.
-    pub fn anywhere(exprs: Vec<Expr<Effect>>) -> Self {
+    #[cfg(test)]
+    pub(crate) fn anywhere(exprs: Vec<Expr<Effect>>) -> Self {
         ArgPattern::Anywhere(exprs)
     }
 
-    /// Create a forbidden pattern.
-    pub fn forbidden(exprs: Vec<Expr<Effect>>) -> Self {
+    #[cfg(test)]
+    pub(crate) fn forbidden(exprs: Vec<Expr<Effect>>) -> Self {
         ArgPattern::Forbidden(exprs)
     }
 }

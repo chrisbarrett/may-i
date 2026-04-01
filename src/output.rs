@@ -105,7 +105,7 @@ pub fn write_trace(
 }
 
 /// Convert trace entries into a declarative layout tree.
-pub fn trace_to_layout(
+fn trace_to_layout(
     entries: &[TraceEntry],
     command: &str,
     indent: usize,

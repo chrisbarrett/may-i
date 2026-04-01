@@ -230,7 +230,7 @@ fn integration_named_predicate_with_define() {
     .unwrap();
 
     // Resolve named predicates before evaluation
-    let (resolved_rules, _) = validate_and_resolve(&config.rules, &config.defines).unwrap();
+    let resolved_rules = validate_and_resolve(&config.rules, &config.defines).unwrap();
 
     let mut resolved_config = config;
     resolved_config.rules = resolved_rules;

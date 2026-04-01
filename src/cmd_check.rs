@@ -18,7 +18,7 @@ pub fn cmd_check(
     let mut canonical_config = config::load(&config_file)?;
 
     // Resolve named predicates before evaluation.
-    let (resolved_rules, _) =
+    let resolved_rules =
         config::resolve::validate_and_resolve(&canonical_config.rules, &canonical_config.defines)
             .map_err(|errs| miette::miette!("Predicate resolution failed: {}", errs[0].message))?;
     canonical_config.rules = resolved_rules;

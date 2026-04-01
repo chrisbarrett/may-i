@@ -14,7 +14,7 @@ pub struct ResolutionError {
 }
 
 impl ResolutionError {
-    pub fn new(message: impl Into<String>, span: Span) -> Self {
+    pub(crate) fn new(message: impl Into<String>, span: Span) -> Self {
         Self {
             message: message.into(),
             span,
@@ -22,7 +22,7 @@ impl ResolutionError {
         }
     }
 
-    pub fn with_help(mut self, help: impl Into<String>) -> Self {
+    pub(crate) fn with_help(mut self, help: impl Into<String>) -> Self {
         self.help = Some(help.into());
         self
     }
@@ -42,7 +42,7 @@ impl std::error::Error for ResolutionError {}
 
 /// Map of define names to their definitions.
 #[derive(Debug, Clone, Default)]
-pub struct DefineMap {
+pub(crate) struct DefineMap {
     /// Name -> (index in original defines list, span)
     indices: HashMap<String, (usize, Span)>,
 }
@@ -50,7 +50,7 @@ pub struct DefineMap {
 impl DefineMap {
     /// Create a new define map from a list of defines.
     /// Returns an error if there are duplicate names.
-    pub fn from_defines(defines: &[Define]) -> Result<Self, ResolutionError> {
+    pub(crate) fn from_defines(defines: &[Define]) -> Result<Self, ResolutionError> {
         let mut indices: HashMap<String, (usize, Span)> = HashMap::new();
 
         for (idx, define) in defines.iter().enumerate() {
@@ -73,31 +73,32 @@ impl DefineMap {
         Ok(Self { indices })
     }
 
-    /// Check if a name is defined.
-    pub fn contains(&self, name: &str) -> bool {
-        self.indices.contains_key(name)
-    }
-
     /// Get the define index and span for a name.
-    pub fn get(&self, name: &str) -> Option<(usize, Span)> {
+    pub(crate) fn get(&self, name: &str) -> Option<(usize, Span)> {
         self.indices.get(name).copied()
     }
 
     /// Get all defined names.
-    pub fn names(&self) -> impl Iterator<Item = &String> {
+    pub(crate) fn names(&self) -> impl Iterator<Item = &String> {
         self.indices.keys()
+    }
+
+    /// Check if a name is defined.
+    #[cfg(test)]
+    fn contains(&self, name: &str) -> bool {
+        self.indices.contains_key(name)
     }
 }
 
 /// Information about a predicate reference.
 #[derive(Debug, Clone)]
-pub struct NamedRef {
+pub(crate) struct NamedRef {
     pub name: String,
     pub span: Span,
 }
 
 /// Collect all named predicate references from a predicate.
-pub fn collect_named_refs(predicate: &Spanned<Predicate>) -> Vec<NamedRef> {
+pub(crate) fn collect_named_refs(predicate: &Spanned<Predicate>) -> Vec<NamedRef> {
     let mut refs = Vec::new();
     collect_refs_recursive(&predicate.value, predicate.span, &mut refs);
     refs
@@ -124,7 +125,10 @@ fn collect_refs_recursive(predicate: &Predicate, span: Span, refs: &mut Vec<Name
 }
 
 /// Detect cycles in define references using DFS.
-pub fn detect_cycles(defines: &[Define], define_map: &DefineMap) -> Result<(), ResolutionError> {
+pub(crate) fn detect_cycles(
+    defines: &[Define],
+    define_map: &DefineMap,
+) -> Result<(), ResolutionError> {
     // Build adjacency list: name -> names it references
     let mut adjacency: HashMap<String, Vec<String>> = HashMap::new();
 
@@ -180,7 +184,7 @@ fn dfs_check_cycle(
 }
 
 /// Check for undefined predicate references in a list of rules and defines.
-pub fn check_undefined_refs(
+pub(crate) fn check_undefined_refs(
     rules: &[Rule],
     defines: &[Define],
     define_map: &DefineMap,
@@ -233,7 +237,7 @@ pub fn check_undefined_refs(
 
 /// Collect all named predicate references from an effect.
 /// This recursively searches through conditionals (when/unless/if/cond).
-pub fn collect_named_refs_from_effect(effect: &Spanned<Effect>) -> Vec<NamedRef> {
+pub(crate) fn collect_named_refs_from_effect(effect: &Spanned<Effect>) -> Vec<NamedRef> {
     let mut refs = Vec::new();
     collect_refs_from_effect_recursive(&effect.value, effect.span, &mut refs);
     refs
@@ -276,7 +280,7 @@ fn collect_refs_from_effect_recursive(effect: &Effect, _span: Span, refs: &mut V
 
 /// Resolve all named predicates by inlining their definitions.
 /// Returns a new list of rules with all named predicates resolved.
-pub fn resolve_predicates(
+pub(crate) fn resolve_predicates(
     rules: &[Rule],
     defines: &[Define],
     define_map: &DefineMap,
@@ -462,7 +466,7 @@ fn resolve_single_predicate(
 pub fn validate_and_resolve(
     rules: &[Rule],
     defines: &[Define],
-) -> Result<(Vec<Rule>, DefineMap), Vec<ResolutionError>> {
+) -> Result<Vec<Rule>, Vec<ResolutionError>> {
     let mut errors = Vec::new();
 
     // Step 1: Build define map and check for duplicates (3.1, 3.2)
@@ -495,7 +499,7 @@ pub fn validate_and_resolve(
         }
     };
 
-    Ok((resolved_rules, define_map))
+    Ok(resolved_rules)
 }
 
 #[cfg(test)]
@@ -761,9 +765,8 @@ mod tests {
 
         let result = validate_and_resolve(&rules, &defines);
         assert!(result.is_ok());
-        let (resolved_rules, map) = result.unwrap();
+        let resolved_rules = result.unwrap();
         assert_eq!(resolved_rules.len(), 1);
-        assert!(map.contains("safe"));
     }
 
     #[test]

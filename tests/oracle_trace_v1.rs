@@ -40,7 +40,7 @@ fn load_cases() -> Vec<Case> {
 fn load_config() -> may_i_core::ast::Config {
     let config_path = fixture_dir().join("config.lisp");
     let mut config = may_i_config::load(&config_path).expect("failed to load V1 fixture config");
-    let (resolved_rules, _) =
+    let resolved_rules =
         may_i_config::resolve::validate_and_resolve(&config.rules, &config.defines)
             .expect("predicate resolution failed");
     config.rules = resolved_rules;

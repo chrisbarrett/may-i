@@ -15,7 +15,7 @@ pub mod test_generators;
 mod arbitrary_impls;
 
 pub use doc::{Doc, DocF, LayoutHint};
-pub use span::{Span, offset_to_line_col};
+pub use span::Span;
 
 // Re-export primitive types
 pub use primitives::{Decision, Keyword, ToDoc};
@@ -27,8 +27,5 @@ pub use context::ContextFacts;
 pub use predicates::{FactPattern, FactQuery};
 
 // Re-export canonical types
-pub use ast::{
-    Config, Define, Effect, EffectResult, Predicate, Rule, SecurityConfig, Spanned,
-    SpannedPredicate,
-};
+pub use ast::{Config, Define, Effect, EffectResult, Predicate, Rule, SecurityConfig, Spanned};
 pub use pattern::{ArgPattern, CommandPattern, Expr, ExprBranch, PositionalArg, Quantifier};

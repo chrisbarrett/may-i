@@ -1,11 +1,11 @@
 mod ast;
+#[cfg(test)]
 mod glob;
 mod lexer;
 mod parse;
+#[cfg(test)]
 pub(crate) mod resolve;
 mod segment;
-
-pub use resolve::resolve_param_op;
 
 #[cfg(test)]
 mod tests;
