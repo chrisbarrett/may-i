@@ -1696,4 +1696,341 @@ mod tests {
             let _ = colorize_decision_keyword(&s);
         }
     }
+
+    // ── facts_rows / command_row ──────────────────────────────────
+
+    #[test]
+    fn facts_rows_creates_breakable_row() {
+        let facts = vec![
+            (":env".to_string(), "prod".to_string()),
+            (":region".to_string(), "us-east".to_string()),
+        ];
+        let rows = facts_rows(&facts);
+        assert_eq!(rows.len(), 1);
+        let stripped = strip_ansi(&rows[0].left);
+        assert_eq!(stripped, "facts");
+    }
+
+    #[test]
+    fn command_row_creates_row() {
+        let geom = ColumnGeometry { left_width: 40 };
+        let rows = command_row("git push", &geom);
+        assert_eq!(rows.len(), 1);
+        let stripped = strip_ansi(&rows[0].left);
+        assert_eq!(stripped, "command");
+    }
+
+    // ── render_annotated_rule ─────────────────────────────────────
+
+    #[test]
+    fn render_annotated_rule_simple() {
+        let doc = list_ann(
+            Ann::RuleMatch {
+                matched: true,
+                line: Some(5),
+            },
+            vec![
+                atom("rule"),
+                atom_ann("git", Ann::CommandMatch { matched: true }),
+                atom_ann(
+                    ":allow",
+                    Ann::EffectDecision {
+                        decision: may_i_core::Decision::Allow,
+                        reason: None,
+                    },
+                ),
+            ],
+        );
+        let geom = ColumnGeometry { left_width: 40 };
+        let rows = render_annotated_rule(&doc, Some(5), &geom);
+        assert!(!rows.is_empty());
+    }
+
+    #[test]
+    fn render_annotated_rule_with_overflow() {
+        // A doc where annotations can't be placed on any line
+        let doc = list_ann(
+            Ann::RuleMatch {
+                matched: true,
+                line: Some(1),
+            },
+            vec![atom("rule")],
+        );
+        let geom = ColumnGeometry { left_width: 40 };
+        let rows = render_annotated_rule(&doc, Some(1), &geom);
+        assert!(!rows.is_empty());
+    }
+
+    // ── collect_annotations for arg patterns ──────────────────────
+
+    #[test]
+    fn collect_annotations_anywhere_matched() {
+        let doc = list_ann(
+            Ann::ArgMatch {
+                search_tokens: vec!["\"rm\"".into()],
+                arg_set: vec!["rm".into(), "ls".into()],
+                matched: true,
+            },
+            vec![atom("anywhere"), atom("\"rm\"")],
+        );
+        let annotations = collect_annotations(&doc);
+        assert!(!annotations.is_empty());
+        assert!(annotations[0].1.contains("yes"));
+    }
+
+    #[test]
+    fn collect_annotations_anywhere_not_matched() {
+        let doc = list_ann(
+            Ann::ArgMatch {
+                search_tokens: vec!["\"rm\"".into()],
+                arg_set: vec!["ls".into()],
+                matched: false,
+            },
+            vec![atom("anywhere"), atom("\"rm\"")],
+        );
+        let annotations = collect_annotations(&doc);
+        assert!(!annotations.is_empty());
+        assert!(annotations[0].1.contains("no"));
+    }
+
+    #[test]
+    fn collect_annotations_forbidden_passed() {
+        let inner = list_ann(
+            Ann::ArgMatch {
+                search_tokens: vec!["\"rm\"".into()],
+                arg_set: vec!["ls".into()],
+                matched: true,
+            },
+            vec![atom("anywhere"), atom("\"rm\"")],
+        );
+        let doc = list(vec![atom("not"), inner]);
+        // forbidden wraps in (not (anywhere ...)), set ann on the (not) level
+        let doc = Doc {
+            ann: Some(Ann::ArgMatch {
+                search_tokens: vec!["\"rm\"".into()],
+                arg_set: vec!["ls".into()],
+                matched: true,
+            }),
+            node: DocF::List(vec![atom("forbidden"), atom("\"rm\"")]),
+            layout: LayoutHint::Auto,
+            dimmed: false,
+        };
+        let annotations = collect_annotations(&doc);
+        assert!(!annotations.is_empty());
+        assert!(annotations[0].1.contains("no")); // forbidden passed = no forbidden found
+    }
+
+    #[test]
+    fn collect_annotations_forbidden_failed() {
+        let doc = Doc {
+            ann: Some(Ann::ArgMatch {
+                search_tokens: vec!["\"rm\"".into()],
+                arg_set: vec!["rm".into()],
+                matched: false,
+            }),
+            node: DocF::List(vec![atom("forbidden"), atom("\"rm\"")]),
+            layout: LayoutHint::Auto,
+            dimmed: false,
+        };
+        let annotations = collect_annotations(&doc);
+        assert!(!annotations.is_empty());
+        assert!(annotations[0].1.contains("yes"));
+    }
+
+    #[test]
+    fn collect_annotations_positional_pattern() {
+        let doc = list_ann(
+            Ann::ArgMatch {
+                search_tokens: vec![],
+                arg_set: vec!["push".into()],
+                matched: true,
+            },
+            vec![atom("positional"), atom("\"push\"")],
+        );
+        let annotations = collect_annotations(&doc);
+        assert!(!annotations.is_empty());
+    }
+
+    // ── quote_arg_set ─────────────────────────────────────────────
+
+    #[test]
+    fn quote_arg_set_short() {
+        let items = vec!["a".into(), "b".into()];
+        assert_eq!(quote_arg_set(&items), "\"a\", \"b\"");
+    }
+
+    #[test]
+    fn quote_arg_set_truncates() {
+        let items: Vec<String> = (0..6).map(|i| format!("item{i}")).collect();
+        let result = quote_arg_set(&items);
+        assert!(result.contains("…"));
+    }
+
+    // ── trace_to_layout with Rule entry ───────────────────────────
+
+    #[test]
+    fn trace_to_layout_with_rule() {
+        let term = Terminal::new(80);
+        let doc = list_ann(
+            Ann::RuleMatch {
+                matched: true,
+                line: Some(3),
+            },
+            vec![
+                atom("rule"),
+                atom_ann("git", Ann::CommandMatch { matched: true }),
+                atom_ann(
+                    ":allow",
+                    Ann::EffectDecision {
+                        decision: may_i_core::Decision::Allow,
+                        reason: Some("ok".into()),
+                    },
+                ),
+            ],
+        );
+        let entries = vec![TraceEntry::Rule {
+            doc,
+            line: Some(3),
+            pre_migration_doc: None,
+            facts: vec![(":env".into(), "prod".into())],
+            inner_command: None,
+        }];
+        let layout = trace_to_layout(&entries, "git push", 0, &term);
+        let mut buf = Vec::new();
+        write_layout(&mut buf, &layout, &term);
+        let output = String::from_utf8(buf).unwrap();
+        let stripped = strip_ansi(&output);
+        assert!(stripped.contains("command"));
+        assert!(stripped.contains("git push"));
+    }
+
+    #[test]
+    fn trace_to_layout_with_inner_command() {
+        let term = Terminal::new(80);
+        let doc = list_ann(
+            Ann::RuleMatch {
+                matched: true,
+                line: Some(1),
+            },
+            vec![atom("rule"), atom("rm")],
+        );
+        let entries = vec![
+            TraceEntry::Rule {
+                doc: doc.clone(),
+                line: Some(1),
+                pre_migration_doc: None,
+                facts: vec![],
+                inner_command: None,
+            },
+            TraceEntry::Rule {
+                doc,
+                line: Some(2),
+                pre_migration_doc: None,
+                facts: vec![],
+                inner_command: Some("rm -rf".into()),
+            },
+        ];
+        let layout = trace_to_layout(&entries, "sudo rm -rf", 0, &term);
+        let mut buf = Vec::new();
+        write_layout(&mut buf, &layout, &term);
+        let output = String::from_utf8(buf).unwrap();
+        let stripped = strip_ansi(&output);
+        assert!(stripped.contains("rm -rf"));
+    }
+
+    #[test]
+    fn trace_to_layout_consecutive_rules_get_separator() {
+        let term = Terminal::new(80);
+        let make_rule = |cmd: &str| TraceEntry::Rule {
+            doc: list_ann(
+                Ann::RuleMatch {
+                    matched: false,
+                    line: None,
+                },
+                vec![atom("rule"), atom(cmd)],
+            ),
+            line: None,
+            pre_migration_doc: None,
+            facts: vec![],
+            inner_command: None,
+        };
+        let entries = vec![make_rule("git"), make_rule("hg")];
+        let layout = trace_to_layout(&entries, "ls", 0, &term);
+        let mut buf = Vec::new();
+        write_layout(&mut buf, &layout, &term);
+        assert!(!buf.is_empty());
+    }
+
+    #[test]
+    fn trace_to_layout_skips_duplicate_facts() {
+        let term = Terminal::new(80);
+        let facts = vec![(":env".into(), "prod".into())];
+        let make_rule = || TraceEntry::Rule {
+            doc: list_ann(
+                Ann::RuleMatch {
+                    matched: false,
+                    line: None,
+                },
+                vec![atom("rule"), atom("cmd")],
+            ),
+            line: None,
+            pre_migration_doc: None,
+            facts: facts.clone(),
+            inner_command: None,
+        };
+        let entries = vec![make_rule(), make_rule()];
+        let layout = trace_to_layout(&entries, "cmd", 0, &term);
+        let mut buf = Vec::new();
+        write_layout(&mut buf, &layout, &term);
+        let output = String::from_utf8(buf).unwrap();
+        let stripped = strip_ansi(&output);
+        // "facts" label should appear only once
+        assert_eq!(
+            stripped.matches("facts").count(),
+            1,
+            "facts should appear once: {stripped}"
+        );
+    }
+
+    // ── collect_pattern_comparisons ───────────────────────────────
+
+    #[test]
+    fn collect_pattern_comparisons_literal() {
+        let pattern_doc = atom("\"push\"");
+        let mut out = Vec::new();
+        collect_pattern_comparisons(&pattern_doc, "push", &mut out);
+        assert_eq!(out.len(), 1);
+        assert!(out[0].1.contains("yes"));
+    }
+
+    #[test]
+    fn collect_pattern_comparisons_or() {
+        let pattern_doc = list(vec![atom("or"), atom("\"a\""), atom("\"b\"")]);
+        let mut out = Vec::new();
+        collect_pattern_comparisons(&pattern_doc, "a", &mut out);
+        assert_eq!(out.len(), 2);
+    }
+
+    #[test]
+    fn collect_pattern_comparisons_quantifier() {
+        let pattern_doc = list(vec![atom("?"), atom("\"opt\"")]);
+        let mut out = Vec::new();
+        collect_pattern_comparisons(&pattern_doc, "opt", &mut out);
+        assert_eq!(out.len(), 1);
+        assert!(out[0].1.contains("yes"));
+    }
+
+    // ── segment_header_layout ─────────────────────────────────────
+
+    #[test]
+    fn segment_header_layout_variants() {
+        use may_i_core::Decision;
+        for decision in [Decision::Allow, Decision::Ask, Decision::Deny] {
+            let layout = segment_header_layout("cmd", decision);
+            let term = Terminal::new(80);
+            let mut buf = Vec::new();
+            write_layout(&mut buf, &layout, &term);
+            assert!(!buf.is_empty());
+        }
+    }
 }
