@@ -50,6 +50,12 @@ pub enum Ann {
         actual: String,
         matched: bool,
     },
+    /// Positional pattern comparison: actual arg vs pattern literal.
+    PositionalMatch {
+        actual_arg: String,
+        pattern_text: String,
+        matched: bool,
+    },
     /// Quantifier/combinator result.
     Combinator { result_is_nil: bool },
     /// Rule-level annotation.

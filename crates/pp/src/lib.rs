@@ -239,17 +239,279 @@ fn snap_to_preset(width: usize) -> usize {
     }
 }
 
+// ── PrettyOutput trait ──────────────────────────────────────────────
+
+/// Trait for receiving structured events from the pretty-printer.
+pub trait PrettyOutput<A> {
+    fn begin_line(&mut self, indent: usize);
+    fn emit_space(&mut self);
+    fn emit_delim(&mut self, ch: char, dimmed: bool);
+    fn emit_atom(&mut self, text: &str, ann: &A, dimmed: bool);
+    /// Called when entering a list/vector node that carries an annotation.
+    /// Default implementation is a no-op.
+    fn emit_node_ann(&mut self, _ann: &A) {}
+}
+
+/// Event emitted during flat-rendering for buffering and replay.
+pub enum OutputEvent<A> {
+    BeginLine(usize),
+    Space,
+    Delim(char, bool),
+    Atom(String, A, bool),
+    NodeAnn(A),
+}
+
+// ── StringBuilder ───────────────────────────────────────────────────
+
+/// A `PrettyOutput` implementation that produces a colorized `String`,
+/// reproducing the behavior of the original `pretty()` function.
+pub struct StringBuilder {
+    buf: String,
+    color: bool,
+}
+
+impl StringBuilder {
+    pub fn new(color: bool) -> Self {
+        Self {
+            buf: String::new(),
+            color,
+        }
+    }
+
+    pub fn into_string(self) -> String {
+        self.buf
+    }
+}
+
+impl<A> PrettyOutput<A> for StringBuilder {
+    fn begin_line(&mut self, indent: usize) {
+        self.buf.push('\n');
+        for _ in 0..indent {
+            self.buf.push(' ');
+        }
+    }
+
+    fn emit_space(&mut self) {
+        self.buf.push(' ');
+    }
+
+    fn emit_delim(&mut self, ch: char, _dimmed: bool) {
+        if self.color {
+            self.buf.push_str(&ch.to_string().dimmed().to_string());
+        } else {
+            self.buf.push(ch);
+        }
+    }
+
+    fn emit_atom(&mut self, text: &str, _ann: &A, dimmed: bool) {
+        if dimmed && self.color {
+            self.buf.push_str(&text.dimmed().to_string());
+        } else {
+            self.buf.push_str(&colorize_atom(text, self.color));
+        }
+    }
+}
+
+// ── EventBuffer ─────────────────────────────────────────────────────
+
+/// Buffer that collects output events, tracks width, and can replay
+/// to another `PrettyOutput`. Used for flat-vs-broken layout decisions.
+struct EventBuffer<A> {
+    events: Vec<OutputEvent<A>>,
+    first_line_width: usize,
+    current_line_width: usize,
+    max_continuation_width: usize,
+    on_first_line: bool,
+}
+
+impl<A> EventBuffer<A> {
+    fn new() -> Self {
+        Self {
+            events: Vec::new(),
+            first_line_width: 0,
+            current_line_width: 0,
+            max_continuation_width: 0,
+            on_first_line: true,
+        }
+    }
+
+    fn first_line_width(&self) -> usize {
+        if self.on_first_line {
+            self.current_line_width
+        } else {
+            self.first_line_width
+        }
+    }
+
+    fn is_multiline(&self) -> bool {
+        !self.on_first_line
+    }
+
+    /// Max line width, where the first line is offset by `base_indent`.
+    fn max_line_width(&self, base_indent: usize) -> usize {
+        let first = base_indent + self.first_line_width();
+        if self.on_first_line {
+            first
+        } else {
+            first
+                .max(self.max_continuation_width)
+                .max(self.current_line_width)
+        }
+    }
+
+    fn replay(self, out: &mut impl PrettyOutput<A>) {
+        for event in self.events {
+            match event {
+                OutputEvent::BeginLine(indent) => out.begin_line(indent),
+                OutputEvent::Space => out.emit_space(),
+                OutputEvent::Delim(ch, dimmed) => out.emit_delim(ch, dimmed),
+                OutputEvent::Atom(text, ann, dimmed) => out.emit_atom(&text, &ann, dimmed),
+                OutputEvent::NodeAnn(ann) => out.emit_node_ann(&ann),
+            }
+        }
+    }
+}
+
+impl<A: Clone> PrettyOutput<A> for EventBuffer<A> {
+    fn begin_line(&mut self, indent: usize) {
+        if self.on_first_line {
+            self.first_line_width = self.current_line_width;
+            self.on_first_line = false;
+        } else {
+            self.max_continuation_width = self.max_continuation_width.max(self.current_line_width);
+        }
+        self.current_line_width = indent;
+        self.events.push(OutputEvent::BeginLine(indent));
+    }
+
+    fn emit_space(&mut self) {
+        self.current_line_width += 1;
+        self.events.push(OutputEvent::Space);
+    }
+
+    fn emit_delim(&mut self, ch: char, dimmed: bool) {
+        self.current_line_width += 1;
+        self.events.push(OutputEvent::Delim(ch, dimmed));
+    }
+
+    fn emit_atom(&mut self, text: &str, ann: &A, dimmed: bool) {
+        self.current_line_width += text.chars().count();
+        self.events
+            .push(OutputEvent::Atom(text.to_string(), ann.clone(), dimmed));
+    }
+
+    fn emit_node_ann(&mut self, ann: &A) {
+        self.events.push(OutputEvent::NodeAnn(ann.clone()));
+    }
+}
+
+// ── AnnotatedLineBuilder ─────────────────────────────────────────────
+
+/// A single rendered line with its text and the annotations from atoms on that line.
+#[derive(Debug, Clone)]
+pub struct AnnotatedLine<A> {
+    pub text: String,
+    pub visible_width: usize,
+    pub annotations: Vec<A>,
+}
+
+/// A `PrettyOutput` implementation that collects per-line annotations.
+///
+/// Each rendered line becomes an `AnnotatedLine` carrying the annotations from
+/// Doc nodes that produced content on that line.
+pub struct AnnotatedLineBuilder<A> {
+    lines: Vec<AnnotatedLine<A>>,
+    current_text: String,
+    current_width: usize,
+    current_annotations: Vec<A>,
+}
+
+impl<A> AnnotatedLineBuilder<A> {
+    pub fn new() -> Self {
+        Self {
+            lines: Vec::new(),
+            current_text: String::new(),
+            current_width: 0,
+            current_annotations: Vec::new(),
+        }
+    }
+
+    pub fn into_lines(mut self) -> Vec<AnnotatedLine<A>> {
+        self.flush_line();
+        self.lines
+    }
+
+    fn flush_line(&mut self) {
+        if !self.current_text.is_empty() || !self.current_annotations.is_empty() {
+            self.lines.push(AnnotatedLine {
+                text: std::mem::take(&mut self.current_text),
+                visible_width: self.current_width,
+                annotations: std::mem::take(&mut self.current_annotations),
+            });
+            self.current_width = 0;
+        }
+    }
+}
+
+impl<A> Default for AnnotatedLineBuilder<A> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<A: Clone> PrettyOutput<A> for AnnotatedLineBuilder<A> {
+    fn begin_line(&mut self, indent: usize) {
+        self.flush_line();
+        for _ in 0..indent {
+            self.current_text.push(' ');
+        }
+        self.current_width = indent;
+    }
+
+    fn emit_space(&mut self) {
+        self.current_text.push(' ');
+        self.current_width += 1;
+    }
+
+    fn emit_delim(&mut self, ch: char, _dimmed: bool) {
+        self.current_text.push(ch);
+        self.current_width += 1;
+    }
+
+    fn emit_atom(&mut self, text: &str, ann: &A, _dimmed: bool) {
+        self.current_text.push_str(text);
+        self.current_width += text.chars().count();
+        self.current_annotations.push(ann.clone());
+    }
+
+    fn emit_node_ann(&mut self, ann: &A) {
+        self.current_annotations.push(ann.clone());
+    }
+}
+
 // ── Rendering ───────────────────────────────────────────────────────
 
 /// Pretty-print a Doc with the given format settings.
-pub fn pretty<A>(doc: &Doc<A>, indent: usize, fmt: &Format) -> String {
+pub fn pretty<A: Clone>(doc: &Doc<A>, indent: usize, fmt: &Format) -> String {
     let prefix_width = fmt.line_number.map_or(0, line_prefix_width);
-    let content = render(doc, indent + prefix_width, fmt.width, fmt.color, false);
+    let mut sb = StringBuilder::new(fmt.color);
+    pretty_into(doc, indent + prefix_width, fmt.width, &mut sb);
+    let content = sb.into_string();
 
     match fmt.line_number {
         Some(n) => prepend_line_number(&content, n, fmt.color),
         None => content,
     }
+}
+
+/// Pretty-print a Doc into any `PrettyOutput` implementation.
+pub fn pretty_into<A: Clone>(
+    doc: &Doc<A>,
+    indent: usize,
+    width: usize,
+    out: &mut impl PrettyOutput<A>,
+) {
+    render(doc, indent, width, false, out);
 }
 
 fn line_prefix_width(n: usize) -> usize {
@@ -275,326 +537,271 @@ fn prepend_line_number(content: &str, n: usize, color: bool) -> String {
     result
 }
 
-fn render<A>(doc: &Doc<A>, indent: usize, width: usize, color: bool, dimmed: bool) -> String {
-    // Inherit dimmed from ancestors; once dimmed, stays dimmed.
+fn render<A: Clone>(
+    doc: &Doc<A>,
+    indent: usize,
+    width: usize,
+    dimmed: bool,
+    out: &mut impl PrettyOutput<A>,
+) {
     let dimmed = dimmed || doc.dimmed;
     match &doc.node {
-        DocF::Atom(s) => render_atom(s, color, dimmed),
+        DocF::Atom(s) => out.emit_atom(s, &doc.ann, dimmed),
         DocF::List(children) if children.is_empty() => {
-            if color {
-                format!("{}{}", "(".dimmed(), ")".dimmed())
-            } else {
-                "()".into()
-            }
+            out.emit_delim('(', dimmed);
+            out.emit_delim(')', dimmed);
         }
         DocF::List(children) => {
+            out.emit_node_ann(&doc.ann);
             if let Some(head) = children.first().and_then(|c| c.as_atom()) {
                 match head {
                     "rule" => {
-                        let broken = render_broken(children, indent, width, color, dimmed);
-                        if max_line_width(&broken, indent) <= width {
-                            return broken;
+                        let mut buf = EventBuffer::new();
+                        render_broken(children, indent, width, dimmed, &mut buf);
+                        if buf.max_line_width(indent) <= width {
+                            buf.replay(out);
+                            return;
                         }
-                        return render_all_drop(children, indent, width, color, dimmed);
+                        render_all_drop(children, indent, width, dimmed, out);
+                        return;
                     }
-                    "cond" => return render_cond(children, indent, width, color, dimmed),
+                    "cond" => {
+                        render_cond(children, indent, width, dimmed, out);
+                        return;
+                    }
                     "if" | "when" | "unless" => {
-                        return render_body_indent(children, indent, width, color, dimmed);
+                        render_body_indent(children, indent, width, dimmed, out);
+                        return;
                     }
                     _ => {}
                 }
             }
 
-            // Skip flat when this node or any child requires breaking.
             let must_break = doc.layout == LayoutHint::AlwaysBreak
                 || children.iter().any(|c| c.layout == LayoutHint::AlwaysBreak);
             if !must_break {
-                let flat = render_flat(children, color, dimmed);
-                if !flat.contains('\n') && indent + visible_len(&flat) <= width {
-                    return flat;
+                let mut buf = EventBuffer::new();
+                render_flat(children, dimmed, &mut buf);
+                if !buf.is_multiline() && buf.max_line_width(indent) <= width {
+                    buf.replay(out);
+                    return;
                 }
             }
-            let broken = render_broken(children, indent, width, color, dimmed);
-            // Accept broken layout if every line fits within the width.
-            if max_line_width(&broken, indent) <= width {
-                return broken;
+            let mut buf = EventBuffer::new();
+            render_broken(children, indent, width, dimmed, &mut buf);
+            if buf.max_line_width(indent) <= width {
+                buf.replay(out);
+                return;
             }
-            // Last resort: drop all children to separate lines at indent+2.
-            // (Special forms like when/if/unless are routed to
-            // render_body_indent above and never reach here.)
-            render_all_drop(children, indent, width, color, dimmed)
+            render_all_drop(children, indent, width, dimmed, out);
         }
         DocF::Vector(children) if children.is_empty() => {
-            if color {
-                format!("{}{}", "[".dimmed(), "]".dimmed())
-            } else {
-                "[]".into()
-            }
+            out.emit_delim('[', dimmed);
+            out.emit_delim(']', dimmed);
         }
         DocF::Vector(children) => {
+            out.emit_node_ann(&doc.ann);
             let must_break = doc.layout == LayoutHint::AlwaysBreak
                 || children.iter().any(|c| c.layout == LayoutHint::AlwaysBreak);
             if !must_break {
-                let flat = render_flat_delim(children, color, dimmed, '[', ']');
-                if !flat.contains('\n') && indent + visible_len(&flat) <= width {
-                    return flat;
+                let mut buf = EventBuffer::new();
+                render_flat_delim(children, dimmed, '[', ']', &mut buf);
+                if !buf.is_multiline() && buf.max_line_width(indent) <= width {
+                    buf.replay(out);
+                    return;
                 }
             }
-            let broken = render_broken_delim(children, indent, width, color, dimmed, '[', ']');
-            if max_line_width(&broken, indent) <= width {
-                return broken;
+            let mut buf = EventBuffer::new();
+            render_broken_delim(children, indent, width, dimmed, '[', ']', &mut buf);
+            if buf.max_line_width(indent) <= width {
+                buf.replay(out);
+                return;
             }
-            render_all_drop_delim(children, indent, width, color, dimmed, '[', ']')
+            render_all_drop_delim(children, indent, width, dimmed, '[', ']', out);
         }
     }
 }
 
-/// Render an atom, respecting dimmed state. When dimmed, all atoms
-/// render as dim text regardless of their syntactic role.
-fn render_atom(s: &str, color: bool, dimmed: bool) -> String {
-    if dimmed && color {
-        s.dimmed().to_string()
-    } else {
-        colorize_atom(s, color)
-    }
-}
-
-fn delim_pair(color: bool, open: char, close: char) -> (String, String) {
-    if color {
-        (
-            open.to_string().dimmed().to_string(),
-            close.to_string().dimmed().to_string(),
-        )
-    } else {
-        (open.to_string(), close.to_string())
-    }
-}
-
-fn render_flat_delim<A>(
+fn render_flat_delim<A: Clone>(
     children: &[Doc<A>],
-    color: bool,
     dimmed: bool,
     open: char,
     close: char,
-) -> String {
-    let (open, close) = delim_pair(color, open, close);
-    let parts: Vec<String> = children
-        .iter()
-        .map(|c| render(c, 0, usize::MAX, color, dimmed))
-        .collect();
-    format!("{open}{}{close}", parts.join(" "))
+    out: &mut impl PrettyOutput<A>,
+) {
+    out.emit_delim(open, dimmed);
+    for (i, child) in children.iter().enumerate() {
+        if i > 0 {
+            out.emit_space();
+        }
+        render(child, 0, usize::MAX, dimmed, out);
+    }
+    out.emit_delim(close, dimmed);
 }
 
-fn render_broken_delim<A>(
+fn render_broken_delim<A: Clone>(
     children: &[Doc<A>],
     indent: usize,
     width: usize,
-    color: bool,
     dimmed: bool,
     open: char,
     close: char,
-) -> String {
-    let (open, close) = delim_pair(color, open, close);
+    out: &mut impl PrettyOutput<A>,
+) {
+    out.emit_delim(open, dimmed);
 
-    let head = render(&children[0], indent + 1, width, color, dimmed);
-    let align = indent + visible_len(&head) + 2;
+    let mut head_buf = EventBuffer::new();
+    render(&children[0], indent + 1, width, dimmed, &mut head_buf);
+    let head_width = head_buf.first_line_width();
+    head_buf.replay(out);
 
-    let mut lines = Vec::new();
+    let align = indent + head_width + 2;
 
     if children.len() == 1 {
-        lines.push(format!("{open}{head}{close}"));
+        out.emit_delim(close, dimmed);
     } else {
-        let first_child = render(&children[1], align, width, color, dimmed);
-        lines.push(format!("{open}{head} {first_child}"));
+        out.emit_space();
+        render(&children[1], align, width, dimmed, out);
 
         for child in &children[2..] {
-            let child_str = render(child, align, width, color, dimmed);
-            lines.push(format!("{:pad$}{child_str}", "", pad = align));
+            out.begin_line(align);
+            render(child, align, width, dimmed, out);
         }
-        if let Some(last) = lines.last_mut() {
-            last.push_str(&close);
-        }
+        out.emit_delim(close, dimmed);
     }
-
-    lines.join("\n")
 }
 
-fn render_all_drop_delim<A>(
+fn render_all_drop_delim<A: Clone>(
     children: &[Doc<A>],
     indent: usize,
     width: usize,
-    color: bool,
     dimmed: bool,
     open: char,
     close: char,
-) -> String {
-    let (open, close) = delim_pair(color, open, close);
-
-    let head = render(&children[0], indent + 1, width, color, dimmed);
-    let child_indent = indent + 2;
+    out: &mut impl PrettyOutput<A>,
+) {
+    out.emit_delim(open, dimmed);
+    render(&children[0], indent + 1, width, dimmed, out);
 
     if children.len() == 1 {
-        return format!("{open}{head}{close}");
+        out.emit_delim(close, dimmed);
+        return;
     }
 
-    let mut lines = vec![format!("{open}{head}")];
+    let child_indent = indent + 2;
     for (i, child) in children[1..].iter().enumerate() {
         let is_last = i == children.len() - 2;
-        let rendered = render(child, child_indent, width, color, dimmed);
+        out.begin_line(child_indent);
+        render(child, child_indent, width, dimmed, out);
         if is_last {
-            lines.push(format!("{:pad$}{rendered}{close}", "", pad = child_indent));
-        } else {
-            lines.push(format!("{:pad$}{rendered}", "", pad = child_indent));
+            out.emit_delim(close, dimmed);
         }
     }
-
-    lines.join("\n")
 }
 
-fn render_flat<A>(children: &[Doc<A>], color: bool, dimmed: bool) -> String {
-    render_flat_delim(children, color, dimmed, '(', ')')
+fn render_flat<A: Clone>(children: &[Doc<A>], dimmed: bool, out: &mut impl PrettyOutput<A>) {
+    render_flat_delim(children, dimmed, '(', ')', out);
 }
 
-fn render_broken<A>(
+fn render_broken<A: Clone>(
     children: &[Doc<A>],
     indent: usize,
     width: usize,
-    color: bool,
     dimmed: bool,
-) -> String {
-    render_broken_delim(children, indent, width, color, dimmed, '(', ')')
+    out: &mut impl PrettyOutput<A>,
+) {
+    render_broken_delim(children, indent, width, dimmed, '(', ')', out);
 }
 
-/// Render with all children dropped to new lines at indent+2.
-/// Used for AlwaysBreak nodes where uniform child alignment is wanted.
-fn render_all_drop<A>(
+fn render_all_drop<A: Clone>(
     children: &[Doc<A>],
     indent: usize,
     width: usize,
-    color: bool,
     dimmed: bool,
-) -> String {
-    render_all_drop_delim(children, indent, width, color, dimmed, '(', ')')
+    out: &mut impl PrettyOutput<A>,
+) {
+    render_all_drop_delim(children, indent, width, dimmed, '(', ')', out);
 }
 
-fn render_cond<A>(
+fn render_cond<A: Clone>(
     children: &[Doc<A>],
     indent: usize,
     width: usize,
-    color: bool,
     dimmed: bool,
-) -> String {
-    let open = if color {
-        "(".dimmed().to_string()
-    } else {
-        "(".into()
-    };
-    let close = if color {
-        ")".dimmed().to_string()
-    } else {
-        ")".into()
-    };
-
-    let head = render(&children[0], indent + 1, width, color, dimmed);
+    out: &mut impl PrettyOutput<A>,
+) {
+    out.emit_delim('(', dimmed);
+    render(&children[0], indent + 1, width, dimmed, out);
     let body_indent = indent + 2;
-
-    let mut lines = vec![format!("{open}{head}")];
 
     for (i, clause) in children[1..].iter().enumerate() {
         let is_last = i == children.len() - 2;
-        // Inherit dimmed from the clause node itself (e.g. unevaluated branches).
         let clause_dimmed = dimmed || clause.dimmed;
         match &clause.node {
             DocF::List(parts) if parts.len() >= 2 => {
-                let clause_open = if color {
-                    "(".dimmed().to_string()
-                } else {
-                    "(".into()
-                };
-                let clause_close = if color {
-                    ")".dimmed().to_string()
-                } else {
-                    ")".into()
-                };
-
-                let test = render(&parts[0], body_indent + 1, width, color, clause_dimmed);
-                lines.push(format!("{:pad$}{clause_open}{test}", "", pad = body_indent));
+                out.begin_line(body_indent);
+                out.emit_delim('(', clause_dimmed);
+                render(&parts[0], body_indent + 1, width, clause_dimmed, out);
 
                 let body_col = body_indent + 1;
                 for (j, body_part) in parts[1..].iter().enumerate() {
                     let is_last_part = j == parts.len() - 2;
-                    let rendered = render(body_part, body_col, width, color, clause_dimmed);
+                    out.begin_line(body_col);
+                    render(body_part, body_col, width, clause_dimmed, out);
                     if is_last_part && is_last {
-                        lines.push(format!(
-                            "{:pad$}{rendered}{clause_close}{close}",
-                            "",
-                            pad = body_col
-                        ));
+                        out.emit_delim(')', clause_dimmed);
+                        out.emit_delim(')', dimmed);
                     } else if is_last_part {
-                        lines.push(format!(
-                            "{:pad$}{rendered}{clause_close}",
-                            "",
-                            pad = body_col
-                        ));
-                    } else {
-                        lines.push(format!("{:pad$}{rendered}", "", pad = body_col));
+                        out.emit_delim(')', clause_dimmed);
                     }
                 }
             }
             _ => {
-                let rendered = render(clause, body_indent, width, color, clause_dimmed);
+                out.begin_line(body_indent);
+                render(clause, body_indent, width, clause_dimmed, out);
                 if is_last {
-                    lines.push(format!("{:pad$}{rendered}{close}", "", pad = body_indent));
-                } else {
-                    lines.push(format!("{:pad$}{rendered}", "", pad = body_indent));
+                    out.emit_delim(')', dimmed);
                 }
             }
         }
     }
 
-    if children.len() == 1
-        && let Some(last) = lines.last_mut()
-    {
-        last.push_str(&close);
+    if children.len() == 1 {
+        out.emit_delim(')', dimmed);
     }
-
-    lines.join("\n")
 }
 
-fn render_body_indent<A>(
+fn render_body_indent<A: Clone>(
     children: &[Doc<A>],
     indent: usize,
     width: usize,
-    color: bool,
     dimmed: bool,
-) -> String {
-    let open = if color {
-        "(".dimmed().to_string()
-    } else {
-        "(".into()
-    };
-    let close = if color {
-        ")".dimmed().to_string()
-    } else {
-        ")".into()
-    };
+    out: &mut impl PrettyOutput<A>,
+) {
+    out.emit_delim('(', dimmed);
 
-    let head = render(&children[0], indent + 1, width, color, dimmed);
+    // Buffer head to measure its width for alignment.
+    let mut head_buf = EventBuffer::new();
+    render(&children[0], indent + 1, width, dimmed, &mut head_buf);
+    let head_width = head_buf.first_line_width();
+    head_buf.replay(out);
+
     let body_indent = indent + 2;
 
     if children.len() == 1 {
-        return format!("{open}{head}{close}");
+        out.emit_delim(')', dimmed);
+        return;
     }
 
     // Try placing the first child on the same line as the head.
-    let inline_col = indent + 1 + visible_len(&head) + 1;
-    let first = render(&children[1], inline_col, width, color, dimmed);
-    let first_multiline = first.contains('\n');
+    let inline_col = indent + 1 + head_width + 1;
 
-    let mut lines = if first_multiline {
+    let mut first_buf = EventBuffer::new();
+    render(&children[1], inline_col, width, dimmed, &mut first_buf);
+    let first_multiline = first_buf.is_multiline();
+
+    if first_multiline {
         // First child wraps — drop it to the next line.
-        // For predicate forms (when/if/unless), use extra indent (indent+4)
-        // to visually distinguish the predicate from the body (at indent+2).
         let head_atom = children[0].as_atom().unwrap_or("");
         let is_predicate_form = matches!(head_atom, "when" | "if" | "unless");
         let first_indent = if is_predicate_form {
@@ -602,32 +809,25 @@ fn render_body_indent<A>(
         } else {
             body_indent
         };
-        let first = render(&children[1], first_indent, width, color, dimmed);
-        vec![
-            format!("{open}{head}"),
-            format!("{:pad$}{first}", "", pad = first_indent),
-        ]
+        out.begin_line(first_indent);
+        render(&children[1], first_indent, width, dimmed, out);
     } else {
-        vec![format!("{open}{head} {first}")]
-    };
+        out.emit_space();
+        first_buf.replay(out);
+    }
 
     for (i, child) in children[2..].iter().enumerate() {
         let is_last = i == children.len() - 3;
-        let rendered = render(child, body_indent, width, color, dimmed);
+        out.begin_line(body_indent);
+        render(child, body_indent, width, dimmed, out);
         if is_last {
-            lines.push(format!("{:pad$}{rendered}{close}", "", pad = body_indent));
-        } else {
-            lines.push(format!("{:pad$}{rendered}", "", pad = body_indent));
+            out.emit_delim(')', dimmed);
         }
     }
 
-    if children.len() == 2
-        && let Some(last) = lines.last_mut()
-    {
-        last.push_str(&close);
+    if children.len() == 2 {
+        out.emit_delim(')', dimmed);
     }
-
-    lines.join("\n")
 }
 
 /// Colorize an atom value based on its content.
@@ -644,21 +844,6 @@ pub fn colorize_atom(s: &str, color: bool) -> String {
     } else {
         s.to_string()
     }
-}
-
-/// Widest visible line in a multi-line rendered string.
-/// `base_indent` is added to the first line (which lacks indentation padding
-/// because indentation is added by the caller).
-fn max_line_width(rendered: &str, base_indent: usize) -> usize {
-    rendered
-        .lines()
-        .enumerate()
-        .map(|(i, line)| {
-            let w = visible_len(line);
-            if i == 0 { base_indent + w } else { w }
-        })
-        .max()
-        .unwrap_or(0)
 }
 
 /// Visible length of a string, ignoring ANSI SGR escape sequences.
@@ -1463,5 +1648,156 @@ mod prop_tests {
             }
         }
         result
+    }
+}
+
+// ── AnnotatedLineBuilder tests ──────────────────────────────────────
+
+#[cfg(test)]
+mod annotated_line_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn arb_doc() -> impl Strategy<Value = Doc> {
+        let leaf = "[a-z_]{1,12}".prop_map(|s| Doc::atom(s));
+        leaf.prop_recursive(4, 20, 5, |inner| {
+            prop_oneof![
+                prop::collection::vec(inner.clone(), 0..5).prop_map(Doc::list),
+                (
+                    "[a-z]{1,8}".prop_map(|s| Doc::atom(s)),
+                    prop::collection::vec(inner, 0..4),
+                )
+                    .prop_map(|(head, mut children)| {
+                        children.insert(0, head);
+                        Doc::list(children)
+                    }),
+            ]
+        })
+    }
+
+    /// Reconstruct text from AnnotatedLine vec (joining with newlines).
+    fn lines_to_text(lines: &[AnnotatedLine<()>]) -> String {
+        let mut result = String::new();
+        for (i, line) in lines.iter().enumerate() {
+            if i > 0 {
+                result.push('\n');
+            }
+            result.push_str(&line.text);
+        }
+        result
+    }
+
+    proptest! {
+        #[test]
+        fn annotated_line_text_matches_string_builder(doc in arb_doc(), width in 10..120usize) {
+            let mut sb = StringBuilder::new(false);
+            pretty_into(&doc, 0, width, &mut sb);
+            let sb_text = sb.into_string();
+
+            let mut alb = AnnotatedLineBuilder::new();
+            pretty_into(&doc, 0, width, &mut alb);
+            let lines = alb.into_lines();
+            let alb_text = lines_to_text(&lines);
+
+            prop_assert_eq!(sb_text, alb_text,
+                "AnnotatedLineBuilder text should match StringBuilder");
+        }
+
+        #[test]
+        fn annotated_line_visible_width_correct(doc in arb_doc(), width in 10..120usize) {
+            let mut alb = AnnotatedLineBuilder::new();
+            pretty_into(&doc, 0, width, &mut alb);
+            let lines = alb.into_lines();
+
+            for line in &lines {
+                let actual_width = line.text.trim_start().chars().count()
+                    + line.text.len() - line.text.trim_start().len();
+                prop_assert_eq!(line.visible_width, actual_width,
+                    "visible_width should match actual char count for line: {:?}", line.text);
+            }
+        }
+    }
+
+    // ── Unit tests: annotation association ───────────────────────────
+
+    #[derive(Debug, Clone, PartialEq)]
+    enum TestAnn {
+        A,
+        B,
+        C,
+    }
+
+    fn atom_with(s: &str, ann: TestAnn) -> Doc<TestAnn> {
+        Doc {
+            ann,
+            node: DocF::Atom(s.into()),
+            layout: LayoutHint::Auto,
+            dimmed: false,
+        }
+    }
+
+    fn list_of(children: Vec<Doc<TestAnn>>) -> Doc<TestAnn> {
+        Doc {
+            ann: TestAnn::A,
+            node: DocF::List(children),
+            layout: LayoutHint::Auto,
+            dimmed: false,
+        }
+    }
+
+    #[test]
+    fn single_atom_carries_annotation() {
+        let doc = atom_with("hello", TestAnn::B);
+        let mut alb = AnnotatedLineBuilder::new();
+        pretty_into(&doc, 0, 80, &mut alb);
+        let lines = alb.into_lines();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].text, "hello");
+        assert_eq!(lines[0].annotations, vec![TestAnn::B]);
+    }
+
+    #[test]
+    fn flat_layout_aggregates_annotations() {
+        // (a b) on a wide line → single AnnotatedLine with both annotations
+        let doc = list_of(vec![atom_with("a", TestAnn::A), atom_with("b", TestAnn::B)]);
+        let mut alb = AnnotatedLineBuilder::new();
+        pretty_into(&doc, 0, 80, &mut alb);
+        let lines = alb.into_lines();
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].annotations.contains(&TestAnn::A));
+        assert!(lines[0].annotations.contains(&TestAnn::B));
+    }
+
+    #[test]
+    fn broken_layout_separates_annotations() {
+        // Force broken layout with a very narrow width
+        let doc = list_of(vec![
+            atom_with("alpha", TestAnn::A),
+            atom_with("beta", TestAnn::B),
+            atom_with("gamma", TestAnn::C),
+        ]);
+        let mut alb = AnnotatedLineBuilder::new();
+        // Width 1 forces all-drop layout
+        pretty_into(&doc, 0, 1, &mut alb);
+        let lines = alb.into_lines();
+        // Should have multiple lines, each with its own annotation
+        assert!(
+            lines.len() >= 2,
+            "expected broken layout, got {} lines",
+            lines.len()
+        );
+
+        // First line has "alpha" (and the list open paren), last items on separate lines
+        let all_anns: Vec<_> = lines.iter().flat_map(|l| l.annotations.iter()).collect();
+        assert!(all_anns.contains(&&TestAnn::A));
+        assert!(all_anns.contains(&&TestAnn::B));
+        assert!(all_anns.contains(&&TestAnn::C));
+
+        // Check that annotations are distributed across lines, not all on one
+        let lines_with_anns: Vec<_> = lines.iter().filter(|l| !l.annotations.is_empty()).collect();
+        assert!(
+            lines_with_anns.len() >= 2,
+            "expected annotations on multiple lines"
+        );
     }
 }

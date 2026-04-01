@@ -1,0 +1,448 @@
+// Shared display helpers for trace output.
+//
+// Trace-specific rendering built on top of the `may_i_layout` crate's
+// declarative Layout primitives.
+
+mod annotate;
+mod colorize;
+mod json;
+mod render_rule;
+mod transform;
+
+#[cfg(test)]
+mod test_helpers;
+
+use std::io::Write;
+
+use colored::Colorize;
+use may_i_pp::colorize_atom;
+
+pub use may_i_layout::{
+    ColAlign, ColContent, ColItem, ColRow, HRuleLabel, Layout, Terminal, strip_ansi, write_layout,
+};
+
+pub use self::colorize::colorize_decision_keyword;
+pub use self::json::trace_to_json;
+
+use self::colorize::colorize_right;
+use self::render_rule::render_annotated_rule;
+use crate::annotation::TraceEntry;
+
+// ── Column geometry (trace-specific) ──────────────────────────────
+
+const MIN_TERM_WIDTH: usize = 40;
+
+struct ColumnGeometry {
+    left_width: usize,
+}
+
+fn detect_column_geometry(term: &Terminal) -> ColumnGeometry {
+    let usable = term.width.saturating_sub(2).max(MIN_TERM_WIDTH);
+    ColumnGeometry {
+        left_width: usable / 2,
+    }
+}
+
+// ── Facts rows (2-column layout) ──────────────────────────────────
+
+fn facts_rows(facts: &[(String, String)]) -> Vec<ColRow> {
+    let items: Vec<ColItem> = facts
+        .iter()
+        .map(|(key, value)| {
+            let quoted = format!("\"{value}\"");
+            let colored = format!(
+                "{} {}",
+                colorize_atom(key, true),
+                colorize_atom(&quoted, true)
+            );
+            let width = key.len() + 1 + quoted.len();
+            ColItem::new(colored, width)
+        })
+        .collect();
+
+    let label = "facts";
+    vec![ColRow {
+        left: label.dimmed().to_string(),
+        left_width: label.len(),
+        left_align: ColAlign::Right,
+        right: ColContent::Breakable {
+            items,
+            separator: ", ".dimmed().to_string(),
+            separator_width: 2,
+        },
+    }]
+}
+
+fn command_row(cmd: &str, _geom: &ColumnGeometry) -> Vec<ColRow> {
+    let label = "command";
+    let label_colored = label.dimmed().to_string();
+    let mut row = ColRow::new(label_colored, label.len(), cmd.bold().to_string());
+    row.left_align = ColAlign::Right;
+    vec![row]
+}
+
+// ── Separator (public convenience for cmd_check) ──────────────────
+
+pub fn print_separator(indent: &str, label: Option<(&str, usize)>, term: &Terminal) {
+    let hrule_label = label.map(|(text, w)| HRuleLabel {
+        text: text.to_string(),
+        visible_width: w,
+    });
+    let layout = Layout::HRule(hrule_label);
+    let indented = Layout::Indent(indent.len(), Box::new(layout));
+    write_layout(&mut std::io::stdout(), &indented, term);
+}
+
+// ── Public convenience for cmd_check ──────────────────────────────
+
+pub fn render_elements(indent: &str, elements: &[Layout], term: &Terminal) {
+    let layout = Layout::Indent(indent.len(), Box::new(Layout::Stack(elements.to_vec())));
+    write_layout(&mut std::io::stdout(), &layout, term);
+}
+
+// ── Trace rendering ────────────────────────────────────────────────
+
+pub fn print_trace(entries: &[TraceEntry], command: &str, indent: &str, term: &Terminal) {
+    write_trace(&mut std::io::stdout(), entries, command, indent, term);
+}
+
+pub fn write_trace(
+    w: &mut impl Write,
+    entries: &[TraceEntry],
+    command: &str,
+    indent: &str,
+    term: &Terminal,
+) {
+    let layout = trace_to_layout(entries, command, indent.len(), term);
+    write_layout(w, &layout, term);
+}
+
+/// Convert trace entries into a declarative layout tree.
+fn trace_to_layout(
+    entries: &[TraceEntry],
+    command: &str,
+    indent: usize,
+    term: &Terminal,
+) -> Layout {
+    let geom = detect_column_geometry(term);
+    let mut children: Vec<Layout> = Vec::new();
+    let mut first = true;
+
+    let has_segments = entries
+        .iter()
+        .any(|e| matches!(e, TraceEntry::SegmentHeader { .. }));
+
+    let mut pending_command: Option<&str> = if !has_segments { Some(command) } else { None };
+
+    let mut current_rows: Vec<ColRow> = Vec::new();
+    let mut last_shown_facts: Option<&Vec<(String, String)>> = None;
+
+    let flush_rows = |rows: &mut Vec<ColRow>, children: &mut Vec<Layout>| {
+        if !rows.is_empty() {
+            children.push(Layout::Columns(std::mem::take(rows)));
+        }
+    };
+
+    for entry in entries {
+        match entry {
+            TraceEntry::SegmentHeader { command, decision } => {
+                flush_rows(&mut current_rows, &mut children);
+                if !first {
+                    children.push(Layout::Blank);
+                    children.push(Layout::Blank);
+                }
+                children.push(segment_header_layout(command, *decision));
+                pending_command = Some(command);
+            }
+            TraceEntry::Rule {
+                doc,
+                line,
+                pre_migration_doc: _,
+                facts,
+                inner_command,
+            } => {
+                if inner_command.is_some() || pending_command.is_some() {
+                    flush_rows(&mut current_rows, &mut children);
+                    last_shown_facts = None;
+                    if !first {
+                        children.push(Layout::Blank);
+                    }
+                } else if !current_rows.is_empty() {
+                    current_rows.push(ColRow::new(" ", 1, ""));
+                }
+
+                if let Some(cmd) = pending_command.take() {
+                    current_rows.extend(command_row(cmd, &geom));
+                } else if let Some(cmd) = inner_command {
+                    current_rows.extend(command_row(cmd, &geom));
+                }
+                if !facts.is_empty() && last_shown_facts.as_ref() != Some(&facts) {
+                    current_rows.extend(facts_rows(facts));
+                }
+                last_shown_facts = Some(facts);
+                current_rows.extend(render_annotated_rule(doc, *line, &geom));
+            }
+            TraceEntry::DefaultAsk { .. } => {
+                let label = "No matching rule".italic().yellow().to_string();
+                let label_visible = "No matching rule".len();
+                let mut row = ColRow::new(label, label_visible, colorize_right("→ :ask (default)"));
+                row.left_align = ColAlign::Right;
+                current_rows.push(row);
+            }
+        }
+        first = false;
+    }
+    flush_rows(&mut current_rows, &mut children);
+
+    Layout::Indent(indent, Box::new(Layout::Stack(children)))
+}
+
+fn segment_header_layout(command: &str, decision: may_i_core::Decision) -> Layout {
+    use may_i_core::Decision;
+    let icon = match decision {
+        Decision::Allow => "✓".green().bold().to_string(),
+        Decision::Ask => "?".yellow().bold().to_string(),
+        Decision::Deny => "✗".red().bold().to_string(),
+    };
+    let label = format!("{icon} {}", command.bold());
+    let label_width = 2 + command.len();
+    Layout::HRule(Some(HRuleLabel {
+        text: label,
+        visible_width: label_width,
+    }))
+}
+
+// ── Path display ───────────────────────────────────────────────────
+
+pub fn shorten_home(path: &std::path::Path) -> String {
+    if let Ok(home) = std::env::var("HOME")
+        && let Ok(rest) = path.strip_prefix(&home)
+    {
+        return format!("~/{}", rest.display());
+    }
+    path.display().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use test_helpers::*;
+
+    #[test]
+    fn facts_rows_creates_breakable_row() {
+        let facts = vec![
+            (":env".to_string(), "prod".to_string()),
+            (":region".to_string(), "us-east".to_string()),
+        ];
+        let rows = facts_rows(&facts);
+        assert_eq!(rows.len(), 1);
+        let stripped = strip_ansi(&rows[0].left);
+        assert_eq!(stripped, "facts");
+    }
+
+    #[test]
+    fn command_row_creates_row() {
+        let geom = ColumnGeometry { left_width: 40 };
+        let rows = command_row("git push", &geom);
+        assert_eq!(rows.len(), 1);
+        let stripped = strip_ansi(&rows[0].left);
+        assert_eq!(stripped, "command");
+    }
+
+    #[test]
+    fn trace_to_layout_empty() {
+        let term = Terminal::new(80);
+        let layout = trace_to_layout(&[], "ls", 0, &term);
+        let mut buf = Vec::new();
+        write_layout(&mut buf, &layout, &term);
+    }
+
+    #[test]
+    fn trace_to_layout_with_default_ask() {
+        let term = Terminal::new(80);
+        let entries = vec![TraceEntry::DefaultAsk {
+            reason: "no rules".into(),
+        }];
+        let layout = trace_to_layout(&entries, "unknown", 0, &term);
+        let mut buf = Vec::new();
+        write_layout(&mut buf, &layout, &term);
+        let output = String::from_utf8(buf).unwrap();
+        let stripped = strip_ansi(&output);
+        assert!(stripped.contains("No matching rule"));
+    }
+
+    #[test]
+    fn trace_to_layout_with_segment_header() {
+        let term = Terminal::new(80);
+        let entries = vec![TraceEntry::SegmentHeader {
+            command: "ls".into(),
+            decision: may_i_core::Decision::Allow,
+        }];
+        let layout = trace_to_layout(&entries, "ls && echo done", 0, &term);
+        let mut buf = Vec::new();
+        write_layout(&mut buf, &layout, &term);
+        let output = String::from_utf8(buf).unwrap();
+        let stripped = strip_ansi(&output);
+        assert!(stripped.contains("ls"));
+    }
+
+    #[test]
+    fn write_trace_produces_output() {
+        let term = Terminal::new(80);
+        let entries = vec![TraceEntry::DefaultAsk {
+            reason: "test".into(),
+        }];
+        let mut buf = Vec::new();
+        write_trace(&mut buf, &entries, "cmd", "  ", &term);
+        assert!(!buf.is_empty());
+    }
+
+    #[test]
+    fn shorten_home_replaces_home_prefix() {
+        if let Ok(home) = std::env::var("HOME") {
+            let path = std::path::PathBuf::from(&home).join("foo/bar");
+            assert_eq!(shorten_home(&path), "~/foo/bar");
+        }
+    }
+
+    #[test]
+    fn shorten_home_preserves_non_home_path() {
+        let path = std::path::Path::new("/tmp/other");
+        assert_eq!(shorten_home(path), "/tmp/other");
+    }
+
+    #[test]
+    fn trace_to_layout_with_rule() {
+        let term = Terminal::new(80);
+        let doc = list_ann(
+            Ann::RuleMatch {
+                matched: true,
+                line: Some(3),
+            },
+            vec![
+                atom("rule"),
+                atom_ann("git", Ann::CommandMatch { matched: true }),
+                atom_ann(
+                    ":allow",
+                    Ann::EffectDecision {
+                        decision: may_i_core::Decision::Allow,
+                        reason: Some("ok".into()),
+                    },
+                ),
+            ],
+        );
+        let entries = vec![TraceEntry::Rule {
+            doc,
+            line: Some(3),
+            pre_migration_doc: None,
+            facts: vec![(":env".into(), "prod".into())],
+            inner_command: None,
+        }];
+        let layout = trace_to_layout(&entries, "git push", 0, &term);
+        let mut buf = Vec::new();
+        write_layout(&mut buf, &layout, &term);
+        let output = String::from_utf8(buf).unwrap();
+        let stripped = strip_ansi(&output);
+        assert!(stripped.contains("command"));
+        assert!(stripped.contains("git push"));
+    }
+
+    #[test]
+    fn trace_to_layout_with_inner_command() {
+        let term = Terminal::new(80);
+        let doc = list_ann(
+            Ann::RuleMatch {
+                matched: true,
+                line: Some(1),
+            },
+            vec![atom("rule"), atom("rm")],
+        );
+        let entries = vec![
+            TraceEntry::Rule {
+                doc: doc.clone(),
+                line: Some(1),
+                pre_migration_doc: None,
+                facts: vec![],
+                inner_command: None,
+            },
+            TraceEntry::Rule {
+                doc,
+                line: Some(2),
+                pre_migration_doc: None,
+                facts: vec![],
+                inner_command: Some("rm -rf".into()),
+            },
+        ];
+        let layout = trace_to_layout(&entries, "sudo rm -rf", 0, &term);
+        let mut buf = Vec::new();
+        write_layout(&mut buf, &layout, &term);
+        let output = String::from_utf8(buf).unwrap();
+        let stripped = strip_ansi(&output);
+        assert!(stripped.contains("rm -rf"));
+    }
+
+    #[test]
+    fn trace_to_layout_consecutive_rules_get_separator() {
+        let term = Terminal::new(80);
+        let make_rule = |cmd: &str| TraceEntry::Rule {
+            doc: list_ann(
+                Ann::RuleMatch {
+                    matched: false,
+                    line: None,
+                },
+                vec![atom("rule"), atom(cmd)],
+            ),
+            line: None,
+            pre_migration_doc: None,
+            facts: vec![],
+            inner_command: None,
+        };
+        let entries = vec![make_rule("git"), make_rule("hg")];
+        let layout = trace_to_layout(&entries, "ls", 0, &term);
+        let mut buf = Vec::new();
+        write_layout(&mut buf, &layout, &term);
+        assert!(!buf.is_empty());
+    }
+
+    #[test]
+    fn trace_to_layout_skips_duplicate_facts() {
+        let term = Terminal::new(80);
+        let facts = vec![(":env".into(), "prod".into())];
+        let make_rule = || TraceEntry::Rule {
+            doc: list_ann(
+                Ann::RuleMatch {
+                    matched: false,
+                    line: None,
+                },
+                vec![atom("rule"), atom("cmd")],
+            ),
+            line: None,
+            pre_migration_doc: None,
+            facts: facts.clone(),
+            inner_command: None,
+        };
+        let entries = vec![make_rule(), make_rule()];
+        let layout = trace_to_layout(&entries, "cmd", 0, &term);
+        let mut buf = Vec::new();
+        write_layout(&mut buf, &layout, &term);
+        let output = String::from_utf8(buf).unwrap();
+        let stripped = strip_ansi(&output);
+        assert_eq!(
+            stripped.matches("facts").count(),
+            1,
+            "facts should appear once: {stripped}"
+        );
+    }
+
+    #[test]
+    fn segment_header_layout_variants() {
+        use may_i_core::Decision;
+        for decision in [Decision::Allow, Decision::Ask, Decision::Deny] {
+            let layout = segment_header_layout("cmd", decision);
+            let term = Terminal::new(80);
+            let mut buf = Vec::new();
+            write_layout(&mut buf, &layout, &term);
+            assert!(!buf.is_empty());
+        }
+    }
+}
