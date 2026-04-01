@@ -8,5 +8,9 @@ Run `cargo fmt` before staging files.
 Prefer property tests; fall back to targeted unit tests for hard-to-hit
 branches.
 
-If tarpaulin coverage is under threshold, inspect `lcov.info` to see what was
-uncovered.
+At the end of any significant unit of work, run `cargo tarpaulin` to check
+coverage. Inspect `lcov.info` to see what was uncovered, then
+
+- look for program properties that should have proptests
+- write unit tests for hitting specific branches surgically--proptests are
+  preferred.
