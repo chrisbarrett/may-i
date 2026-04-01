@@ -163,7 +163,6 @@ fn dim_unevaluated_inner(
 ///
 /// Handles forbidden patterns `(not (anywhere ...))` by distributing into the
 /// inner anywhere's children.
-#[allow(dead_code)] // Infrastructure for Phase 6 integration
 pub(super) fn distribute_arg_annotations(doc: &Doc<Option<Ann>>) -> Doc<Option<Ann>> {
     if let Some(Ann::ArgMatch {
         search_tokens,

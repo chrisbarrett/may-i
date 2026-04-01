@@ -43,6 +43,8 @@ pub struct PositionalElementDetail {
     pub expr_match: Option<ExprMatchDetail>,
     /// Whether this element matched.
     pub matched: bool,
+    /// If this pattern is a Cond, the index of the branch that matched.
+    pub cond_branch_index: Option<usize>,
 }
 
 /// Detail about a fact binding from a positional Bind expression.

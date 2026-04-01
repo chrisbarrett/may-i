@@ -721,12 +721,24 @@ fn build_positional_element_details(
             None
         };
 
+        let cond_branch_index = if let Expr::Cond(branches) = &pattern.pattern
+            && !consumed_args.is_empty()
+        {
+            let value = &consumed_args[0];
+            branches
+                .iter()
+                .position(|b| match_expr_with_binding(&b.test, value).0)
+        } else {
+            None
+        };
+
         details.push(crate::fold::PositionalElementDetail {
             pattern_index: pat_idx,
             consumed_args,
             binding,
             expr_match,
             matched: element_matched,
+            cond_branch_index,
         });
 
         arg_idx += consume_count;

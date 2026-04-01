@@ -392,6 +392,37 @@ fn annotate_pattern_element(doc: ADoc, detail: &PositionalElementDetail) -> ADoc
     doc
 }
 
+/// Move an annotation to a cond branch body within the positional children.
+///
+/// When a positional pattern has a trailing `Expr::Cond` with no explicit
+/// continuation, `resolve_trailing_cond_effect` extracts the matching branch's
+/// effect and evaluates it as a continuation. This creates a duplicate
+/// `(effect :keyword)` node. This function places the evaluated annotation on
+/// the original cond branch body so the annotation renders on the correct line.
+fn move_ann_to_cond_branch(children: &mut [ADoc], branch_idx: usize, ann: Ann) {
+    // Find the cond child among the positional children (a list starting with "cond").
+    for child in children.iter_mut() {
+        if let DocF::List(cond_children) = &mut child.node {
+            let is_cond = cond_children.first().and_then(|c| c.as_atom()) == Some("cond");
+            if !is_cond {
+                continue;
+            }
+            // Cond children: ["cond", clause0, clause1, ...]
+            let clause_idx = branch_idx + 1;
+            if clause_idx >= cond_children.len() {
+                continue;
+            }
+            // Each clause is a list: (test body)
+            if let DocF::List(clause_parts) = &mut cond_children[clause_idx].node
+                && let Some(body) = clause_parts.last_mut()
+            {
+                body.ann = Some(ann);
+                return;
+            }
+        }
+    }
+}
+
 /// Annotate an expression doc node with match detail (regex, literal).
 fn annotate_expr_match(doc: ADoc, detail: &may_i_engine::fold::ExprMatchDetail) -> ADoc {
     use may_i_engine::fold::ExprMatchDetail;
@@ -805,7 +836,36 @@ impl EvalFold for TracingFold {
             DocF::List(cs) => cs,
             _ => vec![ann_doc],
         };
-        children.push(continuation.1);
+
+        // If the continuation came from a trailing cond (no explicit continuation),
+        // move the EffectDecision annotation to the matching cond branch body so it
+        // renders on the correct line rather than on the duplicate continuation.
+        let trailing_cond_branch = match pattern {
+            ArgPattern::Positional {
+                continuation: None, ..
+            }
+            | ArgPattern::Exact {
+                continuation: None, ..
+            } => detail
+                .positional_elements
+                .last()
+                .and_then(|e| e.cond_branch_index),
+            _ => None,
+        };
+
+        if let Some(branch_idx) = trailing_cond_branch {
+            if let Some(ref effect_ann @ Ann::EffectDecision { .. }) = continuation.1.ann {
+                move_ann_to_cond_branch(&mut children, branch_idx, effect_ann.clone());
+            }
+            // Push continuation without the EffectDecision annotation
+            children.push(Doc {
+                ann: None,
+                ..continuation.1
+            });
+        } else {
+            children.push(continuation.1);
+        }
+
         let _ = args;
         let wrapper = Doc {
             ann: Some(Ann::ArgMatch {

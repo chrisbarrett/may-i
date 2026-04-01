@@ -478,10 +478,12 @@ impl<A: Clone> PrettyOutput<A> for AnnotatedLineBuilder<A> {
         self.current_width += 1;
     }
 
-    fn emit_atom(&mut self, text: &str, ann: &A, _dimmed: bool) {
+    fn emit_atom(&mut self, text: &str, ann: &A, dimmed: bool) {
         self.current_text.push_str(text);
         self.current_width += text.chars().count();
-        self.current_annotations.push(ann.clone());
+        if !dimmed {
+            self.current_annotations.push(ann.clone());
+        }
     }
 
     fn emit_node_ann(&mut self, ann: &A) {
@@ -514,7 +516,7 @@ pub fn pretty_into<A: Clone>(
     render(doc, indent, width, false, out);
 }
 
-fn line_prefix_width(n: usize) -> usize {
+pub fn line_prefix_width(n: usize) -> usize {
     format!("{n}").len() + 2
 }
 
@@ -740,6 +742,7 @@ fn render_cond<A: Clone>(
         match &clause.node {
             DocF::List(parts) if parts.len() >= 2 => {
                 out.begin_line(body_indent);
+                out.emit_node_ann(&clause.ann);
                 out.emit_delim('(', clause_dimmed);
                 render(&parts[0], body_indent + 1, width, clause_dimmed, out);
 
@@ -1798,6 +1801,73 @@ mod annotated_line_tests {
         assert!(
             lines_with_anns.len() >= 2,
             "expected annotations on multiple lines"
+        );
+    }
+
+    #[test]
+    fn fully_dimmed_doc_suppresses_atom_annotations() {
+        let doc = Doc {
+            ann: TestAnn::A,
+            node: DocF::List(vec![
+                atom_with("head", TestAnn::B),
+                atom_with("body", TestAnn::C),
+            ]),
+            layout: LayoutHint::Auto,
+            dimmed: true,
+        };
+        let mut alb = AnnotatedLineBuilder::new();
+        pretty_into(&doc, 0, 80, &mut alb);
+        let lines = alb.into_lines();
+        let all_anns: Vec<_> = lines.iter().flat_map(|l| &l.annotations).collect();
+        // Node-level annotation (TestAnn::A on the list) IS emitted even when dimmed,
+        // but atom annotations (TestAnn::B, TestAnn::C) are suppressed.
+        assert!(
+            all_anns.contains(&&TestAnn::A),
+            "list node annotation should be emitted even when dimmed"
+        );
+        assert!(
+            !all_anns.contains(&&TestAnn::B),
+            "dimmed atom annotation B should be suppressed"
+        );
+        assert!(
+            !all_anns.contains(&&TestAnn::C),
+            "dimmed atom annotation C should be suppressed"
+        );
+    }
+
+    #[test]
+    fn mixed_dimmed_only_collects_non_dimmed_atom_annotations() {
+        // List with one normal child and one dimmed child
+        let normal = atom_with("visible", TestAnn::A);
+        let dimmed_child = Doc {
+            ann: TestAnn::B,
+            node: DocF::Atom("hidden".into()),
+            layout: LayoutHint::Auto,
+            dimmed: true,
+        };
+        let doc = Doc {
+            ann: TestAnn::C,
+            node: DocF::List(vec![normal, dimmed_child]),
+            layout: LayoutHint::Auto,
+            dimmed: false,
+        };
+        let mut alb = AnnotatedLineBuilder::new();
+        pretty_into(&doc, 0, 80, &mut alb);
+        let lines = alb.into_lines();
+        let all_anns: Vec<_> = lines.iter().flat_map(|l| &l.annotations).collect();
+        // Should have TestAnn::C (list node_ann) and TestAnn::A (normal atom)
+        // but NOT TestAnn::B (dimmed atom)
+        assert!(
+            all_anns.contains(&&TestAnn::A),
+            "should contain non-dimmed atom annotation"
+        );
+        assert!(
+            all_anns.contains(&&TestAnn::C),
+            "should contain non-dimmed list node annotation"
+        );
+        assert!(
+            !all_anns.contains(&&TestAnn::B),
+            "should NOT contain dimmed atom annotation"
         );
     }
 }
