@@ -335,6 +335,8 @@ impl ArgPattern {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_generators::any_expr;
+    use proptest::prelude::*;
 
     #[test]
     fn command_pattern_literal_matches_exactly() {
@@ -491,5 +493,128 @@ mod tests {
     fn expr_is_wildcard_works() {
         assert!(Expr::<Effect>::Wildcard.is_wildcard());
         assert!(!Expr::<Effect>::Literal("test".into()).is_wildcard());
+    }
+
+    // --- is_match: Regex and Not ---
+
+    #[test]
+    fn expr_regex_matches() {
+        let expr = Expr::<Effect>::Regex(regex::Regex::new("^foo").unwrap());
+        assert!(expr.is_match("foobar"));
+        assert!(!expr.is_match("barfoo"));
+    }
+
+    #[test]
+    fn expr_not_inverts_match() {
+        let expr = Expr::<Effect>::Not(Box::new(Expr::Literal("yes".into())));
+        assert!(expr.is_match("no"));
+        assert!(!expr.is_match("yes"));
+    }
+
+    // --- is_match: Cond and Bind ---
+
+    #[test]
+    fn expr_cond_matches_if_any_branch_test_matches() {
+        let expr = Expr::<Effect>::Cond(vec![ExprBranch {
+            test: Expr::Literal("yes".into()),
+            effect: Effect::Allow(None),
+        }]);
+        assert!(expr.is_match("yes"));
+        assert!(!expr.is_match("no"));
+    }
+
+    #[test]
+    fn expr_bind_delegates_to_inner() {
+        let expr = Expr::<Effect>::Bind {
+            key: Keyword::new(":test").unwrap(),
+            expr: Box::new(Expr::Literal("val".into())),
+        };
+        assert!(expr.is_match("val"));
+        assert!(!expr.is_match("other"));
+    }
+
+    // --- to_doc: broken_list paths (And/Or with >4 items) ---
+
+    #[test]
+    fn expr_and_over_4_items_hits_broken_list() {
+        let expr = Expr::<Effect>::And(vec![
+            Expr::Literal("a".into()),
+            Expr::Literal("b".into()),
+            Expr::Literal("c".into()),
+            Expr::Literal("d".into()),
+            Expr::Literal("e".into()),
+        ]);
+        let doc = expr.to_doc();
+        assert!(!format!("{doc:?}").is_empty());
+    }
+
+    #[test]
+    fn expr_or_over_4_items_hits_broken_list() {
+        let expr = Expr::<Effect>::Or(vec![
+            Expr::Literal("a".into()),
+            Expr::Literal("b".into()),
+            Expr::Literal("c".into()),
+            Expr::Literal("d".into()),
+            Expr::Literal("e".into()),
+        ]);
+        let doc = expr.to_doc();
+        assert!(!format!("{doc:?}").is_empty());
+    }
+
+    // --- find_effect: And, Or, Not, Bind ---
+
+    #[test]
+    fn find_effect_in_and() {
+        let inner = Expr::Cond(vec![ExprBranch {
+            test: Expr::Wildcard,
+            effect: Effect::Allow(Some("found".into())),
+        }]);
+        let expr = Expr::And(vec![inner]);
+        assert!(expr.find_effect("anything").is_some());
+    }
+
+    #[test]
+    fn find_effect_in_or() {
+        let inner = Expr::Cond(vec![ExprBranch {
+            test: Expr::Wildcard,
+            effect: Effect::Allow(Some("found".into())),
+        }]);
+        let expr = Expr::Or(vec![inner]);
+        assert!(expr.find_effect("anything").is_some());
+    }
+
+    #[test]
+    fn find_effect_in_not() {
+        let inner = Expr::Cond(vec![ExprBranch {
+            test: Expr::Wildcard,
+            effect: Effect::Allow(Some("found".into())),
+        }]);
+        let expr = Expr::Not(Box::new(inner));
+        assert!(expr.find_effect("anything").is_some());
+    }
+
+    #[test]
+    fn find_effect_in_bind() {
+        let inner = Expr::Cond(vec![ExprBranch {
+            test: Expr::Wildcard,
+            effect: Effect::Allow(Some("found".into())),
+        }]);
+        let expr = Expr::Bind {
+            key: Keyword::new(":k").unwrap(),
+            expr: Box::new(inner),
+        };
+        assert!(expr.find_effect("anything").is_some());
+    }
+
+    // --- proptest: to_doc never panics for arbitrary Expr ---
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: 256, max_shrink_iters: 50, .. ProptestConfig::default() })]
+
+        #[test]
+        fn expr_to_doc_never_panics(expr in any_expr(3)) {
+            let doc = expr.to_doc();
+            assert!(!format!("{doc:?}").is_empty());
+        }
     }
 }

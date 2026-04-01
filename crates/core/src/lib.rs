@@ -11,7 +11,7 @@ pub mod span;
 #[cfg(any(test, feature = "test-generators"))]
 pub mod test_generators;
 
-#[cfg(feature = "arbitrary")]
+#[cfg(any(test, feature = "arbitrary"))]
 mod arbitrary_impls;
 
 pub use doc::{Doc, DocF, LayoutHint};

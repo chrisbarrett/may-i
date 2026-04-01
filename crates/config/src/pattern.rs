@@ -831,4 +831,134 @@ mod tests {
             _ => panic!("expected Bind"),
         }
     }
+
+    // --- Tests for cond/if/when/unless inside argument patterns ---
+
+    #[test]
+    fn parse_expr_cond_in_positional() {
+        let pattern =
+            parse_arg(r#"(positional (cond ("a" (effect :allow)) (else (effect :deny))))"#)
+                .unwrap();
+        match pattern {
+            ArgPattern::Positional {
+                patterns: pargs, ..
+            } => {
+                assert_eq!(pargs.len(), 1);
+                assert!(matches!(pargs[0].pattern, Expr::Cond(_)));
+            }
+            _ => panic!("expected Positional"),
+        }
+    }
+
+    #[test]
+    fn parse_expr_if_in_positional() {
+        let pattern = parse_arg(r#"(positional (if "a" (effect :allow) (effect :deny)))"#).unwrap();
+        match pattern {
+            ArgPattern::Positional {
+                patterns: pargs, ..
+            } => {
+                assert_eq!(pargs.len(), 1);
+                assert!(matches!(pargs[0].pattern, Expr::Cond(_)));
+            }
+            _ => panic!("expected Positional"),
+        }
+    }
+
+    #[test]
+    fn parse_expr_when_in_positional() {
+        let pattern = parse_arg(r#"(positional (when "a" (effect :allow)))"#).unwrap();
+        match pattern {
+            ArgPattern::Positional {
+                patterns: pargs, ..
+            } => {
+                assert_eq!(pargs.len(), 1);
+                assert!(matches!(pargs[0].pattern, Expr::Cond(_)));
+            }
+            _ => panic!("expected Positional"),
+        }
+    }
+
+    #[test]
+    fn parse_expr_unless_in_positional() {
+        let pattern = parse_arg(r#"(positional (unless "a" (effect :deny)))"#).unwrap();
+        match pattern {
+            ArgPattern::Positional {
+                patterns: pargs, ..
+            } => {
+                assert_eq!(pargs.len(), 1);
+                assert!(matches!(pargs[0].pattern, Expr::Cond(_)));
+            }
+            _ => panic!("expected Positional"),
+        }
+    }
+
+    // --- Error paths for cond/if/when/unless ---
+
+    #[test]
+    fn parse_cond_empty_branch_error() {
+        let err = parse_arg(r#"(positional (cond ()))"#).expect_err("expected error");
+        assert!(format!("{err}").contains("empty cond branch"));
+    }
+
+    #[test]
+    fn parse_cond_else_wrong_arity_error() {
+        let err = parse_arg(r#"(positional (cond (else (effect :allow) (effect :deny))))"#)
+            .expect_err("expected error");
+        assert!(format!("{err}").contains("else branch must have exactly one effect"));
+    }
+
+    #[test]
+    fn parse_cond_branch_wrong_arity_error() {
+        let err = parse_arg(r#"(positional (cond ("a" (effect :allow) "extra")))"#)
+            .expect_err("expected error");
+        assert!(format!("{err}").contains("cond branch must have (test effect) form"));
+    }
+
+    #[test]
+    fn parse_if_wrong_arity_error() {
+        let err =
+            parse_arg(r#"(positional (if "a" (effect :allow)))"#).expect_err("expected error");
+        assert!(format!("{err}").contains("if must have exactly 3 arguments"));
+    }
+
+    #[test]
+    fn parse_when_wrong_arity_error() {
+        let err = parse_arg(r#"(positional (when "a"))"#).expect_err("expected error");
+        assert!(format!("{err}").contains("when must have exactly 2 arguments"));
+    }
+
+    #[test]
+    fn parse_unless_wrong_arity_error() {
+        let err = parse_arg(r#"(positional (unless "a"))"#).expect_err("expected error");
+        assert!(format!("{err}").contains("unless must have exactly 2 arguments"));
+    }
+
+    // --- Quantifier arity error paths ---
+
+    #[test]
+    fn parse_optional_quantifier_wrong_arity_error() {
+        let err = parse_arg(r#"(positional (? "a" "b"))"#).expect_err("expected error");
+        assert!(format!("{err}").contains("? must have exactly one pattern"));
+    }
+
+    #[test]
+    fn parse_one_or_more_quantifier_wrong_arity_error() {
+        let err = parse_arg(r#"(positional (+ "a" "b"))"#).expect_err("expected error");
+        assert!(format!("{err}").contains("+ must have exactly one pattern"));
+    }
+
+    #[test]
+    fn parse_zero_or_more_quantifier_wrong_arity_error() {
+        let err = parse_arg(r#"(positional (* "a" "b"))"#).expect_err("expected error");
+        assert!(format!("{err}").contains("* must have exactly one pattern"));
+    }
+
+    // --- contains_bind coverage for Cond variant ---
+
+    #[test]
+    fn forbidden_rejects_bind_in_cond() {
+        let err = parse_arg(r#"(forbidden (cond ([:key *] (effect :allow))))"#)
+            .expect_err("expected error");
+        assert!(format!("{err}").contains("not valid in forbidden"));
+    }
 }

@@ -434,4 +434,40 @@ mod tests {
         assert!(matches!(rule.effects[0].value, Effect::Allow(_)));
         assert!(matches!(rule.effects[1].value, Effect::Deny(_)));
     }
+
+    #[test]
+    fn parse_rule_too_few_elements_error() {
+        let err = parse_rule_str(r#"(rule)"#).expect_err("expected error");
+        assert!(format!("{err}").contains("must have at least a command"));
+    }
+
+    #[test]
+    fn parse_shorthand_unknown_keyword_error() {
+        let err = parse_shorthand_str(r#":foo"#).expect_err("expected error");
+        assert!(format!("{err}").contains("unknown shorthand effect keyword"));
+    }
+
+    #[test]
+    fn parse_shorthand_empty_vector_error() {
+        let err = parse_shorthand_str(r#"[]"#).expect_err("expected error");
+        assert!(format!("{err}").contains("cannot be empty"));
+    }
+
+    #[test]
+    fn parse_shorthand_unknown_vector_keyword_error() {
+        let err = parse_shorthand_str(r#"[:foo "reason"]"#).expect_err("expected error");
+        assert!(format!("{err}").contains("unknown effect keyword"));
+    }
+
+    #[test]
+    fn parse_shorthand_invalid_form_error() {
+        let err = parse_shorthand_str(r#"("not" "valid")"#).expect_err("expected error");
+        assert!(format!("{err}").contains("shorthand effect must be"));
+    }
+
+    #[test]
+    fn parse_define_wrong_arity_error() {
+        let err = parse_define_str(r#"(define foo)"#).expect_err("expected error");
+        assert!(format!("{err}").contains("must have exactly a name and a predicate"));
+    }
 }

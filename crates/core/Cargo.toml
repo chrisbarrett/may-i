@@ -9,6 +9,7 @@ proptest = { version = "1", optional = true }
 arbitrary = { version = "1", optional = true }
 
 [dev-dependencies]
+arbitrary = "1"
 proptest = "1"
 
 [features]

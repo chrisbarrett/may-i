@@ -414,6 +414,8 @@ impl<'a> Arbitrary<'a> for Config {
             rules,
             security: SecurityConfig::default(),
             checks: vec![],
+            source_text: None,
+            pre_migration_forms: None,
         })
     }
 }
