@@ -37,18 +37,10 @@
 - [x] 5.2 Handle nested patterns: `(not (anywhere ...))` for forbidden patterns
 - [x] 5.3 Add tests verifying per-token annotation distribution for anywhere, forbidden, and positional patterns
 
-## 6. Replace find_line pipeline in render_rule (BLOCKED)
+## 6. Replace find_line pipeline in render_rule
 
-> **Blocker**: EffectDecision annotations are placed on keyword atoms (`:allow`,
-> `:deny`) by the tracing fold, but need to render on the `(effect ...)`
-> opening-paren line. With `find_line` this works via sequential string search.
-> With `AnnotatedLineBuilder`, the annotation lands on the atom's line (which may
-> differ in broken layout). Fixing requires moving `EffectDecision` to the
-> `(effect ...)` list node in the tracing fold, which is out of scope for this
-> change.
-
-- [ ] 6.1 Update `render_annotated_rule` to use `pretty_into` + `AnnotatedLineBuilder` instead of `pretty` + `collect_annotations` + `find_line`
-- [ ] 6.2 Implement `format_line_annotation` that maps `Vec<Ann>` from each `AnnotatedLine` to right-column text
-- [ ] 6.3 Remove `find_line`, `node_text`, `collect_annotations`, `collect_annotations_inner` from `annotate.rs`
-- [ ] 6.4 Verify: oracle snapshot tests produce byte-identical output
-- [ ] 6.5 Verify: `cargo test`, `cargo clippy`, `cargo tarpaulin` all pass
+- [x] 6.1 Update `render_annotated_rule` to use `pretty_into` + `AnnotatedLineBuilder` instead of `pretty` + `collect_annotations` + `find_line`
+- [x] 6.2 Implement `format_line_annotation` that maps `Vec<Ann>` from each `AnnotatedLine` to right-column text
+- [x] 6.3 Remove `find_line`, `node_text`, `collect_annotations`, `collect_annotations_inner` from `annotate.rs`
+- [x] 6.4 Verify: oracle snapshot tests produce byte-identical output
+- [x] 6.5 Verify: `cargo test`, `cargo clippy`, `cargo tarpaulin` all pass
