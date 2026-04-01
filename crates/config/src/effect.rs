@@ -626,6 +626,13 @@ mod tests {
     }
 
     #[test]
+    fn reserved_keyword_atom_is_not_command() {
+        // Reserved keywords as bare atoms should not be treated as commands
+        let err = parse_effect_str(r#"rule"#).expect_err("expected error");
+        assert!(format!("{err}").contains("effect must be a list"));
+    }
+
+    #[test]
     fn unknown_effect_form_error() {
         let err = parse_effect_str(r#"(unknown)"#).expect_err("expected error");
         assert!(format!("{err}").contains("unknown effect form"));
