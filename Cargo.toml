@@ -2,6 +2,12 @@
 members = ["crates/*"]
 exclude = ["fuzz"]
 
+[workspace.lints.rust]
+unreachable_pub = "warn"
+
+[lints]
+workspace = true
+
 [package]
 name = "may-i"
 version = "0.2.0"
