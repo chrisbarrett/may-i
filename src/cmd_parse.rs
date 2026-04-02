@@ -1,5 +1,3 @@
-// Parse subcommand — parse a shell command and print the AST.
-
 use std::io::Read;
 
 use may_i_shell_parser as parser;
