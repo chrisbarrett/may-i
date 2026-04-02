@@ -36,16 +36,16 @@ QUICK START
     print!(
         "{}",
         r#"
-(rule COMMAND-EFFECT
+(rule COMMAND
   EFFECT...
   :effect DEFAULT-EFFECT)
 
-COMMAND-EFFECT:  String, (or STRING...), or (regex "PATTERN")
-EFFECT:          Pattern, combinator, conditional, or terminal
-DEFAULT-EFFECT:  Fallback if all effects return Nil
+COMMAND:         String, (or STRING...), or (regex "PATTERN")
+EFFECT:          Arg pattern, combinator, conditional, or terminal
+DEFAULT-EFFECT:  Fallback when all body effects return Nil
 
 Examples:
-  (rule "ls" :effect :allow)
+  (rule "ls" :effect (effect :allow))
 
   (rule "rm"
     (when (anywhere "-r" "--recursive")
@@ -63,34 +63,43 @@ Terminal Effects (return a decision):
   (effect :ask "Reason")
   (effect :deny "Reason")
 
-Pattern Effects (return Allow on match, Nil otherwise):
-  (positional PAT...)         Match args positionally (skip flags)
-  (exact PAT...)              Exact match (no extra args)
-  (anywhere PAT...)           Match anywhere in args
-  (forbidden PAT...)          Fail if pattern found
+Arg Patterns (return Allow on match, Nil otherwise):
+  (positional PAT...)         Match by position (flags skipped)
+  (exact PAT...)              Like positional, no extra args allowed
+  (anywhere PAT...)           Token appears anywhere in argv
+  (forbidden PAT...)          None of these tokens in argv
 
-  Pattern syntax:
-    "string"                    Literal match
-    *                           Wildcard
-    (regex "PATTERN")           Regex match
-    (or PAT...)                 Match any
-    (and PAT...)                Match all
-    (not PAT)                   Negate
+Expression Patterns (match a single token):
+  "string"                    Literal match
+  *                           Wildcard (matches anything)
+  (regex "PATTERN")           Regex match
+  (or PAT...)                 Match any
+  (and PAT...)                Match all
+  (not PAT)                   Negate
+  [:key *]                    Bind matched value as fact
+
+Quantifiers (wrap a positional pattern):
+  EXPR                        Exactly one (default)
+  (? EXPR)                    Zero or one
+  (+ EXPR)                    One or more
+  (* EXPR)                    Zero or more
 
 Combinators:
-  (and EFFECT...)             All must match
-  (or EFFECT...)              First match wins
-  (not EFFECT)                Invert Allow/Nil
+  (and EFFECT...)             All must succeed (short-circuits on Nil)
+  (or EFFECT...)              First non-Nil wins
+  (not EFFECT)                Swap Allow <-> Nil; pass Ask/Deny
 
-Conditionals:
-  (when PATTERN EFFECT)       Effect if pattern matches
-  (unless PATTERN EFFECT)     Effect if pattern doesn't match
-  (if PATTERN THEN ELSE)      If-then-else
-  (cond ((PAT) EFF)... (else EFF))   Multi-way branch
+Conditionals (predicate controls branching):
+  (when PRED EFFECT)          Effect if predicate matches
+  (unless PRED EFFECT)        Effect if predicate doesn't match
+  (if PRED THEN ELSE)         If-then-else
+  (cond ((PRED EFF)...) (else EFF))   Multi-way branch
+
+  Predicates: (fact? ...), arg patterns, named refs, (and/or/not ...)
 
 Recursive Evaluation:
-  (may-i PATTERN)             Evaluate inner command
-  (positional [:host *] . (may-i *))   ; capture host, eval rest
+  (positional . (may-i *))              Eval rest as command (sudo)
+  (positional [:host *] . (may-i *))    Bind host, eval rest (ssh)
 "#
     );
 
