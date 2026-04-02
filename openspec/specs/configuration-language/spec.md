@@ -1,3 +1,8 @@
+> [!IMPORTANT]
+> The user-facing quick reference is [`REFERENCE.txt`](../../../REFERENCE.txt) in
+> the repo root (embedded in the binary via `include_str!`). Keep it in sync with
+> this spec when adding or changing syntax.
+
 ## ADDED Requirements
 
 ### Requirement: Configuration file is a sequence of top-level forms
