@@ -20,12 +20,9 @@ pub(crate) fn cmd_parse(
             std::fs::read_to_string(&path)
                 .map_err(|e| miette::miette!("Failed to read {path}: {e}"))?
         }
-    } else if let Some(cmd) = command {
-        cmd
     } else {
-        return Err(miette::miette!(
-            "Usage: may-i parse '<command>' or may-i parse -f <file>"
-        ));
+        // clap enforces `command` is present when `file` is absent
+        command.unwrap()
     };
 
     let ast = parser::parse(&input);

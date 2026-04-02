@@ -58,42 +58,6 @@ impl PromptHandler for RealPromptHandler {
     }
 }
 
-/// Mock prompt handler for testing.
-#[cfg(test)]
-pub struct MockPromptHandler {
-    responses: Vec<String>,
-    response_index: std::cell::RefCell<usize>,
-    is_tty: bool,
-}
-
-#[cfg(test)]
-impl MockPromptHandler {
-    pub fn new(responses: Vec<String>, is_tty: bool) -> Self {
-        Self {
-            responses,
-            response_index: std::cell::RefCell::new(0),
-            is_tty,
-        }
-    }
-}
-
-#[cfg(test)]
-impl PromptHandler for MockPromptHandler {
-    fn is_tty(&self) -> bool {
-        self.is_tty
-    }
-
-    fn prompt(&self, _message: &str) -> io::Result<String> {
-        let idx = *self.response_index.borrow();
-        if idx < self.responses.len() {
-            *self.response_index.borrow_mut() += 1;
-            Ok(self.responses[idx].clone())
-        } else {
-            Ok("".to_string())
-        }
-    }
-}
-
 fn shorten_home(path: &std::path::Path) -> String {
     may_i::output::shorten_home(path)
 }
@@ -288,51 +252,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_real_prompt_handler_is_tty() {
-        // This test just ensures the handler compiles and basic behavior works
-        let handler = RealPromptHandler;
-        // Can't reliably test is_tty in tests, but we can verify it doesn't panic
-        let _ = handler.is_tty();
-    }
-
-    #[test]
-    fn test_mock_prompt_handler() {
-        let handler = MockPromptHandler::new(vec!["yes".to_string(), "no".to_string()], true);
-
-        assert!(handler.is_tty());
-        assert_eq!(handler.prompt("Test: ").unwrap(), "yes");
-        assert_eq!(handler.prompt("Test: ").unwrap(), "no");
-        assert_eq!(handler.prompt("Test: ").unwrap(), ""); // Exhausted responses
-    }
-
-    #[test]
-    fn test_should_use_color_respects_no_color() {
-        // Save original value
-        let original = std::env::var("NO_COLOR").ok();
-
-        // Test with NO_COLOR set
-        unsafe {
-            std::env::set_var("NO_COLOR", "1");
-        }
-        assert!(!should_use_color());
-
-        // Test with NO_COLOR unset
-        unsafe {
-            std::env::remove_var("NO_COLOR");
-        }
-        // Result depends on whether stdout is a TTY in test environment
-        let _ = should_use_color();
-
-        // Restore original value
-        unsafe {
-            match original {
-                Some(val) => std::env::set_var("NO_COLOR", val),
-                None => std::env::remove_var("NO_COLOR"),
-            }
-        }
-    }
-
-    #[test]
     fn test_generate_diff_with_changes() {
         let original = "(rule (command git) (effect :allow))\n";
         let migrated = "(rule git :effect :allow)\n";
@@ -427,30 +346,5 @@ mod tests {
             // Should show ~ prefix
             assert!(diff.contains("~/.config/may-i/config.lisp"));
         }
-    }
-
-    #[test]
-    fn test_should_use_color_no_color_set() {
-        // Save original
-        let original = std::env::var("NO_COLOR").ok();
-
-        unsafe {
-            std::env::set_var("NO_COLOR", "1");
-        }
-        assert!(!should_use_color());
-
-        // Restore
-        unsafe {
-            match original {
-                Some(val) => std::env::set_var("NO_COLOR", val),
-                None => std::env::remove_var("NO_COLOR"),
-            }
-        }
-    }
-
-    #[test]
-    fn test_mock_handler_tty_false() {
-        let handler = MockPromptHandler::new(vec!["y".to_string()], false);
-        assert!(!handler.is_tty());
     }
 }

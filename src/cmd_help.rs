@@ -1,38 +1,11 @@
-// Help subcommand — print detailed DSL syntax reference.
+// Reference subcommand — print detailed DSL syntax reference.
 
 use colored::Colorize;
 
 /// Print comprehensive DSL syntax help.
 #[allow(clippy::print_literal)]
 pub(crate) fn cmd_help() -> miette::Result<()> {
-    print!(
-        "{}",
-        r#"
-may-i — Shell command authorization evaluator
-
-OVERVIEW
-    may-i evaluates shell commands against a policy you define, returning:
-    • allow  — run without asking
-    • ask    — escalate to normal permission prompt
-    • deny   — block execution
-
-USAGE
-    may-i eval 'COMMAND...'           Evaluate a command
-    may-i check                       Validate config and run checks
-    may-i migrate FILE                Migrate v1 config to canonical syntax
-    may-i help                        Show this help
-
-QUICK START
-    1. may-i creates ~/.config/may-i/config.lisp on first run
-    2. Edit rules to define your policy
-    3. Run `may-i check` to validate
-    4. Use `may-i eval 'cmd'` to test rules
-
-"#
-        .trim()
-    );
-
-    println!("\n{}", "RULE SYNTAX".bold().underline());
+    println!("{}", "RULE SYNTAX".bold().underline());
     print!(
         "{}",
         r#"
@@ -54,7 +27,7 @@ Examples:
 "#
     );
 
-    println!("\n{}", "EFFECTS".bold().underline());
+    println!("{}", "EFFECTS".bold().underline());
     print!(
         "{}",
         r#"
@@ -103,7 +76,7 @@ Recursive Evaluation:
 "#
     );
 
-    println!("\n{}", "FACTS".bold().underline());
+    println!("{}", "FACTS".bold().underline());
     print!(
         "{}",
         r#"
@@ -123,7 +96,7 @@ Pass facts to eval:
 "#
     );
 
-    println!("\n{}", "NAMED PREDICATES".bold().underline());
+    println!("{}", "NAMED PREDICATES".bold().underline());
     print!(
         "{}",
         r#"
@@ -139,7 +112,7 @@ Use in rules:
 "#
     );
 
-    println!("\n{}", "CHECKS".bold().underline());
+    println!("{}", "CHECKS".bold().underline());
     print!(
         "{}",
         r#"
@@ -154,29 +127,6 @@ With facts:
            :allow "kubectl get pods"))
 
 Validate with: may-i check
-"#
-    );
-
-    println!("\n{}", "MIGRATION".bold().underline());
-    print!(
-        "{}",
-        r#"
-Convert v1 configs to canonical syntax:
-  may-i migrate ~/.config/may-i/config.lisp
-
-Options:
-  --dry-run    Preview changes
-  --diff       Show detailed diff
-  --yes        Skip confirmation
-"#
-    );
-
-    println!("\n{}", "GLOBAL FLAGS".bold().underline());
-    print!(
-        "{}",
-        r#"
-  --json       Output as JSON
-  --config F   Use specific config file
 "#
     );
 

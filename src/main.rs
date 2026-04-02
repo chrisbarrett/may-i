@@ -13,7 +13,20 @@ mod cmd_parse;
 #[command(
     name = "may-i",
     version,
-    about = "Shell command authorization evaluator"
+    about = "Shell command authorization evaluator",
+    long_about = "\
+may-i evaluates shell commands against a policy you define, returning:
+  - allow  -- run without asking
+  - ask    -- escalate to normal permission prompt
+  - deny   -- block execution",
+    after_help = "\
+QUICK START:
+  1. may-i creates ~/.config/may-i/config.lisp on first run
+  2. Edit rules to define your policy
+  3. Run `may-i check` to validate
+  4. Use `may-i eval 'cmd'` to test rules
+
+Run `may-i reference` for full DSL syntax documentation."
 )]
 struct Cli {
     /// Output as JSON
@@ -45,6 +58,7 @@ enum Command {
     },
     /// Parse a shell command and print the AST
     Parse {
+        #[arg(required_unless_present = "file")]
         command: Option<String>,
         /// Read command from a file (use `-` for stdin)
         #[arg(short = 'f', long = "file")]
