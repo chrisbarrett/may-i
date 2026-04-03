@@ -10,6 +10,8 @@ use may_i_core::ast::Check;
 use may_i_core::ast::{Config, Effect, Predicate, Rule, SecurityConfig, Spanned};
 use may_i_core::{ContextFacts, Span};
 #[cfg(test)]
+use may_i_core::Keyword;
+#[cfg(test)]
 use may_i_core::{Decision, pattern::CommandPattern};
 
 // Re-export core generators.
@@ -207,7 +209,7 @@ mod predicate_eval_tests {
         ) {
             let (cmd, args, facts) = data;
             let ctx = make_ctx(&cmd, &args, &facts);
-            let _ = evaluate_predicate(&pred, &ctx);
+            let _ = evaluate_predicate(&pred, &ctx).unwrap();
         }
 
         #[test]
@@ -217,7 +219,7 @@ mod predicate_eval_tests {
         ) {
             let (cmd, args, facts) = data;
             let ctx = make_ctx(&cmd, &args, &facts);
-            let result = evaluate_predicate(&pred, &ctx);
+            let result = evaluate_predicate(&pred, &ctx).unwrap();
             prop_assert!(result == PredicateResult::Match || result == PredicateResult::NoMatch);
         }
 
@@ -228,8 +230,8 @@ mod predicate_eval_tests {
         ) {
             let (cmd, args, facts) = data;
             let ctx = make_ctx(&cmd, &args, &facts);
-            let result = evaluate_predicate(&pred, &ctx);
-            let not_result = evaluate_predicate(&Predicate::Not(Box::new(pred)), &ctx);
+            let result = evaluate_predicate(&pred, &ctx).unwrap();
+            let not_result = evaluate_predicate(&Predicate::Not(Box::new(pred)), &ctx).unwrap();
             match (result, not_result) {
                 (PredicateResult::Match, PredicateResult::NoMatch) |
                 (PredicateResult::NoMatch, PredicateResult::Match) => {},
@@ -247,8 +249,8 @@ mod predicate_eval_tests {
         ) {
             let (cmd, args, facts) = data;
             let ctx = make_ctx(&cmd, &args, &facts);
-            let all_match = preds.iter().all(|p| evaluate_predicate(p, &ctx) == PredicateResult::Match);
-            let and_result = evaluate_predicate(&Predicate::And(preds), &ctx);
+            let all_match = preds.iter().all(|p| evaluate_predicate(p, &ctx).unwrap() == PredicateResult::Match);
+            let and_result = evaluate_predicate(&Predicate::And(preds), &ctx).unwrap();
             prop_assert_eq!(and_result == PredicateResult::Match, all_match);
         }
 
@@ -262,22 +264,22 @@ mod predicate_eval_tests {
         ) {
             let (cmd, args, facts) = data;
             let ctx = make_ctx(&cmd, &args, &facts);
-            let any_match = preds.iter().any(|p| evaluate_predicate(p, &ctx) == PredicateResult::Match);
-            let or_result = evaluate_predicate(&Predicate::Or(preds), &ctx);
+            let any_match = preds.iter().any(|p| evaluate_predicate(p, &ctx).unwrap() == PredicateResult::Match);
+            let or_result = evaluate_predicate(&Predicate::Or(preds), &ctx).unwrap();
             prop_assert_eq!(or_result == PredicateResult::Match, any_match);
         }
 
         #[test]
         fn fact_presence_matches_when_key_present(key in any_keyword()) {
             let mut facts = ContextFacts::default();
-            facts.insert_present(key.as_str());
+            facts.insert_present(key.clone());
             let args: Vec<String> = vec![];
             let ctx = make_ctx("test", &args, &facts);
             let pred = Predicate::Fact(may_i_core::FactQuery::Presence {
-                key: key.as_str().to_string(),
+                key: key.clone(),
                 vector_syntax: false,
             });
-            prop_assert_eq!(evaluate_predicate(&pred, &ctx), PredicateResult::Match);
+            prop_assert_eq!(evaluate_predicate(&pred, &ctx).unwrap(), PredicateResult::Match);
         }
 
         #[test]
@@ -286,14 +288,14 @@ mod predicate_eval_tests {
             value in "[a-zA-Z0-9]{1,20}",
         ) {
             let mut facts = ContextFacts::default();
-            facts.insert_scalar(key.as_str(), &value);
+            facts.insert_scalar(key.clone(), &value);
             let args: Vec<String> = vec![];
             let ctx = make_ctx("test", &args, &facts);
             let pred = Predicate::Fact(may_i_core::FactQuery::Value {
-                key: key.as_str().to_string(),
+                key: key.clone(),
                 pattern: may_i_core::FactPattern::Literal(value),
             });
-            prop_assert_eq!(evaluate_predicate(&pred, &ctx), PredicateResult::Match);
+            prop_assert_eq!(evaluate_predicate(&pred, &ctx).unwrap(), PredicateResult::Match);
         }
     }
 
@@ -320,7 +322,7 @@ mod predicate_eval_tests {
                 a,
                 Predicate::And(vec![b, c]),
             ]);
-            prop_assert_eq!(evaluate_predicate(&ab_c, &ctx), evaluate_predicate(&a_bc, &ctx));
+            prop_assert_eq!(evaluate_predicate(&ab_c, &ctx).unwrap(), evaluate_predicate(&a_bc, &ctx).unwrap());
         }
 
         #[test]
@@ -342,7 +344,7 @@ mod predicate_eval_tests {
                 a,
                 Predicate::Or(vec![b, c]),
             ]);
-            prop_assert_eq!(evaluate_predicate(&ab_c, &ctx), evaluate_predicate(&a_bc, &ctx));
+            prop_assert_eq!(evaluate_predicate(&ab_c, &ctx).unwrap(), evaluate_predicate(&a_bc, &ctx).unwrap());
         }
 
         #[test]
@@ -361,8 +363,8 @@ mod predicate_eval_tests {
                 Predicate::Not(Box::new(b.clone())),
             ]);
             prop_assert_eq!(
-                evaluate_predicate(&not_and, &ctx),
-                evaluate_predicate(&or_nots, &ctx),
+                evaluate_predicate(&not_and, &ctx).unwrap(),
+                evaluate_predicate(&or_nots, &ctx).unwrap(),
                 "not(a and b) != (not a) or (not b)"
             );
 
@@ -373,8 +375,8 @@ mod predicate_eval_tests {
                 Predicate::Not(Box::new(b)),
             ]);
             prop_assert_eq!(
-                evaluate_predicate(&not_or, &ctx),
-                evaluate_predicate(&and_nots, &ctx),
+                evaluate_predicate(&not_or, &ctx).unwrap(),
+                evaluate_predicate(&and_nots, &ctx).unwrap(),
                 "not(a or b) != (not a) and (not b)"
             );
         }
@@ -417,7 +419,7 @@ mod effect_eval_tests {
         };
         let rules = [rule];
         let evaluator = Evaluator::new(&rules);
-        let result = evaluator.evaluate(&mut crate::fold::PureFold, ctx);
+        let result = evaluator.evaluate(&mut crate::fold::PureFold, ctx).unwrap();
         EffectResult::Decision(result.decision, result.reason)
     }
 
@@ -453,7 +455,7 @@ mod effect_eval_tests {
             data in any_eval_context_data(),
         ) {
             let (cmd, args, facts) = data;
-            let _ = evaluate(&cmd, &args, &config, &facts);
+            let _ = evaluate(&cmd, &args, &config, &facts).unwrap();
         }
 
         #[test]
@@ -462,7 +464,7 @@ mod effect_eval_tests {
             data in any_eval_context_data(),
         ) {
             let (cmd, args, facts) = data;
-            let result = evaluate(&cmd, &args, &config, &facts);
+            let result = evaluate(&cmd, &args, &config, &facts).unwrap();
             prop_assert!(
                 matches!(result.decision, Decision::Allow | Decision::Ask | Decision::Deny)
             );
@@ -472,7 +474,7 @@ mod effect_eval_tests {
         fn empty_config_returns_ask(data in any_eval_context_data()) {
             let (cmd, args, facts) = data;
             let config = Config::default();
-            let result = evaluate(&cmd, &args, &config, &facts);
+            let result = evaluate(&cmd, &args, &config, &facts).unwrap();
             prop_assert_eq!(result.decision, Decision::Ask);
         }
 
@@ -489,7 +491,7 @@ mod effect_eval_tests {
             let and_effect = Effect::And {
                 effects: vec![spanned(terminal), spanned(nil_effect)],
             };
-            let result = eval::evaluate_effect(&and_effect, &ctx, &[]);
+            let result = eval::evaluate_effect(&and_effect, &ctx, &[]).unwrap();
             prop_assert!(result.is_nil(), "And with Nil should return Nil, got {:?}", result);
         }
 
@@ -510,7 +512,7 @@ mod effect_eval_tests {
                 spanned(eff)
             }).collect();
             let and_effect = Effect::And { effects };
-            let result = eval::evaluate_effect(&and_effect, &ctx, &[]);
+            let result = eval::evaluate_effect(&and_effect, &ctx, &[]).unwrap();
             let expected = decisions.last().unwrap();
             match result {
                 EffectResult::Decision(d, _) => prop_assert_eq!(d, *expected),
@@ -535,7 +537,7 @@ mod effect_eval_tests {
             let or_effect = Effect::Or {
                 effects: vec![spanned(nil_effect), spanned(terminal)],
             };
-            let result = eval::evaluate_effect(&or_effect, &ctx, &[]);
+            let result = eval::evaluate_effect(&or_effect, &ctx, &[]).unwrap();
             match result {
                 EffectResult::Decision(d, _) => prop_assert_eq!(d, decision),
                 EffectResult::Nil => prop_assert!(false, "Expected decision, got Nil"),
@@ -552,7 +554,7 @@ mod effect_eval_tests {
             let or_effect = Effect::Or {
                 effects: vec![spanned(nil1), spanned(nil2)],
             };
-            let result = eval::evaluate_effect(&or_effect, &ctx, &[]);
+            let result = eval::evaluate_effect(&or_effect, &ctx, &[]).unwrap();
             prop_assert!(result.is_nil(), "Or of all-Nil should be Nil, got {:?}", result);
         }
 
@@ -564,23 +566,23 @@ mod effect_eval_tests {
 
             // Not(Allow) -> Nil
             let not_allow = Effect::Not { effect: Box::new(spanned(Effect::Allow(None))) };
-            let result = eval::evaluate_effect(&not_allow, &ctx, &[]);
+            let result = eval::evaluate_effect(&not_allow, &ctx, &[]).unwrap();
             prop_assert!(result.is_nil(), "Not(Allow) should be Nil, got {:?}", result);
 
             // Not(Nil) -> Allow
             let nil = Effect::CommandPattern(CommandPattern::Literal("__no_match__".into()));
             let not_nil = Effect::Not { effect: Box::new(spanned(nil)) };
-            let result = eval::evaluate_effect(&not_nil, &ctx, &[]);
+            let result = eval::evaluate_effect(&not_nil, &ctx, &[]).unwrap();
             prop_assert_eq!(result.decision(), Some(Decision::Allow));
 
             // Not(Ask) -> Ask
             let not_ask = Effect::Not { effect: Box::new(spanned(Effect::Ask(None))) };
-            let result = eval::evaluate_effect(&not_ask, &ctx, &[]);
+            let result = eval::evaluate_effect(&not_ask, &ctx, &[]).unwrap();
             prop_assert_eq!(result.decision(), Some(Decision::Ask));
 
             // Not(Deny) -> Deny
             let not_deny = Effect::Not { effect: Box::new(spanned(Effect::Deny(None))) };
-            let result = eval::evaluate_effect(&not_deny, &ctx, &[]);
+            let result = eval::evaluate_effect(&not_deny, &ctx, &[]).unwrap();
             prop_assert_eq!(result.decision(), Some(Decision::Deny));
         }
 
@@ -595,12 +597,12 @@ mod effect_eval_tests {
             let effect = Effect::CommandPattern(CommandPattern::Literal(name.clone()));
 
             let ctx = make_ctx(&name, &args, &facts);
-            let result = eval::evaluate_effect(&effect, &ctx, &[]);
+            let result = eval::evaluate_effect(&effect, &ctx, &[]).unwrap();
             prop_assert!(result.is_decision(), "Should match literal command");
 
             if name != other {
                 let ctx2 = make_ctx(&other, &args, &facts);
-                let result2 = eval::evaluate_effect(&effect, &ctx2, &[]);
+                let result2 = eval::evaluate_effect(&effect, &ctx2, &[]).unwrap();
                 prop_assert!(result2.is_nil(), "Should not match different command");
             }
         }
@@ -620,7 +622,7 @@ mod effect_eval_tests {
                 may_i_core::pattern::Expr::Literal(target),
             ]);
             let effect = Effect::ArgPattern(pattern);
-            let result = eval::evaluate_effect(&effect, &ctx, &[]);
+            let result = eval::evaluate_effect(&effect, &ctx, &[]).unwrap();
             prop_assert!(result.is_decision(), "Anywhere should match when arg present");
         }
 
@@ -634,7 +636,7 @@ mod effect_eval_tests {
 
             // Predicate: fact :key is present
             let pred = Predicate::Fact(may_i_core::FactQuery::Presence {
-                key: key.as_str().to_string(),
+                key: key.clone(),
                 vector_syntax: false,
             });
             let inner = Effect::Allow(Some("when-matched".into()));
@@ -644,8 +646,8 @@ mod effect_eval_tests {
             };
 
             let ctx = make_ctx(&cmd, &args, &facts);
-            let pred_result = evaluate_predicate(&pred, &ctx);
-            let effect_result = eval::evaluate_effect(&when_effect, &ctx, &[]);
+            let pred_result = evaluate_predicate(&pred, &ctx).unwrap();
+            let effect_result = eval::evaluate_effect(&when_effect, &ctx, &[]).unwrap();
 
             if pred_result == PredicateResult::Match {
                 prop_assert!(effect_result.is_decision(), "When should eval effect on match");
@@ -663,7 +665,7 @@ mod effect_eval_tests {
             let (cmd, args, facts) = data;
 
             let pred = Predicate::Fact(may_i_core::FactQuery::Presence {
-                key: key.as_str().to_string(),
+                key: key.clone(),
                 vector_syntax: false,
             });
             let inner = Effect::Allow(Some("unless-matched".into()));
@@ -673,8 +675,8 @@ mod effect_eval_tests {
             };
 
             let ctx = make_ctx(&cmd, &args, &facts);
-            let pred_result = evaluate_predicate(&pred, &ctx);
-            let effect_result = eval::evaluate_effect(&unless_effect, &ctx, &[]);
+            let pred_result = evaluate_predicate(&pred, &ctx).unwrap();
+            let effect_result = eval::evaluate_effect(&unless_effect, &ctx, &[]).unwrap();
 
             if pred_result == PredicateResult::NoMatch {
                 prop_assert!(effect_result.is_decision(), "Unless should eval on no match");
@@ -692,7 +694,7 @@ mod effect_eval_tests {
             let (cmd, args, facts) = data;
 
             let pred = Predicate::Fact(may_i_core::FactQuery::Presence {
-                key: key.as_str().to_string(),
+                key: key.clone(),
                 vector_syntax: false,
             });
             let then_eff = Effect::Allow(Some("then".into()));
@@ -704,8 +706,8 @@ mod effect_eval_tests {
             };
 
             let ctx = make_ctx(&cmd, &args, &facts);
-            let pred_result = evaluate_predicate(&pred, &ctx);
-            let effect_result = eval::evaluate_effect(&if_effect, &ctx, &[]);
+            let pred_result = evaluate_predicate(&pred, &ctx).unwrap();
+            let effect_result = eval::evaluate_effect(&if_effect, &ctx, &[]).unwrap();
 
             match pred_result {
                 PredicateResult::Match => {
@@ -731,11 +733,11 @@ mod effect_eval_tests {
             // Instead, build a cond with a guaranteed-matching first branch
             let always_true = Predicate::Or(vec![
                 Predicate::Fact(may_i_core::FactQuery::Presence {
-                    key: key.as_str().to_string(),
+                    key: key.clone(),
                     vector_syntax: false,
                 }),
                 Predicate::Not(Box::new(Predicate::Fact(may_i_core::FactQuery::Presence {
-                    key: key.as_str().to_string(),
+                    key: key.clone(),
                     vector_syntax: false,
                 }))),
             ]);
@@ -744,14 +746,14 @@ mod effect_eval_tests {
                 branches: vec![
                     (spanned(always_true), spanned(Effect::Allow(Some("first".into())))),
                     (spanned(Predicate::Fact(may_i_core::FactQuery::Presence {
-                        key: ":other".to_string(),
+                        key: Keyword::new(":other").unwrap(),
                         vector_syntax: false,
                     })), spanned(Effect::Deny(Some("second".into())))),
                 ],
                 fallback: Some(Box::new(spanned(Effect::Ask(Some("fallback".into()))))),
             };
 
-            let result = eval::evaluate_effect(&cond_effect, &ctx, &[]);
+            let result = eval::evaluate_effect(&cond_effect, &ctx, &[]).unwrap();
             prop_assert_eq!(result.decision(), Some(Decision::Allow), "First matching branch should win");
         }
 
@@ -781,7 +783,7 @@ mod effect_eval_tests {
                     continuation: None,
                 },
             };
-            let result = eval::evaluate_effect(&may_i, &ctx, &rules);
+            let result = eval::evaluate_effect(&may_i, &ctx, &rules).unwrap();
             // MayI extracts inner command and evaluates it
             prop_assert!(result.is_decision(), "MayI should produce a decision");
         }
@@ -798,7 +800,7 @@ mod effect_eval_tests {
             ctx.recursion_depth = 1;
 
             let evaluator = Evaluator::new(&[]);
-            let result = evaluator.evaluate(&mut crate::fold::PureFold, &ctx);
+            let result = evaluator.evaluate(&mut crate::fold::PureFold, &ctx).unwrap();
             prop_assert_eq!(result.decision, Decision::Ask, "Should return Ask when recursion limit hit");
         }
 
@@ -808,8 +810,8 @@ mod effect_eval_tests {
             data in any_eval_context_data(),
         ) {
             let (cmd, args, facts) = data;
-            let r1 = evaluate(&cmd, &args, &config, &facts);
-            let r2 = evaluate(&cmd, &args, &config, &facts);
+            let r1 = evaluate(&cmd, &args, &config, &facts).unwrap();
+            let r2 = evaluate(&cmd, &args, &config, &facts).unwrap();
             prop_assert_eq!(r1.decision, r2.decision);
             prop_assert_eq!(r1.reason, r2.reason);
         }
@@ -842,7 +844,7 @@ mod effect_eval_tests {
                 ],
                 ..Config::default()
             };
-            let result = evaluate(&cmd_name, &args, &config, &facts);
+            let result = evaluate(&cmd_name, &args, &config, &facts).unwrap();
             prop_assert_eq!(result.decision, Decision::Allow);
             prop_assert_eq!(result.reason, Some("first".to_string()));
         }
@@ -856,10 +858,10 @@ mod effect_eval_tests {
         ) {
             let args: Vec<String> = vec![];
             let mut facts = ContextFacts::default();
-            facts.insert_scalar(key.as_str(), &value);
+            facts.insert_scalar(key.clone(), &value);
 
             let pred = Predicate::Fact(may_i_core::FactQuery::Value {
-                key: key.as_str().to_string(),
+                key: key.clone(),
                 pattern: may_i_core::FactPattern::Literal(value),
             });
             let config = Config {
@@ -876,7 +878,7 @@ mod effect_eval_tests {
                 }],
                 ..Config::default()
             };
-            let result = evaluate(&cmd_name, &args, &config, &facts);
+            let result = evaluate(&cmd_name, &args, &config, &facts).unwrap();
             prop_assert_eq!(result.decision, Decision::Allow);
         }
 
@@ -899,11 +901,11 @@ mod effect_eval_tests {
                 }],
                 ..Config::default()
             };
-            let result = evaluate(&cmd_name, &args, &config, &facts);
+            let result = evaluate(&cmd_name, &args, &config, &facts).unwrap();
             prop_assert_eq!(result.decision, Decision::Allow);
 
             if cmd_name != other {
-                let result2 = evaluate(&other, &args, &config, &facts);
+                let result2 = evaluate(&other, &args, &config, &facts).unwrap();
                 prop_assert_eq!(result2.decision, Decision::Ask, "Non-matching command should Ask");
             }
         }
@@ -931,7 +933,7 @@ mod effect_eval_tests {
                 }],
                 ..Config::default()
             };
-            let result = evaluate(&cmd_name, &args, &config, &facts);
+            let result = evaluate(&cmd_name, &args, &config, &facts).unwrap();
             prop_assert_eq!(result.decision, Decision::Allow);
         }
     }
@@ -1106,15 +1108,20 @@ mod edge_case_tests {
         EvalContext::new(command, args, facts)
     }
 
-    // 5.1.1 Unit test: Named predicate panic path
+    // 5.1.1 Unit test: Unresolved named predicate returns Err
     #[test]
-    #[should_panic(expected = "Named predicates should be resolved")]
-    fn named_predicate_panics() {
+    fn unresolved_predicate_returns_err() {
         let args: Vec<String> = vec![];
         let facts = ContextFacts::default();
         let ctx = make_ctx("test", &args, &facts);
         let pred = Predicate::Named("undefined".to_string());
-        let _ = evaluate_predicate(&pred, &ctx);
+        let result = evaluate_predicate(&pred, &ctx);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, crate::EvalError::UnresolvedPredicate { ref name } if name == "undefined"),
+            "expected UnresolvedPredicate, got: {err:?}"
+        );
     }
 
     // 5.1.2 Unit test: Invalid regex in pattern (error handling)
@@ -1127,7 +1134,7 @@ mod edge_case_tests {
         let args: Vec<String> = vec![];
         let facts = ContextFacts::default();
         let ctx = make_ctx("notempty", &args, &facts);
-        let result = eval::evaluate_effect(&effect, &ctx, &[]);
+        let result = eval::evaluate_effect(&effect, &ctx, &[]).unwrap();
         assert!(result.is_nil());
     }
 
@@ -1145,7 +1152,7 @@ mod edge_case_tests {
                 effect: Box::new(spanned(effect)),
             };
         }
-        let result = eval::evaluate_effect(&effect, &ctx, &[]);
+        let result = eval::evaluate_effect(&effect, &ctx, &[]).unwrap();
         // Should not panic, just alternate between Allow and Nil
         assert!(result.is_nil() || result.is_decision());
     }
@@ -1166,7 +1173,7 @@ mod edge_case_tests {
             continuation: None,
         };
         let effect = Effect::ArgPattern(pattern);
-        let result = eval::evaluate_effect(&effect, &ctx, &[]);
+        let result = eval::evaluate_effect(&effect, &ctx, &[]).unwrap();
         assert!(result.is_nil(), "No args should not match One pattern");
     }
 
@@ -1178,7 +1185,7 @@ mod edge_case_tests {
         let ctx = make_ctx("test", &args, &facts);
 
         let and_effect = Effect::And { effects: vec![] };
-        let result = eval::evaluate_effect(&and_effect, &ctx, &[]);
+        let result = eval::evaluate_effect(&and_effect, &ctx, &[]).unwrap();
         // Empty And: no Nil encountered, last_result stays at default Allow
         assert_eq!(result.decision(), Some(Decision::Allow));
     }
@@ -1190,7 +1197,7 @@ mod edge_case_tests {
         let ctx = make_ctx("test", &args, &facts);
 
         let or_effect = Effect::Or { effects: vec![] };
-        let result = eval::evaluate_effect(&or_effect, &ctx, &[]);
+        let result = eval::evaluate_effect(&or_effect, &ctx, &[]).unwrap();
         assert!(result.is_nil(), "Empty Or should return Nil");
     }
 
@@ -1205,7 +1212,7 @@ mod edge_case_tests {
             branches: vec![],
             fallback: None,
         };
-        let result = eval::evaluate_effect(&cond, &ctx, &[]);
+        let result = eval::evaluate_effect(&cond, &ctx, &[]).unwrap();
         assert!(result.is_nil(), "Empty Cond with no fallback should be Nil");
     }
 
@@ -1219,7 +1226,7 @@ mod edge_case_tests {
             branches: vec![],
             fallback: Some(Box::new(spanned(Effect::Deny(Some("fallback".into()))))),
         };
-        let result = eval::evaluate_effect(&cond, &ctx, &[]);
+        let result = eval::evaluate_effect(&cond, &ctx, &[]).unwrap();
         assert_eq!(result.decision(), Some(Decision::Deny));
     }
 }
@@ -1243,7 +1250,7 @@ mod additional_properties {
             data in any_eval_context_data(),
         ) {
             let (cmd, args, facts) = data;
-            let result = evaluate(&cmd, &args, &config, &facts);
+            let result = evaluate(&cmd, &args, &config, &facts).unwrap();
             prop_assert!(
                 matches!(result.decision, Decision::Allow | Decision::Ask | Decision::Deny),
                 "evaluate must always produce a valid decision"
@@ -1262,7 +1269,7 @@ mod integration_tests {
     fn complex_nested_conditionals() {
         let args: Vec<String> = vec!["src".into()];
         let mut facts = ContextFacts::default();
-        facts.insert_scalar(":env", "prod");
+        facts.insert_scalar(Keyword::new(":env").unwrap(), "prod");
 
         // Rule: when env=prod, if arg is "src" -> allow, else deny
         let config = Config {
@@ -1272,7 +1279,7 @@ mod integration_tests {
                 ))),
                 effects: vec![spanned(Effect::When {
                     predicate: spanned(Predicate::Fact(may_i_core::FactQuery::Value {
-                        key: ":env".to_string(),
+                        key: Keyword::new(":env").unwrap(),
                         pattern: may_i_core::FactPattern::Literal("prod".to_string()),
                     })),
                     effect: Box::new(spanned(Effect::If {
@@ -1295,12 +1302,12 @@ mod integration_tests {
             ..Config::default()
         };
 
-        let result = evaluate("deploy", &args, &config, &facts);
+        let result = evaluate("deploy", &args, &config, &facts).unwrap();
         assert_eq!(result.decision, Decision::Allow);
 
         // Without the fact
         let empty_facts = ContextFacts::default();
-        let result2 = evaluate("deploy", &args, &config, &empty_facts);
+        let result2 = evaluate("deploy", &args, &config, &empty_facts).unwrap();
         assert_eq!(result2.decision, Decision::Ask); // When doesn't match -> Nil -> Ask
     }
 
@@ -1309,8 +1316,8 @@ mod integration_tests {
     fn multiple_fact_bindings() {
         let args: Vec<String> = vec![];
         let mut facts = ContextFacts::default();
-        facts.insert_scalar(":role", "admin");
-        facts.insert_present(":verified");
+        facts.insert_scalar(Keyword::new(":role").unwrap(), "admin");
+        facts.insert_present(Keyword::new(":verified").unwrap());
 
         let config = Config {
             rules: vec![Rule {
@@ -1320,11 +1327,11 @@ mod integration_tests {
                 effects: vec![spanned(Effect::When {
                     predicate: spanned(Predicate::And(vec![
                         Predicate::Fact(may_i_core::FactQuery::Value {
-                            key: ":role".to_string(),
+                            key: Keyword::new(":role").unwrap(),
                             pattern: may_i_core::FactPattern::Literal("admin".to_string()),
                         }),
                         Predicate::Fact(may_i_core::FactQuery::Presence {
-                            key: ":verified".to_string(),
+                            key: Keyword::new(":verified").unwrap(),
                             vector_syntax: false,
                         }),
                     ])),
@@ -1336,13 +1343,13 @@ mod integration_tests {
             ..Config::default()
         };
 
-        let result = evaluate("admin-cmd", &args, &config, &facts);
+        let result = evaluate("admin-cmd", &args, &config, &facts).unwrap();
         assert_eq!(result.decision, Decision::Allow);
 
         // Missing :verified
         let mut partial_facts = ContextFacts::default();
-        partial_facts.insert_scalar(":role", "admin");
-        let result2 = evaluate("admin-cmd", &args, &config, &partial_facts);
+        partial_facts.insert_scalar(Keyword::new(":role").unwrap(), "admin");
+        let result2 = evaluate("admin-cmd", &args, &config, &partial_facts).unwrap();
         assert_eq!(result2.decision, Decision::Ask);
     }
 
@@ -1381,7 +1388,7 @@ mod integration_tests {
             ..Config::default()
         };
 
-        let result = evaluate("wrapper", &args, &config, &facts);
+        let result = evaluate("wrapper", &args, &config, &facts).unwrap();
         assert_eq!(result.decision, Decision::Allow);
         assert_eq!(result.reason, Some("inner allowed".to_string()));
     }
@@ -1420,7 +1427,7 @@ mod integration_tests {
             ..Config::default()
         };
 
-        let result = evaluate("test", &args, &config, &facts);
+        let result = evaluate("test", &args, &config, &facts).unwrap();
         // Or returns first non-Nil = Allow("or-allow")
         // And returns last = Allow("and-second")
         assert_eq!(result.decision, Decision::Allow);
@@ -1455,8 +1462,8 @@ mod fold_properties {
             let (cmd, args, facts) = data;
             let ctx = make_ctx(&cmd, &args, &facts);
 
-            let direct = eval::evaluate_effect(&effect, &ctx, &[]);
-            let via_fold = eval::evaluate_effect_fold(&mut PureFold, &effect, &ctx, &[]);
+            let direct = eval::evaluate_effect(&effect, &ctx, &[]).unwrap();
+            let via_fold = eval::evaluate_effect_fold(&mut PureFold, &effect, &ctx, &[]).unwrap();
 
             prop_assert_eq!(direct, via_fold,
                 "PureFold should produce identical result to direct evaluation");
@@ -1469,13 +1476,13 @@ mod fold_properties {
             data in any_eval_context_data(),
         ) {
             let (cmd, args, facts) = data;
-            let result_convenience = eval::evaluate(&cmd, &args, &config, &facts);
+            let result_convenience = eval::evaluate(&cmd, &args, &config, &facts).unwrap();
 
             // Must expand flags to match the convenience wrapper's behavior.
             let expanded = eval::expand_combined_flags(&args);
             let ctx = EvalContext::new(&cmd, &expanded, &facts);
             let evaluator = Evaluator::new(&config.rules);
-            let result_fold = evaluator.evaluate(&mut PureFold, &ctx);
+            let result_fold = evaluator.evaluate(&mut PureFold, &ctx).unwrap();
 
             prop_assert_eq!(result_convenience.decision, result_fold.decision);
             prop_assert_eq!(result_convenience.reason, result_fold.reason);
@@ -1505,7 +1512,7 @@ mod fold_properties {
 
             let facts = ContextFacts::default();
             let ctx = make_ctx("test", &args, &facts);
-            let result = eval::evaluate_effect(&effect, &ctx, &[]);
+            let result = eval::evaluate_effect(&effect, &ctx, &[]).unwrap();
 
             let any_present = args.iter().any(|a| tokens.contains(a));
             if any_present {
@@ -1679,7 +1686,7 @@ mod fold_properties {
                 }],
                 ..Config::default()
             };
-            let result = eval::evaluate(&cmd, &args, &config, &facts);
+            let result = eval::evaluate(&cmd, &args, &config, &facts).unwrap();
             prop_assert_eq!(result.decision, Decision::Allow);
             prop_assert_eq!(result.reason, Some(reason),
                 "Should use terminal effect's reason, not bare predicate Allow");
@@ -1723,7 +1730,7 @@ mod fold_properties {
                 ],
                 ..Config::default()
             };
-            let result = eval::evaluate(&cmd, &args, &config, &facts);
+            let result = eval::evaluate(&cmd, &args, &config, &facts).unwrap();
             prop_assert_eq!(result.decision, Decision::Ask);
             prop_assert_eq!(result.reason, Some("fallback".into()),
                 "Should skip first rule and match second");

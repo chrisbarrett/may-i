@@ -29,11 +29,11 @@ Trace
         (command "git")                                            │
         (context                                                   │
           (or                                                      │
-            (has                                                   │
+            (fact?                                                 │
               [:claude-code/permission-mode                        │
                 "plan"])                                           │
-            (has                                                   │
-              [:opencode/agent "plan"])))                          │
+            (fact? [:opencode/agent                                │
+                     "plan"])))                                    │
         (args (or                                                  │
                 (positional (or "switch"                           │ "status" = "switch" → no
                                 "restore"                          │ "status" = "restore" → no

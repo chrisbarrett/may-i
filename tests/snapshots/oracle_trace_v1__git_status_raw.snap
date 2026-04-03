@@ -29,11 +29,11 @@ expression: normalised
         [2m([0m[34mcommand[0m [32m"git"[0m[2m)[0m                                            [2m│[0m
         [2m([0mcontext                                                   [2m│[0m
           [2m([0m[2mor[0m                                                      [2m│[0m
-            [2m([0m[2mhas[0m                                                   [2m│[0m
+            [2m([0m[2mfact?[0m                                                 [2m│[0m
               [2m[[0m[2m:claude-code/permission-mode[0m                        [2m│[0m
                 [2m"plan"[0m[2m][0m[2m)[0m                                           [2m│[0m
-            [2m([0m[2mhas[0m                                                   [2m│[0m
-              [2m[[0m[2m:opencode/agent[0m [2m"plan"[0m[2m][0m[2m)[0m[2m)[0m[2m)[0m                          [2m│[0m
+            [2m([0m[2mfact?[0m [2m[[0m[2m:opencode/agent[0m                                [2m│[0m
+                     [2m"plan"[0m[2m][0m[2m)[0m[2m)[0m[2m)[0m                                    [2m│[0m
         [2m([0m[34margs[0m [2m([0mor                                                  [2m│[0m
                 [2m([0m[34mpositional[0m [2m([0mor [32m"switch"[0m                           [2m│[0m [2m"status" = "switch" [0m[2m→[0m [33mno[0m
                                 [32m"restore"[0m                          [2m│[0m [2m"status" = "restore" [0m[2m→[0m [33mno[0m

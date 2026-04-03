@@ -3,7 +3,7 @@
 
 use may_i_core::Span;
 use may_i_core::ast::{Check, Config, SecurityConfig};
-use may_i_core::{ContextFacts, Decision};
+use may_i_core::{ContextFacts, Decision, Keyword};
 use may_i_sexpr::{RawError, Sexpr};
 
 /// Parse a config from an s-expression string.
@@ -196,7 +196,7 @@ fn parse_fact_literal(sexpr: &Sexpr) -> Result<ContextFacts, RawError> {
 }
 
 /// Parse a single fact entry: [:key] or [:key "value"]
-fn parse_fact_entry(entry: &Sexpr) -> Result<(String, Option<String>), RawError> {
+fn parse_fact_entry(entry: &Sexpr) -> Result<(Keyword, Option<String>), RawError> {
     let items = match entry {
         Sexpr::Vector(items, _) => items,
         _ => {
@@ -232,20 +232,18 @@ fn parse_fact_entry(entry: &Sexpr) -> Result<(String, Option<String>), RawError>
 }
 
 /// Parse a context key (namespaced atom starting with ':').
-fn parse_context_key(sexpr: &Sexpr) -> Result<String, RawError> {
+fn parse_context_key(sexpr: &Sexpr) -> Result<Keyword, RawError> {
     let key = sexpr
         .as_atom()
         .ok_or_else(|| RawError::new("context fact key must be an atom", sexpr.span()))?;
 
-    if !key.starts_with(':') {
-        return Err(RawError::new(
+    Keyword::new(key).map_err(|_| {
+        RawError::new(
             format!("context fact key must be namespaced: {key}"),
             sexpr.span(),
         )
-        .with_help("use a namespaced key like :via/ssh or :claude-code/permission-mode"));
-    }
-
-    Ok(key.to_string())
+        .with_help("use a namespaced key like :via/ssh or :claude-code/permission-mode")
+    })
 }
 
 /// Parse check items with a given context.
@@ -363,8 +361,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(config.checks.len(), 1);
-        assert!(config.checks[0].context.has(":client/opencode"));
-        assert!(config.checks[0].context.has(":via/ssh"));
+        assert!(config.checks[0].context.has(&Keyword::new(":client/opencode").unwrap()));
+        assert!(config.checks[0].context.has(&Keyword::new(":via/ssh").unwrap()));
     }
 
     #[test]
@@ -379,8 +377,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(config.checks.len(), 1);
-        assert!(config.checks[0].context.has(":client/opencode"));
-        assert!(config.checks[0].context.has(":via/ssh"));
+        assert!(config.checks[0].context.has(&Keyword::new(":client/opencode").unwrap()));
+        assert!(config.checks[0].context.has(&Keyword::new(":via/ssh").unwrap()));
     }
 
     #[test]
@@ -395,7 +393,7 @@ mod tests {
         .unwrap();
         assert_eq!(config.checks.len(), 1);
         // The context should have the scalar value
-        assert!(config.checks[0].context.has(":opencode/agent"));
+        assert!(config.checks[0].context.has(&Keyword::new(":opencode/agent").unwrap()));
     }
 
     #[test]

@@ -3,6 +3,11 @@
 use crate::evaluate;
 use may_i_config::{parse_config, resolve::validate_and_resolve};
 use may_i_core::types::{ContextFacts, Decision};
+use may_i_core::Keyword;
+
+fn kw(s: &str) -> Keyword {
+    Keyword::new(s).unwrap()
+}
 
 fn test_context() -> ContextFacts {
     ContextFacts::default()
@@ -18,7 +23,7 @@ fn integration_simple_allow_rule() {
     .unwrap();
 
     let facts = test_context();
-    let result = evaluate("git", &[], &config, &facts);
+    let result = evaluate("git", &[], &config, &facts).unwrap();
 
     assert_eq!(result.decision, Decision::Allow);
 }
@@ -33,7 +38,7 @@ fn integration_simple_deny_rule() {
     .unwrap();
 
     let facts = test_context();
-    let result = evaluate("rm", &[], &config, &facts);
+    let result = evaluate("rm", &[], &config, &facts).unwrap();
 
     assert_eq!(result.decision, Decision::Deny);
     assert!(result.reason.unwrap().contains("dangerous"));
@@ -51,9 +56,9 @@ fn integration_rule_with_fact_predicate() {
     .unwrap();
 
     let mut facts = test_context();
-    facts.insert_present(":via/ssh");
+    facts.insert_present(kw(":via/ssh"));
 
-    let result = evaluate("git", &[], &config, &facts);
+    let result = evaluate("git", &[], &config, &facts).unwrap();
     assert_eq!(result.decision, Decision::Ask);
 }
 
@@ -67,7 +72,7 @@ fn integration_rule_with_arg_pattern() {
     .unwrap();
 
     let facts = test_context();
-    let result = evaluate("git", &["push".to_string()], &config, &facts);
+    let result = evaluate("git", &["push".to_string()], &config, &facts).unwrap();
 
     assert_eq!(result.decision, Decision::Allow);
 }
@@ -84,9 +89,9 @@ fn integration_rule_with_and_combinator() {
     .unwrap();
 
     let mut facts = test_context();
-    facts.insert_present(":via/ssh");
+    facts.insert_present(kw(":via/ssh"));
 
-    let result = evaluate("git", &["push".to_string()], &config, &facts);
+    let result = evaluate("git", &["push".to_string()], &config, &facts).unwrap();
     assert_eq!(result.decision, Decision::Ask);
 }
 
@@ -103,10 +108,10 @@ fn integration_rule_with_or_combinator() {
 
     let facts = test_context();
 
-    let result = evaluate("git", &["push".to_string()], &config, &facts);
+    let result = evaluate("git", &["push".to_string()], &config, &facts).unwrap();
     assert_eq!(result.decision, Decision::Allow);
 
-    let result = evaluate("git", &["pull".to_string()], &config, &facts);
+    let result = evaluate("git", &["pull".to_string()], &config, &facts).unwrap();
     assert_eq!(result.decision, Decision::Allow);
 }
 
@@ -124,7 +129,7 @@ fn integration_rule_with_not_combinator() {
     let facts = test_context();
 
     // Without --force, should allow
-    let result = evaluate("git", &["push".to_string()], &config, &facts);
+    let result = evaluate("git", &["push".to_string()], &config, &facts).unwrap();
     assert_eq!(result.decision, Decision::Allow);
 
     // With --force, should deny (default effect)
@@ -133,7 +138,7 @@ fn integration_rule_with_not_combinator() {
         &["push".to_string(), "--force".to_string()],
         &config,
         &facts,
-    );
+    ).unwrap();
     assert_eq!(result.decision, Decision::Deny);
 }
 
@@ -149,9 +154,9 @@ fn integration_rule_with_when_effect() {
     .unwrap();
 
     let mut facts = test_context();
-    facts.insert_present(":via/ssh");
+    facts.insert_present(kw(":via/ssh"));
 
-    let result = evaluate("git", &[], &config, &facts);
+    let result = evaluate("git", &[], &config, &facts).unwrap();
     assert_eq!(result.decision, Decision::Ask);
 }
 
@@ -168,7 +173,7 @@ fn integration_rule_with_unless_effect() {
 
     let facts = test_context();
     // No :local fact, so should ask
-    let result = evaluate("git", &[], &config, &facts);
+    let result = evaluate("git", &[], &config, &facts).unwrap();
     assert_eq!(result.decision, Decision::Ask);
 }
 
@@ -184,9 +189,9 @@ fn integration_rule_with_if_effect() {
     .unwrap();
 
     let mut facts = test_context();
-    facts.insert_present(":via/ssh");
+    facts.insert_present(kw(":via/ssh"));
 
-    let result = evaluate("git", &[], &config, &facts);
+    let result = evaluate("git", &[], &config, &facts).unwrap();
     assert_eq!(result.decision, Decision::Ask);
 }
 
@@ -207,13 +212,13 @@ fn integration_rule_with_case_effect() {
 
     let facts = test_context();
 
-    let result = evaluate("git", &["push".to_string()], &config, &facts);
+    let result = evaluate("git", &["push".to_string()], &config, &facts).unwrap();
     assert_eq!(result.decision, Decision::Ask);
 
-    let result = evaluate("git", &["pull".to_string()], &config, &facts);
+    let result = evaluate("git", &["pull".to_string()], &config, &facts).unwrap();
     assert_eq!(result.decision, Decision::Allow);
 
-    let result = evaluate("git", &["status".to_string()], &config, &facts);
+    let result = evaluate("git", &["status".to_string()], &config, &facts).unwrap();
     assert_eq!(result.decision, Decision::Deny);
 }
 
@@ -236,9 +241,9 @@ fn integration_named_predicate_with_define() {
     resolved_config.rules = resolved_rules;
 
     let mut facts = test_context();
-    facts.insert_present(":via/ssh");
+    facts.insert_present(kw(":via/ssh"));
 
-    let result = evaluate("git", &[], &resolved_config, &facts);
+    let result = evaluate("git", &[], &resolved_config, &facts).unwrap();
     assert_eq!(result.decision, Decision::Ask);
 }
 
@@ -259,11 +264,11 @@ fn integration_multiple_rules_most_restrictive_wins() {
     let facts = test_context();
 
     // git rm should deny (specific pattern matches)
-    let result = evaluate("git", &["rm".to_string()], &config, &facts);
+    let result = evaluate("git", &["rm".to_string()], &config, &facts).unwrap();
     assert_eq!(result.decision, Decision::Deny);
 
     // Simple git should allow (falls through to default effect)
-    let result = evaluate("git", &[], &config, &facts);
+    let result = evaluate("git", &[], &config, &facts).unwrap();
     assert_eq!(result.decision, Decision::Allow);
 }
 
@@ -278,13 +283,13 @@ fn integration_or_command_pattern() {
 
     let facts = test_context();
 
-    let result = evaluate("git", &[], &config, &facts);
+    let result = evaluate("git", &[], &config, &facts).unwrap();
     assert_eq!(result.decision, Decision::Allow);
 
-    let result = evaluate("gh", &[], &config, &facts);
+    let result = evaluate("gh", &[], &config, &facts).unwrap();
     assert_eq!(result.decision, Decision::Allow);
 
-    let result = evaluate("hg", &[], &config, &facts);
+    let result = evaluate("hg", &[], &config, &facts).unwrap();
     assert_eq!(result.decision, Decision::Ask);
 }
 
@@ -302,7 +307,7 @@ fn integration_forbidden_pattern() {
     let facts = test_context();
 
     // Without --force, should allow
-    let result = evaluate("git", &["push".to_string()], &config, &facts);
+    let result = evaluate("git", &["push".to_string()], &config, &facts).unwrap();
     assert_eq!(result.decision, Decision::Allow);
 
     // With --force, should not match
@@ -311,7 +316,7 @@ fn integration_forbidden_pattern() {
         &["push".to_string(), "--force".to_string()],
         &config,
         &facts,
-    );
+    ).unwrap();
     assert_eq!(result.decision, Decision::Deny);
 }
 
@@ -333,10 +338,10 @@ fn integration_anywhere_pattern() {
         &["-r".to_string(), "foo".to_string()],
         &config,
         &facts,
-    );
+    ).unwrap();
     assert_eq!(result.decision, Decision::Ask);
 
-    let result = evaluate("rm", &["foo".to_string()], &config, &facts);
+    let result = evaluate("rm", &["foo".to_string()], &config, &facts).unwrap();
     assert_eq!(result.decision, Decision::Allow);
 }
 
@@ -351,7 +356,7 @@ fn integration_no_matching_rule_returns_ask() {
 
     let facts = test_context();
 
-    let result = evaluate("hg", &[], &config, &facts);
+    let result = evaluate("hg", &[], &config, &facts).unwrap();
     assert_eq!(result.decision, Decision::Ask);
 }
 
@@ -369,7 +374,7 @@ fn integration_exact_pattern_requires_all_args() {
     let facts = test_context();
 
     // Exact match
-    let result = evaluate("git", &["status".to_string()], &config, &facts);
+    let result = evaluate("git", &["status".to_string()], &config, &facts).unwrap();
     assert_eq!(result.decision, Decision::Allow);
 
     // Extra positional args - no match (flags are ignored by exact)
@@ -378,7 +383,7 @@ fn integration_exact_pattern_requires_all_args() {
         &["status".to_string(), "extra".to_string()],
         &config,
         &facts,
-    );
+    ).unwrap();
     assert_eq!(result.decision, Decision::Ask);
 }
 
@@ -397,16 +402,16 @@ fn integration_complex_nested_combinators() {
     .unwrap();
 
     let mut facts = test_context();
-    facts.insert_scalar(":env", "prod".to_string());
+    facts.insert_scalar(kw(":env"), "prod".to_string());
 
-    let result = evaluate("kubectl", &["apply".to_string()], &config, &facts);
+    let result = evaluate("kubectl", &["apply".to_string()], &config, &facts).unwrap();
     assert_eq!(result.decision, Decision::Deny);
 
-    let result = evaluate("kubectl", &["delete".to_string()], &config, &facts);
+    let result = evaluate("kubectl", &["delete".to_string()], &config, &facts).unwrap();
     assert_eq!(result.decision, Decision::Deny);
 
     // Non-mutation command should not match the when clause, use default
-    let result = evaluate("kubectl", &["get".to_string()], &config, &facts);
+    let result = evaluate("kubectl", &["get".to_string()], &config, &facts).unwrap();
     assert_eq!(result.decision, Decision::Allow);
 }
 
@@ -430,7 +435,7 @@ fn integration_dot_notation_simple() {
         &["git".to_string(), "push".to_string()],
         &config,
         &facts,
-    );
+    ).unwrap();
     assert_eq!(result.decision, Decision::Allow);
 
     // Should match "git" and return Allow via continuation
@@ -439,7 +444,7 @@ fn integration_dot_notation_simple() {
         &["git".to_string(), "status".to_string()],
         &config,
         &facts,
-    );
+    ).unwrap();
     assert_eq!(result.decision, Decision::Allow);
 
     // Should not match "hg", fall through to default
@@ -448,7 +453,7 @@ fn integration_dot_notation_simple() {
         &["hg".to_string(), "status".to_string()],
         &config,
         &facts,
-    );
+    ).unwrap();
     assert_eq!(result.decision, Decision::Deny);
 }
 
@@ -475,7 +480,7 @@ fn integration_dot_notation_with_may_i() {
         &["host1".to_string(), "ls".to_string(), "-la".to_string()],
         &config,
         &facts,
-    );
+    ).unwrap();
     assert_eq!(result.decision, Decision::Allow);
 
     // ssh host1 rm -> should deny (rm is denied)
@@ -484,11 +489,11 @@ fn integration_dot_notation_with_may_i() {
         &["host1".to_string(), "rm".to_string(), "-rf".to_string()],
         &config,
         &facts,
-    );
+    ).unwrap();
     assert_eq!(result.decision, Decision::Deny);
 
     // ssh (no args after host) -> should fall through to default
-    let result = evaluate("ssh", &["host1".to_string()], &config, &facts);
+    let result = evaluate("ssh", &["host1".to_string()], &config, &facts).unwrap();
     assert_eq!(result.decision, Decision::Deny);
 }
 
@@ -513,7 +518,7 @@ fn integration_dot_notation_exact() {
         &["git".to_string(), "status".to_string()],
         &config,
         &facts,
-    );
+    ).unwrap();
     assert_eq!(result.decision, Decision::Allow);
 
     // With flag - exact pattern still matches because flags are skipped
@@ -527,7 +532,7 @@ fn integration_dot_notation_exact() {
         ],
         &config,
         &facts,
-    );
+    ).unwrap();
     assert_eq!(result.decision, Decision::Allow);
 
     // Extra positional arg - exact match fails, falls through to default
@@ -536,6 +541,6 @@ fn integration_dot_notation_exact() {
         &["git".to_string(), "status".to_string(), "extra".to_string()],
         &config,
         &facts,
-    );
+    ).unwrap();
     assert_eq!(result.decision, Decision::Deny);
 }

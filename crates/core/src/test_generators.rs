@@ -14,7 +14,7 @@ use crate::primitives::{Decision, Keyword};
 
 /// Generate valid Keyword values (strings starting with `:`).
 pub fn any_keyword() -> impl Strategy<Value = Keyword> {
-    "[a-z][a-z0-9/_-]{0,19}".prop_map(|s| Keyword::new_unchecked(format!(":{s}")))
+    "[a-z][a-z0-9/_-]{0,19}".prop_map(|s| Keyword::new(format!(":{s}")).unwrap())
 }
 
 /// Generate Decision enum values with uniform distribution.
@@ -39,8 +39,8 @@ pub fn any_context_facts() -> impl Strategy<Value = ContextFacts> {
         let mut facts = ContextFacts::default();
         for (k, v) in entries {
             match v {
-                None => facts.insert_present(k.as_str()),
-                Some(s) => facts.insert_scalar(k.as_str(), s),
+                None => facts.insert_present(k),
+                Some(s) => facts.insert_scalar(k, s),
             }
         }
         facts
@@ -87,13 +87,13 @@ pub fn any_fact_query() -> BoxedStrategy<FactQuery> {
     prop_oneof![
         (any_keyword(), proptest::bool::ANY).prop_map(|(k, vector)| {
             FactQuery::Presence {
-                key: k.as_str().to_string(),
+                key: k,
                 vector_syntax: vector,
             }
         }),
         (any_keyword(), any_fact_pattern(3)).prop_map(|(k, pattern)| {
             FactQuery::Value {
-                key: k.as_str().to_string(),
+                key: k,
                 pattern,
             }
         }),
@@ -291,11 +291,11 @@ mod context_facts_tests {
         fn has_returns_true_for_inserted_keys(key in any_keyword(), has_value: bool, value in "[a-zA-Z0-9]{1,20}") {
             let mut facts = ContextFacts::default();
             if has_value {
-                facts.insert_scalar(key.as_str(), &value);
+                facts.insert_scalar(key.clone(), &value);
             } else {
-                facts.insert_present(key.as_str());
+                facts.insert_present(key.clone());
             }
-            prop_assert!(facts.has(key.as_str()));
+            prop_assert!(facts.has(&key));
         }
 
         #[test]
@@ -304,21 +304,21 @@ mod context_facts_tests {
             other_key in any_keyword(),
         ) {
             let mut facts = ContextFacts::default();
-            facts.insert_present(key.as_str());
-            if key.as_str() != other_key.as_str() {
-                prop_assert!(!facts.has(other_key.as_str()));
+            facts.insert_present(key.clone());
+            if key != other_key {
+                prop_assert!(!facts.has(&other_key));
             }
         }
 
         #[test]
         fn get_scalar_returns_some_only_for_scalar(key in any_keyword(), value in "[a-zA-Z0-9]{1,20}") {
             let mut facts = ContextFacts::default();
-            facts.insert_scalar(key.as_str(), &value);
-            prop_assert_eq!(facts.get_scalar(key.as_str()), Some(value.as_str()));
+            facts.insert_scalar(key.clone(), &value);
+            prop_assert_eq!(facts.get_scalar(&key), Some(value.as_str()));
 
             let mut facts2 = ContextFacts::default();
-            facts2.insert_present(key.as_str());
-            prop_assert_eq!(facts2.get_scalar(key.as_str()), None);
+            facts2.insert_present(key.clone());
+            prop_assert_eq!(facts2.get_scalar(&key), None);
         }
 
         #[test]
@@ -339,12 +339,12 @@ mod context_facts_tests {
             val2 in "[a-z]{1,10}",
         ) {
             let mut a = ContextFacts::default();
-            a.insert_scalar(key.as_str(), &val1);
+            a.insert_scalar(key.clone(), &val1);
             let mut b = ContextFacts::default();
-            b.insert_scalar(key.as_str(), &val2);
+            b.insert_scalar(key.clone(), &val2);
             let merged = a.merge(&b);
-            prop_assert!(merged.contains(key.as_str(), &val1));
-            prop_assert!(merged.contains(key.as_str(), &val2));
+            prop_assert!(merged.contains(&key, &val1));
+            prop_assert!(merged.contains(&key, &val2));
         }
 
         #[test]

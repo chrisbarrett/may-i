@@ -346,13 +346,6 @@ impl<A: Clone> CstNode<A> {
         }
     }
 
-    fn map_ref<B>(&self, f: &mut impl FnMut(&A) -> B) -> CstNode<B> {
-        CstNode {
-            ann: f(&self.ann),
-            shape: self.shape.map_ref(|child| Box::new(child.map_ref(f))),
-        }
-    }
-
     fn fold<B>(&self, alg: &mut impl FnMut(&ShapeF<B>, &A) -> B) -> B {
         let folded_shape = self.shape.map_ref(|child| child.fold(alg));
         alg(&folded_shape, &self.ann)

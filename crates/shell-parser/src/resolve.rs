@@ -3,7 +3,7 @@ use super::glob::{glob_replace, glob_strip_prefix, glob_strip_suffix};
 
 /// Resolve a `ParameterExpansionOp` given an env snapshot. If the variable is in
 /// env, apply the operator and return a `Literal`. Otherwise return the original part.
-pub fn resolve_param_op(
+pub(crate) fn resolve_param_op(
     name: &str,
     op: &ParameterOperator,
     env: &std::collections::HashMap<String, String>,

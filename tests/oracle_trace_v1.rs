@@ -57,7 +57,7 @@ fn render_output(command: &str, config: &may_i_core::ast::Config, facts: &[Strin
 
     let term = output::Terminal::new(80);
     let context = parse_facts(facts);
-    let (result, traces, colored_command) = evaluate_segments(command, config, &context);
+    let (result, traces, colored_command) = evaluate_segments(command, config, &context).unwrap();
     let display_path = output::shorten_home(&fixture_dir().join("config.lisp"));
 
     let mut buf = Vec::new();

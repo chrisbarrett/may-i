@@ -151,7 +151,7 @@ pub trait EvalFold {
     ) -> Self::EffectOut;
     fn effect_cond(
         &mut self,
-        branches: Vec<(Self::PredicateOut, ChildResult<Self::EffectOut>)>,
+        branches: Vec<(ChildResult<Self::PredicateOut>, ChildResult<Self::EffectOut>)>,
         fallback: Option<ChildResult<Self::EffectOut>>,
         result: EffectResult,
     ) -> Self::EffectOut;
@@ -337,7 +337,7 @@ impl EvalFold for PureFold {
 
     fn effect_cond(
         &mut self,
-        _branches: Vec<(PredicateResult, ChildResult<EffectResult>)>,
+        _branches: Vec<(ChildResult<PredicateResult>, ChildResult<EffectResult>)>,
         _fallback: Option<ChildResult<EffectResult>>,
         result: EffectResult,
     ) -> EffectResult {

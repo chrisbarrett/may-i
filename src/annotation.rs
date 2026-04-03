@@ -789,17 +789,21 @@ impl EvalFold for TracingFold {
 
     fn effect_cond(
         &mut self,
-        branches: Vec<(Self::PredicateOut, ChildResult<Self::EffectOut>)>,
+        branches: Vec<(ChildResult<Self::PredicateOut>, ChildResult<Self::EffectOut>)>,
         fallback: Option<ChildResult<Self::EffectOut>>,
         result: EffectResult,
     ) -> Self::EffectOut {
         let mut docs = vec![plain_atom("cond")];
         for (pred, body) in branches {
+            let pred_doc = match pred {
+                ChildResult::Evaluated((_, doc)) => doc,
+                ChildResult::Skipped => dim(plain_atom("…")),
+            };
             let body_doc = match body {
                 ChildResult::Evaluated((_, doc)) => doc,
                 ChildResult::Skipped => dim(plain_atom("…")),
             };
-            docs.push(ann_list(vec![pred.1, body_doc], None));
+            docs.push(ann_list(vec![pred_doc, body_doc], None));
         }
         if let Some(fb) = fallback {
             match fb {
@@ -1117,7 +1121,7 @@ mod tests {
     use super::*;
     use may_i_core::ast::{Config, Predicate, Spanned};
     use may_i_core::pattern::PositionalArg;
-    use may_i_core::{FactQuery, Span};
+    use may_i_core::{FactQuery, Keyword, Span};
     use may_i_engine::eval::{EvalContext, Evaluator, evaluate_with_fold};
     use may_i_engine::fold::PureFold;
     use may_i_engine::test_generators::*;
@@ -1149,7 +1153,7 @@ mod tests {
 
     fn presence_query(key: &str) -> FactQuery {
         FactQuery::Presence {
-            key: key.into(),
+            key: Keyword::new(key).unwrap(),
             vector_syntax: false,
         }
     }
@@ -1157,7 +1161,7 @@ mod tests {
     fn eval_tracing(config: &Config, cmd: &str, args: &[String]) -> Vec<TraceEntry> {
         let facts = ContextFacts::default();
         let mut fold = TracingFold::new();
-        evaluate_with_fold(cmd, args, config, &facts, &mut fold);
+        evaluate_with_fold(cmd, args, config, &facts, &mut fold).unwrap();
         fold.traces
     }
 
@@ -1174,8 +1178,10 @@ mod tests {
 
             let evaluator = Evaluator::new(&config.rules);
 
-            let pure_result = evaluator.evaluate(&mut PureFold, &ctx);
-            let tracing_result = evaluator.evaluate(&mut TracingFold::new(), &ctx);
+            let pure_result = evaluator.evaluate(&mut PureFold, &ctx)
+                .expect("evaluation should not fail on resolved config");
+            let tracing_result = evaluator.evaluate(&mut TracingFold::new(), &ctx)
+                .expect("evaluation should not fail on resolved config");
 
             prop_assert_eq!(
                 pure_result.decision, tracing_result.decision,
@@ -1291,7 +1297,7 @@ mod tests {
         )]);
         let facts = ContextFacts::default();
         let mut fold = TracingFold::new();
-        evaluate_with_fold("git", &[], &config, &facts, &mut fold);
+        evaluate_with_fold("git", &[], &config, &facts, &mut fold).unwrap();
         assert!(!fold.traces.is_empty());
     }
 
@@ -1305,9 +1311,9 @@ mod tests {
             }],
         )]);
         let mut facts = ContextFacts::default();
-        facts.insert_present(String::from(":safe"));
+        facts.insert_present(Keyword::new(":safe").unwrap());
         let mut fold = TracingFold::new();
-        evaluate_with_fold("git", &[], &config, &facts, &mut fold);
+        evaluate_with_fold("git", &[], &config, &facts, &mut fold).unwrap();
         assert!(
             fold.traces
                 .iter()
@@ -1318,8 +1324,8 @@ mod tests {
     #[test]
     fn flatten_facts_produces_pairs() {
         let mut facts = ContextFacts::default();
-        facts.insert_scalar(String::from(":env"), String::from("prod"));
-        facts.insert_scalar(String::from(":host"), String::from("example.com"));
+        facts.insert_scalar(Keyword::new(":env").unwrap(), String::from("prod"));
+        facts.insert_scalar(Keyword::new(":host").unwrap(), String::from("example.com"));
         let pairs = flatten_facts(&facts);
         assert_eq!(pairs.len(), 2);
         assert!(pairs.iter().any(|(k, _)| k == ":env"));

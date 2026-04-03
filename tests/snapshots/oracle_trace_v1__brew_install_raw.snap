@@ -14,8 +14,7 @@ expression: normalised
              [2m([0m[34meffect[0m                                [2m│[0m [2m[0m[2m→[0m [1;31m:deny[0m [32m"Package installation not allowed"[0m
                [38;2;120;120;255m:deny[0m                                [2m│[0m
                [32m"Package installation not allowed"[0m[2m)[0m[2m)[0m [2m│[0m
-            [2m([0m[2m([0m[34mpositional[0m [2m([0mor [32m"list"[0m                 [2m│[0m [2m"install" = "list" [0m[2m→[0m [33mno[0m
-                             [32m"search"[0m[2m)[0m[2m)[0m             [2m│[0m [2m"install" = "search" [0m[2m→[0m [33mno[0m
+            [2m([0m[2m…[0m                                      [2m│[0m
              [2m…[0m[2m)[0m[2m)[0m[2m)[0m[2m)[0m                                  [2m│[0m
 
 [1mResult[0m

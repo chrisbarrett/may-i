@@ -65,7 +65,7 @@ impl<'a> Arbitrary<'a> for Decision {
 impl<'a> Arbitrary<'a> for Keyword {
     fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
         let s = arb_alpha(u, 10)?;
-        Ok(Keyword::new_unchecked(format!(":{s}")))
+        Ok(Keyword::new(format!(":{s}")).unwrap())
     }
 }
 
@@ -76,9 +76,9 @@ impl<'a> Arbitrary<'a> for ContextFacts {
         for _ in 0..count {
             let key = Keyword::arbitrary(u)?;
             if u.arbitrary()? {
-                facts.insert_present(key.as_str());
+                facts.insert_present(key);
             } else {
-                facts.insert_scalar(key.as_str(), arb_alpha(u, 15)?);
+                facts.insert_scalar(key, arb_alpha(u, 15)?);
             }
         }
         Ok(facts)
@@ -135,12 +135,12 @@ impl<'a> Arbitrary<'a> for FactQuery {
     fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
         if u.arbitrary()? {
             Ok(FactQuery::Presence {
-                key: Keyword::arbitrary(u)?.as_str().to_string(),
+                key: Keyword::arbitrary(u)?,
                 vector_syntax: u.arbitrary()?,
             })
         } else {
             Ok(FactQuery::Value {
-                key: Keyword::arbitrary(u)?.as_str().to_string(),
+                key: Keyword::arbitrary(u)?,
                 pattern: FactPattern::arbitrary(u)?,
             })
         }

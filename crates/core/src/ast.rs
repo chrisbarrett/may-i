@@ -265,7 +265,7 @@ impl Predicate {
     /// Create a simple fact presence check.
     pub fn fact_presence(key: impl Into<String>) -> Self {
         Predicate::Fact(FactQuery::Presence {
-            key: key.into(),
+            key: crate::Keyword::new(key).unwrap(),
             vector_syntax: false,
         })
     }
@@ -274,7 +274,7 @@ impl Predicate {
     fn fact_value(key: impl Into<String>, value: impl Into<String>) -> Self {
         use crate::predicates::FactPattern;
         Predicate::Fact(FactQuery::Value {
-            key: key.into(),
+            key: crate::Keyword::new(key).unwrap(),
             pattern: FactPattern::Literal(value.into()),
         })
     }
@@ -311,7 +311,7 @@ impl Predicate {
 impl ToDoc for Predicate {
     fn to_doc(&self) -> Doc {
         match self {
-            Predicate::Fact(query) => Doc::list(vec![Doc::atom("has"), query.to_doc()]),
+            Predicate::Fact(query) => Doc::list(vec![Doc::atom("fact?"), query.to_doc()]),
             Predicate::Arg(_) => Doc::atom("<arg-predicate>"),
             Predicate::Named(name) => Doc::atom(name.clone()),
             Predicate::And(preds) => {
@@ -625,7 +625,7 @@ mod tests {
     #[test]
     fn effect_is_conditional_returns_correctly() {
         let span = Span { start: 0, end: 1 };
-        let pred = Spanned::new(Predicate::fact_presence("test"), span);
+        let pred = Spanned::new(Predicate::fact_presence(":test"), span);
         let effect = Spanned::new(Effect::Allow(None), span);
 
         assert!(
@@ -697,35 +697,35 @@ mod tests {
 
     #[test]
     fn predicate_and_with_single_returns_unwrapped() {
-        let pred = Predicate::fact_presence("test");
+        let pred = Predicate::fact_presence(":test");
         let result = Predicate::and(vec![pred]);
         assert!(matches!(result, Predicate::Fact(_)));
     }
 
     #[test]
     fn predicate_and_with_multiple_creates_and() {
-        let preds = vec![Predicate::fact_presence("a"), Predicate::fact_presence("b")];
+        let preds = vec![Predicate::fact_presence(":a"), Predicate::fact_presence(":b")];
         let result = Predicate::and(preds);
         assert!(matches!(result, Predicate::And(children) if children.len() == 2));
     }
 
     #[test]
     fn predicate_or_with_single_returns_unwrapped() {
-        let pred = Predicate::fact_presence("test");
+        let pred = Predicate::fact_presence(":test");
         let result = Predicate::or(vec![pred]);
         assert!(matches!(result, Predicate::Fact(_)));
     }
 
     #[test]
     fn predicate_or_with_multiple_creates_or() {
-        let preds = vec![Predicate::fact_presence("a"), Predicate::fact_presence("b")];
+        let preds = vec![Predicate::fact_presence(":a"), Predicate::fact_presence(":b")];
         let result = Predicate::or(preds);
         assert!(matches!(result, Predicate::Or(children) if children.len() == 2));
     }
 
     #[test]
     fn predicate_negate_creates_not() {
-        let inner = Predicate::fact_presence("test");
+        let inner = Predicate::fact_presence(":test");
         let result = Predicate::negate(inner);
         assert!(
             matches!(result, Predicate::Not(boxed) if matches!(boxed.as_ref(), Predicate::Fact(_)))
@@ -735,7 +735,7 @@ mod tests {
     #[test]
     fn define_new_creates_correctly() {
         let span = Span { start: 0, end: 10 };
-        let pred = Spanned::new(Predicate::fact_presence("test"), span);
+        let pred = Spanned::new(Predicate::fact_presence(":test"), span);
         let define = Define::new("my-pred", pred, span);
 
         assert_eq!(define.name, "my-pred");
@@ -846,7 +846,7 @@ mod tests {
     #[test]
     fn effect_to_doc_when_placeholder() {
         let span = Span { start: 0, end: 1 };
-        let pred = Spanned::new(Predicate::fact_presence("test"), span);
+        let pred = Spanned::new(Predicate::fact_presence(":test"), span);
         let effect = Spanned::new(Effect::Allow(None), span);
         let doc = Effect::When {
             predicate: pred,
@@ -859,7 +859,7 @@ mod tests {
     #[test]
     fn effect_to_doc_unless_placeholder() {
         let span = Span { start: 0, end: 1 };
-        let pred = Spanned::new(Predicate::fact_presence("test"), span);
+        let pred = Spanned::new(Predicate::fact_presence(":test"), span);
         let effect = Spanned::new(Effect::Allow(None), span);
         let doc = Effect::Unless {
             predicate: pred,
@@ -872,7 +872,7 @@ mod tests {
     #[test]
     fn effect_to_doc_if_placeholder() {
         let span = Span { start: 0, end: 1 };
-        let pred = Spanned::new(Predicate::fact_presence("test"), span);
+        let pred = Spanned::new(Predicate::fact_presence(":test"), span);
         let effect = Spanned::new(Effect::Allow(None), span);
         let doc = Effect::If {
             predicate: pred,

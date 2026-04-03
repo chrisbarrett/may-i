@@ -1,5 +1,6 @@
 // Fact-based predicate types for matching and querying.
 
+use crate::Keyword;
 use crate::doc::Doc;
 
 /// Quote a string for use in source representation.
@@ -107,32 +108,25 @@ impl std::fmt::Debug for FactPattern {
 #[derive(Debug, Clone)]
 pub enum FactQuery {
     /// Check if a key is present.
-    Presence { key: String, vector_syntax: bool },
+    Presence { key: Keyword, vector_syntax: bool },
     /// Check if a key's value matches a pattern.
-    Value { key: String, pattern: FactPattern },
+    Value { key: Keyword, pattern: FactPattern },
 }
 
 impl FactQuery {
-    #[cfg(test)]
-    pub(crate) fn key(&self) -> &str {
-        match self {
-            FactQuery::Presence { key, .. } | FactQuery::Value { key, .. } => key,
-        }
-    }
-
     /// Convert to a Doc representation.
     pub fn to_doc(&self) -> Doc {
         match self {
             FactQuery::Presence {
                 key,
                 vector_syntax: false,
-            } => Doc::atom(key.clone()),
+            } => Doc::atom(key.as_str()),
             FactQuery::Presence {
                 key,
                 vector_syntax: true,
-            } => Doc::vector(vec![Doc::atom(key.clone())]),
+            } => Doc::vector(vec![Doc::atom(key.as_str())]),
             FactQuery::Value { key, pattern } => {
-                Doc::vector(vec![Doc::atom(key.clone()), pattern.to_doc()])
+                Doc::vector(vec![Doc::atom(key.as_str()), pattern.to_doc()])
             }
         }
     }
@@ -142,12 +136,12 @@ impl FactQuery {
             FactQuery::Presence {
                 key,
                 vector_syntax: false,
-            } => key.clone(),
+            } => key.as_str().to_string(),
             FactQuery::Presence {
                 key,
                 vector_syntax: true,
-            } => format!("[{key}]"),
-            FactQuery::Value { key, pattern } => format!("[{key} {}]", pattern.to_source()),
+            } => format!("[{}]", key.as_str()),
+            FactQuery::Value { key, pattern } => format!("[{} {}]", key.as_str(), pattern.to_source()),
         }
     }
 }

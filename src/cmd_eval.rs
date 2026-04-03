@@ -52,7 +52,8 @@ pub fn cmd_eval(
             .with_source_text(config.source_text.clone())
             .with_pre_migration_forms(config.pre_migration_forms.clone());
         let (cmd, args) = parse_command_args(command);
-        let result = engine::eval::evaluate_with_fold(&cmd, &args, &config, &context, &mut fold);
+        let result = engine::eval::evaluate_with_fold(&cmd, &args, &config, &context, &mut fold)
+            .map_err(|e| miette::miette!("{e}"))?;
         let json = serde_json::json!({
             "decision": result.decision.to_string(),
             "reason": result.reason.unwrap_or_default(),
@@ -64,7 +65,7 @@ pub fn cmd_eval(
         );
     } else {
         let term = output::Terminal::detect();
-        let (result, traces, colored_command) = evaluate_segments(command, &config, &context);
+        let (result, traces, colored_command) = evaluate_segments(command, &config, &context)?;
         let display_path = output::shorten_home(&config_file);
         write_eval_output(
             &mut std::io::stdout(),
@@ -147,7 +148,7 @@ pub fn evaluate_segments(
     command: &str,
     config: &may_i_core::ast::Config,
     context: &may_i_core::ContextFacts,
-) -> (engine::EvalResult, Vec<TraceEntry>, String) {
+) -> miette::Result<(engine::EvalResult, Vec<TraceEntry>, String)> {
     let segments = parser::segment(command);
 
     if segments.is_empty() {
@@ -155,8 +156,9 @@ pub fn evaluate_segments(
             .with_source_text(config.source_text.clone())
             .with_pre_migration_forms(config.pre_migration_forms.clone());
         let (cmd, args) = parse_command_args(command);
-        let result = engine::eval::evaluate_with_fold(&cmd, &args, config, context, &mut fold);
-        return (result, fold.traces, command.to_string());
+        let result = engine::eval::evaluate_with_fold(&cmd, &args, config, context, &mut fold)
+            .map_err(|e| miette::miette!("{e}"))?;
+        return Ok((result, fold.traces, command.to_string()));
     }
 
     let mut display_parts = Vec::new();
@@ -171,7 +173,8 @@ pub fn evaluate_segments(
                 .with_source_text(config.source_text.clone())
                 .with_pre_migration_forms(config.pre_migration_forms.clone());
             let (cmd, args) = parse_command_args(text);
-            let result = engine::eval::evaluate_with_fold(&cmd, &args, config, context, &mut fold);
+            let result = engine::eval::evaluate_with_fold(&cmd, &args, config, context, &mut fold)
+                .map_err(|e| miette::miette!("{e}"))?;
             let colored = match result.decision {
                 Decision::Allow => text.green().underline().to_string(),
                 Decision::Ask => text.yellow().underline().to_string(),
@@ -202,5 +205,5 @@ pub fn evaluate_segments(
     }
 
     let result = engine::EvalResult::new(aggregate_decision, aggregate_reason);
-    (result, traces, display_parts.concat())
+    Ok((result, traces, display_parts.concat()))
 }

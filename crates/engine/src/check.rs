@@ -1,48 +1,43 @@
 // Config validation — run embedded checks against the engine.
 
 use crate::EvalResult;
-use may_i_core::ast::Config;
+use may_i_core::ast::{Check, Config};
 use may_i_core::{ContextFacts, Decision};
 use may_i_shell_parser::{self as parser, Command, Word, WordPart};
 
 /// Result of evaluating a single embedded check.
 #[derive(Debug)]
-pub(crate) struct CheckResult {
+pub struct CheckResult<T = ()> {
     pub command: String,
     pub expected: Decision,
     pub actual: Decision,
     pub passed: bool,
     pub context: ContextFacts,
     pub reason: Option<String>,
-    pub location: Option<String>,
+    pub extra: T,
 }
 
-/// Evaluate a simple shell command string using the v2 evaluator.
-/// For now, this only handles simple commands (not compound commands).
-fn evaluate_simple(input: &str, config: &Config, context: &ContextFacts) -> EvalResult {
-    let cmd = parser::parse(input);
+/// Result of parsing a check command string.
+pub enum ParsedCheck {
+    /// A simple command with name and arguments.
+    Simple(String, Vec<String>),
+    /// An empty or assignment-only command.
+    Empty,
+    /// A compound command (not yet supported).
+    Compound,
+}
 
+/// Parse a check command string into its components.
+pub fn parse_check_command(input: &str) -> ParsedCheck {
+    let cmd = parser::parse(input);
     match cmd {
         Command::Simple(sc) if !sc.words.is_empty() => {
-            // Extract command name from first word
             let cmd_name = word_to_string(&sc.words[0]);
-            // Extract arguments
             let args: Vec<String> = sc.words[1..].iter().map(word_to_string).collect();
-
-            crate::eval::evaluate(&cmd_name, &args, config, context)
+            ParsedCheck::Simple(cmd_name, args)
         }
-        Command::Simple(_) => {
-            // Assignment-only command or empty
-            EvalResult::new(Decision::Allow, None)
-        }
-        _ => {
-            // Compound commands - for now return Ask
-            // Full compound evaluation will be implemented in task 14
-            EvalResult::new(
-                Decision::Ask,
-                Some("Compound commands not yet supported in checks".into()),
-            )
-        }
+        Command::Simple(_) | Command::Assignment(_) => ParsedCheck::Empty,
+        _ => ParsedCheck::Compound,
     }
 }
 
@@ -65,29 +60,38 @@ fn word_to_string(word: &Word) -> String {
         .collect()
 }
 
-/// Run all embedded checks from config rules and compare against expected decisions.
-pub(crate) fn run_checks(config: &Config) -> Vec<CheckResult> {
+/// Evaluate a simple shell command string using the default evaluator.
+fn evaluate_simple(input: &str, config: &Config, context: &ContextFacts) -> EvalResult {
+    match parse_check_command(input) {
+        ParsedCheck::Simple(cmd_name, args) => {
+            crate::eval::evaluate(&cmd_name, &args, config, context).unwrap()
+        }
+        ParsedCheck::Empty => EvalResult::new(Decision::Allow, None),
+        ParsedCheck::Compound => EvalResult::new(
+            Decision::Ask,
+            Some("Compound commands not yet supported in checks".into()),
+        ),
+    }
+}
+
+/// Run all embedded checks from config, using a caller-provided evaluation
+/// function. The function receives the full `Check` and returns
+/// `(EvalResult, T)` where `T` is any extra data the caller wants to attach
+/// (e.g. trace output, location info). Returns `Err` if the evaluation function fails.
+pub fn run_checks_with<T, E>(
+    config: &Config,
+    mut eval_fn: impl FnMut(&Check) -> Result<(EvalResult, T), E>,
+) -> Result<Vec<CheckResult<T>>, E> {
     let mut results = Vec::new();
 
-    for rule in &config.rules {
-        for check in &rule.checks {
-            let eval = evaluate_simple(&check.command, config, &check.context);
-            let location = None; // TODO: Add source info back when available
-            results.push(CheckResult {
-                command: check.command.clone(),
-                expected: check.expected,
-                actual: eval.decision,
-                passed: eval.decision == check.expected,
-                context: check.context.clone(),
-                reason: eval.reason,
-                location,
-            });
-        }
-    }
+    let checks = config
+        .rules
+        .iter()
+        .flat_map(|rule| rule.checks.iter())
+        .chain(config.checks.iter());
 
-    for check in &config.checks {
-        let eval = evaluate_simple(&check.command, config, &check.context);
-        let location = None; // TODO: Add source info back when available
+    for check in checks {
+        let (eval, extra) = eval_fn(check)?;
         results.push(CheckResult {
             command: check.command.clone(),
             expected: check.expected,
@@ -95,11 +99,22 @@ pub(crate) fn run_checks(config: &Config) -> Vec<CheckResult> {
             passed: eval.decision == check.expected,
             context: check.context.clone(),
             reason: eval.reason,
-            location,
+            extra,
         });
     }
 
-    results
+    Ok(results)
+}
+
+/// Run all embedded checks using the default evaluator (no extra data).
+pub fn run_checks(config: &Config) -> Vec<CheckResult> {
+    run_checks_with(config, |check| {
+        Ok::<_, std::convert::Infallible>((
+            evaluate_simple(&check.command, config, &check.context),
+            (),
+        ))
+    })
+    .unwrap()
 }
 
 #[cfg(test)]

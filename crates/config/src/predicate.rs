@@ -5,6 +5,7 @@
 
 use may_i_core::ast::Predicate;
 use may_i_core::predicates::FactQuery;
+use may_i_core::Keyword;
 use may_i_sexpr::{RawError, Sexpr};
 
 /// Parse a unified predicate from an s-expression.
@@ -141,20 +142,18 @@ fn parse_fact_query(sexpr: &Sexpr) -> Result<FactQuery, RawError> {
 }
 
 /// Parse a context key (namespaced atom starting with ':').
-fn parse_context_key(sexpr: &Sexpr) -> Result<String, RawError> {
+fn parse_context_key(sexpr: &Sexpr) -> Result<Keyword, RawError> {
     let key = sexpr
         .as_atom()
         .ok_or_else(|| RawError::new("context fact key must be an atom", sexpr.span()))?;
 
-    if !key.starts_with(':') {
-        return Err(RawError::new(
+    Keyword::new(key).map_err(|_| {
+        RawError::new(
             format!("context fact key must be namespaced: {key}"),
             sexpr.span(),
         )
-        .with_help("use a namespaced key like :via/ssh or :claude-code/permission-mode"));
-    }
-
-    Ok(key.to_string())
+        .with_help("use a namespaced key like :via/ssh or :claude-code/permission-mode")
+    })
 }
 
 /// Parse a fact pattern for value matching.

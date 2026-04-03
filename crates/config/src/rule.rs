@@ -203,7 +203,6 @@ fn is_reserved_define_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::*;
     use may_i_core::ast::{Define, Effect, Predicate, Rule};
     use may_i_core::pattern::CommandPattern;
     use may_i_core::span::Span;

@@ -1,7 +1,6 @@
 // Rule engine — evaluates against unified rule DSL with recursive evaluation
 
-#[cfg(test)]
-mod check;
+pub mod check;
 pub mod eval;
 pub mod fold;
 
@@ -9,6 +8,25 @@ pub mod fold;
 pub mod test_generators;
 
 use may_i_core::Decision;
+
+/// Error type for evaluation failures.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EvalError {
+    /// A named predicate was not resolved before evaluation.
+    UnresolvedPredicate { name: String },
+}
+
+impl std::fmt::Display for EvalError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EvalError::UnresolvedPredicate { name } => {
+                write!(f, "unresolved predicate: '{name}'")
+            }
+        }
+    }
+}
+
+impl std::error::Error for EvalError {}
 
 /// Result of evaluating a command.
 #[derive(Debug, Clone)]

@@ -6,7 +6,7 @@ use crate::doc::Doc;
 ///
 /// Keywords are used as fact keys in bindings and queries.
 /// The validation ensures correctness by construction.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Keyword(String);
 
 impl Keyword {
@@ -22,17 +22,15 @@ impl Keyword {
         }
     }
 
-    /// Create a new keyword without validation (for internal use).
-    ///
-    /// # Safety
-    /// The caller must ensure the string starts with `:`.
-    pub fn new_unchecked(s: impl Into<String>) -> Self {
-        Keyword(s.into())
-    }
-
     /// Get the string representation of the keyword.
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl PartialEq<&str> for Keyword {
+    fn eq(&self, other: &&str) -> bool {
+        self.0 == *other
     }
 }
 

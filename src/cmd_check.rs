@@ -5,9 +5,15 @@ use may_i_pp::colorize_atom;
 
 use may_i_config as config;
 use may_i_engine as engine;
+use engine::check::CheckResult;
 
 use crate::annotation::{TraceEntry, TracingFold};
 use crate::output;
+
+struct TraceExtra {
+    location: Option<String>,
+    traces: Vec<TraceEntry>,
+}
 
 pub fn cmd_check(
     json_mode: bool,
@@ -23,7 +29,7 @@ pub fn cmd_check(
             .map_err(|errs| miette::miette!("Predicate resolution failed: {}", errs[0].message))?;
     canonical_config.rules = resolved_rules;
 
-    let results = run_checks_with_traces(&canonical_config, &config_file);
+    let results = run_checks_with_traces(&canonical_config, &config_file)?;
 
     let passed = results.iter().filter(|r| r.passed).count();
     let failed = results.len() - passed;
@@ -38,9 +44,9 @@ pub fn cmd_check(
                     "actual": r.actual.to_string(),
                     "passed": r.passed,
                     "context": context_to_json(&r.context),
-                    "location": r.location,
+                    "location": r.extra.location,
                     "reason": r.reason,
-                    "trace": output::trace_to_json(&r.traces),
+                    "trace": output::trace_to_json(&r.extra.traces),
                 })
             })
             .collect();
@@ -92,7 +98,7 @@ pub fn cmd_check(
             output::print_separator("", Some((&label, label_width)), &term);
             println!();
 
-            let loc = r.location.as_deref().unwrap_or("<unknown>");
+            let loc = r.extra.location.as_deref().unwrap_or("<unknown>");
             let (file, line_col) = loc.split_once(':').unwrap_or((loc, ""));
             let short_file = output::shorten_home(std::path::Path::new(file));
             print!("{}", short_file.dimmed());
@@ -116,9 +122,9 @@ pub fn cmd_check(
             }
             output::render_elements("  ", &[output::Layout::Columns(rows)], &term);
 
-            if !r.traces.is_empty() {
+            if !r.extra.traces.is_empty() {
                 println!("\n  {}\n", "Trace".bold());
-                output::print_trace(&r.traces, &r.command, "  ", &term);
+                output::print_trace(&r.extra.traces, &r.command, "  ", &term);
             }
         }
 
@@ -149,23 +155,11 @@ pub fn cmd_check(
     Ok(())
 }
 
-/// Check result with trace data for CLI output.
-struct CheckResultWithTrace {
-    command: String,
-    expected: may_i_core::Decision,
-    actual: may_i_core::Decision,
-    passed: bool,
-    context: may_i_core::ContextFacts,
-    reason: Option<String>,
-    location: Option<String>,
-    traces: Vec<TraceEntry>,
-}
-
 /// Run all checks using TracingFold to capture traces for failure reporting.
 fn run_checks_with_traces(
     config: &may_i_core::ast::Config,
     config_file: &std::path::Path,
-) -> Vec<CheckResultWithTrace> {
+) -> miette::Result<Vec<CheckResult<TraceExtra>>> {
     use may_i_core::span::offset_to_line_col;
 
     let file_str = config_file.display().to_string();
@@ -177,50 +171,19 @@ fn run_checks_with_traces(
         })
     };
 
-    let evaluate_with_trace = |input: &str,
-                               context: &may_i_core::ContextFacts|
-     -> (engine::EvalResult, Vec<TraceEntry>) {
-        let (cmd, args) = crate::cmd_eval::parse_command_args(input);
+    engine::check::run_checks_with(config, |check| {
+        let (cmd, args) = crate::cmd_eval::parse_command_args(&check.command);
         let mut fold = TracingFold::new()
             .with_source_text(config.source_text.clone())
             .with_pre_migration_forms(config.pre_migration_forms.clone());
-        let result = engine::eval::evaluate_with_fold(&cmd, &args, config, context, &mut fold);
-        (result, fold.traces)
-    };
-
-    let mut results = Vec::new();
-
-    for rule in &config.rules {
-        for check in &rule.checks {
-            let (eval, traces) = evaluate_with_trace(&check.command, &check.context);
-            results.push(CheckResultWithTrace {
-                command: check.command.clone(),
-                expected: check.expected,
-                actual: eval.decision,
-                passed: eval.decision == check.expected,
-                context: check.context.clone(),
-                reason: eval.reason,
-                location: make_location(&check.span),
-                traces,
-            });
-        }
-    }
-
-    for check in &config.checks {
-        let (eval, traces) = evaluate_with_trace(&check.command, &check.context);
-        results.push(CheckResultWithTrace {
-            command: check.command.clone(),
-            expected: check.expected,
-            actual: eval.decision,
-            passed: eval.decision == check.expected,
-            context: check.context.clone(),
-            reason: eval.reason,
+        let result =
+            engine::eval::evaluate_with_fold(&cmd, &args, config, &check.context, &mut fold)
+                .map_err(|e| miette::miette!("{e}"))?;
+        Ok((result, TraceExtra {
             location: make_location(&check.span),
-            traces,
-        });
-    }
-
-    results
+            traces: fold.traces,
+        }))
+    })
 }
 
 fn context_to_json(context: &may_i_core::ContextFacts) -> serde_json::Value {

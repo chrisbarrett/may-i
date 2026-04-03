@@ -1,4 +1,4 @@
-use may_i_core::ContextFacts;
+use may_i_core::{ContextFacts, Keyword};
 
 pub fn parse_cli_facts(raw_facts: &[String]) -> miette::Result<ContextFacts> {
     let mut context = ContextFacts::default();
@@ -17,7 +17,7 @@ pub fn parse_cli_facts(raw_facts: &[String]) -> miette::Result<ContextFacts> {
     Ok(context)
 }
 
-fn parse_fact(raw: &str) -> miette::Result<(String, Option<String>)> {
+fn parse_fact(raw: &str) -> miette::Result<(Keyword, Option<String>)> {
     let raw = raw.trim();
     if raw.is_empty() {
         return Err(miette::miette!(
@@ -25,22 +25,17 @@ fn parse_fact(raw: &str) -> miette::Result<(String, Option<String>)> {
         ));
     }
 
-    let (key, value) = match raw.split_once('=') {
+    let (key_str, value) = match raw.split_once('=') {
         Some((key, value)) => (key, Some(value.to_string())),
         None => (raw, None),
     };
 
-    validate_context_key(key)?;
-    Ok((key.to_string(), value))
-}
-
-fn validate_context_key(key: &str) -> miette::Result<()> {
-    if !key.starts_with(':') {
-        return Err(miette::miette!(
-            "context fact key must be namespaced: {key}\nhelp: use a namespaced key like :via/ssh or :claude-code/permission-mode"
-        ));
-    }
-    Ok(())
+    let key = Keyword::new(key_str).map_err(|_| {
+        miette::miette!(
+            "context fact key must be namespaced: {key_str}\nhelp: use a namespaced key like :via/ssh or :claude-code/permission-mode"
+        )
+    })?;
+    Ok((key, value))
 }
 
 #[cfg(test)]
@@ -48,16 +43,20 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
 
+    fn kw(s: &str) -> Keyword {
+        Keyword::new(s).unwrap()
+    }
+
     #[test]
     fn parse_presence_fact() {
         let facts = parse_cli_facts(&[":via/ssh".to_string()]).unwrap();
-        assert!(facts.has(":via/ssh"));
+        assert!(facts.has(&kw(":via/ssh")));
     }
 
     #[test]
     fn parse_scalar_fact() {
         let facts = parse_cli_facts(&[":env=prod".to_string()]).unwrap();
-        assert_eq!(facts.get_scalar(":env"), Some("prod"));
+        assert_eq!(facts.get_scalar(&kw(":env")), Some("prod"));
     }
 
     #[test]
@@ -83,14 +82,15 @@ mod tests {
     #[test]
     fn scalar_value_with_equals_in_value() {
         let facts = parse_cli_facts(&[":key=a=b".to_string()]).unwrap();
-        assert_eq!(facts.get_scalar(":key"), Some("a=b"));
+        assert_eq!(facts.get_scalar(&kw(":key")), Some("a=b"));
     }
 
     proptest! {
         #[test]
         fn valid_presence_facts_roundtrip(key in ":[a-z][a-z/]{0,10}") {
-            let facts = parse_cli_facts(&[key.clone()]).unwrap();
-            prop_assert!(facts.has(&key));
+            let kw = Keyword::new(&key).unwrap();
+            let facts = parse_cli_facts(&[key]).unwrap();
+            prop_assert!(facts.has(&kw));
         }
 
         #[test]
@@ -98,9 +98,10 @@ mod tests {
             key in ":[a-z][a-z/]{0,10}",
             value in "[a-zA-Z0-9_-]{1,20}",
         ) {
+            let kw = Keyword::new(&key).unwrap();
             let input = format!("{key}={value}");
             let facts = parse_cli_facts(&[input]).unwrap();
-            prop_assert_eq!(facts.get_scalar(&key), Some(value.as_str()));
+            prop_assert_eq!(facts.get_scalar(&kw), Some(value.as_str()));
         }
 
         #[test]

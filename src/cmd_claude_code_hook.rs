@@ -3,7 +3,7 @@
 use std::io::Read;
 
 use may_i_config as config;
-use may_i_core::ContextFacts;
+use may_i_core::{ContextFacts, Keyword};
 use may_i_engine as engine;
 use may_i_engine::EvalResult;
 use miette::Context;
@@ -27,10 +27,18 @@ pub(crate) fn cmd_claude_code_hook(config_path: Option<&std::path::Path>) -> mie
 
     let config_file = config::resolve_path(config_path)?;
 
-    let canonical_config = config::load(&config_file)?;
+    let mut canonical_config = config::load(&config_file)?;
+
+    // Resolve named predicates before evaluation (same as cmd_eval).
+    let resolved_rules =
+        config::resolve::validate_and_resolve(&canonical_config.rules, &canonical_config.defines)
+            .map_err(|errs| miette::miette!("Predicate resolution failed: {}", errs[0].message))?;
+    canonical_config.rules = resolved_rules;
+
     let context = build_context(&payload);
     let (cmd, args) = may_i::cmd_eval::parse_command_args(&command);
-    let result = engine::eval::evaluate(&cmd, &args, &canonical_config, &context);
+    let result = engine::eval::evaluate(&cmd, &args, &canonical_config, &context)
+        .map_err(|e| miette::miette!("{e}"))?;
 
     let response = render_response(result);
 
@@ -73,17 +81,17 @@ fn build_context(payload: &serde_json::Value) -> ContextFacts {
         .unwrap_or("Bash");
 
     let mut context = ContextFacts::default();
-    context.insert_present(":client/claude-code");
+    context.insert_present(Keyword::new(":client/claude-code").unwrap());
 
     if let Some(permission_mode) = payload.get("permission_mode").and_then(|v| v.as_str()) {
-        context.insert_scalar(":claude-code/permission-mode", permission_mode);
+        context.insert_scalar(Keyword::new(":claude-code/permission-mode").unwrap(), permission_mode);
     }
     if let Some(cwd) = payload.get("cwd").and_then(|v| v.as_str()) {
-        context.insert_scalar(":claude-code/cwd", cwd);
+        context.insert_scalar(Keyword::new(":claude-code/cwd").unwrap(), cwd);
     }
-    context.insert_scalar(":claude-code/tool-name", tool_name);
+    context.insert_scalar(Keyword::new(":claude-code/tool-name").unwrap(), tool_name);
     if let Some(event_name) = payload.get("hook_event_name").and_then(|v| v.as_str()) {
-        context.insert_scalar(":claude-code/hook-event-name", event_name);
+        context.insert_scalar(Keyword::new(":claude-code/hook-event-name").unwrap(), event_name);
     }
 
     context

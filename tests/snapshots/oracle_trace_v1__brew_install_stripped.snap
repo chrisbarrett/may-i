@@ -14,8 +14,7 @@ Trace
              (effect                                │ → :deny "Package installation not allowed"
                :deny                                │
                "Package installation not allowed")) │
-            ((positional (or "list"                 │ "install" = "list" → no
-                             "search"))             │ "install" = "search" → no
+            (…                                      │
              …))))                                  │
 
 Result
