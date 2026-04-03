@@ -16,7 +16,7 @@ use crate::runtime_facts::parse_cli_facts;
 /// Parse a simple command string into (command_name, args) using the shell
 /// parser, which correctly handles quoting. Falls back to split_whitespace
 /// for non-simple commands.
-pub(crate) fn parse_command_args(text: &str) -> (String, Vec<String>) {
+pub fn parse_command_args(text: &str) -> (String, Vec<String>) {
     match parser::parse(text) {
         parser::Command::Simple(sc) if !sc.words.is_empty() => {
             let cmd = sc.words[0].to_str();
@@ -78,6 +78,26 @@ pub fn cmd_eval(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_command_args_strips_leading_comment() {
+        let (cmd, args) = parse_command_args("# this is a comment\nsed -i '' 's/foo/bar/g' file.txt");
+        assert_eq!(cmd, "sed");
+        assert_eq!(args[0], "-i");
+    }
+
+    #[test]
+    fn parse_command_args_comment_only() {
+        let (cmd, _args) = parse_command_args("# just a comment");
+        // Shell parser strips comments; fallback gives "#" which is acceptable
+        // The key point is it doesn't produce "\n" or other whitespace
+        assert!(!cmd.trim().is_empty(), "command should not be empty/whitespace, got: {cmd:?}");
+    }
 }
 
 /// Render trace + result output to a writer.

@@ -29,13 +29,8 @@ pub(crate) fn cmd_claude_code_hook(config_path: Option<&std::path::Path>) -> mie
 
     let canonical_config = config::load(&config_file)?;
     let context = build_context(&payload);
-    let args: Vec<String> = command
-        .split_whitespace()
-        .skip(1)
-        .map(String::from)
-        .collect();
-    let cmd = command.split_whitespace().next().unwrap_or(&command);
-    let result = engine::eval::evaluate(cmd, &args, &canonical_config, &context);
+    let (cmd, args) = may_i::cmd_eval::parse_command_args(&command);
+    let result = engine::eval::evaluate(&cmd, &args, &canonical_config, &context);
 
     let response = render_response(result);
 
