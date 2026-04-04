@@ -105,9 +105,8 @@ pub(crate) fn cmd_migrate(
 
         let is_tty = io::stdin().is_terminal() && io::stdout().is_terminal();
         if !is_tty {
-            return Err(miette::miette!(
-                "Config file would be modified. Use --yes to confirm non-interactive execution."
-            ));
+            // Output is piped — just show the diff as a preview.
+            return Ok(());
         }
 
         let response = prompt_confirm("Apply migration? [y/N] ")
