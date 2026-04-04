@@ -1,3 +1,5 @@
+**Note:** Any syntax changes in this spec MUST be reflected in `REFERENCE.txt` at the repository root.
+
 ## REMOVED Requirements
 
 ### Requirement: Bare keyword effect shorthand
