@@ -474,9 +474,18 @@ impl CstNode<TriviaAnn> {
                     // Check if this is a keyword (starts with ":")
                     let is_keyword = child.as_atom().is_some_and(|s| s.starts_with(':'));
 
+                    let mut did_break = false;
                     if i > 0 {
+                        // Preserve source cascade: if this child's leading
+                        // trivia had a newline, force a break to keep the
+                        // original multi-line layout.
+                        let source_newline = child.ann.leading.iter().any(|t| {
+                            matches!(t, Trivia::Whitespace(s) if s.contains('\n'))
+                                || matches!(t, Trivia::Comment { has_newline: true, .. })
+                        });
+
                         // cond always breaks clauses onto separate lines
-                        let force_break = is_cond;
+                        let force_break = is_cond || source_newline;
 
                         let child_width = estimate_width(child);
                         let would_exceed = ctx.col + 1 + child_width > ctx.width;
@@ -487,12 +496,20 @@ impl CstNode<TriviaAnn> {
                         if needs_break {
                             ctx.write_newline();
                             ctx.write_indent();
+                            did_break = true;
                         } else {
                             ctx.write_str(" ");
                         }
                     }
 
                     child.pretty_write_no_whitespace(ctx);
+
+                    // Restore cascade: inner list rendering may reset
+                    // has_broken, but if we broke before this child the
+                    // cascade must continue.
+                    if did_break {
+                        ctx.has_broken = true;
+                    }
 
                     // If this was a keyword, the next child is its value - keep them together
                     if is_keyword && i + 1 < children.len() {
@@ -648,9 +665,9 @@ impl CstNode<TriviaAnn> {
 
                             child.pretty_write_no_whitespace(ctx);
                         }
-                    } else if child.has_source_trivia() {
-                        child.pretty_write(ctx);
                     } else {
+                        // First child (i==0): always strip whitespace since it
+                        // follows the opening paren directly.
                         child.pretty_write_no_whitespace(ctx);
                     }
 
@@ -694,9 +711,9 @@ impl CstNode<TriviaAnn> {
                             }
                             child.pretty_write_no_whitespace(ctx);
                         }
-                    } else if child.has_source_trivia() {
-                        child.pretty_write(ctx);
                     } else {
+                        // First child (i==0): always strip whitespace since it
+                        // follows the opening bracket directly.
                         child.pretty_write_no_whitespace(ctx);
                     }
                 }
@@ -1668,6 +1685,74 @@ mod tests {
         assert!(
             node.has_source_trivia(),
             "node at offset 0 with non-zero end should have source trivia"
+        );
+    }
+
+    // ── Cascade preservation tests ──────────────────────────────
+
+    #[test]
+    fn test_cascade_preserved_in_check() {
+        // Source check form with children on separate lines should stay cascaded
+        // even though all children fit on one line.
+        let input = "(check\n :allow \"mkdir /tmp/foo\"\n :allow \"touch /tmp/foo\"\n :allow \"cp foo bar\")";
+        let result = pretty(input, 80);
+        assert_eq!(
+            result,
+            "(check\n  :allow \"mkdir /tmp/foo\"\n  :allow \"touch /tmp/foo\"\n  :allow \"cp foo bar\")",
+            "cascade should be preserved, got:\n{result}"
+        );
+    }
+
+    #[test]
+    fn test_cascade_preserved_in_rule() {
+        // Source rule form with children on separate lines should stay cascaded.
+        let input = "(rule (or \"cp\" \"mkdir\" \"touch\")\n      (effect :allow \"Low-risk filesystem operation\"))";
+        let result = pretty(input, 80);
+        assert_eq!(
+            result,
+            "(rule (or \"cp\" \"mkdir\" \"touch\")\n  (effect :allow \"Low-risk filesystem operation\"))",
+            "cascade should be preserved, got:\n{result}"
+        );
+    }
+
+    #[test]
+    fn test_no_cascade_when_source_is_flat() {
+        // A form that was originally on one line should stay on one line.
+        let input = "(rule \"rm\" (effect :allow))";
+        let result = pretty(input, 80);
+        assert_eq!(result, "(rule \"rm\" (effect :allow))");
+    }
+
+    // ── Cond clause rendering ────────────────────────────────────
+
+    #[test]
+    fn test_no_extra_space_in_new_list_with_source_child() {
+        // When a source child (with leading whitespace trivia) is placed as
+        // the first child of a newly-constructed cond branch, and that branch
+        // is rendered via pretty_write_no_whitespace (nested inside another
+        // new node), the original leading whitespace must not leak.
+        let input = "(if (anywhere \"-f\") (effect :ask))";
+        let (nodes, _) = parse(input);
+        let if_children = nodes[0].as_list().unwrap();
+        let pred = &if_children[1]; // has source trivia with leading " "
+        let then_eff = &if_children[2];
+
+        // Build (cond (PRED THEN)) — simulates what args_cond_to_case produces
+        let branch = CstNode::list(
+            vec![Box::new((**pred).clone()), Box::new((**then_eff).clone())],
+            Default::default(),
+        );
+        let cond_node = CstNode::list(
+            vec![
+                Box::new(CstNode::atom("cond", Default::default())),
+                Box::new(branch),
+            ],
+            Default::default(),
+        );
+        let result = cond_node.pretty_serialize(80);
+        assert_eq!(
+            result, "(cond\n  ((anywhere \"-f\") (effect :ask)))",
+            "no extra space after opening paren of cond clause, got:\n{result}"
         );
     }
 }
