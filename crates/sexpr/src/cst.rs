@@ -610,17 +610,25 @@ impl CstNode<TriviaAnn> {
                     None
                 };
 
-                // Preserve blank lines from preceding whitespace
+                // Preserve blank lines from preceding whitespace.
+                // If the previous comment already emitted a newline, the
+                // first newline in the separator whitespace is redundant.
                 if let Some(ws) = prev_ws {
                     let newline_count = ws.matches('\n').count();
-                    if newline_count > 0 {
-                        for _ in 0..newline_count {
+                    let already_on_newline = emitted_comment_with_newline;
+                    let effective = if already_on_newline && newline_count > 0 {
+                        newline_count - 1
+                    } else {
+                        newline_count
+                    };
+                    if effective > 0 {
+                        for _ in 0..effective {
                             ctx.write_newline();
                         }
-                    } else {
+                    } else if !already_on_newline {
                         ctx.write_newline();
                     }
-                } else {
+                } else if !emitted_comment_with_newline {
                     ctx.write_newline();
                 }
                 ctx.write_indent();
@@ -1283,6 +1291,20 @@ mod tests {
         assert!(
             result.contains("\n  ;; a comment\n"),
             "whole-line comment should be indented at current level, got:\n{result}"
+        );
+    }
+
+    #[test]
+    fn test_consecutive_comments_no_extra_blank_line() {
+        // Two consecutive comment lines should not get a blank line inserted
+        // between them.
+        let input = "(check\n ;; line one\n ;; line two\n :ask \"foo\")";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+        let result = nodes[0].pretty_serialize(80);
+        assert!(
+            result.contains(";; line one\n  ;; line two"),
+            "consecutive comments should not have blank line between them, got:\n{result}"
         );
     }
 
