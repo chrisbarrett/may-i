@@ -29,7 +29,7 @@ fn test_migration_analysis_no_changes() {
     use may_i_config::migrate::analyze_migration;
 
     // Already canonical syntax (unified style) - no changes needed
-    let source = "(rule git :effect :allow)";
+    let source = "(rule git (effect :allow))";
     let analysis = analyze_migration(source);
 
     assert!(
@@ -72,7 +72,7 @@ fn test_migration_analysis_multiple_forms() {
     let source = r#"
 (rule (command git) (effect :allow))
 (defcontext ssh (has :via/ssh))
-(rule ls :effect :allow)
+(rule ls (effect :allow))
 "#;
 
     let analysis = analyze_migration(source);
@@ -210,7 +210,7 @@ fn test_diff_output_simple_migration() {
         "After should not have command wrapper"
     );
     assert!(
-        diff.after.contains("git :effect"),
+        diff.after.contains("(rule git (effect"),
         "After should have inlined command"
     );
 }
@@ -243,7 +243,7 @@ fn test_diff_output_multiple_changes() {
 fn test_diff_output_no_changes() {
     use may_i_config::migrate::analyze_migration;
 
-    let source = "(rule git :effect :allow)\n";
+    let source = "(rule git (effect :allow))\n";
     let analysis = analyze_migration(source);
 
     // Verify the analysis structure

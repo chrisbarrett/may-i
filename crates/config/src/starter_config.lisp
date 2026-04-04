@@ -10,17 +10,17 @@
 ;; RULES
 ;;
 ;; A rule matches a command and produces a decision (allow, ask, or deny).
-;; Body effects are evaluated in order; :effect gives the default when all
-;; body effects return Nil.
+;; Body effects are evaluated in order. The last terminal effect gives the
+;; default when all body effects return Nil.
 ;;
-;;   (rule "grep" :effect (effect :allow))
-;;   (rule "rm" :effect (effect :deny "Dangerous"))
-;;   (rule (or "cat" "head" "tail") :effect (effect :allow))
-;;   (rule (regex "^git-.*") :effect (effect :allow))
+;;   (rule "grep" (effect :allow))
+;;   (rule "rm" (effect :deny "Dangerous"))
+;;   (rule (or "cat" "head" "tail") (effect :allow))
+;;   (rule (regex "^git-.*") (effect :allow))
 ;;
 ;;   (rule "git"
 ;;     (when (anywhere "--force") (effect :ask "Force flag detected"))
-;;     :effect (effect :allow))
+;;     (effect :allow))
 ;;
 ;; TERMINAL EFFECTS
 ;;
@@ -90,7 +90,7 @@
 ;;
 ;;   (rule "kubectl"
 ;;     (when prod-host (effect :deny "No kubectl on prod"))
-;;     :effect (effect :allow))
+;;     (effect :allow))
 ;;
 ;; CHECKS (validated by `may-i check`)
 ;;
@@ -113,16 +113,16 @@
   (when (and (anywhere "-r" "--recursive")
              (anywhere "/"))
     (effect :deny "Recursive deletion from root"))
-  :effect (effect :ask))
+  (effect :ask))
 
 (rule (or "mkfs" "dd" "fdisk" "parted" "gdisk")
-  :effect (effect :deny "Dangerous filesystem or device operation"))
+  (effect :deny "Dangerous filesystem or device operation"))
 
 (rule (or "shutdown" "reboot" "halt" "poweroff" "init")
-  :effect (effect :deny "System power control"))
+  (effect :deny "System power control"))
 
 (rule (or "iptables" "nft" "pfctl")
-  :effect (effect :deny "Firewall manipulation"))
+  (effect :deny "Firewall manipulation"))
 
 ;;; -- Context-aware rules using facts -----------------------------------------
 
@@ -130,12 +130,12 @@
 (rule "kubectl"
   (when (fact? [:env "prod"])
     (effect :deny "No kubectl in production"))
-  :effect (effect :allow))
+  (effect :allow))
 
 ; SSH wrapper — capture host as fact, evaluate inner command recursively
 (rule "ssh"
   (positional [:ssh/host *] . (may-i *))
-  :effect (effect :deny "SSH commands denied by default"))
+  (effect :deny "SSH commands denied by default"))
 
 (rule "rm"
   (cond
@@ -150,25 +150,25 @@
 ;;; -- Allow: read-only operations ---------------------------------------------
 
 (rule (or "cat" "head" "tail" "less" "more" "wc" "sort" "uniq")
-  :effect (effect :allow "Read-only file operations"))
+  (effect :allow "Read-only file operations"))
 
 (rule (or "ls" "tree" "file" "stat" "du" "df")
-  :effect (effect :allow "Read-only filesystem inspection"))
+  (effect :allow "Read-only filesystem inspection"))
 
 (rule (or "grep" "rg" "ag" "ack")
-  :effect (effect :allow "Text search"))
+  (effect :allow "Text search"))
 
 (rule (or "locate" "which" "whereis" "type")
-  :effect (effect :allow "File and command lookup"))
+  (effect :allow "File and command lookup"))
 
 (rule (or "echo" "printf" "true" "false" "test" "[")
-  :effect (effect :allow "Shell builtins"))
+  (effect :allow "Shell builtins"))
 
 (rule (or "date" "hostname" "uname" "whoami" "id" "printenv" "env")
-  :effect (effect :allow "System information"))
+  (effect :allow "System information"))
 
 (rule (or "ps" "top" "uptime" "free" "vmstat" "iostat")
-  :effect (effect :allow "Process and system monitoring"))
+  (effect :allow "Process and system monitoring"))
 
 (rule (or "basename" "dirname" "realpath" "readlink" "pwd")
-  :effect (effect :allow "Path utilities"))
+  (effect :allow "Path utilities"))

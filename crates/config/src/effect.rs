@@ -14,45 +14,18 @@ use may_i_sexpr::{RawError, Sexpr};
 /// - Conditionals: `(when PREDICATE EFFECT)`, `(unless PREDICATE EFFECT)`, `(if PREDICATE THEN ELSE)`, `(cond ...)`
 /// - Recursion: `(may-i PATTERN)`
 pub fn parse_effect(sexpr: &Sexpr) -> Result<Spanned<Effect>, RawError> {
-    // Handle shorthand notation first: :allow, :ask, :deny, or [:ask "reason"]
+    // Handle bare atoms: command literals
     if let Some(atom) = sexpr.as_atom() {
-        // Check for shorthand keywords
-        match atom {
-            ":allow" => return Ok(Spanned::new(Effect::Allow(None), sexpr.span())),
-            ":ask" => return Ok(Spanned::new(Effect::Ask(None), sexpr.span())),
-            ":deny" => return Ok(Spanned::new(Effect::Deny(None), sexpr.span())),
-            _ => {
-                if !is_reserved_keyword(atom) {
-                    // This is a command literal - treat as CommandPattern effect
-                    let pattern = crate::command::parse_command_pattern_from_atom(atom)?;
-                    return Ok(Spanned::new(Effect::CommandPattern(pattern), sexpr.span()));
-                }
-            }
-        }
-    }
-
-    // Handle vector shorthand: [:ask "reason"]
-    if let Sexpr::Vector(items, _) = sexpr
-        && !items.is_empty()
-        && let Some(kw) = items[0].as_atom()
-    {
-        let reason = if items.len() > 1 {
-            items[1].as_atom().map(|s| s.to_string())
-        } else {
-            None
-        };
-
-        match kw {
-            ":allow" => return Ok(Spanned::new(Effect::Allow(reason), sexpr.span())),
-            ":ask" => return Ok(Spanned::new(Effect::Ask(reason), sexpr.span())),
-            ":deny" => return Ok(Spanned::new(Effect::Deny(reason), sexpr.span())),
-            _ => {}
+        if !is_reserved_keyword(atom) {
+            // This is a command literal - treat as CommandPattern effect
+            let pattern = crate::command::parse_command_pattern_from_atom(atom)?;
+            return Ok(Spanned::new(Effect::CommandPattern(pattern), sexpr.span()));
         }
     }
 
     let list = sexpr.as_list().ok_or_else(|| {
         RawError::new(
-            "effect must be a list, command literal, or shorthand keyword",
+            "effect must be a list or command literal",
             sexpr.span(),
         )
     })?;
@@ -606,19 +579,6 @@ mod tests {
     }
 
     #[test]
-    fn shorthand_keyword_parsing() {
-        // Shorthand keywords should parse as terminal effects
-        let effect = parse_effect_str(r#":allow"#).unwrap();
-        assert!(matches!(effect, Effect::Allow(None)));
-
-        let effect = parse_effect_str(r#":ask"#).unwrap();
-        assert!(matches!(effect, Effect::Ask(None)));
-
-        let effect = parse_effect_str(r#":deny"#).unwrap();
-        assert!(matches!(effect, Effect::Deny(None)));
-    }
-
-    #[test]
     fn non_keyword_atom_as_command() {
         // Non-reserved atoms should be treated as command patterns
         let effect = parse_effect_str(r#"git"#).unwrap();
@@ -629,7 +589,7 @@ mod tests {
     fn reserved_keyword_atom_is_not_command() {
         // Reserved keywords as bare atoms should not be treated as commands
         let err = parse_effect_str(r#"rule"#).expect_err("expected error");
-        assert!(format!("{err}").contains("effect must be a list"));
+        assert!(format!("{err}").contains("effect must be a list or command literal"));
     }
 
     #[test]

@@ -153,7 +153,7 @@ mod tests {
         let mut temp_file = tempfile::NamedTempFile::new().unwrap();
         writeln!(
             temp_file,
-            r#"(rule "git" (positional "status") :effect (effect :allow))"#
+            r#"(rule "git" (positional "status") (effect :allow))"#
         )
         .unwrap();
         let result = load(temp_file.path());

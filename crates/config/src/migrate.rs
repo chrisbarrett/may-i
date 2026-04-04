@@ -41,10 +41,7 @@ pub fn migration_rules() -> Vec<RewriteFn> {
         // Rule: (has ...) → (fact? ...)
         // Rename has to fact? for the new unified syntax
         Box::new(rename_has_to_fact),
-        // Rule: (rule ... (effect E)) → (rule ... :effect E)
-        // MUST run after other rule transformations that may produce old-style rules
-        Box::new(rule_convert_effect_to_keyword),
-        // Rule: Add :effect :ask when rule has no default effect
+        // Rule: Add (effect :ask) when rule has no default effect
         // This handles v1 rules that relied on if/cond covering all cases
         Box::new(rule_add_default_effect),
     ]
@@ -120,27 +117,8 @@ fn rule_inline_context(node: &CstNode) -> Option<Box<CstNode>> {
                 context_expr = Some(ctx_children[1].clone());
             }
         } else if child.is_tagged("effect") {
-            let eff_children = child.as_list()?;
-            if eff_children.len() >= 2 {
-                // Extract effect content: either :keyword or [:keyword "reason"]
-                effect_expr = if eff_children.len() == 2 {
-                    // Simple effect: (effect :keyword)
-                    Some(eff_children[1].clone())
-                } else {
-                    // Effect with reason: (effect :keyword "reason")
-                    Some(Box::new(CstNode {
-                        ann: TriviaAnn {
-                            leading: eff_children[1].ann.leading.clone(),
-                            trailing: eff_children[2].ann.trailing.clone(),
-                            span: eff_children[1].ann.span,
-                        },
-                        shape: Shape::Vector(vec![
-                            eff_children[1].clone(),
-                            eff_children[2].clone(),
-                        ]),
-                    }))
-                };
-            }
+            // Keep the whole (effect ...) node
+            effect_expr = Some(child.clone());
         } else {
             other_children.push(child.clone());
         }
@@ -235,80 +213,6 @@ fn rule_inline_args(node: &CstNode) -> Option<Box<CstNode>> {
     }))
 }
 
-/// Convert old-style `(effect EFFECT)` to new-style `:effect EFFECT` in rules.
-/// Transforms: (rule X ... (effect E)) → (rule X ... :effect E)
-fn rule_convert_effect_to_keyword(node: &CstNode) -> Option<Box<CstNode>> {
-    if !node.is_tagged("rule") {
-        return None;
-    }
-
-    let children = node.as_list()?;
-    if children.len() < 3 {
-        return None;
-    }
-
-    // Check if the last element is (effect ...)
-    let last_idx = children.len() - 1;
-    let last_child = &children[last_idx];
-
-    if !last_child.is_tagged("effect") {
-        return None;
-    }
-
-    // Extract the effect content from (effect EFFECT) or (effect EFFECT "reason")
-    let effect_children = last_child.as_list()?;
-    if effect_children.len() < 2 || effect_children.len() > 3 {
-        // Invalid (effect) form, skip
-        return None;
-    }
-
-    // Build the effect content: either just the keyword, or [:keyword "reason"]
-    let effect_content = if effect_children.len() == 2 {
-        // Simple effect: (effect :keyword) → :keyword
-        effect_children[1].clone()
-    } else {
-        // Effect with reason: (effect :keyword "reason") → [:keyword "reason"]
-        let keyword = &effect_children[1];
-        let reason = &effect_children[2];
-        Box::new(CstNode {
-            ann: TriviaAnn {
-                leading: keyword.ann.leading.clone(),
-                trailing: reason.ann.trailing.clone(),
-                span: keyword.ann.span, // Approximate
-            },
-            shape: Shape::Vector(vec![keyword.clone(), reason.clone()]),
-        })
-    };
-
-    // Build new children: all except last, then :effect keyword, then effect content
-    let mut new_children = Vec::new();
-
-    // Copy all children except the last
-    for child in &children[..last_idx] {
-        new_children.push(child.clone());
-    }
-
-    // Add :effect keyword with leading trivia from the old (effect ...) list
-    let effect_keyword = CstNode::atom(
-        ":effect",
-        TriviaAnn {
-            leading: last_child.ann.leading.clone(),
-            ..Default::default()
-        },
-    );
-    new_children.push(Box::new(effect_keyword));
-
-    // Add the effect content with combined trailing trivia
-    let mut new_effect_content = (*effect_content).clone();
-    new_effect_content.ann.trailing = last_child.ann.trailing.clone();
-    new_children.push(Box::new(new_effect_content));
-
-    Some(Box::new(CstNode {
-        ann: node.ann.clone(),
-        shape: Shape::List(new_children),
-    }))
-}
-
 /// Check if a node contains a continuation effect (dot notation with may-i).
 /// This recursively searches for patterns like (positional ... . (may-i ...))
 fn has_continuation_effect(node: &CstNode) -> bool {
@@ -337,7 +241,7 @@ fn has_continuation_effect(node: &CstNode) -> bool {
     false
 }
 
-/// Add default :effect :ask to rules that don't have one.
+/// Add default (effect :ask) to rules that don't have one.
 /// This handles v1 rules that relied on if/cond covering all cases.
 fn rule_add_default_effect(node: &CstNode) -> Option<Box<CstNode>> {
     if !node.is_tagged("rule") {
@@ -349,12 +253,9 @@ fn rule_add_default_effect(node: &CstNode) -> Option<Box<CstNode>> {
         return None;
     }
 
-    // Check if the rule already has a :effect keyword
+    // Check if the rule already has an (effect ...) tagged list
     for child in &children[1..] {
-        if let Some(atom) = child.as_atom()
-            && atom == ":effect"
-        {
-            // Rule already has :effect keyword
+        if child.is_tagged("effect") {
             return None;
         }
     }
@@ -379,26 +280,27 @@ fn rule_add_default_effect(node: &CstNode) -> Option<Box<CstNode>> {
         }
     }
 
-    // Add :effect :ask at the end
+    // Add (effect :ask) at the end
     let mut new_children: Vec<Box<CstNode>> = children.to_vec();
 
-    // Add :effect keyword
-    new_children.push(Box::new(CstNode::atom(
-        ":effect",
+    // Build (effect :ask) list node
+    let effect_node = CstNode::list(
+        vec![
+            Box::new(CstNode::atom("effect", Default::default())),
+            Box::new(CstNode::atom(
+                ":ask",
+                TriviaAnn {
+                    leading: vec![may_i_sexpr::cst::Trivia::Whitespace(" ".to_string())],
+                    ..Default::default()
+                },
+            )),
+        ],
         TriviaAnn {
             leading: vec![may_i_sexpr::cst::Trivia::Whitespace(" ".to_string())],
             ..Default::default()
         },
-    )));
-
-    // Add :ask default effect
-    new_children.push(Box::new(CstNode::atom(
-        ":ask",
-        TriviaAnn {
-            leading: vec![may_i_sexpr::cst::Trivia::Whitespace(" ".to_string())],
-            ..Default::default()
-        },
-    )));
+    );
+    new_children.push(Box::new(effect_node));
 
     Some(Box::new(CstNode {
         ann: node.ann.clone(),
@@ -807,9 +709,8 @@ fn args_cond_to_case(node: &CstNode) -> Option<Box<CstNode>> {
                     continue;
                 }
             }
-        } else if child.as_atom().is_some() && !child.is_tagged(":effect") {
+        } else if child.as_atom().is_some() {
             // Bare atom after command - likely a context predicate from inlined (context ...)
-            // Skip :effect keyword and collect other atoms as predicates
             rule_level_predicates.push(child.clone());
         } else {
             new_children.push(child.clone());
@@ -1343,8 +1244,7 @@ mod tests {
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let node = nodes.into_iter().next().unwrap();
         let result = migrate(node);
-        // New unified syntax uses :effect keyword with shorthand
-        assert_eq!(result.serialize(), "(rule git :effect :allow)");
+        assert_eq!(result.serialize(), "(rule git (effect :allow))");
     }
 
     #[test]
@@ -1353,8 +1253,7 @@ mod tests {
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let results = migrate_forms(nodes);
         assert_eq!(results.len(), 2);
-        // New unified syntax uses :effect keyword with shorthand
-        assert!(results[0].serialize().contains("(rule git :effect :allow)"));
+        assert!(results[0].serialize().contains("(rule git (effect :allow))"));
         assert!(
             results[1]
                 .serialize()
@@ -1489,7 +1388,7 @@ mod tests {
         let serialized = result.serialize();
 
         // The migrated output should preserve the fact binding
-        // Expected: (rule "ssh" (positional [:ssh/host *] . (may-i *)) :effect :ask)
+        // Expected: (rule "ssh" (positional [:ssh/host *] . (may-i *)))
         assert!(
             serialized.contains("[:ssh/host *]"),
             "Migration should preserve fact binding syntax. Got: {}",
@@ -1572,7 +1471,7 @@ mod tests {
     #[test]
     fn test_has_continuation_effect_without_continuation() {
         // Test has_continuation_effect returns false for rule without continuation
-        let input = r#"(rule test :effect :allow)"#;
+        let input = r#"(rule test (effect :allow))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let node = nodes.into_iter().next().unwrap();
         assert!(!has_continuation_effect(&node));
@@ -1594,15 +1493,18 @@ mod tests {
 
     #[test]
     fn test_rule_add_default_effect_adds_to_rules_without_effect() {
-        // Test that rules without effects get default :effect :ask
+        // Test that rules without effects get default (effect :ask)
         let input = r#"(rule test (positional "x"))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let node = nodes.into_iter().next().unwrap();
         let result = rule_add_default_effect(&node).unwrap();
         let serialized = result.serialize();
-        // Should have :effect :ask added
-        assert!(serialized.contains(":effect"));
-        assert!(serialized.contains(":ask"));
+        // Should have (effect :ask) added
+        assert!(
+            serialized.contains("(effect :ask)"),
+            "Expected '(effect :ask)' in: {}",
+            serialized
+        );
     }
 
     #[test]

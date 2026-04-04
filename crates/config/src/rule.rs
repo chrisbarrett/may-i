@@ -1,7 +1,7 @@
 // Rule and define parser for the unified DSL.
 // Syntax: (rule COMMAND-EFFECT EFFECT... [CHECK...])
 
-use may_i_core::ast::{Define, Effect, Rule, Spanned};
+use may_i_core::ast::{Define, Rule, Spanned};
 use may_i_sexpr::{RawError, Sexpr};
 
 /// Parse a rule from an s-expression.
@@ -41,13 +41,6 @@ pub fn parse_rule(sexpr: &Sexpr) -> Result<Spanned<Rule>, RawError> {
     let mut checks = Vec::new();
 
     for sexpr in list.iter().skip(2) {
-        // Skip :effect keyword (for backward compatibility during migration)
-        if let Some(atom) = sexpr.as_atom()
-            && atom == ":effect"
-        {
-            continue;
-        }
-
         // Check for check forms
         if let Some(lst) = sexpr.as_list()
             && !lst.is_empty()
@@ -66,68 +59,6 @@ pub fn parse_rule(sexpr: &Sexpr) -> Result<Spanned<Rule>, RawError> {
     let rule = Rule::new(command_effect, effects, checks, sexpr.span());
 
     Ok(Spanned::new(rule, sexpr.span()))
-}
-
-/// Parse shorthand effect notation.
-/// - `:allow` -> `(effect :allow)`
-/// - `:ask` -> `(effect :ask)`
-/// - `:deny` -> `(effect :deny)`
-/// - `[:ask "reason"]` -> `(effect :ask "reason")`
-pub fn parse_shorthand_effect(sexpr: &Sexpr) -> Result<Effect, RawError> {
-    // Handle keyword shorthand: :allow, :ask, :deny
-    if let Some(atom) = sexpr.as_atom() {
-        return match atom {
-            ":allow" => Ok(Effect::Allow(None)),
-            ":ask" => Ok(Effect::Ask(None)),
-            ":deny" => Ok(Effect::Deny(None)),
-            _ => Err(RawError::new(
-                format!("unknown shorthand effect keyword: {}", atom),
-                sexpr.span(),
-            )),
-        };
-    }
-
-    // Handle vector shorthand: [:ask "reason"] or [:allow]
-    if let Sexpr::Vector(items, _) = sexpr {
-        if items.is_empty() {
-            return Err(RawError::new(
-                "effect vector shorthand cannot be empty",
-                sexpr.span(),
-            ));
-        }
-
-        let kw = items[0]
-            .as_atom()
-            .ok_or_else(|| RawError::new("effect keyword must be an atom", items[0].span()))?;
-
-        let reason = if items.len() > 1 {
-            Some(
-                items[1]
-                    .as_atom()
-                    .ok_or_else(|| {
-                        RawError::new("effect reason must be a string", items[1].span())
-                    })?
-                    .to_string(),
-            )
-        } else {
-            None
-        };
-
-        return match kw {
-            ":allow" => Ok(Effect::Allow(reason)),
-            ":ask" => Ok(Effect::Ask(reason)),
-            ":deny" => Ok(Effect::Deny(reason)),
-            other => Err(RawError::new(
-                format!("unknown effect keyword: {}", other),
-                items[0].span(),
-            )),
-        };
-    }
-
-    Err(RawError::new(
-        "shorthand effect must be a keyword (:allow/:ask/:deny) or a vector [:keyword \"reason\"]",
-        sexpr.span(),
-    ))
 }
 
 /// Parse a named predicate definition from an s-expression.
@@ -236,20 +167,6 @@ mod tests {
         parse_define(&forms[0])
     }
 
-    fn parse_shorthand_str(input: &str) -> Result<Effect, RawError> {
-        let (forms, errors) = may_i_sexpr::parse(input);
-        if let Some(err) = errors.into_iter().next() {
-            return Err(err);
-        }
-        if forms.len() != 1 {
-            return Err(RawError::new(
-                "expected exactly one form",
-                Span::new(0, input.len()),
-            ));
-        }
-        parse_shorthand_effect(&forms[0])
-    }
-
     #[test]
     fn parse_simple_rule() {
         let rule = parse_rule_str(r#"(rule "git" (effect :allow))"#).unwrap();
@@ -292,46 +209,6 @@ mod tests {
             rule.command_effect.value,
             Effect::CommandPattern(CommandPattern::Or(_))
         ));
-    }
-
-    #[test]
-    fn parse_rule_with_shorthand_effect() {
-        // Using shorthand :allow syntax
-        let rule = parse_rule_str(r#"(rule "git" :allow)"#).unwrap();
-        assert_eq!(rule.effects.len(), 1);
-        assert!(matches!(rule.effects[0].value, Effect::Allow(_)));
-    }
-
-    #[test]
-    fn parse_rule_with_vector_shorthand() {
-        // Using vector shorthand [:ask "reason"]
-        let rule = parse_rule_str(r#"(rule "git" [:ask "confirm"])"#).unwrap();
-        assert_eq!(rule.effects.len(), 1);
-        match &rule.effects[0].value {
-            Effect::Ask(Some(reason)) => assert_eq!(reason, "confirm"),
-            _ => panic!("expected Ask with reason"),
-        }
-    }
-
-    #[test]
-    fn parse_shorthand_keyword() {
-        let effect = parse_shorthand_str(r#":allow"#).unwrap();
-        assert!(matches!(effect, Effect::Allow(None)));
-
-        let effect = parse_shorthand_str(r#":ask"#).unwrap();
-        assert!(matches!(effect, Effect::Ask(None)));
-
-        let effect = parse_shorthand_str(r#":deny"#).unwrap();
-        assert!(matches!(effect, Effect::Deny(None)));
-    }
-
-    #[test]
-    fn parse_shorthand_vector() {
-        let effect = parse_shorthand_str(r#"[:allow]"#).unwrap();
-        assert!(matches!(effect, Effect::Allow(None)));
-
-        let effect = parse_shorthand_str(r#"[:ask "confirm"]"#).unwrap();
-        assert!(matches!(effect, Effect::Ask(Some(ref s)) if s == "confirm"));
     }
 
     #[test]
@@ -419,14 +296,6 @@ mod tests {
     }
 
     #[test]
-    fn effect_keyword_is_skipped() {
-        // :effect keyword is now skipped during parsing (backward compatibility)
-        let rule = parse_rule_str(r#"(rule "git" :effect (effect :allow))"#).unwrap();
-        assert_eq!(rule.effects.len(), 1);
-        assert!(matches!(rule.effects[0].value, Effect::Allow(_)));
-    }
-
-    #[test]
     fn multiple_effects_are_allowed() {
         // Multiple effects are now allowed in the effects vector
         let rule = parse_rule_str(r#"(rule "git" (effect :allow) (effect :deny))"#).unwrap();
@@ -439,30 +308,6 @@ mod tests {
     fn parse_rule_too_few_elements_error() {
         let err = parse_rule_str(r#"(rule)"#).expect_err("expected error");
         assert!(format!("{err}").contains("must have at least a command"));
-    }
-
-    #[test]
-    fn parse_shorthand_unknown_keyword_error() {
-        let err = parse_shorthand_str(r#":foo"#).expect_err("expected error");
-        assert!(format!("{err}").contains("unknown shorthand effect keyword"));
-    }
-
-    #[test]
-    fn parse_shorthand_empty_vector_error() {
-        let err = parse_shorthand_str(r#"[]"#).expect_err("expected error");
-        assert!(format!("{err}").contains("cannot be empty"));
-    }
-
-    #[test]
-    fn parse_shorthand_unknown_vector_keyword_error() {
-        let err = parse_shorthand_str(r#"[:foo "reason"]"#).expect_err("expected error");
-        assert!(format!("{err}").contains("unknown effect keyword"));
-    }
-
-    #[test]
-    fn parse_shorthand_invalid_form_error() {
-        let err = parse_shorthand_str(r#"("not" "valid")"#).expect_err("expected error");
-        assert!(format!("{err}").contains("shorthand effect must be"));
     }
 
     #[test]

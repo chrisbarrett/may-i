@@ -106,7 +106,7 @@ fn migration_preserves_comments() {
 fn validate_migration_success() {
     // Test that properly migrated (new syntax) configs pass validation
     let migrated = r#"
-        (rule "git" :effect :allow)
+        (rule "git" (effect :allow))
         (define safe (fact? :local))
     "#;
 
@@ -120,7 +120,7 @@ fn validate_migration_success() {
 #[test]
 fn validate_migration_failure() {
     let migrated = r#"
-        (rule "git" :effect (effect :invalid-decision))
+        (rule "git" (effect :invalid-decision))
     "#;
 
     let result = validate_migration(migrated);
