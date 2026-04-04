@@ -105,6 +105,12 @@ impl Trivia {
 }
 
 impl CstNode<TriviaAnn> {
+    /// Returns true when this node carries original source trivia (non-zero span),
+    /// indicating it was parsed from source rather than freshly constructed.
+    pub fn has_source_trivia(&self) -> bool {
+        self.ann.span.start != 0 || self.ann.span.end != 0
+    }
+
     /// Convert this CST node to a Sexpr (discards trivia).
     pub fn to_sexpr(&self) -> crate::sexpr::Sexpr {
         use crate::sexpr::Sexpr;
@@ -352,6 +358,12 @@ impl<A: Clone> CstNode<A> {
     }
 }
 
+const SPECIAL_FORMS: &[&str] = &["define", "check", "with-facts", "when", "unless", "rule", "cond"];
+
+fn is_special_form(name: &str) -> bool {
+    SPECIAL_FORMS.contains(&name)
+}
+
 fn quote_string(s: &str) -> String {
     format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
 }
@@ -445,81 +457,53 @@ impl CstNode<TriviaAnn> {
                 ctx.write_str(&quote_string(s));
             }
             ShapeF::List(children) => {
-                // Check if this is a cond form that needs special handling
-                let is_cond = children.first().and_then(|c| c.as_atom()) == Some("cond");
+                let head_atom = children.first().and_then(|c| c.as_atom());
+                let is_cond = head_atom == Some("cond");
 
                 ctx.write_str("(");
 
-                if is_cond && children.len() > 1 {
-                    // Special formatting for cond: always break clauses onto separate lines
-                    // Format: (cond
-                    //          ((test) (body))
-                    //          (else (body)))
-                    let body_indent = head_col + 2;
+                // Compute form-aware child indent
+                let child_indent = compute_child_indent(head_col, head_atom);
+                ctx.push_indent(child_indent);
+                ctx.reset_broken();
 
-                    // Write "cond" head
-                    if let Some(head) = children.first() {
-                        head.pretty_write(ctx);
-                    }
+                let mut i = 0;
+                while i < children.len() {
+                    let child = &children[i];
 
-                    // Each clause on its own line with fresh formatting (no trivia)
-                    for clause in &children[1..] {
-                        ctx.write_newline();
-                        ctx.write_str(&" ".repeat(body_indent));
-                        // For cond clauses, format without whitespace trivia
-                        clause.pretty_write_no_whitespace(ctx);
-                    }
-                } else {
-                    // Standard list formatting with cascading line breaks
-                    // Calculate indent for children: head position + 1 (for the opening paren)
-                    let child_indent = head_col + 1;
-                    ctx.push_indent(child_indent);
-                    ctx.reset_broken();
+                    // Check if this is a keyword (starts with ":")
+                    let is_keyword = child.as_atom().is_some_and(|s| s.starts_with(':'));
 
-                    let mut i = 0;
-                    while i < children.len() {
-                        let child = &children[i];
+                    if i > 0 {
+                        // cond always breaks clauses onto separate lines
+                        let force_break = is_cond;
 
-                        // Check if this is a keyword (starts with ":")
-                        let is_keyword = child.as_atom().is_some_and(|s| s.starts_with(':'));
+                        let child_width = estimate_width(child);
+                        let would_exceed = ctx.col + 1 + child_width > ctx.width;
+                        let past_indent = ctx.col > child_indent;
+                        let needs_break =
+                            force_break || ctx.has_broken || (would_exceed && past_indent);
 
-                        // Check if we need to break before this child
-                        if i > 0 {
-                            let child_width = estimate_width(child);
-                            let would_exceed = ctx.col + 1 + child_width > ctx.width;
-                            let past_indent = ctx.col > child_indent;
-                            // Only break if we've already broken (cascade) OR this specific child would exceed
-                            let needs_break = ctx.has_broken || (would_exceed && past_indent);
-
-                            if needs_break {
-                                // Force a break
-                                ctx.write_newline();
-                                ctx.write_indent();
-                            } else {
-                                // No break needed - add space
-                                ctx.write_str(" ");
-                            }
-                        }
-
-                        // Write the child without its original whitespace trivia
-                        // (we control formatting with our own indentation)
-                        child.pretty_write_no_whitespace(ctx);
-
-                        // If this was a keyword, the next child is its value - keep them together
-                        if is_keyword && i + 1 < children.len() {
-                            let value = &children[i + 1];
-                            // Add space between keyword and value
+                        if needs_break {
+                            ctx.write_newline();
+                            ctx.write_indent();
+                        } else {
                             ctx.write_str(" ");
-                            // Write the value without its whitespace trivia
-                            value.pretty_write_no_whitespace(ctx);
-                            // Skip the value in the next iteration
-                            i += 1;
                         }
+                    }
 
+                    child.pretty_write_no_whitespace(ctx);
+
+                    // If this was a keyword, the next child is its value - keep them together
+                    if is_keyword && i + 1 < children.len() {
+                        ctx.write_str(" ");
+                        children[i + 1].pretty_write_no_whitespace(ctx);
                         i += 1;
                     }
-                    ctx.pop_indent();
+
+                    i += 1;
                 }
+                ctx.pop_indent();
                 ctx.write_str(")");
             }
             ShapeF::Vector(children) => {
@@ -570,14 +554,51 @@ impl CstNode<TriviaAnn> {
 
     /// Write node preserving only comments, not whitespace.
     fn pretty_write_no_whitespace(&self, ctx: &mut PrettyCtx) {
-        // Write only comment trivia, not whitespace
-        for trivia in &self.ann.leading {
+        // Write comment trivia with position-aware whitespace handling.
+        // In leading trivia, comments always get their own line at the
+        // current indent level. Blank lines (extra newlines in preceding
+        // whitespace) are preserved.
+        let leading = &self.ann.leading;
+        let mut emitted_comment_with_newline = false;
+        for (i, trivia) in leading.iter().enumerate() {
             if let Trivia::Comment { text, has_newline } = trivia {
+                let prev_ws = if i > 0 {
+                    if let Trivia::Whitespace(ws) = &leading[i - 1] {
+                        Some(ws.as_str())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                // Preserve blank lines from preceding whitespace
+                if let Some(ws) = prev_ws {
+                    let newline_count = ws.matches('\n').count();
+                    if newline_count > 0 {
+                        for _ in 0..newline_count {
+                            ctx.write_newline();
+                        }
+                    } else {
+                        ctx.write_newline();
+                    }
+                } else {
+                    ctx.write_newline();
+                }
+                ctx.write_indent();
                 ctx.write_str(text);
                 if *has_newline {
                     ctx.write_newline();
+                    emitted_comment_with_newline = true;
+                } else {
+                    emitted_comment_with_newline = false;
                 }
             }
+        }
+
+        // If comments left us on a fresh line, indent before the node content
+        if emitted_comment_with_newline {
+            ctx.write_indent();
         }
 
         let head_col = ctx.col;
@@ -590,42 +611,33 @@ impl CstNode<TriviaAnn> {
                 ctx.write_str(&quote_string(s));
             }
             ShapeF::List(children) => {
+                let head_atom = children.first().and_then(|c| c.as_atom());
+                let is_cond = head_atom == Some("cond");
+
                 ctx.write_str("(");
 
-                // Check if this is a cond form
-                let is_cond = children.first().and_then(|c| c.as_atom()) == Some("cond");
+                let child_indent = compute_child_indent(head_col, head_atom);
+                ctx.push_indent(child_indent);
+                ctx.reset_broken();
 
-                if is_cond && children.len() > 1 {
-                    // Special cond formatting: always break clauses
-                    let body_indent = head_col + 2;
+                let mut i = 0;
+                while i < children.len() {
+                    let child = &children[i];
+                    let is_keyword = child.as_atom().is_some_and(|s| s.starts_with(':'));
 
-                    // Write "cond" head
-                    if let Some(head) = children.first() {
-                        head.pretty_write_no_whitespace(ctx);
-                    }
+                    if i > 0 {
+                        // Preserve source children's trivia as spacing, unless
+                        // the parent forces breaks (e.g. cond clauses).
+                        if !is_cond && child.has_source_trivia() {
+                            child.pretty_write(ctx);
+                        } else {
+                            let force_break = is_cond;
 
-                    // Each clause on its own line
-                    for clause in &children[1..] {
-                        ctx.write_newline();
-                        ctx.write_str(&" ".repeat(body_indent));
-                        clause.pretty_write_no_whitespace(ctx);
-                    }
-                } else {
-                    // Standard list formatting
-                    let child_indent = head_col + 1;
-                    ctx.push_indent(child_indent);
-                    ctx.reset_broken();
-
-                    let mut i = 0;
-                    while i < children.len() {
-                        let child = &children[i];
-                        let is_keyword = child.as_atom().is_some_and(|s| s.starts_with(':'));
-
-                        if i > 0 {
                             let child_width = estimate_width(child);
                             let would_exceed = ctx.col + 1 + child_width > ctx.width;
                             let past_indent = ctx.col > child_indent;
-                            let needs_break = ctx.has_broken || (would_exceed && past_indent);
+                            let needs_break =
+                                force_break || ctx.has_broken || (would_exceed && past_indent);
 
                             if needs_break {
                                 ctx.write_newline();
@@ -633,20 +645,28 @@ impl CstNode<TriviaAnn> {
                             } else {
                                 ctx.write_str(" ");
                             }
+
+                            child.pretty_write_no_whitespace(ctx);
                         }
-
+                    } else if child.has_source_trivia() {
+                        child.pretty_write(ctx);
+                    } else {
                         child.pretty_write_no_whitespace(ctx);
+                    }
 
-                        if is_keyword && i + 1 < children.len() {
+                    if is_keyword && i + 1 < children.len() {
+                        if children[i + 1].has_source_trivia() {
+                            children[i + 1].pretty_write(ctx);
+                        } else {
                             ctx.write_str(" ");
                             children[i + 1].pretty_write_no_whitespace(ctx);
-                            i += 1;
                         }
-
                         i += 1;
                     }
-                    ctx.pop_indent();
+
+                    i += 1;
                 }
+                ctx.pop_indent();
                 ctx.write_str(")");
             }
             ShapeF::Vector(children) => {
@@ -658,34 +678,87 @@ impl CstNode<TriviaAnn> {
 
                 for (i, child) in children.iter().enumerate() {
                     if i > 0 {
-                        let child_width = estimate_width(child);
-                        let would_exceed = ctx.col + 1 + child_width > ctx.width;
-                        let past_indent = ctx.col > child_indent;
-                        let needs_break = ctx.has_broken || (would_exceed && past_indent);
-
-                        if needs_break {
-                            ctx.write_newline();
-                            ctx.write_indent();
+                        if child.has_source_trivia() {
+                            child.pretty_write(ctx);
                         } else {
-                            ctx.write_str(" ");
+                            let child_width = estimate_width(child);
+                            let would_exceed = ctx.col + 1 + child_width > ctx.width;
+                            let past_indent = ctx.col > child_indent;
+                            let needs_break = ctx.has_broken || (would_exceed && past_indent);
+
+                            if needs_break {
+                                ctx.write_newline();
+                                ctx.write_indent();
+                            } else {
+                                ctx.write_str(" ");
+                            }
+                            child.pretty_write_no_whitespace(ctx);
                         }
+                    } else if child.has_source_trivia() {
+                        child.pretty_write(ctx);
+                    } else {
+                        child.pretty_write_no_whitespace(ctx);
                     }
-                    child.pretty_write_no_whitespace(ctx);
                 }
                 ctx.pop_indent();
                 ctx.write_str("]");
             }
         }
 
-        // Write only comment trivia from trailing
-        for trivia in &self.ann.trailing {
+        // Write trailing trivia with position-aware whitespace handling
+        let trailing = &self.ann.trailing;
+        for (i, trivia) in trailing.iter().enumerate() {
             if let Trivia::Comment { text, has_newline } = trivia {
-                ctx.write_str(text);
-                if *has_newline {
-                    ctx.write_newline();
+                let prev_ws = if i > 0 {
+                    if let Trivia::Whitespace(ws) = &trailing[i - 1] {
+                        Some(ws.as_str())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                match prev_ws {
+                    Some(ws) if ws.contains('\n') => {
+                        let extra_newlines = ws.matches('\n').count();
+                        for _ in 0..extra_newlines {
+                            ctx.write_newline();
+                        }
+                        ctx.write_indent();
+                        ctx.write_str(text);
+                        if *has_newline {
+                            ctx.write_newline();
+                        }
+                    }
+                    Some(ws) => {
+                        ctx.write_str(ws);
+                        ctx.write_str(text);
+                        if *has_newline {
+                            ctx.write_newline();
+                        }
+                    }
+                    None => {
+                        ctx.write_str(text);
+                        if *has_newline {
+                            ctx.write_newline();
+                        }
+                    }
                 }
             }
         }
+    }
+}
+
+/// Compute child indent based on form classification.
+/// - Special forms: paren_col + 2
+/// - Function-call forms: paren_col + 1 + head_atom_width + 1 (align under first arg)
+/// - Non-atom heads: paren_col + 1 (fallback)
+fn compute_child_indent(paren_col: usize, head_atom: Option<&str>) -> usize {
+    match head_atom {
+        Some(name) if is_special_form(name) => paren_col + 2,
+        Some(name) => paren_col + 1 + name.len() + 1,
+        None => paren_col + 1,
     }
 }
 
@@ -1048,6 +1121,140 @@ mod tests {
     }
 
     #[test]
+    fn test_is_special_form_known_forms() {
+        for name in &["define", "check", "with-facts", "when", "unless", "rule", "cond"] {
+            assert!(is_special_form(name), "{name} should be a special form");
+        }
+    }
+
+    #[test]
+    fn test_is_special_form_non_special() {
+        for name in &["or", "and", "positional", "anywhere", "effect", "foo", "bar"] {
+            assert!(!is_special_form(name), "{name} should NOT be a special form");
+        }
+    }
+
+    // ── Pretty-serialize indentation tests ─────────────────────────
+
+    fn pretty(input: &str, width: usize) -> String {
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty(), "parse errors: {errors:?}");
+        assert_eq!(nodes.len(), 1);
+        nodes[0].pretty_serialize(width)
+    }
+
+    #[test]
+    fn test_special_form_indent_define() {
+        // define is a special form: body indents +2 from paren
+        let result = pretty("(define foo (or a b))", 19);
+        assert_eq!(result, "(define foo\n  (or a b))");
+    }
+
+    #[test]
+    fn test_special_form_indent_check() {
+        let result = pretty("(check :ask \"rmdir /foo\" :allow \"rmdir /bar\")", 30);
+        // check body indents +2
+        assert!(
+            result.contains("\n  "),
+            "check body should indent by 2, got:\n{result}"
+        );
+        // Verify it doesn't use function-call alignment
+        assert!(
+            !result.contains("\n      "),
+            "check should not use function-call indent (6+ spaces), got:\n{result}"
+        );
+    }
+
+    #[test]
+    fn test_special_form_indent_rule() {
+        let result = pretty("(rule \"rm\" (when build-mode (effect :allow)))", 25);
+        // rule body indents +2
+        for line in result.lines().skip(1) {
+            let indent = line.len() - line.trim_start().len();
+            assert!(
+                indent >= 2,
+                "rule body should indent by at least 2, got indent {indent} in line: {line}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_function_call_indent_or() {
+        // or is NOT a special form: args align under first arg
+        // (or has width 2, so first arg at col 4, subsequent args align there
+        let result = pretty("(or \"cat\" \"bat\" \"head\" \"tail\" \"less\" \"ls\")", 25);
+        // After breaking, args should align at column 4 (paren_col=0 + 1 + 2 + 1)
+        for line in result.lines().skip(1) {
+            let indent = line.len() - line.trim_start().len();
+            assert_eq!(indent, 4, "or args should align at col 4, got:\n{result}");
+        }
+    }
+
+    #[test]
+    fn test_function_call_indent_and() {
+        let result = pretty("(and (anywhere \"-r\") (anywhere \"/\"))", 30);
+        // and has width 3, first arg at col 5 (0 + 1 + 3 + 1)
+        for line in result.lines().skip(1) {
+            let indent = line.len() - line.trim_start().len();
+            assert_eq!(indent, 5, "and args should align at col 5, got:\n{result}");
+        }
+    }
+
+    #[test]
+    fn test_non_atom_head_fallback() {
+        // When head is a nested list, fall back to paren_col + 1
+        let result = pretty("((foo bar) baz qux quux quuz corge)", 20);
+        for line in result.lines().skip(1) {
+            let indent = line.len() - line.trim_start().len();
+            assert_eq!(
+                indent, 1,
+                "non-atom head should fall back to col+1, got:\n{result}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_whole_line_comment_indented() {
+        // A whole-line comment (preceded by whitespace with \n) should be
+        // indented at the current indent level in pretty-serialized output.
+        let input = "(define foo\n  ;; a comment\n  bar)";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+        let result = nodes[0].pretty_serialize(40);
+        assert!(
+            result.contains("\n  ;; a comment\n"),
+            "whole-line comment should be indented at current level, got:\n{result}"
+        );
+    }
+
+    #[test]
+    fn test_blank_line_before_comment_preserved() {
+        let input = "(define foo\n\n  ;; a comment\n  bar)";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+        let result = nodes[0].pretty_serialize(40);
+        assert!(
+            result.contains("\n\n  ;; a comment"),
+            "blank line before comment should be preserved, got:\n{result}"
+        );
+    }
+
+    #[test]
+    fn test_trailing_comment_gap_preserved() {
+        // A line-trailing comment (no \n in preceding whitespace) should
+        // preserve its exact whitespace gap. Test with a top-level form
+        // where the comment is in the node's trailing trivia.
+        let input = "(define foo)  ;; trailing\n";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+        let result = nodes[0].pretty_serialize(40);
+        assert!(
+            result.contains("foo)  ;; trailing"),
+            "trailing comment gap should be preserved, got:\n{result}"
+        );
+    }
+
+    #[test]
     fn test_trivia_has_newline() {
         let ws_no_newline = Trivia::Whitespace("   ".to_string());
         let ws_with_newline = Trivia::Whitespace("  \n  ".to_string());
@@ -1327,6 +1534,141 @@ mod tests {
         assert!(errors.is_empty());
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].serialize(), "[a (b c) d]");
+    }
+
+    // ── Preserved layout tests ────────────────────────────────────
+
+    /// Helper: wrap a parsed node in a constructed `(rule "x" <node>)`.
+    fn wrap_in_rule(node: Box<CstNode>) -> Box<CstNode> {
+        Box::new(CstNode::list(
+            vec![
+                Box::new(CstNode::atom("rule", Default::default())),
+                Box::new(CstNode {
+                    ann: Default::default(),
+                    shape: ShapeF::Str("x".into()),
+                }),
+                node,
+            ],
+            Default::default(),
+        ))
+    }
+
+    #[test]
+    fn test_preserved_packed_layout() {
+        // Parse a packed or node and wrap it in a constructed rule
+        let input = r#"(or "a" "b" "c" "d")"#;
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+
+        let wrapped = wrap_in_rule(nodes.into_iter().next().unwrap());
+        let result = wrapped.pretty_serialize(80);
+        // The or node should preserve its packed layout
+        assert!(
+            result.contains(r#"(or "a" "b" "c" "d")"#),
+            "packed or should be preserved, got:\n{result}"
+        );
+    }
+
+    #[test]
+    fn test_preserved_multiline_packed_layout() {
+        let input = "(or \"a\" \"b\"\n    \"c\" \"d\")";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+
+        let wrapped = wrap_in_rule(nodes.into_iter().next().unwrap());
+        let result = wrapped.pretty_serialize(80);
+        // The or node should preserve its multi-line packed layout
+        assert!(
+            result.contains("\"a\" \"b\"\n    \"c\" \"d\""),
+            "multi-line packed layout should be preserved, got:\n{result}"
+        );
+    }
+
+    #[test]
+    fn test_preserved_cascaded_layout() {
+        let input = "(or (foo)\n    (bar))";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+
+        let wrapped = wrap_in_rule(nodes.into_iter().next().unwrap());
+        let result = wrapped.pretty_serialize(80);
+        // The or node should preserve its cascaded layout
+        assert!(
+            result.contains("(foo)\n    (bar)"),
+            "cascaded layout should be preserved, got:\n{result}"
+        );
+    }
+
+    #[test]
+    fn test_constructed_nodes_use_reflow() {
+        // Freshly constructed nodes (default trivia) should still use reflow
+        let long_or = CstNode::list(
+            vec![
+                Box::new(CstNode::atom("or", Default::default())),
+                Box::new(CstNode {
+                    ann: Default::default(),
+                    shape: ShapeF::Str("aaa".into()),
+                }),
+                Box::new(CstNode {
+                    ann: Default::default(),
+                    shape: ShapeF::Str("bbb".into()),
+                }),
+                Box::new(CstNode {
+                    ann: Default::default(),
+                    shape: ShapeF::Str("ccc".into()),
+                }),
+                Box::new(CstNode {
+                    ann: Default::default(),
+                    shape: ShapeF::Str("ddd".into()),
+                }),
+            ],
+            Default::default(),
+        );
+        let wrapped = wrap_in_rule(Box::new(long_or));
+        let result = wrapped.pretty_serialize(25);
+        // Should use reflow (cascading breaks), not preserve layout
+        assert!(
+            result.contains('\n'),
+            "constructed node should reflow when exceeding width, got:\n{result}"
+        );
+    }
+
+    // ── has_source_trivia tests ─────────────────────────────────────
+
+    #[test]
+    fn test_has_source_trivia_parsed_node() {
+        let input = "(foo bar)";
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty());
+        assert!(
+            nodes[0].has_source_trivia(),
+            "parsed node should have source trivia"
+        );
+    }
+
+    #[test]
+    fn test_has_source_trivia_default_node() {
+        let node = CstNode::atom("foo", Default::default());
+        assert!(
+            !node.has_source_trivia(),
+            "default-constructed node should NOT have source trivia"
+        );
+    }
+
+    #[test]
+    fn test_has_source_trivia_node_at_offset_zero() {
+        // A node starting at byte 0 but with non-zero end should still be detected
+        let node = CstNode::atom(
+            "foo",
+            TriviaAnn {
+                span: Span::new(0, 3),
+                ..Default::default()
+            },
+        );
+        assert!(
+            node.has_source_trivia(),
+            "node at offset 0 with non-zero end should have source trivia"
+        );
     }
 }
 
