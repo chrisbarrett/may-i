@@ -52,6 +52,95 @@ pub enum Layout {
     Stack(Vec<Layout>),
     /// Pre-formatted text line(s).
     Text(String),
+    /// Advisory note with word-wrapped body text.
+    Note(Note),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoteLevel {
+    Info,
+    Warn,
+    Error,
+}
+
+#[derive(Debug, Clone)]
+pub struct Note {
+    pub level: NoteLevel,
+    pub heading: NoteHeading,
+    pub body: String,
+}
+
+/// Heading content for a note box.
+///
+/// The heading appears in the top border after the level icon. Use `From<String>`
+/// for plain text (colored by level), or construct directly with pre-styled text
+/// and its visible width.
+#[derive(Debug, Clone)]
+pub struct NoteHeading {
+    /// Pre-rendered heading text (may contain ANSI codes).
+    pub text: String,
+    /// Visible width of `text` (excluding ANSI).
+    pub visible_width: usize,
+}
+
+impl From<String> for NoteHeading {
+    fn from(s: String) -> Self {
+        let visible_width = s.len();
+        Self { text: s, visible_width }
+    }
+}
+
+impl From<&str> for NoteHeading {
+    fn from(s: &str) -> Self {
+        Self::from(s.to_string())
+    }
+}
+
+/// High-level advisory box with structured fields.
+///
+/// Interpreted into a `Layout::Note` via `into_layout()`.
+#[derive(Debug, Clone)]
+pub struct Advisory {
+    pub level: NoteLevel,
+    pub heading: String,
+    pub detail: String,
+    pub suggestion: String,
+    pub command: String,
+}
+
+impl Advisory {
+    /// Convert to a `Layout::Note`, coloring the heading by level.
+    pub fn into_layout(self) -> Layout {
+        let colorize: fn(&str) -> colored::ColoredString = match self.level {
+            NoteLevel::Info => |s| s.blue(),
+            NoteLevel::Warn => |s| s.yellow(),
+            NoteLevel::Error => |s| s.red(),
+        };
+        let heading = NoteHeading {
+            visible_width: self.heading.len(),
+            text: colorize(&self.heading).bold().to_string(),
+        };
+        self.into_note_with_heading(heading)
+    }
+
+    /// Convert to a `Layout::Note` with a custom pre-styled heading.
+    pub fn into_note_with_heading(self, heading: NoteHeading) -> Layout {
+        let mut body_parts = Vec::new();
+        if !self.detail.is_empty() {
+            body_parts.push(self.detail);
+        }
+        if !self.suggestion.is_empty() {
+            body_parts.push(self.suggestion);
+        }
+        if !self.command.is_empty() {
+            body_parts.push(format!("$ {}", self.command));
+        }
+        Layout::Note(Note {
+            level: self.level,
+            heading,
+            body: body_parts.join("\n"),
+        })
+    }
 }
 
 impl Layout {
@@ -174,6 +263,9 @@ fn render_layout(w: &mut impl Write, layout: &Layout, indent: usize, term: &Term
         }
         Layout::Text(text) => {
             let _ = writeln!(w, "{:indent$}{text}", "");
+        }
+        Layout::Note(note) => {
+            write_note(w, indent, note, term);
         }
     }
 }
@@ -325,6 +417,109 @@ fn write_col_left(w: &mut impl Write, indent: usize, row: &ColRow, divider_col: 
     let _ = write!(w, "{:indent$}{:lead$}{}{:trail$}", "", "", row.left, "",);
 }
 
+fn write_note(w: &mut impl Write, indent: usize, note: &Note, term: &Terminal) {
+    let icon: &str = match note.level {
+        NoteLevel::Info => "ℹ",
+        NoteLevel::Warn => "⚠",
+        NoteLevel::Error => "✗",
+    };
+
+    let colorize: fn(&str) -> colored::ColoredString = match note.level {
+        NoteLevel::Info => |s| s.blue(),
+        NoteLevel::Warn => |s| s.yellow(),
+        NoteLevel::Error => |s| s.red(),
+    };
+
+    let usable = term.width.saturating_sub(indent);
+
+    // Top border: ╭─ ⚠ Heading text ───────╮
+    let header = format!("{} {}", colorize(icon).bold(), note.heading.text);
+    let header_visible_width = visible_len(icon) + 1 + note.heading.visible_width;
+    let top_prefix = "╭─ ";
+    let top_mid = " ";
+    let top_used = visible_len(top_prefix) + header_visible_width + visible_len(top_mid) + 1; // +1 for ╮
+    let top_fill = usable.saturating_sub(top_used);
+    let _ = writeln!(
+        w, "{:indent$}{}{}{}{}{}", "",
+        top_prefix.dimmed(), header, top_mid.dimmed(),
+        "─".repeat(top_fill).dimmed(), "╮".dimmed(),
+    );
+
+    // "│ " prefix + " │" suffix = 4 chars of box chrome.
+    let inner_width = usable.saturating_sub(4).max(10);
+
+    // Body: split into paragraphs on newlines, word-wrap each, blank line between.
+    if !note.body.is_empty() {
+        let paragraphs: Vec<&str> = note.body.split('\n').collect();
+        for (i, para) in paragraphs.iter().enumerate() {
+            if i > 0 {
+                write_box_line(w, indent, usable, "", 0);
+            }
+            let trimmed = para.trim();
+            if trimmed.starts_with("$ ") {
+                // Command lines render verbatim with dimmed sigil.
+                let cmd_text = format!("{}{}", "$ ".dimmed(), &trimmed[2..]);
+                write_box_line(w, indent, usable, &cmd_text, trimmed.len());
+            } else {
+                for line in word_wrap(trimmed, inner_width) {
+                    write_box_line(w, indent, usable, &line, line.len());
+                }
+            }
+        }
+    }
+
+    // Bottom border: ╰──────╯
+    let bottom_fill = usable.saturating_sub(2);
+    let _ = writeln!(
+        w, "{:indent$}{}{}{}", "",
+        "╰".dimmed(), "─".repeat(bottom_fill).dimmed(), "╯".dimmed(),
+    );
+}
+
+/// Write a single line inside a box: "│ content                 │"
+fn write_box_line(w: &mut impl Write, indent: usize, box_width: usize, text: &str, text_width: usize) {
+    let inner_width = box_width.saturating_sub(4);
+    let padding = inner_width.saturating_sub(text_width);
+    let _ = writeln!(
+        w,
+        "{:indent$}{} {text}{:padding$} {}",
+        "",
+        DIVIDER.dimmed(),
+        "",
+        DIVIDER.dimmed(),
+    );
+}
+
+/// Word-wrap plain text into lines fitting `max_width`.
+fn word_wrap(text: &str, max_width: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let mut cur = String::new();
+    let mut cur_width = 0;
+
+    for word in &words {
+        let w_len = word.len();
+        if !cur.is_empty() && cur_width + 1 + w_len > max_width {
+            lines.push(cur);
+            cur = String::new();
+            cur_width = 0;
+        }
+        if !cur.is_empty() {
+            cur.push(' ');
+            cur_width += 1;
+        }
+        cur.push_str(word);
+        cur_width += w_len;
+    }
+    if !cur.is_empty() {
+        lines.push(cur);
+    }
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
+}
+
 // ── Helpers ───────────────────────────────────────────────────────
 
 pub fn strip_ansi(s: &str) -> String {
@@ -432,6 +627,135 @@ mod tests {
         assert_eq!(row.left, "key");
         assert_eq!(row.left_width, 3);
         assert!(matches!(row.left_align, ColAlign::Left));
+    }
+
+    #[test]
+    fn note_warn_with_body() {
+        let term = Terminal::new(50);
+        let layout = Layout::Note(Note {
+            level: NoteLevel::Warn,
+            heading: "Test heading".into(),
+            body: "This is the body text.".into(),
+        });
+        let s = render_to_string(&layout, 0, &term);
+        insta::assert_snapshot!(strip_ansi(&s));
+    }
+
+    #[test]
+    fn note_info_level() {
+        let term = Terminal::new(50);
+        let layout = Layout::Note(Note {
+            level: NoteLevel::Info,
+            heading: "FYI".into(),
+            body: "Something to know.".into(),
+        });
+        let s = render_to_string(&layout, 0, &term);
+        insta::assert_snapshot!(strip_ansi(&s));
+    }
+
+    #[test]
+    fn note_error_level() {
+        let term = Terminal::new(50);
+        let layout = Layout::Note(Note {
+            level: NoteLevel::Error,
+            heading: "Bad thing".into(),
+            body: "Something went wrong.".into(),
+        });
+        let s = render_to_string(&layout, 0, &term);
+        insta::assert_snapshot!(strip_ansi(&s));
+    }
+
+    #[test]
+    fn note_wraps_body_at_terminal_width() {
+        let term = Terminal::new(30);
+        let layout = Layout::Note(Note {
+            level: NoteLevel::Warn,
+            heading: "Warn".into(),
+            body: "one two three four five six seven eight nine ten".into(),
+        });
+        let s = render_to_string(&layout, 0, &term);
+        insta::assert_snapshot!(strip_ansi(&s));
+    }
+
+    #[test]
+    fn note_with_empty_body() {
+        let term = Terminal::new(50);
+        let layout = Layout::Note(Note {
+            level: NoteLevel::Warn,
+            heading: "Heads up".into(),
+            body: String::new(),
+        });
+        let s = render_to_string(&layout, 0, &term);
+        insta::assert_snapshot!(strip_ansi(&s));
+    }
+
+    #[test]
+    fn note_with_indent() {
+        let term = Terminal::new(50);
+        let layout = Layout::indent(4, Layout::Note(Note {
+            level: NoteLevel::Info,
+            heading: "Hi".into(),
+            body: "Hello world.".into(),
+        }));
+        let s = render_to_string(&layout, 0, &term);
+        insta::assert_snapshot!(strip_ansi(&s));
+    }
+
+    #[test]
+    fn note_box_lines_are_same_visible_width() {
+        let term = Terminal::new(50);
+        let layout = Layout::Note(Note {
+            level: NoteLevel::Warn,
+            heading: "Short".into(),
+            body: "Some body text here.".into(),
+        });
+        let s = render_to_string(&layout, 0, &term);
+        let stripped = strip_ansi(&s);
+        let widths: Vec<usize> = stripped.lines().map(|l| l.chars().count()).collect();
+        let first = widths[0];
+        for (i, &w) in widths.iter().enumerate() {
+            assert_eq!(w, first, "line {} width {} != expected {}: {:?}", i, w, first, stripped);
+        }
+    }
+
+    #[test]
+    fn note_with_paragraphs() {
+        let term = Terminal::new(50);
+        let layout = Layout::Note(Note {
+            level: NoteLevel::Warn,
+            heading: "Migration needed".into(),
+            body: "Config format is outdated.\nRun this command:\n$ may-i migrate".into(),
+        });
+        let s = render_to_string(&layout, 0, &term);
+        insta::assert_snapshot!(strip_ansi(&s));
+    }
+
+    #[test]
+    fn advisory_into_layout() {
+        let term = Terminal::new(60);
+        let layout = Advisory {
+            level: NoteLevel::Warn,
+            heading: "Outdated configuration format".into(),
+            detail: "Tracing output may differ from the real file.".into(),
+            suggestion: "Update your config to the latest syntax:".into(),
+            command: "may-i migrate".into(),
+        }.into_layout();
+        let s = render_to_string(&layout, 0, &term);
+        insta::assert_snapshot!(strip_ansi(&s));
+    }
+
+    #[test]
+    fn advisory_narrow_terminal() {
+        let term = Terminal::new(40);
+        let layout = Advisory {
+            level: NoteLevel::Warn,
+            heading: "Outdated config".into(),
+            detail: "Tracing output may differ from the real file.".into(),
+            suggestion: "Update your config:".into(),
+            command: "may-i migrate".into(),
+        }.into_layout();
+        let s = render_to_string(&layout, 0, &term);
+        insta::assert_snapshot!(strip_ansi(&s));
     }
 
     #[test]

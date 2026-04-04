@@ -575,6 +575,7 @@ name = "may-i-layout"
 version = "0.1.0"
 dependencies = [
  "colored",
+ "insta",
  "may-i-pp",
  "proptest",
  "terminal_size",

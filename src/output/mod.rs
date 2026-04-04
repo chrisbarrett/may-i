@@ -18,7 +18,8 @@ use colored::Colorize;
 use may_i_pp::colorize_atom;
 
 pub use may_i_layout::{
-    ColAlign, ColContent, ColItem, ColRow, HRuleLabel, Layout, Terminal, strip_ansi, write_layout,
+    Advisory, ColAlign, ColContent, ColItem, ColRow, HRuleLabel, Layout, Note, NoteLevel, Terminal,
+    strip_ansi, write_layout,
 };
 
 pub use self::colorize::colorize_decision_keyword;
@@ -27,6 +28,50 @@ pub use self::json::trace_to_json;
 use self::colorize::colorize_right;
 use self::render_rule::render_annotated_rule;
 use crate::annotation::TraceEntry;
+
+// ── Advisory notes ────────────────────────────────────────────────
+
+/// Build a migration advisory note if the config was transparently migrated.
+pub fn migration_note(
+    config: &may_i_core::ast::Config,
+    config_path: &std::path::Path,
+) -> Option<Layout> {
+    use may_i_layout::NoteHeading;
+
+    if config.pre_migration_forms.is_some() {
+        let prog = std::env::args()
+            .next()
+            .map(|s| {
+                std::path::Path::new(&s)
+                    .file_name()
+                    .map(|f| f.to_string_lossy().into_owned())
+                    .unwrap_or(s)
+            })
+            .unwrap_or_else(|| "may-i".into());
+        let display_path = shorten_home(config_path);
+        let prefix = "Migrations available:";
+        let heading = NoteHeading {
+            text: format!(
+                "{} {}",
+                prefix.yellow().bold(),
+                display_path.bold(),
+            ),
+            visible_width: prefix.len() + 1 + display_path.len(),
+        };
+        Some(Advisory {
+            level: NoteLevel::Warn,
+            heading: String::new(), // unused — overridden below
+            detail: "Your config uses an older syntax that has been automatically \
+                     translated. Trace output reflects the translated rules, which \
+                     may not match the file on disk."
+                .into(),
+            suggestion: "Apply pending migrations by running:".into(),
+            command: format!("{prog} migrate"),
+        }.into_note_with_heading(heading))
+    } else {
+        None
+    }
+}
 
 // ── Column geometry (trace-specific) ──────────────────────────────
 

@@ -65,6 +65,9 @@ pub fn cmd_eval(
         );
     } else {
         let term = output::Terminal::detect();
+        if let Some(note) = output::migration_note(&config, &config_file) {
+            output::write_layout(&mut std::io::stderr(), &note, &term);
+        }
         let (result, traces, colored_command) = evaluate_segments(command, &config, &context)?;
         let display_path = output::shorten_home(&config_file);
         write_eval_output(

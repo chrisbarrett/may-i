@@ -62,6 +62,9 @@ pub fn cmd_check(
         );
     } else {
         let term = output::Terminal::detect();
+        if let Some(note) = output::migration_note(&canonical_config, &config_file) {
+            output::write_layout(&mut std::io::stderr(), &note, &term);
+        }
         let mut failures = Vec::new();
 
         for r in &results {

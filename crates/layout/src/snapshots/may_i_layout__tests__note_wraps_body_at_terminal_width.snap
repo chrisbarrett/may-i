@@ -1,0 +1,9 @@
+---
+source: crates/layout/src/lib.rs
+assertion_line: 636
+expression: strip_ansi(&s)
+---
+╭─ ⚠ Warn ───────────────────╮
+│ one two three four five    │
+│ six seven eight nine ten   │
+╰────────────────────────────╯

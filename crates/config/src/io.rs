@@ -22,12 +22,7 @@ pub fn load(path: &Path) -> miette::Result<may_i_core::ast::Config> {
         Err(original_err) => {
             // Slow path: attempt transparent migration from legacy syntax.
             match try_migrate_and_parse(&content) {
-                Some(config) => {
-                    eprintln!(
-                        "Config auto-migrated from legacy format. Run `may-i migrate` to update permanently."
-                    );
-                    Ok(config)
-                }
+                Some(config) => Ok(config),
                 None => {
                     // Migration failed or didn't help; return the original error.
                     Err(crate::ConfigError::from_raw(original_err, &content, &filename).into())

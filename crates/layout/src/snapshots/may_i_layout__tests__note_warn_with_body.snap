@@ -1,0 +1,8 @@
+---
+source: crates/layout/src/lib.rs
+assertion_line: 600
+expression: strip_ansi(&s)
+---
+╭─ ⚠ Test heading ───────────────────────────────╮
+│ This is the body text.                         │
+╰────────────────────────────────────────────────╯
