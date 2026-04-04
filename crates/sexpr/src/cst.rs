@@ -376,6 +376,9 @@ struct PrettyCtx {
     indent_stack: Vec<usize>,
     /// Track if we've broken the current list onto multiple lines
     has_broken: bool,
+    /// Set by cond rendering; the next list opened is a cond clause
+    /// and should force cascading with paren_col + 1 indent.
+    cond_clause: bool,
 }
 
 impl PrettyCtx {
@@ -386,6 +389,7 @@ impl PrettyCtx {
             output: String::new(),
             indent_stack: vec![0],
             has_broken: false,
+            cond_clause: false,
         }
     }
 
@@ -462,10 +466,21 @@ impl CstNode<TriviaAnn> {
 
                 ctx.write_str("(");
 
-                // Compute form-aware child indent
-                let child_indent = compute_child_indent(head_col, head_atom);
+                // Cond clauses: override indent to paren_col + 1 and
+                // force cascade so predicate and effect are on separate lines.
+                let is_cond_clause = ctx.cond_clause;
+                ctx.cond_clause = false;
+
+                let child_indent = if is_cond_clause {
+                    head_col + 1
+                } else {
+                    compute_child_indent(head_col, head_atom)
+                };
                 ctx.push_indent(child_indent);
                 ctx.reset_broken();
+                if is_cond_clause {
+                    ctx.has_broken = true;
+                }
 
                 let mut i = 0;
                 while i < children.len() {
@@ -502,12 +517,18 @@ impl CstNode<TriviaAnn> {
                         }
                     }
 
+                    // Tell the next list opened that it's a cond clause
+                    if is_cond && i > 0 {
+                        ctx.cond_clause = true;
+                    }
+
                     child.pretty_write_no_whitespace(ctx);
 
                     // Restore cascade: inner list rendering may reset
                     // has_broken, but if we broke before this child the
-                    // cascade must continue.
-                    if did_break {
+                    // cascade must continue. Also restore for cond clauses
+                    // where we force cascading.
+                    if did_break || is_cond_clause {
                         ctx.has_broken = true;
                     }
 
@@ -633,9 +654,19 @@ impl CstNode<TriviaAnn> {
 
                 ctx.write_str("(");
 
-                let child_indent = compute_child_indent(head_col, head_atom);
+                let is_cond_clause = ctx.cond_clause;
+                ctx.cond_clause = false;
+
+                let child_indent = if is_cond_clause {
+                    head_col + 1
+                } else {
+                    compute_child_indent(head_col, head_atom)
+                };
                 ctx.push_indent(child_indent);
                 ctx.reset_broken();
+                if is_cond_clause {
+                    ctx.has_broken = true;
+                }
 
                 let mut i = 0;
                 while i < children.len() {
@@ -644,8 +675,9 @@ impl CstNode<TriviaAnn> {
 
                     if i > 0 {
                         // Preserve source children's trivia as spacing, unless
-                        // the parent forces breaks (e.g. cond clauses).
-                        if !is_cond && child.has_source_trivia() {
+                        // the parent forces breaks (e.g. cond clauses) or this
+                        // is a cond clause with computed layout.
+                        if !is_cond && !is_cond_clause && child.has_source_trivia() {
                             child.pretty_write(ctx);
                         } else {
                             let force_break = is_cond;
@@ -663,12 +695,22 @@ impl CstNode<TriviaAnn> {
                                 ctx.write_str(" ");
                             }
 
+                            // Tell the next list opened that it's a cond clause
+                            if is_cond {
+                                ctx.cond_clause = true;
+                            }
+
                             child.pretty_write_no_whitespace(ctx);
                         }
                     } else {
                         // First child (i==0): always strip whitespace since it
                         // follows the opening paren directly.
                         child.pretty_write_no_whitespace(ctx);
+                    }
+
+                    // Cond clause: ensure cascade persists after child rendering
+                    if is_cond_clause {
+                        ctx.has_broken = true;
                     }
 
                     if is_keyword && i + 1 < children.len() {
@@ -1726,15 +1768,26 @@ mod tests {
     // ── Cond clause rendering ────────────────────────────────────
 
     #[test]
-    fn test_no_extra_space_in_new_list_with_source_child() {
-        // When a source child (with leading whitespace trivia) is placed as
-        // the first child of a newly-constructed cond branch, and that branch
-        // is rendered via pretty_write_no_whitespace (nested inside another
-        // new node), the original leading whitespace must not leak.
-        let input = "(if (anywhere \"-f\") (effect :ask))";
+    fn test_cond_clause_always_breaks_after_predicate() {
+        // Cond clauses should always break after the predicate, with the
+        // effect aligned at paren_col + 1 (same level as the predicate).
+        let input = "(cond\n  ((pred) (effect :allow))\n  (else (effect :ask)))";
+        let result = pretty(input, 80);
+        assert_eq!(
+            result,
+            "(cond\n  ((pred)\n   (effect :allow))\n  (else\n   (effect :ask)))",
+            "cond clauses should break after predicate, got:\n{result}"
+        );
+    }
+
+    #[test]
+    fn test_cond_clause_uses_computed_indent_not_source_trivia() {
+        // When source children are placed in a newly-constructed cond clause,
+        // the effect should use computed indentation (not original source trivia).
+        let input = "(if (anywhere \"--force\" \"-f\") (effect :ask \"desc\"))";
         let (nodes, _) = parse(input);
         let if_children = nodes[0].as_list().unwrap();
-        let pred = &if_children[1]; // has source trivia with leading " "
+        let pred = &if_children[1];
         let then_eff = &if_children[2];
 
         // Build (cond (PRED THEN)) — simulates what args_cond_to_case produces
@@ -1751,8 +1804,9 @@ mod tests {
         );
         let result = cond_node.pretty_serialize(80);
         assert_eq!(
-            result, "(cond\n  ((anywhere \"-f\") (effect :ask)))",
-            "no extra space after opening paren of cond clause, got:\n{result}"
+            result,
+            "(cond\n  ((anywhere \"--force\" \"-f\")\n   (effect :ask \"desc\")))",
+            "cond clause children should use computed indent, got:\n{result}"
         );
     }
 }
