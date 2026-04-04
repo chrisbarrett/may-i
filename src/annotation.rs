@@ -140,78 +140,35 @@ fn dim(mut doc: ADoc) -> ADoc {
 fn build_rule_doc_children(
     rule: &Rule,
     command_out: (EffectResult, ADoc),
-    effects: Vec<(EffectResult, ADoc)>,
+    effect_out: (EffectResult, ADoc),
 ) -> Vec<ADoc> {
     use may_i_core::ast::Effect;
     let command_doc = ann_list(vec![plain_atom("command"), command_out.1], None);
     let mut docs = vec![plain_atom("rule"), command_doc];
 
-    // Separate effects into arg predicates and terminal/other effects.
-    // Context predicates (When/Unless wrapping a terminal) are extracted separately.
-    let mut args_children = vec![plain_atom("args")];
-    let mut terminal_doc: Option<ADoc> = None;
+    // Decompose the single body effect for display.
     let mut context_docs: Vec<ADoc> = Vec::new();
+    let mut terminal_doc: Option<ADoc> = None;
+    let mut args_children = vec![plain_atom("args")];
 
-    for (i, effect_out) in effects.iter().enumerate() {
-        let effect = rule.effects.get(i).map(|e| &e.value);
-        match effect {
-            Some(Effect::When {
-                predicate,
-                effect: body,
-            }) if body.value.is_terminal() => {
-                // Context predicate wrapping terminal effect — extract both.
-                // The fold produced a single doc for the when(...) form.
-                // We need to split it into (context ...) and (effect ...) siblings.
-                // For now, extract from the evaluated doc.
-                extract_context_and_effect(&effect_out.1, &mut context_docs, &mut terminal_doc);
-            }
-            Some(Effect::Unless {
-                predicate,
-                effect: body,
-            }) if body.value.is_terminal() => {
-                extract_context_and_effect(&effect_out.1, &mut context_docs, &mut terminal_doc);
-            }
-            Some(eff) if eff.is_terminal() => {
-                terminal_doc = Some(effect_out.1.clone());
-            }
-            _ => {
-                args_children.push(effect_out.1.clone());
-            }
+    match &rule.effect.value {
+        Effect::When {
+            predicate: _,
+            effect: body,
+        } if body.value.is_terminal() => {
+            extract_context_and_effect(&effect_out.1, &mut context_docs, &mut terminal_doc);
         }
-    }
-
-    // If we didn't see all effects (rule_not_matched case), add remaining
-    // effects from the rule definition as dimmed (no annotations).
-    if terminal_doc.is_none() {
-        // Find the first un-evaluated effect.
-        let start_idx = effects.len();
-        for effect_def in rule.effects.iter().skip(start_idx) {
-            match &effect_def.value {
-                Effect::When {
-                    predicate,
-                    effect: body,
-                } if body.value.is_terminal() => {
-                    // Extract context predicate and terminal effect.
-                    let ctx_doc = dim(unannotated_to_ann(predicate.value.to_doc()));
-                    context_docs.push(ann_list_break(vec![plain_atom("context"), ctx_doc], None));
-                    terminal_doc = Some(dim(unannotated_to_ann(body.value.to_doc())));
-                }
-                Effect::Unless {
-                    predicate,
-                    effect: body,
-                } if body.value.is_terminal() => {
-                    let ctx_doc = dim(unannotated_to_ann(predicate.value.to_doc()));
-                    context_docs.push(ann_list_break(vec![plain_atom("context"), ctx_doc], None));
-                    terminal_doc = Some(dim(unannotated_to_ann(body.value.to_doc())));
-                }
-                eff if eff.is_terminal() => {
-                    terminal_doc = Some(dim(unannotated_to_ann(eff.to_doc())));
-                }
-                _ => {
-                    // Non-terminal, non-evaluated effect — add dimmed to args
-                    args_children.push(dim(unannotated_to_ann(effect_def.value.to_doc())));
-                }
-            }
+        Effect::Unless {
+            predicate: _,
+            effect: body,
+        } if body.value.is_terminal() => {
+            extract_context_and_effect(&effect_out.1, &mut context_docs, &mut terminal_doc);
+        }
+        eff if eff.is_terminal() => {
+            terminal_doc = Some(effect_out.1.clone());
+        }
+        _ => {
+            args_children.push(effect_out.1.clone());
         }
     }
 
@@ -1022,7 +979,7 @@ impl EvalFold for TracingFold {
         _line: Option<usize>,
         facts: &ContextFacts,
         command_out: Self::EffectOut,
-        effects: Vec<Self::EffectOut>,
+        effect_out: Self::EffectOut,
     ) -> Self::EffectOut {
         let line = self.line_of(rule.span.start);
         let pre_migration_doc = self.find_pre_migration_doc(rule.span);
@@ -1030,12 +987,9 @@ impl EvalFold for TracingFold {
             matched: true,
             line,
         });
-        let terminal_result = effects
-            .last()
-            .map(|e| e.0.clone())
-            .unwrap_or(EffectResult::Nil);
+        let terminal_result = effect_out.0.clone();
 
-        let docs = build_rule_doc_children(rule, command_out, effects);
+        let docs = build_rule_doc_children(rule, command_out, effect_out);
         let doc = ann_list_break(docs, ann);
         self.traces.push(TraceEntry::Rule {
             doc: doc.clone(),
@@ -1057,9 +1011,9 @@ impl EvalFold for TracingFold {
         rule: &Rule,
         facts: &ContextFacts,
         command_out: Self::EffectOut,
-        effects: Vec<Self::EffectOut>,
+        effect_out: Self::EffectOut,
     ) -> Self::EffectOut {
-        // Command matched but args/context didn't — still show in trace.
+        // Command matched but body effect returned Nil — still show in trace.
         let line = self.line_of(rule.span.start);
         let pre_migration_doc = self.find_pre_migration_doc(rule.span);
         let ann = Some(Ann::RuleMatch {
@@ -1067,7 +1021,7 @@ impl EvalFold for TracingFold {
             line,
         });
 
-        let docs = build_rule_doc_children(rule, command_out, effects);
+        let docs = build_rule_doc_children(rule, command_out, effect_out);
         let doc = ann_list_break(docs, ann);
         self.traces.push(TraceEntry::Rule {
             doc: doc.clone(),
@@ -1142,10 +1096,10 @@ mod tests {
         }
     }
 
-    fn make_rule(command: CommandPattern, effects: Vec<Effect>) -> Rule {
+    fn make_rule(command: CommandPattern, effect: Effect) -> Rule {
         Rule::new(
             spanned(Effect::CommandPattern(command)),
-            effects.into_iter().map(|e| spanned(e)).collect(),
+            spanned(effect),
             vec![],
             dummy_span(),
         )
@@ -1198,7 +1152,7 @@ mod tests {
     fn tracing_fold_default_ask() {
         let config = make_config(vec![make_rule(
             CommandPattern::Literal("other".into()),
-            vec![Effect::Allow(None)],
+            Effect::Allow(None),
         )]);
         let entries = eval_tracing(&config, "git", &[]);
         assert!(
@@ -1216,7 +1170,7 @@ mod tests {
                 CommandPattern::Literal("git".into()),
                 CommandPattern::Literal("svn".into()),
             ]),
-            vec![Effect::Allow(None)],
+            Effect::Allow(None),
         )]);
         let entries = eval_tracing(&config, "git", &[]);
         assert!(entries.iter().any(|e| matches!(e, TraceEntry::Rule { .. })));
@@ -1239,7 +1193,7 @@ mod tests {
     fn tracing_fold_cond_effect() {
         let config = make_config(vec![make_rule(
             CommandPattern::Literal("git".into()),
-            vec![Effect::Cond {
+            Effect::Cond {
                 branches: vec![(
                     spanned(Predicate::Fact(presence_query(":env"))),
                     spanned(Effect::Allow(None)),
@@ -1247,7 +1201,7 @@ mod tests {
                 fallback: Some(Box::new(spanned(Effect::Deny(Some(String::from(
                     "no env",
                 )))))),
-            }],
+            },
         )]);
         let entries = eval_tracing(&config, "git", &[]);
         assert!(entries.iter().any(|e| matches!(e, TraceEntry::Rule { .. })));
@@ -1257,10 +1211,10 @@ mod tests {
     fn tracing_fold_when_terminal_context() {
         let config = make_config(vec![make_rule(
             CommandPattern::Literal("git".into()),
-            vec![Effect::When {
+            Effect::When {
                 predicate: spanned(Predicate::Fact(presence_query(":safe"))),
                 effect: Box::new(spanned(Effect::Allow(None))),
-            }],
+            },
         )]);
         let entries = eval_tracing(&config, "git", &[]);
         assert!(entries.iter().any(|e| matches!(e, TraceEntry::Rule { .. })));
@@ -1270,17 +1224,19 @@ mod tests {
     fn tracing_fold_arg_continuation() {
         let config = make_config(vec![make_rule(
             CommandPattern::Literal("git".into()),
-            vec![
-                Effect::ArgPattern(ArgPattern::Positional {
-                    patterns: vec![PositionalArg {
-                        quantifier: Quantifier::One,
-                        pattern: may_i_core::pattern::Expr::Literal("push".into()),
-                        recursive: false,
-                    }],
-                    continuation: None,
-                }),
-                Effect::Allow(None),
-            ],
+            Effect::And {
+                effects: vec![
+                    spanned(Effect::ArgPattern(ArgPattern::Positional {
+                        patterns: vec![PositionalArg {
+                            quantifier: Quantifier::One,
+                            pattern: may_i_core::pattern::Expr::Literal("push".into()),
+                            recursive: false,
+                        }],
+                        continuation: None,
+                    })),
+                    spanned(Effect::Allow(None)),
+                ],
+            },
         )]);
         let entries = eval_tracing(&config, "git", &["push".to_string()]);
         assert!(entries.iter().any(|e| matches!(e, TraceEntry::Rule { .. })));
@@ -1290,10 +1246,10 @@ mod tests {
     fn tracing_fold_effect_nil_on_false_predicate() {
         let config = make_config(vec![make_rule(
             CommandPattern::Literal("git".into()),
-            vec![Effect::When {
+            Effect::When {
                 predicate: spanned(Predicate::Fact(presence_query(":nonexistent"))),
                 effect: Box::new(spanned(Effect::Allow(None))),
-            }],
+            },
         )]);
         let facts = ContextFacts::default();
         let mut fold = TracingFold::new();
@@ -1305,10 +1261,10 @@ mod tests {
     fn tracing_fold_with_facts() {
         let config = make_config(vec![make_rule(
             CommandPattern::Literal("git".into()),
-            vec![Effect::When {
+            Effect::When {
                 predicate: spanned(Predicate::Fact(presence_query(":safe"))),
                 effect: Box::new(spanned(Effect::Allow(None))),
-            }],
+            },
         )]);
         let mut facts = ContextFacts::default();
         facts.insert_present(Keyword::new(":safe").unwrap());

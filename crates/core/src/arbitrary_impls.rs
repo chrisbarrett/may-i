@@ -363,13 +363,9 @@ impl<'a> Arbitrary<'a> for Predicate {
 
 impl<'a> Arbitrary<'a> for Rule {
     fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
-        let effect_count = u.int_in_range(0..=3)?;
-        let effects = (0..effect_count)
-            .map(|_| Spanned::arbitrary(u))
-            .collect::<arbitrary::Result<Vec<_>>>()?;
         Ok(Rule {
             command_effect: Spanned::arbitrary(u)?,
-            effects,
+            effect: Spanned::arbitrary(u)?,
             checks: vec![],
             span: Span::new(0, 0),
         })

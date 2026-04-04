@@ -6,12 +6,10 @@ expression: normalised
 [1mTrace[0m
 
                                           [2mcommand[0m [2m│[0m [1mcurl -d data https://example.com[0m
-  [2m65: [0m[2m([0m[34mrule[0m                                       [2m│[0m
-        [2m([0m[34mcommand[0m [32m"curl"[0m[2m)[0m                          [2m│[0m
-        [2m([0m[34margs[0m [2m([0mnot [2m([0m[34manywhere[0m [32m"-d"[0m[2m)[0m[2m)[0m[2m)[0m              [2m│[0m [2m"-d" ∈ {"-d", "data", "https://example.com"} [0m[2m→[0m [1;32myes[0m
-        [2m([0m[2meffect[0m                                   [2m│[0m
-          [2m:allow[0m                                  [2m│[0m
-          [2m"GET request (no mutating flags)"[0m[2m)[0m[2m)[0m     [2m│[0m
+  [2m65: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"curl"[0m[2m)[0m                      [2m│[0m
+            [2m([0m[34margs[0m [2m([0mand [2m([0mnot [2m([0m[34manywhere[0m             [2m│[0m
+                              [32m"-d"[0m[2m)[0m[2m)[0m              [2m│[0m [2m"-d" ∈ {"-d", "data", "https://example.com"} [0m[2m→[0m [1;32myes[0m
+                       [2m…[0m[2m)[0m[2m)[0m[2m)[0m                       [2m│[0m
                                                   [2m│[0m
   [2m69: [0m[2m([0m[34mrule[0m                                       [2m│[0m
         [2m([0m[34mcommand[0m [32m"curl"[0m[2m)[0m                          [2m│[0m

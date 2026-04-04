@@ -7,15 +7,13 @@ Trace
 
                                           command │ rm foo
                                             facts │ :opencode/agent "build"
-  24: (rule                                       │
-        (command "rm")                            │
-        (args (and (anywhere                      │
-                     "-r"                         │ "-r" ∈ {"foo"} → no
-                     "--recursive")               │ "--recursive" ∈ {"foo"} → no
-                   …))                            │
-        (effect                                   │
-          :deny                                   │
-          "Recursive deletion from root"))        │
+  24: (rule (command "rm")                        │
+            (args (and (and                       │
+                         (anywhere                │
+                           "-r"                   │ "-r" ∈ {"foo"} → no
+                           "--recursive")         │ "--recursive" ∈ {"foo"} → no
+                         …)                       │
+                       …)))                       │
                                                   │
   29: (rule                                       │
         (command "rm")                            │

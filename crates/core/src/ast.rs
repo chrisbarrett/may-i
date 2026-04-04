@@ -361,19 +361,18 @@ impl Define {
 }
 
 /// An authorization rule.
-/// Syntax: `(rule COMMAND-EFFECT EFFECT... [CHECK...])`
+/// Syntax: `(rule COMMAND EFFECT [CHECK...])`
 ///
-/// Effects are evaluated in order. Pattern effects (positional, exact, etc.)
-/// return Allow on match or Nil otherwise. Terminal effects (effect :allow/:ask/:deny)
-/// return a decision. The last effect (or combined via boolean operators) serves
-/// as the final decision.
+/// A rule takes exactly two positional forms: a command pattern and a single
+/// body effect. The body effect can be a terminal, a combinator, or a
+/// conditional. Optional `(check ...)` forms may follow.
 #[derive(Debug, Clone)]
 pub struct Rule {
     /// The command effect (position 1) - must return non-Nil for rule to apply.
     pub command_effect: Spanned<Effect>,
 
-    /// Effects evaluated in sequence until a terminal decision is reached.
-    pub effects: Vec<Spanned<Effect>>,
+    /// The single body effect for this rule.
+    pub effect: Spanned<Effect>,
 
     /// Validation checks associated with this rule.
     pub checks: Vec<Check>,
@@ -386,13 +385,13 @@ impl Rule {
     /// Create a new rule.
     pub fn new(
         command_effect: Spanned<Effect>,
-        effects: Vec<Spanned<Effect>>,
+        effect: Spanned<Effect>,
         checks: Vec<Check>,
         span: Span,
     ) -> Self {
         Self {
             command_effect,
-            effects,
+            effect,
             checks,
             span,
         }
@@ -749,7 +748,8 @@ mod tests {
             Effect::command_pattern(CommandPattern::Literal("git".into())),
             span,
         );
-        let rule = Rule::new(cmd_effect, vec![], vec![], span);
+        let effect = Spanned::new(Effect::ask(None), span);
+        let rule = Rule::new(cmd_effect, effect, vec![], span);
 
         assert!(
             matches!(rule.command_effect.value, Effect::CommandPattern(CommandPattern::Literal(s)) if s == "git")

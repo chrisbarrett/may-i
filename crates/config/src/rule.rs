@@ -1,25 +1,22 @@
 // Rule and define parser for the unified DSL.
-// Syntax: (rule COMMAND-EFFECT EFFECT... [CHECK...])
+// Syntax: (rule COMMAND EFFECT [CHECK...])
 
 use may_i_core::ast::{Define, Rule, Spanned};
 use may_i_sexpr::{RawError, Sexpr};
 
 /// Parse a rule from an s-expression.
 ///
-/// New unified syntax: `(rule COMMAND-EFFECT EFFECT... [CHECK...])`
+/// Syntax: `(rule COMMAND EFFECT [CHECK...])`
 ///
-/// Effects are evaluated in order. Pattern effects return Allow on match or Nil.
-/// Terminal effects return a decision. The evaluator applies (or ... (effect :ask))
-/// at the top level, so rules default to :ask if no terminal effect is reached.
-///
-/// Checks can be included inline: `(check :allow "cmd")` or `(check (with-facts ...) ...)`
+/// A rule takes exactly two positional forms: a command pattern and a single
+/// body effect. Optional `(check ...)` forms may follow. Rules with zero or
+/// more than one non-check body form produce a parse error.
 ///
 /// Examples:
 /// - `(rule "git" (effect :allow))` - allow all git commands
-/// - `(rule "git" (positional "push") (effect :ask))` - ask for git push
+/// - `(rule "git" (and (positional "push") (effect :ask)))` - ask for git push
 /// - `(rule "git" (effect :deny) (check :deny "rm -rf /"))`
 /// - `(rule (or "git" "gh") (effect :allow))` - allow git or gh
-/// - `(rule "ssh" (positional [:host *] . (may-i *)) (effect :deny))`
 pub fn parse_rule(sexpr: &Sexpr) -> Result<Spanned<Rule>, RawError> {
     let list = sexpr
         .as_list()
@@ -27,16 +24,15 @@ pub fn parse_rule(sexpr: &Sexpr) -> Result<Spanned<Rule>, RawError> {
 
     if list.len() < 2 {
         return Err(RawError::new(
-            "rule must have at least a command effect: (rule COMMAND)",
+            "rule must have at least a command and an effect: (rule COMMAND EFFECT)",
             sexpr.span(),
         ));
     }
 
     // Parse command effect (position 1 in the list, after "rule")
-    // This can be a command literal, command pattern, or effect
     let command_effect = crate::effect::parse_effect(&list[1])?;
 
-    // Parse all remaining items - effects and checks
+    // Parse all remaining items - exactly one effect plus optional checks
     let mut effects = Vec::new();
     let mut checks = Vec::new();
 
@@ -56,7 +52,25 @@ pub fn parse_rule(sexpr: &Sexpr) -> Result<Spanned<Rule>, RawError> {
         effects.push(effect);
     }
 
-    let rule = Rule::new(command_effect, effects, checks, sexpr.span());
+    if effects.is_empty() {
+        return Err(RawError::new(
+            "rule requires an effect: (rule COMMAND EFFECT)",
+            sexpr.span(),
+        ));
+    }
+
+    if effects.len() > 1 {
+        return Err(
+            RawError::new(
+                "rule accepts exactly one effect, but multiple were given",
+                sexpr.span(),
+            )
+            .with_help("wrap multiple effects with a combinator: (and ...) or (or ...)"),
+        );
+    }
+
+    let effect = effects.into_iter().next().unwrap();
+    let rule = Rule::new(command_effect, effect, checks, sexpr.span());
 
     Ok(Spanned::new(rule, sexpr.span()))
 }
@@ -173,33 +187,17 @@ mod tests {
         assert!(
             matches!(rule.command_effect.value, Effect::CommandPattern(CommandPattern::Literal(ref s)) if s == "git")
         );
-        assert_eq!(rule.effects.len(), 1);
-        assert!(matches!(rule.effects[0].value, Effect::Allow(_)));
+        assert!(matches!(rule.effect.value, Effect::Allow(_)));
     }
 
     #[test]
-    fn parse_rule_with_effects() {
-        let rule = parse_rule_str(r#"(rule "git" (positional "push") (effect :ask))"#).unwrap();
+    fn parse_rule_with_and_combinator() {
+        let rule =
+            parse_rule_str(r#"(rule "git" (and (positional "push") (effect :ask)))"#).unwrap();
         assert!(
             matches!(rule.command_effect.value, Effect::CommandPattern(CommandPattern::Literal(ref s)) if s == "git")
         );
-        assert_eq!(rule.effects.len(), 2);
-        assert!(matches!(rule.effects[0].value, Effect::ArgPattern(_)));
-        assert!(matches!(rule.effects[1].value, Effect::Ask(_)));
-    }
-
-    #[test]
-    fn parse_rule_with_multiple_effects() {
-        let rule = parse_rule_str(
-            r#"
-            (rule "git"
-                (positional "push")
-                (when (fact? :via/ssh) (effect :allow))
-                (effect :deny))
-        "#,
-        )
-        .unwrap();
-        assert_eq!(rule.effects.len(), 3);
+        assert!(matches!(rule.effect.value, Effect::And { .. }));
     }
 
     #[test]
@@ -231,20 +229,9 @@ mod tests {
     }
 
     #[test]
-    fn rule_with_just_command_is_valid() {
-        // A rule with just a command is valid - it defaults to :ask
-        let rule = parse_rule_str(r#"(rule "git")"#).unwrap();
-        assert!(
-            matches!(rule.command_effect.value, Effect::CommandPattern(CommandPattern::Literal(ref s)) if s == "git")
-        );
-        assert!(rule.effects.is_empty());
-    }
-
-    #[test]
-    fn rule_with_effects_no_default() {
-        let rule = parse_rule_str(r#"(rule "git" (positional "push"))"#).unwrap();
-        // Effects are now in the effects vector, no separate default_effect
-        assert_eq!(rule.effects.len(), 1);
+    fn rule_with_no_effect_is_error() {
+        let err = parse_rule_str(r#"(rule "git")"#).expect_err("expected error");
+        assert!(format!("{err}").contains("requires an effect"));
     }
 
     #[test]
@@ -256,8 +243,7 @@ mod tests {
         "#,
         )
         .unwrap();
-        assert_eq!(rule.effects.len(), 1);
-        assert!(matches!(rule.effects[0].value, Effect::When { .. }));
+        assert!(matches!(rule.effect.value, Effect::When { .. }));
     }
 
     #[test]
@@ -272,8 +258,7 @@ mod tests {
         "#,
         )
         .unwrap();
-        assert_eq!(rule.effects.len(), 1);
-        assert!(matches!(rule.effects[0].value, Effect::Cond { .. }));
+        assert!(matches!(rule.effect.value, Effect::Cond { .. }));
     }
 
     #[test]
@@ -296,12 +281,12 @@ mod tests {
     }
 
     #[test]
-    fn multiple_effects_are_allowed() {
-        // Multiple effects are now allowed in the effects vector
-        let rule = parse_rule_str(r#"(rule "git" (effect :allow) (effect :deny))"#).unwrap();
-        assert_eq!(rule.effects.len(), 2);
-        assert!(matches!(rule.effects[0].value, Effect::Allow(_)));
-        assert!(matches!(rule.effects[1].value, Effect::Deny(_)));
+    fn multiple_effects_are_error() {
+        let err = parse_rule_str(r#"(rule "git" (effect :allow) (effect :deny))"#)
+            .expect_err("expected error");
+        let msg = format!("{err}");
+        assert!(msg.contains("exactly one effect"));
+        assert!(err.help.as_deref().unwrap_or("").contains("combinator"));
     }
 
     #[test]
@@ -314,5 +299,15 @@ mod tests {
     fn parse_define_wrong_arity_error() {
         let err = parse_define_str(r#"(define foo)"#).expect_err("expected error");
         assert!(format!("{err}").contains("must have exactly a name and a predicate"));
+    }
+
+    #[test]
+    fn parse_rule_with_check_alongside_effect() {
+        let rule = parse_rule_str(
+            r#"(rule "git" (effect :allow) (check :allow "git status"))"#,
+        )
+        .unwrap();
+        assert!(matches!(rule.effect.value, Effect::Allow(_)));
+        assert_eq!(rule.checks.len(), 1);
     }
 }

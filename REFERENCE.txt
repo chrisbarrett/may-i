@@ -1,17 +1,19 @@
 RULE SYNTAX
 
-(rule COMMAND EFFECT...)
+(rule COMMAND EFFECT)
 
 COMMAND:  String, (or STRING...), or (regex "PATTERN")
 EFFECT:   Arg pattern, combinator, conditional, or terminal
+
+Each rule takes exactly one body effect. Use combinators for complex logic.
 
 Examples:
   (rule "ls" (effect :allow))
 
   (rule "rm"
-    (when (anywhere "-r" "--recursive")
-      (effect :ask "Recursive deletion"))
-    (effect :allow))
+    (or (when (anywhere "-r" "--recursive")
+          (effect :ask "Recursive deletion"))
+        (effect :allow)))
 
 EFFECTS
 
@@ -83,8 +85,8 @@ Define reusable predicates:
 
 Use in rules:
   (rule "kubectl"
-    (when prod (effect :deny "No prod access"))
-    (effect :allow))
+    (or (when prod (effect :deny "No prod access"))
+        (effect :allow)))
 
 CHECKS
 

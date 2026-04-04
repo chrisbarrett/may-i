@@ -15,13 +15,12 @@ use may_i_sexpr::{RawError, Sexpr};
 /// - Recursion: `(may-i PATTERN)`
 pub fn parse_effect(sexpr: &Sexpr) -> Result<Spanned<Effect>, RawError> {
     // Handle bare atoms: command literals
-    if let Some(atom) = sexpr.as_atom() {
-        if !is_reserved_keyword(atom) {
+    if let Some(atom) = sexpr.as_atom()
+        && !is_reserved_keyword(atom) {
             // This is a command literal - treat as CommandPattern effect
             let pattern = crate::command::parse_command_pattern_from_atom(atom)?;
             return Ok(Spanned::new(Effect::CommandPattern(pattern), sexpr.span()));
         }
-    }
 
     let list = sexpr.as_list().ok_or_else(|| {
         RawError::new(

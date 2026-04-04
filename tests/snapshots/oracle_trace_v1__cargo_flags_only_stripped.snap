@@ -9,8 +9,7 @@ Trace
   95: (rule (command "cargo")            │
             (args (or (when (exact)      │
                         (effect :allow)) │ → :allow
-                      …))                │
-            (effect :ask))               │
+                      …)))               │
 
 Result
 

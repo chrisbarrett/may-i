@@ -41,9 +41,8 @@ pub fn migration_rules() -> Vec<RewriteFn> {
         // Rule: (has ...) → (fact? ...)
         // Rename has to fact? for the new unified syntax
         Box::new(rename_has_to_fact),
-        // Rule: Add (effect :ask) when rule has no default effect
-        // This handles v1 rules that relied on if/cond covering all cases
-        Box::new(rule_add_default_effect),
+        // Rule: Collapse multiple body effects into (and ...) — MUST run last
+        Box::new(rule_collapse_effects),
     ]
 }
 
@@ -213,37 +212,13 @@ fn rule_inline_args(node: &CstNode) -> Option<Box<CstNode>> {
     }))
 }
 
-/// Check if a node contains a continuation effect (dot notation with may-i).
-/// This recursively searches for patterns like (positional ... . (may-i ...))
-fn has_continuation_effect(node: &CstNode) -> bool {
-    // Check if this is a list with a dot followed by may-i
-    if let Some(list) = node.as_list() {
-        for (i, child) in list.iter().enumerate() {
-            if let Some(atom) = child.as_atom()
-                && atom == "."
-                && i + 1 < list.len()
-            {
-                // Check if the next element is (may-i ...)
-                let next = &list[i + 1];
-                if let Some(next_list) = next.as_list()
-                    && !next_list.is_empty()
-                    && next_list[0].as_atom() == Some("may-i")
-                {
-                    return true;
-                }
-            }
-            // Recursively check children
-            if has_continuation_effect(child) {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-/// Add default (effect :ask) to rules that don't have one.
-/// This handles v1 rules that relied on if/cond covering all cases.
-fn rule_add_default_effect(node: &CstNode) -> Option<Box<CstNode>> {
+/// Collapse multiple body forms in a rule into a single `(and ...)` effect.
+///
+/// After other migration rules run, a rule may have multiple non-check body
+/// forms (e.g., `(rule "git" (positional "push") (effect :ask))`). The v2
+/// parser requires exactly one body effect, so we wrap them:
+/// `(rule "git" (and (positional "push") (effect :ask)))`.
+fn rule_collapse_effects(node: &CstNode) -> Option<Box<CstNode>> {
     if !node.is_tagged("rule") {
         return None;
     }
@@ -253,54 +228,44 @@ fn rule_add_default_effect(node: &CstNode) -> Option<Box<CstNode>> {
         return None;
     }
 
-    // Check if the rule already has an (effect ...) tagged list
-    for child in &children[1..] {
-        if child.is_tagged("effect") {
-            return None;
+    // Separate the tag, command, check forms, and body effects.
+    // children[0] = "rule" tag, children[1] = command
+    let mut body_effects: Vec<Box<CstNode>> = Vec::new();
+    let mut check_forms: Vec<Box<CstNode>> = Vec::new();
+
+    for child in &children[2..] {
+        if child.is_tagged("check") {
+            check_forms.push(child.clone());
+        } else {
+            body_effects.push(child.clone());
         }
     }
 
-    // Check if the rule has a continuation effect (e.g., from wrapper migration)
-    // Rules with continuations like (positional ... . (may-i ...)) don't need a default effect
-    for child in &children[1..] {
-        if has_continuation_effect(child) {
-            return None;
-        }
+    // If 0 or 1 body effects, no collapse needed
+    if body_effects.len() <= 1 {
+        return None;
     }
 
-    // Check if the rule has a conditional effect form (when, unless, cond, if)
-    // These forms already contain effects, so we shouldn't add a default
-    for child in &children[1..] {
-        if let Some(list) = child.as_list()
-            && !list.is_empty()
-            && let Some(tag) = list[0].as_atom()
-            && (tag == "when" || tag == "unless" || tag == "cond" || tag == "if")
-        {
-            return None;
-        }
+    // Wrap body effects in (and ...)
+    let mut and_children: Vec<Box<CstNode>> = Vec::new();
+    and_children.push(Box::new(CstNode::atom("and", Default::default())));
+    for effect in body_effects {
+        and_children.push(effect);
     }
-
-    // Add (effect :ask) at the end
-    let mut new_children: Vec<Box<CstNode>> = children.to_vec();
-
-    // Build (effect :ask) list node
-    let effect_node = CstNode::list(
-        vec![
-            Box::new(CstNode::atom("effect", Default::default())),
-            Box::new(CstNode::atom(
-                ":ask",
-                TriviaAnn {
-                    leading: vec![may_i_sexpr::cst::Trivia::Whitespace(" ".to_string())],
-                    ..Default::default()
-                },
-            )),
-        ],
+    let and_node = CstNode::list(
+        and_children,
         TriviaAnn {
             leading: vec![may_i_sexpr::cst::Trivia::Whitespace(" ".to_string())],
             ..Default::default()
         },
     );
-    new_children.push(Box::new(effect_node));
+
+    // Reconstruct: tag, command, (and ...), checks...
+    let mut new_children = Vec::new();
+    new_children.push(children[0].clone()); // "rule" tag
+    new_children.push(children[1].clone()); // command
+    new_children.push(Box::new(and_node));
+    new_children.extend(check_forms);
 
     Some(Box::new(CstNode {
         ann: node.ann.clone(),
@@ -1460,51 +1425,26 @@ mod tests {
     }
 
     #[test]
-    fn test_has_continuation_effect_with_nested_structure() {
-        // Test has_continuation_effect with deeply nested continuation
-        let input = r#"(rule test (positional . (may-i *)))"#;
+    fn test_rule_collapse_effects_wraps_multiple() {
+        let input = r#"(rule "git" (positional "push") (effect :ask))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let node = nodes.into_iter().next().unwrap();
-        assert!(has_continuation_effect(&node));
-    }
-
-    #[test]
-    fn test_has_continuation_effect_without_continuation() {
-        // Test has_continuation_effect returns false for rule without continuation
-        let input = r#"(rule test (effect :allow))"#;
-        let (nodes, _) = may_i_sexpr::parse_cst(input);
-        let node = nodes.into_iter().next().unwrap();
-        assert!(!has_continuation_effect(&node));
-    }
-
-    #[test]
-    fn test_rule_add_default_effect_skips_continuation_rules() {
-        // Test that rules with continuation effects don't get default :effect :ask
-        let input = r#"(rule test (positional . (may-i *)))"#;
-        let (nodes, _) = may_i_sexpr::parse_cst(input);
-        let node = nodes.into_iter().next().unwrap();
-        // Should return None since no transformation is needed
-        let result = rule_add_default_effect(&node);
-        assert!(
-            result.is_none(),
-            "Rules with continuation effects should not be modified"
-        );
-    }
-
-    #[test]
-    fn test_rule_add_default_effect_adds_to_rules_without_effect() {
-        // Test that rules without effects get default (effect :ask)
-        let input = r#"(rule test (positional "x"))"#;
-        let (nodes, _) = may_i_sexpr::parse_cst(input);
-        let node = nodes.into_iter().next().unwrap();
-        let result = rule_add_default_effect(&node).unwrap();
+        let result = rule_collapse_effects(&node).unwrap();
         let serialized = result.serialize();
-        // Should have (effect :ask) added
         assert!(
-            serialized.contains("(effect :ask)"),
-            "Expected '(effect :ask)' in: {}",
+            serialized.contains("(and"),
+            "Expected '(and' in: {}",
             serialized
         );
+    }
+
+    #[test]
+    fn test_rule_collapse_effects_single_not_modified() {
+        let input = r#"(rule "git" (effect :allow))"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let node = nodes.into_iter().next().unwrap();
+        let result = rule_collapse_effects(&node);
+        assert!(result.is_none(), "Single effect should not be modified");
     }
 
     #[test]

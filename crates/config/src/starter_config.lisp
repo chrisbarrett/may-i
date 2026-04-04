@@ -10,8 +10,7 @@
 ;; RULES
 ;;
 ;; A rule matches a command and produces a decision (allow, ask, or deny).
-;; Body effects are evaluated in order. The last terminal effect gives the
-;; default when all body effects return Nil.
+;; Each rule takes exactly one body effect. Use combinators for complex logic.
 ;;
 ;;   (rule "grep" (effect :allow))
 ;;   (rule "rm" (effect :deny "Dangerous"))
@@ -19,8 +18,8 @@
 ;;   (rule (regex "^git-.*") (effect :allow))
 ;;
 ;;   (rule "git"
-;;     (when (anywhere "--force") (effect :ask "Force flag detected"))
-;;     (effect :allow))
+;;     (or (when (anywhere "--force") (effect :ask "Force flag detected"))
+;;         (effect :allow)))
 ;;
 ;; TERMINAL EFFECTS
 ;;
@@ -89,8 +88,8 @@
 ;;          (fact? [:ssh/host (regex "^prod-")])))
 ;;
 ;;   (rule "kubectl"
-;;     (when prod-host (effect :deny "No kubectl on prod"))
-;;     (effect :allow))
+;;     (or (when prod-host (effect :deny "No kubectl on prod"))
+;;         (effect :allow)))
 ;;
 ;; CHECKS (validated by `may-i check`)
 ;;
@@ -110,10 +109,10 @@
 ;;; -- Deny: dangerous operations ---------------------------------------------
 
 (rule "rm"
-  (when (and (anywhere "-r" "--recursive")
-             (anywhere "/"))
-    (effect :deny "Recursive deletion from root"))
-  (effect :ask))
+  (or (when (and (anywhere "-r" "--recursive")
+                 (anywhere "/"))
+        (effect :deny "Recursive deletion from root"))
+      (effect :ask)))
 
 (rule (or "mkfs" "dd" "fdisk" "parted" "gdisk")
   (effect :deny "Dangerous filesystem or device operation"))
@@ -128,14 +127,13 @@
 
 ; Block kubectl in production (test with: may-i eval --fact :env=prod 'kubectl get pods')
 (rule "kubectl"
-  (when (fact? [:env "prod"])
-    (effect :deny "No kubectl in production"))
-  (effect :allow))
+  (or (when (fact? [:env "prod"])
+        (effect :deny "No kubectl in production"))
+      (effect :allow)))
 
 ; SSH wrapper — capture host as fact, evaluate inner command recursively
 (rule "ssh"
-  (positional [:ssh/host *] . (may-i *))
-  (effect :deny "SSH commands denied by default"))
+  (positional [:ssh/host *] . (may-i *)))
 
 (rule "rm"
   (cond

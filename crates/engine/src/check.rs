@@ -131,7 +131,7 @@ mod tests {
                 Effect::CommandPattern(CommandPattern::Literal(name.into())),
                 Span::new(0, 0),
             ),
-            effects: vec![Spanned::new(effect, Span::new(0, 0))],
+            effect: Spanned::new(effect, Span::new(0, 0)),
             checks: vec![],
             span: Span::new(0, 0),
         }
@@ -198,10 +198,10 @@ mod tests {
                 Effect::CommandPattern(CommandPattern::Literal("echo".into())),
                 s,
             ),
-            effects: vec![may_i_core::ast::Spanned::new(
+            effect: may_i_core::ast::Spanned::new(
                 Effect::Allow(Some("ok".into())),
                 s,
-            )],
+            ),
             checks: vec![Check {
                 command: "echo hi".into(),
                 expected: Decision::Allow,

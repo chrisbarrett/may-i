@@ -39,9 +39,8 @@ fn hook_resolves_defined_predicates() {
     let cfg = write_config(
         r#"
 (define is-cc (fact? :client/claude-code))
-(rule (command "rm")
-      (when is-cc (effect :deny "CC denied"))
-      :effect (effect :allow))
+(rule "rm"
+      (when is-cc (effect :deny "CC denied")))
 "#,
     );
     let output = may_i(&cfg)

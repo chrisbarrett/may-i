@@ -6,12 +6,10 @@ expression: normalised
 Trace
 
                                           command │ curl -d data https://example.com
-  65: (rule                                       │
-        (command "curl")                          │
-        (args (not (anywhere "-d")))              │ "-d" ∈ {"-d", "data", "https://example.com"} → yes
-        (effect                                   │
-          :allow                                  │
-          "GET request (no mutating flags)"))     │
+  65: (rule (command "curl")                      │
+            (args (and (not (anywhere             │
+                              "-d"))              │ "-d" ∈ {"-d", "data", "https://example.com"} → yes
+                       …)))                       │
                                                   │
   69: (rule                                       │
         (command "curl")                          │

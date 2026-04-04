@@ -5,25 +5,24 @@ expression: normalised
 
 Trace
 
-                                  command │ git push --force
-  43: (rule (command "git")               │
-            (args (and (positional        │
-                         "reset")         │ "push" = "reset" → no
-                       …))                │
-            (effect                       │
-              :ask                        │
-              "Dangerous git reset"))     │
-                                          │
-  47: (rule (command "git")               │
-            (args (or (positional         │
-                        "remote")         │ "push" = "remote" → no
-                      (positional         │
-                        (or "clean"       │ "push" = "clean" → no
-                            "gc"          │ "push" = "gc" → no
-                            "push"))))    │ "push" = "push" → yes
-            (effect                       │ → :ask "Dangerous git operation"
-              :ask                        │
-              "Dangerous git operation")) │
+                                    command │ git push --force
+  43: (rule (command "git")                 │
+            (args (and (and (positional     │
+                              "reset")      │ "push" = "reset" → no
+                            …)              │
+                       …)))                 │
+                                            │
+  47: (rule                                 │
+        (command "git")                     │
+        (args                               │
+          (and                              │
+            (or (positional "remote")       │ "push" = "remote" → no
+                (positional (or "clean"     │ "push" = "clean" → no
+                                "gc"        │ "push" = "gc" → no
+                                "push")))   │ "push" = "push" → yes
+            (effect                         │ → :ask "Dangerous git operation"
+              :ask                          │
+              "Dangerous git operation")))) │
 
 Result
 

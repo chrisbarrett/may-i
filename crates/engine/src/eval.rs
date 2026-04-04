@@ -147,24 +147,6 @@ pub struct Evaluator<'a> {
     rules: &'a [Rule],
 }
 
-/// Check if an effect is a pure arg-matching predicate/guard.
-///
-/// ArgPattern effects (anywhere, forbidden, positional, exact) are predicates
-/// that gate the rule. When they return Nil (no match), the rule is skipped.
-/// When they return Decision::Allow (match), execution continues to the next
-/// effect rather than treating it as a terminal.
-///
-/// Or/And/Not wrapping only arg predicates also act as predicates.
-fn is_arg_predicate(effect: &Effect) -> bool {
-    match effect {
-        Effect::ArgPattern(_) => true,
-        Effect::Or { effects } => effects.iter().all(|e| is_arg_predicate(&e.value)),
-        Effect::And { effects } => effects.iter().all(|e| is_arg_predicate(&e.value)),
-        Effect::Not { effect: inner } => is_arg_predicate(&inner.value),
-        _ => false,
-    }
-}
-
 impl<'a> Evaluator<'a> {
     /// Create a new evaluator with the given rules.
     pub fn new(rules: &'a [Rule]) -> Self {
@@ -233,44 +215,18 @@ impl<'a> Evaluator<'a> {
             return Ok(fold.rule_skipped(rule));
         }
 
-        // Step 2: Evaluate subsequent effects in sequence.
-        // Nil from any effect means "no match" → skip rule.
-        // ArgPattern Allow (no reason) is a passed predicate → continue.
-        // Any other Decision is a terminal → return as rule result.
-        let mut effect_outs: Vec<F::EffectOut> = Vec::new();
-        for effect in &rule.effects {
-            let out = evaluate_effect_fold(fold, &effect.value, ctx, self.rules)?;
-            let result = F::effect_result(&out);
+        // Step 2: Evaluate the single body effect.
+        let out = evaluate_effect_fold(fold, &rule.effect.value, ctx, self.rules)?;
+        let result = F::effect_result(&out);
 
-            match result {
-                EffectResult::Nil => {
-                    effect_outs.push(out);
-                    return Ok(fold.rule_not_matched(rule, ctx.facts, command_out, effect_outs));
-                }
-                EffectResult::Decision(Decision::Allow, None)
-                    if is_arg_predicate(&effect.value) =>
-                {
-                    effect_outs.push(out);
-                }
-                EffectResult::Decision(_, _) => {
-                    effect_outs.push(out);
-                    let line = None;
-                    return Ok(fold.rule_matched(rule, line, ctx.facts, command_out, effect_outs));
-                }
+        Ok(match result {
+            EffectResult::Nil => {
+                fold.rule_not_matched(rule, ctx.facts, command_out, out)
             }
-        }
-
-        // Step 3: No terminal effect fired.
-        Ok(if !effect_outs.is_empty() {
-            let line = None;
-            fold.rule_matched(rule, line, ctx.facts, command_out, effect_outs)
-        } else if rule.effects.is_empty() {
-            let ask_result = EffectResult::Decision(Decision::Ask, None);
-            let ask_out = fold.effect_terminal(&Effect::Ask(None), ask_result);
-            let line = None;
-            fold.rule_matched(rule, line, ctx.facts, command_out, vec![ask_out])
-        } else {
-            fold.rule_not_matched(rule, ctx.facts, command_out, effect_outs)
+            EffectResult::Decision(_, _) => {
+                let line = None;
+                fold.rule_matched(rule, line, ctx.facts, command_out, out)
+            }
         })
     }
 }
@@ -2016,7 +1972,7 @@ mod tests {
                 Effect::CommandPattern(CommandPattern::Literal("rm".to_string())),
                 s,
             ),
-            vec![Spanned::new(
+            Spanned::new(
                 Effect::When {
                     predicate: Spanned::new(
                         Predicate::Fact(may_i_core::FactQuery::Value {
@@ -2028,7 +1984,7 @@ mod tests {
                     effect: Box::new(Spanned::new(Effect::Deny(Some("via sudo".to_string())), s)),
                 },
                 s,
-            )],
+            ),
             vec![],
             s,
         );
@@ -2039,7 +1995,7 @@ mod tests {
                 Effect::CommandPattern(CommandPattern::Literal("sudo".to_string())),
                 s,
             ),
-            vec![Spanned::new(may_i_effect, s)],
+            Spanned::new(may_i_effect, s),
             vec![],
             s,
         );
@@ -2074,7 +2030,7 @@ mod tests {
                 Effect::CommandPattern(CommandPattern::Literal("rm".to_string())),
                 s,
             ),
-            vec![Spanned::new(
+            Spanned::new(
                 Effect::When {
                     predicate: Spanned::new(
                         Predicate::And(vec![
@@ -2092,7 +2048,7 @@ mod tests {
                     effect: Box::new(Spanned::new(Effect::Deny(Some("via both".to_string())), s)),
                 },
                 s,
-            )],
+            ),
             vec![],
             s,
         );
@@ -2102,7 +2058,7 @@ mod tests {
                 Effect::CommandPattern(CommandPattern::Literal("ssh".to_string())),
                 s,
             ),
-            vec![Spanned::new(may_i_effect.clone(), s)],
+            Spanned::new(may_i_effect.clone(), s),
             vec![],
             s,
         );
@@ -2112,7 +2068,7 @@ mod tests {
                 Effect::CommandPattern(CommandPattern::Literal("sudo".to_string())),
                 s,
             ),
-            vec![Spanned::new(may_i_effect, s)],
+            Spanned::new(may_i_effect, s),
             vec![],
             s,
         );
@@ -2264,7 +2220,7 @@ mod tests {
                 Effect::CommandPattern(CommandPattern::Literal("ls".into())),
                 s,
             ),
-            vec![Spanned::new(
+            Spanned::new(
                 Effect::ArgPattern(ArgPattern::Positional {
                     patterns: vec![PositionalArg {
                         quantifier: Quantifier::One,
@@ -2274,7 +2230,7 @@ mod tests {
                     continuation: None,
                 }),
                 s,
-            )],
+            ),
             vec![],
             s,
         );
@@ -2307,10 +2263,10 @@ mod tests {
                 Effect::CommandPattern(CommandPattern::Literal("test".into())),
                 s,
             ),
-            vec![Spanned::new(
+            Spanned::new(
                 Effect::ArgPattern(ArgPattern::Forbidden(vec![Expr::Literal("bad".into())])),
                 s,
-            )],
+            ),
             vec![],
             s,
         );
@@ -2332,27 +2288,32 @@ mod tests {
         use may_i_core::span::Span;
 
         let s = Span::new(0, 1);
-        // Rule: "cmd" (positional "ok") :allow "done"
+        // Rule: "cmd" (and (positional "ok") :allow "done")
         // The positional predicate matches, continues, then terminal fires.
         let rule = Rule::new(
             Spanned::new(
                 Effect::CommandPattern(CommandPattern::Literal("cmd".into())),
                 s,
             ),
-            vec![
-                Spanned::new(
-                    Effect::ArgPattern(ArgPattern::Positional {
-                        patterns: vec![PositionalArg {
-                            quantifier: Quantifier::One,
-                            pattern: Expr::Literal("ok".into()),
-                            recursive: false,
-                        }],
-                        continuation: None,
-                    }),
-                    s,
-                ),
-                Spanned::new(Effect::Allow(Some("done".into())), s),
-            ],
+            Spanned::new(
+                Effect::And {
+                    effects: vec![
+                        Spanned::new(
+                            Effect::ArgPattern(ArgPattern::Positional {
+                                patterns: vec![PositionalArg {
+                                    quantifier: Quantifier::One,
+                                    pattern: Expr::Literal("ok".into()),
+                                    recursive: false,
+                                }],
+                                continuation: None,
+                            }),
+                            s,
+                        ),
+                        Spanned::new(Effect::Allow(Some("done".into())), s),
+                    ],
+                },
+                s,
+            ),
             vec![],
             s,
         );
@@ -2576,7 +2537,7 @@ mod tests {
                 Effect::CommandPattern(CommandPattern::Literal("ls".into())),
                 s,
             ),
-            effects: vec![Spanned::new(Effect::Allow(Some("ok".into())), s)],
+            effect: Spanned::new(Effect::Allow(Some("ok".into())), s),
             checks: vec![Check {
                 command: "ls -la".into(),
                 expected: Decision::Allow,
@@ -2608,7 +2569,7 @@ mod tests {
                 Effect::CommandPattern(CommandPattern::Literal("git".into())),
                 s,
             ),
-            effects: vec![Spanned::new(Effect::Deny(Some("no git".into())), s)],
+            effect: Spanned::new(Effect::Deny(Some("no git".into())), s),
             checks: vec![],
             span: s,
         };
@@ -2703,10 +2664,10 @@ mod tests {
             fn predicate_not(&mut self, _: PredicateResult, result: PredicateResult) -> PredicateResult { result }
             fn predicate_named(&mut self, _: &str, _: PredicateResult, result: PredicateResult) -> PredicateResult { result }
 
-            fn rule_matched(&mut self, _: &Rule, _: Option<usize>, _: &ContextFacts, _: EffectResult, effects: Vec<EffectResult>) -> EffectResult {
-                effects.into_iter().last().unwrap_or(EffectResult::Nil)
+            fn rule_matched(&mut self, _: &Rule, _: Option<usize>, _: &ContextFacts, _: EffectResult, effect_out: EffectResult) -> EffectResult {
+                effect_out
             }
-            fn rule_not_matched(&mut self, _: &Rule, _: &ContextFacts, _: EffectResult, _: Vec<EffectResult>) -> EffectResult { EffectResult::Nil }
+            fn rule_not_matched(&mut self, _: &Rule, _: &ContextFacts, _: EffectResult, _: EffectResult) -> EffectResult { EffectResult::Nil }
             fn rule_skipped(&mut self, _: &Rule) -> EffectResult { EffectResult::Nil }
             fn default_ask(&mut self, _: &str) -> EffectResult { EffectResult::Decision(Decision::Ask, None) }
         }

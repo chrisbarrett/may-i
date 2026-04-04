@@ -211,9 +211,9 @@ pub(crate) fn check_undefined_refs(
 
     // Check references in rules (predicates can appear in effects within conditionals)
     for rule in rules {
-        // Check effects for named predicate references
-        for effect in &rule.effects {
-            let refs = collect_named_refs_from_effect(effect);
+        // Check effect for named predicate references
+        {
+            let refs = collect_named_refs_from_effect(&rule.effect);
             for named_ref in refs {
                 if !defined_names.contains(&named_ref.name) {
                     return Err(ResolutionError::new(
@@ -297,16 +297,11 @@ fn resolve_rule_predicates(
     define_map: &DefineMap,
 ) -> Result<Rule, ResolutionError> {
     let resolved_command = resolve_effect_predicates(&rule.command_effect, defines, define_map)?;
-
-    let resolved_effects: Result<Vec<_>, _> = rule
-        .effects
-        .iter()
-        .map(|e| resolve_effect_predicates(e, defines, define_map))
-        .collect();
+    let resolved_effect = resolve_effect_predicates(&rule.effect, defines, define_map)?;
 
     Ok(Rule {
         command_effect: resolved_command,
-        effects: resolved_effects?,
+        effect: resolved_effect,
         checks: rule.checks.clone(),
         span: rule.span,
     })
@@ -521,7 +516,7 @@ mod tests {
                 Effect::CommandPattern(CommandPattern::Literal("test".to_string())),
                 dummy_span(),
             ),
-            vec![Spanned::new(conditional_effect, dummy_span())],
+            Spanned::new(conditional_effect, dummy_span()),
             vec![],
             dummy_span(),
         )
@@ -602,7 +597,7 @@ mod tests {
         let resolved = resolve_predicates(&rules, &defines, &define_map).unwrap();
         assert_eq!(resolved.len(), 1);
         // After resolution, the Named predicate in the effect should be replaced with Fact
-        match &resolved[0].effects[0].value {
+        match &resolved[0].effect.value {
             Effect::When { predicate, .. } => {
                 assert!(matches!(predicate.value, Predicate::Fact(_)));
             }
@@ -629,7 +624,7 @@ mod tests {
         let define_map = DefineMap::from_defines(&defines).unwrap();
 
         let resolved = resolve_predicates(&rules, &defines, &define_map).unwrap();
-        match &resolved[0].effects[0].value {
+        match &resolved[0].effect.value {
             Effect::When { predicate, .. } => {
                 assert!(matches!(predicate.value, Predicate::And(_)));
             }
@@ -752,7 +747,7 @@ mod tests {
 
         let resolved = resolve_predicates(&rules, &defines, &define_map).unwrap();
         // The predicate should be resolved within the effect
-        assert!(!resolved[0].effects.is_empty());
+        assert!(matches!(resolved[0].effect.value, Effect::When { .. }));
     }
 
     #[test]
@@ -816,7 +811,7 @@ mod tests {
                 Effect::CommandPattern(CommandPattern::Literal("test".to_string())),
                 dummy_span(),
             ),
-            vec![Spanned::new(effect, dummy_span())],
+            Spanned::new(effect, dummy_span()),
             vec![],
             dummy_span(),
         )
@@ -833,7 +828,7 @@ mod tests {
         let define_map = DefineMap::from_defines(&defines).unwrap();
 
         let resolved = resolve_predicates(&rules, &defines, &define_map).unwrap();
-        match &resolved[0].effects[0].value {
+        match &resolved[0].effect.value {
             Effect::Unless { predicate, .. } => {
                 assert!(matches!(predicate.value, Predicate::Fact(_)));
             }
@@ -853,7 +848,7 @@ mod tests {
         let define_map = DefineMap::from_defines(&defines).unwrap();
 
         let resolved = resolve_predicates(&rules, &defines, &define_map).unwrap();
-        match &resolved[0].effects[0].value {
+        match &resolved[0].effect.value {
             Effect::If { predicate, .. } => {
                 assert!(matches!(predicate.value, Predicate::Fact(_)));
             }
@@ -875,7 +870,7 @@ mod tests {
         let define_map = DefineMap::from_defines(&defines).unwrap();
 
         let resolved = resolve_predicates(&rules, &defines, &define_map).unwrap();
-        match &resolved[0].effects[0].value {
+        match &resolved[0].effect.value {
             Effect::Cond { branches, .. } => {
                 assert!(matches!(branches[0].0.value, Predicate::Fact(_)));
             }
@@ -899,7 +894,7 @@ mod tests {
         let define_map = DefineMap::from_defines(&defines).unwrap();
 
         let resolved = resolve_predicates(&rules, &defines, &define_map).unwrap();
-        match &resolved[0].effects[0].value {
+        match &resolved[0].effect.value {
             Effect::And { effects } => match &effects[0].value {
                 Effect::When { predicate, .. } => {
                     assert!(matches!(predicate.value, Predicate::Fact(_)));
@@ -926,7 +921,7 @@ mod tests {
         let define_map = DefineMap::from_defines(&defines).unwrap();
 
         let resolved = resolve_predicates(&rules, &defines, &define_map).unwrap();
-        match &resolved[0].effects[0].value {
+        match &resolved[0].effect.value {
             Effect::Or { effects } => match &effects[0].value {
                 Effect::When { predicate, .. } => {
                     assert!(matches!(predicate.value, Predicate::Fact(_)));
@@ -953,7 +948,7 @@ mod tests {
         let define_map = DefineMap::from_defines(&defines).unwrap();
 
         let resolved = resolve_predicates(&rules, &defines, &define_map).unwrap();
-        match &resolved[0].effects[0].value {
+        match &resolved[0].effect.value {
             Effect::Not { effect } => match &effect.value {
                 Effect::When { predicate, .. } => {
                     assert!(matches!(predicate.value, Predicate::Fact(_)));
@@ -980,7 +975,7 @@ mod tests {
         let define_map = DefineMap::from_defines(&defines).unwrap();
 
         let resolved = resolve_predicates(&rules, &defines, &define_map).unwrap();
-        match &resolved[0].effects[0].value {
+        match &resolved[0].effect.value {
             Effect::When { predicate, .. } => {
                 assert!(matches!(predicate.value, Predicate::Or(_)));
                 if let Predicate::Or(preds) = &predicate.value {

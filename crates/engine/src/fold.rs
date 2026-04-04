@@ -219,17 +219,15 @@ pub trait EvalFold {
         line: Option<usize>,
         facts: &ContextFacts,
         command_out: Self::EffectOut,
-        effects: Vec<Self::EffectOut>,
+        effect_out: Self::EffectOut,
     ) -> Self::EffectOut;
-    /// Command matched but the rule did not fire (args returned Nil or
-    /// context predicates failed). `effects` contains any partially-evaluated
-    /// effect outputs up to the point of failure.
+    /// Command matched but the body effect returned Nil.
     fn rule_not_matched(
         &mut self,
         rule: &Rule,
         facts: &ContextFacts,
         command_out: Self::EffectOut,
-        effects: Vec<Self::EffectOut>,
+        effect_out: Self::EffectOut,
     ) -> Self::EffectOut;
     fn rule_skipped(&mut self, rule: &Rule) -> Self::EffectOut;
     fn default_ask(&mut self, reason: &str) -> Self::EffectOut;
@@ -426,9 +424,9 @@ impl EvalFold for PureFold {
         _line: Option<usize>,
         _facts: &ContextFacts,
         _command_out: EffectResult,
-        effects: Vec<EffectResult>,
+        effect_out: EffectResult,
     ) -> EffectResult {
-        effects.into_iter().last().unwrap_or(EffectResult::Nil)
+        effect_out
     }
 
     fn rule_not_matched(
@@ -436,7 +434,7 @@ impl EvalFold for PureFold {
         _rule: &Rule,
         _facts: &ContextFacts,
         _command_out: EffectResult,
-        _effects: Vec<EffectResult>,
+        _effect_out: EffectResult,
     ) -> EffectResult {
         EffectResult::Nil
     }

@@ -157,10 +157,10 @@ pub fn any_eval_context_data() -> impl Strategy<Value = (String, Vec<String>, Co
 /// Generate a vector of Rules.
 pub fn any_rule_set(size: usize) -> BoxedStrategy<Vec<Rule>> {
     prop::collection::vec(
-        (any_effect(2), prop::collection::vec(any_effect(2), 0..3)).prop_map(
-            |(cmd_effect, effects)| Rule {
+        (any_effect(2), any_effect(2)).prop_map(
+            |(cmd_effect, effect)| Rule {
                 command_effect: spanned(cmd_effect),
-                effects: effects.into_iter().map(spanned).collect(),
+                effect: spanned(effect),
                 checks: vec![],
                 span: dummy_span(),
             },
@@ -413,7 +413,7 @@ mod effect_eval_tests {
             command_effect: spanned(Effect::CommandPattern(CommandPattern::Literal(
                 ctx.command.to_string(),
             ))),
-            effects: vec![spanned(effect.clone())],
+            effect: spanned(effect.clone()),
             checks: vec![],
             span: dummy_span(),
         };
@@ -771,7 +771,7 @@ mod effect_eval_tests {
                 command_effect: spanned(Effect::CommandPattern(
                     CommandPattern::Literal(inner_cmd),
                 )),
-                effects: vec![spanned(Effect::Allow(Some("inner-allowed".into())))],
+                effect: spanned(Effect::Allow(Some("inner-allowed".into()))),
                 checks: vec![],
                 span: dummy_span(),
             };
@@ -829,7 +829,7 @@ mod effect_eval_tests {
                         command_effect: spanned(Effect::CommandPattern(
                             CommandPattern::Literal(cmd_name.clone()),
                         )),
-                        effects: vec![spanned(Effect::Allow(Some("first".into())))],
+                        effect: spanned(Effect::Allow(Some("first".into()))),
                         checks: vec![],
                         span: dummy_span(),
                     },
@@ -837,7 +837,7 @@ mod effect_eval_tests {
                         command_effect: spanned(Effect::CommandPattern(
                             CommandPattern::Literal(cmd_name.clone()),
                         )),
-                        effects: vec![spanned(Effect::Deny(Some("second".into())))],
+                        effect: spanned(Effect::Deny(Some("second".into()))),
                         checks: vec![],
                         span: dummy_span(),
                     },
@@ -869,10 +869,10 @@ mod effect_eval_tests {
                     command_effect: spanned(Effect::CommandPattern(
                         CommandPattern::Literal(cmd_name.clone()),
                     )),
-                    effects: vec![spanned(Effect::When {
+                    effect: spanned(Effect::When {
                         predicate: spanned(pred),
                         effect: Box::new(spanned(Effect::Allow(Some("fact-matched".into())))),
-                    })],
+                    }),
                     checks: vec![],
                     span: dummy_span(),
                 }],
@@ -895,7 +895,7 @@ mod effect_eval_tests {
                     command_effect: spanned(Effect::CommandPattern(
                         CommandPattern::Literal(cmd_name.clone()),
                     )),
-                    effects: vec![spanned(Effect::Allow(Some("matched".into())))],
+                    effect: spanned(Effect::Allow(Some("matched".into()))),
                     checks: vec![],
                     span: dummy_span(),
                 }],
@@ -923,11 +923,11 @@ mod effect_eval_tests {
                     command_effect: spanned(Effect::CommandPattern(
                         CommandPattern::Literal(cmd_name.clone()),
                     )),
-                    effects: vec![spanned(Effect::ArgPattern(
+                    effect: spanned(Effect::ArgPattern(
                         may_i_core::pattern::ArgPattern::Anywhere(vec![
                             may_i_core::pattern::Expr::Literal(target_arg),
                         ]),
-                    ))],
+                    )),
                     checks: vec![],
                     span: dummy_span(),
                 }],
@@ -961,7 +961,7 @@ mod check_tests {
                     command_effect: spanned(Effect::CommandPattern(
                         CommandPattern::Literal(cmd_name.clone()),
                     )),
-                    effects: vec![spanned(Effect::Allow(Some("allowed".into())))],
+                    effect: spanned(Effect::Allow(Some("allowed".into()))),
                     checks: vec![],
                     span: dummy_span(),
                 }],
@@ -989,7 +989,7 @@ mod check_tests {
                     command_effect: spanned(Effect::CommandPattern(
                         CommandPattern::Literal(cmd_name.clone()),
                     )),
-                    effects: vec![spanned(Effect::Deny(Some("denied".into())))],
+                    effect: spanned(Effect::Deny(Some("denied".into()))),
                     checks: vec![],
                     span: dummy_span(),
                 }],
@@ -1045,7 +1045,7 @@ mod check_tests {
                     command_effect: spanned(Effect::CommandPattern(
                         CommandPattern::Literal(cmd_name.clone()),
                     )),
-                    effects: vec![spanned(effect)],
+                    effect: spanned(effect),
                     checks: vec![],
                     span: dummy_span(),
                 }],
@@ -1073,7 +1073,7 @@ mod check_tests {
                     command_effect: spanned(Effect::CommandPattern(
                         CommandPattern::Literal(cmd_name.clone()),
                     )),
-                    effects: vec![spanned(Effect::Deny(Some("denied".into())))],
+                    effect: spanned(Effect::Deny(Some("denied".into()))),
                     checks: vec![],
                     span: dummy_span(),
                 }],
@@ -1277,7 +1277,7 @@ mod integration_tests {
                 command_effect: spanned(Effect::CommandPattern(CommandPattern::Literal(
                     "deploy".into(),
                 ))),
-                effects: vec![spanned(Effect::When {
+                effect: spanned(Effect::When {
                     predicate: spanned(Predicate::Fact(may_i_core::FactQuery::Value {
                         key: Keyword::new(":env").unwrap(),
                         pattern: may_i_core::FactPattern::Literal("prod".to_string()),
@@ -1295,7 +1295,7 @@ mod integration_tests {
                             "prod deploy denied".into(),
                         )))),
                     })),
-                })],
+                }),
                 checks: vec![],
                 span: dummy_span(),
             }],
@@ -1324,7 +1324,7 @@ mod integration_tests {
                 command_effect: spanned(Effect::CommandPattern(CommandPattern::Literal(
                     "admin-cmd".into(),
                 ))),
-                effects: vec![spanned(Effect::When {
+                effect: spanned(Effect::When {
                     predicate: spanned(Predicate::And(vec![
                         Predicate::Fact(may_i_core::FactQuery::Value {
                             key: Keyword::new(":role").unwrap(),
@@ -1336,7 +1336,7 @@ mod integration_tests {
                         }),
                     ])),
                     effect: Box::new(spanned(Effect::Allow(Some("admin verified".into())))),
-                })],
+                }),
                 checks: vec![],
                 span: dummy_span(),
             }],
@@ -1366,12 +1366,12 @@ mod integration_tests {
                     command_effect: spanned(Effect::CommandPattern(CommandPattern::Literal(
                         "wrapper".into(),
                     ))),
-                    effects: vec![spanned(Effect::MayI {
+                    effect: spanned(Effect::MayI {
                         pattern: may_i_core::pattern::ArgPattern::Positional {
                             patterns: vec![],
                             continuation: None,
                         },
-                    })],
+                    }),
                     checks: vec![],
                     span: dummy_span(),
                 },
@@ -1380,7 +1380,7 @@ mod integration_tests {
                     command_effect: spanned(Effect::CommandPattern(CommandPattern::Literal(
                         "inner-cmd".into(),
                     ))),
-                    effects: vec![spanned(Effect::Allow(Some("inner allowed".into())))],
+                    effect: spanned(Effect::Allow(Some("inner allowed".into()))),
                     checks: vec![],
                     span: dummy_span(),
                 },
@@ -1406,7 +1406,7 @@ mod integration_tests {
                 command_effect: spanned(Effect::CommandPattern(CommandPattern::Literal(
                     "test".into(),
                 ))),
-                effects: vec![spanned(Effect::And {
+                effect: spanned(Effect::And {
                     effects: vec![
                         spanned(Effect::Or {
                             effects: vec![
@@ -1420,7 +1420,7 @@ mod integration_tests {
                         }),
                         spanned(Effect::Allow(Some("and-second".into()))),
                     ],
-                })],
+                }),
                 checks: vec![],
                 span: dummy_span(),
             }],
@@ -1673,14 +1673,16 @@ mod fold_properties {
                     command_effect: spanned(Effect::CommandPattern(
                         CommandPattern::Literal(cmd.clone()),
                     )),
-                    effects: vec![
-                        spanned(Effect::ArgPattern(
-                            may_i_core::pattern::ArgPattern::Anywhere(vec![
-                                may_i_core::pattern::Expr::Literal(target),
-                            ]),
-                        )),
-                        spanned(Effect::Allow(Some(reason.clone()))),
-                    ],
+                    effect: spanned(Effect::And {
+                        effects: vec![
+                            spanned(Effect::ArgPattern(
+                                may_i_core::pattern::ArgPattern::Anywhere(vec![
+                                    may_i_core::pattern::Expr::Literal(target),
+                                ]),
+                            )),
+                            spanned(Effect::Allow(Some(reason.clone()))),
+                        ],
+                    }),
                     checks: vec![],
                     span: dummy_span(),
                 }],
@@ -1706,14 +1708,16 @@ mod fold_properties {
                         command_effect: spanned(Effect::CommandPattern(
                             CommandPattern::Literal(cmd.clone()),
                         )),
-                        effects: vec![
-                            spanned(Effect::ArgPattern(
-                                may_i_core::pattern::ArgPattern::Anywhere(vec![
-                                    may_i_core::pattern::Expr::Literal(target),
-                                ]),
-                            )),
-                            spanned(Effect::Deny(Some("should not reach".into()))),
-                        ],
+                        effect: spanned(Effect::And {
+                            effects: vec![
+                                spanned(Effect::ArgPattern(
+                                    may_i_core::pattern::ArgPattern::Anywhere(vec![
+                                        may_i_core::pattern::Expr::Literal(target),
+                                    ]),
+                                )),
+                                spanned(Effect::Deny(Some("should not reach".into()))),
+                            ],
+                        }),
                         checks: vec![],
                         span: dummy_span(),
                     },
@@ -1721,9 +1725,7 @@ mod fold_properties {
                         command_effect: spanned(Effect::CommandPattern(
                             CommandPattern::Literal(cmd.clone()),
                         )),
-                        effects: vec![
-                            spanned(Effect::Ask(Some("fallback".into()))),
-                        ],
+                        effect: spanned(Effect::Ask(Some("fallback".into()))),
                         checks: vec![],
                         span: dummy_span(),
                     },
