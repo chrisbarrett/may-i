@@ -1,29 +1,27 @@
 ---
 source: tests/oracle_trace_v1.rs
-assertion_line: 108
 expression: normalised
 ---
 
 Trace
 
-                                command │ ssh prod "rm -rf /"
-  107: (rule (command "ssh")            │
-             (args (positional          │
-                     [:ssh/host *]      │ facts += :ssh/host "prod"
-                     (may-i (positional │ `rm -rf /` → :deny "Recursive deletion from root"
-                              *)))))    │
+                                 command │ ssh prod "rm -rf /"
+  107: (rule (command "ssh")             │
+         (args (positional [:ssh/host *] │ facts += :ssh/host "prod"
+                           (may-i        │ `rm -rf /` → :deny "Recursive deletion from root"
+                            (positional  │
+                             *)))))      │
 
-                                               command │ rm -rf /
-                                                 facts │ :ssh/host "prod", 
-                                                       │ :via "ssh"
-  24: (rule                                            │
-        (command "rm")                                 │
-        (args                                          │
-          (and                                         │
-            (and (anywhere "-r")                       │ "-r" ∈ {"-r", "-f", "/"} → yes
-                 (anywhere "/"))                       │ "/" ∈ {"-r", "-f", "/"} → yes
-            (effect                                    │ → :deny "Recursive deletion from root"
-              :deny "Recursive deletion from root")))) │
+                                            command │ rm -rf /
+                                              facts │ :ssh/host "prod", 
+                                                    │ :via "ssh"
+  24: (rule (command "rm")                          │
+        (args                                       │
+         (and                                       │
+          (and (anywhere "-r")                      │ "-r" ∈ {"-r", "-f", "/"} → yes
+               (anywhere "/"))                      │ "/" ∈ {"-r", "-f", "/"} → yes
+          (effect                                   │ → :deny "Recursive deletion from root"
+           :deny "Recursive deletion from root")))) │
 
 Result
 

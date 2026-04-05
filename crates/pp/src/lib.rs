@@ -629,7 +629,7 @@ impl<A: Clone> PrettyOutput<A> for AnnotatedLineBuilder<A> {
 /// Unified special-form classification table.
 /// Special forms use +2 body indent rather than function-call alignment.
 pub const SPECIAL_FORMS: &[&str] = &[
-    "rule", "define", "check", "with-facts", "when", "unless", "if", "cond", "case",
+    "rule", "define", "with-facts", "when", "unless", "if", "cond", "case",
 ];
 
 pub fn is_special_form(name: &str) -> bool {
@@ -760,24 +760,6 @@ fn render_node<A: Clone + TriviaSource>(
 
             if let Some(head) = children.first().and_then(|c| c.as_atom()) {
                 match head {
-                    "rule" => {
-                        let mut flat_buf = EventBuffer::new();
-                        render_flat(children, dimmed, &mut flat_buf);
-                        if !flat_buf.is_multiline()
-                            && flat_buf.max_line_width(indent) <= width
-                        {
-                            flat_buf.replay(out);
-                            return;
-                        }
-                        let mut buf = EventBuffer::new();
-                        render_broken(children, indent, width, dimmed, &mut buf);
-                        if buf.max_line_width(indent) <= width {
-                            buf.replay(out);
-                            return;
-                        }
-                        render_all_drop(children, indent, width, dimmed, out);
-                        return;
-                    }
                     h if is_special_form(h) => {
                         render_body_indent(children, indent, width, dimmed, out);
                         return;
@@ -917,11 +899,16 @@ fn render_trivia_guided_delim<A: Clone + TriviaSource>(
         return;
     }
 
-    // Compute child indent based on head atom
-    let child_indent = match children[0].as_atom() {
-        Some(name) if is_special_form(name) => indent + 2,
-        Some(name) => indent + 1 + name.len() + 1,
-        None => indent + 1,
+    // Compute child indent based on head atom.
+    // Special forms (indent 1) use body indent (+2).
+    // Default forms use +1 (column after the opening paren).
+    let child_indent = if children[0]
+        .as_atom()
+        .is_some_and(is_special_form)
+    {
+        indent + 2
+    } else {
+        indent + 1
     };
 
     let mut col = indent + 1 + head_width;
@@ -1039,7 +1026,7 @@ fn render_all_drop_delim<A: Clone + TriviaSource>(
         return;
     }
 
-    let child_indent = indent + 2;
+    let child_indent = indent + 1;
     let mut prev_was_keyword = false;
     for (i, child) in children[1..].iter().enumerate() {
         let is_last = i == children.len() - 2;
@@ -1221,6 +1208,17 @@ pub fn visible_len(s: &str) -> usize {
 }
 
 #[cfg(test)]
+fn force_color() {
+    use std::sync::Once;
+    // Enable colors once for all color tests. Never unset — unsetting
+    // races with parallel tests that expect colors to be on.
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        colored::control::set_override(true);
+    });
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -1305,7 +1303,7 @@ mod tests {
     fn wraps_when_exceeds_width() {
         let doc = l(vec![a("rule"), a("aaa"), a("bbb"), a("ccc")]);
         let result = pp(&doc, 15);
-        assert_eq!(result, "(rule aaa\n      bbb\n      ccc)");
+        assert_eq!(result, "(rule aaa\n  bbb\n  ccc)");
     }
 
     #[test]
@@ -1335,17 +1333,8 @@ mod tests {
     // ── Coloring ────────────────────────────────────────────────────
 
     fn with_forced_color(f: impl FnOnce()) {
-        // Set both the override and the environment variable to force colors
-        // even in non-TTY environments (like pre-commit hooks)
-        colored::control::set_override(true);
-        unsafe {
-            std::env::set_var("CLICOLOR_FORCE", "1");
-        }
+        force_color();
         f();
-        colored::control::unset_override();
-        unsafe {
-            std::env::remove_var("CLICOLOR_FORCE");
-        }
     }
 
     #[test]
@@ -1524,7 +1513,7 @@ mod tests {
         let lines: Vec<&str> = result.lines().collect();
         assert!(lines.len() > 1);
         assert!(lines[0].starts_with("5: "));
-        assert!(lines[1].starts_with("         "));
+        assert!(lines[1].starts_with("     "));
     }
 
     #[test]
@@ -1645,7 +1634,7 @@ mod tests {
             a("\"long-value-two\""),
         ]);
         let result = pp(&doc, 20);
-        assert_eq!(result, "(or\n  \"long-value-one\"\n  \"long-value-two\")");
+        assert_eq!(result, "(or\n \"long-value-one\"\n \"long-value-two\")");
     }
 
     #[test]
@@ -2075,9 +2064,8 @@ mod prop_tests {
 
         #[test]
         fn balanced_parens_with_color(doc in arb_doc(), width in 10..120usize) {
-            colored::control::set_override(true);
+            force_color();
             let result = pretty(&doc, 0, &Format { width, color: true, ..Default::default() });
-            colored::control::unset_override();
             let (open, close) = count_parens(&result);
             prop_assert_eq!(open, close,
                 "unbalanced parens (colored) in: {:?}", result);
@@ -2110,9 +2098,8 @@ mod prop_tests {
         fn color_preserves_visible_text(doc in arb_doc(), width in 10..120usize) {
             let plain = pretty(&doc, 0, &Format { width, ..Default::default() });
 
-            colored::control::set_override(true);
+            force_color();
             let colored_output = pretty(&doc, 0, &Format { width, color: true, ..Default::default() });
-            colored::control::unset_override();
 
             // Strip ANSI codes from colored output and compare.
             let stripped = strip_ansi(&colored_output);

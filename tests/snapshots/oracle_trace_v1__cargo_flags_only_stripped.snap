@@ -5,11 +5,11 @@ expression: normalised
 
 Trace
 
-                                 command │ cargo --list
-  95: (rule (command "cargo")            │
-            (args (or (when (exact)      │
-                        (effect :allow)) │ → :allow
-                      …)))               │
+                             command │ cargo --list
+  95: (rule (command "cargo")        │
+        (args (or (when (exact)      │
+                    (effect :allow)) │ → :allow
+                  …)))               │
 
 Result
 

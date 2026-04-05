@@ -6,15 +6,14 @@ expression: normalised
 
 Trace
 
-                                               command │ rm -rf /
-  24: (rule                                            │
-        (command "rm")                                 │
-        (args                                          │
-          (and                                         │
-            (and (anywhere "-r")                       │ "-r" ∈ {"-r", "-f", "/"} → yes
-                 (anywhere "/"))                       │ "/" ∈ {"-r", "-f", "/"} → yes
-            (effect                                    │ → :deny "Recursive deletion from root"
-              :deny "Recursive deletion from root")))) │
+                                            command │ rm -rf /
+  24: (rule (command "rm")                          │
+        (args                                       │
+         (and                                       │
+          (and (anywhere "-r")                      │ "-r" ∈ {"-r", "-f", "/"} → yes
+               (anywhere "/"))                      │ "/" ∈ {"-r", "-f", "/"} → yes
+          (effect                                   │ → :deny "Recursive deletion from root"
+           :deny "Recursive deletion from root")))) │
 
 Result
 

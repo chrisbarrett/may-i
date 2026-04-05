@@ -5,35 +5,32 @@ expression: normalised
 
 Trace
 
-                                                       command │ rm -r /other/path
-                                                         facts │ :opencode/agent "build"
-  24: (rule (command "rm")                                     │
-            (args (and (and (anywhere                          │
-                              "-r")                            │ "-r" ∈ {"-r", "/other/path"} → yes
-                            (anywhere                          │
-                              "/"))                            │ "/" ∈ {"-r", "/other/path"} → no
-                       …)))                                    │
-                                                               │
-  29: (rule                                                    │
-        (command "rm")                                         │
-        (args                                                  │
-          (when                                                │
-              (and                                             │
-                (or                                            │
-                  (has                                         │ no
-                    [:claude-code/permission-mode              │
-                      "acceptEdits"])                          │
-                  (has [:opencode/agent                        │ "build" → yes
-                         "build"]))                            │
-                (anywhere "-r"                                 │
-                          "--recursive"))                      │
-            (cond                                              │
-              ((anywhere (regex                                │
-                           "^/tmp/.*"))                        │
-               …)                                              │
-              (effect                                          │ → :ask "Recursive deletion requires confirmation"
-               :ask                                            │
-               "Recursive deletion requires confirmation"))))) │
+                                                      command │ rm -r /other/path
+                                                        facts │ :opencode/agent "build"
+  24: (rule (command "rm")                                    │
+        (args (and (and (anywhere "-r")                       │ "-r" ∈ {"-r", "/other/path"} → yes
+                        (anywhere "/"))                       │ "/" ∈ {"-r", "/other/path"} → no
+                   …)))                                       │
+                                                              │
+  29: (rule (command "rm")                                    │
+        (args                                                 │
+         (when                                                │
+             (and                                             │
+              (or                                             │
+               (has                                           │ no
+                [:claude-code/permission-mode                 │
+                 "acceptEdits"])                              │
+               (has [:opencode/agent                          │ "build" → yes
+                     "build"]))                               │
+              (anywhere "-r"                                  │
+                        "--recursive"))                       │
+           (cond                                              │
+             ((anywhere (regex                                │
+                         "^/tmp/.*"))                         │
+              …)                                              │
+             (effect                                          │ → :ask "Recursive deletion requires confirmation"
+              :ask                                            │
+              "Recursive deletion requires confirmation"))))) │
 
 Result
 

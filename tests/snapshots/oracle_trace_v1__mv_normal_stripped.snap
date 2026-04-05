@@ -5,14 +5,14 @@ expression: normalised
 
 Trace
 
-                                  command │ mv a b
-  83: (rule (command "mv")                │
-            (args (cond                   │
-                    ((anywhere "-f"       │
-                               "--force") │
-                     …)                   │
-                    (effect               │ → :allow
-                     :allow))))           │
+                              command │ mv a b
+  83: (rule (command "mv")            │
+        (args (cond                   │
+                ((anywhere "-f"       │
+                           "--force") │
+                 …)                   │
+                (effect               │ → :allow
+                 :allow))))           │
 
 Result
 

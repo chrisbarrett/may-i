@@ -7,14 +7,13 @@ Trace
 
                                  command │ brew list
   74: (rule (command "brew")             │
-            (args (cond                  │
-                    ((positional         │
-                       "install")        │ "list" = "install" → no
-                     …)                  │
-                    ((positional         │
-                       (or "list"        │ "list" = "list" → yes
-                           "search"))    │ "list" = "search" → no
-                     (effect :allow))))) │ → :allow
+        (args (cond                      │
+                ((positional "install")  │ "list" = "install" → no
+                 …)                      │
+                ((positional (or         │
+                              "list"     │ "list" = "list" → yes
+                              "search")) │ "list" = "search" → no
+                 (effect :allow)))))     │ → :allow
 
 Result
 

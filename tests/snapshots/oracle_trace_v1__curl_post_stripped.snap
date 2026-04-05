@@ -1,21 +1,18 @@
 ---
 source: tests/oracle_trace_v1.rs
-assertion_line: 108
 expression: normalised
 ---
 
 Trace
 
-                                               command │ curl -d data https://example.com
-  65: (rule (command "curl")                           │
-            (args (and (not (anywhere                  │
-                              "-d"))                   │ "-d" ∈ {"-d", "data", "https://example.com"} → yes
-                       …)))                            │
-                                                       │
-  69: (rule                                            │
-        (command "curl")                               │
-        (effect                                        │ → :ask "Network operation requires approval"
-          :ask "Network operation requires approval")) │
+                                              command │ curl -d data https://example.com
+  65: (rule (command "curl")                          │
+        (args (and (not (anywhere "-d"))              │ "-d" ∈ {"-d", "data", "https://example.com"} → yes
+                   …)))                               │
+                                                      │
+  69: (rule (command "curl")                          │
+        (effect                                       │ → :ask "Network operation requires approval"
+         :ask "Network operation requires approval")) │
 
 Result
 

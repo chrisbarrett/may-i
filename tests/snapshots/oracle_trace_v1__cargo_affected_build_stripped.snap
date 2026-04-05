@@ -5,27 +5,26 @@ expression: normalised
 
 Trace
 
-                                 command │ cargo affected build
-  95: (rule (command "cargo")            │
-            (args                        │
-              (or (when (exact)          │
-                    (effect :allow))     │ → :allow
-                  (positional            │
-                    (? "affected")       │
-                    (? (or "watch"       │
-                           "run"         │
-                           "r"))         │
-                    (? "--")             │
-                    (cond                │
-                      ((or "install"     │
-                           "uninstall")  │
-                       (effect :deny))   │
-                      ((or "build"       │
-                           "b"           │
-                           …             │
-                           "clippy")     │
-                       (effect :allow))) │ → :allow
-                    (effect :allow)))))  │
+                                command │ cargo affected build
+  95: (rule (command "cargo")           │
+        (args (or (when (exact)         │
+                    (effect :allow))    │ → :allow
+                  (positional           │
+                   (? "affected")       │
+                   (? (or "watch"       │
+                          "run"         │
+                          "r"))         │
+                   (? "--")             │
+                   (cond                │
+                     ((or "install"     │
+                          "uninstall")  │
+                      (effect :deny))   │
+                     ((or "build"       │
+                          "b"           │
+                          …             │
+                          "clippy")     │
+                      (effect :allow))) │ → :allow
+                   (effect :allow)))))  │
 
 Result
 
