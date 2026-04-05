@@ -935,7 +935,7 @@ fn render_trivia_guided_delim<A: Clone + TriviaSource>(
         .iter()
         .any(|t| t.has_newline());
 
-    for child in &children[1..] {
+    for (i, child) in children[1..].iter().enumerate() {
         let forced = child.ann.forced_break();
         let has_source_trivia = !child.ann.leading_trivia().is_empty();
         // Cascade: constructed children (no source trivia) inherit the broken state.
@@ -974,9 +974,11 @@ fn render_trivia_guided_delim<A: Clone + TriviaSource>(
                 size_buf.replay(out);
                 let child_start = col + 1;
                 col += 1 + child_width;
-                // For default forms, future breaks align under this
-                // inline child.  Indent-spec forms keep fixed body indent.
-                if !has_indent_spec {
+                // Align cascade under the first inline arg only
+                // (default forms).  Indent-spec forms keep fixed body
+                // indent.  Later inline children don't shift the cascade
+                // to avoid rightward staircase drift.
+                if i == 0 && !has_indent_spec {
                     cascade_col = child_start;
                 }
             }
