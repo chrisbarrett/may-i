@@ -703,7 +703,10 @@ mod tests {
 
     #[test]
     fn predicate_and_with_multiple_creates_and() {
-        let preds = vec![Predicate::fact_presence(":a"), Predicate::fact_presence(":b")];
+        let preds = vec![
+            Predicate::fact_presence(":a"),
+            Predicate::fact_presence(":b"),
+        ];
         let result = Predicate::and(preds);
         assert!(matches!(result, Predicate::And(children) if children.len() == 2));
     }
@@ -717,7 +720,10 @@ mod tests {
 
     #[test]
     fn predicate_or_with_multiple_creates_or() {
-        let preds = vec![Predicate::fact_presence(":a"), Predicate::fact_presence(":b")];
+        let preds = vec![
+            Predicate::fact_presence(":a"),
+            Predicate::fact_presence(":b"),
+        ];
         let result = Predicate::or(preds);
         assert!(matches!(result, Predicate::Or(children) if children.len() == 2));
     }

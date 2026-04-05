@@ -3,9 +3,9 @@
 // Task 2.4: Implement boolean combinator parsers (`and`, `or`, `not`)
 // Task 2.5: Implement unified predicate parser that dispatches to fact or arg parsers
 
+use may_i_core::Keyword;
 use may_i_core::ast::Predicate;
 use may_i_core::predicates::FactQuery;
-use may_i_core::Keyword;
 use may_i_sexpr::{RawError, Sexpr};
 
 /// Parse a unified predicate from an s-expression.

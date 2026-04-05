@@ -358,7 +358,15 @@ impl<A: Clone> CstNode<A> {
     }
 }
 
-const SPECIAL_FORMS: &[&str] = &["define", "check", "with-facts", "when", "unless", "rule", "cond"];
+const SPECIAL_FORMS: &[&str] = &[
+    "define",
+    "check",
+    "with-facts",
+    "when",
+    "unless",
+    "rule",
+    "cond",
+];
 
 fn is_special_form(name: &str) -> bool {
     SPECIAL_FORMS.contains(&name)
@@ -496,7 +504,13 @@ impl CstNode<TriviaAnn> {
                         // original multi-line layout.
                         let source_newline = child.ann.leading.iter().any(|t| {
                             matches!(t, Trivia::Whitespace(s) if s.contains('\n'))
-                                || matches!(t, Trivia::Comment { has_newline: true, .. })
+                                || matches!(
+                                    t,
+                                    Trivia::Comment {
+                                        has_newline: true,
+                                        ..
+                                    }
+                                )
                         });
 
                         // cond always breaks clauses onto separate lines
@@ -1189,15 +1203,34 @@ mod tests {
 
     #[test]
     fn test_is_special_form_known_forms() {
-        for name in &["define", "check", "with-facts", "when", "unless", "rule", "cond"] {
+        for name in &[
+            "define",
+            "check",
+            "with-facts",
+            "when",
+            "unless",
+            "rule",
+            "cond",
+        ] {
             assert!(is_special_form(name), "{name} should be a special form");
         }
     }
 
     #[test]
     fn test_is_special_form_non_special() {
-        for name in &["or", "and", "positional", "anywhere", "effect", "foo", "bar"] {
-            assert!(!is_special_form(name), "{name} should NOT be a special form");
+        for name in &[
+            "or",
+            "and",
+            "positional",
+            "anywhere",
+            "effect",
+            "foo",
+            "bar",
+        ] {
+            assert!(
+                !is_special_form(name),
+                "{name} should NOT be a special form"
+            );
         }
     }
 
@@ -1796,8 +1829,7 @@ mod tests {
         let input = "(cond\n  ((pred) (effect :allow))\n  (else (effect :ask)))";
         let result = pretty(input, 80);
         assert_eq!(
-            result,
-            "(cond\n  ((pred)\n   (effect :allow))\n  (else\n   (effect :ask)))",
+            result, "(cond\n  ((pred)\n   (effect :allow))\n  (else\n   (effect :ask)))",
             "cond clauses should break after predicate, got:\n{result}"
         );
     }
@@ -1826,8 +1858,7 @@ mod tests {
         );
         let result = cond_node.pretty_serialize(80);
         assert_eq!(
-            result,
-            "(cond\n  ((anywhere \"--force\" \"-f\")\n   (effect :ask \"desc\")))",
+            result, "(cond\n  ((anywhere \"--force\" \"-f\")\n   (effect :ask \"desc\")))",
             "cond clause children should use computed indent, got:\n{result}"
         );
     }

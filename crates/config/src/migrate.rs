@@ -1218,7 +1218,11 @@ mod tests {
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let results = migrate_forms(nodes);
         assert_eq!(results.len(), 2);
-        assert!(results[0].serialize().contains("(rule git (effect :allow))"));
+        assert!(
+            results[0]
+                .serialize()
+                .contains("(rule git (effect :allow))")
+        );
         assert!(
             results[1]
                 .serialize()

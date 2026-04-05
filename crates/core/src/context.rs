@@ -25,9 +25,7 @@ impl ContextFacts {
 
     /// Check if a key contains a specific value.
     pub fn contains(&self, key: &Keyword, value: &str) -> bool {
-        self.values
-            .get(key)
-            .is_some_and(|set| set.contains(value))
+        self.values.get(key).is_some_and(|set| set.contains(value))
     }
 
     /// Insert a presence fact (key exists with empty set).
@@ -37,18 +35,12 @@ impl ContextFacts {
 
     /// Insert a scalar value for a key (singleton set).
     pub fn insert_scalar(&mut self, key: Keyword, value: impl Into<String>) {
-        self.values
-            .entry(key)
-            .or_default()
-            .insert(value.into());
+        self.values.entry(key).or_default().insert(value.into());
     }
 
     /// Push a value onto the set at the given key, accumulating values.
     pub fn push(&mut self, key: Keyword, value: impl Into<String>) {
-        self.values
-            .entry(key)
-            .or_default()
-            .insert(value.into());
+        self.values.entry(key).or_default().insert(value.into());
     }
 
     /// Get the scalar value for a key, if it exists and has exactly one member.

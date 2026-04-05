@@ -3,9 +3,9 @@
 use colored::Colorize;
 use may_i_pp::colorize_atom;
 
+use engine::check::CheckResult;
 use may_i_config as config;
 use may_i_engine as engine;
-use engine::check::CheckResult;
 
 use crate::annotation::{TraceEntry, TracingFold};
 use crate::output;
@@ -182,10 +182,13 @@ fn run_checks_with_traces(
         let result =
             engine::eval::evaluate_with_fold(&cmd, &args, config, &check.context, &mut fold)
                 .map_err(|e| miette::miette!("{e}"))?;
-        Ok((result, TraceExtra {
-            location: make_location(&check.span),
-            traces: fold.traces,
-        }))
+        Ok((
+            result,
+            TraceExtra {
+                location: make_location(&check.span),
+                traces: fold.traces,
+            },
+        ))
     })
 }
 

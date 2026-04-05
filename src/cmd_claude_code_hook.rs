@@ -84,14 +84,20 @@ fn build_context(payload: &serde_json::Value) -> ContextFacts {
     context.insert_present(Keyword::new(":client/claude-code").unwrap());
 
     if let Some(permission_mode) = payload.get("permission_mode").and_then(|v| v.as_str()) {
-        context.insert_scalar(Keyword::new(":claude-code/permission-mode").unwrap(), permission_mode);
+        context.insert_scalar(
+            Keyword::new(":claude-code/permission-mode").unwrap(),
+            permission_mode,
+        );
     }
     if let Some(cwd) = payload.get("cwd").and_then(|v| v.as_str()) {
         context.insert_scalar(Keyword::new(":claude-code/cwd").unwrap(), cwd);
     }
     context.insert_scalar(Keyword::new(":claude-code/tool-name").unwrap(), tool_name);
     if let Some(event_name) = payload.get("hook_event_name").and_then(|v| v.as_str()) {
-        context.insert_scalar(Keyword::new(":claude-code/hook-event-name").unwrap(), event_name);
+        context.insert_scalar(
+            Keyword::new(":claude-code/hook-event-name").unwrap(),
+            event_name,
+        );
     }
 
     context

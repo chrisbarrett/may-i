@@ -141,7 +141,9 @@ impl FactQuery {
                 key,
                 vector_syntax: true,
             } => format!("[{}]", key.as_str()),
-            FactQuery::Value { key, pattern } => format!("[{} {}]", key.as_str(), pattern.to_source()),
+            FactQuery::Value { key, pattern } => {
+                format!("[{} {}]", key.as_str(), pattern.to_source())
+            }
         }
     }
 }

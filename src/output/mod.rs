@@ -51,23 +51,22 @@ pub fn migration_note(
         let display_path = shorten_home(config_path);
         let prefix = "Migrations available:";
         let heading = NoteHeading {
-            text: format!(
-                "{} {}",
-                prefix.yellow().bold(),
-                display_path.bold(),
-            ),
+            text: format!("{} {}", prefix.yellow().bold(), display_path.bold(),),
             visible_width: prefix.len() + 1 + display_path.len(),
         };
-        Some(Advisory {
-            level: NoteLevel::Warn,
-            heading: String::new(), // unused — overridden below
-            detail: "Your config uses an older syntax that has been automatically \
+        Some(
+            Advisory {
+                level: NoteLevel::Warn,
+                heading: String::new(), // unused — overridden below
+                detail: "Your config uses an older syntax that has been automatically \
                      translated. Trace output reflects the translated rules, which \
                      may not match the file on disk."
-                .into(),
-            suggestion: "Apply pending migrations by running:".into(),
-            command: format!("{prog} migrate"),
-        }.into_note_with_heading(heading))
+                    .into(),
+                suggestion: "Apply pending migrations by running:".into(),
+                command: format!("{prog} migrate"),
+            }
+            .into_note_with_heading(heading),
+        )
     } else {
         None
     }

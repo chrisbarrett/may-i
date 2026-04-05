@@ -746,7 +746,10 @@ impl EvalFold for TracingFold {
 
     fn effect_cond(
         &mut self,
-        branches: Vec<(ChildResult<Self::PredicateOut>, ChildResult<Self::EffectOut>)>,
+        branches: Vec<(
+            ChildResult<Self::PredicateOut>,
+            ChildResult<Self::EffectOut>,
+        )>,
         fallback: Option<ChildResult<Self::EffectOut>>,
         result: EffectResult,
     ) -> Self::EffectOut {

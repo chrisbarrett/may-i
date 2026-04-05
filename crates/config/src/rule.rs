@@ -60,13 +60,11 @@ pub fn parse_rule(sexpr: &Sexpr) -> Result<Spanned<Rule>, RawError> {
     }
 
     if effects.len() > 1 {
-        return Err(
-            RawError::new(
-                "rule accepts exactly one effect, but multiple were given",
-                sexpr.span(),
-            )
-            .with_help("wrap multiple effects with a combinator: (and ...) or (or ...)"),
-        );
+        return Err(RawError::new(
+            "rule accepts exactly one effect, but multiple were given",
+            sexpr.span(),
+        )
+        .with_help("wrap multiple effects with a combinator: (and ...) or (or ...)"));
     }
 
     let effect = effects.into_iter().next().unwrap();
@@ -303,10 +301,8 @@ mod tests {
 
     #[test]
     fn parse_rule_with_check_alongside_effect() {
-        let rule = parse_rule_str(
-            r#"(rule "git" (effect :allow) (check :allow "git status"))"#,
-        )
-        .unwrap();
+        let rule =
+            parse_rule_str(r#"(rule "git" (effect :allow) (check :allow "git status"))"#).unwrap();
         assert!(matches!(rule.effect.value, Effect::Allow(_)));
         assert_eq!(rule.checks.len(), 1);
     }

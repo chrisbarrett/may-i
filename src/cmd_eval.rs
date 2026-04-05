@@ -90,7 +90,8 @@ mod tests {
 
     #[test]
     fn parse_command_args_strips_leading_comment() {
-        let (cmd, args) = parse_command_args("# this is a comment\nsed -i '' 's/foo/bar/g' file.txt");
+        let (cmd, args) =
+            parse_command_args("# this is a comment\nsed -i '' 's/foo/bar/g' file.txt");
         assert_eq!(cmd, "sed");
         assert_eq!(args[0], "-i");
     }
@@ -100,7 +101,10 @@ mod tests {
         let (cmd, _args) = parse_command_args("# just a comment");
         // Shell parser strips comments; fallback gives "#" which is acceptable
         // The key point is it doesn't produce "\n" or other whitespace
-        assert!(!cmd.trim().is_empty(), "command should not be empty/whitespace, got: {cmd:?}");
+        assert!(
+            !cmd.trim().is_empty(),
+            "command should not be empty/whitespace, got: {cmd:?}"
+        );
     }
 }
 

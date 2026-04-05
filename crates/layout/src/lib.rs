@@ -86,7 +86,10 @@ pub struct NoteHeading {
 impl From<String> for NoteHeading {
     fn from(s: String) -> Self {
         let visible_width = s.len();
-        Self { text: s, visible_width }
+        Self {
+            text: s,
+            visible_width,
+        }
     }
 }
 
@@ -440,9 +443,14 @@ fn write_note(w: &mut impl Write, indent: usize, note: &Note, term: &Terminal) {
     let top_used = visible_len(top_prefix) + header_visible_width + visible_len(top_mid) + 1; // +1 for ╮
     let top_fill = usable.saturating_sub(top_used);
     let _ = writeln!(
-        w, "{:indent$}{}{}{}{}{}", "",
-        top_prefix.dimmed(), header, top_mid.dimmed(),
-        "─".repeat(top_fill).dimmed(), "╮".dimmed(),
+        w,
+        "{:indent$}{}{}{}{}{}",
+        "",
+        top_prefix.dimmed(),
+        header,
+        top_mid.dimmed(),
+        "─".repeat(top_fill).dimmed(),
+        "╮".dimmed(),
     );
 
     // "│ " prefix + " │" suffix = 4 chars of box chrome.
@@ -471,13 +479,23 @@ fn write_note(w: &mut impl Write, indent: usize, note: &Note, term: &Terminal) {
     // Bottom border: ╰──────╯
     let bottom_fill = usable.saturating_sub(2);
     let _ = writeln!(
-        w, "{:indent$}{}{}{}", "",
-        "╰".dimmed(), "─".repeat(bottom_fill).dimmed(), "╯".dimmed(),
+        w,
+        "{:indent$}{}{}{}",
+        "",
+        "╰".dimmed(),
+        "─".repeat(bottom_fill).dimmed(),
+        "╯".dimmed(),
     );
 }
 
 /// Write a single line inside a box: "│ content                 │"
-fn write_box_line(w: &mut impl Write, indent: usize, box_width: usize, text: &str, text_width: usize) {
+fn write_box_line(
+    w: &mut impl Write,
+    indent: usize,
+    box_width: usize,
+    text: &str,
+    text_width: usize,
+) {
     let inner_width = box_width.saturating_sub(4);
     let padding = inner_width.saturating_sub(text_width);
     let _ = writeln!(
@@ -692,11 +710,14 @@ mod tests {
     #[test]
     fn note_with_indent() {
         let term = Terminal::new(50);
-        let layout = Layout::indent(4, Layout::Note(Note {
-            level: NoteLevel::Info,
-            heading: "Hi".into(),
-            body: "Hello world.".into(),
-        }));
+        let layout = Layout::indent(
+            4,
+            Layout::Note(Note {
+                level: NoteLevel::Info,
+                heading: "Hi".into(),
+                body: "Hello world.".into(),
+            }),
+        );
         let s = render_to_string(&layout, 0, &term);
         insta::assert_snapshot!(strip_ansi(&s));
     }
@@ -714,7 +735,11 @@ mod tests {
         let widths: Vec<usize> = stripped.lines().map(|l| l.chars().count()).collect();
         let first = widths[0];
         for (i, &w) in widths.iter().enumerate() {
-            assert_eq!(w, first, "line {} width {} != expected {}: {:?}", i, w, first, stripped);
+            assert_eq!(
+                w, first,
+                "line {} width {} != expected {}: {:?}",
+                i, w, first, stripped
+            );
         }
     }
 
@@ -739,7 +764,8 @@ mod tests {
             detail: "Tracing output may differ from the real file.".into(),
             suggestion: "Update your config to the latest syntax:".into(),
             command: "may-i migrate".into(),
-        }.into_layout();
+        }
+        .into_layout();
         let s = render_to_string(&layout, 0, &term);
         insta::assert_snapshot!(strip_ansi(&s));
     }
@@ -753,7 +779,8 @@ mod tests {
             detail: "Tracing output may differ from the real file.".into(),
             suggestion: "Update your config:".into(),
             command: "may-i migrate".into(),
-        }.into_layout();
+        }
+        .into_layout();
         let s = render_to_string(&layout, 0, &term);
         insta::assert_snapshot!(strip_ansi(&s));
     }

@@ -198,10 +198,7 @@ mod tests {
                 Effect::CommandPattern(CommandPattern::Literal("echo".into())),
                 s,
             ),
-            effect: may_i_core::ast::Spanned::new(
-                Effect::Allow(Some("ok".into())),
-                s,
-            ),
+            effect: may_i_core::ast::Spanned::new(Effect::Allow(Some("ok".into())), s),
             checks: vec![Check {
                 command: "echo hi".into(),
                 expected: Decision::Allow,

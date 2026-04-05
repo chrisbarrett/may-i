@@ -5,8 +5,8 @@ use may_i_core::ast::{Effect, EffectResult, Predicate, Rule};
 use may_i_core::pattern::{ArgPattern, CommandPattern, PositionalArg};
 use may_i_core::{ContextFacts, Decision, FactPattern, FactQuery, Keyword};
 
-use crate::{EvalError, EvalResult};
 use crate::fold::{ArgMatchDetail, ChildResult, EvalFold, PureFold, build_fact_detail};
+use crate::{EvalError, EvalResult};
 
 /// Maximum recursion depth for (may-i ...) evaluation.
 pub(crate) const DEFAULT_RECURSION_LIMIT: usize = 10;
@@ -155,7 +155,11 @@ impl<'a> Evaluator<'a> {
 
     /// Evaluate a command against all rules.
     /// Returns the first matching rule's effect, or ask if none match.
-    pub fn evaluate<F: EvalFold>(&self, fold: &mut F, ctx: &EvalContext) -> Result<EvalResult, EvalError> {
+    pub fn evaluate<F: EvalFold>(
+        &self,
+        fold: &mut F,
+        ctx: &EvalContext,
+    ) -> Result<EvalResult, EvalError> {
         // If depth exceeded, return ask
         if ctx.is_depth_exceeded() {
             return Ok(EvalResult::new(
@@ -220,9 +224,7 @@ impl<'a> Evaluator<'a> {
         let result = F::effect_result(&out);
 
         Ok(match result {
-            EffectResult::Nil => {
-                fold.rule_not_matched(rule, ctx.facts, command_out, out)
-            }
+            EffectResult::Nil => fold.rule_not_matched(rule, ctx.facts, command_out, out),
             EffectResult::Decision(_, _) => {
                 let line = None;
                 fold.rule_matched(rule, line, ctx.facts, command_out, out)
@@ -233,7 +235,10 @@ impl<'a> Evaluator<'a> {
 
 /// Evaluate a predicate against the context (non-generic, uses PureFold).
 #[cfg(test)]
-pub(crate) fn evaluate_predicate(predicate: &Predicate, ctx: &EvalContext) -> Result<PredicateResult, EvalError> {
+pub(crate) fn evaluate_predicate(
+    predicate: &Predicate,
+    ctx: &EvalContext,
+) -> Result<PredicateResult, EvalError> {
     let mut fold = PureFold;
     let out = evaluate_predicate_fold(&mut fold, predicate, ctx)?;
     Ok(PureFold::predicate_result(&out))
@@ -304,9 +309,7 @@ pub(crate) fn evaluate_predicate_fold<F: EvalFold>(
             };
             Ok(fold.predicate_not(out, result))
         }
-        Predicate::Named(name) => {
-            Err(EvalError::UnresolvedPredicate { name: name.clone() })
-        }
+        Predicate::Named(name) => Err(EvalError::UnresolvedPredicate { name: name.clone() }),
     }
 }
 
@@ -755,7 +758,11 @@ fn resolve_trailing_cond_effect<'a>(
 
 /// Evaluate an effect to produce an EffectResult (convenience, uses PureFold).
 #[cfg(test)]
-pub(crate) fn evaluate_effect(effect: &Effect, ctx: &EvalContext, rules: &[Rule]) -> Result<EffectResult, EvalError> {
+pub(crate) fn evaluate_effect(
+    effect: &Effect,
+    ctx: &EvalContext,
+    rules: &[Rule],
+) -> Result<EffectResult, EvalError> {
     evaluate_effect_fold(&mut PureFold, effect, ctx, rules)
 }
 
@@ -927,12 +934,17 @@ pub(crate) fn evaluate_effect_fold<F: EvalFold>(
                     let pred_out = evaluate_predicate_fold(fold, &predicate.value, ctx)?;
                     let pred_result = F::predicate_result(&pred_out);
                     if pred_result == PredicateResult::Match {
-                        let body_out = evaluate_effect_fold(fold, &branch_effect.value, ctx, rules)?;
+                        let body_out =
+                            evaluate_effect_fold(fold, &branch_effect.value, ctx, rules)?;
                         result = F::effect_result(&body_out).clone();
-                        fold_branches.push((ChildResult::Evaluated(pred_out), ChildResult::Evaluated(body_out)));
+                        fold_branches.push((
+                            ChildResult::Evaluated(pred_out),
+                            ChildResult::Evaluated(body_out),
+                        ));
                         found = true;
                     } else {
-                        fold_branches.push((ChildResult::Evaluated(pred_out), ChildResult::Skipped));
+                        fold_branches
+                            .push((ChildResult::Evaluated(pred_out), ChildResult::Skipped));
                     }
                 }
             }
@@ -951,31 +963,27 @@ pub(crate) fn evaluate_effect_fold<F: EvalFold>(
         }
 
         // Recursion
-        Effect::MayI { pattern } => {
-            match extract_inner_command(pattern, ctx.args) {
-                Some((inner_cmd, inner_args)) => {
-                    let evaluator = Evaluator::new(rules);
-                    let mut inner_facts = ctx.facts.clone();
-                    inner_facts.push(Keyword::new(":via").unwrap(), ctx.command);
-                    let expanded_inner = expand_combined_flags(&inner_args);
-                    let inner_ctx = EvalContext {
-                        command: &inner_cmd,
-                        args: &expanded_inner,
-                        facts: &inner_facts,
-                        recursion_depth: ctx.recursion_depth + 1,
-                        recursion_limit: ctx.recursion_limit,
-                    };
-                    fold.begin_recursive_eval();
-                    let eval_result = evaluator.evaluate(fold, &inner_ctx)?;
-                    let inner_result =
-                        EffectResult::Decision(eval_result.decision, eval_result.reason);
-                    let inner_out =
-                        fold.effect_terminal(&Effect::Allow(None), inner_result.clone());
-                    fold.effect_may_i(pattern, &inner_cmd, &inner_args, inner_result, inner_out)
-                }
-                None => fold.effect_may_i_no_match(pattern),
+        Effect::MayI { pattern } => match extract_inner_command(pattern, ctx.args) {
+            Some((inner_cmd, inner_args)) => {
+                let evaluator = Evaluator::new(rules);
+                let mut inner_facts = ctx.facts.clone();
+                inner_facts.push(Keyword::new(":via").unwrap(), ctx.command);
+                let expanded_inner = expand_combined_flags(&inner_args);
+                let inner_ctx = EvalContext {
+                    command: &inner_cmd,
+                    args: &expanded_inner,
+                    facts: &inner_facts,
+                    recursion_depth: ctx.recursion_depth + 1,
+                    recursion_limit: ctx.recursion_limit,
+                };
+                fold.begin_recursive_eval();
+                let eval_result = evaluator.evaluate(fold, &inner_ctx)?;
+                let inner_result = EffectResult::Decision(eval_result.decision, eval_result.reason);
+                let inner_out = fold.effect_terminal(&Effect::Allow(None), inner_result.clone());
+                fold.effect_may_i(pattern, &inner_cmd, &inner_args, inner_result, inner_out)
             }
-        }
+            None => fold.effect_may_i_no_match(pattern),
+        },
     })
 }
 
@@ -1319,7 +1327,10 @@ mod tests {
             key: kw(":missing"),
             vector_syntax: false,
         });
-        assert_eq!(evaluate_predicate(&pred, &ctx).unwrap(), PredicateResult::NoMatch);
+        assert_eq!(
+            evaluate_predicate(&pred, &ctx).unwrap(),
+            PredicateResult::NoMatch
+        );
 
         let mut facts = ContextFacts::default();
         facts.insert_present(kw(":present"));
@@ -1329,7 +1340,10 @@ mod tests {
             key: kw(":present"),
             vector_syntax: false,
         });
-        assert_eq!(evaluate_predicate(&pred, &ctx).unwrap(), PredicateResult::Match);
+        assert_eq!(
+            evaluate_predicate(&pred, &ctx).unwrap(),
+            PredicateResult::Match
+        );
     }
 
     #[test]
@@ -1368,7 +1382,10 @@ mod tests {
         // The match should succeed and bind the fact
         let (matched, bound_facts) = match_expr_with_binding(&bind_expr, matched_value);
         assert!(matched);
-        assert_eq!(bound_facts.get_scalar(&kw(":ssh/host")), Some(matched_value));
+        assert_eq!(
+            bound_facts.get_scalar(&kw(":ssh/host")),
+            Some(matched_value)
+        );
     }
 
     #[test]
@@ -2593,8 +2610,8 @@ mod tests {
 
     #[test]
     fn or_short_circuits_bindings_on_first_match() {
-        use may_i_core::pattern::Expr;
         use may_i_core::Keyword;
+        use may_i_core::pattern::Expr;
 
         let expr: Expr = Expr::Or(vec![
             Expr::Bind {
@@ -2611,7 +2628,10 @@ mod tests {
         assert!(matched);
         assert!(facts.has(&kw(":x")));
         assert_eq!(facts.get_scalar(&kw(":x")), Some("val"));
-        assert!(!facts.has(&kw(":y")), "second Or alternative should not bind :y");
+        assert!(
+            !facts.has(&kw(":y")),
+            "second Or alternative should not bind :y"
+        );
     }
 
     #[test]
@@ -2629,47 +2649,197 @@ mod tests {
             type EffectOut = EffectResult;
             type PredicateOut = PredicateResult;
 
-            fn effect_result(out: &EffectResult) -> &EffectResult { out }
-            fn predicate_result(out: &PredicateResult) -> PredicateResult { *out }
+            fn effect_result(out: &EffectResult) -> &EffectResult {
+                out
+            }
+            fn predicate_result(out: &PredicateResult) -> PredicateResult {
+                *out
+            }
 
-            fn effect_terminal(&mut self, _: &Effect, result: EffectResult) -> EffectResult { result }
-            fn effect_nil(&mut self, _: &Effect) -> EffectResult { EffectResult::Nil }
-            fn effect_command_match(&mut self, _: &CommandPattern, _: &str, matched: bool) -> EffectResult {
-                if matched { EffectResult::Decision(Decision::Allow, None) } else { EffectResult::Nil }
+            fn effect_terminal(&mut self, _: &Effect, result: EffectResult) -> EffectResult {
+                result
             }
-            fn effect_arg_match(&mut self, _: &ArgPattern, _: &[String], matched: bool, _: crate::fold::ArgMatchDetail) -> EffectResult {
-                if matched { EffectResult::Decision(Decision::Allow, None) } else { EffectResult::Nil }
+            fn effect_nil(&mut self, _: &Effect) -> EffectResult {
+                EffectResult::Nil
             }
-            fn effect_and(&mut self, _: Vec<ChildResult<EffectResult>>, result: EffectResult) -> EffectResult { result }
-            fn effect_or(&mut self, _: Vec<ChildResult<EffectResult>>, result: EffectResult) -> EffectResult { result }
-            fn effect_not(&mut self, _: EffectResult, result: EffectResult) -> EffectResult { result }
-            fn effect_when(&mut self, _: PredicateResult, _: ChildResult<EffectResult>, _: &Effect, result: EffectResult) -> EffectResult { result }
-            fn effect_unless(&mut self, _: PredicateResult, _: ChildResult<EffectResult>, _: &Effect, result: EffectResult) -> EffectResult { result }
-            fn effect_if(&mut self, _: PredicateResult, _: ChildResult<EffectResult>, _: ChildResult<EffectResult>, result: EffectResult) -> EffectResult { result }
-            fn effect_cond(&mut self, branches: Vec<(ChildResult<PredicateResult>, ChildResult<EffectResult>)>, _: Option<ChildResult<EffectResult>>, result: EffectResult) -> EffectResult {
+            fn effect_command_match(
+                &mut self,
+                _: &CommandPattern,
+                _: &str,
+                matched: bool,
+            ) -> EffectResult {
+                if matched {
+                    EffectResult::Decision(Decision::Allow, None)
+                } else {
+                    EffectResult::Nil
+                }
+            }
+            fn effect_arg_match(
+                &mut self,
+                _: &ArgPattern,
+                _: &[String],
+                matched: bool,
+                _: crate::fold::ArgMatchDetail,
+            ) -> EffectResult {
+                if matched {
+                    EffectResult::Decision(Decision::Allow, None)
+                } else {
+                    EffectResult::Nil
+                }
+            }
+            fn effect_and(
+                &mut self,
+                _: Vec<ChildResult<EffectResult>>,
+                result: EffectResult,
+            ) -> EffectResult {
+                result
+            }
+            fn effect_or(
+                &mut self,
+                _: Vec<ChildResult<EffectResult>>,
+                result: EffectResult,
+            ) -> EffectResult {
+                result
+            }
+            fn effect_not(&mut self, _: EffectResult, result: EffectResult) -> EffectResult {
+                result
+            }
+            fn effect_when(
+                &mut self,
+                _: PredicateResult,
+                _: ChildResult<EffectResult>,
+                _: &Effect,
+                result: EffectResult,
+            ) -> EffectResult {
+                result
+            }
+            fn effect_unless(
+                &mut self,
+                _: PredicateResult,
+                _: ChildResult<EffectResult>,
+                _: &Effect,
+                result: EffectResult,
+            ) -> EffectResult {
+                result
+            }
+            fn effect_if(
+                &mut self,
+                _: PredicateResult,
+                _: ChildResult<EffectResult>,
+                _: ChildResult<EffectResult>,
+                result: EffectResult,
+            ) -> EffectResult {
+                result
+            }
+            fn effect_cond(
+                &mut self,
+                branches: Vec<(ChildResult<PredicateResult>, ChildResult<EffectResult>)>,
+                _: Option<ChildResult<EffectResult>>,
+                result: EffectResult,
+            ) -> EffectResult {
                 let mut recorded = self.cond_branches.lock().unwrap();
                 for (pred, body) in &branches {
-                    recorded.push((matches!(pred, ChildResult::Evaluated(_)), matches!(body, ChildResult::Evaluated(_))));
+                    recorded.push((
+                        matches!(pred, ChildResult::Evaluated(_)),
+                        matches!(body, ChildResult::Evaluated(_)),
+                    ));
                 }
                 result
             }
-            fn effect_arg_continuation(&mut self, _: &ArgPattern, _: &[String], _: crate::fold::ArgMatchDetail, cont: EffectResult) -> EffectResult { cont }
-            fn effect_may_i(&mut self, _: &ArgPattern, _: &str, _: &[String], _: EffectResult, out: EffectResult) -> EffectResult { out }
-            fn effect_may_i_no_match(&mut self, _: &ArgPattern) -> EffectResult { EffectResult::Nil }
+            fn effect_arg_continuation(
+                &mut self,
+                _: &ArgPattern,
+                _: &[String],
+                _: crate::fold::ArgMatchDetail,
+                cont: EffectResult,
+            ) -> EffectResult {
+                cont
+            }
+            fn effect_may_i(
+                &mut self,
+                _: &ArgPattern,
+                _: &str,
+                _: &[String],
+                _: EffectResult,
+                out: EffectResult,
+            ) -> EffectResult {
+                out
+            }
+            fn effect_may_i_no_match(&mut self, _: &ArgPattern) -> EffectResult {
+                EffectResult::Nil
+            }
 
-            fn predicate_fact(&mut self, _: &FactQuery, result: PredicateResult, _: crate::fold::FactDetail) -> PredicateResult { result }
-            fn predicate_arg(&mut self, _: &ArgPattern, _: &[String], result: PredicateResult) -> PredicateResult { result }
-            fn predicate_and(&mut self, _: Vec<ChildResult<PredicateResult>>, result: PredicateResult) -> PredicateResult { result }
-            fn predicate_or(&mut self, _: Vec<ChildResult<PredicateResult>>, result: PredicateResult) -> PredicateResult { result }
-            fn predicate_not(&mut self, _: PredicateResult, result: PredicateResult) -> PredicateResult { result }
-            fn predicate_named(&mut self, _: &str, _: PredicateResult, result: PredicateResult) -> PredicateResult { result }
+            fn predicate_fact(
+                &mut self,
+                _: &FactQuery,
+                result: PredicateResult,
+                _: crate::fold::FactDetail,
+            ) -> PredicateResult {
+                result
+            }
+            fn predicate_arg(
+                &mut self,
+                _: &ArgPattern,
+                _: &[String],
+                result: PredicateResult,
+            ) -> PredicateResult {
+                result
+            }
+            fn predicate_and(
+                &mut self,
+                _: Vec<ChildResult<PredicateResult>>,
+                result: PredicateResult,
+            ) -> PredicateResult {
+                result
+            }
+            fn predicate_or(
+                &mut self,
+                _: Vec<ChildResult<PredicateResult>>,
+                result: PredicateResult,
+            ) -> PredicateResult {
+                result
+            }
+            fn predicate_not(
+                &mut self,
+                _: PredicateResult,
+                result: PredicateResult,
+            ) -> PredicateResult {
+                result
+            }
+            fn predicate_named(
+                &mut self,
+                _: &str,
+                _: PredicateResult,
+                result: PredicateResult,
+            ) -> PredicateResult {
+                result
+            }
 
-            fn rule_matched(&mut self, _: &Rule, _: Option<usize>, _: &ContextFacts, _: EffectResult, effect_out: EffectResult) -> EffectResult {
+            fn rule_matched(
+                &mut self,
+                _: &Rule,
+                _: Option<usize>,
+                _: &ContextFacts,
+                _: EffectResult,
+                effect_out: EffectResult,
+            ) -> EffectResult {
                 effect_out
             }
-            fn rule_not_matched(&mut self, _: &Rule, _: &ContextFacts, _: EffectResult, _: EffectResult) -> EffectResult { EffectResult::Nil }
-            fn rule_skipped(&mut self, _: &Rule) -> EffectResult { EffectResult::Nil }
-            fn default_ask(&mut self, _: &str) -> EffectResult { EffectResult::Decision(Decision::Ask, None) }
+            fn rule_not_matched(
+                &mut self,
+                _: &Rule,
+                _: &ContextFacts,
+                _: EffectResult,
+                _: EffectResult,
+            ) -> EffectResult {
+                EffectResult::Nil
+            }
+            fn rule_skipped(&mut self, _: &Rule) -> EffectResult {
+                EffectResult::Nil
+            }
+            fn default_ask(&mut self, _: &str) -> EffectResult {
+                EffectResult::Decision(Decision::Ask, None)
+            }
         }
 
         // Build a cond with 3 branches: first matches, second and third should be skipped
@@ -2678,22 +2848,40 @@ mod tests {
         let ctx = dummy_context("test", &[], &facts);
         let rules: &[Rule] = &[];
 
-        use may_i_core::ast::Spanned;
         use may_i_core::Span;
+        use may_i_core::ast::Spanned;
         let s = Span::new(0, 0);
 
         let effect = Effect::Cond {
             branches: vec![
                 (
-                    Spanned::new(Predicate::Fact(FactQuery::Presence { key: kw(":a"), vector_syntax: false }), s),
+                    Spanned::new(
+                        Predicate::Fact(FactQuery::Presence {
+                            key: kw(":a"),
+                            vector_syntax: false,
+                        }),
+                        s,
+                    ),
                     Spanned::new(Effect::Allow(Some("first".into())), s),
                 ),
                 (
-                    Spanned::new(Predicate::Fact(FactQuery::Presence { key: kw(":b"), vector_syntax: false }), s),
+                    Spanned::new(
+                        Predicate::Fact(FactQuery::Presence {
+                            key: kw(":b"),
+                            vector_syntax: false,
+                        }),
+                        s,
+                    ),
                     Spanned::new(Effect::Deny(Some("second".into())), s),
                 ),
                 (
-                    Spanned::new(Predicate::Fact(FactQuery::Presence { key: kw(":c"), vector_syntax: false }), s),
+                    Spanned::new(
+                        Predicate::Fact(FactQuery::Presence {
+                            key: kw(":c"),
+                            vector_syntax: false,
+                        }),
+                        s,
+                    ),
                     Spanned::new(Effect::Deny(Some("third".into())), s),
                 ),
             ],
@@ -2701,10 +2889,15 @@ mod tests {
         };
 
         let recorded = Arc::new(Mutex::new(Vec::new()));
-        let mut fold = RecordingFold { cond_branches: recorded.clone() };
+        let mut fold = RecordingFold {
+            cond_branches: recorded.clone(),
+        };
         let result = evaluate_effect_fold(&mut fold, &effect, &ctx, rules).unwrap();
 
-        assert_eq!(result, EffectResult::Decision(Decision::Allow, Some("first".into())));
+        assert_eq!(
+            result,
+            EffectResult::Decision(Decision::Allow, Some("first".into()))
+        );
 
         let branches = recorded.lock().unwrap();
         assert_eq!(branches.len(), 3);

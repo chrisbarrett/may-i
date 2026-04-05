@@ -6,11 +6,11 @@
 use proptest::prelude::*;
 
 #[cfg(test)]
+use may_i_core::Keyword;
+#[cfg(test)]
 use may_i_core::ast::Check;
 use may_i_core::ast::{Config, Effect, Predicate, Rule, SecurityConfig, Spanned};
 use may_i_core::{ContextFacts, Span};
-#[cfg(test)]
-use may_i_core::Keyword;
 #[cfg(test)]
 use may_i_core::{Decision, pattern::CommandPattern};
 
@@ -157,14 +157,12 @@ pub fn any_eval_context_data() -> impl Strategy<Value = (String, Vec<String>, Co
 /// Generate a vector of Rules.
 pub fn any_rule_set(size: usize) -> BoxedStrategy<Vec<Rule>> {
     prop::collection::vec(
-        (any_effect(2), any_effect(2)).prop_map(
-            |(cmd_effect, effect)| Rule {
-                command_effect: spanned(cmd_effect),
-                effect: spanned(effect),
-                checks: vec![],
-                span: dummy_span(),
-            },
-        ),
+        (any_effect(2), any_effect(2)).prop_map(|(cmd_effect, effect)| Rule {
+            command_effect: spanned(cmd_effect),
+            effect: spanned(effect),
+            checks: vec![],
+            span: dummy_span(),
+        }),
         0..size,
     )
     .boxed()

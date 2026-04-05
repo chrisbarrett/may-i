@@ -91,12 +91,8 @@ pub fn any_fact_query() -> BoxedStrategy<FactQuery> {
                 vector_syntax: vector,
             }
         }),
-        (any_keyword(), any_fact_pattern(3)).prop_map(|(k, pattern)| {
-            FactQuery::Value {
-                key: k,
-                pattern,
-            }
-        }),
+        (any_keyword(), any_fact_pattern(3))
+            .prop_map(|(k, pattern)| { FactQuery::Value { key: k, pattern } }),
     ]
     .boxed()
 }

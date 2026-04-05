@@ -1,14 +1,13 @@
 // Integration tests for the Claude Code hook entry point.
 
-use assert_cmd::cargo::cargo_bin_cmd;
 use assert_cmd::Command;
+use assert_cmd::cargo::cargo_bin_cmd;
 use std::io::Write;
 use tempfile::NamedTempFile;
 
 fn write_config(contents: &str) -> NamedTempFile {
     let mut f = NamedTempFile::new().expect("create temp config");
-    f.write_all(contents.as_bytes())
-        .expect("write temp config");
+    f.write_all(contents.as_bytes()).expect("write temp config");
     f
 }
 

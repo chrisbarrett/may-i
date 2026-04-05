@@ -361,8 +361,16 @@ mod tests {
         )
         .unwrap();
         assert_eq!(config.checks.len(), 1);
-        assert!(config.checks[0].context.has(&Keyword::new(":client/opencode").unwrap()));
-        assert!(config.checks[0].context.has(&Keyword::new(":via/ssh").unwrap()));
+        assert!(
+            config.checks[0]
+                .context
+                .has(&Keyword::new(":client/opencode").unwrap())
+        );
+        assert!(
+            config.checks[0]
+                .context
+                .has(&Keyword::new(":via/ssh").unwrap())
+        );
     }
 
     #[test]
@@ -377,8 +385,16 @@ mod tests {
         )
         .unwrap();
         assert_eq!(config.checks.len(), 1);
-        assert!(config.checks[0].context.has(&Keyword::new(":client/opencode").unwrap()));
-        assert!(config.checks[0].context.has(&Keyword::new(":via/ssh").unwrap()));
+        assert!(
+            config.checks[0]
+                .context
+                .has(&Keyword::new(":client/opencode").unwrap())
+        );
+        assert!(
+            config.checks[0]
+                .context
+                .has(&Keyword::new(":via/ssh").unwrap())
+        );
     }
 
     #[test]
@@ -393,7 +409,11 @@ mod tests {
         .unwrap();
         assert_eq!(config.checks.len(), 1);
         // The context should have the scalar value
-        assert!(config.checks[0].context.has(&Keyword::new(":opencode/agent").unwrap()));
+        assert!(
+            config.checks[0]
+                .context
+                .has(&Keyword::new(":opencode/agent").unwrap())
+        );
     }
 
     #[test]
