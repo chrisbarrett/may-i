@@ -273,24 +273,28 @@ pub trait PrettyOutput<A> {
                         None
                     };
 
-                    if let Some(ws) = prev_ws {
+                    if i == 0 && prev_ws.is_none() {
+                        // Very first trivia item: emit indent without a
+                        // leading newline.
+                        for _ in 0..indent {
+                            self.emit_raw(" ");
+                        }
+                    } else if let Some(ws) = prev_ws {
                         let newline_count = ws.matches('\n').count();
-                        let effective = if emitted_comment_with_newline && newline_count > 0 {
-                            newline_count - 1
+                        // The previous comment's has_newline consumed a \n that
+                        // we didn't emit, so account for it in the total.
+                        let total = if emitted_comment_with_newline {
+                            1 + newline_count
                         } else {
-                            newline_count
+                            newline_count.max(1)
                         };
-                        if effective > 0 {
-                            for _ in 0..effective {
-                                self.begin_line(0);
-                            }
-                        } else if !emitted_comment_with_newline {
+                        for _ in 0..total.saturating_sub(1) {
                             self.begin_line(0);
                         }
-                    } else if !emitted_comment_with_newline {
-                        self.begin_line(0);
+                        self.begin_line(indent);
+                    } else {
+                        self.begin_line(indent);
                     }
-                    self.begin_line(indent);
                     self.emit_raw(text);
                     emitted_comment_with_newline = *has_newline;
                 }
@@ -306,35 +310,45 @@ pub trait PrettyOutput<A> {
     /// Emit trailing trivia (typically trailing comments) after a node.
     fn emit_trailing_trivia(&mut self, trivia: &[Trivia]) {
         for (i, item) in trivia.iter().enumerate() {
-            if let Trivia::Comment { text, has_newline } = item {
-                let prev_ws = if i > 0 {
-                    if let Trivia::Whitespace(ws) = &trivia[i - 1] {
-                        Some(ws.as_str())
+            match item {
+                Trivia::Comment { text, has_newline } => {
+                    let prev_ws = if i > 0 {
+                        if let Trivia::Whitespace(ws) = &trivia[i - 1] {
+                            Some(ws.as_str())
+                        } else {
+                            None
+                        }
                     } else {
                         None
-                    }
-                } else {
-                    None
-                };
+                    };
 
-                match prev_ws {
-                    Some(ws) if ws.contains('\n') => {
-                        let extra_newlines = ws.matches('\n').count();
-                        for _ in 0..extra_newlines {
-                            self.begin_line(0);
+                    match prev_ws {
+                        Some(ws) if ws.contains('\n') => {
+                            let extra_newlines = ws.matches('\n').count();
+                            for _ in 0..extra_newlines {
+                                self.begin_line(0);
+                            }
+                            self.emit_raw(text);
                         }
-                        self.emit_raw(text);
+                        Some(ws) => {
+                            self.emit_raw(ws);
+                            self.emit_raw(text);
+                        }
+                        None => {
+                            self.emit_raw(text);
+                        }
                     }
-                    Some(ws) => {
-                        self.emit_raw(ws);
-                        self.emit_raw(text);
-                    }
-                    None => {
-                        self.emit_raw(text);
+                    if *has_newline {
+                        self.begin_line(0);
                     }
                 }
-                if *has_newline {
-                    self.begin_line(0);
+                Trivia::Whitespace(ws) => {
+                    // Emit trailing whitespace that isn't followed by a comment
+                    // (whitespace before comments is handled above).
+                    let next_is_comment = trivia.get(i + 1).is_some_and(|t| matches!(t, Trivia::Comment { .. }));
+                    if !next_is_comment {
+                        self.emit_raw(ws);
+                    }
                 }
             }
         }
@@ -1847,6 +1861,25 @@ mod tests {
         );
         let result = pp_trivia(&doc, 80);
         assert!(result.contains("; trailing"), "trailing comment should be present: {result:?}");
+    }
+
+    #[test]
+    fn trivia_blank_line_between_leading_comment_groups() {
+        // A blank line between comment groups in leading trivia should be preserved
+        let doc = trivia_atom("foo", trivia_ann(
+            vec![
+                CoreTrivia::Comment { text: ";; group A".to_string(), has_newline: true },
+                CoreTrivia::Whitespace("\n".to_string()),
+                CoreTrivia::Comment { text: ";; group B".to_string(), has_newline: true },
+                CoreTrivia::Whitespace("\n".to_string()),
+            ],
+            vec![],
+        ));
+        let result = pp_trivia(&doc, 80);
+        assert!(
+            result.contains(";; group A\n\n;; group B"),
+            "blank line between comment groups should be preserved: {result:?}"
+        );
     }
 
     #[test]
