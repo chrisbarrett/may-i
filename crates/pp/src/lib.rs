@@ -915,11 +915,13 @@ fn render_trivia_guided_delim<A: Clone + TriviaSource>(
         return;
     }
 
-    // Compute child indent based on head atom.
-    // Special forms (indent 1) use body indent (+2).
-    // Forms with an indent spec use body indent (+2).
-    // Default forms use +1 (column after the opening paren).
-    let child_indent = if children[0].as_atom().and_then(indent_spec).is_some() {
+    // Cascade indent: starts at a base value and updates when a child
+    // is placed inline, so that subsequent breaks align under it.
+    //   - Indent-spec forms: body indent (+2), fixed (not updated)
+    //   - Default forms: column after the opening paren (+1), updated
+    //     to align under the first inline child
+    let has_indent_spec = children[0].as_atom().and_then(indent_spec).is_some();
+    let mut cascade_col = if has_indent_spec {
         indent + 2
     } else {
         indent + 1
@@ -949,10 +951,10 @@ fn render_trivia_guided_delim<A: Clone + TriviaSource>(
             size_buf.replay(out);
             col += 1 + child_width;
         } else if should_break {
-            emit_trivia_or_line(&child.ann, child_indent, out);
+            emit_trivia_or_line(&child.ann, cascade_col, out);
             let mut size_buf = EventBuffer::new();
-            render(child, child_indent, width, dimmed, &mut size_buf);
-            col = child_indent + size_buf.first_line_width();
+            render(child, cascade_col, width, dimmed, &mut size_buf);
+            col = cascade_col + size_buf.first_line_width();
             size_buf.replay(out);
             has_broken = true;
         } else {
@@ -961,16 +963,22 @@ fn render_trivia_guided_delim<A: Clone + TriviaSource>(
             render(child, col + 1, width, dimmed, &mut size_buf);
             let child_width = size_buf.first_line_width();
 
-            if col + 1 + child_width > width && col > child_indent {
+            if col + 1 + child_width > width && col > cascade_col {
                 // Doesn't fit, break
-                emit_trivia_or_line(&child.ann, child_indent, out);
-                render(child, child_indent, width, dimmed, out);
-                col = child_indent;
+                emit_trivia_or_line(&child.ann, cascade_col, out);
+                render(child, cascade_col, width, dimmed, out);
+                col = cascade_col;
                 has_broken = true;
             } else {
                 out.emit_space();
                 size_buf.replay(out);
+                let child_start = col + 1;
                 col += 1 + child_width;
+                // For default forms, future breaks align under this
+                // inline child.  Indent-spec forms keep fixed body indent.
+                if !has_indent_spec {
+                    cascade_col = child_start;
+                }
             }
         }
         prev_was_keyword = child.as_atom().is_some_and(|s| s.starts_with(':'));
