@@ -301,8 +301,19 @@ pub trait PrettyOutput<A> {
                 Trivia::Whitespace(_) => {}
             }
         }
-        // If comments left us needing a new line, indent before the node content
+        // Position the cursor for the node content that follows the trivia.
         if emitted_comment_with_newline {
+            // Check if there's trailing whitespace after the last comment that
+            // represents blank lines between the comments and the form.
+            let trailing_newlines = trivia.last().and_then(|t| match t {
+                Trivia::Whitespace(ws) => Some(ws.matches('\n').count()),
+                _ => None,
+            }).unwrap_or(0);
+            // 1 begin_line for the comment's un-emitted trailing \n, plus
+            // any additional newlines from trailing whitespace.
+            for _ in 0..trailing_newlines {
+                self.begin_line(0);
+            }
             self.begin_line(indent);
         }
     }
