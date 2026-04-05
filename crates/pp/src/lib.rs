@@ -639,7 +639,6 @@ impl<A: Clone> PrettyOutput<A> for AnnotatedLineBuilder<A> {
 /// first arg when inline, indent +1 when dropped).
 pub const INDENT_SPECS: &[(&str, u8)] = &[
     ("case", 0),
-    ("check", 0),
     ("cond", 0),
     ("define", 1),
     ("if", 1),
@@ -798,8 +797,16 @@ fn render_node<A: Clone + TriviaSource>(
                     return;
                 }
             }
+            if !must_break {
+                let mut buf = EventBuffer::new();
+                render_broken(children, indent, width, dimmed, &mut buf);
+                if buf.max_line_width(indent) <= width {
+                    buf.replay(out);
+                    return;
+                }
+            }
             let mut buf = EventBuffer::new();
-            render_broken(children, indent, width, dimmed, &mut buf);
+            render_broken_conservative(children, indent, width, dimmed, &mut buf);
             if buf.max_line_width(indent) <= width {
                 buf.replay(out);
                 return;
@@ -835,8 +842,16 @@ fn render_node<A: Clone + TriviaSource>(
                     return;
                 }
             }
+            if !must_break {
+                let mut buf = EventBuffer::new();
+                render_broken_delim(children, indent, width, dimmed, '[', ']', &mut buf);
+                if buf.max_line_width(indent) <= width {
+                    buf.replay(out);
+                    return;
+                }
+            }
             let mut buf = EventBuffer::new();
-            render_broken_delim(children, indent, width, dimmed, '[', ']', &mut buf);
+            render_broken_conservative_delim(children, indent, width, dimmed, '[', ']', &mut buf);
             if buf.max_line_width(indent) <= width {
                 buf.replay(out);
                 return;
@@ -939,7 +954,7 @@ fn render_trivia_guided_delim<A: Clone + TriviaSource>(
         .iter()
         .any(|t| t.has_newline());
 
-    for (i, child) in children[1..].iter().enumerate() {
+    for child in &children[1..] {
         let forced = child.ann.forced_break();
         let has_source_trivia = !child.ann.leading_trivia().is_empty();
         // Cascade: constructed children (no source trivia) inherit the broken state.
@@ -978,11 +993,11 @@ fn render_trivia_guided_delim<A: Clone + TriviaSource>(
                 size_buf.replay(out);
                 let child_start = col + 1;
                 col += 1 + child_width;
-                // Align cascade under the first inline arg only
-                // (default forms).  Indent-spec forms keep fixed body
-                // indent.  Later inline children don't shift the cascade
-                // to avoid rightward staircase drift.
-                if i == 0 && !has_indent_spec {
+                // Update cascade to track the last inline arg on the
+                // head line (before any break).  After the first break,
+                // cascade stays fixed to prevent staircase drift.
+                // Indent-spec forms keep their fixed body indent.
+                if !has_broken && !has_indent_spec {
                     cascade_col = child_start;
                 }
             }
@@ -992,6 +1007,9 @@ fn render_trivia_guided_delim<A: Clone + TriviaSource>(
     out.emit_delim(close, dimmed);
 }
 
+/// Greedy broken layout: fit as many args as possible on the first
+/// line (after the head), then cascade remaining args under the last
+/// inline arg.
 fn render_broken_delim<A: Clone + TriviaSource>(
     children: &[Doc<A>],
     indent: usize,
@@ -1008,33 +1026,111 @@ fn render_broken_delim<A: Clone + TriviaSource>(
     let head_width = head_buf.first_line_width();
     head_buf.replay(out);
 
+    if children.len() == 1 {
+        out.emit_delim(close, dimmed);
+        return;
+    }
+
+    // Greedily fit children on the head line.
+    let mut col = indent + 1 + head_width;
+    let mut cascade_col = match children[0].as_atom() {
+        Some(_) => indent + head_width + 2, // under first arg
+        None => indent + 1,
+    };
+    let mut n_inline = 0;
+
+    for child in &children[1..] {
+        let mut buf = EventBuffer::new();
+        render(child, col + 1, width, dimmed, &mut buf);
+        let child_width = buf.first_line_width();
+        if col + 1 + child_width > width {
+            break;
+        }
+        n_inline += 1;
+        cascade_col = col + 1;
+        col += 1 + child_width;
+
+        // Keywords keep their value on the same line.
+        if child.as_atom().is_some_and(|s| s.starts_with(':'))
+            && let Some(next) = children.get(1 + n_inline) {
+                let mut vbuf = EventBuffer::new();
+                render(next, col + 1, width, dimmed, &mut vbuf);
+                let vw = vbuf.first_line_width();
+                if !vbuf.is_multiline() && col + 1 + vw <= width {
+                    n_inline += 1;
+                    col += 1 + vw;
+                }
+            }
+    }
+
+    // Emit inline children.
+    for child in &children[1..1 + n_inline] {
+        out.emit_space();
+        render(child, cascade_col, width, dimmed, out);
+    }
+
+    // Emit remaining children on new lines at cascade_col.
+    let mut prev_was_keyword = children
+        .get(n_inline)
+        .and_then(|c| c.as_atom())
+        .is_some_and(|s| s.starts_with(':'));
+    for child in &children[1 + n_inline..] {
+        if prev_was_keyword {
+            out.emit_space();
+            render(child, cascade_col, width, dimmed, out);
+        } else {
+            render_child_on_line(child, cascade_col, width, dimmed, out);
+        }
+        prev_was_keyword = child.as_atom().is_some_and(|s| s.starts_with(':'));
+    }
+    out.emit_delim(close, dimmed);
+}
+
+/// Conservative broken layout: only the first arg goes on the head
+/// line; all remaining args align under it.  Used as a fallback when
+/// the greedy broken layout produces lines that exceed width.
+fn render_broken_conservative_delim<A: Clone + TriviaSource>(
+    children: &[Doc<A>],
+    indent: usize,
+    width: usize,
+    dimmed: bool,
+    open: char,
+    close: char,
+    out: &mut impl PrettyOutput<A>,
+) {
+    out.emit_delim(open, dimmed);
+
+    let mut head_buf = EventBuffer::new();
+    render(&children[0], indent + 1, width, dimmed, &mut head_buf);
+    let head_width = head_buf.first_line_width();
+    head_buf.replay(out);
+
+    if children.len() == 1 {
+        out.emit_delim(close, dimmed);
+        return;
+    }
+
     let align = match children[0].as_atom() {
         Some(_) => indent + head_width + 2,
         None => indent + 1,
     };
 
-    if children.len() == 1 {
-        out.emit_delim(close, dimmed);
-    } else {
-        if children[1].ann.forced_break() {
-            render_child_on_line(&children[1], align, width, dimmed, out);
-        } else {
-            out.emit_space();
-            render(&children[1], align, width, dimmed, out);
-        }
+    // First child inline.
+    out.emit_space();
+    render(&children[1], align, width, dimmed, out);
 
-        let mut prev_was_keyword = children[1].as_atom().is_some_and(|s| s.starts_with(':'));
-        for child in &children[2..] {
-            if prev_was_keyword {
-                out.emit_space();
-                render(child, align, width, dimmed, out);
-            } else {
-                render_child_on_line(child, align, width, dimmed, out);
-            }
-            prev_was_keyword = child.as_atom().is_some_and(|s| s.starts_with(':'));
+    // Rest on new lines at align.
+    let mut prev_was_keyword = children[1].as_atom().is_some_and(|s| s.starts_with(':'));
+    for child in &children[2..] {
+        if prev_was_keyword {
+            out.emit_space();
+            render(child, align, width, dimmed, out);
+        } else {
+            render_child_on_line(child, align, width, dimmed, out);
         }
-        out.emit_delim(close, dimmed);
+        prev_was_keyword = child.as_atom().is_some_and(|s| s.starts_with(':'));
     }
+    out.emit_delim(close, dimmed);
 }
 
 fn render_all_drop_delim<A: Clone + TriviaSource>(
@@ -1083,6 +1179,16 @@ fn render_broken<A: Clone + TriviaSource>(
     out: &mut impl PrettyOutput<A>,
 ) {
     render_broken_delim(children, indent, width, dimmed, '(', ')', out);
+}
+
+fn render_broken_conservative<A: Clone + TriviaSource>(
+    children: &[Doc<A>],
+    indent: usize,
+    width: usize,
+    dimmed: bool,
+    out: &mut impl PrettyOutput<A>,
+) {
+    render_broken_conservative_delim(children, indent, width, dimmed, '(', ')', out);
 }
 
 fn render_all_drop<A: Clone + TriviaSource>(
@@ -1473,7 +1579,72 @@ mod tests {
         assert_eq!(visible_len(&s), 5);
     }
 
-    // ── Alignment ───────────────────────────────────────────────────
+    // ── Default layout heuristic (non-indent-spec forms) ──────────
+    //
+    // Forms not in INDENT_SPECS use a default layout with four tiers:
+    //   1. Flat:      (foo x y z w)
+    //   2. Broken:    (foo x
+    //                      y
+    //                      z)
+    //   3. Partial:   (foo x y
+    //                        z
+    //                        w)
+    //   4. All-drop:  (foo
+    //                  x
+    //                  y
+    //                  z)
+
+    #[test]
+    fn default_layout_flat() {
+        // All args fit on one line.
+        let doc = l(vec![a("foo"), a("x"), a("y"), a("z"), a("w")]);
+        assert_eq!(pp(&doc, 80), "(foo x y z w)");
+    }
+
+    #[test]
+    fn default_layout_broken_one_inline() {
+        // Only one arg fits with its continuation lines within width.
+        // Width 8: greedy would pack x,y (cascade 7, max cont "       w)" = 9 > 8).
+        // Conservative: 1 inline (cascade 5, max cont "     w)" = 7 <= 8).
+        let doc = l(vec![a("foo"), a("x"), a("y"), a("z"), a("w")]);
+        assert_eq!(
+            pp(&doc, 8),
+            "(foo x\n     y\n     z\n     w)"
+        );
+    }
+
+    #[test]
+    fn default_layout_broken_greedy() {
+        // Two args fit on first line with continuation within width.
+        // Width 12: x,y inline (cascade 7), cont "       wwww)" = 12 <= 12.
+        let doc = l(vec![a("foo"), a("x"), a("y"), a("zzzz"), a("wwww")]);
+        assert_eq!(
+            pp(&doc, 12),
+            "(foo x y\n       zzzz\n       wwww)"
+        );
+    }
+
+    #[test]
+    fn default_layout_all_drop() {
+        // Even one inline arg's continuation exceeds width.
+        // Width 5: conservative "(foo x\n     w)" max 7 > 5. All-drop.
+        let doc = l(vec![a("foo"), a("x"), a("y"), a("z"), a("w")]);
+        assert_eq!(
+            pp(&doc, 5),
+            "(foo\n x\n y\n z\n w)"
+        );
+    }
+
+    #[test]
+    fn default_layout_long_head_forces_drop() {
+        // Head so long that even 1 inline arg's cascade (col 10)
+        // makes continuation "          c)" = 12 > 11. All-drop.
+        let doc = l(vec![a("longname"), a("a"), a("b"), a("c")]);
+        assert_eq!(
+            pp(&doc, 11),
+            "(longname\n a\n b\n c)"
+        );
+    }
 
     #[test]
     fn alignment_under_first_arg() {

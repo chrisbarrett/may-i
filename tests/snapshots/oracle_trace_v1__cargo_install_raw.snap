@@ -11,9 +11,8 @@ expression: normalised
                     [2m([0m[2meffect[0m [2m:allow[0m[2m)[0m[2m)[0m    [2m│[0m [2m[0m[2m→[0m [1;32m:allow[0m
                   [2m([0m[34mpositional[0m           [2m│[0m
                    [2m([0m? [32m"affected"[0m[2m)[0m       [2m│[0m
-                   [2m([0m? [2m([0mor [32m"watch"[0m       [2m│[0m
-                          [32m"run"[0m         [2m│[0m
-                          [32m"r"[0m[2m)[0m[2m)[0m         [2m│[0m
+                   [2m([0m? [2m([0mor [32m"watch"[0m [32m"run"[0m [2m│[0m
+                                  [32m"r"[0m[2m)[0m[2m)[0m [2m│[0m
                    [2m([0m? [32m"--"[0m[2m)[0m             [2m│[0m
                    [2m([0m[34mcond[0m                [2m│[0m
                      [2m([0m[2m([0mor [32m"install"[0m     [2m│[0m

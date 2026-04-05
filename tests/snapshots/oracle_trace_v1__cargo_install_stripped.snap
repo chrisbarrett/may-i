@@ -11,9 +11,8 @@ Trace
                     (effect :allow))    │ → :allow
                   (positional           │
                    (? "affected")       │
-                   (? (or "watch"       │
-                          "run"         │
-                          "r"))         │
+                   (? (or "watch" "run" │
+                                  "r")) │
                    (? "--")             │
                    (cond                │
                      ((or "install"     │
