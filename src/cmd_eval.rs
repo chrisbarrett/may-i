@@ -84,30 +84,6 @@ pub fn cmd_eval(
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_command_args_strips_leading_comment() {
-        let (cmd, args) =
-            parse_command_args("# this is a comment\nsed -i '' 's/foo/bar/g' file.txt");
-        assert_eq!(cmd, "sed");
-        assert_eq!(args[0], "-i");
-    }
-
-    #[test]
-    fn parse_command_args_comment_only() {
-        let (cmd, _args) = parse_command_args("# just a comment");
-        // Shell parser strips comments; fallback gives "#" which is acceptable
-        // The key point is it doesn't produce "\n" or other whitespace
-        assert!(
-            !cmd.trim().is_empty(),
-            "command should not be empty/whitespace, got: {cmd:?}"
-        );
-    }
-}
-
 /// Render trace + result output to a writer.
 pub fn write_eval_output(
     w: &mut impl Write,
@@ -213,4 +189,28 @@ pub fn evaluate_segments(
 
     let result = engine::EvalResult::new(aggregate_decision, aggregate_reason);
     Ok((result, traces, display_parts.concat()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_command_args_strips_leading_comment() {
+        let (cmd, args) =
+            parse_command_args("# this is a comment\nsed -i '' 's/foo/bar/g' file.txt");
+        assert_eq!(cmd, "sed");
+        assert_eq!(args[0], "-i");
+    }
+
+    #[test]
+    fn parse_command_args_comment_only() {
+        let (cmd, _args) = parse_command_args("# just a comment");
+        // Shell parser strips comments; fallback gives "#" which is acceptable
+        // The key point is it doesn't produce "\n" or other whitespace
+        assert!(
+            !cmd.trim().is_empty(),
+            "command should not be empty/whitespace, got: {cmd:?}"
+        );
+    }
 }

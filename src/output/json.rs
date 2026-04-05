@@ -329,6 +329,6 @@ mod tests {
         assert_eq!(json.len(), 1);
         assert_eq!(json[0]["type"], "rule");
         assert_eq!(json[0]["line"], 5);
-        assert!(json[0]["annotations"].as_array().unwrap().len() >= 1);
+        assert!(!json[0]["annotations"].as_array().unwrap().is_empty());
     }
 }

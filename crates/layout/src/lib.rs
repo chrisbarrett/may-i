@@ -464,9 +464,9 @@ fn write_note(w: &mut impl Write, indent: usize, note: &Note, term: &Terminal) {
                 write_box_line(w, indent, usable, "", 0);
             }
             let trimmed = para.trim();
-            if trimmed.starts_with("$ ") {
+            if let Some(rest) = trimmed.strip_prefix("$ ") {
                 // Command lines render verbatim with dimmed sigil.
-                let cmd_text = format!("{}{}", "$ ".dimmed(), &trimmed[2..]);
+                let cmd_text = format!("{}{}", "$ ".dimmed(), rest);
                 write_box_line(w, indent, usable, &cmd_text, trimmed.len());
             } else {
                 for line in word_wrap(trimmed, inner_width) {

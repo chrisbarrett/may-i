@@ -149,6 +149,7 @@ pub trait EvalFold {
         else_: ChildResult<Self::EffectOut>,
         result: EffectResult,
     ) -> Self::EffectOut;
+    #[allow(clippy::type_complexity)]
     fn effect_cond(
         &mut self,
         branches: Vec<(

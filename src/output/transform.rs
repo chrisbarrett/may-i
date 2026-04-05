@@ -742,7 +742,7 @@ mod tests {
         ) {
             // Build (? "value") and distribute
             let inner = atom(&format!("\"{pattern_value}\""));
-            let doc = list(vec![atom(&quantifier), inner]);
+            let doc = list(vec![atom(quantifier), inner]);
             let result = distribute_positional_comparisons(&doc, &actual_arg);
 
             if let DocF::List(cs) = &result.node {
