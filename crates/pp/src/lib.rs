@@ -624,16 +624,37 @@ impl<A: Clone> PrettyOutput<A> for AnnotatedLineBuilder<A> {
     }
 }
 
-// ── Special forms ───────────────────────────────────────────────────
+// ── Indent specs ────────────────────────────────────────────────────
 
-/// Unified special-form classification table.
-/// Special forms use +2 body indent rather than function-call alignment.
-pub const SPECIAL_FORMS: &[&str] = &[
-    "rule", "define", "with-facts", "when", "unless", "if", "cond", "case",
+/// Per-identifier indent specs, mapping head atoms to the number of
+/// "special" arguments before the body.  Modelled after Emacs Lisp's
+/// `(declare (indent N))`:
+///
+///   N = 0  →  all children are body (indent +2 from paren)
+///   N = 1  →  first arg on head line, rest are body
+///   N = 2  →  first two args special, rest are body
+///   …
+///
+/// Identifiers not in this table use the default heuristic (align under
+/// first arg when inline, indent +1 when dropped).
+pub const INDENT_SPECS: &[(&str, u8)] = &[
+    ("case", 0),
+    ("cond", 0),
+    ("define", 1),
+    ("if", 1),
+    ("rule", 1),
+    ("unless", 1),
+    ("when", 1),
+    ("with-facts", 1),
 ];
 
-pub fn is_special_form(name: &str) -> bool {
-    SPECIAL_FORMS.contains(&name)
+/// Look up the indent spec for a head atom.  Returns `Some(n)` if the
+/// identifier has a declared indent, `None` for the default heuristic.
+pub fn indent_spec(name: &str) -> Option<u8> {
+    INDENT_SPECS
+        .iter()
+        .find(|(k, _)| *k == name)
+        .map(|(_, v)| *v)
 }
 
 // ── Rendering ───────────────────────────────────────────────────────
@@ -758,14 +779,9 @@ fn render_node<A: Clone + TriviaSource>(
                 return;
             }
 
-            if let Some(head) = children.first().and_then(|c| c.as_atom()) {
-                match head {
-                    h if is_special_form(h) => {
-                        render_body_indent(children, indent, width, dimmed, out);
-                        return;
-                    }
-                    _ => {}
-                }
+            if let Some(spec) = children.first().and_then(|c| c.as_atom()).and_then(indent_spec) {
+                render_body_indent(children, indent, width, dimmed, spec, out);
+                return;
             }
 
             let must_break = doc.layout == LayoutHint::AlwaysBreak
@@ -901,11 +917,9 @@ fn render_trivia_guided_delim<A: Clone + TriviaSource>(
 
     // Compute child indent based on head atom.
     // Special forms (indent 1) use body indent (+2).
+    // Forms with an indent spec use body indent (+2).
     // Default forms use +1 (column after the opening paren).
-    let child_indent = if children[0]
-        .as_atom()
-        .is_some_and(is_special_form)
-    {
+    let child_indent = if children[0].as_atom().and_then(indent_spec).is_some() {
         indent + 2
     } else {
         indent + 1
@@ -1119,56 +1133,57 @@ fn render_body_indent<A: Clone + TriviaSource>(
     indent: usize,
     width: usize,
     dimmed: bool,
+    spec: u8,
     out: &mut impl PrettyOutput<A>,
 ) {
+    let spec = spec as usize;
+    let body_indent = indent + 2;
+
     out.emit_delim('(', dimmed);
 
-    // Buffer head to measure its width for alignment.
+    // Render head atom.
     let mut head_buf = EventBuffer::new();
     render(&children[0], indent + 1, width, dimmed, &mut head_buf);
     let head_width = head_buf.first_line_width();
     head_buf.replay(out);
-
-    let body_indent = indent + 2;
 
     if children.len() == 1 {
         out.emit_delim(')', dimmed);
         return;
     }
 
-    // Try placing the first child on the same line as the head.
-    let inline_col = indent + 1 + head_width + 1;
+    // Render "special" args (the first `spec` children after the head).
+    // These go on the same line as the head if they fit, otherwise drop.
+    let special_end = (1 + spec).min(children.len());
+    let mut col = indent + 1 + head_width;
 
-    let mut first_buf = EventBuffer::new();
-    render(&children[1], inline_col, width, dimmed, &mut first_buf);
-    let first_multiline = first_buf.is_multiline();
+    for child in &children[1..special_end] {
+        let mut buf = EventBuffer::new();
+        render(child, col + 1, width, dimmed, &mut buf);
+        let child_width = buf.first_line_width();
+        let multiline = buf.is_multiline();
+        let has_trivia = child.ann.forced_break();
 
-    let first_has_trivia = children[1].ann.forced_break();
-
-    if first_multiline || first_has_trivia {
-        // First child wraps or has trivia — drop it to the next line.
-        let head_atom = children[0].as_atom().unwrap_or("");
-        let is_predicate_form = matches!(head_atom, "when" | "if" | "unless");
-        let first_indent = if is_predicate_form {
-            indent + 4
+        if multiline || has_trivia || col + 1 + child_width > width {
+            render_child_on_line(child, indent + 4, width, dimmed, out);
+            col = indent + 4;
         } else {
-            body_indent
-        };
-        render_child_on_line(&children[1], first_indent, width, dimmed, out);
-    } else {
-        out.emit_space();
-        first_buf.replay(out);
+            out.emit_space();
+            buf.replay(out);
+            col += 1 + child_width;
+        }
     }
 
-    for (i, child) in children[2..].iter().enumerate() {
-        let is_last = i == children.len() - 3;
+    // Render body args at body indent.
+    for (i, child) in children[special_end..].iter().enumerate() {
+        let is_last = i == children.len() - special_end - 1;
         render_child_on_line(child, body_indent, width, dimmed, out);
         if is_last {
             out.emit_delim(')', dimmed);
         }
     }
 
-    if children.len() == 2 {
+    if children.len() <= special_end {
         out.emit_delim(')', dimmed);
     }
 }
