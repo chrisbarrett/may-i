@@ -596,6 +596,7 @@ name = "may-i-sexpr"
 version = "0.1.0"
 dependencies = [
  "may-i-core",
+ "may-i-pp",
  "proptest",
 ]
 

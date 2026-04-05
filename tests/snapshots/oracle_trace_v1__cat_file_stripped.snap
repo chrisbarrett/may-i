@@ -1,14 +1,15 @@
 ---
 source: tests/oracle_trace_v1.rs
+assertion_line: 108
 expression: normalised
 ---
 
 Trace
 
-                                 command │ cat foo
-  90: (rule (command (or "cat" …))       │
-            (effect :allow               │ → :allow "Read-only access"
-                    "Read-only access")) │
+                                  command │ cat foo
+  90: (rule (command (or "cat" …))        │
+            (effect                       │ → :allow "Read-only access"
+              :allow "Read-only access")) │
 
 Result
 

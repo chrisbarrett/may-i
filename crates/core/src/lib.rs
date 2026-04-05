@@ -7,6 +7,7 @@ pub mod pattern;
 pub mod predicates;
 pub mod primitives;
 pub mod span;
+pub mod trivia;
 
 #[cfg(any(test, feature = "test-generators"))]
 pub mod test_generators;
@@ -16,6 +17,7 @@ mod arbitrary_impls;
 
 pub use doc::{Doc, DocF, LayoutHint};
 pub use span::Span;
+pub use trivia::{Trivia, TriviaAnn, TriviaSource};
 
 // Re-export primitive types
 pub use primitives::{Decision, Keyword, ToDoc};

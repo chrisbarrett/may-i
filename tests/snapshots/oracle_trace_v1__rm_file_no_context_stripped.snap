@@ -1,46 +1,46 @@
 ---
 source: tests/oracle_trace_v1.rs
+assertion_line: 108
 expression: normalised
 ---
 
 Trace
 
-                                          command │ rm foo
-  24: (rule (command "rm")                        │
-            (args (and (and                       │
-                         (anywhere                │
-                           "-r"                   │ "-r" ∈ {"foo"} → no
-                           "--recursive")         │ "--recursive" ∈ {"foo"} → no
-                         …)                       │
-                       …)))                       │
-                                                  │
-  29: (rule                                       │
-        (command "rm")                            │
-        (args                                     │
-          (when                                   │
-              (and                                │
-                (or                               │
-                  (has                            │ no
-                    [:claude-code/permission-mode │
-                      "acceptEdits"])             │
-                  (has [:opencode/agent           │ no
-                         "build"]))               │
-                …)                                │
-            <cond-effect>)))                      │
-                                                  │
-  37: (rule                                       │
-        (command "rm")                            │
-        (context                                  │
-          (or                                     │
-            (has                                  │ no
-              [:claude-code/permission-mode       │
-                "acceptEdits"])                   │
-            (has [:opencode/agent                 │ no
-                   "build"])))                    │
-        (effect                                   │ → :allow "Non-recursive delete is allowed"
-          :allow                                  │
-          "Non-recursive delete is allowed"))     │
-                                 No matching rule │ → :ask (default)
+                                             command │ rm foo
+  24: (rule (command "rm")                           │
+            (args (and (and                          │
+                         (anywhere                   │
+                           "-r"                      │ "-r" ∈ {"foo"} → no
+                           "--recursive")            │ "--recursive" ∈ {"foo"} → no
+                         …)                          │
+                       …)))                          │
+                                                     │
+  29: (rule                                          │
+        (command "rm")                               │
+        (args                                        │
+          (when                                      │
+              (and                                   │
+                (or                                  │
+                  (has                               │ no
+                    [:claude-code/permission-mode    │
+                      "acceptEdits"])                │
+                  (has [:opencode/agent              │ no
+                         "build"]))                  │
+                …)                                   │
+            <cond-effect>)))                         │
+                                                     │
+  37: (rule                                          │
+        (command "rm")                               │
+        (context                                     │
+          (or                                        │
+            (has                                     │ no
+              [:claude-code/permission-mode          │
+                "acceptEdits"])                      │
+            (has [:opencode/agent                    │ no
+                   "build"])))                       │
+        (effect                                      │ → :allow "Non-recursive delete is allowed"
+          :allow "Non-recursive delete is allowed")) │
+                                    No matching rule │ → :ask (default)
 
 Result
 

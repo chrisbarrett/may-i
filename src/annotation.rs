@@ -6,6 +6,7 @@ use may_i_core::ast::{Effect, EffectResult, Rule};
 use may_i_core::doc::{Doc, DocF, LayoutHint};
 use may_i_core::pattern::{ArgPattern, CommandPattern, Quantifier};
 use may_i_core::primitives::ToDoc;
+use may_i_core::trivia::{Trivia, TriviaSource};
 use may_i_core::{ContextFacts, Decision, FactQuery};
 
 use may_i_engine::eval::PredicateResult;
@@ -60,6 +61,18 @@ pub enum Ann {
     Combinator { result_is_nil: bool },
     /// Rule-level annotation.
     RuleMatch { matched: bool, line: Option<usize> },
+}
+
+impl TriviaSource for Ann {
+    fn forced_break(&self) -> bool {
+        false
+    }
+    fn leading_trivia(&self) -> &[Trivia] {
+        &[]
+    }
+    fn trailing_trivia(&self) -> &[Trivia] {
+        &[]
+    }
 }
 
 type ADoc = Doc<Option<Ann>>;

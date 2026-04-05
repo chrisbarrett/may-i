@@ -5,7 +5,7 @@
 // and s-expression string parsing.
 
 use colored::Colorize;
-use may_i_core::{Doc, DocF, LayoutHint};
+use may_i_core::{Doc, DocF, LayoutHint, Trivia, TriviaSource};
 
 // ── from_sexpr (test-only) ─────────────────────────────────────────
 
@@ -120,7 +120,7 @@ fn parse_tokens(tokens: &[&str], pos: usize) -> (Doc, usize) {
 
 // ── Atom classification ─────────────────────────────────────────────
 
-const SPECIAL_FORMS: &[&str] = &[
+const COLORED_FORMS: &[&str] = &[
     "rule",
     "command",
     "args",
@@ -133,6 +133,10 @@ const SPECIAL_FORMS: &[&str] = &[
     "positional",
     "exact",
     "anywhere",
+    "define",
+    "check",
+    "with-facts",
+    "case",
 ];
 
 fn is_keyword(s: &str) -> bool {
@@ -144,8 +148,8 @@ fn is_string(s: &str) -> bool {
 fn is_regex(s: &str) -> bool {
     s.starts_with("#\"")
 }
-fn is_special_form(s: &str) -> bool {
-    SPECIAL_FORMS.contains(&s)
+fn is_colored_form(s: &str) -> bool {
+    COLORED_FORMS.contains(&s)
 }
 
 // ── Formatting settings ─────────────────────────────────────────────
@@ -250,6 +254,94 @@ pub trait PrettyOutput<A> {
     /// Called when entering a list/vector node that carries an annotation.
     /// Default implementation is a no-op.
     fn emit_node_ann(&mut self, _ann: &A) {}
+
+    /// Emit leading trivia (comments and preserved blank lines) before a node.
+    /// Comments are placed on their own line at the given indent level.
+    fn emit_leading_trivia(&mut self, trivia: &[Trivia], indent: usize) {
+        let mut emitted_comment_with_newline = false;
+        for (i, item) in trivia.iter().enumerate() {
+            match item {
+                Trivia::Comment { text, has_newline } => {
+                    // Preserve blank lines from preceding whitespace
+                    let prev_ws = if i > 0 {
+                        if let Trivia::Whitespace(ws) = &trivia[i - 1] {
+                            Some(ws.as_str())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+
+                    if let Some(ws) = prev_ws {
+                        let newline_count = ws.matches('\n').count();
+                        let effective = if emitted_comment_with_newline && newline_count > 0 {
+                            newline_count - 1
+                        } else {
+                            newline_count
+                        };
+                        if effective > 0 {
+                            for _ in 0..effective {
+                                self.begin_line(0);
+                            }
+                        } else if !emitted_comment_with_newline {
+                            self.begin_line(0);
+                        }
+                    } else if !emitted_comment_with_newline {
+                        self.begin_line(0);
+                    }
+                    self.begin_line(indent);
+                    self.emit_raw(text);
+                    emitted_comment_with_newline = *has_newline;
+                }
+                Trivia::Whitespace(_) => {}
+            }
+        }
+        // If comments left us needing a new line, indent before the node content
+        if emitted_comment_with_newline {
+            self.begin_line(indent);
+        }
+    }
+
+    /// Emit trailing trivia (typically trailing comments) after a node.
+    fn emit_trailing_trivia(&mut self, trivia: &[Trivia]) {
+        for (i, item) in trivia.iter().enumerate() {
+            if let Trivia::Comment { text, has_newline } = item {
+                let prev_ws = if i > 0 {
+                    if let Trivia::Whitespace(ws) = &trivia[i - 1] {
+                        Some(ws.as_str())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                match prev_ws {
+                    Some(ws) if ws.contains('\n') => {
+                        let extra_newlines = ws.matches('\n').count();
+                        for _ in 0..extra_newlines {
+                            self.begin_line(0);
+                        }
+                        self.emit_raw(text);
+                    }
+                    Some(ws) => {
+                        self.emit_raw(ws);
+                        self.emit_raw(text);
+                    }
+                    None => {
+                        self.emit_raw(text);
+                    }
+                }
+                if *has_newline {
+                    self.begin_line(0);
+                }
+            }
+        }
+    }
+
+    /// Emit raw text without any formatting. Used for trivia content.
+    fn emit_raw(&mut self, text: &str);
 }
 
 /// Event emitted during flat-rendering for buffering and replay.
@@ -259,6 +351,7 @@ pub enum OutputEvent<A> {
     Delim(char, bool),
     Atom(String, A, bool),
     NodeAnn(A),
+    Raw(String),
 }
 
 // ── StringBuilder ───────────────────────────────────────────────────
@@ -309,6 +402,10 @@ impl<A> PrettyOutput<A> for StringBuilder {
         } else {
             self.buf.push_str(&colorize_atom(text, self.color));
         }
+    }
+
+    fn emit_raw(&mut self, text: &str) {
+        self.buf.push_str(text);
     }
 }
 
@@ -367,6 +464,7 @@ impl<A> EventBuffer<A> {
                 OutputEvent::Delim(ch, dimmed) => out.emit_delim(ch, dimmed),
                 OutputEvent::Atom(text, ann, dimmed) => out.emit_atom(&text, &ann, dimmed),
                 OutputEvent::NodeAnn(ann) => out.emit_node_ann(&ann),
+                OutputEvent::Raw(text) => out.emit_raw(&text),
             }
         }
     }
@@ -402,6 +500,11 @@ impl<A: Clone> PrettyOutput<A> for EventBuffer<A> {
 
     fn emit_node_ann(&mut self, ann: &A) {
         self.events.push(OutputEvent::NodeAnn(ann.clone()));
+    }
+
+    fn emit_raw(&mut self, text: &str) {
+        self.current_line_width += text.chars().count();
+        self.events.push(OutputEvent::Raw(text.to_string()));
     }
 }
 
@@ -489,12 +592,29 @@ impl<A: Clone> PrettyOutput<A> for AnnotatedLineBuilder<A> {
     fn emit_node_ann(&mut self, ann: &A) {
         self.current_annotations.push(ann.clone());
     }
+
+    fn emit_raw(&mut self, text: &str) {
+        self.current_text.push_str(text);
+        self.current_width += text.chars().count();
+    }
+}
+
+// ── Special forms ───────────────────────────────────────────────────
+
+/// Unified special-form classification table.
+/// Special forms use +2 body indent rather than function-call alignment.
+pub const SPECIAL_FORMS: &[&str] = &[
+    "rule", "define", "check", "with-facts", "when", "unless", "if", "cond", "case",
+];
+
+pub fn is_special_form(name: &str) -> bool {
+    SPECIAL_FORMS.contains(&name)
 }
 
 // ── Rendering ───────────────────────────────────────────────────────
 
 /// Pretty-print a Doc with the given format settings.
-pub fn pretty<A: Clone>(doc: &Doc<A>, indent: usize, fmt: &Format) -> String {
+pub fn pretty<A: Clone + TriviaSource>(doc: &Doc<A>, indent: usize, fmt: &Format) -> String {
     let prefix_width = fmt.line_number.map_or(0, line_prefix_width);
     let mut sb = StringBuilder::new(fmt.color);
     pretty_into(doc, indent + prefix_width, fmt.width, &mut sb);
@@ -507,13 +627,13 @@ pub fn pretty<A: Clone>(doc: &Doc<A>, indent: usize, fmt: &Format) -> String {
 }
 
 /// Pretty-print a Doc into any `PrettyOutput` implementation.
-pub fn pretty_into<A: Clone>(
+pub fn pretty_into<A: Clone + TriviaSource>(
     doc: &Doc<A>,
     indent: usize,
     width: usize,
     out: &mut impl PrettyOutput<A>,
 ) {
-    render(doc, indent, width, false, out);
+    render_toplevel(doc, indent, width, false, out);
 }
 
 pub fn line_prefix_width(n: usize) -> usize {
@@ -539,7 +659,38 @@ fn prepend_line_number(content: &str, n: usize, color: bool) -> String {
     result
 }
 
-fn render<A: Clone>(
+fn render<A: Clone + TriviaSource>(
+    doc: &Doc<A>,
+    indent: usize,
+    width: usize,
+    dimmed: bool,
+    out: &mut impl PrettyOutput<A>,
+) {
+    render_node(doc, indent, width, dimmed, out);
+    let trailing = doc.ann.trailing_trivia();
+    if !trailing.is_empty() {
+        out.emit_trailing_trivia(trailing);
+    }
+}
+
+/// Like `render` but also emits leading trivia of the root node.
+/// Used for top-level entry points where there's no parent to emit our leading trivia.
+fn render_toplevel<A: Clone + TriviaSource>(
+    doc: &Doc<A>,
+    indent: usize,
+    width: usize,
+    dimmed: bool,
+    out: &mut impl PrettyOutput<A>,
+) {
+    let leading = doc.ann.leading_trivia();
+    let has_comments = leading.iter().any(|t| matches!(t, Trivia::Comment { .. }));
+    if has_comments {
+        out.emit_leading_trivia(leading, indent);
+    }
+    render(doc, indent, width, dimmed, out);
+}
+
+fn render_node<A: Clone + TriviaSource>(
     doc: &Doc<A>,
     indent: usize,
     width: usize,
@@ -548,16 +699,51 @@ fn render<A: Clone>(
 ) {
     let dimmed = dimmed || doc.dimmed;
     match &doc.node {
-        DocF::Atom(s) => out.emit_atom(s, &doc.ann, dimmed),
+        DocF::Atom(s) => {
+            out.emit_atom(s, &doc.ann, dimmed);
+        }
         DocF::List(children) if children.is_empty() => {
             out.emit_delim('(', dimmed);
             out.emit_delim(')', dimmed);
         }
         DocF::List(children) => {
             out.emit_node_ann(&doc.ann);
+
+            // cond/case always use their dedicated renderer
+            if let Some(head) = children.first().and_then(|c| c.as_atom())
+                && (head == "cond" || head == "case") {
+                    render_cond(children, indent, width, dimmed, out);
+                    return;
+                }
+
+            let has_trivia_break = children.iter().any(|c| c.ann.forced_break())
+                || children.iter().any(|c| {
+                    c.ann
+                        .trailing_trivia()
+                        .iter()
+                        .any(|t| t.has_newline())
+                });
+
+            // When trivia forces breaks, use trivia-guided layout that
+            // preserves the author's per-child line break decisions.
+            if has_trivia_break {
+                render_trivia_guided_delim(
+                    children, indent, width, dimmed, '(', ')', out,
+                );
+                return;
+            }
+
             if let Some(head) = children.first().and_then(|c| c.as_atom()) {
                 match head {
                     "rule" => {
+                        let mut flat_buf = EventBuffer::new();
+                        render_flat(children, dimmed, &mut flat_buf);
+                        if !flat_buf.is_multiline()
+                            && flat_buf.max_line_width(indent) <= width
+                        {
+                            flat_buf.replay(out);
+                            return;
+                        }
                         let mut buf = EventBuffer::new();
                         render_broken(children, indent, width, dimmed, &mut buf);
                         if buf.max_line_width(indent) <= width {
@@ -567,11 +753,7 @@ fn render<A: Clone>(
                         render_all_drop(children, indent, width, dimmed, out);
                         return;
                     }
-                    "cond" => {
-                        render_cond(children, indent, width, dimmed, out);
-                        return;
-                    }
-                    "if" | "when" | "unless" => {
+                    h if is_special_form(h) => {
                         render_body_indent(children, indent, width, dimmed, out);
                         return;
                     }
@@ -603,6 +785,19 @@ fn render<A: Clone>(
         }
         DocF::Vector(children) => {
             out.emit_node_ann(&doc.ann);
+            let has_trivia_break = children.iter().any(|c| c.ann.forced_break())
+                || children.iter().any(|c| {
+                    c.ann
+                        .trailing_trivia()
+                        .iter()
+                        .any(|t| t.has_newline())
+                });
+            if has_trivia_break {
+                render_trivia_guided_delim(
+                    children, indent, width, dimmed, '[', ']', out,
+                );
+                return;
+            }
             let must_break = doc.layout == LayoutHint::AlwaysBreak
                 || children.iter().any(|c| c.layout == LayoutHint::AlwaysBreak);
             if !must_break {
@@ -624,7 +819,37 @@ fn render<A: Clone>(
     }
 }
 
-fn render_flat_delim<A: Clone>(
+/// Emit leading trivia from an annotation at the given indent,
+/// or fall back to `begin_line(indent)` when there's no trivia.
+fn emit_trivia_or_line<A: TriviaSource>(
+    ann: &A,
+    indent: usize,
+    out: &mut impl PrettyOutput<A>,
+) {
+    let leading = ann.leading_trivia();
+    let has_comments = leading.iter().any(|t| matches!(t, Trivia::Comment { .. }));
+    if has_comments {
+        out.emit_leading_trivia(leading, indent);
+    } else {
+        out.begin_line(indent);
+    }
+}
+
+/// Emit a child's leading trivia (if any) at the given indent, OR fall back to
+/// `begin_line(indent)` when there's no trivia. Then render the child content
+/// and its trailing trivia.
+fn render_child_on_line<A: Clone + TriviaSource>(
+    child: &Doc<A>,
+    indent: usize,
+    width: usize,
+    dimmed: bool,
+    out: &mut impl PrettyOutput<A>,
+) {
+    emit_trivia_or_line(&child.ann, indent, out);
+    render(child, indent, width, dimmed, out);
+}
+
+fn render_flat_delim<A: Clone + TriviaSource>(
     children: &[Doc<A>],
     dimmed: bool,
     open: char,
@@ -641,7 +866,93 @@ fn render_flat_delim<A: Clone>(
     out.emit_delim(close, dimmed);
 }
 
-fn render_broken_delim<A: Clone>(
+/// Trivia-guided layout: makes per-child break decisions based on source trivia.
+/// Children with forced breaks (newline in leading trivia) go to new lines.
+/// Children without forced breaks try to fit on the current line.
+/// Keywords (atoms starting with `:`) keep their following value on the same line.
+fn render_trivia_guided_delim<A: Clone + TriviaSource>(
+    children: &[Doc<A>],
+    indent: usize,
+    width: usize,
+    dimmed: bool,
+    open: char,
+    close: char,
+    out: &mut impl PrettyOutput<A>,
+) {
+    out.emit_delim(open, dimmed);
+
+    // Render head (using render, which handles trailing trivia)
+    let mut head_buf = EventBuffer::new();
+    render(&children[0], indent + 1, width, dimmed, &mut head_buf);
+    let head_width = head_buf.first_line_width();
+    head_buf.replay(out);
+
+    if children.len() == 1 {
+        out.emit_delim(close, dimmed);
+        return;
+    }
+
+    // Compute child indent based on head atom
+    let child_indent = match children[0].as_atom() {
+        Some(name) if is_special_form(name) => indent + 2,
+        Some(name) => indent + 1 + name.len() + 1,
+        None => indent + 1,
+    };
+
+    let mut col = indent + 1 + head_width;
+    let mut prev_was_keyword = false;
+    let mut has_broken = children[0]
+        .ann
+        .trailing_trivia()
+        .iter()
+        .any(|t| t.has_newline());
+
+    for child in &children[1..] {
+        let forced = child.ann.forced_break();
+        let has_source_trivia = !child.ann.leading_trivia().is_empty();
+        // Cascade: constructed children (no source trivia) inherit the broken state.
+        // Source children decide individually based on their own trivia.
+        let should_break = forced || (has_broken && !has_source_trivia);
+
+        if prev_was_keyword {
+            // Keep value on same line as preceding keyword
+            out.emit_space();
+            let mut size_buf = EventBuffer::new();
+            render(child, col + 1, width, dimmed, &mut size_buf);
+            let child_width = size_buf.first_line_width();
+            size_buf.replay(out);
+            col += 1 + child_width;
+        } else if should_break {
+            emit_trivia_or_line(&child.ann, child_indent, out);
+            let mut size_buf = EventBuffer::new();
+            render(child, child_indent, width, dimmed, &mut size_buf);
+            col = child_indent + size_buf.first_line_width();
+            size_buf.replay(out);
+            has_broken = true;
+        } else {
+            // Try to fit on current line
+            let mut size_buf = EventBuffer::new();
+            render(child, col + 1, width, dimmed, &mut size_buf);
+            let child_width = size_buf.first_line_width();
+
+            if col + 1 + child_width > width && col > child_indent {
+                // Doesn't fit, break
+                emit_trivia_or_line(&child.ann, child_indent, out);
+                render(child, child_indent, width, dimmed, out);
+                col = child_indent;
+                has_broken = true;
+            } else {
+                out.emit_space();
+                size_buf.replay(out);
+                col += 1 + child_width;
+            }
+        }
+        prev_was_keyword = child.as_atom().is_some_and(|s| s.starts_with(':'));
+    }
+    out.emit_delim(close, dimmed);
+}
+
+fn render_broken_delim<A: Clone + TriviaSource>(
     children: &[Doc<A>],
     indent: usize,
     width: usize,
@@ -657,23 +968,36 @@ fn render_broken_delim<A: Clone>(
     let head_width = head_buf.first_line_width();
     head_buf.replay(out);
 
-    let align = indent + head_width + 2;
+    let align = match children[0].as_atom() {
+        Some(_) => indent + head_width + 2,
+        None => indent + 1,
+    };
 
     if children.len() == 1 {
         out.emit_delim(close, dimmed);
     } else {
-        out.emit_space();
-        render(&children[1], align, width, dimmed, out);
+        if children[1].ann.forced_break() {
+            render_child_on_line(&children[1], align, width, dimmed, out);
+        } else {
+            out.emit_space();
+            render(&children[1], align, width, dimmed, out);
+        }
 
+        let mut prev_was_keyword = children[1].as_atom().is_some_and(|s| s.starts_with(':'));
         for child in &children[2..] {
-            out.begin_line(align);
-            render(child, align, width, dimmed, out);
+            if prev_was_keyword {
+                out.emit_space();
+                render(child, align, width, dimmed, out);
+            } else {
+                render_child_on_line(child, align, width, dimmed, out);
+            }
+            prev_was_keyword = child.as_atom().is_some_and(|s| s.starts_with(':'));
         }
         out.emit_delim(close, dimmed);
     }
 }
 
-fn render_all_drop_delim<A: Clone>(
+fn render_all_drop_delim<A: Clone + TriviaSource>(
     children: &[Doc<A>],
     indent: usize,
     width: usize,
@@ -691,21 +1015,27 @@ fn render_all_drop_delim<A: Clone>(
     }
 
     let child_indent = indent + 2;
+    let mut prev_was_keyword = false;
     for (i, child) in children[1..].iter().enumerate() {
         let is_last = i == children.len() - 2;
-        out.begin_line(child_indent);
-        render(child, child_indent, width, dimmed, out);
+        if prev_was_keyword {
+            out.emit_space();
+            render(child, child_indent, width, dimmed, out);
+        } else {
+            render_child_on_line(child, child_indent, width, dimmed, out);
+        }
         if is_last {
             out.emit_delim(close, dimmed);
         }
+        prev_was_keyword = child.as_atom().is_some_and(|s| s.starts_with(':'));
     }
 }
 
-fn render_flat<A: Clone>(children: &[Doc<A>], dimmed: bool, out: &mut impl PrettyOutput<A>) {
+fn render_flat<A: Clone + TriviaSource>(children: &[Doc<A>], dimmed: bool, out: &mut impl PrettyOutput<A>) {
     render_flat_delim(children, dimmed, '(', ')', out);
 }
 
-fn render_broken<A: Clone>(
+fn render_broken<A: Clone + TriviaSource>(
     children: &[Doc<A>],
     indent: usize,
     width: usize,
@@ -715,7 +1045,7 @@ fn render_broken<A: Clone>(
     render_broken_delim(children, indent, width, dimmed, '(', ')', out);
 }
 
-fn render_all_drop<A: Clone>(
+fn render_all_drop<A: Clone + TriviaSource>(
     children: &[Doc<A>],
     indent: usize,
     width: usize,
@@ -725,7 +1055,7 @@ fn render_all_drop<A: Clone>(
     render_all_drop_delim(children, indent, width, dimmed, '(', ')', out);
 }
 
-fn render_cond<A: Clone>(
+fn render_cond<A: Clone + TriviaSource>(
     children: &[Doc<A>],
     indent: usize,
     width: usize,
@@ -741,7 +1071,7 @@ fn render_cond<A: Clone>(
         let clause_dimmed = dimmed || clause.dimmed;
         match &clause.node {
             DocF::List(parts) if parts.len() >= 2 => {
-                out.begin_line(body_indent);
+                emit_trivia_or_line(&clause.ann, body_indent, out);
                 out.emit_node_ann(&clause.ann);
                 out.emit_delim('(', clause_dimmed);
                 render(&parts[0], body_indent + 1, width, clause_dimmed, out);
@@ -749,8 +1079,7 @@ fn render_cond<A: Clone>(
                 let body_col = body_indent + 1;
                 for (j, body_part) in parts[1..].iter().enumerate() {
                     let is_last_part = j == parts.len() - 2;
-                    out.begin_line(body_col);
-                    render(body_part, body_col, width, clause_dimmed, out);
+                    render_child_on_line(body_part, body_col, width, clause_dimmed, out);
                     if is_last_part && is_last {
                         out.emit_delim(')', clause_dimmed);
                         out.emit_delim(')', dimmed);
@@ -760,8 +1089,7 @@ fn render_cond<A: Clone>(
                 }
             }
             _ => {
-                out.begin_line(body_indent);
-                render(clause, body_indent, width, clause_dimmed, out);
+                render_child_on_line(clause, body_indent, width, clause_dimmed, out);
                 if is_last {
                     out.emit_delim(')', dimmed);
                 }
@@ -774,7 +1102,7 @@ fn render_cond<A: Clone>(
     }
 }
 
-fn render_body_indent<A: Clone>(
+fn render_body_indent<A: Clone + TriviaSource>(
     children: &[Doc<A>],
     indent: usize,
     width: usize,
@@ -803,8 +1131,10 @@ fn render_body_indent<A: Clone>(
     render(&children[1], inline_col, width, dimmed, &mut first_buf);
     let first_multiline = first_buf.is_multiline();
 
-    if first_multiline {
-        // First child wraps — drop it to the next line.
+    let first_has_trivia = children[1].ann.forced_break();
+
+    if first_multiline || first_has_trivia {
+        // First child wraps or has trivia — drop it to the next line.
         let head_atom = children[0].as_atom().unwrap_or("");
         let is_predicate_form = matches!(head_atom, "when" | "if" | "unless");
         let first_indent = if is_predicate_form {
@@ -812,8 +1142,7 @@ fn render_body_indent<A: Clone>(
         } else {
             body_indent
         };
-        out.begin_line(first_indent);
-        render(&children[1], first_indent, width, dimmed, out);
+        render_child_on_line(&children[1], first_indent, width, dimmed, out);
     } else {
         out.emit_space();
         first_buf.replay(out);
@@ -821,8 +1150,7 @@ fn render_body_indent<A: Clone>(
 
     for (i, child) in children[2..].iter().enumerate() {
         let is_last = i == children.len() - 3;
-        out.begin_line(body_indent);
-        render(child, body_indent, width, dimmed, out);
+        render_child_on_line(child, body_indent, width, dimmed, out);
         if is_last {
             out.emit_delim(')', dimmed);
         }
@@ -842,7 +1170,7 @@ pub fn colorize_atom(s: &str, color: bool) -> String {
         s.truecolor(120, 120, 255).to_string()
     } else if is_string(s) || is_regex(s) {
         s.green().to_string()
-    } else if is_special_form(s) {
+    } else if is_colored_form(s) {
         s.blue().to_string()
     } else {
         s.to_string()
@@ -1419,6 +1747,128 @@ mod tests {
             assert!(result.contains("bright"));
         });
     }
+
+    // ── Trivia-aware rendering ──────────────────────────────────────
+
+    use may_i_core::{TriviaAnn, Trivia as CoreTrivia};
+
+    fn trivia_ann(leading: Vec<CoreTrivia>, trailing: Vec<CoreTrivia>) -> Option<TriviaAnn> {
+        Some(TriviaAnn {
+            leading,
+            trailing,
+            span: may_i_core::Span::new(1, 2), // non-zero = source-parsed
+        })
+    }
+
+    fn trivia_atom(s: &str, ann: Option<TriviaAnn>) -> Doc<Option<TriviaAnn>> {
+        Doc {
+            ann,
+            node: DocF::Atom(s.into()),
+            layout: LayoutHint::Auto,
+            dimmed: false,
+        }
+    }
+
+    fn trivia_list(children: Vec<Doc<Option<TriviaAnn>>>, ann: Option<TriviaAnn>) -> Doc<Option<TriviaAnn>> {
+        Doc {
+            ann,
+            node: DocF::List(children),
+            layout: LayoutHint::Auto,
+            dimmed: false,
+        }
+    }
+
+    fn pp_trivia(doc: &Doc<Option<TriviaAnn>>, width: usize) -> String {
+        pretty(doc, 0, &Format { width, ..Default::default() })
+    }
+
+    #[test]
+    fn trivia_forced_break_prevents_flat() {
+        // A child with newline in trivia forces multi-line layout
+        let child_with_newline = trivia_atom("b", trivia_ann(
+            vec![CoreTrivia::Whitespace("\n  ".to_string())],
+            vec![],
+        ));
+        let doc = trivia_list(
+            vec![trivia_atom("a", None), child_with_newline],
+            None,
+        );
+        let result = pp_trivia(&doc, 80);
+        assert!(result.contains('\n'), "should break to multi-line: {result:?}");
+    }
+
+    #[test]
+    fn trivia_no_forced_break_stays_flat() {
+        // Children without trivia stay flat when they fit
+        let doc = trivia_list(
+            vec![trivia_atom("a", None), trivia_atom("b", None)],
+            None,
+        );
+        let result = pp_trivia(&doc, 80);
+        assert_eq!(result, "(a b)");
+    }
+
+    #[test]
+    fn trivia_comment_emitted_before_child() {
+        let child_with_comment = trivia_atom("b", trivia_ann(
+            vec![CoreTrivia::Comment {
+                text: "; a comment".to_string(),
+                has_newline: true,
+            }],
+            vec![],
+        ));
+        let doc = trivia_list(
+            vec![trivia_atom("a", None), child_with_comment],
+            None,
+        );
+        let result = pp_trivia(&doc, 80);
+        assert!(result.contains("; a comment"), "comment should be present: {result:?}");
+        // The comment should appear before "b"
+        let comment_pos = result.find("; a comment").unwrap();
+        let b_pos = result.find('b').unwrap();
+        assert!(comment_pos < b_pos, "comment should appear before b: {result:?}");
+    }
+
+    #[test]
+    fn trivia_trailing_comment_emitted_after_node() {
+        let child_with_trailing = trivia_atom("a", trivia_ann(
+            vec![],
+            vec![
+                CoreTrivia::Whitespace(" ".to_string()),
+                CoreTrivia::Comment {
+                    text: "; trailing".to_string(),
+                    has_newline: true,
+                },
+            ],
+        ));
+        let doc = trivia_list(
+            vec![child_with_trailing, trivia_atom("b", None)],
+            None,
+        );
+        let result = pp_trivia(&doc, 80);
+        assert!(result.contains("; trailing"), "trailing comment should be present: {result:?}");
+    }
+
+    #[test]
+    fn trivia_cascade_after_forced_break() {
+        // After a forced break, subsequent children should also break
+        let child_with_break = trivia_atom("b", trivia_ann(
+            vec![CoreTrivia::Whitespace("\n  ".to_string())],
+            vec![],
+        ));
+        let doc = trivia_list(
+            vec![
+                trivia_atom("a", None),
+                child_with_break,
+                trivia_atom("c", None),
+            ],
+            None,
+        );
+        let result = pp_trivia(&doc, 80);
+        // All children after the forced break should be on separate lines
+        let lines: Vec<&str> = result.lines().collect();
+        assert!(lines.len() >= 3, "should have at least 3 lines (a, b, c): {result:?}");
+    }
 }
 
 // ── Column width detection tests ────────────────────────────────────
@@ -1745,6 +2195,18 @@ mod annotated_line_tests {
         A,
         B,
         C,
+    }
+
+    impl TriviaSource for TestAnn {
+        fn forced_break(&self) -> bool {
+            false
+        }
+        fn leading_trivia(&self) -> &[Trivia] {
+            &[]
+        }
+        fn trailing_trivia(&self) -> &[Trivia] {
+            &[]
+        }
     }
 
     fn atom_with(s: &str, ann: TestAnn) -> Doc<TestAnn> {
