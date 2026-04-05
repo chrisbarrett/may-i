@@ -639,6 +639,7 @@ impl<A: Clone> PrettyOutput<A> for AnnotatedLineBuilder<A> {
 /// first arg when inline, indent +1 when dropped).
 pub const INDENT_SPECS: &[(&str, u8)] = &[
     ("case", 0),
+    ("check", 0),
     ("cond", 0),
     ("define", 1),
     ("if", 1),
@@ -762,6 +763,14 @@ fn render_node<A: Clone + TriviaSource>(
                     return;
                 }
 
+            // Forms with indent specs always use body-indent layout,
+            // even when trivia is present (render_body_indent handles
+            // leading trivia via emit_trivia_or_line).
+            if let Some(spec) = children.first().and_then(|c| c.as_atom()).and_then(indent_spec) {
+                render_body_indent(children, indent, width, dimmed, spec, out);
+                return;
+            }
+
             let has_trivia_break = children.iter().any(|c| c.ann.forced_break())
                 || children.iter().any(|c| {
                     c.ann
@@ -776,11 +785,6 @@ fn render_node<A: Clone + TriviaSource>(
                 render_trivia_guided_delim(
                     children, indent, width, dimmed, '(', ')', out,
                 );
-                return;
-            }
-
-            if let Some(spec) = children.first().and_then(|c| c.as_atom()).and_then(indent_spec) {
-                render_body_indent(children, indent, width, dimmed, spec, out);
                 return;
             }
 
@@ -1185,12 +1189,20 @@ fn render_body_indent<A: Clone + TriviaSource>(
     }
 
     // Render body args at body indent.
+    // Keywords (atoms starting with `:`) keep their following value inline.
+    let mut prev_was_keyword = false;
     for (i, child) in children[special_end..].iter().enumerate() {
         let is_last = i == children.len() - special_end - 1;
-        render_child_on_line(child, body_indent, width, dimmed, out);
+        if prev_was_keyword {
+            out.emit_space();
+            render(child, body_indent, width, dimmed, out);
+        } else {
+            render_child_on_line(child, body_indent, width, dimmed, out);
+        }
         if is_last {
             out.emit_delim(')', dimmed);
         }
+        prev_was_keyword = child.as_atom().is_some_and(|s| s.starts_with(':'));
     }
 
     if children.len() <= special_end {
