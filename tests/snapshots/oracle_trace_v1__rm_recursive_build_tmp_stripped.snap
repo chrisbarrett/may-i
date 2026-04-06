@@ -14,16 +14,15 @@ Trace
                                                         │
   29: (rule (command "rm")                              │
         (args                                           │
-         (when                                          │
-             (and                                       │
-              (or                                       │
-               (has                                     │ no
-                [:claude-code/permission-mode           │
-                 "acceptEdits"])                        │
-               (has [:opencode/agent                    │ "build" → yes
-                     "build"]))                         │
-              (anywhere "-r"                            │
-                        "--recursive"))                 │
+         (when (and                                     │
+                (or                                     │
+                 (has                                   │ no
+                  [:claude-code/permission-mode         │
+                   "acceptEdits"])                      │
+                 (has [:opencode/agent                  │ "build" → yes
+                       "build"]))                       │
+                (anywhere "-r"                          │
+                          "--recursive"))               │
            (cond                                        │
              ((anywhere (regex                          │
                          "^/tmp/.*"))                   │

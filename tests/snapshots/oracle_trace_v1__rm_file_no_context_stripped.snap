@@ -15,15 +15,14 @@ Trace
                                                     │
   29: (rule (command "rm")                          │
         (args                                       │
-         (when                                      │
-             (and                                   │
-              (or                                   │
-               (has                                 │ no
-                [:claude-code/permission-mode       │
-                 "acceptEdits"])                    │
-               (has [:opencode/agent                │ no
-                     "build"]))                     │
-              …)                                    │
+         (when (and                                 │
+                (or                                 │
+                 (has                               │ no
+                  [:claude-code/permission-mode     │
+                   "acceptEdits"])                  │
+                 (has [:opencode/agent              │ no
+                       "build"]))                   │
+                …)                                  │
            <cond-effect>)))                         │
                                                     │
   37: (rule (command "rm")                          │

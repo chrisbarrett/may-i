@@ -641,7 +641,7 @@ pub const INDENT_SPECS: &[(&str, u8)] = &[
     ("case", 0),
     ("cond", 0),
     ("define", 1),
-    ("if", 1),
+    ("if", 2),
     ("rule", 1),
     ("unless", 1),
     ("when", 1),
@@ -762,10 +762,20 @@ fn render_node<A: Clone + TriviaSource>(
                     return;
                 }
 
-            // Forms with indent specs always use body-indent layout,
-            // even when trivia is present (render_body_indent handles
-            // leading trivia via emit_trivia_or_line).
+            // Forms with indent specs: try flat first, then body-indent.
             if let Some(spec) = children.first().and_then(|c| c.as_atom()).and_then(indent_spec) {
+                let has_trivia = children.iter().any(|c| c.ann.forced_break())
+                    || children.iter().any(|c| {
+                        c.ann.trailing_trivia().iter().any(|t| t.has_newline())
+                    });
+                if !has_trivia {
+                    let mut buf = EventBuffer::new();
+                    render_flat(children, dimmed, &mut buf);
+                    if !buf.is_multiline() && buf.max_line_width(indent) <= width {
+                        buf.replay(out);
+                        return;
+                    }
+                }
                 render_body_indent(children, indent, width, dimmed, spec, out);
                 return;
             }
@@ -1281,10 +1291,9 @@ fn render_body_indent<A: Clone + TriviaSource>(
         let mut buf = EventBuffer::new();
         render(child, col + 1, width, dimmed, &mut buf);
         let child_width = buf.first_line_width();
-        let multiline = buf.is_multiline();
         let has_trivia = child.ann.forced_break();
 
-        if multiline || has_trivia || col + 1 + child_width > width {
+        if has_trivia || col + 1 + child_width > width {
             render_child_on_line(child, indent + 4, width, dimmed, out);
             col = indent + 4;
         } else {
@@ -1894,6 +1903,45 @@ mod tests {
         let doc = l(vec![a("when"), pred]);
         let result = pp(&doc, 15);
         assert!(result.contains("when"));
+    }
+
+    #[test]
+    fn if_keeps_multiline_condition_inline() {
+        // (if (or "a" "b") (effect :allow "yes") (effect :deny "no"))
+        // The condition is multiline but should stay on the if line.
+        // With (indent 2): condition and then-branch are special args.
+        let cond = l(vec![
+            a("or"),
+            a("\"~/.config/tmux/custom.conf\""),
+            a("\"~/.config/tmux/tmux.conf\""),
+        ]);
+        let then_br = l(vec![a("effect"), a(":allow"), a("\"yes\"")]);
+        let else_br = l(vec![a("effect"), a(":deny"), a("\"no\"")]);
+        let doc = l(vec![a("if"), cond, then_br, else_br]);
+        let result = pp(&doc, 50);
+        // First line should have "if" and "(or" together
+        let first_line = result.lines().next().unwrap();
+        assert!(
+            first_line.contains("if") && first_line.contains("(or"),
+            "Expected 'if' and '(or' on same line, got:\n{}",
+            result,
+        );
+    }
+
+    #[test]
+    fn if_indent_spec_is_2() {
+        // With (indent 2), condition + then-branch are special,
+        // else-branch is body (at indent+2).
+        let cond = a("pred");
+        let then_br = a("yes");
+        let else_br = a("no");
+        let doc = l(vec![a("if"), cond, then_br, else_br]);
+        let result = pp(&doc, 10);
+        // Should be:
+        // (if pred
+        //     yes
+        //   no)
+        assert_eq!(result, "(if pred\n    yes\n  no)");
     }
 
     #[test]
