@@ -1294,17 +1294,12 @@ fn render_body_indent<A: Clone + TriviaSource>(
     let mut col = indent + 1 + head_width;
 
     for child in &children[1..special_end] {
-        if child.ann.forced_break() {
-            render_child_on_line(child, indent + 4, width, dimmed, out);
-            col = indent + 4;
-        } else {
-            let mut buf = EventBuffer::new();
-            render(child, col + 1, width, dimmed, &mut buf);
-            let child_width = buf.first_line_width();
-            out.emit_space();
-            buf.replay(out);
-            col += 1 + child_width;
-        }
+        let mut buf = EventBuffer::new();
+        render(child, col + 1, width, dimmed, &mut buf);
+        let child_width = buf.first_line_width();
+        out.emit_space();
+        buf.replay(out);
+        col += 1 + child_width;
     }
 
     // Render body args at body indent.
