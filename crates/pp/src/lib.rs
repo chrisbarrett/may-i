@@ -807,11 +807,18 @@ fn render_node<A: Clone + TriviaSource>(
                 let mut buf = EventBuffer::new();
                 render_flat(children, dimmed, &mut buf);
                 if !buf.is_multiline() && buf.max_line_width(indent) <= width {
+                    #[cfg(debug_assertions)]
+                    {
+                        if let Some(head) = children.first().and_then(|c| c.as_atom())
+                            && head == "forbidden" {
+                                eprintln!("render_list: forbidden using render_flat");
+                            }
+                    }
                     buf.replay(out);
                     return;
                 }
             }
-            // Fill layout: and/or with all-atom args flow across lines.
+            // Fill layout: and/or/forbidden with all-atom args flow across lines.
             // Skipped when AlwaysBreak is set (caller requires broken output).
             if !must_break && is_fill_eligible(children) {
                 render_fill(children, indent, width, dimmed, out);
@@ -1288,13 +1295,17 @@ fn render_cond<A: Clone + TriviaSource>(
     }
 }
 
-/// Returns true when `children` is an `and`/`or` form whose only content
-/// is atoms (complexity == 2). These use fill layout.
+/// Returns true when `children` is a form that can use fill layout.
+/// Fill layout is used for forms with all-atom args that should pack
+/// tightly across lines (and/or, forbidden, etc).
 fn is_fill_eligible<A: Clone>(children: &[Doc<A>]) -> bool {
     let Some(head) = children.first().and_then(|c| c.as_atom()) else {
         return false;
     };
-    if head != "and" && head != "or" {
+    // Fill-eligible forms: and, or, and pattern-matching predicates
+    // that commonly take many string literals
+    const FILL_ELIGIBLE_HEADS: &[&str] = &["and", "or", "forbidden"];
+    if !FILL_ELIGIBLE_HEADS.contains(&head) {
         return false;
     }
     children.len() > 1 && children[1..].iter().all(|c| c.as_atom().is_some())
@@ -1321,8 +1332,13 @@ fn render_fill<A: Clone + TriviaSource>(
         return;
     }
 
-    let align = indent + 1 + head_width + 1; // column of first arg
-    let mut col = indent + 1 + head_width;   // column after head
+    // Column where first arg would be (head col + space + head + space)
+    let first_arg_col = indent + 1 + head_width + 1;
+    // Cap alignment to prevent excessive rightward drift when nested
+    // Body indent is indent + 2, so we use that as a reasonable bound
+    let body_indent = indent + 2;
+    let align = first_arg_col.min(body_indent + 8);
+    let mut col = indent + 1 + head_width; // column after head
 
     let last = children.len() - 1;
     for (i, child) in children[1..].iter().enumerate() {
@@ -1798,6 +1814,123 @@ mod tests {
             result,
             "(and \"a\" \"bb\"\n     \"ccc\" \"dddd\")"
         );
+    }
+
+    #[test]
+    fn forbidden_fill_layout() {
+        // forbidden also uses fill when all args are atoms
+        let doc = l(vec![
+            a("forbidden"),
+            a(r#""-d""#),
+            a(r#""--data""#),
+            a(r#""--data-raw""#),
+        ]);
+        let result = pp(&doc, 30);
+        // (forbidden "-d" "--data"
+        //            "--data-raw")
+        assert!(result.contains("forbidden"));
+        assert!(result.contains("--data-raw"));
+    }
+
+    #[test]
+    fn forbidden_in_when_fill_layout() {
+        // Test forbidden nested inside when - with many args like real config
+        let when_doc = l(vec![
+            a("when"),
+            l(vec![
+                a("forbidden"),
+                a(r#""-d""#),
+                a(r#""--data""#),
+                a(r#""--data-raw""#),
+                a(r#""--data-binary""#),
+                a(r#""--data-urlencode""#),
+                a(r#""-F""#),
+                a(r#""--form""#),
+                a(r#""-T""#),
+                a(r#""--upload-file""#),
+                a(r#""-X""#),
+                a(r#""--request""#),
+            ]),
+            a("body"),
+        ]);
+        let result = pp(&when_doc, 80);
+        println!("forbidden_in_when (full):\n{}", result);
+        // Should not have excessive rightward drift
+        for line in result.lines() {
+            let leading = line.len() - line.trim_start().len();
+            assert!(
+                leading < 40,
+                "Line has excessive indent ({} chars): {}",
+                leading,
+                line
+            );
+        }
+    }
+
+    #[test]
+    fn forbidden_via_trivia_doc() {
+        // Test using Option<()> annotation like to_doc_with_trivia produces
+        use may_i_core::doc::{DocF, LayoutHint};
+        
+        fn atom_with_ann(s: &str) -> Doc<Option<()>> {
+            Doc {
+                ann: None,
+                node: DocF::Atom(s.to_string()),
+                layout: LayoutHint::Auto,
+                dimmed: false,
+            }
+        }
+        
+        fn list_with_ann(children: Vec<Doc<Option<()>>>) -> Doc<Option<()>> {
+            Doc {
+                ann: None,
+                node: DocF::List(children),
+                layout: LayoutHint::Auto,
+                dimmed: false,
+            }
+        }
+        
+        let forbidden_doc = list_with_ann(vec![
+            atom_with_ann("forbidden"),
+            atom_with_ann(r#""-d""#),
+            atom_with_ann(r#""--data""#),
+            atom_with_ann(r#""--data-raw""#),
+            atom_with_ann(r#""--data-binary""#),
+            atom_with_ann(r#""--data-urlencode""#),
+            atom_with_ann(r#""-F""#),
+            atom_with_ann(r#""--form""#),
+            atom_with_ann(r#""-T""#),
+            atom_with_ann(r#""--upload-file""#),
+            atom_with_ann(r#""-X""#),
+            atom_with_ann(r#""--request""#),
+        ]);
+        
+        let when_doc = list_with_ann(vec![
+            atom_with_ann("when"),
+            forbidden_doc,
+            atom_with_ann("body"),
+        ]);
+        
+        let result = pretty(
+            &when_doc,
+            0,
+            &Format {
+                width: 80,
+                ..Default::default()
+            },
+        );
+        println!("forbidden_via_trivia_doc:\n{}", result);
+        
+        // Should not have excessive rightward drift
+        for line in result.lines() {
+            let leading = line.len() - line.trim_start().len();
+            assert!(
+                leading < 40,
+                "Line has excessive indent ({} chars): {}",
+                leading,
+                line
+            );
+        }
     }
 
     // ── parse_sexpr ────────────────────────────────────────────────

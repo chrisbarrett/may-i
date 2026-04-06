@@ -22,6 +22,26 @@ use may_i_sexpr::cst::{CstNode, Shape, TriviaAnn};
 /// A rewrite rule that transforms v1 syntax to canonical.
 pub type RewriteFn = Box<dyn Fn(&CstNode) -> Option<Box<CstNode>>>;
 
+/// Recursively strip trivia from a node and all its children.
+/// This allows the pretty printer to use optimal layout (fill layout)
+/// instead of being constrained by source trivia.
+fn strip_trivia(node: &CstNode) -> CstNode {
+    let mut stripped = node.clone();
+    stripped.ann = Default::default();
+    
+    // Recursively strip children
+    match &mut stripped.shape {
+        Shape::List(children) | Shape::Vector(children) => {
+            for child in children.iter_mut() {
+                **child = strip_trivia(child);
+            }
+        }
+        _ => {}
+    }
+    
+    stripped
+}
+
 /// Compute the structural complexity (nesting depth) of an expression.
 ///
 /// Used to guide rewrite heuristics (e.g. choosing between `when` and `if`).
@@ -147,11 +167,13 @@ fn rule_inline_context(node: &CstNode) -> Option<Box<CstNode>> {
         if child.is_tagged("context") {
             let ctx_children = child.as_list()?;
             if ctx_children.len() == 2 {
-                context_expr = Some(ctx_children[1].clone());
+                // Strip trivia from cloned context expr so pretty printer
+                // can use optimal layout (fill layout for and/or/forbidden)
+                context_expr = Some(Box::new(strip_trivia(&ctx_children[1])));
             }
         } else if child.is_tagged("effect") {
-            // Keep the whole (effect ...) node
-            effect_expr = Some(child.clone());
+            // Strip trivia from effect node so pretty printer can use optimal layout
+            effect_expr = Some(Box::new(strip_trivia(child)));
         } else {
             other_children.push(child.clone());
         }
@@ -224,10 +246,9 @@ fn rule_inline_args(node: &CstNode) -> Option<Box<CstNode>> {
                     continue;
                 }
 
-                // For simple matchers, inline them
-                let mut inlined = (**matcher).clone();
-                inlined.ann.leading = child.ann.leading.clone();
-                inlined.ann.trailing = child.ann.trailing.clone();
+                // For simple matchers, inline them with stripped trivia
+                // so pretty printer can use optimal layout
+                let inlined = strip_trivia(matcher);
                 new_children.push(Box::new(inlined));
                 changed = true;
                 continue;
