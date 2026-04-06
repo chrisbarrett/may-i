@@ -636,6 +636,16 @@ impl<A: Clone> PrettyOutput<A> for AnnotatedLineBuilder<A> {
 ///
 /// Identifiers not in this table use the default heuristic (align under
 /// first arg when inline, indent +1 when dropped).
+/// Forms with Emacs-Lisp-style `(declare (indent N))` body indentation.
+/// N controls how many children after the head are "special" (stay near the
+/// head) before the body, which is indented +2 from the opening paren.
+///
+///   N = 0  →  all children are body (indent +2)
+///   N = 1  →  first arg is special (inline if fits), rest are body (+2)
+///   N = 2  →  first two args special, rest are body (+2)
+///
+/// Forms absent from this table use function-call alignment (args align under
+/// the first arg: `paren_col + 1 + head_width + 1`).
 pub const INDENT_SPECS: &[(&str, u8)] = &[
     ("cond", 0),
     ("define", 1),
@@ -644,6 +654,19 @@ pub const INDENT_SPECS: &[(&str, u8)] = &[
     ("unless", 1),
     ("when", 1),
     ("with-facts", 1),
+];
+
+/// Head atoms whose all-atom argument lists use fill layout instead of
+/// standard broken layout.  Fill layout packs multiple args per line,
+/// wrapping at the column of the first arg.
+///
+/// Trigger: head is in this list AND every argument after the head is an atom.
+pub const FILL_ELIGIBLE_HEADS: &[&str] = &[
+    "and",
+    "anywhere",
+    "forbidden",
+    "or",
+    "positional",
 ];
 
 /// Look up the indent spec for a head atom.  Returns `Some(n)` if the
@@ -1302,14 +1325,10 @@ fn is_fill_eligible<A: Clone>(children: &[Doc<A>]) -> bool {
     let Some(head) = children.first().and_then(|c| c.as_atom()) else {
         return false;
     };
-    // Fill-eligible forms: and, or, and pattern-matching predicates
-    // that commonly take many string literals
-    const FILL_ELIGIBLE_HEADS: &[&str] = &["and", "or", "forbidden", "anywhere", "positional"];
     if !FILL_ELIGIBLE_HEADS.contains(&head) {
         return false;
     }
-    // All args must be atoms for fill layout
-    // (render_fill assumes atoms for width calculation)
+    // All args must be atoms — render_fill relies on this for width tracking.
     children.len() > 1 && children[1..].iter().all(|c| c.as_atom().is_some())
 }
 

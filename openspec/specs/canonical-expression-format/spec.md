@@ -26,6 +26,10 @@ number of "special" arguments before the body.
 
 Forms not in this table use default function-call alignment.
 
+`check` is intentionally absent: it takes keyword-value pairs in a plist-like
+calling convention and reads naturally with function-call alignment (args align
+under the first arg).
+
 #### Scenario: N=0 form (cond)
 - **WHEN** pretty-printing `(cond ((pred1) (effect :allow)) (else (effect :deny)))`
 - **THEN** the form always breaks with clauses at +2 and body parts on separate lines:
@@ -110,8 +114,10 @@ then-branch (consequence) from the else-branch (alternative).
 **Layout Rules:**
 1. If the entire form fits on one line: render flat `(if p e1 e2)`
 2. Otherwise:
-   - Pred stays on the same line as `if` (always)
-   - Then-branch is at indent +4 (aligns under pred if pred is atomic)
+   - Pred stays on the same line as `if` **when it fits within the column width**.
+     If pred itself exceeds the remaining width it drops to indent +4 (the same
+     column where it would start inline).
+   - Then-branch is always at indent +4 (aligns under pred's start column)
    - Else-branch is at indent +2 (body indent)
 
 This creates the characteristic "staircase" indentation that makes the
@@ -142,25 +148,28 @@ asymmetry visually apparent.
 
 ---
 
-### Requirement: Fill Layout for And/Or Forms
+### Requirement: Fill Layout for All-Atom Forms
 
-`and` and `or` forms whose arguments are ALL atoms (strings, keywords,
+The following forms whose arguments are ALL atoms (strings, keywords,
 identifiers, regexes) SHALL use "fill layout" instead of the standard broken
-layout.
+layout: `and`, `or`, `forbidden`, `anywhere`, `positional`.
+
+These forms commonly take many string literal patterns and fill layout keeps
+them compact without wasting one line per arg.
 
 **Fill Layout Algorithm:**
-1. Head atom on opening line: `(and ` or `(or `
+1. Head atom on opening line
 2. First arg follows head on same line
 3. Subsequent args flow across lines, wrapping when the next arg would exceed
    the width limit
-4. Wrap point is the column of the first arg (align under first arg)
+4. Wrap column is the column of the first arg (align under first arg)
 5. Multiple items may appear on each line (unlike broken layout's one-per-line)
 
 **Trigger Condition:**
-- Head is `"and"` or `"or"`
+- Head is one of: `and`, `or`, `forbidden`, `anywhere`, `positional`
 - All children after head are atoms (no nested lists)
 
-#### Scenario: Short and/or on one line
+#### Scenario: Short form on one line
 - **WHEN** `(and "a" "b" "c")` fits within width
 - **THEN** render flat: `(and "a" "b" "c")`
 
@@ -172,13 +181,12 @@ layout.
       "tail" "less" "ls")
   ```
 
-#### Scenario: Mixed length atoms
-- **WHEN** atoms have varying lengths
-- **THEN** pack as many as fit on each line:
+#### Scenario: positional fill layout
+- **WHEN** `(positional "push" "origin" "main" "feature" "release")` exceeds width
+- **THEN** args flow across lines aligned under the first arg:
   ```
-  (and "a" "bb"
-       "ccc" "dddd"
-       "eeeee")
+  (positional "push" "origin" "main"
+              "feature" "release")
   ```
 
 #### Scenario: Non-atom args disable fill
@@ -226,20 +234,29 @@ Where:
 
 ### Requirement: Special Form Keyword Coloring
 
-The pretty-printer SHALL syntax-color head atoms that are special forms.
+The pretty-printer SHALL syntax-color the head atoms of known forms in blue
+to aid readability.
 
-**Coloring Rules:**
-- Special forms (from indent spec table): distinct color (e.g., blue)
-- All other atoms: default color
+**Colored form list:**
+- All forms in the indent spec table: `check`, `cond`, `define`, `if`, `rule`,
+  `unless`, `when`, `with-facts`
+- Structural effect form: `effect`
+- Pattern forms: `anywhere`, `exact`, `positional`
+- Control forms: `else`
 
-**Special Forms List:** `cond`, `define`, `effect`, `if`, `rule`, `unless`,
-`when`, `with-facts`
+Atoms not in this list (e.g., `command`, bare identifiers) use default color.
+`:keyword` atoms are colored in a distinct hue (purple-ish).
+String and regex literals are colored green.
 
 #### Scenario: Special form head is colored
-- **WHEN` rendering `(when pred body)`
-- **THEN** `when` appears in special-form color
+- **WHEN** rendering `(when pred body)`
+- **THEN** `when` appears in special-form color (blue)
 
-#### Scenario: Non-special form is default color
+#### Scenario: Pattern form is colored
+- **WHEN** rendering `(positional "push")`
+- **THEN** `positional` appears in special-form color
+
+#### Scenario: Non-colored form is default
 - **WHEN** rendering `(command "git")`
 - **THEN** `command` appears in default color
 
@@ -247,30 +264,33 @@ The pretty-printer SHALL syntax-color head atoms that are special forms.
 
 ## MODIFIED Requirements
 
-### Requirement: Remove Dead Case References
+### Requirement: Migration rule `and_trailing_effect_to_when`
 
-The `case` form was renamed to `cond` before release. All references to `case`
-in the pretty-printer SHALL be removed.
+The migration rule SHALL extract a trailing low-complexity `(effect ...)` from
+an `(and ...)` predicate, rewriting to a `(when ...)` form.
 
-**Items to Remove:**
-1. `("case", 0)` from `INDENT_SPECS` table
-2. `"case"` from colored keywords list
-3. `case` branch in cond/case special renderer check (now just `cond`)
+**Trigger:** `(and e1 … en)` where `en` is `(effect ...)` with structural
+complexity ≤ 3.
 
-#### Scenario: Cond form uses render_cond
-- **WHEN** pretty-printing a `cond` form
-- **THEN** it uses the dedicated `render_cond` function, not indent specs
-- **AND** no `case` logic is invoked
+**Complexity scoring:**
+- Atoms (bare identifiers, keywords, strings, regexes): 1
+- `(regex "r")`: 1 (special-cased as a leaf)
+- Any other `(tag e1 … en)`: `1 + max(complexity(e1), …, complexity(en))`
+- `[e1 … en]` (vector): `1 + max(complexity(e1), …, complexity(en))`
 
----
+**Threshold rationale:** `(effect :allow)` scores 2, `(effect :ask "reason")`
+scores 2.  The threshold of 3 admits both common simple effects while rejecting
+effects containing nested forms.
 
-### Requirement: Rename Migration Function
+#### Scenario: Simple effect is extracted
+- **WHEN** migrating `(and (anywhere "-f") (effect :allow))`
+- **THEN** the output SHALL be `(when (anywhere "-f") (effect :allow))`
 
-The migration function `args_cond_to_case` SHALL be renamed to `hoist_cond` to
-accurately describe its purpose: lifting cond expressions from args position
-into rule bodies.
+#### Scenario: Effect with reason is extracted
+- **WHEN** migrating `(and (anywhere "-f") (effect :ask "confirm"))`
+- **THEN** the output SHALL be `(when (anywhere "-f") (effect :ask "confirm"))`
 
-#### Scenario: Function is renamed
-- **WHEN** searching for `args_cond_to_case` in the codebase
-- **THEN** no results are found
-- **AND** `hoist_cond` exists and performs the same transformation
+#### Scenario: Complex effect is not extracted
+- **WHEN** migrating `(and pred (effect :ask (some-nested-form)))`
+- **AND** the effect's complexity exceeds 3
+- **THEN** the `(and ...)` form SHALL be left unchanged

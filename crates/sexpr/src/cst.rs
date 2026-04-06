@@ -1297,11 +1297,12 @@ mod tests {
     }
 
     #[test]
-    fn test_no_cascade_when_source_is_flat() {
-        // A form that was originally on one line should stay on one line.
+    fn test_rule_body_always_breaks() {
+        // rule has N=1 indent spec: body args always go to a new line at +2
+        // regardless of how the source was formatted.
         let input = "(rule \"rm\" (effect :allow))";
         let result = pretty(input, 80);
-        assert_eq!(result, "(rule \"rm\" (effect :allow))");
+        assert_eq!(result, "(rule \"rm\"\n  (effect :allow))");
     }
 
     // ── Cond clause rendering ────────────────────────────────────
@@ -1802,13 +1803,15 @@ mod proptests {
     }
 
     #[test]
-    fn pretty_serialize_short_form_unchanged() {
+    fn pretty_serialize_rule_body_indent() {
+        // rule has N=1: body args always break to +2 regardless of source width.
+        // Keywords (starting with :) keep their following value on the same line.
         let input = "(rule git :effect :allow)";
         let (nodes, errors) = parse(input);
         assert!(errors.is_empty());
 
         let pretty = nodes[0].pretty_serialize(80);
-        assert_eq!(pretty, input);
+        assert_eq!(pretty, "(rule git\n  :effect :allow)");
     }
 
     #[test]

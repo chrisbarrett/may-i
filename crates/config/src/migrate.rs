@@ -22,9 +22,20 @@ use may_i_sexpr::cst::{CstNode, Shape, TriviaAnn};
 /// A rewrite rule that transforms v1 syntax to canonical.
 pub type RewriteFn = Box<dyn Fn(&CstNode) -> Option<Box<CstNode>>>;
 
-/// Recursively strip trivia from a node and all its children.
-/// This allows the pretty printer to use optimal layout (fill layout)
-/// instead of being constrained by source trivia.
+/// Recursively strip trivia (and zeroise the span) from a node and its children.
+///
+/// The `pp` crate uses `has_source_trivia()` (non-zero span) to decide whether
+/// to preserve a node's original source layout or reflow it fresh.  When a
+/// rewrite rule *clones* a source node and places it in a new structural
+/// context, call `strip_trivia` first so the renderer treats it as a
+/// constructed node and applies optimal layout (fill, broken, etc.) rather than
+/// locking it to the old source formatting.
+///
+/// **When to call:**  any time you clone a source-parsed node and embed it in a
+/// freshly-built list where its old whitespace decisions no longer apply.
+/// Freshly constructed nodes (built via `CstNode::atom`/`CstNode::list` with
+/// `Default::default()` annotations) already have zero spans, so `strip_trivia`
+/// is not needed for them.
 fn strip_trivia(node: &CstNode) -> CstNode {
     let mut stripped = node.clone();
     stripped.ann = Default::default();
@@ -70,33 +81,50 @@ pub fn complexity(node: &CstNode) -> usize {
 }
 
 /// Get all v1→canonical migration rewrite rules.
+///
+/// Rules are applied by `rewrite_until_convergence`, which repeatedly walks the
+/// whole tree applying each rule until no rule fires.  The ordering within the
+/// vec only affects which rule wins when multiple rules could fire on the same
+/// node in the same pass; it does **not** mean earlier rules run before later
+/// ones globally.
+///
+/// # Ordering constraints
+///
+/// The following dependencies must be respected when adding or reordering rules:
+///
+/// - `hoist_cond` **before** `rule_inline_args`: `hoist_cond` needs the
+///   `(args ...)` tag present to detect `(args (cond ...))`.  `rule_inline_args`
+///   removes that tag by inlining the matcher directly.
+///
+/// - `rule_collapse_effects` **after** all rules that may produce multiple body
+///   children in a rule (e.g., `rule_inline_context`, `rule_inline_args`):
+///   collapsing only makes sense once the rule body is in its final shape.
+///
+/// - `flatten_combinators` **after** `rule_inline_args` and `hoist_cond`:
+///   inlining may create nested `(and (and ...))` structures that flattening
+///   then canonicalises.
+///
+/// - `cond_single_clause_to_if` and `and_trailing_effect_to_when` are cosmetic
+///   simplifiers that run last and have no dependencies other than the tree
+///   being in near-canonical form.
 pub fn migration_rules() -> Vec<RewriteFn> {
     vec![
-        // Rule: (rule (command X) ...) → (rule X ...)
-        Box::new(rule_simplify_command),
-        // Rule: (rule ... (context EXPR) ...) → (rule ... EXPR ...)
-        Box::new(rule_inline_context),
-        // Rule: (args (cond/if ...)) → (case ...) in effect position
-        // MUST run before rule_inline_args which removes the args tag
-        Box::new(hoist_cond),
-        // Rule: (rule ... (args MATCHER) ...) → (rule ... MATCHER ...)
-        Box::new(rule_inline_args),
-        // Rule: (wrapper CMD ...) → (rule CMD ... . (may-i *))
-        Box::new(wrapper_to_rule),
-        // Rule: (defcontext NAME EXPR) → (define NAME EXPR)
-        Box::new(defcontext_to_define),
-        // Rule: (has ...) → (fact? ...)
-        // Rename has to fact? for the new unified syntax
-        Box::new(rename_has_to_fact),
-        // Rule: Collapse multiple body effects into (and ...) — MUST run last
-        Box::new(rule_collapse_effects),
-        // Rule: Flatten nested associative combinators and eliminate double-not
-        Box::new(flatten_combinators),
-        // Rule: (cond (PRED EFFECT) (else EFFECT)) → (if PRED EFFECT EFFECT)
-        Box::new(cond_single_clause_to_if),
-        // Rule: (and e1 ... (effect ...)) → (when (and e1 ...) (effect ...))
-        // when the trailing effect has low complexity
-        Box::new(and_trailing_effect_to_when),
+        // Stage 1 — structural unwrapping
+        Box::new(rule_simplify_command),   // (rule (command X) …) → (rule X …)
+        Box::new(rule_inline_context),     // (context PRED) + (effect E) → (when PRED E)
+        Box::new(hoist_cond),              // (args (cond …)) → cond in body   ← before inline_args
+        Box::new(rule_inline_args),        // (args MATCHER) → MATCHER inline
+        Box::new(wrapper_to_rule),         // (wrapper …) → (rule …)
+        Box::new(defcontext_to_define),    // (defcontext N E) → (define N E)
+        Box::new(rename_has_to_fact),      // (has …) → (fact? …)
+
+        // Stage 2 — normalisation (must run after stage 1 is stable)
+        Box::new(rule_collapse_effects),   // multiple body effects → (and …)   ← after stage 1
+        Box::new(flatten_combinators),     // (and (and …) …) → flat, ¬¬x → x
+
+        // Stage 3 — cosmetic simplification
+        Box::new(cond_single_clause_to_if),        // (cond (P E) (else E)) → (if P E E)
+        Box::new(and_trailing_effect_to_when),      // (and … (effect …)) → (when … (effect …))
     ]
 }
 
@@ -388,14 +416,14 @@ fn flatten_combinators(node: &CstNode) -> Option<Box<CstNode>> {
     }
 }
 
-/// Simplify (cond (PRED EFFECT) (else EFFECT)) → (if PRED EFFECT EFFECT).
-///
-/// A cond with exactly one non-else clause plus an else clause is equivalent
-/// to an if expression.
 /// Extract a trailing low-complexity effect from `and` into `when`.
 ///
 /// `(and e1 ... en)` where `en` is `(effect ...)` with complexity ≤ 3
 /// → `(when (and e1 ...) en)` (or `(when e1 en)` if only one predicate).
+///
+/// The complexity threshold of 3 admits simple effects like `(effect :allow)`
+/// (score 2) and `(effect :ask "reason")` (score 2), but rejects effects that
+/// contain nested forms.
 fn and_trailing_effect_to_when(node: &CstNode) -> Option<Box<CstNode>> {
     if !node.is_tagged("and") {
         return None;
@@ -442,6 +470,10 @@ fn and_trailing_effect_to_when(node: &CstNode) -> Option<Box<CstNode>> {
     }))
 }
 
+/// Simplify `(cond (PRED EFFECT) (else EFFECT))` → `(if PRED EFFECT EFFECT)`.
+///
+/// A `cond` with exactly one non-else clause plus an `else` clause is
+/// equivalent to an `if` expression and is more readable in that form.
 fn cond_single_clause_to_if(node: &CstNode) -> Option<Box<CstNode>> {
     if !node.is_tagged("cond") {
         return None;
@@ -639,8 +671,9 @@ fn defcontext_to_define(node: &CstNode) -> Option<Box<CstNode>> {
         return None;
     }
 
-    // Transform the expression to handle v1 has syntax
-    let transformed_expr = transform_has_expression(&children[2]);
+    // Transform v1 (has KEY VALUE) → (has [KEY VALUE]) inside the body, if present.
+    let body = transform_has_expression(&children[2])
+        .unwrap_or_else(|| children[2].clone());
 
     // Build (define NAME EXPR)
     let new_children = vec![
@@ -652,7 +685,7 @@ fn defcontext_to_define(node: &CstNode) -> Option<Box<CstNode>> {
             },
         )),
         children[1].clone(), // NAME
-        transformed_expr,
+        body,
     ];
 
     Some(Box::new(CstNode::list(
@@ -665,79 +698,69 @@ fn defcontext_to_define(node: &CstNode) -> Option<Box<CstNode>> {
     )))
 }
 
-/// Transform v1 has expressions to canonical syntax.
-/// Converts (has :key "value") to (has [:key "value"])
-fn transform_has_expression(expr: &CstNode) -> Box<CstNode> {
-    // Check if this is a (has ...) expression
-    if let Some(list) = expr.as_list()
-        && !list.is_empty()
-        && list[0].as_atom() == Some("has")
-        && list.len() == 3
-    {
-        // This is (has KEY VALUE) - convert to (has [KEY VALUE])
-        let key = &list[1];
-        let value = &list[2];
+/// Transform v1 `(has KEY VALUE)` to canonical `(has [KEY VALUE])`.
+///
+/// Returns `Some(new_node)` when a rewrite was made, `None` when the node is
+/// already canonical or is an atom/string.  Recursively descends into lists.
+fn transform_has_expression(expr: &CstNode) -> Option<Box<CstNode>> {
+    let list = expr.as_list()?;
+    if list.is_empty() {
+        return None;
+    }
 
-        // Create the vector [key value]
-        let vector_node = CstNode {
-            ann: TriviaAnn {
-                leading: vec![],
-                trailing: vec![],
-                span: key.ann.span, // Use key's span as approximation
-            },
-            shape: Shape::Vector(vec![key.clone(), value.clone()]),
-        };
-
-        // Create (has [key value])
-        let new_children = vec![
-            list[0].clone(), // "has" tag
-            Box::new(vector_node),
-        ];
-
-        Box::new(CstNode::list(
-            new_children,
-            TriviaAnn {
-                leading: expr.ann.leading.clone(),
-                trailing: expr.ann.trailing.clone(),
-                span: expr.ann.span,
-            },
-        ))
-    } else if let Some(list) = expr.as_list()
-        && !list.is_empty()
-        && list[0].as_atom() == Some("has")
-        && list.len() == 2
-    {
-        // This is (has KEY) - presence check, keep as-is
-        Box::new(expr.clone())
-    } else if let Some(list) = expr.as_list() {
-        // Recursively transform children
-        let mut new_children = Vec::new();
-        let mut changed = false;
-
-        for child in list {
-            let transformed = transform_has_expression(child);
-            // Check if transformation actually changed anything by comparing serialized output
-            if transformed.serialize() != child.serialize() {
-                changed = true;
-            }
-            new_children.push(transformed);
-        }
-
-        if changed {
-            Box::new(CstNode::list(
+    if list[0].as_atom() == Some("has") {
+        if list.len() == 3 {
+            // (has KEY VALUE) → (has [KEY VALUE])
+            let key = &list[1];
+            let value = &list[2];
+            let vector_node = CstNode {
+                ann: TriviaAnn {
+                    leading: vec![],
+                    trailing: vec![],
+                    span: key.ann.span,
+                },
+                shape: Shape::Vector(vec![key.clone(), value.clone()]),
+            };
+            let new_children = vec![
+                list[0].clone(), // "has" tag
+                Box::new(vector_node),
+            ];
+            return Some(Box::new(CstNode::list(
                 new_children,
                 TriviaAnn {
                     leading: expr.ann.leading.clone(),
                     trailing: expr.ann.trailing.clone(),
                     span: expr.ann.span,
                 },
-            ))
-        } else {
-            Box::new(expr.clone())
+            )));
         }
+        // (has KEY) presence check — already canonical
+        return None;
+    }
+
+    // Recurse into non-has lists.
+    let mut new_children = Vec::new();
+    let mut changed = false;
+    for child in list {
+        if let Some(rewritten) = transform_has_expression(child) {
+            new_children.push(rewritten);
+            changed = true;
+        } else {
+            new_children.push(child.clone());
+        }
+    }
+
+    if changed {
+        Some(Box::new(CstNode::list(
+            new_children,
+            TriviaAnn {
+                leading: expr.ann.leading.clone(),
+                trailing: expr.ann.trailing.clone(),
+                span: expr.ann.span,
+            },
+        )))
     } else {
-        // Atom or string - return as-is
-        Box::new(expr.clone())
+        None
     }
 }
 
@@ -1509,31 +1532,30 @@ mod tests {
 
     #[test]
     fn test_transform_has_expression_simple() {
-        // Test (has :key "value") -> (has [:key "value"])
+        // (has :key "value") → (has [:key "value"])
         let input = r#"(has :env "prod")"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let node = nodes.into_iter().next().unwrap();
-        let result = transform_has_expression(&node);
+        let result = transform_has_expression(&node).unwrap();
         assert!(result.serialize().contains("[ :env \"prod\"]"));
     }
 
     #[test]
     fn test_transform_has_expression_presence() {
-        // Test (has :key) stays as-is
+        // (has :key) presence check — already canonical, returns None
         let input = "(has :env)";
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let node = nodes.into_iter().next().unwrap();
-        let result = transform_has_expression(&node);
-        assert_eq!(result.serialize(), "(has :env)");
+        assert!(transform_has_expression(&node).is_none());
     }
 
     #[test]
     fn test_transform_has_expression_nested() {
-        // Test nested has expressions
+        // Nested has expressions inside an and are both rewritten
         let input = r#"(and (has :env "prod") (has :region "us-east"))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let node = nodes.into_iter().next().unwrap();
-        let result = transform_has_expression(&node);
+        let result = transform_has_expression(&node).unwrap();
         let serialized = result.serialize();
         assert!(serialized.contains("[ :env \"prod\"]"));
         assert!(serialized.contains("[ :region \"us-east\"]"));
@@ -1755,7 +1777,6 @@ mod tests {
         assert_eq!(c("(if pred (effect :allow \"r\") (effect :deny \"r\"))"), 3);
     }
 
-    #[test]
     #[test]
     fn complexity_cond() {
         // (cond (pred1 e1) (pred2 e2))
