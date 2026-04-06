@@ -23,7 +23,7 @@ expression: normalised
                  [2m([0mhas [2m[[0m[38;2;120;120;255m:opencode/agent[0m              [2m│[0m [33mno[0m
                        [32m"build"[0m[2m][0m[2m)[0m[2m)[0m                   [2m│[0m
                 [2m…[0m[2m)[0m                                  [2m│[0m
-           [2m<cond-effect>[0m[2m)[0m[2m)[0m[2m)[0m                         [2m│[0m
+           [2m<if-effect>[0m[2m)[0m[2m)[0m[2m)[0m                           [2m│[0m
                                                     [2m│[0m
   [2m37: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"rm"[0m[2m)[0m                          [2m│[0m
         [2m([0mcontext                                    [2m│[0m

@@ -23,7 +23,7 @@ Trace
                  (has [:opencode/agent              │ no
                        "build"]))                   │
                 …)                                  │
-           <cond-effect>)))                         │
+           <if-effect>)))                           │
                                                     │
   37: (rule (command "rm")                          │
         (context                                    │

@@ -45,6 +45,8 @@ pub fn migration_rules() -> Vec<RewriteFn> {
         Box::new(rule_collapse_effects),
         // Rule: Flatten nested associative combinators and eliminate double-not
         Box::new(flatten_combinators),
+        // Rule: (cond (PRED EFFECT) (else EFFECT)) → (if PRED EFFECT EFFECT)
+        Box::new(cond_single_clause_to_if),
     ]
 }
 
@@ -333,6 +335,60 @@ fn flatten_combinators(node: &CstNode) -> Option<Box<CstNode>> {
         }
         _ => None,
     }
+}
+
+/// Simplify (cond (PRED EFFECT) (else EFFECT)) → (if PRED EFFECT EFFECT).
+///
+/// A cond with exactly one non-else clause plus an else clause is equivalent
+/// to an if expression.
+fn cond_single_clause_to_if(node: &CstNode) -> Option<Box<CstNode>> {
+    if !node.is_tagged("cond") {
+        return None;
+    }
+    let children = node.as_list()?;
+    // Expect: cond tag + exactly 2 branches
+    if children.len() != 3 {
+        return None;
+    }
+    let clause = &children[1];
+    let else_clause = &children[2];
+
+    // clause must be a list like (PRED EFFECT)
+    let clause_children = clause.as_list()?;
+    if clause_children.len() != 2 {
+        return None;
+    }
+
+    // else_clause must be (else EFFECT)
+    if !else_clause.is_tagged("else") {
+        return None;
+    }
+    let else_children = else_clause.as_list()?;
+    if else_children.len() != 2 {
+        return None;
+    }
+
+    let pred = &clause_children[0];
+    let then_effect = &clause_children[1];
+    let else_effect = &else_children[1];
+
+    let if_children = vec![
+        Box::new(CstNode::atom(
+            "if",
+            TriviaAnn {
+                leading: node.ann.leading.clone(),
+                ..Default::default()
+            },
+        )),
+        pred.clone(),
+        then_effect.clone(),
+        else_effect.clone(),
+    ];
+
+    Some(Box::new(CstNode {
+        ann: Default::default(),
+        shape: Shape::List(if_children),
+    }))
 }
 
 /// Convert (wrapper CMD ...) to (rule CMD ... . (may-i *))
@@ -1549,6 +1605,34 @@ mod tests {
             "Expected 'when' in: {}",
             serialized
         );
+    }
+
+    // ── Simplify single-clause cond to if ─────────────────────────
+
+    #[test]
+    fn test_cond_single_clause_else_to_if() {
+        let input = "(cond ((pred) (effect :allow)) (else (effect :deny)))";
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let result = migrate(nodes.into_iter().next().unwrap());
+        assert_eq!(result.serialize(), "(if (pred) (effect :allow) (effect :deny))");
+    }
+
+    #[test]
+    fn test_cond_single_clause_no_else_unchanged() {
+        // A cond with just one clause and no else should not become if
+        let input = "(cond ((pred) (effect :allow)))";
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let result = migrate(nodes.into_iter().next().unwrap());
+        assert_eq!(result.serialize(), "(cond ((pred) (effect :allow)))");
+    }
+
+    #[test]
+    fn test_cond_multiple_clauses_unchanged() {
+        // A cond with multiple clauses should stay as cond
+        let input = "(cond ((a) x) ((b) y) (else z))";
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let result = migrate(nodes.into_iter().next().unwrap());
+        assert!(result.serialize().starts_with("(cond"), "should stay as cond");
     }
 
     // ── Flatten nested combinators ──────────────────────────────────

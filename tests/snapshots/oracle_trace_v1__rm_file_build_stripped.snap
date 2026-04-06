@@ -25,7 +25,7 @@ Trace
                        "build"]))                   │
                 (anywhere "-r"                      │
                           "--recursive"))           │
-           <cond-effect>)))                         │
+           <if-effect>)))                           │
                                                     │
   37: (rule (command "rm")                          │
         (context                                    │
