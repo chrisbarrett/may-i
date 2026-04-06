@@ -22,60 +22,29 @@ use may_i_sexpr::cst::{CstNode, Shape, TriviaAnn};
 /// A rewrite rule that transforms v1 syntax to canonical.
 pub type RewriteFn = Box<dyn Fn(&CstNode) -> Option<Box<CstNode>>>;
 
-/// Compute the structural complexity of an expression.
+/// Compute the structural complexity (nesting depth) of an expression.
 ///
 /// Used to guide rewrite heuristics (e.g. choosing between `when` and `if`).
+///
+/// - Atoms (keywords, strings, wildcards, identifiers): 1
+/// - `(regex "r")`: 1
+/// - Any other `(tag e1 ... en)`: `1 + max(C(e1), ..., C(en))`
+/// - `[e1 ... en]`: `1 + max(C(e1), ..., C(en))`
 pub fn complexity(node: &CstNode) -> usize {
     match &node.shape {
-        // Atoms: keywords, strings, wildcard, bare identifiers → 1
         Shape::Atom(_) | Shape::Str(_) => 1,
 
-        // Vectors: [e1 e2 ...] → 1 + max(children)
         Shape::Vector(children) => {
             1 + children.iter().map(|c| complexity(c)).max().unwrap_or(0)
         }
 
         Shape::List(children) => {
             let tag = children.first().and_then(|c| c.as_atom());
-            let args = &children[1..];
-
-            match tag {
-                // (regex "r") → 1
-                Some("regex") => 1,
-
-                // (cond clauses...) → 1 + max(for each clause, max(C(pred), C(effect)))
-                Some("cond") => {
-                    1 + args
-                        .iter()
-                        .map(|clause| {
-                            clause
-                                .as_list()
-                                .map(|cs| cs.iter().map(|c| complexity(c)).max().unwrap_or(0))
-                                .unwrap_or_else(|| complexity(clause))
-                        })
-                        .max()
-                        .unwrap_or(0)
-                }
-
-                // (if pred then else) → 1 + C(pred) + max(C(then), C(else))
-                Some("if") if args.len() == 3 => {
-                    1 + complexity(&args[0])
-                        + args[1..].iter().map(|c| complexity(c)).max().unwrap_or(0)
-                }
-
-                // (when p e), (unless p e) → 1 + max(C(p), C(e))
-                Some("when" | "unless") if args.len() == 2 => {
-                    1 + args.iter().map(|c| complexity(c)).max().unwrap_or(0)
-                }
-
-                // (effect kw reason) → 1 + max(C(kw), C(reason))
-                Some("effect") => {
-                    1 + args.iter().map(|c| complexity(c)).max().unwrap_or(0)
-                }
-
-                // Default: (T e1 ... en) → 1 + sum(C(e1), ..., C(en))
-                _ => 1 + args.iter().map(|c| complexity(c)).sum::<usize>(),
+            if tag == Some("regex") {
+                return 1;
             }
+            let args = &children[1..];
+            1 + args.iter().map(|c| complexity(c)).max().unwrap_or(0)
         }
     }
 }
@@ -105,6 +74,9 @@ pub fn migration_rules() -> Vec<RewriteFn> {
         Box::new(flatten_combinators),
         // Rule: (cond (PRED EFFECT) (else EFFECT)) → (if PRED EFFECT EFFECT)
         Box::new(cond_single_clause_to_if),
+        // Rule: (and e1 ... (effect ...)) → (when (and e1 ...) (effect ...))
+        // when the trailing effect has low complexity
+        Box::new(and_trailing_effect_to_when),
     ]
 }
 
@@ -399,6 +371,56 @@ fn flatten_combinators(node: &CstNode) -> Option<Box<CstNode>> {
 ///
 /// A cond with exactly one non-else clause plus an else clause is equivalent
 /// to an if expression.
+/// Extract a trailing low-complexity effect from `and` into `when`.
+///
+/// `(and e1 ... en)` where `en` is `(effect ...)` with complexity ≤ 3
+/// → `(when (and e1 ...) en)` (or `(when e1 en)` if only one predicate).
+fn and_trailing_effect_to_when(node: &CstNode) -> Option<Box<CstNode>> {
+    if !node.is_tagged("and") {
+        return None;
+    }
+    let children = node.as_list()?;
+    // Need at least: and + one predicate + effect
+    if children.len() < 3 {
+        return None;
+    }
+    let last = children.last()?;
+    if !last.is_tagged("effect") {
+        return None;
+    }
+    if complexity(last) > 3 {
+        return None;
+    }
+
+    // Build the predicate part (everything except tag and last)
+    let pred_children = &children[1..children.len() - 1];
+    let pred = if pred_children.len() == 1 {
+        pred_children[0].clone()
+    } else {
+        let mut and_children: Vec<Box<CstNode>> = Vec::new();
+        and_children.push(Box::new(CstNode::atom("and", Default::default())));
+        and_children.extend(pred_children.iter().cloned());
+        Box::new(CstNode::list(and_children, Default::default()))
+    };
+
+    let when_children = vec![
+        Box::new(CstNode::atom(
+            "when",
+            TriviaAnn {
+                leading: node.ann.leading.clone(),
+                ..Default::default()
+            },
+        )),
+        pred,
+        last.clone(),
+    ];
+
+    Some(Box::new(CstNode {
+        ann: Default::default(),
+        shape: Shape::List(when_children),
+    }))
+}
+
 fn cond_single_clause_to_if(node: &CstNode) -> Option<Box<CstNode>> {
     if !node.is_tagged("cond") {
         return None;
@@ -1708,16 +1730,17 @@ mod tests {
     #[test]
     fn complexity_if() {
         // (if pred (effect :allow "r") (effect :deny "r"))
-        // = 1 + C(pred) + max(C(e1), C(e2))
-        // = 1 + 1 + max(2, 2) = 4
-        assert_eq!(c("(if pred (effect :allow \"r\") (effect :deny \"r\"))"), 4);
+        // = 1 + max(1, 2, 2) = 3
+        assert_eq!(c("(if pred (effect :allow \"r\") (effect :deny \"r\"))"), 3);
     }
 
     #[test]
+    #[test]
     fn complexity_cond() {
-        // (cond (pred1 e1) (pred2 e2)) -> 1 + max(max(C(pred1),C(e1)), max(C(pred2),C(e2)))
-        // = 1 + max(max(1,1), max(1,1)) = 1 + 1 = 2
-        assert_eq!(c("(cond (pred1 e1) (pred2 e2))"), 2);
+        // (cond (pred1 e1) (pred2 e2))
+        // C((pred1 e1)) = 1 + max(1) = 2
+        // C(cond ...) = 1 + max(2, 2) = 3
+        assert_eq!(c("(cond (pred1 e1) (pred2 e2))"), 3);
     }
 
     #[test]
@@ -1727,21 +1750,68 @@ mod tests {
     }
 
     #[test]
-    fn complexity_and_sums() {
-        // (and a b c) -> 1 + C(a) + C(b) + C(c) = 1 + 1 + 1 + 1 = 4
-        assert_eq!(c("(and a b c)"), 4);
+    fn complexity_and() {
+        // (and a b c) -> 1 + max(1, 1, 1) = 2
+        assert_eq!(c("(and a b c)"), 2);
     }
 
     #[test]
-    fn complexity_or_sums() {
-        // (or a b) -> 1 + C(a) + C(b) = 1 + 1 + 1 = 3
-        assert_eq!(c("(or a b)"), 3);
+    fn complexity_or() {
+        // (or a b) -> 1 + max(1, 1) = 2
+        assert_eq!(c("(or a b)"), 2);
     }
 
     #[test]
     fn complexity_nested() {
-        // (and (or a b) c) -> 1 + C(or a b) + C(c) = 1 + 3 + 1 = 5
-        assert_eq!(c("(and (or a b) c)"), 5);
+        // (and (or a b) c) -> 1 + max(C(or a b), C(c)) = 1 + max(2, 1) = 3
+        assert_eq!(c("(and (or a b) c)"), 3);
+    }
+
+    // ── Extract trailing effect from and into when ────────────────
+
+    #[test]
+    fn test_and_trailing_effect_to_when() {
+        let input = r#"(and (anywhere "-r") (anywhere "/") (effect :deny "bad"))"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let result = migrate(nodes.into_iter().next().unwrap());
+        assert_eq!(
+            result.serialize(),
+            r#"(when (and (anywhere "-r") (anywhere "/")) (effect :deny "bad"))"#,
+        );
+    }
+
+    #[test]
+    fn test_and_trailing_effect_single_pred_to_when() {
+        // (and pred (effect ...)) → (when pred (effect ...))
+        let input = r#"(and (anywhere "-r") (effect :allow "ok"))"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let result = migrate(nodes.into_iter().next().unwrap());
+        assert_eq!(
+            result.serialize(),
+            r#"(when (anywhere "-r") (effect :allow "ok"))"#,
+        );
+    }
+
+    #[test]
+    fn test_and_trailing_complex_effect_unchanged() {
+        // Effect with complexity > 3 should not be extracted.
+        // (effect :allow (or (and a b) c)) → C = 1 + max(1, 1+max(1+max(1,1), 1)) = 1+3 = 4
+        let input = r#"(and pred (effect :allow (or (and a b) c)))"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let result = migrate(nodes.into_iter().next().unwrap());
+        assert!(
+            result.serialize().starts_with("(and"),
+            "complex effect should stay in and, got: {}",
+            result.serialize(),
+        );
+    }
+
+    #[test]
+    fn test_and_no_trailing_effect_unchanged() {
+        let input = r#"(and (anywhere "-r") (anywhere "/"))"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let result = migrate(nodes.into_iter().next().unwrap());
+        assert!(result.serialize().starts_with("(and"), "no effect → no change");
     }
 
     // ── Simplify single-clause cond to if ─────────────────────────

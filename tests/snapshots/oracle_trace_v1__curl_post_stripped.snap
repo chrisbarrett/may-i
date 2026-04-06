@@ -7,8 +7,13 @@ Trace
 
                                               command │ curl -d data https://example.com
   65: (rule (command "curl")                          │
-        (args (and (not (anywhere "-d"))              │ "-d" ∈ {"-d", "data", "https://example.com"} → yes
-                   …)))                               │
+        (context (not (anywhere                       │
+                       "-d"                           │
+                       "--data"                       │
+                       …                              │
+                       "--request")))                 │
+        (effect                                       │ → :allow "GET request (no mutating flags)"
+         :allow "GET request (no mutating flags)"))   │
                                                       │
   69: (rule (command "curl")                          │
         (effect                                       │ → :ask "Network operation requires approval"
