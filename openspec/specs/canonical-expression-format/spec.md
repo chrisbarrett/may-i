@@ -16,7 +16,7 @@ number of "special" arguments before the body.
 **Indent Spec Table:**
 | Form | N | Notes |
 |------|---|-------|
-| `cond` | 0 | All clauses are body |
+| `cond` | 0 | Uses dedicated renderer (always breaks, see below) |
 | `define` | 1 | Name is special, body follows |
 | `if` | 2 | Pred and then-branch are special, else is body |
 | `rule` | 1 | Command/pattern is special, body follows |
@@ -28,11 +28,13 @@ Forms not in this table use default function-call alignment.
 
 #### Scenario: N=0 form (cond)
 - **WHEN** pretty-printing `(cond ((pred1) (effect :allow)) (else (effect :deny)))`
-- **THEN** all clauses are indented +2 from opening paren:
+- **THEN** the form always breaks with clauses at +2 and body parts on separate lines:
   ```
   (cond
-    ((pred1) (effect :allow))
-    (else (effect :deny)))
+    ((pred1)
+     (effect :allow))
+    (else
+     (effect :deny)))
   ```
 
 #### Scenario: N=1 form (when)
@@ -60,6 +62,42 @@ Forms not in this table use default function-call alignment.
   (if pred
       then-branch
     else-branch)
+  ```
+
+---
+
+### Requirement: Cond Form Layout
+
+The `cond` form SHALL use a dedicated renderer that always breaks clauses onto
+separate lines with body parts on their own lines.
+
+**Layout Rules:**
+1. `cond` always starts on its own line (never packed)
+2. Each clause is on its own line at indent +2
+3. Within each clause, the predicate and each body part are on separate lines
+4. Body parts within a clause are at indent +3 (one space after the clause's opening paren)
+
+#### Scenario: Cond with multiple clauses
+- **WHEN** pretty-printing a cond form with multiple clauses
+- **THEN** each clause body part gets its own line:
+  ```
+  (cond
+    ((anywhere "-r")
+     (effect :deny "Recursive"))
+    ((anywhere "--force")
+     (effect :ask "Force flag requires confirmation"))
+    (else
+     (effect :allow)))
+  ```
+
+#### Scenario: Cond clause with multiple body parts
+- **WHEN** a clause has multiple body expressions
+- **THEN** each body part is on its own line:
+  ```
+  (cond
+    ((pred)
+     (effect :ask "First")
+     (effect :log "Logging")))
   ```
 
 ---
