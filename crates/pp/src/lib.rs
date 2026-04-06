@@ -1288,15 +1288,13 @@ fn render_body_indent<A: Clone + TriviaSource>(
     let mut col = indent + 1 + head_width;
 
     for child in &children[1..special_end] {
-        let mut buf = EventBuffer::new();
-        render(child, col + 1, width, dimmed, &mut buf);
-        let child_width = buf.first_line_width();
-        let has_trivia = child.ann.forced_break();
-
-        if has_trivia || col + 1 + child_width > width {
+        if child.ann.forced_break() {
             render_child_on_line(child, indent + 4, width, dimmed, out);
             col = indent + 4;
         } else {
+            let mut buf = EventBuffer::new();
+            render(child, col + 1, width, dimmed, &mut buf);
+            let child_width = buf.first_line_width();
             out.emit_space();
             buf.replay(out);
             col += 1 + child_width;
@@ -1930,18 +1928,17 @@ mod tests {
 
     #[test]
     fn if_indent_spec_is_2() {
-        // With (indent 2), condition + then-branch are special,
-        // else-branch is body (at indent+2).
+        // With (indent 2), condition + then-branch are special args
+        // that always stay inline. else-branch is body (at indent+2).
         let cond = a("pred");
         let then_br = a("yes");
         let else_br = a("no");
         let doc = l(vec![a("if"), cond, then_br, else_br]);
         let result = pp(&doc, 10);
-        // Should be:
-        // (if pred
-        //     yes
+        // Special args stay inline even at narrow width:
+        // (if pred yes
         //   no)
-        assert_eq!(result, "(if pred\n    yes\n  no)");
+        assert_eq!(result, "(if pred yes\n  no)");
     }
 
     #[test]
