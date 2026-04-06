@@ -7,9 +7,8 @@ Trace
 
                                       command │ git push --force
   43: (rule (command "git")                   │
-        (args (and (and (positional           │
-                         "reset")             │ "push" = "reset" → no
-                        …)                    │
+        (args (and (positional "reset")       │ "push" = "reset" → no
+                   …                          │
                    …)))                       │
                                               │
   47: (rule (command "git")                   │

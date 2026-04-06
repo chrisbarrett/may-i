@@ -7,10 +7,10 @@ Trace
 
                                             command │ rm foo
   24: (rule (command "rm")                          │
-        (args (and (and (anywhere                   │
-                         "-r"                       │ "-r" ∈ {"foo"} → no
-                         "--recursive")             │ "--recursive" ∈ {"foo"} → no
-                        …)                          │
+        (args (and (anywhere                        │
+                    "-r"                            │ "-r" ∈ {"foo"} → no
+                    "--recursive")                  │ "--recursive" ∈ {"foo"} → no
+                   …                                │
                    …)))                             │
                                                     │
   29: (rule (command "rm")                          │

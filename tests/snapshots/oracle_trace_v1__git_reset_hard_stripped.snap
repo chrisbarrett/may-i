@@ -9,8 +9,8 @@ Trace
   43: (rule (command "git")               │
         (args                             │
          (and                             │
-          (and (positional "reset")       │ "reset" = "reset" → yes
-               (anywhere "--hard"))       │ "--hard" ∈ {"reset", "--hard"} → yes
+          (positional "reset")            │ "reset" = "reset" → yes
+          (anywhere "--hard")             │ "--hard" ∈ {"reset", "--hard"} → yes
           (effect                         │ → :ask "Dangerous git reset"
            :ask "Dangerous git reset")))) │
 

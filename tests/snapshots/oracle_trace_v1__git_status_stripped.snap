@@ -5,37 +5,36 @@ expression: normalised
 
 Trace
 
-                              command │ git status
-  43: (rule (command "git")           │
-        (args (and (and (positional   │
-                         "reset")     │ "status" = "reset" → no
-                        …)            │
-                   …)))               │
-                                      │
-  47: (rule (command "git")           │
-        (args (and (or (positional    │
-                        "remote")     │ "status" = "remote" → no
-                       (positional    │
-                        (or "clean"   │ "status" = "clean" → no
-                            "gc"      │ "status" = "gc" → no
-                            "push"))) │ "status" = "push" → no
-                   …)))               │
-                                      │
-  52: (rule (command "git")           │
-        (args (and (or (positional    │
-                        (or "switch"  │ "status" = "switch" → no
-                            "restore" │ "status" = "restore" → no
-                            …         │
-                            "clone")) │ "status" = "clone" → no
-                       (positional    │
-                        "checkout"    │ "status" = "checkout" → no
-                        "--")         │ "status" = "--" → no
-                       (positional    │
-                        "worktree"))  │ "status" = "worktree" → no
-                   …)))               │
-                                      │
-  60: (rule (command "git")           │
-        (effect :allow))              │ → :allow
+                                command │ git status
+  43: (rule (command "git")             │
+        (args (and (positional "reset") │ "status" = "reset" → no
+                   …                    │
+                   …)))                 │
+                                        │
+  47: (rule (command "git")             │
+        (args (and (or (positional      │
+                        "remote")       │ "status" = "remote" → no
+                       (positional      │
+                        (or "clean"     │ "status" = "clean" → no
+                            "gc"        │ "status" = "gc" → no
+                            "push")))   │ "status" = "push" → no
+                   …)))                 │
+                                        │
+  52: (rule (command "git")             │
+        (args (and (or (positional      │
+                        (or "switch"    │ "status" = "switch" → no
+                            "restore"   │ "status" = "restore" → no
+                            …           │
+                            "clone"))   │ "status" = "clone" → no
+                       (positional      │
+                        "checkout"      │ "status" = "checkout" → no
+                        "--")           │ "status" = "--" → no
+                       (positional      │
+                        "worktree"))    │ "status" = "worktree" → no
+                   …)))                 │
+                                        │
+  60: (rule (command "git")             │
+        (effect :allow))                │ → :allow
 
 Result
 

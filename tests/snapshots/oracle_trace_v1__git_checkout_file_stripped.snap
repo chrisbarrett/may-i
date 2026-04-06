@@ -7,9 +7,8 @@ Trace
 
                                                                       command │ git checkout -- main.ts
   43: (rule (command "git")                                                   │
-        (args (and (and (positional                                           │
-                         "reset")                                             │ "checkout" = "reset" → no
-                        …)                                                    │
+        (args (and (positional "reset")                                       │ "checkout" = "reset" → no
+                   …                                                          │
                    …)))                                                       │
                                                                               │
   47: (rule (command "git")                                                   │

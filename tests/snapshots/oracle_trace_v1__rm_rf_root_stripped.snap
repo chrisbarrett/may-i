@@ -1,6 +1,5 @@
 ---
 source: tests/oracle_trace_v1.rs
-assertion_line: 108
 expression: normalised
 ---
 
@@ -10,8 +9,8 @@ Trace
   24: (rule (command "rm")                          │
         (args                                       │
          (and                                       │
-          (and (anywhere "-r")                      │ "-r" ∈ {"-r", "-f", "/"} → yes
-               (anywhere "/"))                      │ "/" ∈ {"-r", "-f", "/"} → yes
+          (anywhere "-r")                           │ "-r" ∈ {"-r", "-f", "/"} → yes
+          (anywhere "/")                            │ "/" ∈ {"-r", "-f", "/"} → yes
           (effect                                   │ → :deny "Recursive deletion from root"
            :deny "Recursive deletion from root")))) │
 

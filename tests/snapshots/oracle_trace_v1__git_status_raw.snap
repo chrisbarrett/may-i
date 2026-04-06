@@ -5,37 +5,36 @@ expression: normalised
 
 [1mTrace[0m
 
-                              [2mcommand[0m [2m│[0m [1mgit status[0m
-  [2m43: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"git"[0m[2m)[0m           [2m│[0m
-        [2m([0m[34margs[0m [2m([0mand [2m([0mand [2m([0m[34mpositional[0m   [2m│[0m
-                         [32m"reset"[0m[2m)[0m     [2m│[0m [2m"status" = "reset" [0m[2m→[0m [33mno[0m
-                        [2m…[0m[2m)[0m            [2m│[0m
-                   [2m…[0m[2m)[0m[2m)[0m[2m)[0m               [2m│[0m
-                                      [2m│[0m
-  [2m47: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"git"[0m[2m)[0m           [2m│[0m
-        [2m([0m[34margs[0m [2m([0mand [2m([0mor [2m([0m[34mpositional[0m    [2m│[0m
-                        [32m"remote"[0m[2m)[0m     [2m│[0m [2m"status" = "remote" [0m[2m→[0m [33mno[0m
-                       [2m([0m[34mpositional[0m    [2m│[0m
-                        [2m([0mor [32m"clean"[0m   [2m│[0m [2m"status" = "clean" [0m[2m→[0m [33mno[0m
-                            [32m"gc"[0m      [2m│[0m [2m"status" = "gc" [0m[2m→[0m [33mno[0m
-                            [32m"push"[0m[2m)[0m[2m)[0m[2m)[0m [2m│[0m [2m"status" = "push" [0m[2m→[0m [33mno[0m
-                   [2m…[0m[2m)[0m[2m)[0m[2m)[0m               [2m│[0m
-                                      [2m│[0m
-  [2m52: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"git"[0m[2m)[0m           [2m│[0m
-        [2m([0m[34margs[0m [2m([0mand [2m([0mor [2m([0m[34mpositional[0m    [2m│[0m
-                        [2m([0mor [32m"switch"[0m  [2m│[0m [2m"status" = "switch" [0m[2m→[0m [33mno[0m
-                            [32m"restore"[0m [2m│[0m [2m"status" = "restore" [0m[2m→[0m [33mno[0m
-                            [2m…[0m         [2m│[0m
-                            [32m"clone"[0m[2m)[0m[2m)[0m [2m│[0m [2m"status" = "clone" [0m[2m→[0m [33mno[0m
-                       [2m([0m[34mpositional[0m    [2m│[0m
-                        [32m"checkout"[0m    [2m│[0m [2m"status" = "checkout" [0m[2m→[0m [33mno[0m
-                        [32m"--"[0m[2m)[0m         [2m│[0m [2m"status" = "--" [0m[2m→[0m [33mno[0m
-                       [2m([0m[34mpositional[0m    [2m│[0m
-                        [32m"worktree"[0m[2m)[0m[2m)[0m  [2m│[0m [2m"status" = "worktree" [0m[2m→[0m [33mno[0m
-                   [2m…[0m[2m)[0m[2m)[0m[2m)[0m               [2m│[0m
-                                      [2m│[0m
-  [2m60: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"git"[0m[2m)[0m           [2m│[0m
-        [2m([0m[34meffect[0m [38;2;120;120;255m:allow[0m[2m)[0m[2m)[0m              [2m│[0m [2m[0m[2m→[0m [1;32m:allow[0m
+                                [2mcommand[0m [2m│[0m [1mgit status[0m
+  [2m43: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"git"[0m[2m)[0m             [2m│[0m
+        [2m([0m[34margs[0m [2m([0mand [2m([0m[34mpositional[0m [32m"reset"[0m[2m)[0m [2m│[0m [2m"status" = "reset" [0m[2m→[0m [33mno[0m
+                   [2m…[0m                    [2m│[0m
+                   [2m…[0m[2m)[0m[2m)[0m[2m)[0m                 [2m│[0m
+                                        [2m│[0m
+  [2m47: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"git"[0m[2m)[0m             [2m│[0m
+        [2m([0m[34margs[0m [2m([0mand [2m([0mor [2m([0m[34mpositional[0m      [2m│[0m
+                        [32m"remote"[0m[2m)[0m       [2m│[0m [2m"status" = "remote" [0m[2m→[0m [33mno[0m
+                       [2m([0m[34mpositional[0m      [2m│[0m
+                        [2m([0mor [32m"clean"[0m     [2m│[0m [2m"status" = "clean" [0m[2m→[0m [33mno[0m
+                            [32m"gc"[0m        [2m│[0m [2m"status" = "gc" [0m[2m→[0m [33mno[0m
+                            [32m"push"[0m[2m)[0m[2m)[0m[2m)[0m   [2m│[0m [2m"status" = "push" [0m[2m→[0m [33mno[0m
+                   [2m…[0m[2m)[0m[2m)[0m[2m)[0m                 [2m│[0m
+                                        [2m│[0m
+  [2m52: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"git"[0m[2m)[0m             [2m│[0m
+        [2m([0m[34margs[0m [2m([0mand [2m([0mor [2m([0m[34mpositional[0m      [2m│[0m
+                        [2m([0mor [32m"switch"[0m    [2m│[0m [2m"status" = "switch" [0m[2m→[0m [33mno[0m
+                            [32m"restore"[0m   [2m│[0m [2m"status" = "restore" [0m[2m→[0m [33mno[0m
+                            [2m…[0m           [2m│[0m
+                            [32m"clone"[0m[2m)[0m[2m)[0m   [2m│[0m [2m"status" = "clone" [0m[2m→[0m [33mno[0m
+                       [2m([0m[34mpositional[0m      [2m│[0m
+                        [32m"checkout"[0m      [2m│[0m [2m"status" = "checkout" [0m[2m→[0m [33mno[0m
+                        [32m"--"[0m[2m)[0m           [2m│[0m [2m"status" = "--" [0m[2m→[0m [33mno[0m
+                       [2m([0m[34mpositional[0m      [2m│[0m
+                        [32m"worktree"[0m[2m)[0m[2m)[0m    [2m│[0m [2m"status" = "worktree" [0m[2m→[0m [33mno[0m
+                   [2m…[0m[2m)[0m[2m)[0m[2m)[0m                 [2m│[0m
+                                        [2m│[0m
+  [2m60: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"git"[0m[2m)[0m             [2m│[0m
+        [2m([0m[34meffect[0m [38;2;120;120;255m:allow[0m[2m)[0m[2m)[0m                [2m│[0m [2m[0m[2m→[0m [1;32m:allow[0m
 
 [1mResult[0m
 

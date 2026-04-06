@@ -8,8 +8,8 @@ Trace
                                                 command │ rm -r /tmp/foo
                                                   facts │ :opencode/agent "build"
   24: (rule (command "rm")                              │
-        (args (and (and (anywhere "-r")                 │ "-r" ∈ {"-r", "/tmp/foo"} → yes
-                        (anywhere "/"))                 │ "/" ∈ {"-r", "/tmp/foo"} → no
+        (args (and (anywhere "-r")                      │ "-r" ∈ {"-r", "/tmp/foo"} → yes
+                   (anywhere "/")                       │ "/" ∈ {"-r", "/tmp/foo"} → no
                    …)))                                 │
                                                         │
   29: (rule (command "rm")                              │

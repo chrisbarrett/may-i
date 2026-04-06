@@ -8,10 +8,10 @@ expression: normalised
                                             [2mcommand[0m [2m│[0m [1mrm foo[0m
                                               [2mfacts[0m [2m│[0m [38;2;120;120;255m:opencode/agent[0m [32m"build"[0m
   [2m24: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"rm"[0m[2m)[0m                          [2m│[0m
-        [2m([0m[34margs[0m [2m([0mand [2m([0mand [2m([0m[34manywhere[0m                   [2m│[0m
-                         [32m"-r"[0m                       [2m│[0m [2m"-r" ∈ {"foo"} [0m[2m→[0m [33mno[0m
-                         [32m"--recursive"[0m[2m)[0m             [2m│[0m [2m"--recursive" ∈ {"foo"} [0m[2m→[0m [33mno[0m
-                        [2m…[0m[2m)[0m                          [2m│[0m
+        [2m([0m[34margs[0m [2m([0mand [2m([0m[34manywhere[0m                        [2m│[0m
+                    [32m"-r"[0m                            [2m│[0m [2m"-r" ∈ {"foo"} [0m[2m→[0m [33mno[0m
+                    [32m"--recursive"[0m[2m)[0m                  [2m│[0m [2m"--recursive" ∈ {"foo"} [0m[2m→[0m [33mno[0m
+                   [2m…[0m                                [2m│[0m
                    [2m…[0m[2m)[0m[2m)[0m[2m)[0m                             [2m│[0m
                                                     [2m│[0m
   [2m29: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"rm"[0m[2m)[0m                          [2m│[0m
