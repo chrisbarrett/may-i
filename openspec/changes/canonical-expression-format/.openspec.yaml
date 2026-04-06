@@ -1,0 +1,7 @@
+schema: openspec-change-v1
+name: canonical-expression-format
+description: |
+  Document and implement the canonical expression format specification,
+  including indent specs, fill layout for and/or, if-form asymmetric
+  indentation, and cleanup dead 'case' code.
+status: drafting
