@@ -136,7 +136,6 @@ const COLORED_FORMS: &[&str] = &[
     "define",
     "check",
     "with-facts",
-    "case",
 ];
 
 fn is_keyword(s: &str) -> bool {
@@ -638,7 +637,6 @@ impl<A: Clone> PrettyOutput<A> for AnnotatedLineBuilder<A> {
 /// Identifiers not in this table use the default heuristic (align under
 /// first arg when inline, indent +1 when dropped).
 pub const INDENT_SPECS: &[(&str, u8)] = &[
-    ("case", 0),
     ("cond", 0),
     ("define", 1),
     ("if", 2),
@@ -755,9 +753,9 @@ fn render_node<A: Clone + TriviaSource>(
         DocF::List(children) => {
             out.emit_node_ann(&doc.ann);
 
-            // cond/case always use their dedicated renderer
+            // cond always uses its dedicated renderer
             if let Some(head) = children.first().and_then(|c| c.as_atom())
-                && (head == "cond" || head == "case") {
+                && head == "cond" {
                     render_cond(children, indent, width, dimmed, out);
                     return;
                 }

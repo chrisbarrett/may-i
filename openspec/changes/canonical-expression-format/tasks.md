@@ -9,21 +9,21 @@
 
 ## 2. Dead Code Removal
 
-- [ ] 2.1 Remove `("case", 0)` from INDENT_SPECS in `crates/pp/src/lib.rs`
-- [ ] 2.2 Remove `"case"` from colored keywords list (line ~139)
-- [ ] 2.3 Remove `case` from cond/case special renderer check (line ~758-760)
-- [ ] 2.4 Verify `cond` forms still render correctly
+- [x] 2.1 Remove `("case", 0)` from INDENT_SPECS in `crates/pp/src/lib.rs`
+- [x] 2.2 Remove `"case"` from colored keywords list (line ~139)
+- [x] 2.3 Remove `case` from cond/case special renderer check (line ~758-760)
+- [x] 2.4 Verify `cond` forms still render correctly
 
 ## 3. Function Rename
 
-- [ ] 3.1 Rename `args_cond_to_case` → `hoist_cond` in `crates/config/src/migrate.rs`
-- [ ] 3.2 Update all call sites of the renamed function
-- [ ] 3.3 Update test function names that reference the old name
+- [x] 3.1 Rename `args_cond_to_case` → `hoist_cond` in `crates/config/src/migrate.rs`
+- [x] 3.2 Update all call sites of the renamed function
+- [x] 3.3 Update test function names that reference the old name
 
 ## 4. Testing
 
-- [ ] 4.1 Run `cargo test` in `crates/pp` to verify pp tests pass
-- [ ] 4.2 Run `cargo test` in `crates/config` to verify migration tests pass
-- [ ] 4.3 Run `cargo test` at workspace level
-- [ ] 4.4 Run `cargo run -- migrate` on sample config to verify end-to-end behavior
-- [ ] 4.5 Verify no `case` references remain in codebase (except test variable names)
+- [x] 4.1 Run `cargo test` in `crates/pp` to verify pp tests pass
+- [x] 4.2 Run `cargo test` in `crates/config` to verify migration tests pass
+- [x] 4.3 Run `cargo test` at workspace level
+- [x] 4.4 Run `cargo run -- migrate` on sample config to verify end-to-end behavior
+- [x] 4.5 Verify no `case` references remain in codebase (except test variable names)

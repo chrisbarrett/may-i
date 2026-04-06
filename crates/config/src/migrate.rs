@@ -58,7 +58,7 @@ pub fn migration_rules() -> Vec<RewriteFn> {
         Box::new(rule_inline_context),
         // Rule: (args (cond/if ...)) → (case ...) in effect position
         // MUST run before rule_inline_args which removes the args tag
-        Box::new(args_cond_to_case),
+        Box::new(hoist_cond),
         // Rule: (rule ... (args MATCHER) ...) → (rule ... MATCHER ...)
         Box::new(rule_inline_args),
         // Rule: (wrapper CMD ...) → (rule CMD ... . (may-i *))
@@ -218,7 +218,7 @@ fn rule_inline_args(node: &CstNode) -> Option<Box<CstNode>> {
             if args_children.len() == 2 {
                 let matcher = &args_children[1];
 
-                // Skip cond forms - they're handled by args_cond_to_case
+                // Skip cond forms - they're handled by hoist_cond
                 if matcher.is_tagged("cond") {
                     new_children.push(child.clone());
                     continue;
@@ -826,7 +826,7 @@ fn find_cond_or_if_in_booleans(node: &CstNode) -> Option<(Vec<Box<CstNode>>, Box
 /// Convert (args ...) in rule to predicates and an effect.
 /// Handles cond/if nested inside and/or combinators.
 /// Also collects bare atom predicates between command and args (e.g., from inlined context).
-fn args_cond_to_case(node: &CstNode) -> Option<Box<CstNode>> {
+fn hoist_cond(node: &CstNode) -> Option<Box<CstNode>> {
     if !node.is_tagged("rule") {
         return None;
     }
@@ -1314,7 +1314,7 @@ mod tests {
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let node = nodes.into_iter().next().unwrap();
         let result = rule_inline_args(&node);
-        // Should return None since cond is handled by args_cond_to_case
+        // Should return None since cond is handled by hoist_cond
         assert!(result.is_none());
     }
 
@@ -1384,20 +1384,20 @@ mod tests {
     }
 
     #[test]
-    fn test_args_cond_to_case_not_rule() {
+    fn test_hoist_cond_not_rule() {
         let input = "(other (args (cond)))";
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let node = nodes.into_iter().next().unwrap();
-        let result = args_cond_to_case(&node);
+        let result = hoist_cond(&node);
         assert!(result.is_none());
     }
 
     #[test]
-    fn test_args_cond_to_case_no_cond() {
+    fn test_hoist_cond_no_cond() {
         let input = "(rule git (args (positional)) (effect :allow))";
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let node = nodes.into_iter().next().unwrap();
-        let result = args_cond_to_case(&node);
+        let result = hoist_cond(&node);
         assert!(result.is_none());
     }
 
@@ -1519,12 +1519,12 @@ mod tests {
     }
 
     #[test]
-    fn test_args_cond_to_case_with_if() {
+    fn test_hoist_cond_with_if() {
         // Test (args (if PRED THEN ELSE)) -> (cond ...)
         let input = r#"(rule "mv" (args (if (anywhere "-f") (effect :ask) (effect :allow))) (effect :allow))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let node = nodes.into_iter().next().unwrap();
-        let result = args_cond_to_case(&node).unwrap();
+        let result = hoist_cond(&node).unwrap();
         let serialized = result.serialize();
         assert!(serialized.contains("cond"));
         assert!(!serialized.contains("args"));
@@ -1650,13 +1650,13 @@ mod tests {
     }
 
     #[test]
-    fn test_args_cond_to_case_with_single_predicate() {
+    fn test_hoist_cond_with_single_predicate() {
         // Test args with cond and a single predicate - should wrap in when
         // Note: the predicate is from (context prod) which gets extracted as a rule-level predicate
         let input = r#"(rule git (args (cond ((regex "^push$") :allow))) prod)"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let node = nodes.into_iter().next().unwrap();
-        let result = args_cond_to_case(&node).unwrap();
+        let result = hoist_cond(&node).unwrap();
         let serialized = result.serialize();
         // Should wrap cond in (when ...)
         assert!(
@@ -1667,12 +1667,12 @@ mod tests {
     }
 
     #[test]
-    fn test_args_cond_to_case_with_multiple_predicates() {
+    fn test_hoist_cond_with_multiple_predicates() {
         // Test args with cond and multiple predicates - should wrap in (and ...) then when
         let input = r#"(rule git (args (cond ((regex "^push$") :allow))) prod ssh)"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let node = nodes.into_iter().next().unwrap();
-        let result = args_cond_to_case(&node).unwrap();
+        let result = hoist_cond(&node).unwrap();
         let serialized = result.serialize();
         // Should wrap in (and ...) then (when ...)
         assert!(
