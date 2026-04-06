@@ -762,18 +762,24 @@ fn render_node<A: Clone + TriviaSource>(
                     return;
                 }
 
-            // Forms with indent specs: try flat first, then body-indent.
+            // Forms with indent specs: try flat only when all children
+            // are special (no body args to break before). Otherwise
+            // always use body-indent to force a break after the predicate.
             if let Some(spec) = children.first().and_then(|c| c.as_atom()).and_then(indent_spec) {
-                let has_trivia = children.iter().any(|c| c.ann.forced_break())
-                    || children.iter().any(|c| {
-                        c.ann.trailing_trivia().iter().any(|t| t.has_newline())
-                    });
-                if !has_trivia {
-                    let mut buf = EventBuffer::new();
-                    render_flat(children, dimmed, &mut buf);
-                    if !buf.is_multiline() && buf.max_line_width(indent) <= width {
-                        buf.replay(out);
-                        return;
+                let special_end = (1 + spec as usize).min(children.len());
+                let has_body_args = children.len() > special_end;
+                if !has_body_args {
+                    let has_trivia = children.iter().any(|c| c.ann.forced_break())
+                        || children.iter().any(|c| {
+                            c.ann.trailing_trivia().iter().any(|t| t.has_newline())
+                        });
+                    if !has_trivia {
+                        let mut buf = EventBuffer::new();
+                        render_flat(children, dimmed, &mut buf);
+                        if !buf.is_multiline() && buf.max_line_width(indent) <= width {
+                            buf.replay(out);
+                            return;
+                        }
                     }
                 }
                 render_body_indent(children, indent, width, dimmed, spec, out);
