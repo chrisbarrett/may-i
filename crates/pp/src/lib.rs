@@ -1289,30 +1289,30 @@ fn render_body_indent<A: Clone + TriviaSource>(
     }
 
     // Render "special" args (the first `spec` children after the head).
-    // First special arg always stays inline. Subsequent special args
-    // drop to a new line (aligned under first arg) if:
-    //   - a previous special arg rendered as multiline, or
-    //   - the next arg's first line doesn't fit within the width.
+    // Only the FIRST special arg can stay inline with the head (if it fits).
+    // All subsequent special args always drop to a new line aligned under the
+    // first arg. This ensures forms like `(if COND THEN ELSE)` never pack
+    // COND and THEN together on the same line when the form is broken.
     let special_end = (1 + spec).min(children.len());
     let special_align = indent + 1 + head_width + 1;
     let mut col = indent + 1 + head_width;
-    let mut prev_was_multiline = false;
 
-    for child in &children[1..special_end] {
+    for (i, child) in children[1..special_end].iter().enumerate() {
         let mut buf = EventBuffer::new();
         render(child, col + 1, width, dimmed, &mut buf);
         let child_width = buf.first_line_width();
-        let is_multiline = buf.is_multiline();
 
-        if prev_was_multiline || col + 1 + child_width > width {
-            render_child_on_line(child, special_align, width, dimmed, out);
-            col = special_align + child_width;
-        } else {
+        // Only the first special arg may stay inline, and only if it fits.
+        let keep_inline = i == 0 && col + 1 + child_width <= width;
+
+        if keep_inline {
             out.emit_space();
             buf.replay(out);
             col += 1 + child_width;
+        } else {
+            render_child_on_line(child, special_align, width, dimmed, out);
+            col = special_align + child_width;
         }
-        prev_was_multiline = is_multiline;
     }
 
     // Render body args at body indent.
