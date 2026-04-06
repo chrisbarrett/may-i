@@ -1,18 +1,17 @@
 ---
 source: tests/oracle_trace_v1.rs
+assertion_line: 108
 expression: normalised
 ---
 
 Trace
 
-                                command │ timeout 30 echo hello
-  110: (rule (command "timeout")        │
-         (args (positional (regex       │ "30" ~ (regex "^[0-9]+$") → yes
-                            "^[0-9]+$") │
-                           (may-i       │ `echo hello` → :ask "No rule for command `echo`"
-                            (positional │
-                             *)))))     │
-                       No matching rule │ → :ask (default)
+                                  command │ timeout 30 echo hello
+  110: (rule (command "timeout")          │
+         (args (positional                │
+                (regex "^[0-9]+$")        │ "30" ~ (regex "^[0-9]+$") → yes
+                (may-i (positional *))))) │ `echo hello` → :ask "No rule for command `echo`"
+                         No matching rule │ → :ask (default)
 
 Result
 

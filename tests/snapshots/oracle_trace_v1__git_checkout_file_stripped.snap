@@ -1,5 +1,6 @@
 ---
 source: tests/oracle_trace_v1.rs
+assertion_line: 108
 expression: normalised
 ---
 
@@ -7,31 +8,31 @@ Trace
 
                                                                       command │ git checkout -- main.ts
   43: (rule (command "git")                                                   │
-        (context (and (positional                                             │
-                       "reset")                                               │ "checkout" = "reset" → no
-                      …))                                                     │
+        (context (and                                                         │
+                  (positional "reset")                                        │ "checkout" = "reset" → no
+                  …))                                                         │
         (effect                                                               │ → :ask "Dangerous git reset"
          :ask "Dangerous git reset"))                                         │
                                                                               │
   47: (rule (command "git")                                                   │
-        (context (or (positional                                              │
-                      "remote")                                               │ "checkout" = "remote" → no
-                     (positional                                              │
-                      (or "clean" "gc"                                        │ "checkout" = "clean" → no
-                          "push"))))                                          │ "checkout" = "push" → no
+        (context (or                                                          │
+                  (positional "remote")                                       │ "checkout" = "remote" → no
+                  (positional                                                 │
+                   (or "clean" "gc"                                           │ "checkout" = "clean" → no
+                       "push"))))                                             │ "checkout" = "push" → no
         (effect                                                               │ → :ask "Dangerous git operation"
          :ask "Dangerous git operation"))                                     │
                                                                               │
   52: (rule (command "git")                                                   │
         (args                                                                 │
          (and                                                                 │
-          (or (positional (or "switch"                                        │ "checkout" = "switch" → no
-                              "restore"                                       │ "checkout" = "restore" → no
-                              …                                               │
-                              "clone"))                                       │ "checkout" = "clone" → no
-              (positional "checkout"                                          │ "checkout" = "checkout" → yes
-                          "--")                                               │ "checkout" = "--" → no
-              …)                                                              │
+          (or                                                                 │
+           (positional (or "switch"                                           │ "checkout" = "switch" → no
+                           "restore"                                          │ "checkout" = "restore" → no
+                           …                                                  │
+                           "clone"))                                          │ "checkout" = "clone" → no
+           (positional "checkout" "--")                                       │ "checkout" = "checkout" → yes
+           …)                                                                 │
           (when (or                                                           │
                  (has                                                         │ no
                   [:claude-code/permission-mode                               │

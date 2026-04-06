@@ -1,5 +1,6 @@
 ---
 source: tests/oracle_trace_v1.rs
+assertion_line: 122
 expression: normalised
 ---
 
@@ -7,11 +8,9 @@ expression: normalised
 
                                             [2mcommand[0m [2m│[0m [1mcurl https://example.com[0m
   [2m65: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"curl"[0m[2m)[0m                        [2m│[0m
-        [2m([0mcontext [2m([0mnot [2m([0m[34manywhere[0m                     [2m│[0m
-                       [32m"-d"[0m                         [2m│[0m
-                       [32m"--data"[0m                     [2m│[0m
-                       [2m…[0m                            [2m│[0m
-                       [32m"--request"[0m[2m)[0m[2m)[0m[2m)[0m               [2m│[0m
+        [2m([0mcontext                                    [2m│[0m
+         [2m([0mnot [2m([0m[34manywhere[0m [32m"-d"[0m [32m"--data"[0m …             [2m│[0m
+                        [32m"--request"[0m[2m)[0m[2m)[0m[2m)[0m              [2m│[0m
         [2m([0m[34meffect[0m                                     [2m│[0m [2m[0m[2m→[0m [1;32m:allow[0m [32m"GET request (no mutating flags)"[0m
          [38;2;120;120;255m:allow[0m [32m"GET request (no mutating flags)"[0m[2m)[0m[2m)[0m [2m│[0m
 

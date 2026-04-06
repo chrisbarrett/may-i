@@ -1,5 +1,6 @@
 ---
 source: tests/oracle_trace_v1.rs
+assertion_line: 108
 expression: normalised
 ---
 
@@ -7,18 +8,18 @@ Trace
 
                                   command │ git push --force
   43: (rule (command "git")               │
-        (context (and (positional         │
-                       "reset")           │ "push" = "reset" → no
-                      …))                 │
+        (context (and                     │
+                  (positional "reset")    │ "push" = "reset" → no
+                  …))                     │
         (effect                           │ → :ask "Dangerous git reset"
          :ask "Dangerous git reset"))     │
                                           │
   47: (rule (command "git")               │
-        (context (or (positional          │
-                      "remote")           │ "push" = "remote" → no
-                     (positional          │
-                      (or "clean" "gc"    │ "push" = "clean" → no
-                          "push"))))      │ "push" = "push" → yes
+        (context (or                      │
+                  (positional "remote")   │ "push" = "remote" → no
+                  (positional             │
+                   (or "clean" "gc"       │ "push" = "clean" → no
+                       "push"))))         │ "push" = "push" → yes
         (effect                           │ → :ask "Dangerous git operation"
          :ask "Dangerous git operation")) │
 

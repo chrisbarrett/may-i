@@ -1,5 +1,6 @@
 ---
 source: tests/oracle_trace_v1.rs
+assertion_line: 108
 expression: normalised
 ---
 
@@ -8,10 +9,10 @@ Trace
                                             command │ rm foo
                                               facts │ :opencode/agent "build"
   24: (rule (command "rm")                          │
-        (context (and (anywhere                     │
-                       "-r"                         │
-                       "--recursive")               │
-                      …))                           │
+        (context                                    │
+         (and (anywhere "-r"                        │
+                        "--recursive")              │
+              …))                                   │
         (effect                                     │ → :deny "Recursive deletion from root"
          :deny "Recursive deletion from root"))     │
                                                     │
