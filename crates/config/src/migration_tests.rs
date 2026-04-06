@@ -276,8 +276,9 @@ fn migration_args_with_cond() {
     let result = migrate(node);
     let output = result.serialize();
 
-    assert!(output.contains("cond"));
-    assert!(output.contains("else"));
+    // Single-clause cond+else gets simplified to if
+    assert!(output.contains("if"), "single-clause cond+else should become if, got: {output}");
+    assert!(!output.contains("cond"), "should no longer contain cond, got: {output}");
 }
 
 #[test]

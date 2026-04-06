@@ -22,6 +22,64 @@ use may_i_sexpr::cst::{CstNode, Shape, TriviaAnn};
 /// A rewrite rule that transforms v1 syntax to canonical.
 pub type RewriteFn = Box<dyn Fn(&CstNode) -> Option<Box<CstNode>>>;
 
+/// Compute the structural complexity of an expression.
+///
+/// Used to guide rewrite heuristics (e.g. choosing between `when` and `if`).
+pub fn complexity(node: &CstNode) -> usize {
+    match &node.shape {
+        // Atoms: keywords, strings, wildcard, bare identifiers → 1
+        Shape::Atom(_) | Shape::Str(_) => 1,
+
+        // Vectors: [e1 e2 ...] → 1 + max(children)
+        Shape::Vector(children) => {
+            1 + children.iter().map(|c| complexity(c)).max().unwrap_or(0)
+        }
+
+        Shape::List(children) => {
+            let tag = children.first().and_then(|c| c.as_atom());
+            let args = &children[1..];
+
+            match tag {
+                // (regex "r") → 1
+                Some("regex") => 1,
+
+                // (cond clauses...) → 1 + max(for each clause, max(C(pred), C(effect)))
+                Some("cond") => {
+                    1 + args
+                        .iter()
+                        .map(|clause| {
+                            clause
+                                .as_list()
+                                .map(|cs| cs.iter().map(|c| complexity(c)).max().unwrap_or(0))
+                                .unwrap_or_else(|| complexity(clause))
+                        })
+                        .max()
+                        .unwrap_or(0)
+                }
+
+                // (if pred then else) → 1 + C(pred) + max(C(then), C(else))
+                Some("if") if args.len() == 3 => {
+                    1 + complexity(&args[0])
+                        + args[1..].iter().map(|c| complexity(c)).max().unwrap_or(0)
+                }
+
+                // (when p e), (unless p e) → 1 + max(C(p), C(e))
+                Some("when" | "unless") if args.len() == 2 => {
+                    1 + args.iter().map(|c| complexity(c)).max().unwrap_or(0)
+                }
+
+                // (effect kw reason) → 1 + max(C(kw), C(reason))
+                Some("effect") => {
+                    1 + args.iter().map(|c| complexity(c)).max().unwrap_or(0)
+                }
+
+                // Default: (T e1 ... en) → 1 + sum(C(e1), ..., C(en))
+                _ => 1 + args.iter().map(|c| complexity(c)).sum::<usize>(),
+            }
+        }
+    }
+}
+
 /// Get all v1→canonical migration rewrite rules.
 pub fn migration_rules() -> Vec<RewriteFn> {
     vec![
@@ -1605,6 +1663,85 @@ mod tests {
             "Expected 'when' in: {}",
             serialized
         );
+    }
+
+    // ── Expression complexity ─────────────────────────────────────
+
+    fn c(input: &str) -> usize {
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        complexity(&nodes[0])
+    }
+
+    #[test]
+    fn complexity_atom_keyword() {
+        assert_eq!(c(":allow"), 1);
+    }
+
+    #[test]
+    fn complexity_atom_string() {
+        assert_eq!(c("\"hello\""), 1);
+    }
+
+    #[test]
+    fn complexity_atom_wildcard() {
+        assert_eq!(c("*"), 1);
+    }
+
+    #[test]
+    fn complexity_regex() {
+        assert_eq!(c("(regex \"^foo\")"), 1);
+    }
+
+    #[test]
+    fn complexity_effect() {
+        // (effect :allow "reason") -> 1 + max(1, 1) = 2
+        assert_eq!(c("(effect :allow \"reason\")"), 2);
+    }
+
+    #[test]
+    fn complexity_when() {
+        // (when pred (effect :allow)) -> 1 + max(C(pred), C(effect))
+        // = 1 + max(1, 2) = 3
+        assert_eq!(c("(when pred (effect :allow \"r\"))"), 3);
+    }
+
+    #[test]
+    fn complexity_if() {
+        // (if pred (effect :allow "r") (effect :deny "r"))
+        // = 1 + C(pred) + max(C(e1), C(e2))
+        // = 1 + 1 + max(2, 2) = 4
+        assert_eq!(c("(if pred (effect :allow \"r\") (effect :deny \"r\"))"), 4);
+    }
+
+    #[test]
+    fn complexity_cond() {
+        // (cond (pred1 e1) (pred2 e2)) -> 1 + max(max(C(pred1),C(e1)), max(C(pred2),C(e2)))
+        // = 1 + max(max(1,1), max(1,1)) = 1 + 1 = 2
+        assert_eq!(c("(cond (pred1 e1) (pred2 e2))"), 2);
+    }
+
+    #[test]
+    fn complexity_vector() {
+        // [:key "value"] -> 1 + max(1, 1) = 2
+        assert_eq!(c("[:key \"value\"]"), 2);
+    }
+
+    #[test]
+    fn complexity_and_sums() {
+        // (and a b c) -> 1 + C(a) + C(b) + C(c) = 1 + 1 + 1 + 1 = 4
+        assert_eq!(c("(and a b c)"), 4);
+    }
+
+    #[test]
+    fn complexity_or_sums() {
+        // (or a b) -> 1 + C(a) + C(b) = 1 + 1 + 1 = 3
+        assert_eq!(c("(or a b)"), 3);
+    }
+
+    #[test]
+    fn complexity_nested() {
+        // (and (or a b) c) -> 1 + C(or a b) + C(c) = 1 + 3 + 1 = 5
+        assert_eq!(c("(and (or a b) c)"), 5);
     }
 
     // ── Simplify single-clause cond to if ─────────────────────────
