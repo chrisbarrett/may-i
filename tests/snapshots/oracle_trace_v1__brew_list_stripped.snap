@@ -5,15 +5,14 @@ expression: normalised
 
 Trace
 
-                                 command │ brew list
-  74: (rule (command "brew")             │
-        (args (cond                      │
-                ((positional "install")  │ "list" = "install" → no
-                 …)                      │
-                ((positional (or         │
-                              "list"     │ "list" = "list" → yes
-                              "search")) │ "list" = "search" → no
-                 (effect :allow)))))     │ → :allow
+                                command │ brew list
+  74: (rule (command "brew")            │
+        (args (cond                     │
+                ((positional "install") │ "list" = "install" → no
+                 …)                     │
+                ((positional            │
+                  (or "list" "search")) │ "list" = "list" → yes
+                 (effect :allow)))))    │ → :allow
 
 Result
 

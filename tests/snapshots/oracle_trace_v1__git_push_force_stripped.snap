@@ -14,11 +14,11 @@ Trace
          :ask "Dangerous git reset"))     │
                                           │
   47: (rule (command "git")               │
-        (context (or                      │
-                  (positional "remote")   │ "push" = "remote" → no
-                  (positional             │
-                   (or "clean" "gc"       │ "push" = "clean" → no
-                               "push")))) │ "push" = "push" → yes
+        (context (or (positional          │
+                      "remote")           │ "push" = "remote" → no
+                     (positional          │
+                      (or "clean" "gc"    │ "push" = "clean" → no
+                          "push"))))      │ "push" = "push" → yes
         (effect                           │ → :ask "Dangerous git operation"
          :ask "Dangerous git operation")) │
 

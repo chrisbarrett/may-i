@@ -12,7 +12,7 @@ Trace
                   (positional           │
                    (? "affected")       │
                    (? (or "watch" "run" │
-                                  "r")) │
+                          "r"))         │
                    (? "--")             │
                    (cond                │
                      ((or "install"     │

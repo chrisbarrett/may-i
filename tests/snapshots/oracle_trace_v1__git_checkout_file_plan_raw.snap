@@ -15,11 +15,11 @@ expression: normalised
          [2m:ask[0m [2m"Dangerous git reset"[0m[2m)[0m[2m)[0m                                         [2m│[0m
                                                                               [2m│[0m
   [2m47: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"git"[0m[2m)[0m                                                   [2m│[0m
-        [2m([0mcontext [2m([0mor                                                          [2m│[0m
-                  [2m([0m[34mpositional[0m [32m"remote"[0m[2m)[0m                                       [2m│[0m [2m"checkout" = "remote" [0m[2m→[0m [33mno[0m
-                  [2m([0m[34mpositional[0m                                                 [2m│[0m
-                   [2m([0mor [32m"clean"[0m [32m"gc"[0m                                           [2m│[0m [2m"checkout" = "clean" [0m[2m→[0m [33mno[0m
-                               [32m"push"[0m[2m)[0m[2m)[0m[2m)[0m[2m)[0m                                     [2m│[0m [2m"checkout" = "push" [0m[2m→[0m [33mno[0m
+        [2m([0mcontext [2m([0mor [2m([0m[34mpositional[0m                                              [2m│[0m
+                      [32m"remote"[0m[2m)[0m                                               [2m│[0m [2m"checkout" = "remote" [0m[2m→[0m [33mno[0m
+                     [2m([0m[34mpositional[0m                                              [2m│[0m
+                      [2m([0mor [32m"clean"[0m [32m"gc"[0m                                        [2m│[0m [2m"checkout" = "clean" [0m[2m→[0m [33mno[0m
+                          [32m"push"[0m[2m)[0m[2m)[0m[2m)[0m[2m)[0m                                          [2m│[0m [2m"checkout" = "push" [0m[2m→[0m [33mno[0m
         [2m([0m[2meffect[0m                                                               [2m│[0m [2m[0m[2m→[0m [1;33m:ask[0m [32m"Dangerous git operation"[0m
          [2m:ask[0m [2m"Dangerous git operation"[0m[2m)[0m[2m)[0m                                     [2m│[0m
                                                                               [2m│[0m

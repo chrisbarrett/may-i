@@ -813,6 +813,12 @@ fn render_node<A: Clone + TriviaSource>(
                     return;
                 }
             }
+            // Fill layout: and/or with all-atom args flow across lines.
+            // Skipped when AlwaysBreak is set (caller requires broken output).
+            if !must_break && is_fill_eligible(children) {
+                render_fill(children, indent, width, dimmed, out);
+                return;
+            }
             if !must_break {
                 let mut buf = EventBuffer::new();
                 render_broken(children, indent, width, dimmed, &mut buf);
@@ -1264,6 +1270,65 @@ fn render_cond<A: Clone + TriviaSource>(
     }
 }
 
+/// Returns true when `children` is an `and`/`or` form whose only content
+/// is atoms (complexity == 2). These use fill layout.
+fn is_fill_eligible<A: Clone>(children: &[Doc<A>]) -> bool {
+    let Some(head) = children.first().and_then(|c| c.as_atom()) else {
+        return false;
+    };
+    if head != "and" && head != "or" {
+        return false;
+    }
+    children.len() > 1 && children[1..].iter().all(|c| c.as_atom().is_some())
+}
+
+/// Fill layout: atoms flow across lines, wrapping at the column of the
+/// first arg (indent + 1 + head_width + 1). Multiple items may appear
+/// on each line, unlike the greedy broken layout which puts one per line.
+fn render_fill<A: Clone + TriviaSource>(
+    children: &[Doc<A>],
+    indent: usize,
+    width: usize,
+    dimmed: bool,
+    out: &mut impl PrettyOutput<A>,
+) {
+    out.emit_delim('(', dimmed);
+
+    let head = children[0].as_atom().unwrap();
+    let head_width = visible_len(head);
+    out.emit_atom(head, &children[0].ann, dimmed);
+
+    if children.len() == 1 {
+        out.emit_delim(')', dimmed);
+        return;
+    }
+
+    let align = indent + 1 + head_width + 1; // column of first arg
+    let mut col = indent + 1 + head_width;   // column after head
+
+    let last = children.len() - 1;
+    for (i, child) in children[1..].iter().enumerate() {
+        let atom = child.as_atom().unwrap();
+        let atom_width = visible_len(atom);
+        let is_last = i + 1 == last;
+
+        if col + 1 + atom_width <= width {
+            out.emit_space();
+            out.emit_atom(atom, &child.ann, dimmed);
+            col += 1 + atom_width;
+        } else {
+            out.begin_line(align);
+            out.emit_atom(atom, &child.ann, dimmed);
+            col = align + atom_width;
+        }
+
+        if is_last {
+            out.emit_delim(')', dimmed);
+        }
+    }
+}
+
+
 fn render_body_indent<A: Clone + TriviaSource>(
     children: &[Doc<A>],
     indent: usize,
@@ -1675,6 +1740,46 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0], "(and first-branch");
         assert_eq!(lines[1], "     second-branch)");
+    }
+
+
+    #[test]
+    fn or_atoms_fill_layout() {
+        // (or "activate" "config" "doctor" "fmt") flat = 39 > 25
+        // Fill packs items onto lines, wrapping at col 4 (under first arg).
+        let doc = l(vec![
+            a("or"),
+            a(r#""activate""#),
+            a(r#""config""#),
+            a(r#""doctor""#),
+            a(r#""fmt""#),
+        ]);
+        let result = pp(&doc, 25);
+        // (or "activate" "config"   [22 chars]
+        //     "doctor" "fmt")       [18 chars]
+        assert_eq!(
+            result,
+            "(or \"activate\" \"config\"\n    \"doctor\" \"fmt\")"
+        );
+    }
+
+    #[test]
+    fn and_atoms_fill_layout() {
+        // and also uses fill when all args are atoms
+        let doc = l(vec![
+            a("and"),
+            a(r#""a""#),
+            a(r#""bb""#),
+            a(r#""ccc""#),
+            a(r#""dddd""#),
+        ]);
+        let result = pp(&doc, 17);
+        // (and "a" "bb"      [13 chars]
+        //      "ccc" "dddd") [14 chars]
+        assert_eq!(
+            result,
+            "(and \"a\" \"bb\"\n     \"ccc\" \"dddd\")"
+        );
     }
 
     // ── parse_sexpr ────────────────────────────────────────────────
