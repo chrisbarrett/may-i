@@ -1289,17 +1289,30 @@ fn render_body_indent<A: Clone + TriviaSource>(
     }
 
     // Render "special" args (the first `spec` children after the head).
-    // These go on the same line as the head if they fit, otherwise drop.
+    // First special arg always stays inline. Subsequent special args
+    // drop to a new line (aligned under first arg) if:
+    //   - a previous special arg rendered as multiline, or
+    //   - the next arg's first line doesn't fit within the width.
     let special_end = (1 + spec).min(children.len());
+    let special_align = indent + 1 + head_width + 1;
     let mut col = indent + 1 + head_width;
+    let mut prev_was_multiline = false;
 
     for child in &children[1..special_end] {
         let mut buf = EventBuffer::new();
         render(child, col + 1, width, dimmed, &mut buf);
         let child_width = buf.first_line_width();
-        out.emit_space();
-        buf.replay(out);
-        col += 1 + child_width;
+        let is_multiline = buf.is_multiline();
+
+        if prev_was_multiline || col + 1 + child_width > width {
+            render_child_on_line(child, special_align, width, dimmed, out);
+            col = special_align + child_width;
+        } else {
+            out.emit_space();
+            buf.replay(out);
+            col += 1 + child_width;
+        }
+        prev_was_multiline = is_multiline;
     }
 
     // Render body args at body indent.
@@ -1929,17 +1942,19 @@ mod tests {
 
     #[test]
     fn if_indent_spec_is_2() {
-        // With (indent 2), condition + then-branch are special args
-        // that always stay inline. else-branch is body (at indent+2).
+        // With (indent 2), condition + then-branch are special args.
+        // else-branch is body (at indent+2).
+        // At width 10, then-branch overflows so it drops to align
+        // under the condition.
         let cond = a("pred");
         let then_br = a("yes");
         let else_br = a("no");
         let doc = l(vec![a("if"), cond, then_br, else_br]);
         let result = pp(&doc, 10);
-        // Special args stay inline even at narrow width:
-        // (if pred yes
+        // (if pred
+        //     yes
         //   no)
-        assert_eq!(result, "(if pred yes\n  no)");
+        assert_eq!(result, "(if pred\n    yes\n  no)");
     }
 
     #[test]

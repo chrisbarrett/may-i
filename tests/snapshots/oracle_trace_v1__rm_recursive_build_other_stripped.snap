@@ -27,7 +27,8 @@ Trace
                 (anywhere "-r"                                     │
                           "--recursive"))                          │
            (if (anywhere (regex                                    │
-                          "^/tmp/.*")) …                           │
+                          "^/tmp/.*"))                             │
+               …                                                   │
              (effect                                               │ → :ask "Recursive deletion requires confirmation"
               :ask "Recursive deletion requires confirmation"))))) │
 

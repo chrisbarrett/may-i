@@ -5,31 +5,32 @@ expression: normalised
 
 Trace
 
-                                                                 command │ rm -r /tmp/foo
-                                                                   facts │ :opencode/agent "build"
-  24: (rule (command "rm")                                               │
-        (context (and (anywhere                                          │
-                       "-r"                                              │
-                       "--recursive")                                    │
-                      (anywhere "/")))                                   │
-        (effect                                                          │ → :deny "Recursive deletion from root"
-         :deny "Recursive deletion from root"))                          │
-                                                                         │
-  29: (rule (command "rm")                                               │
-        (args                                                            │
-         (when (and                                                      │
-                (or                                                      │
-                 (has                                                    │ no
-                  [:claude-code/permission-mode                          │
-                   "acceptEdits"])                                       │
-                 (has [:opencode/agent                                   │ "build" → yes
-                       "build"]))                                        │
-                (anywhere "-r"                                           │
-                          "--recursive"))                                │
-           (if (anywhere (regex                                          │
-                          "^/tmp/.*")) (effect                           │ → :allow "Deleting tmp files is allowed"
-                                 :allow "Deleting tmp files is allowed") │
-             …))))                                                       │
+                                                command │ rm -r /tmp/foo
+                                                  facts │ :opencode/agent "build"
+  24: (rule (command "rm")                              │
+        (context (and (anywhere                         │
+                       "-r"                             │
+                       "--recursive")                   │
+                      (anywhere "/")))                  │
+        (effect                                         │ → :deny "Recursive deletion from root"
+         :deny "Recursive deletion from root"))         │
+                                                        │
+  29: (rule (command "rm")                              │
+        (args                                           │
+         (when (and                                     │
+                (or                                     │
+                 (has                                   │ no
+                  [:claude-code/permission-mode         │
+                   "acceptEdits"])                      │
+                 (has [:opencode/agent                  │ "build" → yes
+                       "build"]))                       │
+                (anywhere "-r"                          │
+                          "--recursive"))               │
+           (if (anywhere (regex                         │
+                          "^/tmp/.*"))                  │
+               (effect                                  │ → :allow "Deleting tmp files is allowed"
+                :allow "Deleting tmp files is allowed") │
+             …))))                                      │
 
 Result
 
