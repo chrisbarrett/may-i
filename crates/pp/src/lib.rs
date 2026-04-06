@@ -1296,18 +1296,20 @@ fn render_cond<A: Clone + TriviaSource>(
 }
 
 /// Returns true when `children` is a form that can use fill layout.
-/// Fill layout is used for forms with all-atom args that should pack
-/// tightly across lines (and/or, forbidden, etc).
+/// Fill layout is used for forms with atom args that should pack
+/// tightly across lines (and/or, forbidden, anywhere, positional, etc).
 fn is_fill_eligible<A: Clone>(children: &[Doc<A>]) -> bool {
     let Some(head) = children.first().and_then(|c| c.as_atom()) else {
         return false;
     };
     // Fill-eligible forms: and, or, and pattern-matching predicates
     // that commonly take many string literals
-    const FILL_ELIGIBLE_HEADS: &[&str] = &["and", "or", "forbidden"];
+    const FILL_ELIGIBLE_HEADS: &[&str] = &["and", "or", "forbidden", "anywhere", "positional"];
     if !FILL_ELIGIBLE_HEADS.contains(&head) {
         return false;
     }
+    // All args must be atoms for fill layout
+    // (render_fill assumes atoms for width calculation)
     children.len() > 1 && children[1..].iter().all(|c| c.as_atom().is_some())
 }
 
@@ -1926,6 +1928,77 @@ mod tests {
             let leading = line.len() - line.trim_start().len();
             assert!(
                 leading < 40,
+                "Line has excessive indent ({} chars): {}",
+                leading,
+                line
+            );
+        }
+    }
+
+    #[test]
+    fn anywhere_fill_layout() {
+        // anywhere uses fill layout when all args are atoms
+        let doc = l(vec![
+            a("anywhere"),
+            a(r#""-r""#),
+            a(r#""--recursive""#),
+            a(r#""-f""#),
+            a(r#""--force""#),
+        ]);
+        let result = pp(&doc, 35);
+        // (anywhere "-r" "--recursive"
+        //          "-f" "--force")
+        assert!(result.contains("anywhere"));
+        assert!(result.contains("--recursive"));
+        assert!(result.contains("--force"));
+    }
+
+    #[test]
+    fn positional_fill_layout() {
+        // positional uses fill layout when all args are atoms
+        let doc = l(vec![
+            a("positional"),
+            a(r#""exec""#),
+            a(r#""--""#),
+            a(r#""run""#),
+            a(r#""start""#),
+        ]);
+        let result = pp(&doc, 40);
+        // (positional "exec" "--"
+        //             "run" "start")
+        assert!(result.contains("positional"));
+        assert!(result.contains("exec"));
+        assert!(result.contains("start"));
+    }
+
+    #[test]
+    fn all_fill_eligible_forms_in_and_use_fill_layout() {
+        // Test that all fill-eligible forms inside an and use fill layout
+        let and_doc = l(vec![
+            a("and"),
+            l(vec![
+                a("forbidden"),
+                a(r#""-d""#),
+                a(r#""--data""#),
+            ]),
+            l(vec![
+                a("anywhere"),
+                a(r#""-r""#),
+                a(r#""--recursive""#),
+            ]),
+            l(vec![
+                a("positional"),
+                a(r#""exec""#),
+                a(r#""--""#),
+            ]),
+        ]);
+        let result = pp(&and_doc, 80);
+        println!("all_fill_eligible_forms:\n{}", result);
+        // All should be on their own lines but with reasonable indentation
+        for line in result.lines() {
+            let leading = line.len() - line.trim_start().len();
+            assert!(
+                leading < 20,
                 "Line has excessive indent ({} chars): {}",
                 leading,
                 line
