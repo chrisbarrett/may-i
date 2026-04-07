@@ -161,7 +161,10 @@ mod tests {
         let input = "(cond ((pred) (effect :allow)) (else (effect :deny)))";
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let result = super::super::migrate(nodes.into_iter().next().unwrap());
-        assert_eq!(result.serialize(), "(if (pred) (effect :allow) (effect :deny))");
+        assert_eq!(
+            result.serialize(),
+            "(if (pred) (effect :allow) (effect :deny))"
+        );
     }
 
     #[test]
@@ -177,7 +180,10 @@ mod tests {
         let input = "(cond ((a) x) ((b) y) (else z))";
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let result = super::super::migrate(nodes.into_iter().next().unwrap());
-        assert!(result.serialize().starts_with("(cond"), "should stay as cond");
+        assert!(
+            result.serialize().starts_with("(cond"),
+            "should stay as cond"
+        );
     }
 
     #[test]
@@ -193,7 +199,8 @@ mod tests {
 
     #[test]
     fn test_cond_else_when_absorption() {
-        let input = r#"(cond ((exact) (effect :allow)) (else (when (positional "x") (effect :ask))))"#;
+        let input =
+            r#"(cond ((exact) (effect :allow)) (else (when (positional "x") (effect :ask))))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let result = super::super::migrate(nodes.into_iter().next().unwrap());
         assert_eq!(

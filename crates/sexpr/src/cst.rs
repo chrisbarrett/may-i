@@ -368,8 +368,6 @@ fn quote_string(s: &str) -> String {
     format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
-
-
 /// Parse a string into CST nodes.
 pub fn parse(input: &str) -> (Vec<Box<CstNode>>, Vec<crate::span::RawError>) {
     let mut parser = Parser::new(input);
@@ -1370,14 +1368,20 @@ mod tests {
         let (nodes, _) = parse(input);
         let doc = nodes[0].to_doc_with_trivia();
         // The list node was parsed → Some annotation
-        assert!(doc.ann.is_some(), "source-parsed list should have Some annotation");
+        assert!(
+            doc.ann.is_some(),
+            "source-parsed list should have Some annotation"
+        );
     }
 
     #[test]
     fn to_doc_with_trivia_constructed_has_none() {
         let node = CstNode::atom("test", TriviaAnn::default());
         let doc = node.to_doc_with_trivia();
-        assert!(doc.ann.is_none(), "constructed node should have None annotation");
+        assert!(
+            doc.ann.is_none(),
+            "constructed node should have None annotation"
+        );
     }
 
     #[test]
@@ -1409,9 +1413,14 @@ mod tests {
         let input = "; comment\nfoo";
         let (nodes, _) = parse(input);
         let doc = nodes[0].to_doc_with_trivia();
-        let ann = doc.ann.as_ref().expect("source node should have annotation");
+        let ann = doc
+            .ann
+            .as_ref()
+            .expect("source node should have annotation");
         assert!(
-            ann.leading.iter().any(|t| matches!(t, Trivia::Comment { .. })),
+            ann.leading
+                .iter()
+                .any(|t| matches!(t, Trivia::Comment { .. })),
             "leading trivia should contain comment"
         );
     }

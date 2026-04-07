@@ -277,8 +277,14 @@ fn migration_args_with_cond() {
     let output = result.serialize();
 
     // Single-clause cond+else gets simplified to if
-    assert!(output.contains("if"), "single-clause cond+else should become if, got: {output}");
-    assert!(!output.contains("cond"), "should no longer contain cond, got: {output}");
+    assert!(
+        output.contains("if"),
+        "single-clause cond+else should become if, got: {output}"
+    );
+    assert!(
+        !output.contains("cond"),
+        "should no longer contain cond, got: {output}"
+    );
 }
 
 #[test]
@@ -357,7 +363,10 @@ fn migration_check_forms_after_body_in_rule_with_args_cond() {
 
     // check form must appear after the body (cond/if), not before it
     let check_pos = output.find("check").expect("should contain check");
-    let body_pos = output.find("cond").or_else(|| output.find("if")).expect("should contain body");
+    let body_pos = output
+        .find("cond")
+        .or_else(|| output.find("if"))
+        .expect("should contain body");
     assert!(
         check_pos > body_pos,
         "check form should come after body form in rule, got:\n{output}"
@@ -377,7 +386,10 @@ fn migration_check_forms_after_body_in_rule_with_context() {
 
     // check form must appear after the when/body, not before it
     let check_pos = output.find("check").expect("should contain check");
-    let body_pos = output.find("when").or_else(|| output.find("effect")).expect("should contain body");
+    let body_pos = output
+        .find("when")
+        .or_else(|| output.find("effect"))
+        .expect("should contain body");
     assert!(
         check_pos > body_pos,
         "check form should come after body form in rule, got:\n{output}"

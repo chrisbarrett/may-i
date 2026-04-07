@@ -300,10 +300,13 @@ pub trait PrettyOutput<A> {
         if emitted_comment_with_newline {
             // Check if there's trailing whitespace after the last comment that
             // represents blank lines between the comments and the form.
-            let trailing_newlines = trivia.last().and_then(|t| match t {
-                Trivia::Whitespace(ws) => Some(ws.matches('\n').count()),
-                _ => None,
-            }).unwrap_or(0);
+            let trailing_newlines = trivia
+                .last()
+                .and_then(|t| match t {
+                    Trivia::Whitespace(ws) => Some(ws.matches('\n').count()),
+                    _ => None,
+                })
+                .unwrap_or(0);
             // 1 begin_line for the comment's un-emitted trailing \n, plus
             // any additional newlines from trailing whitespace.
             for _ in 0..trailing_newlines {
@@ -351,7 +354,9 @@ pub trait PrettyOutput<A> {
                 Trivia::Whitespace(ws) => {
                     // Emit trailing whitespace that isn't followed by a comment
                     // (whitespace before comments is handled above).
-                    let next_is_comment = trivia.get(i + 1).is_some_and(|t| matches!(t, Trivia::Comment { .. }));
+                    let next_is_comment = trivia
+                        .get(i + 1)
+                        .is_some_and(|t| matches!(t, Trivia::Comment { .. }));
                     if !next_is_comment {
                         self.emit_raw(ws);
                     }
@@ -657,13 +662,7 @@ pub const INDENT_SPECS: &[(&str, u8)] = &[
 /// wrapping at the column of the first arg.
 ///
 /// Trigger: head is in this list AND every argument after the head is an atom.
-pub const FILL_ELIGIBLE_HEADS: &[&str] = &[
-    "and",
-    "anywhere",
-    "forbidden",
-    "or",
-    "positional",
-];
+pub const FILL_ELIGIBLE_HEADS: &[&str] = &["and", "anywhere", "forbidden", "or", "positional"];
 
 /// Look up the indent spec for a head atom.  Returns `Some(n)` if the
 /// identifier has a declared indent, `None` for the default heuristic.
@@ -774,22 +773,27 @@ fn render_node<A: Clone + TriviaSource>(
 
             // cond always uses its dedicated renderer
             if let Some(head) = children.first().and_then(|c| c.as_atom())
-                && head == "cond" {
-                    render_cond(children, indent, width, dimmed, out);
-                    return;
-                }
+                && head == "cond"
+            {
+                render_cond(children, indent, width, dimmed, out);
+                return;
+            }
 
             // Forms with indent specs: try flat only when all children
             // are special (no body args to break before). Otherwise
             // always use body-indent to force a break after the predicate.
-            if let Some(spec) = children.first().and_then(|c| c.as_atom()).and_then(indent_spec) {
+            if let Some(spec) = children
+                .first()
+                .and_then(|c| c.as_atom())
+                .and_then(indent_spec)
+            {
                 let special_end = (1 + spec as usize).min(children.len());
                 let has_body_args = children.len() > special_end;
                 if !has_body_args {
                     let has_trivia = children.iter().any(|c| c.ann.forced_break())
-                        || children.iter().any(|c| {
-                            c.ann.trailing_trivia().iter().any(|t| t.has_newline())
-                        });
+                        || children
+                            .iter()
+                            .any(|c| c.ann.trailing_trivia().iter().any(|t| t.has_newline()));
                     if !has_trivia {
                         let mut buf = EventBuffer::new();
                         render_flat(children, dimmed, &mut buf);
@@ -804,19 +808,14 @@ fn render_node<A: Clone + TriviaSource>(
             }
 
             let has_trivia_break = children.iter().any(|c| c.ann.forced_break())
-                || children.iter().any(|c| {
-                    c.ann
-                        .trailing_trivia()
-                        .iter()
-                        .any(|t| t.has_newline())
-                });
+                || children
+                    .iter()
+                    .any(|c| c.ann.trailing_trivia().iter().any(|t| t.has_newline()));
 
             // When trivia forces breaks, use trivia-guided layout that
             // preserves the author's per-child line break decisions.
             if has_trivia_break {
-                render_trivia_guided_delim(
-                    children, indent, width, dimmed, '(', ')', out,
-                );
+                render_trivia_guided_delim(children, indent, width, dimmed, '(', ')', out);
                 return;
             }
 
@@ -829,9 +828,10 @@ fn render_node<A: Clone + TriviaSource>(
                     #[cfg(debug_assertions)]
                     {
                         if let Some(head) = children.first().and_then(|c| c.as_atom())
-                            && head == "forbidden" {
-                                eprintln!("render_list: forbidden using render_flat");
-                            }
+                            && head == "forbidden"
+                        {
+                            eprintln!("render_list: forbidden using render_flat");
+                        }
                     }
                     buf.replay(out);
                     return;
@@ -866,16 +866,11 @@ fn render_node<A: Clone + TriviaSource>(
         DocF::Vector(children) => {
             out.emit_node_ann(&doc.ann);
             let has_trivia_break = children.iter().any(|c| c.ann.forced_break())
-                || children.iter().any(|c| {
-                    c.ann
-                        .trailing_trivia()
-                        .iter()
-                        .any(|t| t.has_newline())
-                });
+                || children
+                    .iter()
+                    .any(|c| c.ann.trailing_trivia().iter().any(|t| t.has_newline()));
             if has_trivia_break {
-                render_trivia_guided_delim(
-                    children, indent, width, dimmed, '[', ']', out,
-                );
+                render_trivia_guided_delim(children, indent, width, dimmed, '[', ']', out);
                 return;
             }
             let must_break = doc.layout == LayoutHint::AlwaysBreak
@@ -910,11 +905,7 @@ fn render_node<A: Clone + TriviaSource>(
 /// Emit leading trivia from an annotation at the given indent,
 /// or fall back to `begin_line(indent)` when there's no trivia.
 /// Preserves blank lines from whitespace-only trivia.
-fn emit_trivia_or_line<A: TriviaSource>(
-    ann: &A,
-    indent: usize,
-    out: &mut impl PrettyOutput<A>,
-) {
+fn emit_trivia_or_line<A: TriviaSource>(ann: &A, indent: usize, out: &mut impl PrettyOutput<A>) {
     let leading = ann.leading_trivia();
     let has_comments = leading.iter().any(|t| matches!(t, Trivia::Comment { .. }));
     if has_comments {
@@ -1127,20 +1118,25 @@ fn render_broken_delim<A: Clone + TriviaSource>(
 
         // Keywords keep their value on the same line.
         if child.as_atom().is_some_and(|s| s.starts_with(':'))
-            && let Some(next) = children.get(1 + n_inline) {
-                let mut vbuf = EventBuffer::new();
-                render(next, col + 1, width, dimmed, &mut vbuf);
-                let vw = vbuf.first_line_width();
-                if !vbuf.is_multiline() && col + 1 + vw <= width {
-                    n_inline += 1;
-                    col += 1 + vw;
-                }
+            && let Some(next) = children.get(1 + n_inline)
+        {
+            let mut vbuf = EventBuffer::new();
+            render(next, col + 1, width, dimmed, &mut vbuf);
+            let vw = vbuf.first_line_width();
+            if !vbuf.is_multiline() && col + 1 + vw <= width {
+                n_inline += 1;
+                col += 1 + vw;
             }
+        }
     }
 
     // When nothing was inlined, cascade at indent+1 (like all-drop)
     // rather than under the would-be first arg position.
-    let cascade_col = if n_inline == 0 { indent + 1 } else { cascade_col };
+    let cascade_col = if n_inline == 0 {
+        indent + 1
+    } else {
+        cascade_col
+    };
 
     // Emit inline children.
     for child in &children[1..1 + n_inline] {
@@ -1246,7 +1242,11 @@ fn render_all_drop_delim<A: Clone + TriviaSource>(
     }
 }
 
-fn render_flat<A: Clone + TriviaSource>(children: &[Doc<A>], dimmed: bool, out: &mut impl PrettyOutput<A>) {
+fn render_flat<A: Clone + TriviaSource>(
+    children: &[Doc<A>],
+    dimmed: bool,
+    out: &mut impl PrettyOutput<A>,
+) {
     render_flat_delim(children, dimmed, '(', ')', out);
 }
 
@@ -1389,7 +1389,6 @@ fn render_fill<A: Clone + TriviaSource>(
         }
     }
 }
-
 
 fn render_body_indent<A: Clone + TriviaSource>(
     children: &[Doc<A>],
@@ -1754,10 +1753,7 @@ mod tests {
         // Width 8: greedy packs x,y on head line (cascade 5, under first arg).
         // Continuation "     z\n     w)" max 6 ≤ 8.
         let doc = l(vec![a("foo"), a("x"), a("y"), a("z"), a("w")]);
-        assert_eq!(
-            pp(&doc, 8),
-            "(foo x y\n     z\n     w)"
-        );
+        assert_eq!(pp(&doc, 8), "(foo x y\n     z\n     w)");
     }
 
     #[test]
@@ -1765,10 +1761,7 @@ mod tests {
         // Two args fit on first line with continuation under first arg.
         // Width 12: x,y inline (cascade 5), cont "     wwww)" = 10 <= 12.
         let doc = l(vec![a("foo"), a("x"), a("y"), a("zzzz"), a("wwww")]);
-        assert_eq!(
-            pp(&doc, 12),
-            "(foo x y\n     zzzz\n     wwww)"
-        );
+        assert_eq!(pp(&doc, 12), "(foo x y\n     zzzz\n     wwww)");
     }
 
     #[test]
@@ -1776,10 +1769,7 @@ mod tests {
         // Even one inline arg's continuation exceeds width.
         // Width 5: conservative "(foo x\n     w)" max 7 > 5. All-drop.
         let doc = l(vec![a("foo"), a("x"), a("y"), a("z"), a("w")]);
-        assert_eq!(
-            pp(&doc, 5),
-            "(foo\n x\n y\n z\n w)"
-        );
+        assert_eq!(pp(&doc, 5), "(foo\n x\n y\n z\n w)");
     }
 
     #[test]
@@ -1787,10 +1777,7 @@ mod tests {
         // Head so long that even 1 inline arg's cascade (col 10)
         // makes continuation "          c)" = 12 > 11. All-drop.
         let doc = l(vec![a("longname"), a("a"), a("b"), a("c")]);
-        assert_eq!(
-            pp(&doc, 11),
-            "(longname\n a\n b\n c)"
-        );
+        assert_eq!(pp(&doc, 11), "(longname\n a\n b\n c)");
     }
 
     #[test]
@@ -1802,7 +1789,6 @@ mod tests {
         assert_eq!(lines[0], "(and first-branch");
         assert_eq!(lines[1], "     second-branch)");
     }
-
 
     #[test]
     fn or_atoms_fill_layout() {
@@ -1837,10 +1823,7 @@ mod tests {
         let result = pp(&doc, 17);
         // (and "a" "bb"      [13 chars]
         //      "ccc" "dddd") [14 chars]
-        assert_eq!(
-            result,
-            "(and \"a\" \"bb\"\n     \"ccc\" \"dddd\")"
-        );
+        assert_eq!(result, "(and \"a\" \"bb\"\n     \"ccc\" \"dddd\")");
     }
 
     #[test]
@@ -1898,7 +1881,7 @@ mod tests {
     fn forbidden_via_trivia_doc() {
         // Test using Option<()> annotation like to_doc_with_trivia produces
         use may_i_core::doc::{DocF, LayoutHint};
-        
+
         fn atom_with_ann(s: &str) -> Doc<Option<()>> {
             Doc {
                 ann: None,
@@ -1907,7 +1890,7 @@ mod tests {
                 dimmed: false,
             }
         }
-        
+
         fn list_with_ann(children: Vec<Doc<Option<()>>>) -> Doc<Option<()>> {
             Doc {
                 ann: None,
@@ -1916,7 +1899,7 @@ mod tests {
                 dimmed: false,
             }
         }
-        
+
         let forbidden_doc = list_with_ann(vec![
             atom_with_ann("forbidden"),
             atom_with_ann(r#""-d""#),
@@ -1931,13 +1914,13 @@ mod tests {
             atom_with_ann(r#""-X""#),
             atom_with_ann(r#""--request""#),
         ]);
-        
+
         let when_doc = list_with_ann(vec![
             atom_with_ann("when"),
             forbidden_doc,
             atom_with_ann("body"),
         ]);
-        
+
         let result = pretty(
             &when_doc,
             0,
@@ -1947,7 +1930,7 @@ mod tests {
             },
         );
         println!("forbidden_via_trivia_doc:\n{}", result);
-        
+
         // Should not have excessive rightward drift
         for line in result.lines() {
             let leading = line.len() - line.trim_start().len();
@@ -2028,21 +2011,9 @@ mod tests {
         // Test that all fill-eligible forms inside an and use fill layout
         let and_doc = l(vec![
             a("and"),
-            l(vec![
-                a("forbidden"),
-                a(r#""-d""#),
-                a(r#""--data""#),
-            ]),
-            l(vec![
-                a("anywhere"),
-                a(r#""-r""#),
-                a(r#""--recursive""#),
-            ]),
-            l(vec![
-                a("positional"),
-                a(r#""exec""#),
-                a(r#""--""#),
-            ]),
+            l(vec![a("forbidden"), a(r#""-d""#), a(r#""--data""#)]),
+            l(vec![a("anywhere"), a(r#""-r""#), a(r#""--recursive""#)]),
+            l(vec![a("positional"), a(r#""exec""#), a(r#""--""#)]),
         ]);
         let result = pp(&and_doc, 80);
         println!("all_fill_eligible_forms:\n{}", result);
@@ -2066,7 +2037,11 @@ mod tests {
         // indent+1 (like all-drop), not indent+head_width+2 (under first arg).
         let doc = l(vec![
             a("or"),
-            l(vec![a("when"), a("(exact)"), l(vec![a("effect"), a(":allow")])]),
+            l(vec![
+                a("when"),
+                a("(exact)"),
+                l(vec![a("effect"), a(":allow")]),
+            ]),
             l(vec![a("when"), a("pred"), l(vec![a("effect"), a(":ask")])]),
         ]);
         let result = pp(&doc, 40);
@@ -2090,7 +2065,11 @@ mod tests {
         let doc = l(vec![
             a("and"),
             l(vec![a("positional"), a("\"fmt\"")]),
-            l(vec![a("when"), a("build-mode"), l(vec![a("effect"), a(":allow")])]),
+            l(vec![
+                a("when"),
+                a("build-mode"),
+                l(vec![a("effect"), a(":allow")]),
+            ]),
         ]);
         let result = pp(&doc, 80);
         let lines: Vec<&str> = result.lines().collect();
@@ -2483,7 +2462,7 @@ mod tests {
 
     // ── Trivia-aware rendering ──────────────────────────────────────
 
-    use may_i_core::{TriviaAnn, Trivia as CoreTrivia};
+    use may_i_core::{Trivia as CoreTrivia, TriviaAnn};
 
     fn trivia_ann(leading: Vec<CoreTrivia>, trailing: Vec<CoreTrivia>) -> Option<TriviaAnn> {
         Some(TriviaAnn {
@@ -2502,7 +2481,10 @@ mod tests {
         }
     }
 
-    fn trivia_list(children: Vec<Doc<Option<TriviaAnn>>>, ann: Option<TriviaAnn>) -> Doc<Option<TriviaAnn>> {
+    fn trivia_list(
+        children: Vec<Doc<Option<TriviaAnn>>>,
+        ann: Option<TriviaAnn>,
+    ) -> Doc<Option<TriviaAnn>> {
         Doc {
             ann,
             node: DocF::List(children),
@@ -2512,88 +2494,110 @@ mod tests {
     }
 
     fn pp_trivia(doc: &Doc<Option<TriviaAnn>>, width: usize) -> String {
-        pretty(doc, 0, &Format { width, ..Default::default() })
+        pretty(
+            doc,
+            0,
+            &Format {
+                width,
+                ..Default::default()
+            },
+        )
     }
 
     #[test]
     fn trivia_forced_break_prevents_flat() {
         // A child with newline in trivia forces multi-line layout
-        let child_with_newline = trivia_atom("b", trivia_ann(
-            vec![CoreTrivia::Whitespace("\n  ".to_string())],
-            vec![],
-        ));
-        let doc = trivia_list(
-            vec![trivia_atom("a", None), child_with_newline],
-            None,
+        let child_with_newline = trivia_atom(
+            "b",
+            trivia_ann(vec![CoreTrivia::Whitespace("\n  ".to_string())], vec![]),
         );
+        let doc = trivia_list(vec![trivia_atom("a", None), child_with_newline], None);
         let result = pp_trivia(&doc, 80);
-        assert!(result.contains('\n'), "should break to multi-line: {result:?}");
+        assert!(
+            result.contains('\n'),
+            "should break to multi-line: {result:?}"
+        );
     }
 
     #[test]
     fn trivia_no_forced_break_stays_flat() {
         // Children without trivia stay flat when they fit
-        let doc = trivia_list(
-            vec![trivia_atom("a", None), trivia_atom("b", None)],
-            None,
-        );
+        let doc = trivia_list(vec![trivia_atom("a", None), trivia_atom("b", None)], None);
         let result = pp_trivia(&doc, 80);
         assert_eq!(result, "(a b)");
     }
 
     #[test]
     fn trivia_comment_emitted_before_child() {
-        let child_with_comment = trivia_atom("b", trivia_ann(
-            vec![CoreTrivia::Comment {
-                text: "; a comment".to_string(),
-                has_newline: true,
-            }],
-            vec![],
-        ));
-        let doc = trivia_list(
-            vec![trivia_atom("a", None), child_with_comment],
-            None,
+        let child_with_comment = trivia_atom(
+            "b",
+            trivia_ann(
+                vec![CoreTrivia::Comment {
+                    text: "; a comment".to_string(),
+                    has_newline: true,
+                }],
+                vec![],
+            ),
         );
+        let doc = trivia_list(vec![trivia_atom("a", None), child_with_comment], None);
         let result = pp_trivia(&doc, 80);
-        assert!(result.contains("; a comment"), "comment should be present: {result:?}");
+        assert!(
+            result.contains("; a comment"),
+            "comment should be present: {result:?}"
+        );
         // The comment should appear before "b"
         let comment_pos = result.find("; a comment").unwrap();
         let b_pos = result.find('b').unwrap();
-        assert!(comment_pos < b_pos, "comment should appear before b: {result:?}");
+        assert!(
+            comment_pos < b_pos,
+            "comment should appear before b: {result:?}"
+        );
     }
 
     #[test]
     fn trivia_trailing_comment_emitted_after_node() {
-        let child_with_trailing = trivia_atom("a", trivia_ann(
-            vec![],
-            vec![
-                CoreTrivia::Whitespace(" ".to_string()),
-                CoreTrivia::Comment {
-                    text: "; trailing".to_string(),
-                    has_newline: true,
-                },
-            ],
-        ));
-        let doc = trivia_list(
-            vec![child_with_trailing, trivia_atom("b", None)],
-            None,
+        let child_with_trailing = trivia_atom(
+            "a",
+            trivia_ann(
+                vec![],
+                vec![
+                    CoreTrivia::Whitespace(" ".to_string()),
+                    CoreTrivia::Comment {
+                        text: "; trailing".to_string(),
+                        has_newline: true,
+                    },
+                ],
+            ),
         );
+        let doc = trivia_list(vec![child_with_trailing, trivia_atom("b", None)], None);
         let result = pp_trivia(&doc, 80);
-        assert!(result.contains("; trailing"), "trailing comment should be present: {result:?}");
+        assert!(
+            result.contains("; trailing"),
+            "trailing comment should be present: {result:?}"
+        );
     }
 
     #[test]
     fn trivia_blank_line_between_leading_comment_groups() {
         // A blank line between comment groups in leading trivia should be preserved
-        let doc = trivia_atom("foo", trivia_ann(
-            vec![
-                CoreTrivia::Comment { text: ";; group A".to_string(), has_newline: true },
-                CoreTrivia::Whitespace("\n".to_string()),
-                CoreTrivia::Comment { text: ";; group B".to_string(), has_newline: true },
-                CoreTrivia::Whitespace("\n".to_string()),
-            ],
-            vec![],
-        ));
+        let doc = trivia_atom(
+            "foo",
+            trivia_ann(
+                vec![
+                    CoreTrivia::Comment {
+                        text: ";; group A".to_string(),
+                        has_newline: true,
+                    },
+                    CoreTrivia::Whitespace("\n".to_string()),
+                    CoreTrivia::Comment {
+                        text: ";; group B".to_string(),
+                        has_newline: true,
+                    },
+                    CoreTrivia::Whitespace("\n".to_string()),
+                ],
+                vec![],
+            ),
+        );
         let result = pp_trivia(&doc, 80);
         assert!(
             result.contains(";; group A\n\n;; group B"),
@@ -2604,10 +2608,10 @@ mod tests {
     #[test]
     fn trivia_cascade_after_forced_break() {
         // After a forced break, subsequent children should also break
-        let child_with_break = trivia_atom("b", trivia_ann(
-            vec![CoreTrivia::Whitespace("\n  ".to_string())],
-            vec![],
-        ));
+        let child_with_break = trivia_atom(
+            "b",
+            trivia_ann(vec![CoreTrivia::Whitespace("\n  ".to_string())], vec![]),
+        );
         let doc = trivia_list(
             vec![
                 trivia_atom("a", None),
@@ -2619,7 +2623,10 @@ mod tests {
         let result = pp_trivia(&doc, 80);
         // All children after the forced break should be on separate lines
         let lines: Vec<&str> = result.lines().collect();
-        assert!(lines.len() >= 3, "should have at least 3 lines (a, b, c): {result:?}");
+        assert!(
+            lines.len() >= 3,
+            "should have at least 3 lines (a, b, c): {result:?}"
+        );
     }
 
     // ── Blank line preservation tests ─────────────────────────────────
@@ -2629,17 +2636,14 @@ mod tests {
         // Single blank line between forms should be preserved
         // In a simple list (a b) with width 80, the cascade is 1 (under head)
         // Blank lines should NOT have trailing whitespace
-        let child_with_blank = trivia_atom("b", trivia_ann(
-            vec![CoreTrivia::Whitespace("\n\n ".to_string())], // two newlines = one blank line
-            vec![],
-        ));
-        let doc = trivia_list(
-            vec![
-                trivia_atom("a", None),
-                child_with_blank,
-            ],
-            None,
+        let child_with_blank = trivia_atom(
+            "b",
+            trivia_ann(
+                vec![CoreTrivia::Whitespace("\n\n ".to_string())], // two newlines = one blank line
+                vec![],
+            ),
         );
+        let doc = trivia_list(vec![trivia_atom("a", None), child_with_blank], None);
         let result = pp_trivia(&doc, 80);
         // Should have blank line between a and b, blank lines have no indentation
         assert_eq!(result, "(a\n\n b)");
@@ -2648,17 +2652,14 @@ mod tests {
     #[test]
     fn blank_line_multiple_preserved_between_forms() {
         // Multiple blank lines between forms should be preserved
-        let child_with_blanks = trivia_atom("b", trivia_ann(
-            vec![CoreTrivia::Whitespace("\n\n\n\n ".to_string())], // four newlines = three blank lines
-            vec![],
-        ));
-        let doc = trivia_list(
-            vec![
-                trivia_atom("a", None),
-                child_with_blanks,
-            ],
-            None,
+        let child_with_blanks = trivia_atom(
+            "b",
+            trivia_ann(
+                vec![CoreTrivia::Whitespace("\n\n\n\n ".to_string())], // four newlines = three blank lines
+                vec![],
+            ),
         );
+        let doc = trivia_list(vec![trivia_atom("a", None), child_with_blanks], None);
         let result = pp_trivia(&doc, 80);
         // Should have three blank lines between a and b, blank lines have no indentation
         assert_eq!(result, "(a\n\n\n\n b)");
@@ -2667,17 +2668,14 @@ mod tests {
     #[test]
     fn blank_line_no_extra_single_newline() {
         // Single newline should not produce blank lines
-        let child_single_newline = trivia_atom("b", trivia_ann(
-            vec![CoreTrivia::Whitespace("\n ".to_string())], // one newline = no blank line
-            vec![],
-        ));
-        let doc = trivia_list(
-            vec![
-                trivia_atom("a", None),
-                child_single_newline,
-            ],
-            None,
+        let child_single_newline = trivia_atom(
+            "b",
+            trivia_ann(
+                vec![CoreTrivia::Whitespace("\n ".to_string())], // one newline = no blank line
+                vec![],
+            ),
         );
+        let doc = trivia_list(vec![trivia_atom("a", None), child_single_newline], None);
         let result = pp_trivia(&doc, 80);
         // Should have single newline, no blank line, with cascade indent of 1
         assert_eq!(result, "(a\n b)");
@@ -2688,51 +2686,49 @@ mod tests {
         // Blank lines between test cases in a check form should be preserved
         // check has indent spec 0, so body is at indent+2
         let case1 = trivia_list(
-            vec![
-                trivia_atom("command", None),
-                trivia_atom("\"test1\"", None),
-            ],
+            vec![trivia_atom("command", None), trivia_atom("\"test1\"", None)],
             None,
         );
         let case2 = trivia_list(
-            vec![
-                trivia_atom("command", None),
-                trivia_atom("\"test2\"", None),
-            ],
+            vec![trivia_atom("command", None), trivia_atom("\"test2\"", None)],
             trivia_ann(
                 vec![CoreTrivia::Whitespace("\n\n  ".to_string())], // blank line before case2
                 vec![],
             ),
         );
         let case3 = trivia_list(
-            vec![
-                trivia_atom("command", None),
-                trivia_atom("\"test3\"", None),
-            ],
+            vec![trivia_atom("command", None), trivia_atom("\"test3\"", None)],
             trivia_ann(
                 vec![CoreTrivia::Whitespace("\n\n  ".to_string())], // blank line before case3
                 vec![],
             ),
         );
-        let doc = trivia_list(
-            vec![
-                trivia_atom("check", None),
-                case1,
-                case2,
-                case3,
-            ],
-            None,
-        );
+        let doc = trivia_list(vec![trivia_atom("check", None), case1, case2, case3], None);
         let result = pp_trivia(&doc, 80);
         // Check form with indent spec 0 means body is at indent+2 = 2 spaces
         // The blank lines should be preserved with proper indentation
-        assert!(result.contains("check"), "result should contain 'check': {result:?}");
-        assert!(result.contains("test1"), "result should contain 'test1': {result:?}");
-        assert!(result.contains("test2"), "result should contain 'test2': {result:?}");
-        assert!(result.contains("test3"), "result should contain 'test3': {result:?}");
+        assert!(
+            result.contains("check"),
+            "result should contain 'check': {result:?}"
+        );
+        assert!(
+            result.contains("test1"),
+            "result should contain 'test1': {result:?}"
+        );
+        assert!(
+            result.contains("test2"),
+            "result should contain 'test2': {result:?}"
+        );
+        assert!(
+            result.contains("test3"),
+            "result should contain 'test3': {result:?}"
+        );
         // Verify blank line preservation - check for double newlines in output
         let newline_count = result.matches('\n').count();
-        assert!(newline_count >= 4, "should have at least 4 newlines (one between each test case + form breaks): {result:?}");
+        assert!(
+            newline_count >= 4,
+            "should have at least 4 newlines (one between each test case + form breaks): {result:?}"
+        );
     }
 
     #[test]
@@ -2746,19 +2742,24 @@ mod tests {
             ),
         );
         let doc = trivia_list(
-            vec![
-                trivia_list(vec![trivia_atom("rule1", None)], None),
-                form2,
-            ],
+            vec![trivia_list(vec![trivia_atom("rule1", None)], None), form2],
             None,
         );
         let result = pp_trivia(&doc, 80);
         // Both forms should be present with blank line between (no trailing whitespace on blank line)
-        assert!(result.contains("(rule1)"), "result should contain '(rule1)': {result:?}");
-        assert!(result.contains("(rule2)"), "result should contain '(rule2)': {result:?}");
+        assert!(
+            result.contains("(rule1)"),
+            "result should contain '(rule1)': {result:?}"
+        );
+        assert!(
+            result.contains("(rule2)"),
+            "result should contain '(rule2)': {result:?}"
+        );
         // Check for blank line between without trailing whitespace
-        assert!(result.contains("(rule1)\n\n (rule2)"),
-            "blank line should be preserved between top-level forms: {result:?}");
+        assert!(
+            result.contains("(rule1)\n\n (rule2)"),
+            "blank line should be preserved between top-level forms: {result:?}"
+        );
     }
 }
 

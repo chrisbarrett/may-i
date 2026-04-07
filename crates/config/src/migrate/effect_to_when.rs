@@ -12,9 +12,10 @@ pub(crate) fn and_trailing_effect_to_when(node: &CstNode) -> Option<Box<CstNode>
     }
 
     // Find the first low-complexity effect at any position
-    let effect_idx = children[1..].iter().position(|c| {
-        c.is_tagged("effect") && complexity(c) <= 3
-    })? + 1; // adjust for skip of tag
+    let effect_idx = children[1..]
+        .iter()
+        .position(|c| c.is_tagged("effect") && complexity(c) <= 3)?
+        + 1; // adjust for skip of tag
 
     let effect = &children[effect_idx];
 
@@ -116,6 +117,9 @@ mod tests {
         let input = r#"(and (anywhere "-r") (anywhere "/"))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let result = super::super::migrate(nodes.into_iter().next().unwrap());
-        assert!(result.serialize().starts_with("(and"), "no effect → no change");
+        assert!(
+            result.serialize().starts_with("(and"),
+            "no effect → no change"
+        );
     }
 }

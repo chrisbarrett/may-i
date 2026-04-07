@@ -73,9 +73,7 @@ pub(crate) fn complexity(node: &CstNode) -> usize {
     match &node.shape {
         Shape::Keyword(_) | Shape::Symbol(_) | Shape::String(_) => 1,
 
-        Shape::Vector(children) => {
-            1 + children.iter().map(|c| complexity(c)).max().unwrap_or(0)
-        }
+        Shape::Vector(children) => 1 + children.iter().map(|c| complexity(c)).max().unwrap_or(0),
 
         Shape::List(children) => {
             let tag = children.first().and_then(|c| c.as_atom());
@@ -171,8 +169,8 @@ mod tests {
 
     #[test]
     fn strip_whitespace_trivia_preserves_comments() {
-        use may_i_core::span::Span;
         use may_i_core::Trivia;
+        use may_i_core::span::Span;
 
         let ann = TriviaAnn {
             leading: vec![
@@ -201,7 +199,11 @@ mod tests {
             .iter()
             .filter(|t| matches!(t, Trivia::Comment { .. }))
             .collect();
-        assert_eq!(leading_comments.len(), 1, "leading comment should be preserved");
+        assert_eq!(
+            leading_comments.len(),
+            1,
+            "leading comment should be preserved"
+        );
 
         let trailing_comments: Vec<_> = stripped
             .ann
@@ -209,7 +211,11 @@ mod tests {
             .iter()
             .filter(|t| matches!(t, Trivia::Comment { .. }))
             .collect();
-        assert_eq!(trailing_comments.len(), 1, "trailing comment should be preserved");
+        assert_eq!(
+            trailing_comments.len(),
+            1,
+            "trailing comment should be preserved"
+        );
 
         let leading_ws: Vec<_> = stripped
             .ann
@@ -227,8 +233,8 @@ mod tests {
 
     #[test]
     fn strip_whitespace_trivia_no_comments_zeroes_span() {
-        use may_i_core::span::Span;
         use may_i_core::Trivia;
+        use may_i_core::span::Span;
 
         let ann = TriviaAnn {
             leading: vec![Trivia::Whitespace("\n  ".into())],

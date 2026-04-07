@@ -8,7 +8,10 @@ mod tests {
     // ── V1 paired generators ──────────────────────────────────────────
 
     /// Generates (v1_forms, canonical_forms) for command rules.
-    fn any_v1_command_rule() -> BoxedStrategy<(Vec<Box<may_i_sexpr::CstNode>>, Vec<Box<may_i_sexpr::CstNode>>)> {
+    fn any_v1_command_rule() -> BoxedStrategy<(
+        Vec<Box<may_i_sexpr::CstNode>>,
+        Vec<Box<may_i_sexpr::CstNode>>,
+    )> {
         (any_command_pattern_cst(), any_canonical_effect_cst(1))
             .prop_map(|(cmd, eff)| {
                 let v1 = cst_list(vec![
@@ -23,7 +26,10 @@ mod tests {
     }
 
     /// Generates (v1_forms, canonical_forms) for defcontext/define.
-    fn any_v1_defcontext() -> BoxedStrategy<(Vec<Box<may_i_sexpr::CstNode>>, Vec<Box<may_i_sexpr::CstNode>>)> {
+    fn any_v1_defcontext() -> BoxedStrategy<(
+        Vec<Box<may_i_sexpr::CstNode>>,
+        Vec<Box<may_i_sexpr::CstNode>>,
+    )> {
         ("[a-z][a-z0-9_-]{0,8}", any_predicate_cst(1))
             .prop_map(|(name, pred)| {
                 let v1 = cst_list(vec![cst_atom("defcontext"), cst_atom(&name), pred.clone()]);

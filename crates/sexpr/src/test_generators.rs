@@ -46,11 +46,7 @@ pub fn any_atom_string() -> BoxedStrategy<String> {
 /// Restricted to characters that are valid atom chars, so that roundtripping
 /// through `to_sexpr → Sexpr::Display → parse` preserves structure.
 pub fn any_str_content() -> BoxedStrategy<String> {
-    prop_oneof![
-        "[a-zA-Z0-9 _./-]{0,20}",
-        Just(String::new()),
-    ]
-    .boxed()
+    prop_oneof!["[a-zA-Z0-9 _./-]{0,20}", Just(String::new()),].boxed()
 }
 
 /// An atom CstNode.
@@ -84,10 +80,12 @@ pub fn any_whitespace_trivia() -> BoxedStrategy<Trivia> {
 
 /// Comment trivia.
 pub fn any_comment_trivia() -> BoxedStrategy<Trivia> {
-    "[a-zA-Z0-9 _-]{0,30}".prop_map(|text| Trivia::Comment {
-        text: format!(";; {}", text.trim()),
-        has_newline: true,
-    }).boxed()
+    "[a-zA-Z0-9 _-]{0,30}"
+        .prop_map(|text| Trivia::Comment {
+            text: format!(";; {}", text.trim()),
+            has_newline: true,
+        })
+        .boxed()
 }
 
 /// Any trivia item.
@@ -128,11 +126,9 @@ pub fn any_cst_node(depth: u32) -> BoxedStrategy<Box<CstNode>> {
         prop_oneof![
             any_leaf_node(),
             // list with children
-            prop::collection::vec(any_cst_node(depth - 1), 0..=5)
-                .prop_map(cst_list),
+            prop::collection::vec(any_cst_node(depth - 1), 0..=5).prop_map(cst_list),
             // vector with children
-            prop::collection::vec(any_cst_node(depth - 1), 0..=4)
-                .prop_map(cst_vector),
+            prop::collection::vec(any_cst_node(depth - 1), 0..=4).prop_map(cst_vector),
         ]
         .boxed()
     }
@@ -240,12 +236,13 @@ pub fn any_sexpr(depth: u32) -> BoxedStrategy<Sexpr> {
 pub fn any_command_pattern_cst() -> BoxedStrategy<Box<CstNode>> {
     prop_oneof![
         "[a-z][a-z0-9_-]{0,10}".prop_map(|s| cst_str(&s)),
-        prop::collection::vec("[a-z][a-z0-9_-]{0,10}".prop_map(|s| cst_str(&s)), 2..=4)
-            .prop_map(|cmds| {
+        prop::collection::vec("[a-z][a-z0-9_-]{0,10}".prop_map(|s| cst_str(&s)), 2..=4).prop_map(
+            |cmds| {
                 let mut children = vec![cst_atom("or")];
                 children.extend(cmds);
                 cst_list(children)
-            }),
+            }
+        ),
         "[a-z][a-z.*+?]{0,10}".prop_map(|s| cst_list(vec![cst_atom("regex"), cst_str(&s)])),
     ]
     .boxed()
@@ -329,29 +326,23 @@ pub fn any_canonical_effect_cst(depth: u32) -> BoxedStrategy<Box<CstNode>> {
             )
                 .prop_map(|(p, e1, e2)| cst_list(vec![cst_atom("if"), p, e1, e2])),
             // (cond (P1 E1) (P2 E2) ...) — 2+ clauses, no else
-            prop::collection::vec(
-                (any_predicate_cst(1), any_terminal_effect_cst()),
-                2..=4
-            )
-            .prop_map(|clauses| {
-                let mut children = vec![cst_atom("cond")];
-                children.extend(clauses.into_iter().map(|(p, e)| cst_list(vec![p, e])));
-                cst_list(children)
-            }),
+            prop::collection::vec((any_predicate_cst(1), any_terminal_effect_cst()), 2..=4)
+                .prop_map(|clauses| {
+                    let mut children = vec![cst_atom("cond")];
+                    children.extend(clauses.into_iter().map(|(p, e)| cst_list(vec![p, e])));
+                    cst_list(children)
+                }),
             // (cond (P1 E1) (P2 E2) ... (else TERMINAL))
             (
-                prop::collection::vec(
-                    (any_predicate_cst(1), any_terminal_effect_cst()),
-                    2..=4
-                ),
+                prop::collection::vec((any_predicate_cst(1), any_terminal_effect_cst()), 2..=4),
                 any_terminal_effect_cst()
             )
-            .prop_map(|(clauses, else_eff)| {
-                let mut children = vec![cst_atom("cond")];
-                children.extend(clauses.into_iter().map(|(p, e)| cst_list(vec![p, e])));
-                children.push(cst_list(vec![cst_atom("else"), else_eff]));
-                cst_list(children)
-            }),
+                .prop_map(|(clauses, else_eff)| {
+                    let mut children = vec![cst_atom("cond")];
+                    children.extend(clauses.into_iter().map(|(p, e)| cst_list(vec![p, e])));
+                    children.push(cst_list(vec![cst_atom("else"), else_eff]));
+                    cst_list(children)
+                }),
         ]
         .boxed()
     }

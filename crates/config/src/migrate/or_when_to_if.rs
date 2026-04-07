@@ -54,7 +54,8 @@ pub(crate) fn or_leading_when_to_if(node: &CstNode) -> Option<Box<CstNode>> {
 mod tests {
     #[test]
     fn test_or_all_whens_to_cond() {
-        let input = r#"(or (when (exact) (effect :allow)) (when (positional "info") (effect :allow)))"#;
+        let input =
+            r#"(or (when (exact) (effect :allow)) (when (positional "info") (effect :allow)))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let result = super::super::migrate(nodes.into_iter().next().unwrap());
         assert_eq!(
@@ -96,7 +97,8 @@ mod tests {
 
     #[test]
     fn test_and_whens_not_converted() {
-        let input = r#"(and (when (exact) (effect :allow)) (when (positional "x") (effect :deny)))"#;
+        let input =
+            r#"(and (when (exact) (effect :allow)) (when (positional "x") (effect :deny)))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let result = super::super::migrate(nodes.into_iter().next().unwrap());
         assert!(
