@@ -16,5 +16,6 @@ thiserror = "2"
 
 [dev-dependencies]
 may-i-engine = { path = "../engine" }
+may-i-sexpr = { path = "../sexpr", features = ["test-generators"] }
 proptest = "1"
 tempfile = "3"
