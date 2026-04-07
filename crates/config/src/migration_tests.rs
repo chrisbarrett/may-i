@@ -341,3 +341,45 @@ fn migration_preserves_order() {
     assert!(outputs[1].contains("b"));
     assert!(outputs[2].contains("rule"));
 }
+
+#[test]
+fn migration_check_forms_after_body_in_rule_with_args_cond() {
+    let input = r#"(rule (command "mv")
+      (args (if (anywhere "-f" "--force")
+                (effect :ask "File moves with -f/--force can be destructive")
+              (effect :allow)))
+      (check :allow "mv foo bar"
+             :ask "mv -f foo bar"))"#;
+
+    let node = parse_single(input);
+    let result = migrate(node);
+    let output = result.serialize();
+
+    // check form must appear after the body (cond/if), not before it
+    let check_pos = output.find("check").expect("should contain check");
+    let body_pos = output.find("cond").or_else(|| output.find("if")).expect("should contain body");
+    assert!(
+        check_pos > body_pos,
+        "check form should come after body form in rule, got:\n{output}"
+    );
+}
+
+#[test]
+fn migration_check_forms_after_body_in_rule_with_context() {
+    let input = r#"(rule (command "rm")
+      (context dangerous)
+      (effect :ask "Destructive command")
+      (check :ask "rm -rf /"))"#;
+
+    let node = parse_single(input);
+    let result = migrate(node);
+    let output = result.serialize();
+
+    // check form must appear after the when/body, not before it
+    let check_pos = output.find("check").expect("should contain check");
+    let body_pos = output.find("when").or_else(|| output.find("effect")).expect("should contain body");
+    assert!(
+        check_pos > body_pos,
+        "check form should come after body form in rule, got:\n{output}"
+    );
+}

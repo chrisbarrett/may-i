@@ -1103,21 +1103,26 @@ fn render_broken_delim<A: Clone + TriviaSource>(
 
     // Greedily fit children on the head line.
     let mut col = indent + 1 + head_width;
-    let mut cascade_col = match children[0].as_atom() {
+    let cascade_col = match children[0].as_atom() {
         Some(_) => indent + head_width + 2, // under first arg
         None => indent + 1,
     };
     let mut n_inline = 0;
 
-    for child in &children[1..] {
+    let remaining_count = children.len() - 1;
+    for (i, child) in children[1..].iter().enumerate() {
         let mut buf = EventBuffer::new();
         render(child, col + 1, width, dimmed, &mut buf);
+        // Don't inline a multiline child if there are more children after
+        // it — subsequent children would cascade at the wrong column.
+        if buf.is_multiline() && i + 1 < remaining_count {
+            break;
+        }
         let child_width = buf.first_line_width();
         if col + 1 + child_width > width {
             break;
         }
         n_inline += 1;
-        cascade_col = col + 1;
         col += 1 + child_width;
 
         // Keywords keep their value on the same line.

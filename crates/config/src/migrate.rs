@@ -157,8 +157,9 @@ fn rule_simplify_command(node: &CstNode) -> Option<Box<CstNode>> {
     let mut new_children = Vec::new();
     new_children.push(children[0].clone()); // "rule" tag
 
-    // New command value with combined trivia
-    let mut new_cmd = (**cmd_value).clone();
+    // Strip trivia so pretty printer can use optimal layout,
+    // then restore the (command ...) node's leading/trailing trivia.
+    let mut new_cmd = strip_trivia(cmd_value);
     new_cmd.ann.leading = second.ann.leading.clone();
     new_cmd.ann.trailing = second.ann.trailing.clone();
     new_children.push(Box::new(new_cmd));
@@ -190,6 +191,7 @@ fn rule_inline_context(node: &CstNode) -> Option<Box<CstNode>> {
     let mut context_expr = None;
     let mut effect_expr = None;
     let mut other_children = Vec::new();
+    let mut check_forms = Vec::new();
 
     for child in &children[1..] {
         if child.is_tagged("context") {
@@ -202,6 +204,8 @@ fn rule_inline_context(node: &CstNode) -> Option<Box<CstNode>> {
         } else if child.is_tagged("effect") {
             // Strip trivia from effect node so pretty printer can use optimal layout
             effect_expr = Some(Box::new(strip_trivia(child)));
+        } else if child.is_tagged("check") {
+            check_forms.push(child.clone());
         } else {
             other_children.push(child.clone());
         }
@@ -225,6 +229,7 @@ fn rule_inline_context(node: &CstNode) -> Option<Box<CstNode>> {
         ];
         let when_node = CstNode::list(when_children, Default::default());
         new_children.push(Box::new(when_node));
+        new_children.extend(check_forms);
 
         return Some(Box::new(CstNode {
             ann: node.ann.clone(),
@@ -239,6 +244,7 @@ fn rule_inline_context(node: &CstNode) -> Option<Box<CstNode>> {
         new_children.push(children[0].clone()); // "rule" tag
         new_children.extend(other_children);
         new_children.push(context_expr.unwrap());
+        new_children.extend(check_forms);
 
         return Some(Box::new(CstNode {
             ann: node.ann.clone(),
@@ -834,6 +840,7 @@ fn hoist_cond(node: &CstNode) -> Option<Box<CstNode>> {
     let mut new_children = Vec::new();
     let mut predicates_to_add = Vec::new();
     let mut rule_level_predicates = Vec::new(); // Predicates from inlined context
+    let mut check_forms: Vec<Box<CstNode>> = Vec::new();
     let mut found_case_source = None;
 
     new_children.push(children[0].clone()); // "rule" tag
@@ -867,6 +874,8 @@ fn hoist_cond(node: &CstNode) -> Option<Box<CstNode>> {
                     continue;
                 }
             }
+        } else if child.is_tagged("check") {
+            check_forms.push(child.clone());
         } else if child.as_atom().is_some() {
             // Bare atom after command - likely a context predicate from inlined (context ...)
             rule_level_predicates.push(child.clone());
@@ -883,7 +892,7 @@ fn hoist_cond(node: &CstNode) -> Option<Box<CstNode>> {
     if case_source.is_tagged("cond") {
         let cond_children = case_source.as_list()?;
         for branch in &cond_children[1..] {
-            case_children.push(branch.clone());
+            case_children.push(Box::new(strip_trivia(branch)));
         }
     } else if case_source.is_tagged("if") {
         // Convert (if PRED THEN ELSE) to case branches
@@ -949,8 +958,9 @@ fn hoist_cond(node: &CstNode) -> Option<Box<CstNode>> {
         Box::new(CstNode::list(when_children, Default::default()))
     };
 
-    // Insert the final effect at the END
+    // Insert the final effect, then check forms at the END
     new_children.push(final_effect);
+    new_children.extend(check_forms);
 
     Some(Box::new(CstNode::list(new_children, node.ann.clone())))
 }
