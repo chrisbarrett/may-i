@@ -31,7 +31,7 @@ Trace
                                …                                       │
                                "clone"))                               │ "status" = "clone" → no
                (positional "checkout"                                  │ "status" = "checkout" → no
-                         "--")                                         │ "status" = "--" → no
+                           "--")                                       │ "status" = "--" → no
                (positional "worktree"))                                │ "status" = "worktree" → no
               …))                                                      │
         (effect                                                        │ → :ask "git mutation requires approval in non-writing agents"

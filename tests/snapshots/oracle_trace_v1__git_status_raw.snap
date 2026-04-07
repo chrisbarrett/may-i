@@ -31,7 +31,7 @@ expression: normalised
                                [2m…[0m                                       [2m│[0m
                                [32m"clone"[0m[2m)[0m[2m)[0m                               [2m│[0m [2m"status" = "clone" [0m[2m→[0m [33mno[0m
                [2m([0m[34mpositional[0m [32m"checkout"[0m                                  [2m│[0m [2m"status" = "checkout" [0m[2m→[0m [33mno[0m
-                         [32m"--"[0m[2m)[0m                                         [2m│[0m [2m"status" = "--" [0m[2m→[0m [33mno[0m
+                           [32m"--"[0m[2m)[0m                                       [2m│[0m [2m"status" = "--" [0m[2m→[0m [33mno[0m
                [2m([0m[34mpositional[0m [32m"worktree"[0m[2m)[0m[2m)[0m                                [2m│[0m [2m"status" = "worktree" [0m[2m→[0m [33mno[0m
               [2m…[0m[2m)[0m[2m)[0m                                                      [2m│[0m
         [2m([0m[2meffect[0m                                                        [2m│[0m [2m[0m[2m→[0m [1;33m:ask[0m [32m"git mutation requires approval in non-writing agents"[0m

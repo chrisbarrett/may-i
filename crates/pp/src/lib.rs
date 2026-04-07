@@ -1362,12 +1362,10 @@ fn render_fill<A: Clone + TriviaSource>(
         return;
     }
 
-    // Column where first arg would be (head col + space + head + space)
-    let first_arg_col = indent + 1 + head_width + 1;
-    // Cap alignment to prevent excessive rightward drift when nested
-    // Body indent is indent + 2, so we use that as a reasonable bound
-    let body_indent = indent + 2;
-    let align = first_arg_col.min(body_indent + 8);
+    // Column where first arg would be (head col + space + head + space).
+    // Fill layout only applies to all-atom children, so there's no
+    // risk of recursive nesting — always align under the first arg.
+    let align = indent + 1 + head_width + 1;
     let mut col = indent + 1 + head_width; // column after head
 
     let last = children.len() - 1;
@@ -1958,6 +1956,33 @@ mod tests {
                 "Line has excessive indent ({} chars): {}",
                 leading,
                 line
+            );
+        }
+    }
+
+    #[test]
+    fn forbidden_fill_aligns_under_first_arg() {
+        // Continuation lines in fill layout should align under the first arg
+        let doc = l(vec![
+            a("forbidden"),
+            a(r#""-d""#),
+            a(r#""--data""#),
+            a(r#""--data-raw""#),
+            a(r#""--data-binary""#),
+            a(r#""--data-urlencode""#),
+            a(r#""-F""#),
+            a(r#""--form""#),
+        ]);
+        let result = pp(&doc, 60);
+        let lines: Vec<&str> = result.lines().collect();
+        if lines.len() > 1 {
+            // First arg "-d" position
+            let first_arg_col = lines[0].find(r#""-d""#).unwrap();
+            // Continuation should start at the same column
+            let cont_col = lines[1].len() - lines[1].trim_start().len();
+            assert_eq!(
+                cont_col, first_arg_col,
+                "continuation should align under first arg. Output:\n{result}"
             );
         }
     }
