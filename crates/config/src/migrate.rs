@@ -128,9 +128,14 @@ pub fn complexity(node: &CstNode) -> usize {
 ///   inlining may create nested `(and (and ...))` structures that flattening
 ///   then canonicalises.
 ///
-/// - `cond_single_clause_to_if` and `and_trailing_effect_to_when` are cosmetic
-///   simplifiers that run last and have no dependencies other than the tree
-///   being in near-canonical form.
+/// - `cond_single_clause_to_if`, `and_trailing_effect_to_when`, and
+///   `predicate_pushdown` are cosmetic simplifiers that run last and have
+///   no dependencies other than the tree being in near-canonical form.
+///
+/// - `predicate_pushdown` **after** `and_trailing_effect_to_when`:
+///   `and_trailing_effect_to_when` produces `(when ...)` from
+///   `(and ... (effect ...))`, and `predicate_pushdown` then lifts
+///   any remaining `(and/or ... (when ...))` patterns.
 pub fn migration_rules() -> Vec<RewriteFn> {
     vec![
         // Stage 1 — structural unwrapping
@@ -149,6 +154,7 @@ pub fn migration_rules() -> Vec<RewriteFn> {
         // Stage 3 — cosmetic simplification
         Box::new(cond_single_clause_to_if),        // (cond (P E) (else E)) → (if P E E)
         Box::new(and_trailing_effect_to_when),      // (and … (effect …)) → (when … (effect …))
+        Box::new(predicate_pushdown),               // (and … (when P B)) → (when (and … P) B)
     ]
 }
 
@@ -497,6 +503,65 @@ fn and_trailing_effect_to_when(node: &CstNode) -> Option<Box<CstNode>> {
     Some(Box::new(CstNode {
         ann: Default::default(),
         shape: Shape::List(when_children),
+    }))
+}
+
+/// Push down predicates from a combinator into a trailing `when`/`unless`.
+///
+/// `(and e1 ... en (when P B))` → `(when (and e1 ... en P) B)`
+/// `(or  e1 ... en (when P B))` → `(when (or  e1 ... en P) B)`
+///
+/// Same for `unless`.  Requires at least one predicate *besides* the
+/// `when`/`unless` (i.e. `(and (when P B))` is not rewritten).
+fn predicate_pushdown(node: &CstNode) -> Option<Box<CstNode>> {
+    let children = node.as_list()?;
+    let tag = children[0].as_atom()?;
+    if tag != "and" && tag != "or" {
+        return None;
+    }
+    // Need at least: tag + one predicate + when/unless
+    if children.len() < 3 {
+        return None;
+    }
+    let last = children.last()?;
+    let last_children = last.as_list()?;
+    let wrapper_tag = last_children[0].as_atom()?;
+    if wrapper_tag != "when" && wrapper_tag != "unless" {
+        return None;
+    }
+    // when/unless must have exactly (tag pred body)
+    if last_children.len() != 3 {
+        return None;
+    }
+
+    let inner_pred = &last_children[1];
+    let body = &last_children[2];
+
+    // Build the combined predicate: (tag e1 ... en inner_pred)
+    let mut comb_children: Vec<Box<CstNode>> = Vec::new();
+    comb_children.push(Box::new(CstNode::atom(tag, Default::default())));
+    for child in &children[1..children.len() - 1] {
+        comb_children.push(Box::new(strip_whitespace_trivia(child)));
+    }
+    comb_children.push(Box::new(strip_whitespace_trivia(inner_pred)));
+    let combined_pred = Box::new(CstNode::list(comb_children, Default::default()));
+
+    // Build (when/unless combined_pred body)
+    let result_children = vec![
+        Box::new(CstNode::atom(
+            wrapper_tag,
+            TriviaAnn {
+                leading: node.ann.leading.clone(),
+                ..Default::default()
+            },
+        )),
+        combined_pred,
+        Box::new(strip_whitespace_trivia(body)),
+    ];
+
+    Some(Box::new(CstNode {
+        ann: Default::default(),
+        shape: Shape::List(result_children),
     }))
 }
 
@@ -1933,6 +1998,105 @@ mod tests {
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let result = migrate(nodes.into_iter().next().unwrap());
         assert_eq!(result.serialize(), "(and (or a b))");
+    }
+
+    // ── Predicate push-down: (COMB ... (when/unless P B)) ──────────
+
+    #[test]
+    fn test_and_trailing_when_pushdown() {
+        // (and e1 (when p b)) → (when (and e1 p) b)
+        let input = r#"(and (positional "fmt") (when build-mode (effect :allow)))"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let result = migrate(nodes.into_iter().next().unwrap());
+        assert_eq!(
+            result.serialize(),
+            r#"(when (and (positional "fmt") build-mode) (effect :allow))"#,
+        );
+    }
+
+    #[test]
+    fn test_and_trailing_when_multiple_preds() {
+        // (and e1 e2 (when p b)) → (when (and e1 e2 p) b)
+        let input = r#"(and (positional "x") (anywhere "-f") (when ctx (effect :ask)))"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let result = migrate(nodes.into_iter().next().unwrap());
+        assert_eq!(
+            result.serialize(),
+            r#"(when (and (positional "x") (anywhere "-f") ctx) (effect :ask))"#,
+        );
+    }
+
+    #[test]
+    fn test_and_trailing_unless_pushdown() {
+        // (and e1 (unless p b)) → (unless (and e1 p) b)
+        let input = r#"(and (positional "x") (unless danger (effect :allow)))"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let result = migrate(nodes.into_iter().next().unwrap());
+        assert_eq!(
+            result.serialize(),
+            r#"(unless (and (positional "x") danger) (effect :allow))"#,
+        );
+    }
+
+    #[test]
+    fn test_or_trailing_when_pushdown() {
+        // (or e1 (when p b)) → (when (or e1 p) b)
+        let input = r#"(or (positional "a") (when ctx (effect :allow)))"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let result = migrate(nodes.into_iter().next().unwrap());
+        assert_eq!(
+            result.serialize(),
+            r#"(when (or (positional "a") ctx) (effect :allow))"#,
+        );
+    }
+
+    #[test]
+    fn test_or_trailing_unless_pushdown() {
+        // (or e1 (unless p b)) → (unless (or e1 p) b)
+        let input = r#"(or (positional "a") (unless bad (effect :deny)))"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let result = migrate(nodes.into_iter().next().unwrap());
+        assert_eq!(
+            result.serialize(),
+            r#"(unless (or (positional "a") bad) (effect :deny))"#,
+        );
+    }
+
+    #[test]
+    fn test_pushdown_no_match_when_not_last() {
+        // (and (when p b) e1) — when is not the last child, no pushdown
+        let input = r#"(and (when ctx (effect :allow)) (positional "x"))"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let result = migrate(nodes.into_iter().next().unwrap());
+        // Should stay as (and ...) — the when is not the trailing child
+        assert!(
+            result.serialize().starts_with("(and"),
+            "when not trailing → no pushdown. Got: {}",
+            result.serialize(),
+        );
+    }
+
+    #[test]
+    fn test_pushdown_no_match_too_few_children() {
+        // (and (when p b)) — only one child besides tag, no predicates to push
+        let input = r#"(and (when ctx (effect :allow)))"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let result = migrate(nodes.into_iter().next().unwrap());
+        // No predicates to push down, stays as-is
+        assert_eq!(result.serialize(), "(and (when ctx (effect :allow)))");
+    }
+
+    #[test]
+    fn test_pushdown_single_pred_unwraps_combinator() {
+        // (and e1 (when p b)) with one pred → (when (and e1 p) b)
+        // not (when (and (and e1) p) b)
+        let input = r#"(and (positional "x") (when ctx (effect :allow)))"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let result = migrate(nodes.into_iter().next().unwrap());
+        assert_eq!(
+            result.serialize(),
+            r#"(when (and (positional "x") ctx) (effect :allow))"#,
+        );
     }
 
     // ── strip_whitespace_trivia preserves comments ──────────────────
