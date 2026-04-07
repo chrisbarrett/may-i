@@ -1,6 +1,5 @@
 ---
 source: tests/oracle_trace_v1.rs
-assertion_line: 108
 expression: normalised
 ---
 
