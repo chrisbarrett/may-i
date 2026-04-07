@@ -128,9 +128,19 @@ pub fn complexity(node: &CstNode) -> usize {
 ///   inlining may create nested `(and (and ...))` structures that flattening
 ///   then canonicalises.
 ///
-/// - `cond_single_clause_to_if`, `and_trailing_effect_to_when`, and
-///   `predicate_pushdown` are cosmetic simplifiers that run last and have
-///   no dependencies other than the tree being in near-canonical form.
+/// - `cond_single_clause_to_if`, `and_trailing_effect_to_when`,
+///   `or_leading_when_to_if`, `flatten_nested_if`, and `predicate_pushdown`
+///   are cosmetic simplifiers that run last and have no dependencies other
+///   than the tree being in near-canonical form.
+///
+/// - `or_leading_when_to_if` **before** `predicate_pushdown`:
+///   peels the leading `(when P E)` off an `or` to produce `(if P E rest)`.
+///   This must fire before `predicate_pushdown` would collapse the trailing
+///   `when` into the `or`.
+///
+/// - `flatten_nested_if` composes with `or_leading_when_to_if`: repeated
+///   peeling produces `(if P1 E1 (if P2 E2 ...))`, which is then collapsed
+///   into `(cond (P1 E1) (P2 E2) ...)`.
 ///
 /// - `predicate_pushdown` **after** `and_trailing_effect_to_when`:
 ///   `and_trailing_effect_to_when` produces `(when ...)` from
@@ -153,7 +163,10 @@ pub fn migration_rules() -> Vec<RewriteFn> {
 
         // Stage 3 — cosmetic simplification
         Box::new(cond_single_clause_to_if),        // (cond (P E) (else E)) → (if P E E)
+        Box::new(cond_absorb_else),                 // (cond … (else (if …))) → (cond … clause…)
         Box::new(and_trailing_effect_to_when),      // (and … (effect …)) → (when … (effect …))
+        Box::new(or_leading_when_to_if),            // (or (when P E) …) → (if P E …)
+        Box::new(flatten_nested_if),                // (if P E (if …)) → (cond …)
         Box::new(predicate_pushdown),               // (and … (when P B)) → (when (and … P) B)
     ]
 }
@@ -576,6 +589,166 @@ fn predicate_pushdown(node: &CstNode) -> Option<Box<CstNode>> {
     }))
 }
 
+/// Peel a leading `when` off an `or`: `(or (when P E1) E2...)` → `(if P E1 E2)`.
+///
+/// When the `or` has more than 2 non-tag children, the remainder is wrapped:
+/// `(or (when P E1) E2 E3...)` → `(if P E1 (or E2 E3...))`.
+///
+/// Only fires when the first child after the tag is a `(when P B)` form.
+fn or_leading_when_to_if(node: &CstNode) -> Option<Box<CstNode>> {
+    let children = node.as_list()?;
+    if children[0].as_atom()? != "or" {
+        return None;
+    }
+    if children.len() < 3 {
+        return None;
+    }
+
+    let first = &children[1];
+    if !first.is_tagged("when") {
+        return None;
+    }
+    let when_children = first.as_list()?;
+    if when_children.len() != 3 {
+        return None;
+    }
+
+    let pred = &when_children[1];
+    let then_branch = &when_children[2];
+
+    let else_branch = if children.len() == 3 {
+        // (or (when P E1) E2) → (if P E1 E2)
+        Box::new(strip_whitespace_trivia(&children[2]))
+    } else {
+        // (or (when P E1) E2 E3 ...) → (if P E1 (or E2 E3 ...))
+        let mut rest = vec![Box::new(CstNode::atom("or", Default::default()))];
+        for child in &children[2..] {
+            rest.push(Box::new(strip_whitespace_trivia(child)));
+        }
+        Box::new(CstNode::list(rest, Default::default()))
+    };
+
+    let if_children = vec![
+        Box::new(CstNode::atom(
+            "if",
+            TriviaAnn {
+                leading: node.ann.leading.clone(),
+                ..Default::default()
+            },
+        )),
+        Box::new(strip_whitespace_trivia(pred)),
+        Box::new(strip_whitespace_trivia(then_branch)),
+        else_branch,
+    ];
+
+    Some(Box::new(CstNode::list(if_children, Default::default())))
+}
+
+/// Flatten nested conditionals in the else branch of `if` into `cond`.
+///
+/// - `(if P1 E1 (if P2 E2 E3))`    → `(cond (P1 E1) (P2 E2) (else E3))`
+/// - `(if P1 E1 (when P2 E2))`      → `(cond (P1 E1) (P2 E2))`
+/// - `(if P1 E1 (cond clauses...))` → `(cond (P1 E1) clauses...)`
+fn flatten_nested_if(node: &CstNode) -> Option<Box<CstNode>> {
+    if !node.is_tagged("if") {
+        return None;
+    }
+    let children = node.as_list()?;
+    if children.len() != 4 {
+        return None;
+    }
+
+    let pred = &children[1];
+    let then_branch = &children[2];
+    let else_branch = &children[3];
+
+    let else_children = else_branch.as_list()?;
+    let else_tag = else_children[0].as_atom()?;
+
+    let mut cond_children: Vec<Box<CstNode>> = Vec::new();
+    cond_children.push(Box::new(CstNode::atom(
+        "cond",
+        TriviaAnn {
+            leading: node.ann.leading.clone(),
+            ..Default::default()
+        },
+    )));
+
+    // First clause from the outer if
+    cond_children.push(Box::new(CstNode::list(
+        vec![
+            Box::new(strip_whitespace_trivia(pred)),
+            Box::new(strip_whitespace_trivia(then_branch)),
+        ],
+        Default::default(),
+    )));
+
+    match else_tag {
+        "if" => {
+            // (if P2 E2 E3) → clause (P2 E2) + (else E3)
+            if else_children.len() != 4 {
+                return None;
+            }
+            cond_children.push(Box::new(CstNode::list(
+                vec![
+                    Box::new(strip_whitespace_trivia(&else_children[1])),
+                    Box::new(strip_whitespace_trivia(&else_children[2])),
+                ],
+                Default::default(),
+            )));
+            cond_children.push(Box::new(CstNode::list(
+                vec![
+                    Box::new(CstNode::atom("else", Default::default())),
+                    Box::new(strip_whitespace_trivia(&else_children[3])),
+                ],
+                Default::default(),
+            )));
+        }
+        "when" => {
+            // (when P2 E2) → clause (P2 E2), no else
+            if else_children.len() != 3 {
+                return None;
+            }
+            cond_children.push(Box::new(CstNode::list(
+                vec![
+                    Box::new(strip_whitespace_trivia(&else_children[1])),
+                    Box::new(strip_whitespace_trivia(&else_children[2])),
+                ],
+                Default::default(),
+            )));
+        }
+        "unless" => {
+            // (unless P2 E2) → clause ((not P2) E2), no else
+            if else_children.len() != 3 {
+                return None;
+            }
+            let negated_pred = CstNode::list(
+                vec![
+                    Box::new(CstNode::atom("not", Default::default())),
+                    Box::new(strip_whitespace_trivia(&else_children[1])),
+                ],
+                Default::default(),
+            );
+            cond_children.push(Box::new(CstNode::list(
+                vec![
+                    Box::new(negated_pred),
+                    Box::new(strip_whitespace_trivia(&else_children[2])),
+                ],
+                Default::default(),
+            )));
+        }
+        "cond" => {
+            // Prepend our clause to existing cond clauses
+            for clause in &else_children[1..] {
+                cond_children.push(Box::new(strip_whitespace_trivia(clause)));
+            }
+        }
+        _ => return None,
+    }
+
+    Some(Box::new(CstNode::list(cond_children, Default::default())))
+}
+
 /// Simplify `(cond (PRED EFFECT) (else EFFECT))` → `(if PRED EFFECT EFFECT)`.
 ///
 /// A `cond` with exactly one non-else clause plus an `else` clause is
@@ -628,6 +801,114 @@ fn cond_single_clause_to_if(node: &CstNode) -> Option<Box<CstNode>> {
         ann: Default::default(),
         shape: Shape::List(if_children),
     }))
+}
+
+/// Absorb a conditional `else` branch into the enclosing `cond`.
+///
+/// - `(cond C... (else (if P E1 E2)))` → `(cond C... (P E1) (else E2))`
+/// - `(cond C... (else (when P E)))`   → `(cond C... (P E))`
+/// - `(cond C... (else (cond D...)))`  → `(cond C... D...)`
+fn cond_absorb_else(node: &CstNode) -> Option<Box<CstNode>> {
+    if !node.is_tagged("cond") {
+        return None;
+    }
+    let children = node.as_list()?;
+    // Need at least cond tag + one clause + else
+    if children.len() < 3 {
+        return None;
+    }
+
+    let last = children.last()?;
+    if !last.is_tagged("else") {
+        return None;
+    }
+    let else_children = last.as_list()?;
+    if else_children.len() != 2 {
+        return None;
+    }
+
+    let inner = &else_children[1];
+    let inner_children = inner.as_list()?;
+    let inner_tag = inner_children[0].as_atom()?;
+
+    if inner_tag != "if" && inner_tag != "when" && inner_tag != "unless" && inner_tag != "cond" {
+        return None;
+    }
+
+    // Keep existing clauses (everything except the tag and the else)
+    let mut result_children: Vec<Box<CstNode>> = Vec::new();
+    result_children.push(Box::new(CstNode::atom(
+        "cond",
+        TriviaAnn {
+            leading: node.ann.leading.clone(),
+            ..Default::default()
+        },
+    )));
+    for clause in &children[1..children.len() - 1] {
+        result_children.push(Box::new(strip_whitespace_trivia(clause)));
+    }
+
+    match inner_tag {
+        "if" => {
+            if inner_children.len() != 4 {
+                return None;
+            }
+            result_children.push(Box::new(CstNode::list(
+                vec![
+                    Box::new(strip_whitespace_trivia(&inner_children[1])),
+                    Box::new(strip_whitespace_trivia(&inner_children[2])),
+                ],
+                Default::default(),
+            )));
+            result_children.push(Box::new(CstNode::list(
+                vec![
+                    Box::new(CstNode::atom("else", Default::default())),
+                    Box::new(strip_whitespace_trivia(&inner_children[3])),
+                ],
+                Default::default(),
+            )));
+        }
+        "when" => {
+            if inner_children.len() != 3 {
+                return None;
+            }
+            result_children.push(Box::new(CstNode::list(
+                vec![
+                    Box::new(strip_whitespace_trivia(&inner_children[1])),
+                    Box::new(strip_whitespace_trivia(&inner_children[2])),
+                ],
+                Default::default(),
+            )));
+        }
+        "unless" => {
+            // (unless P E) → ((not P) E)
+            if inner_children.len() != 3 {
+                return None;
+            }
+            let negated_pred = CstNode::list(
+                vec![
+                    Box::new(CstNode::atom("not", Default::default())),
+                    Box::new(strip_whitespace_trivia(&inner_children[1])),
+                ],
+                Default::default(),
+            );
+            result_children.push(Box::new(CstNode::list(
+                vec![
+                    Box::new(negated_pred),
+                    Box::new(strip_whitespace_trivia(&inner_children[2])),
+                ],
+                Default::default(),
+            )));
+        }
+        "cond" => {
+            for clause in &inner_children[1..] {
+                result_children.push(Box::new(strip_whitespace_trivia(clause)));
+            }
+        }
+        _ => return None,
+    }
+
+    Some(Box::new(CstNode::list(result_children, Default::default())))
 }
 
 /// Convert (wrapper CMD ...) to (rule CMD ... . (may-i *))
@@ -2132,6 +2413,154 @@ mod tests {
         assert_eq!(
             result.serialize(),
             r#"(when (and (positional "x") ctx) (effect :allow))"#,
+        );
+    }
+
+    // ── or-of-whens to cond ─────────────────────────────────────────
+
+    #[test]
+    fn test_or_all_whens_to_cond() {
+        // (or (when p1 b1) (when p2 b2)) → (cond (p1 b1) (p2 b2))
+        let input = r#"(or (when (exact) (effect :allow)) (when (positional "info") (effect :allow)))"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let result = migrate(nodes.into_iter().next().unwrap());
+        assert_eq!(
+            result.serialize(),
+            r#"(cond ((exact) (effect :allow)) ((positional "info") (effect :allow)))"#,
+        );
+    }
+
+    #[test]
+    fn test_or_whens_with_else_to_cond() {
+        // (or (when p1 b1) (when p2 b2) fallback) → (cond (p1 b1) (p2 b2) (else fallback))
+        let input = r#"(or (when (exact) (effect :allow)) (when (positional "info") (effect :allow)) (effect :deny))"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let result = migrate(nodes.into_iter().next().unwrap());
+        assert_eq!(
+            result.serialize(),
+            r#"(cond ((exact) (effect :allow)) ((positional "info") (effect :allow)) (else (effect :deny)))"#,
+        );
+    }
+
+    #[test]
+    fn test_or_single_when_no_cond() {
+        // (or (when p b)) — only one clause, not worth converting
+        let input = r#"(or (when (exact) (effect :allow)))"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let result = migrate(nodes.into_iter().next().unwrap());
+        assert_eq!(result.serialize(), r#"(or (when (exact) (effect :allow)))"#);
+    }
+
+    #[test]
+    fn test_or_no_whens_unchanged() {
+        // (or a b c) — no when children, should not convert
+        let input = r#"(or (exact) (positional "x") (positional "y"))"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let result = migrate(nodes.into_iter().next().unwrap());
+        assert!(
+            result.serialize().starts_with("(or"),
+            "no when children → stays as or. Got: {}",
+            result.serialize(),
+        );
+    }
+
+    #[test]
+    fn test_and_whens_not_converted() {
+        // (and (when p1 b1) (when p2 b2)) — only or, not and
+        let input = r#"(and (when (exact) (effect :allow)) (when (positional "x") (effect :deny)))"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let result = migrate(nodes.into_iter().next().unwrap());
+        assert!(
+            !result.serialize().starts_with("(cond"),
+            "and-of-whens should not become cond. Got: {}",
+            result.serialize(),
+        );
+    }
+
+    // ── cond else-if absorption ─────────────────────────────────────
+
+    #[test]
+    fn test_cond_else_if_absorption() {
+        // (cond (c1) (else (if p e1 e2))) → (cond (c1) (p e1) (else e2))
+        let input = r#"(cond ((exact) (effect :allow)) (else (if (positional "x") (effect :ask) (effect :deny))))"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let result = migrate(nodes.into_iter().next().unwrap());
+        assert_eq!(
+            result.serialize(),
+            r#"(cond ((exact) (effect :allow)) ((positional "x") (effect :ask)) (else (effect :deny)))"#,
+        );
+    }
+
+    #[test]
+    fn test_cond_else_when_absorption() {
+        // (cond (c1) (else (when p e))) → (cond (c1) (p e))
+        let input = r#"(cond ((exact) (effect :allow)) (else (when (positional "x") (effect :ask))))"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let result = migrate(nodes.into_iter().next().unwrap());
+        assert_eq!(
+            result.serialize(),
+            r#"(cond ((exact) (effect :allow)) ((positional "x") (effect :ask)))"#,
+        );
+    }
+
+    #[test]
+    fn test_cond_else_cond_absorption() {
+        // (cond (c1) (else (cond (c2) (else e)))) → (cond (c1) (c2) (else e))
+        let input = r#"(cond ((exact) (effect :allow)) (else (cond ((positional "x") (effect :ask)) (else (effect :deny)))))"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let result = migrate(nodes.into_iter().next().unwrap());
+        assert_eq!(
+            result.serialize(),
+            r#"(cond ((exact) (effect :allow)) ((positional "x") (effect :ask)) (else (effect :deny)))"#,
+        );
+    }
+
+    #[test]
+    fn test_cond_multi_clause_else_if_absorption() {
+        // (cond (c1) (c2) (else (if p e1 e2))) — multiple clauses + else-if
+        let input = r#"(cond ((exact) (effect :allow)) ((positional "a") (effect :ask)) (else (if (positional "b") (effect :deny) (effect :allow))))"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let result = migrate(nodes.into_iter().next().unwrap());
+        assert_eq!(
+            result.serialize(),
+            r#"(cond ((exact) (effect :allow)) ((positional "a") (effect :ask)) ((positional "b") (effect :deny)) (else (effect :allow)))"#,
+        );
+    }
+
+    #[test]
+    fn test_cond_else_non_conditional_unchanged() {
+        // (cond (c1) (else plain)) — else is not if/when/cond, no absorption
+        let input = r#"(cond ((exact) (effect :allow)) (else (effect :deny)))"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let result = migrate(nodes.into_iter().next().unwrap());
+        // cond_single_clause_to_if fires here: (cond (P E) (else E)) → (if P E E)
+        assert_eq!(
+            result.serialize(),
+            r#"(if (exact) (effect :allow) (effect :deny))"#,
+        );
+    }
+
+    #[test]
+    fn test_cond_else_unless_absorption() {
+        // (cond (c1) (c2) (else (unless p e))) → (cond (c1) (c2) ((not p) e))
+        let input = r#"(cond ((exact) (effect :allow)) ((positional "a") (effect :ask)) (else (unless danger (effect :deny))))"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let result = migrate(nodes.into_iter().next().unwrap());
+        assert_eq!(
+            result.serialize(),
+            r#"(cond ((exact) (effect :allow)) ((positional "a") (effect :ask)) ((not danger) (effect :deny)))"#,
+        );
+    }
+
+    #[test]
+    fn test_flatten_nested_if_unless() {
+        // (if P1 E1 (unless P2 E2)) → (cond (P1 E1) ((not P2) E2))
+        let input = r#"(if (exact) (effect :allow) (unless danger (effect :deny)))"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let result = migrate(nodes.into_iter().next().unwrap());
+        assert_eq!(
+            result.serialize(),
+            r#"(cond ((exact) (effect :allow)) ((not danger) (effect :deny)))"#,
         );
     }
 
