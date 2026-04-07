@@ -16,4 +16,5 @@ thiserror = "2"
 
 [dev-dependencies]
 may-i-engine = { path = "../engine" }
+proptest = "1"
 tempfile = "3"

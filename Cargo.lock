@@ -544,6 +544,7 @@ dependencies = [
  "may-i-engine",
  "may-i-sexpr",
  "miette",
+ "proptest",
  "regex",
  "tempfile",
  "thiserror 2.0.18",

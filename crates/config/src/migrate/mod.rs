@@ -36,6 +36,9 @@ mod rename_has_to_fact;
 mod simplify_command;
 mod wrapper_to_rule;
 
+#[cfg(test)]
+mod property_tests;
+
 use may_i_sexpr::cst::CstNode;
 
 /// A rewrite rule that transforms v1 syntax to canonical.
