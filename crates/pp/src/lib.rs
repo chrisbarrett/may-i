@@ -1142,6 +1142,10 @@ fn render_broken_delim<A: Clone + TriviaSource>(
             }
     }
 
+    // When nothing was inlined, cascade at indent+1 (like all-drop)
+    // rather than under the would-be first arg position.
+    let cascade_col = if n_inline == 0 { indent + 1 } else { cascade_col };
+
     // Emit inline children.
     for child in &children[1..1 + n_inline] {
         out.emit_space();
@@ -2054,6 +2058,29 @@ mod tests {
                 "Line has excessive indent ({} chars): {}",
                 leading,
                 line
+            );
+        }
+    }
+
+    // ── Broken layout with zero inline children ──────────────────
+
+    #[test]
+    fn broken_zero_inline_uses_drop_indent() {
+        // When all children are multiline, broken layout should cascade at
+        // indent+1 (like all-drop), not indent+head_width+2 (under first arg).
+        let doc = l(vec![
+            a("or"),
+            l(vec![a("when"), a("(exact)"), l(vec![a("effect"), a(":allow")])]),
+            l(vec![a("when"), a("pred"), l(vec![a("effect"), a(":ask")])]),
+        ]);
+        let result = pp(&doc, 40);
+        let lines: Vec<&str> = result.lines().collect();
+        // Children should be at indent 1 (all-drop style), not indent 4
+        if lines.len() > 1 {
+            let second_line_indent = lines[1].len() - lines[1].trim_start().len();
+            assert_eq!(
+                second_line_indent, 1,
+                "children should be at indent 1 when nothing inlined. Output:\n{result}"
             );
         }
     }
