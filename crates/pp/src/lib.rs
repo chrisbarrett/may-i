@@ -443,7 +443,6 @@ struct EventBuffer<A> {
     current_line_width: usize,
     max_continuation_width: usize,
     on_first_line: bool,
-    n_lines: usize,
 }
 
 impl<A> EventBuffer<A> {
@@ -454,7 +453,6 @@ impl<A> EventBuffer<A> {
             current_line_width: 0,
             max_continuation_width: 0,
             on_first_line: true,
-            n_lines: 1,
         }
     }
 
@@ -468,10 +466,6 @@ impl<A> EventBuffer<A> {
 
     fn is_multiline(&self) -> bool {
         !self.on_first_line
-    }
-
-    fn line_count(&self) -> usize {
-        self.n_lines
     }
 
     /// Max line width, where the first line is offset by `base_indent`.
@@ -509,7 +503,6 @@ impl<A: Clone> PrettyOutput<A> for EventBuffer<A> {
             self.max_continuation_width = self.max_continuation_width.max(self.current_line_width);
         }
         self.current_line_width = indent;
-        self.n_lines += 1;
         self.events.push(OutputEvent::BeginLine(indent));
     }
 
@@ -1120,11 +1113,13 @@ fn render_broken_delim<A: Clone + TriviaSource>(
     for (i, child) in children[1..].iter().enumerate() {
         let mut buf = EventBuffer::new();
         render(child, col + 1, width, dimmed, &mut buf);
-        // Don't inline a multiline child if there are more children after
-        // it — subsequent children would cascade at the wrong column.
-        // Also don't inline large (3+ line) multiline last-children like
-        // (cond ...) — only small 2-line forms like [:key "val"] inline.
-        if buf.is_multiline() && (i + 1 < remaining_count || buf.line_count() > 2) {
+        // Don't inline a multiline child if there are more children
+        // after it, or if other children are already on the head line.
+        // A multiline child as the sole arg after the head is fine
+        // (e.g. `(anywhere (regex ...))`, `(has [:key "val"])`), but
+        // after other inlined args it reads poorly (e.g.
+        // `(and (positional "fmt") (when ...)`).
+        if buf.is_multiline() && (i + 1 < remaining_count || n_inline > 0) {
             break;
         }
         let child_width = buf.first_line_width();
@@ -2038,27 +2033,25 @@ mod tests {
         }
     }
 
-    // ── EventBuffer::line_count ──────────────────────────────────
+    // ── Multiline last-child breaks to own line ──────────────────
 
     #[test]
-    fn event_buffer_line_count_single_line() {
-        let mut buf = EventBuffer::<()>::new();
-        buf.emit_atom("hello", &(), false);
-        assert_eq!(buf.line_count(), 1);
+    fn two_line_multiline_last_child_not_inlined() {
+        // (and (positional "fmt") (when build-mode (effect :allow)))
+        // The (when ...) is 2 lines and should NOT inline after (positional "fmt")
+        let doc = l(vec![
+            a("and"),
+            l(vec![a("positional"), a("\"fmt\"")]),
+            l(vec![a("when"), a("build-mode"), l(vec![a("effect"), a(":allow")])]),
+        ]);
+        let result = pp(&doc, 80);
+        let lines: Vec<&str> = result.lines().collect();
+        let fmt_line = lines.iter().find(|l| l.contains("\"fmt\"")).unwrap();
+        assert!(
+            !fmt_line.contains("when"),
+            "when should not be on same line as positional: {result:?}"
+        );
     }
-
-    #[test]
-    fn event_buffer_line_count_multiline() {
-        let mut buf = EventBuffer::<()>::new();
-        buf.emit_atom("a", &(), false);
-        buf.begin_line(2);
-        buf.emit_atom("b", &(), false);
-        buf.begin_line(2);
-        buf.emit_atom("c", &(), false);
-        assert_eq!(buf.line_count(), 3);
-    }
-
-    // ── Large multiline last-child breaks to own line ──────────────
 
     #[test]
     fn large_multiline_last_child_not_inlined() {
