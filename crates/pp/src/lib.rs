@@ -443,6 +443,7 @@ struct EventBuffer<A> {
     current_line_width: usize,
     max_continuation_width: usize,
     on_first_line: bool,
+    n_lines: usize,
 }
 
 impl<A> EventBuffer<A> {
@@ -453,6 +454,7 @@ impl<A> EventBuffer<A> {
             current_line_width: 0,
             max_continuation_width: 0,
             on_first_line: true,
+            n_lines: 1,
         }
     }
 
@@ -466,6 +468,10 @@ impl<A> EventBuffer<A> {
 
     fn is_multiline(&self) -> bool {
         !self.on_first_line
+    }
+
+    fn line_count(&self) -> usize {
+        self.n_lines
     }
 
     /// Max line width, where the first line is offset by `base_indent`.
@@ -503,6 +509,7 @@ impl<A: Clone> PrettyOutput<A> for EventBuffer<A> {
             self.max_continuation_width = self.max_continuation_width.max(self.current_line_width);
         }
         self.current_line_width = indent;
+        self.n_lines += 1;
         self.events.push(OutputEvent::BeginLine(indent));
     }
 
@@ -1115,7 +1122,9 @@ fn render_broken_delim<A: Clone + TriviaSource>(
         render(child, col + 1, width, dimmed, &mut buf);
         // Don't inline a multiline child if there are more children after
         // it — subsequent children would cascade at the wrong column.
-        if buf.is_multiline() && i + 1 < remaining_count {
+        // Also don't inline large (3+ line) multiline last-children like
+        // (cond ...) — only small 2-line forms like [:key "val"] inline.
+        if buf.is_multiline() && (i + 1 < remaining_count || buf.line_count() > 2) {
             break;
         }
         let child_width = buf.first_line_width();
@@ -1749,24 +1758,23 @@ mod tests {
 
     #[test]
     fn default_layout_broken_one_inline() {
-        // Only one arg fits with its continuation lines within width.
-        // Width 8: greedy would pack x,y (cascade 7, max cont "       w)" = 9 > 8).
-        // Conservative: 1 inline (cascade 5, max cont "     w)" = 7 <= 8).
+        // Width 8: greedy packs x,y on head line (cascade 5, under first arg).
+        // Continuation "     z\n     w)" max 6 ≤ 8.
         let doc = l(vec![a("foo"), a("x"), a("y"), a("z"), a("w")]);
         assert_eq!(
             pp(&doc, 8),
-            "(foo x\n     y\n     z\n     w)"
+            "(foo x y\n     z\n     w)"
         );
     }
 
     #[test]
     fn default_layout_broken_greedy() {
-        // Two args fit on first line with continuation within width.
-        // Width 12: x,y inline (cascade 7), cont "       wwww)" = 12 <= 12.
+        // Two args fit on first line with continuation under first arg.
+        // Width 12: x,y inline (cascade 5), cont "     wwww)" = 10 <= 12.
         let doc = l(vec![a("foo"), a("x"), a("y"), a("zzzz"), a("wwww")]);
         assert_eq!(
             pp(&doc, 12),
-            "(foo x y\n       zzzz\n       wwww)"
+            "(foo x y\n     zzzz\n     wwww)"
         );
     }
 
@@ -2028,6 +2036,54 @@ mod tests {
                 line
             );
         }
+    }
+
+    // ── EventBuffer::line_count ──────────────────────────────────
+
+    #[test]
+    fn event_buffer_line_count_single_line() {
+        let mut buf = EventBuffer::<()>::new();
+        buf.emit_atom("hello", &(), false);
+        assert_eq!(buf.line_count(), 1);
+    }
+
+    #[test]
+    fn event_buffer_line_count_multiline() {
+        let mut buf = EventBuffer::<()>::new();
+        buf.emit_atom("a", &(), false);
+        buf.begin_line(2);
+        buf.emit_atom("b", &(), false);
+        buf.begin_line(2);
+        buf.emit_atom("c", &(), false);
+        assert_eq!(buf.line_count(), 3);
+    }
+
+    // ── Large multiline last-child breaks to own line ──────────────
+
+    #[test]
+    fn large_multiline_last_child_not_inlined() {
+        // (positional "foo" "bar" (cond ...)) where the cond has 3+ lines
+        // should put (cond ...) on its own line, not inline after "bar"
+        let doc = l(vec![
+            a("positional"),
+            a("\"foo\""),
+            a("\"bar\""),
+            l(vec![
+                a("cond"),
+                l(vec![a("\"x\""), l(vec![a("exact")])]),
+                l(vec![a("\"y\""), l(vec![a("exact")])]),
+                l(vec![a("\"z\""), l(vec![a("exact")])]),
+            ]),
+        ]);
+        let result = pp(&doc, 40);
+        // The cond should start on its own line, not on the same line as "bar"
+        let lines: Vec<&str> = result.lines().collect();
+        // Find the line containing "bar" — cond should NOT be on the same line
+        let bar_line = lines.iter().find(|l| l.contains("\"bar\"")).unwrap();
+        assert!(
+            !bar_line.contains("cond"),
+            "cond should not be on same line as bar: {result:?}"
+        );
     }
 
     // ── parse_sexpr ────────────────────────────────────────────────

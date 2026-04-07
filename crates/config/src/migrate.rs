@@ -22,34 +22,58 @@ use may_i_sexpr::cst::{CstNode, Shape, TriviaAnn};
 /// A rewrite rule that transforms v1 syntax to canonical.
 pub type RewriteFn = Box<dyn Fn(&CstNode) -> Option<Box<CstNode>>>;
 
-/// Recursively strip trivia (and zeroise the span) from a node and its children.
+/// Recursively strip whitespace trivia from a node and its children, preserving
+/// comments.
 ///
 /// The `pp` crate uses `has_source_trivia()` (non-zero span) to decide whether
 /// to preserve a node's original source layout or reflow it fresh.  When a
 /// rewrite rule *clones* a source node and places it in a new structural
-/// context, call `strip_trivia` first so the renderer treats it as a
+/// context, call `strip_whitespace_trivia` first so the renderer treats it as a
 /// constructed node and applies optimal layout (fill, broken, etc.) rather than
 /// locking it to the old source formatting.
+///
+/// Comments are preserved so that inline comments (e.g. `;; flags-only`) survive
+/// migration.  When comments remain, a sentinel span `Span::new(0, 1)` is used
+/// so that `has_source_trivia()` returns true and the pretty printer emits them.
 ///
 /// **When to call:**  any time you clone a source-parsed node and embed it in a
 /// freshly-built list where its old whitespace decisions no longer apply.
 /// Freshly constructed nodes (built via `CstNode::atom`/`CstNode::list` with
-/// `Default::default()` annotations) already have zero spans, so `strip_trivia`
-/// is not needed for them.
-fn strip_trivia(node: &CstNode) -> CstNode {
+/// `Default::default()` annotations) already have zero spans, so
+/// `strip_whitespace_trivia` is not needed for them.
+fn strip_whitespace_trivia(node: &CstNode) -> CstNode {
+    use may_i_core::Trivia;
+
     let mut stripped = node.clone();
-    stripped.ann = Default::default();
-    
+
+    let leading: Vec<Trivia> = stripped.ann.leading.into_iter()
+        .filter(|t| matches!(t, Trivia::Comment { .. }))
+        .collect();
+    let trailing: Vec<Trivia> = stripped.ann.trailing.into_iter()
+        .filter(|t| matches!(t, Trivia::Comment { .. }))
+        .collect();
+
+    let has_comments = !leading.is_empty() || !trailing.is_empty();
+    stripped.ann = TriviaAnn {
+        leading,
+        trailing,
+        span: if has_comments {
+            may_i_core::Span::new(0, 1) // sentinel: keeps has_source_trivia() true
+        } else {
+            may_i_core::Span::new(0, 0)
+        },
+    };
+
     // Recursively strip children
     match &mut stripped.shape {
         Shape::List(children) | Shape::Vector(children) => {
             for child in children.iter_mut() {
-                **child = strip_trivia(child);
+                **child = strip_whitespace_trivia(child);
             }
         }
         _ => {}
     }
-    
+
     stripped
 }
 
@@ -159,7 +183,7 @@ fn rule_simplify_command(node: &CstNode) -> Option<Box<CstNode>> {
 
     // Strip trivia so pretty printer can use optimal layout,
     // then restore the (command ...) node's leading/trailing trivia.
-    let mut new_cmd = strip_trivia(cmd_value);
+    let mut new_cmd = strip_whitespace_trivia(cmd_value);
     new_cmd.ann.leading = second.ann.leading.clone();
     new_cmd.ann.trailing = second.ann.trailing.clone();
     new_children.push(Box::new(new_cmd));
@@ -199,11 +223,11 @@ fn rule_inline_context(node: &CstNode) -> Option<Box<CstNode>> {
             if ctx_children.len() == 2 {
                 // Strip trivia from cloned context expr so pretty printer
                 // can use optimal layout (fill layout for and/or/forbidden)
-                context_expr = Some(Box::new(strip_trivia(&ctx_children[1])));
+                context_expr = Some(Box::new(strip_whitespace_trivia(&ctx_children[1])));
             }
         } else if child.is_tagged("effect") {
             // Strip trivia from effect node so pretty printer can use optimal layout
-            effect_expr = Some(Box::new(strip_trivia(child)));
+            effect_expr = Some(Box::new(strip_whitespace_trivia(child)));
         } else if child.is_tagged("check") {
             check_forms.push(child.clone());
         } else {
@@ -282,7 +306,7 @@ fn rule_inline_args(node: &CstNode) -> Option<Box<CstNode>> {
 
                 // For simple matchers, inline them with stripped trivia
                 // so pretty printer can use optimal layout
-                let inlined = strip_trivia(matcher);
+                let inlined = strip_whitespace_trivia(matcher);
                 new_children.push(Box::new(inlined));
                 changed = true;
                 continue;
@@ -892,7 +916,7 @@ fn hoist_cond(node: &CstNode) -> Option<Box<CstNode>> {
     if case_source.is_tagged("cond") {
         let cond_children = case_source.as_list()?;
         for branch in &cond_children[1..] {
-            case_children.push(Box::new(strip_trivia(branch)));
+            case_children.push(Box::new(strip_whitespace_trivia(branch)));
         }
     } else if case_source.is_tagged("if") {
         // Convert (if PRED THEN ELSE) to case branches
@@ -1909,5 +1933,74 @@ mod tests {
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let result = migrate(nodes.into_iter().next().unwrap());
         assert_eq!(result.serialize(), "(and (or a b))");
+    }
+
+    // ── strip_whitespace_trivia preserves comments ──────────────────
+
+    #[test]
+    fn strip_whitespace_trivia_preserves_comments() {
+        use may_i_core::span::Span;
+        use may_i_core::Trivia;
+
+        let ann = TriviaAnn {
+            leading: vec![
+                Trivia::Whitespace("\n  ".into()),
+                Trivia::Comment { text: ";; important".into(), has_newline: true },
+                Trivia::Whitespace("\n  ".into()),
+            ],
+            trailing: vec![
+                Trivia::Whitespace(" ".into()),
+                Trivia::Comment { text: ";; trailing".into(), has_newline: true },
+            ],
+            span: Span::new(10, 20),
+        };
+        let node = CstNode::atom("foo", ann);
+        let stripped = strip_whitespace_trivia(&node);
+
+        // Comments should survive
+        let leading_comments: Vec<_> = stripped.ann.leading.iter().filter(|t| matches!(t, Trivia::Comment { .. })).collect();
+        assert_eq!(leading_comments.len(), 1, "leading comment should be preserved");
+
+        let trailing_comments: Vec<_> = stripped.ann.trailing.iter().filter(|t| matches!(t, Trivia::Comment { .. })).collect();
+        assert_eq!(trailing_comments.len(), 1, "trailing comment should be preserved");
+
+        // Whitespace should be stripped
+        let leading_ws: Vec<_> = stripped.ann.leading.iter().filter(|t| matches!(t, Trivia::Whitespace(_))).collect();
+        assert_eq!(leading_ws.len(), 0, "whitespace should be stripped");
+
+        // Span should be sentinel (non-zero) since comments survived
+        assert!(stripped.has_source_trivia(), "node with comments should have source trivia");
+    }
+
+    #[test]
+    fn strip_whitespace_trivia_no_comments_zeroes_span() {
+        use may_i_core::span::Span;
+        use may_i_core::Trivia;
+
+        let ann = TriviaAnn {
+            leading: vec![Trivia::Whitespace("\n  ".into())],
+            trailing: vec![Trivia::Whitespace(" ".into())],
+            span: Span::new(10, 20),
+        };
+        let node = CstNode::atom("foo", ann);
+        let stripped = strip_whitespace_trivia(&node);
+
+        assert!(stripped.ann.leading.is_empty());
+        assert!(stripped.ann.trailing.is_empty());
+        assert!(!stripped.has_source_trivia(), "node without comments should not have source trivia");
+    }
+
+    #[test]
+    fn migration_preserves_inline_comment() {
+        // A rule with an inline comment should preserve it through migration
+        let input = "(rule (command cargo) ;; flags-only, e.g. 'cargo --list'\n  (effect :allow))";
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let result = migrate(nodes.into_iter().next().unwrap());
+        let serialized = result.serialize();
+        assert!(
+            serialized.contains("flags-only"),
+            "inline comment should survive migration. Got: {}",
+            serialized
+        );
     }
 }
