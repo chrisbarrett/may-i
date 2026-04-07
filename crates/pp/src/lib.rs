@@ -12,14 +12,10 @@ use may_i_core::{Doc, DocF, LayoutHint, Trivia, TriviaSource};
 #[cfg(test)]
 fn doc_from_sexpr(sexpr: &may_i_sexpr::Sexpr) -> Doc {
     match sexpr {
-        may_i_sexpr::Sexpr::Atom(s, _) => {
-            let text = if may_i_sexpr::needs_quoting(s) {
-                may_i_sexpr::quote_atom(s)
-            } else {
-                s.clone()
-            };
-            Doc::atom(text)
+        may_i_sexpr::Sexpr::Keyword(s, _) | may_i_sexpr::Sexpr::Symbol(s, _) => {
+            Doc::atom(s.clone())
         }
+        may_i_sexpr::Sexpr::String(s, _) => Doc::atom(may_i_sexpr::quote_atom(s)),
         may_i_sexpr::Sexpr::List(items, _) | may_i_sexpr::Sexpr::Vector(items, _) => {
             Doc::list(items.iter().map(doc_from_sexpr).collect())
         }
@@ -1693,14 +1689,14 @@ mod tests {
 
     #[test]
     fn from_sexpr_atom_bare() {
-        let sexpr = may_i_sexpr::Sexpr::Atom("hello".into(), may_i_core::Span::new(0, 0));
+        let sexpr = may_i_sexpr::Sexpr::Symbol("hello".into(), may_i_core::Span::new(0, 0));
         let doc = doc_from_sexpr(&sexpr);
         assert_eq!(pp(&doc, 80), "hello");
     }
 
     #[test]
-    fn from_sexpr_atom_needs_quoting() {
-        let sexpr = may_i_sexpr::Sexpr::Atom("hello world".into(), may_i_core::Span::new(0, 0));
+    fn from_sexpr_string_is_quoted() {
+        let sexpr = may_i_sexpr::Sexpr::String("hello world".into(), may_i_core::Span::new(0, 0));
         let doc = doc_from_sexpr(&sexpr);
         assert_eq!(pp(&doc, 80), "\"hello world\"");
     }
@@ -1709,8 +1705,8 @@ mod tests {
     fn from_sexpr_list() {
         let sexpr = may_i_sexpr::Sexpr::List(
             vec![
-                may_i_sexpr::Sexpr::Atom("rule".into(), may_i_core::Span::new(0, 0)),
-                may_i_sexpr::Sexpr::Atom("foo".into(), may_i_core::Span::new(0, 0)),
+                may_i_sexpr::Sexpr::Symbol("rule".into(), may_i_core::Span::new(0, 0)),
+                may_i_sexpr::Sexpr::Symbol("foo".into(), may_i_core::Span::new(0, 0)),
             ],
             may_i_core::Span::new(0, 0),
         );

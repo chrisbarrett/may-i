@@ -75,7 +75,7 @@ fn parse_safe_env_vars(
 ) -> Result<(), RawError> {
     for item in args {
         let s = item
-            .as_atom()
+            .as_atom_or_str()
             .ok_or_else(|| RawError::new("safe-env-vars entry must be a string", item.span()))?;
         security.safe_env_vars.insert(s.to_string());
     }
@@ -129,7 +129,7 @@ pub fn parse_check(args: &[Sexpr], check_span: Span) -> Result<Vec<Check>, RawEr
         }
 
         let cmd = args[i]
-            .as_atom()
+            .as_atom_or_str()
             .ok_or_else(|| RawError::new("check command must be a string", args[i].span()))?;
 
         checks.push(Check {
@@ -218,7 +218,7 @@ fn parse_fact_entry(entry: &Sexpr) -> Result<(Keyword, Option<String>), RawError
     let value = if items.len() == 2 {
         Some(
             items[1]
-                .as_atom()
+                .as_atom_or_str()
                 .ok_or_else(|| {
                     RawError::new("context fact value must be a string", items[1].span())
                 })?
@@ -295,7 +295,7 @@ fn parse_check_items(
         }
 
         let cmd = items[i]
-            .as_atom()
+            .as_atom_or_str()
             .ok_or_else(|| RawError::new("check command must be a string", items[i].span()))?;
 
         checks.push(Check {

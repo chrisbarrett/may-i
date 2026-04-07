@@ -161,8 +161,10 @@ use may_i_core::predicates::FactPattern;
 
 fn parse_fact_pattern(sexpr: &Sexpr) -> Result<FactPattern, RawError> {
     match sexpr {
-        Sexpr::Atom(s, _) if s == "*" => Ok(FactPattern::Wildcard),
-        Sexpr::Atom(s, _) => Ok(FactPattern::Literal(s.clone())),
+        Sexpr::Symbol(s, _) if s == "*" => Ok(FactPattern::Wildcard),
+        Sexpr::String(s, _) | Sexpr::Symbol(s, _) | Sexpr::Keyword(s, _) => {
+            Ok(FactPattern::Literal(s.clone()))
+        }
         Sexpr::List(list, span) => {
             if list.is_empty() {
                 return Err(RawError::new("empty fact pattern", *span));
@@ -177,7 +179,7 @@ fn parse_fact_pattern(sexpr: &Sexpr) -> Result<FactPattern, RawError> {
                     if list.len() != 2 {
                         return Err(RawError::new("regex must have exactly one pattern", *span));
                     }
-                    let pat = list[1].as_atom().ok_or_else(|| {
+                    let pat = list[1].as_atom_or_str().ok_or_else(|| {
                         RawError::new("regex pattern must be a string", list[1].span())
                     })?;
                     let re = regex::Regex::new(pat).map_err(|err| {

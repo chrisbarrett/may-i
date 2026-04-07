@@ -71,7 +71,7 @@ pub(crate) fn strip_whitespace_trivia(node: &CstNode) -> CstNode {
 /// - `[e1 ... en]`: `1 + max(C(e1), ..., C(en))`
 pub(crate) fn complexity(node: &CstNode) -> usize {
     match &node.shape {
-        Shape::Atom(_) | Shape::Str(_) => 1,
+        Shape::Keyword(_) | Shape::Symbol(_) | Shape::String(_) => 1,
 
         Shape::Vector(children) => {
             1 + children.iter().map(|c| complexity(c)).max().unwrap_or(0)

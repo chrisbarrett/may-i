@@ -9,6 +9,10 @@ edition = "2024"
 [dependencies]
 may-i-core = { path = "../core" }
 may-i-pp = { path = "../pp" }
+proptest = { version = "1", optional = true }
+
+[features]
+test-generators = ["proptest"]
 
 [dev-dependencies]
-proptest = "1.6.0"
+proptest = "1"

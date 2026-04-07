@@ -14,8 +14,8 @@ use may_i_sexpr::{RawError, Sexpr};
 /// - Conditionals: `(when PREDICATE EFFECT)`, `(unless PREDICATE EFFECT)`, `(if PREDICATE THEN ELSE)`, `(cond ...)`
 /// - Recursion: `(may-i PATTERN)`
 pub fn parse_effect(sexpr: &Sexpr) -> Result<Spanned<Effect>, RawError> {
-    // Handle bare atoms: command literals
-    if let Some(atom) = sexpr.as_atom()
+    // Handle bare atoms and string literals: command literals
+    if let Some(atom) = sexpr.as_atom_or_str()
         && !is_reserved_keyword(atom)
     {
         // This is a command literal - treat as CommandPattern effect
@@ -56,7 +56,7 @@ pub fn parse_effect(sexpr: &Sexpr) -> Result<Spanned<Effect>, RawError> {
                 let patterns: Result<Vec<_>, _> = list[1..]
                     .iter()
                     .map(|s| {
-                        s.as_atom()
+                        s.as_atom_or_str()
                             .ok_or_else(|| {
                                 RawError::new(
                                     "command or pattern requires atom arguments",
@@ -90,7 +90,7 @@ pub fn parse_effect(sexpr: &Sexpr) -> Result<Spanned<Effect>, RawError> {
 
 /// Check if all sexprs are simple atoms (for command or pattern detection).
 fn is_command_or_pattern(exprs: &[Sexpr]) -> bool {
-    exprs.iter().all(|e| e.as_atom().is_some())
+    exprs.iter().all(|e| e.as_atom_or_str().is_some())
 }
 
 /// Parse a terminal effect (allow, ask, deny).
@@ -109,7 +109,7 @@ fn parse_terminal_effect(args: &[Sexpr], span: may_i_core::Span) -> Result<Effec
     let reason = if args.len() > 1 {
         Some(
             args[1]
-                .as_atom()
+                .as_atom_or_str()
                 .ok_or_else(|| RawError::new("effect reason must be a string", args[1].span()))?
                 .to_string(),
         )

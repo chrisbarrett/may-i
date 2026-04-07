@@ -22,8 +22,10 @@ fn contains_bind<E: std::fmt::Debug + may_i_core::ToDoc>(expr: &Expr<E>) -> bool
 /// Parse a simple expression pattern from an s-expression.
 fn parse_expr(sexpr: &Sexpr) -> Result<Expr<Effect>, RawError> {
     match sexpr {
-        Sexpr::Atom(s, _) if s == "*" => Ok(Expr::Wildcard),
-        Sexpr::Atom(s, _) => Ok(Expr::Literal(s.clone())),
+        Sexpr::Symbol(s, _) if s == "*" => Ok(Expr::Wildcard),
+        Sexpr::String(s, _) | Sexpr::Symbol(s, _) | Sexpr::Keyword(s, _) => {
+            Ok(Expr::Literal(s.clone()))
+        }
         Sexpr::List(list, span) => {
             if list.is_empty() {
                 return Err(RawError::new("empty expression form", *span));
@@ -36,7 +38,7 @@ fn parse_expr(sexpr: &Sexpr) -> Result<Expr<Effect>, RawError> {
                     if list.len() != 2 {
                         return Err(RawError::new("regex must have exactly one pattern", *span));
                     }
-                    let pat = list[1].as_atom().ok_or_else(|| {
+                    let pat = list[1].as_atom_or_str().ok_or_else(|| {
                         RawError::new("regex pattern must be a string", list[1].span())
                     })?;
                     let re = regex::Regex::new(pat).map_err(|e| {
@@ -170,7 +172,7 @@ fn parse_expr(sexpr: &Sexpr) -> Result<Expr<Effect>, RawError> {
             }
 
             // First element must be a keyword (starts with :)
-            let key_str = vector[0].as_atom().ok_or_else(|| {
+            let key_str = vector[0].as_atom_or_str().ok_or_else(|| {
                 RawError::new("fact binding key must be an atom", vector[0].span())
             })?;
 

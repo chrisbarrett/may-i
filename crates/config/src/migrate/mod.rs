@@ -13,9 +13,9 @@
 //! # String Type Preservation
 //!
 //! A critical implementation detail is distinguishing string literals from bare atoms.
-//! The CST represents `"~/.config"` as `Shape::Str` and `bare-atom` as `Shape::Atom`.
-//! During serialization, `Shape::Str` is always quoted while `Shape::Atom` is not.
-//! Without this distinction, valid v1 quoted paths produce invalid canonical unquoted output.
+//! The CST represents `"~/.config"` as `ShapeF::String`, `:keyword` as `ShapeF::Keyword`,
+//! and `bare-symbol` as `ShapeF::Symbol`. During serialization, `String` is always quoted
+//! while `Keyword` and `Symbol` are not.
 
 // Shared helpers used by multiple rules.
 pub(crate) mod helpers;

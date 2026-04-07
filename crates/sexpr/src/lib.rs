@@ -2,6 +2,9 @@ pub mod cst;
 mod sexpr;
 mod span;
 
+#[cfg(any(test, feature = "test-generators"))]
+pub mod test_generators;
+
 pub use cst::{
     CstNode, RewriteRule, Shape, ShapeF, Trivia, TriviaAnn, parse as parse_cst,
     rewrite_until_convergence,

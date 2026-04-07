@@ -18,7 +18,7 @@ pub fn parse_command_pattern_from_atom(atom: &str) -> Result<CommandPattern, Raw
 /// - `(regex "^git.*$")` - regex match
 pub fn parse_command_pattern(sexpr: &Sexpr) -> Result<CommandPattern, RawError> {
     match sexpr {
-        Sexpr::Atom(s, _) => {
+        Sexpr::String(s, _) | Sexpr::Symbol(s, _) | Sexpr::Keyword(s, _) => {
             // Literal command name
             Ok(CommandPattern::Literal(s.clone()))
         }
@@ -52,7 +52,7 @@ pub fn parse_command_pattern(sexpr: &Sexpr) -> Result<CommandPattern, RawError> 
                         ));
                     }
 
-                    let pattern_str = list[1].as_atom().ok_or_else(|| {
+                    let pattern_str = list[1].as_atom_or_str().ok_or_else(|| {
                         RawError::new("regex pattern must be a string", list[1].span())
                     })?;
 

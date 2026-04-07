@@ -18,12 +18,12 @@ pub use may_i_core::{Trivia, TriviaAnn};
 /// This is the base functor for the fixpoint-of-functor pattern.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ShapeF<R> {
-    /// A bare atom identifier (e.g., `rule`, `git`, `:allow`).
-    /// Serialized without quotes.
-    Atom(String),
-    /// A string literal (e.g., `"~/.config"`).
-    /// Always serialized with quotes to preserve the distinction from bare atoms.
-    Str(String),
+    /// A keyword atom (e.g., `:allow`, `:via/ssh`). Starts with `:`.
+    Keyword(String),
+    /// A bare symbol (e.g., `rule`, `git`, `fact?`).
+    Symbol(String),
+    /// A string literal (e.g., `"~/.config"`). Always serialized with quotes.
+    String(String),
     /// A list expression: `(children...)`
     List(Vec<R>),
     /// A vector expression: `[children...]`
@@ -38,8 +38,9 @@ pub type Shape = ShapeF<Box<CstNode>>;
 impl<R> ShapeF<R> {
     fn map<S>(self, f: impl FnMut(R) -> S) -> ShapeF<S> {
         match self {
-            ShapeF::Atom(s) => ShapeF::Atom(s),
-            ShapeF::Str(s) => ShapeF::Str(s),
+            ShapeF::Keyword(s) => ShapeF::Keyword(s),
+            ShapeF::Symbol(s) => ShapeF::Symbol(s),
+            ShapeF::String(s) => ShapeF::String(s),
             ShapeF::List(children) => ShapeF::List(children.into_iter().map(f).collect()),
             ShapeF::Vector(children) => ShapeF::Vector(children.into_iter().map(f).collect()),
         }
@@ -47,8 +48,9 @@ impl<R> ShapeF<R> {
 
     fn map_ref<S>(&self, f: impl FnMut(&R) -> S) -> ShapeF<S> {
         match self {
-            ShapeF::Atom(s) => ShapeF::Atom(s.clone()),
-            ShapeF::Str(s) => ShapeF::Str(s.clone()),
+            ShapeF::Keyword(s) => ShapeF::Keyword(s.clone()),
+            ShapeF::Symbol(s) => ShapeF::Symbol(s.clone()),
+            ShapeF::String(s) => ShapeF::String(s.clone()),
             ShapeF::List(children) => ShapeF::List(children.iter().map(f).collect()),
             ShapeF::Vector(children) => ShapeF::Vector(children.iter().map(f).collect()),
         }
@@ -76,8 +78,9 @@ impl CstNode<TriviaAnn> {
 
         let span = self.ann.span;
         match &self.shape {
-            ShapeF::Atom(s) => Sexpr::Atom(s.clone(), span),
-            ShapeF::Str(s) => Sexpr::Atom(s.clone(), span),
+            ShapeF::Keyword(s) => Sexpr::Keyword(s.clone(), span),
+            ShapeF::Symbol(s) => Sexpr::Symbol(s.clone(), span),
+            ShapeF::String(s) => Sexpr::String(s.clone(), span),
             ShapeF::List(children) => {
                 let items: Vec<Sexpr> = children.iter().map(|c| c.to_sexpr()).collect();
                 Sexpr::List(items, span)
@@ -89,11 +92,17 @@ impl CstNode<TriviaAnn> {
         }
     }
 
-    /// Create an atom node.
+    /// Create an atom node (keyword or symbol, classified by leading `:`).
     pub fn atom(value: impl Into<String>, annotation: TriviaAnn) -> Self {
+        let s = value.into();
+        let shape = if s.starts_with(':') {
+            ShapeF::Keyword(s)
+        } else {
+            ShapeF::Symbol(s)
+        };
         Self {
             ann: annotation,
-            shape: ShapeF::Atom(value.into()),
+            shape,
         }
     }
 
@@ -144,8 +153,8 @@ impl CstNode<TriviaAnn> {
         use may_i_core::Doc;
 
         match &self.shape {
-            ShapeF::Atom(s) => Doc::atom(s.clone()),
-            ShapeF::Str(s) => Doc::atom(quote_string(s)),
+            ShapeF::Keyword(s) | ShapeF::Symbol(s) => Doc::atom(s.clone()),
+            ShapeF::String(s) => Doc::atom(quote_string(s)),
             ShapeF::List(children) => {
                 let child_docs: Vec<Doc> = children.iter().map(|c| c.to_doc()).collect();
                 Doc::list(child_docs)
@@ -171,8 +180,8 @@ impl CstNode<TriviaAnn> {
         };
 
         let node = match &self.shape {
-            ShapeF::Atom(s) => DocF::Atom(s.clone()),
-            ShapeF::Str(s) => DocF::Atom(quote_string(s)),
+            ShapeF::Keyword(s) | ShapeF::Symbol(s) => DocF::Atom(s.clone()),
+            ShapeF::String(s) => DocF::Atom(quote_string(s)),
             ShapeF::List(children) => {
                 DocF::List(children.iter().map(|c| c.to_doc_with_trivia()).collect())
             }
@@ -205,10 +214,10 @@ impl CstNode<TriviaAnn> {
 
         // Write the shape
         match &self.shape {
-            ShapeF::Atom(s) => {
+            ShapeF::Keyword(s) | ShapeF::Symbol(s) => {
                 output.push_str(s);
             }
-            ShapeF::Str(s) => {
+            ShapeF::String(s) => {
                 output.push_str(&quote_string(s));
             }
             ShapeF::List(children) => {
@@ -249,18 +258,18 @@ impl CstNode<TriviaAnn> {
 }
 
 impl<A> CstNode<A> {
-    /// Get the atom value if this is an atom.
+    /// Get the atom value if this is a keyword or symbol.
     pub fn as_atom(&self) -> Option<&str> {
         match &self.shape {
-            ShapeF::Atom(s) => Some(s),
+            ShapeF::Keyword(s) | ShapeF::Symbol(s) => Some(s),
             _ => None,
         }
     }
 
-    /// Get string value if this is a string.
+    /// Get string value if this is a string literal.
     pub fn as_str(&self) -> Option<&str> {
         match &self.shape {
-            ShapeF::Str(s) => Some(s),
+            ShapeF::String(s) => Some(s),
             _ => None,
         }
     }
@@ -295,7 +304,7 @@ impl<A> CstNode<A> {
 
         // If no transformation at this node, try children
         match &self.shape {
-            ShapeF::Atom(_) | ShapeF::Str(_) => None,
+            ShapeF::Keyword(_) | ShapeF::Symbol(_) | ShapeF::String(_) => None,
             ShapeF::List(children) => {
                 let mut new_children = Vec::new();
                 let mut changed = false;
@@ -541,7 +550,7 @@ impl<'a> Parser<'a> {
                             span: Span::new(start, end),
                             ..Default::default()
                         },
-                        shape: ShapeF::Str(s),
+                        shape: ShapeF::String(s),
                     });
                 }
                 Some((_, '\\')) => match self.chars.next() {
@@ -585,12 +594,17 @@ impl<'a> Parser<'a> {
         if s.is_empty() {
             None
         } else {
+            let shape = if s.starts_with(':') {
+                ShapeF::Keyword(s)
+            } else {
+                ShapeF::Symbol(s)
+            };
             Some(CstNode {
                 ann: TriviaAnn {
                     span: Span::new(start, end),
                     ..Default::default()
                 },
-                shape: ShapeF::Atom(s),
+                shape,
             })
         }
     }
@@ -1108,7 +1122,7 @@ mod tests {
         let (nodes, errors) = parse(input);
         assert!(errors.is_empty());
         let sexpr = nodes[0].to_sexpr();
-        assert_eq!(sexpr.as_atom(), Some("hello world"));
+        assert_eq!(sexpr.as_str(), Some("hello world"));
     }
 
     #[test]
@@ -1138,7 +1152,7 @@ mod tests {
                 Box::new(CstNode::atom("rule", Default::default())),
                 Box::new(CstNode {
                     ann: Default::default(),
-                    shape: ShapeF::Str("x".into()),
+                    shape: ShapeF::String("x".into()),
                 }),
                 node,
             ],
@@ -1204,19 +1218,19 @@ mod tests {
                 Box::new(CstNode::atom("or", Default::default())),
                 Box::new(CstNode {
                     ann: Default::default(),
-                    shape: ShapeF::Str("aaa".into()),
+                    shape: ShapeF::String("aaa".into()),
                 }),
                 Box::new(CstNode {
                     ann: Default::default(),
-                    shape: ShapeF::Str("bbb".into()),
+                    shape: ShapeF::String("bbb".into()),
                 }),
                 Box::new(CstNode {
                     ann: Default::default(),
-                    shape: ShapeF::Str("ccc".into()),
+                    shape: ShapeF::String("ccc".into()),
                 }),
                 Box::new(CstNode {
                     ann: Default::default(),
-                    shape: ShapeF::Str("ddd".into()),
+                    shape: ShapeF::String("ddd".into()),
                 }),
             ],
             Default::default(),
@@ -1437,8 +1451,9 @@ mod proptests {
     /// (ignoring span information which may differ)
     fn cst_nodes_equal(a: &CstNode, b: &CstNode) -> bool {
         match (&a.shape, &b.shape) {
-            (Shape::Atom(a_str), Shape::Atom(b_str)) => a_str == b_str,
-            (Shape::Str(a_str), Shape::Str(b_str)) => a_str == b_str,
+            (Shape::Keyword(a_str), Shape::Keyword(b_str)) => a_str == b_str,
+            (Shape::Symbol(a_str), Shape::Symbol(b_str)) => a_str == b_str,
+            (Shape::String(a_str), Shape::String(b_str)) => a_str == b_str,
             (Shape::List(a_children), Shape::List(b_children)) => {
                 a_children.len() == b_children.len()
                     && a_children
@@ -1679,8 +1694,7 @@ mod proptests {
 
         // Fold to count nodes
         let count: usize = node.fold(&mut |shape, _ann| match shape {
-            ShapeF::Atom(_) => 1,
-            ShapeF::Str(_) => 1,
+            ShapeF::Keyword(_) | ShapeF::Symbol(_) | ShapeF::String(_) => 1,
             ShapeF::List(children) | ShapeF::Vector(children) => 1 + children.iter().sum::<usize>(),
         });
 
@@ -1697,8 +1711,7 @@ mod proptests {
 
         // Fold to collect all atom values
         let atoms: Vec<String> = node.fold(&mut |shape, _ann| match shape {
-            ShapeF::Atom(s) => vec![s.clone()],
-            ShapeF::Str(s) => vec![s.clone()],
+            ShapeF::Keyword(s) | ShapeF::Symbol(s) | ShapeF::String(s) => vec![s.clone()],
             ShapeF::List(children) | ShapeF::Vector(children) => {
                 children.iter().flatten().cloned().collect()
             }
@@ -1717,7 +1730,9 @@ mod proptests {
 
         // Fold to collect all spans
         let spans: Vec<(usize, usize)> = node.fold(&mut |shape, ann| match shape {
-            ShapeF::Atom(_) | ShapeF::Str(_) => vec![(ann.span.start, ann.span.end)],
+            ShapeF::Keyword(_) | ShapeF::Symbol(_) | ShapeF::String(_) => {
+                vec![(ann.span.start, ann.span.end)]
+            }
             ShapeF::List(children) | ShapeF::Vector(children) => {
                 let mut result = vec![(ann.span.start, ann.span.end)];
                 result.extend(children.iter().flatten().cloned());
@@ -1739,7 +1754,8 @@ mod proptests {
 
         let mut order: Vec<String> = vec![];
         let _: () = node.fold(&mut |shape, _ann| match shape {
-            ShapeF::Atom(s) => order.push(format!("atom:{}", s)),
+            ShapeF::Keyword(s) | ShapeF::Symbol(s) => order.push(format!("atom:{}", s)),
+            ShapeF::String(_) => {}
             ShapeF::List(_) => order.push("list".to_string()),
             _ => {}
         });
@@ -1752,9 +1768,9 @@ mod proptests {
 
     #[test]
     fn shapef_map_preserves_atoms() {
-        let atom: ShapeF<i32> = ShapeF::Atom("test".to_string());
-        let mapped = atom.map(|x| x * 2);
-        assert!(matches!(mapped, ShapeF::Atom(s) if s == "test"));
+        let sym: ShapeF<i32> = ShapeF::Symbol("test".to_string());
+        let mapped = sym.map(|x| x * 2);
+        assert!(matches!(mapped, ShapeF::Symbol(s) if s == "test"));
     }
 
     #[test]
@@ -2260,9 +2276,9 @@ mod proptests {
     fn string_escape_sequences() {
         let (nodes, errors) = parse(r#""hello\nworld\t\"end\\""#);
         assert!(errors.is_empty(), "errors: {errors:?}");
-        // At CST level, strings are ShapeF::Str
+        // At CST level, strings are ShapeF::String
         match &nodes[0].shape {
-            ShapeF::Str(s) => {
+            ShapeF::String(s) => {
                 assert_eq!(s, "hello\nworld\t\"end\\");
             }
             other => panic!("expected Str, got: {other:?}"),

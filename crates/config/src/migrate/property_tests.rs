@@ -14,7 +14,7 @@ mod tests {
     fn str_node(s: &str) -> Box<CstNode> {
         Box::new(CstNode {
             ann: TriviaAnn::default(),
-            shape: ShapeF::Str(s.into()),
+            shape: ShapeF::String(s.into()),
         })
     }
 
