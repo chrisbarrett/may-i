@@ -671,11 +671,7 @@ fn defcontext_to_define(node: &CstNode) -> Option<Box<CstNode>> {
         return None;
     }
 
-    // Transform v1 (has KEY VALUE) → (has [KEY VALUE]) inside the body, if present.
-    let body = transform_has_expression(&children[2])
-        .unwrap_or_else(|| children[2].clone());
-
-    // Build (define NAME EXPR)
+    // Build (define NAME BODY) preserving the original body unchanged.
     let new_children = vec![
         Box::new(CstNode::atom(
             "define",
@@ -685,7 +681,7 @@ fn defcontext_to_define(node: &CstNode) -> Option<Box<CstNode>> {
             },
         )),
         children[1].clone(), // NAME
-        body,
+        children[2].clone(), // BODY
     ];
 
     Some(Box::new(CstNode::list(
@@ -698,74 +694,13 @@ fn defcontext_to_define(node: &CstNode) -> Option<Box<CstNode>> {
     )))
 }
 
-/// Transform v1 `(has KEY VALUE)` to canonical `(has [KEY VALUE])`.
+
+/// Rewrite `has` → `fact?`, collapsing v1 `(has K V)` → `(fact? [K V])` in the process.
 ///
-/// Returns `Some(new_node)` when a rewrite was made, `None` when the node is
-/// already canonical or is an atom/string.  Recursively descends into lists.
-fn transform_has_expression(expr: &CstNode) -> Option<Box<CstNode>> {
-    let list = expr.as_list()?;
-    if list.is_empty() {
-        return None;
-    }
-
-    if list[0].as_atom() == Some("has") {
-        if list.len() == 3 {
-            // (has KEY VALUE) → (has [KEY VALUE])
-            let key = &list[1];
-            let value = &list[2];
-            let vector_node = CstNode {
-                ann: TriviaAnn {
-                    leading: vec![],
-                    trailing: vec![],
-                    span: key.ann.span,
-                },
-                shape: Shape::Vector(vec![key.clone(), value.clone()]),
-            };
-            let new_children = vec![
-                list[0].clone(), // "has" tag
-                Box::new(vector_node),
-            ];
-            return Some(Box::new(CstNode::list(
-                new_children,
-                TriviaAnn {
-                    leading: expr.ann.leading.clone(),
-                    trailing: expr.ann.trailing.clone(),
-                    span: expr.ann.span,
-                },
-            )));
-        }
-        // (has KEY) presence check — already canonical
-        return None;
-    }
-
-    // Recurse into non-has lists.
-    let mut new_children = Vec::new();
-    let mut changed = false;
-    for child in list {
-        if let Some(rewritten) = transform_has_expression(child) {
-            new_children.push(rewritten);
-            changed = true;
-        } else {
-            new_children.push(child.clone());
-        }
-    }
-
-    if changed {
-        Some(Box::new(CstNode::list(
-            new_children,
-            TriviaAnn {
-                leading: expr.ann.leading.clone(),
-                trailing: expr.ann.trailing.clone(),
-                span: expr.ann.span,
-            },
-        )))
-    } else {
-        None
-    }
-}
-
-/// Rename `has` to `fact?` in all expressions.
-/// This is part of the unified effect model where `has` was renamed to `fact?`.
+/// Handles three forms:
+/// - `(has K V)` (3 children) → `(fact? [K V])` — v1 key-value structural rewrite + rename
+/// - `(has [K V])` (2 children, vector arg) → `(fact? [K V])` — simple rename
+/// - `(has K)` (2 children, non-vector arg) → `(fact? K)` — presence check rename
 fn rename_has_to_fact(node: &CstNode) -> Option<Box<CstNode>> {
     if let Some(list) = node.as_list() {
         if list.is_empty() {
@@ -776,20 +711,36 @@ fn rename_has_to_fact(node: &CstNode) -> Option<Box<CstNode>> {
         if let Some(tag) = list[0].as_atom()
             && tag == "has"
         {
-            // Rename to fact?
-            let mut new_children = Vec::new();
-            new_children.push(Box::new(CstNode::atom(
+            let fact_tag = Box::new(CstNode::atom(
                 "fact?",
                 TriviaAnn {
                     leading: list[0].ann.leading.clone(),
                     trailing: list[0].ann.trailing.clone(),
                     span: list[0].ann.span,
                 },
-            )));
-            // Copy the rest of the children
-            for child in &list[1..] {
-                new_children.push(child.clone());
-            }
+            ));
+
+            let new_children = if list.len() == 3 {
+                // (has K V) → (fact? [K V])
+                let key = &list[1];
+                let value = &list[2];
+                let vector_node = CstNode {
+                    ann: TriviaAnn {
+                        leading: vec![],
+                        trailing: vec![],
+                        span: key.ann.span,
+                    },
+                    shape: Shape::Vector(vec![key.clone(), value.clone()]),
+                };
+                vec![fact_tag, Box::new(vector_node)]
+            } else {
+                // (has X) or (has [K V]) → (fact? X) or (fact? [K V])
+                let mut children = vec![fact_tag];
+                for child in &list[1..] {
+                    children.push(child.clone());
+                }
+                children
+            };
 
             return Some(Box::new(CstNode::list(
                 new_children,
@@ -1260,13 +1211,12 @@ mod tests {
 
     #[test]
     fn test_defcontext_to_define_with_has_value() {
-        // Test that (has :key "value") gets converted to (has [:key "value"])
+        // defcontext_to_define no longer transforms has — just renames the tag
         let input = r#"(defcontext prod (has :env "prod"))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let node = nodes.into_iter().next().unwrap();
         let result = defcontext_to_define(&node).unwrap();
-        // Note: serialization adds a space after [ for formatting
-        assert_eq!(result.serialize(), r#"(define prod (has [ :env "prod"]))"#);
+        assert_eq!(result.serialize(), r#"(define prod (has :env "prod"))"#);
     }
 
     // --- Additional tests for uncovered lines ---
@@ -1531,32 +1481,48 @@ mod tests {
     }
 
     #[test]
-    fn test_transform_has_expression_simple() {
-        // (has :key "value") → (has [:key "value"])
+    fn test_rename_has_to_fact_key_value() {
+        // (has K V) → (fact? [K V])
         let input = r#"(has :env "prod")"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let node = nodes.into_iter().next().unwrap();
-        let result = transform_has_expression(&node).unwrap();
-        assert!(result.serialize().contains("[ :env \"prod\"]"));
+        let result = rename_has_to_fact(&node).unwrap();
+        let serialized = result.serialize();
+        assert!(serialized.contains("fact?"));
+        assert!(serialized.contains("[ :env \"prod\"]"));
     }
 
     #[test]
-    fn test_transform_has_expression_presence() {
-        // (has :key) presence check — already canonical, returns None
+    fn test_rename_has_to_fact_presence() {
+        // (has K) → (fact? K)
         let input = "(has :env)";
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let node = nodes.into_iter().next().unwrap();
-        assert!(transform_has_expression(&node).is_none());
+        let result = rename_has_to_fact(&node).unwrap();
+        assert_eq!(result.serialize(), "(fact? :env)");
     }
 
     #[test]
-    fn test_transform_has_expression_nested() {
+    fn test_rename_has_to_fact_vector_arg() {
+        // (has [K V]) → (fact? [K V])
+        let input = r#"(has [ :env "prod"])"#;
+        let (nodes, _) = may_i_sexpr::parse_cst(input);
+        let node = nodes.into_iter().next().unwrap();
+        let result = rename_has_to_fact(&node).unwrap();
+        let serialized = result.serialize();
+        assert!(serialized.contains("fact?"));
+        assert!(serialized.contains(":env"));
+    }
+
+    #[test]
+    fn test_rename_has_to_fact_nested() {
         // Nested has expressions inside an and are both rewritten
         let input = r#"(and (has :env "prod") (has :region "us-east"))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let node = nodes.into_iter().next().unwrap();
-        let result = transform_has_expression(&node).unwrap();
+        let result = rename_has_to_fact(&node).unwrap();
         let serialized = result.serialize();
+        assert!(serialized.contains("fact?"));
         assert!(serialized.contains("[ :env \"prod\"]"));
         assert!(serialized.contains("[ :region \"us-east\"]"));
     }
