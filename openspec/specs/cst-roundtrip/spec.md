@@ -1,7 +1,9 @@
-## ADDED Requirements
+## Requirements
 
 ### Requirement: CST serialization roundtrip consistency
 The CST parser SHALL produce output that can be re-parsed identically.
+`pretty_serialize` output MAY differ in whitespace from the original input
+(due to reformatting) but SHALL re-parse to a structurally equivalent CST.
 
 #### Scenario: Simple atom roundtrip
 - **WHEN** parsing `"foo"` into CST and serializing back
@@ -27,6 +29,11 @@ The CST parser SHALL produce output that can be re-parsed identically.
 - **WHEN** parsing `"[foo bar]"` into CST and serializing back
 - **THEN** the output SHALL be `"[foo bar]"`
 - **AND** re-parsing the output SHALL produce an equivalent CST
+
+#### Scenario: Pretty-serialize roundtrip
+- **WHEN** pretty-serializing a CST node and re-parsing the output
+- **THEN** the re-parsed CST SHALL be structurally equivalent to the original
+- **AND** whitespace MAY differ from the original input
 
 ### Requirement: CST to Sexpr conversion preserves structure
 Converting CST to Sexpr SHALL preserve all structural information.
