@@ -5,6 +5,10 @@ The CST parser SHALL produce output that can be re-parsed identically.
 `pretty_serialize` output MAY differ in whitespace from the original input
 (due to reformatting) but SHALL re-parse to a structurally equivalent CST.
 
+For nodes containing children with source trivia, `pretty_serialize` MAY
+produce output closer to the original input than before (since preserved
+children retain their source whitespace).
+
 #### Scenario: Simple atom roundtrip
 - **WHEN** parsing `"foo"` into CST and serializing back
 - **THEN** the output SHALL be `"foo"`

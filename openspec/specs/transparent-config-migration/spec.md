@@ -1,7 +1,7 @@
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Transparent migration fallback
-When normal config parsing fails, the system SHALL attempt to migrate the config from legacy v1 syntax and retry parsing.
+When normal config parsing fails, the system SHALL attempt to migrate the config from legacy v1 syntax and retry parsing. The migrated output SHALL conform to the two-argument rule syntax `(rule COMMAND EFFECT)`. (CHANGED: migration output must produce single-effect rules)
 
 #### Scenario: Legacy config with wrapper forms
 - **GIVEN** a config file containing `(wrapper "docker" :command+args)`
@@ -21,6 +21,12 @@ When normal config parsing fails, the system SHALL attempt to migrate the config
 - **WHEN** `config::load()` is called
 - **THEN** the original parse error SHALL be returned
 - **AND** the migration error SHALL NOT be returned
+
+#### Scenario: Legacy rule with args and effect migrates to single effect
+- **GIVEN** a config file containing `(rule (command "git") (args (positional "push")) (effect :ask))`
+- **WHEN** `config::load()` is called
+- **THEN** the migrated rule SHALL have a single body effect wrapping the pattern and terminal in a combinator
+- **AND** parsing SHALL succeed
 
 ### Requirement: Warning message on transparent migration
 When transparent migration is applied, the system SHALL print a warning to stderr.
