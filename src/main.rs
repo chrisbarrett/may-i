@@ -48,7 +48,7 @@ enum Command {
         /// Add a runtime fact as :key or :key=value
         #[arg(long = "fact", value_name = "FACT")]
         facts: Vec<String>,
-        command: String,
+        command: Option<String>,
     },
     /// Validate config and run all embedded checks
     Check {
@@ -97,7 +97,19 @@ fn run() -> miette::Result<()> {
 
     match cli.command {
         Some(Command::Eval { command, facts }) => {
-            may_i::cmd_eval::cmd_eval(&command, &facts, cli.json, cli.config.as_deref())?
+            let piped_stdin = if !std::io::stdin().is_terminal() {
+                use std::io::Read;
+                let mut buf = String::new();
+                std::io::stdin()
+                    .take(65536)
+                    .read_to_string(&mut buf)
+                    .map_err(|e| miette::miette!("failed to read stdin: {e}"))?;
+                Some(buf)
+            } else {
+                None
+            };
+            let resolved = resolve_eval_command(command, piped_stdin)?;
+            may_i::cmd_eval::cmd_eval(&resolved, &facts, cli.json, cli.config.as_deref())?
         }
         Some(Command::Check { verbose }) => {
             may_i::cmd_check::cmd_check(cli.json, verbose, cli.config.as_deref())?
@@ -120,4 +132,68 @@ fn run() -> miette::Result<()> {
     }
 
     Ok(())
+}
+
+/// Resolve the eval command from either argv or stdin.
+///
+/// `argv` is the positional argument if provided. `piped_stdin` is `Some(content)`
+/// when stdin is not a terminal, `None` when it is. Exactly one source must
+/// provide a non-empty command.
+fn resolve_eval_command(
+    argv: Option<String>,
+    piped_stdin: Option<String>,
+) -> miette::Result<String> {
+    match (argv, piped_stdin) {
+        (Some(_), Some(_)) => {
+            Err(miette::miette!("ambiguous input: command provided both as argument and on stdin"))
+        }
+        (Some(cmd), None) => Ok(cmd),
+        (None, Some(content)) => {
+            let trimmed = content.trim();
+            if trimmed.is_empty() {
+                Err(miette::miette!("no command provided (stdin was empty)"))
+            } else {
+                Ok(trimmed.to_string())
+            }
+        }
+        (None, None) => Err(miette::miette!(
+            "no command provided\n\nUsage: may-i eval <COMMAND>\n       echo 'command' | may-i eval"
+        )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_argv_only() {
+        let result = resolve_eval_command(Some("ls -la".into()), None).unwrap();
+        assert_eq!(result, "ls -la");
+    }
+
+    #[test]
+    fn resolve_stdin_only() {
+        let result = resolve_eval_command(None, Some("rm -rf /\n".into())).unwrap();
+        assert_eq!(result, "rm -rf /");
+    }
+
+    #[test]
+    fn resolve_both_is_ambiguous() {
+        let result = resolve_eval_command(Some("ls".into()), Some("rm\n".into()));
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("ambiguous"), "expected ambiguous error, got: {err}");
+    }
+
+    #[test]
+    fn resolve_neither_is_error() {
+        let result = resolve_eval_command(None, None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn resolve_empty_stdin_is_error() {
+        let result = resolve_eval_command(None, Some("   \n".into()));
+        assert!(result.is_err());
+    }
 }
