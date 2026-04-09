@@ -82,6 +82,13 @@ fn format_line_annotation(anns: &[Option<Ann>]) -> String {
     }
 
     for ann in anns {
+        if let Some(Ann::VarRef { name, matched }) = ann {
+            let arrow = if *matched { "→ yes" } else { "→ no" };
+            return format!("{name} {arrow}");
+        }
+    }
+
+    for ann in anns {
         if let Some(Ann::BindMatch { key, value }) = ann {
             return match value {
                 Some(v) => format!("facts += {key} \"{v}\""),
@@ -335,6 +342,40 @@ mod tests {
         assert_eq!(format_line_annotation(&anns), "");
     }
 
+    #[test]
+    fn format_line_annotation_var_ref_matched() {
+        let anns = vec![Some(Ann::VarRef {
+            name: "build-mode".into(),
+            matched: true,
+        })];
+        let result = format_line_annotation(&anns);
+        assert!(
+            result.contains("build-mode"),
+            "var ref annotation should show name, got: {result}"
+        );
+        assert!(
+            result.contains("yes"),
+            "matched var ref should show yes, got: {result}"
+        );
+    }
+
+    #[test]
+    fn format_line_annotation_var_ref_unmatched() {
+        let anns = vec![Some(Ann::VarRef {
+            name: "build-mode".into(),
+            matched: false,
+        })];
+        let result = format_line_annotation(&anns);
+        assert!(
+            result.contains("build-mode"),
+            "var ref annotation should show name, got: {result}"
+        );
+        assert!(
+            result.contains("no"),
+            "unmatched var ref should show no, got: {result}"
+        );
+    }
+
     use may_i_core::Decision;
     use proptest::prelude::*;
 
@@ -402,6 +443,8 @@ mod tests {
                     observed: obs,
                     failure_reason: fr,
                 }),
+            ("[a-z]{1,10}", prop::bool::ANY)
+                .prop_map(|(name, matched)| Ann::VarRef { name, matched }),
         ]
         .boxed()
     }
