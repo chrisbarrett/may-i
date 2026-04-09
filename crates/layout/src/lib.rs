@@ -540,22 +540,7 @@ fn word_wrap(text: &str, max_width: usize) -> Vec<String> {
 
 // ── Helpers ───────────────────────────────────────────────────────
 
-pub fn strip_ansi(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    let mut in_escape = false;
-    for ch in s.chars() {
-        if in_escape {
-            if ch == 'm' {
-                in_escape = false;
-            }
-        } else if ch == '\x1b' {
-            in_escape = true;
-        } else {
-            result.push(ch);
-        }
-    }
-    result
-}
+pub use may_i_pp::strip_ansi;
 
 #[cfg(test)]
 mod tests {

@@ -7,6 +7,7 @@ use may_i_core::{ContextFacts, Decision, Keyword};
 use may_i_sexpr::{RawError, Sexpr};
 
 /// Parse a config from an s-expression string.
+#[must_use]
 pub fn parse_config(input: &str) -> Result<Config, RawError> {
     let (forms, errors) = may_i_sexpr::parse(input);
     if let Some(err) = errors.into_iter().next() {
@@ -22,6 +23,7 @@ pub fn parse_config(input: &str) -> Result<Config, RawError> {
 ///
 /// This enables parsing from migrated CST forms that have been converted to
 /// Sexpr, without re-serializing to text.
+#[must_use]
 pub fn parse_config_from_sexprs(forms: &[Sexpr]) -> Result<Config, RawError> {
     let mut config = Config::default();
 

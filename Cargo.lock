@@ -491,6 +491,7 @@ dependencies = [
  "similar",
  "tempfile",
  "terminal_size",
+ "thiserror",
  "toml",
 ]
 

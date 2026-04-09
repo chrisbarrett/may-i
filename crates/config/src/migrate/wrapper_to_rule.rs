@@ -1,5 +1,7 @@
 use may_i_sexpr::cst::{CstNode, TriviaAnn};
 
+use super::helpers::is_capture_marker;
+
 pub(crate) fn wrapper_to_rule(node: &CstNode) -> Option<Box<CstNode>> {
     if !node.is_tagged("wrapper") {
         return None;
@@ -38,7 +40,7 @@ pub(crate) fn wrapper_to_rule(node: &CstNode) -> Option<Box<CstNode>> {
             for pat in &pos_children[1..] {
                 // Check for capture markers inside positional - don't add them to patterns
                 if let Some(atom) = pat.as_atom()
-                    && (atom == ":command+args" || atom == ":command" || atom == ":args")
+                    && (is_capture_marker(atom))
                 {
                     has_capture = true;
                 } else {
@@ -53,7 +55,7 @@ pub(crate) fn wrapper_to_rule(node: &CstNode) -> Option<Box<CstNode>> {
                 for pat in &flag_children[2..] {
                     // Check for capture markers - don't add them to patterns
                     if let Some(atom) = pat.as_atom()
-                        && (atom == ":command+args" || atom == ":command" || atom == ":args")
+                        && (is_capture_marker(atom))
                     {
                         has_capture = true;
                     } else {
@@ -63,7 +65,7 @@ pub(crate) fn wrapper_to_rule(node: &CstNode) -> Option<Box<CstNode>> {
             }
         } else if let Some(atom) = step.as_atom() {
             // Bare atoms like :command+args
-            if atom == ":command+args" || atom == ":command" || atom == ":args" {
+            if is_capture_marker(atom) {
                 has_capture = true;
             }
         }

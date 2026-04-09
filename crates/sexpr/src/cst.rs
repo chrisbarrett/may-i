@@ -9,6 +9,7 @@
 // - Enables rewrite-based migration tools
 // - Pattern matching still works on the structure
 
+use crate::sexpr::quote_string;
 use crate::span::Span;
 pub use may_i_core::{Trivia, TriviaAnn};
 
@@ -219,24 +220,10 @@ impl CstNode<TriviaAnn> {
                 output.push_str(&quote_string(s));
             }
             ShapeF::List(children) => {
-                output.push('(');
-                for (i, child) in children.iter().enumerate() {
-                    if i > 0 && child.ann.leading.is_empty() {
-                        output.push(' ');
-                    }
-                    child.write_to(output);
-                }
-                output.push(')');
+                Self::write_delimited(output, '(', ')', children);
             }
             ShapeF::Vector(children) => {
-                output.push('[');
-                for (i, child) in children.iter().enumerate() {
-                    if i > 0 && child.ann.leading.is_empty() {
-                        output.push(' ');
-                    }
-                    child.write_to(output);
-                }
-                output.push(']');
+                Self::write_delimited(output, '[', ']', children);
             }
         }
 
@@ -252,6 +239,17 @@ impl CstNode<TriviaAnn> {
                 }
             }
         }
+    }
+
+    fn write_delimited(output: &mut String, open: char, close: char, children: &[Box<CstNode>]) {
+        output.push(open);
+        for (i, child) in children.iter().enumerate() {
+            if i > 0 && child.ann.leading.is_empty() {
+                output.push(' ');
+            }
+            child.write_to(output);
+        }
+        output.push(close);
     }
 }
 
@@ -303,46 +301,38 @@ impl<A> CstNode<A> {
         // If no transformation at this node, try children
         match &self.shape {
             ShapeF::Keyword(_) | ShapeF::Symbol(_) | ShapeF::String(_) => None,
-            ShapeF::List(children) => {
-                let mut new_children = Vec::new();
-                let mut changed = false;
-                for c in children {
-                    if let Some(new_c) = c.transform(f) {
-                        new_children.push(new_c);
-                        changed = true;
-                    } else {
-                        new_children.push(c.clone());
-                    }
-                }
-                if changed {
-                    Some(Box::new(CstNode {
-                        ann: self.ann.clone(),
-                        shape: ShapeF::List(new_children),
-                    }))
-                } else {
-                    None
-                }
+            ShapeF::List(children) => self.transform_children(children, f, ShapeF::List),
+            ShapeF::Vector(children) => self.transform_children(children, f, ShapeF::Vector),
+        }
+    }
+
+    fn transform_children<F>(
+        &self,
+        children: &[Box<CstNode<A>>],
+        f: &mut F,
+        wrap: fn(Vec<Box<CstNode<A>>>) -> ShapeF<Box<CstNode<A>>>,
+    ) -> Option<Box<CstNode<A>>>
+    where
+        F: FnMut(&CstNode<A>) -> Option<Box<CstNode<A>>>,
+        A: Clone,
+    {
+        let mut new_children = Vec::new();
+        let mut changed = false;
+        for c in children {
+            if let Some(new_c) = c.transform(f) {
+                new_children.push(new_c);
+                changed = true;
+            } else {
+                new_children.push(c.clone());
             }
-            ShapeF::Vector(children) => {
-                let mut new_children = Vec::new();
-                let mut changed = false;
-                for c in children {
-                    if let Some(new_c) = c.transform(f) {
-                        new_children.push(new_c);
-                        changed = true;
-                    } else {
-                        new_children.push(c.clone());
-                    }
-                }
-                if changed {
-                    Some(Box::new(CstNode {
-                        ann: self.ann.clone(),
-                        shape: ShapeF::Vector(new_children),
-                    }))
-                } else {
-                    None
-                }
-            }
+        }
+        if changed {
+            Some(Box::new(CstNode {
+                ann: self.ann.clone(),
+                shape: wrap(new_children),
+            }))
+        } else {
+            None
         }
     }
 }
@@ -360,10 +350,6 @@ impl<A: Clone> CstNode<A> {
         let folded_shape = self.shape.map_ref(|child| child.fold(alg));
         alg(&folded_shape, &self.ann)
     }
-}
-
-fn quote_string(s: &str) -> String {
-    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 /// Parse a string into CST nodes.
@@ -629,8 +615,14 @@ pub fn rewrite_until_convergence<F>(
 where
     F: Fn(&CstNode<TriviaAnn>) -> Option<Box<CstNode<TriviaAnn>>>,
 {
+    const MAX_ITERS: usize = 100;
     let mut current = node;
+    let mut iterations = 0;
     loop {
+        iterations += 1;
+        if iterations > MAX_ITERS {
+            break;
+        }
         let mut changed = false;
 
         // Apply rules in sequence

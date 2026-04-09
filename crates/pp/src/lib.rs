@@ -10,7 +10,7 @@ pub mod output;
 mod render;
 
 pub use buffer::{AnnotatedLine, AnnotatedLineBuilder, StringBuilder};
-pub use color::{colorize_atom, visible_len};
+pub use color::{colorize_atom, strip_ansi, visible_len};
 pub use output::{OutputEvent, PrettyOutput};
 pub use render::{line_prefix_width, pretty, pretty_into};
 
@@ -27,7 +27,7 @@ pub(crate) fn doc_from_sexpr(sexpr: &may_i_sexpr::Sexpr) -> Doc {
         may_i_sexpr::Sexpr::Keyword(s, _) | may_i_sexpr::Sexpr::Symbol(s, _) => {
             Doc::atom(s.clone())
         }
-        may_i_sexpr::Sexpr::String(s, _) => Doc::atom(may_i_sexpr::quote_atom(s)),
+        may_i_sexpr::Sexpr::String(s, _) => Doc::atom(may_i_sexpr::quote_string(s)),
         may_i_sexpr::Sexpr::List(items, _) | may_i_sexpr::Sexpr::Vector(items, _) => {
             Doc::list(items.iter().map(doc_from_sexpr).collect())
         }
@@ -144,8 +144,6 @@ impl Default for Format {
         }
     }
 }
-
-impl Format {}
 
 /// Detect appropriate column width from existing source code.
 ///

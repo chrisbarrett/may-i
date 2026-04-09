@@ -10,6 +10,11 @@ use may_i_engine as engine;
 use crate::annotation::{TraceEntry, TracingFold};
 use crate::output;
 
+/// Error indicating one or more checks failed.
+#[derive(Debug, thiserror::Error, miette::Diagnostic)]
+#[error("{0} check(s) failed")]
+pub struct CheckFailure(pub usize);
+
 struct TraceExtra {
     location: Option<String>,
     traces: Vec<TraceEntry>,
@@ -21,13 +26,7 @@ pub fn cmd_check(
     config_path: Option<&std::path::Path>,
 ) -> miette::Result<()> {
     let config_file = config::resolve_path(config_path)?;
-    let mut canonical_config = config::load(&config_file)?;
-
-    // Resolve named predicates before evaluation.
-    let resolved_rules =
-        config::resolve::validate_and_resolve(&canonical_config.rules, &canonical_config.defines)
-            .map_err(|errs| miette::miette!("Predicate resolution failed: {}", errs[0].message))?;
-    canonical_config.rules = resolved_rules;
+    let canonical_config = config::load_and_resolve(config_path)?;
 
     let results = run_checks_with_traces(&canonical_config, &config_file)?;
 
@@ -152,7 +151,7 @@ pub fn cmd_check(
     }
 
     if failed > 0 {
-        std::process::exit(1);
+        return Err(CheckFailure(failed).into());
     }
 
     Ok(())

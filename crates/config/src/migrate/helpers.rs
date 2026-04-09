@@ -61,6 +61,11 @@ pub(crate) fn strip_whitespace_trivia(node: &CstNode) -> CstNode {
     stripped
 }
 
+/// Returns true if the atom is a capture marker used in legacy wrapper syntax.
+pub(crate) fn is_capture_marker(atom: &str) -> bool {
+    atom == ":command+args" || atom == ":command" || atom == ":args"
+}
+
 /// Compute the structural complexity (nesting depth) of an expression.
 ///
 /// Used to guide rewrite heuristics (e.g. choosing between `when` and `if`).

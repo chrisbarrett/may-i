@@ -986,6 +986,7 @@ mod tests {
             Expr::And(es) | Expr::Or(es) => es.iter().all(is_simple_expr),
             Expr::Not(e) => is_simple_expr(e),
             Expr::Cond(_) | Expr::Bind { .. } => false,
+            _ => false,
         }
     }
 

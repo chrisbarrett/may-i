@@ -38,14 +38,8 @@ pub fn cmd_eval(
     config_path: Option<&std::path::Path>,
 ) -> miette::Result<()> {
     let config_file = config::resolve_path(config_path)?;
-    let mut config = config::load(&config_file)?;
+    let config = config::load_and_resolve(config_path)?;
     let context = parse_cli_facts(raw_facts)?;
-
-    // Resolve named predicates before evaluation.
-    let resolved_rules =
-        may_i_config::resolve::validate_and_resolve(&config.rules, &config.defines)
-            .map_err(|errs| miette::miette!("Predicate resolution failed: {}", errs[0].message))?;
-    config.rules = resolved_rules;
 
     if json_mode {
         let mut fold = TracingFold::new()

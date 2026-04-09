@@ -165,7 +165,7 @@ fn dfs_check_cycle(
         for neighbor in neighbors {
             if visiting.contains(neighbor) {
                 // Found a cycle
-                let (_, span) = define_map.get(name).unwrap();
+                let (_, span) = define_map.get(name).expect("name exists in define_map");
                 return Err(ResolutionError::new(
                     format!("cyclic define reference detected: '{name}' -> '{neighbor}'"),
                     span,

@@ -38,6 +38,7 @@ pub struct EvalResult {
 
 impl EvalResult {
     /// Create a new EvalResult with the given decision and optional reason.
+    #[must_use]
     pub fn new(decision: Decision, reason: Option<String>) -> Self {
         Self { decision, reason }
     }

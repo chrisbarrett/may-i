@@ -25,15 +25,7 @@ pub(crate) fn cmd_claude_code_hook(config_path: Option<&std::path::Path>) -> mie
         return Ok(());
     };
 
-    let config_file = config::resolve_path(config_path)?;
-
-    let mut canonical_config = config::load(&config_file)?;
-
-    // Resolve named predicates before evaluation (same as cmd_eval).
-    let resolved_rules =
-        config::resolve::validate_and_resolve(&canonical_config.rules, &canonical_config.defines)
-            .map_err(|errs| miette::miette!("Predicate resolution failed: {}", errs[0].message))?;
-    canonical_config.rules = resolved_rules;
+    let canonical_config = config::load_and_resolve(config_path)?;
 
     let context = build_context(&payload);
     let (cmd, args) = may_i::cmd_eval::parse_command_args(&command);
@@ -81,21 +73,28 @@ fn build_context(payload: &serde_json::Value) -> ContextFacts {
         .unwrap_or("Bash");
 
     let mut context = ContextFacts::default();
-    context.insert_present(Keyword::new(":client/claude-code").unwrap());
+    context
+        .insert_present(Keyword::new(":client/claude-code").expect("hardcoded keyword is valid"));
 
     if let Some(permission_mode) = payload.get("permission_mode").and_then(|v| v.as_str()) {
         context.insert_scalar(
-            Keyword::new(":claude-code/permission-mode").unwrap(),
+            Keyword::new(":claude-code/permission-mode").expect("hardcoded keyword is valid"),
             permission_mode,
         );
     }
     if let Some(cwd) = payload.get("cwd").and_then(|v| v.as_str()) {
-        context.insert_scalar(Keyword::new(":claude-code/cwd").unwrap(), cwd);
+        context.insert_scalar(
+            Keyword::new(":claude-code/cwd").expect("hardcoded keyword is valid"),
+            cwd,
+        );
     }
-    context.insert_scalar(Keyword::new(":claude-code/tool-name").unwrap(), tool_name);
+    context.insert_scalar(
+        Keyword::new(":claude-code/tool-name").expect("hardcoded keyword is valid"),
+        tool_name,
+    );
     if let Some(event_name) = payload.get("hook_event_name").and_then(|v| v.as_str()) {
         context.insert_scalar(
-            Keyword::new(":claude-code/hook-event-name").unwrap(),
+            Keyword::new(":claude-code/hook-event-name").expect("hardcoded keyword is valid"),
             event_name,
         );
     }

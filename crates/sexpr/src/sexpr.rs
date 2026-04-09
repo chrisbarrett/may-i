@@ -88,7 +88,7 @@ impl std::fmt::Display for Sexpr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Sexpr::Keyword(s, _) | Sexpr::Symbol(s, _) => write!(f, "{s}"),
-            Sexpr::String(s, _) => write!(f, "{}", quote_atom(s)),
+            Sexpr::String(s, _) => write!(f, "{}", quote_string(s)),
             Sexpr::List(items, _) => {
                 write!(f, "(")?;
                 for (i, item) in items.iter().enumerate() {
@@ -128,8 +128,8 @@ pub fn needs_quoting(s: &str) -> bool {
         })
 }
 
-/// Quote an atom string for s-expression display, escaping backslashes and double quotes.
-pub fn quote_atom(s: &str) -> String {
+/// Quote a string for s-expression display, escaping backslashes and double quotes.
+pub fn quote_string(s: &str) -> String {
     format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
@@ -191,23 +191,23 @@ mod tests {
     }
 
     #[test]
-    fn test_quote_atom_simple() {
-        assert_eq!(quote_atom("foo"), "\"foo\"");
+    fn test_quote_string_simple() {
+        assert_eq!(quote_string("foo"), "\"foo\"");
     }
 
     #[test]
-    fn test_quote_atom_with_quotes() {
-        assert_eq!(quote_atom("foo\"bar"), "\"foo\\\"bar\"");
+    fn test_quote_string_with_quotes() {
+        assert_eq!(quote_string("foo\"bar"), "\"foo\\\"bar\"");
     }
 
     #[test]
-    fn test_quote_atom_with_backslash() {
-        assert_eq!(quote_atom("foo\\bar"), "\"foo\\\\bar\"");
+    fn test_quote_string_with_backslash() {
+        assert_eq!(quote_string("foo\\bar"), "\"foo\\\\bar\"");
     }
 
     #[test]
-    fn test_quote_atom_complex() {
-        assert_eq!(quote_atom("a\"b\\c"), "\"a\\\"b\\\\c\"");
+    fn test_quote_string_complex() {
+        assert_eq!(quote_string("a\"b\\c"), "\"a\\\"b\\\\c\"");
     }
 
     #[test]

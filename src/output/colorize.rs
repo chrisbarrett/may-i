@@ -17,7 +17,20 @@ pub(super) fn colorize_right(s: &str) -> String {
         return "no".yellow().to_string();
     }
 
-    if let Some(arrow_pos) = s.find("→") {
+    if s.contains("~") || s.contains("∈") {
+        if let Some(arrow_pos) = s.find("→") {
+            let before = &s[..arrow_pos];
+            let after = s[arrow_pos + "→".len()..].trim();
+            let colored_result = match after {
+                "yes" => "yes".green().bold().to_string(),
+                "no" => "no".yellow().to_string(),
+                other => other.to_string(),
+            };
+            format!("{}{} {colored_result}", before.dimmed(), "→".dimmed())
+        } else {
+            s.dimmed().to_string()
+        }
+    } else if let Some(arrow_pos) = s.find("→") {
         let before = &s[..arrow_pos];
         let after = s[arrow_pos + "→".len()..].trim();
         let colored_result = match after {
@@ -50,19 +63,6 @@ pub(super) fn colorize_right(s: &str) -> String {
                 colorize_atom(keyword, true),
                 colorize_atom(value, true),
             )
-        } else {
-            s.dimmed().to_string()
-        }
-    } else if s.contains("~") || s.contains("∈") {
-        if let Some(arrow_pos) = s.find("→") {
-            let before = &s[..arrow_pos];
-            let after = s[arrow_pos + "→".len()..].trim();
-            let colored_result = match after {
-                "yes" => "yes".green().bold().to_string(),
-                "no" => "no".yellow().to_string(),
-                other => other.to_string(),
-            };
-            format!("{}{} {colored_result}", before.dimmed(), "→".dimmed())
         } else {
             s.dimmed().to_string()
         }

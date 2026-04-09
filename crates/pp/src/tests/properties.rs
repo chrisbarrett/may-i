@@ -108,18 +108,5 @@ proptest! {
 }
 
 fn strip_ansi(s: &str) -> String {
-    let mut result = String::new();
-    let mut in_escape = false;
-    for ch in s.chars() {
-        if in_escape {
-            if ch.is_ascii_alphabetic() {
-                in_escape = false;
-            }
-        } else if ch == '\x1b' {
-            in_escape = true;
-        } else {
-            result.push(ch);
-        }
-    }
-    result
+    crate::strip_ansi(s)
 }

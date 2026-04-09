@@ -84,6 +84,9 @@ fn main() {
     .ok();
 
     if let Err(e) = run() {
+        if e.downcast_ref::<may_i::cmd_check::CheckFailure>().is_some() {
+            std::process::exit(1);
+        }
         eprintln!("{e:?}");
         // Exit code 2 signals a blocking error to Claude Code hooks.
         // stderr is fed back to Claude so it can adjust its plan.

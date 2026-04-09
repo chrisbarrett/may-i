@@ -9,6 +9,7 @@ use super::effects::evaluate_effect_fold;
 
 /// Evaluate a command against config and context using PureFold.
 /// This is the main entry point for evaluation.
+#[must_use]
 pub fn evaluate(
     command: &str,
     args: &[String],

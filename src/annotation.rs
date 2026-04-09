@@ -519,7 +519,7 @@ impl EvalFold for TracingFold {
         out.0
     }
 
-    fn effect_terminal(&mut self, effect: &Effect, result: EffectResult) -> Self::EffectOut {
+    fn effect_terminal(&mut self, _effect: &Effect, result: EffectResult) -> Self::EffectOut {
         let keyword = match &result {
             EffectResult::Decision(Decision::Allow, _) => ":allow",
             EffectResult::Decision(Decision::Ask, _) => ":ask",
@@ -540,7 +540,6 @@ impl EvalFold for TracingFold {
             EffectResult::Nil => None,
         };
 
-        let _ = effect;
         (result, ann_list(children, ann))
     }
 
@@ -795,7 +794,7 @@ impl EvalFold for TracingFold {
     fn effect_arg_continuation(
         &mut self,
         pattern: &ArgPattern,
-        args: &[String],
+        _args: &[String],
         detail: ArgMatchDetail,
         continuation: Self::EffectOut,
     ) -> Self::EffectOut {
@@ -845,7 +844,6 @@ impl EvalFold for TracingFold {
             children.push(continuation.1);
         }
 
-        let _ = args;
         let wrapper = Doc {
             ann: Some(Ann::ArgMatch {
                 search_tokens: vec![],

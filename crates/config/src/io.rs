@@ -56,6 +56,18 @@ fn try_migrate_and_parse(content: &str) -> Option<may_i_core::ast::Config> {
     Some(config)
 }
 
+/// Load and resolve a config file: resolve path, parse, and validate named predicates.
+///
+/// This is the standard config loading pipeline shared by eval, check, and hook commands.
+pub fn load_and_resolve(override_path: Option<&Path>) -> miette::Result<may_i_core::ast::Config> {
+    let config_file = resolve_path(override_path)?;
+    let mut config = load(&config_file)?;
+    let resolved_rules = crate::resolve::validate_and_resolve(&config.rules, &config.defines)
+        .map_err(|errs| miette::miette!("Predicate resolution failed: {}", errs[0].message))?;
+    config.rules = resolved_rules;
+    Ok(config)
+}
+
 /// Resolve the config file path.
 ///
 /// If `override_path` is provided it takes precedence, then `$MAYI_CONFIG`,

@@ -47,6 +47,24 @@ pub fn colorize_atom(s: &str, color: bool) -> String {
     }
 }
 
+/// Strip ANSI SGR escape sequences from a string.
+pub fn strip_ansi(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut in_escape = false;
+    for ch in s.chars() {
+        if in_escape {
+            if ch == 'm' {
+                in_escape = false;
+            }
+        } else if ch == '\x1b' {
+            in_escape = true;
+        } else {
+            result.push(ch);
+        }
+    }
+    result
+}
+
 /// Visible length of a string, ignoring ANSI SGR escape sequences.
 pub fn visible_len(s: &str) -> usize {
     let mut len = 0;
