@@ -38,6 +38,8 @@ mod wrapper_to_rule;
 
 #[cfg(test)]
 mod property_tests;
+#[cfg(test)]
+mod regression_tests;
 
 use may_i_sexpr::cst::CstNode;
 

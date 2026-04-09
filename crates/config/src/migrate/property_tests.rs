@@ -50,6 +50,88 @@ mod tests {
             .boxed()
     }
 
+    // ── Compound V1 generators ─────────────────────────────────────────
+
+    /// Generates a v1 rule with `(context PRED)`: `(rule (command CMD) (context PRED) (effect ...))`.
+    fn any_v1_rule_with_context() -> BoxedStrategy<(
+        Vec<Box<may_i_sexpr::CstNode>>,
+        Vec<Box<may_i_sexpr::CstNode>>,
+    )> {
+        (
+            any_command_pattern_cst(),
+            any_predicate_cst(1),
+            any_terminal_effect_cst(),
+        )
+            .prop_map(|(cmd, pred, eff)| {
+                let v1 = cst_list(vec![
+                    cst_atom("rule"),
+                    cst_list(vec![cst_atom("command"), cmd.clone()]),
+                    cst_list(vec![cst_atom("context"), pred.clone()]),
+                    eff.clone(),
+                ]);
+                let canonical = cst_list(vec![
+                    cst_atom("rule"),
+                    cmd,
+                    cst_list(vec![cst_atom("when"), pred, eff]),
+                ]);
+                (vec![v1], vec![canonical])
+            })
+            .boxed()
+    }
+
+    /// Generates a v1 rule with `(args (positional ...))`:
+    /// `(rule (command CMD) (args (positional PAT)) (effect ...))`.
+    fn any_v1_rule_with_args() -> BoxedStrategy<(Vec<Box<may_i_sexpr::CstNode>>, String)> {
+        (
+            any_command_pattern_cst(),
+            "[a-z][a-z0-9_-]{0,8}".prop_map(|s| cst_str(&s)),
+            any_terminal_effect_cst(),
+        )
+            .prop_map(|(cmd, arg_pat, eff)| {
+                let v1 = cst_list(vec![
+                    cst_atom("rule"),
+                    cst_list(vec![cst_atom("command"), cmd.clone()]),
+                    cst_list(vec![
+                        cst_atom("args"),
+                        cst_list(vec![cst_atom("positional"), arg_pat]),
+                    ]),
+                    eff,
+                ]);
+                let cmd_text = cmd.serialize();
+                // Trim quotes from string literal for eval command
+                let cmd_str = cmd_text.trim_matches('"').to_string();
+                (vec![v1], cmd_str)
+            })
+            .boxed()
+    }
+
+    /// Generates a compound v1 rule with command + context + args:
+    /// `(rule (command CMD) (context PRED) (args (positional PAT)) (effect ...))`.
+    fn any_v1_compound_rule() -> BoxedStrategy<(Vec<Box<may_i_sexpr::CstNode>>, String)> {
+        (
+            any_command_pattern_cst(),
+            any_predicate_cst(0),
+            "[a-z][a-z0-9_-]{0,8}".prop_map(|s| cst_str(&s)),
+            any_terminal_effect_cst(),
+        )
+            .prop_map(|(cmd, pred, arg_pat, eff)| {
+                let v1 = cst_list(vec![
+                    cst_atom("rule"),
+                    cst_list(vec![cst_atom("command"), cmd.clone()]),
+                    cst_list(vec![cst_atom("context"), pred]),
+                    cst_list(vec![
+                        cst_atom("args"),
+                        cst_list(vec![cst_atom("positional"), arg_pat]),
+                    ]),
+                    eff,
+                ]);
+                let cmd_text = cmd.serialize();
+                let cmd_str = cmd_text.trim_matches('"').to_string();
+                (vec![v1], cmd_str)
+            })
+            .boxed()
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────
 
     fn serialize_forms(forms: &[Box<may_i_sexpr::CstNode>]) -> String {
@@ -86,6 +168,33 @@ mod tests {
             (Err(_), Err(_)) => true,
             _ => false,
         }
+    }
+
+    /// Parse v1 forms through migration pipeline, returning canonical text.
+    fn migrate_v1_to_text(v1_forms: Vec<Box<may_i_sexpr::CstNode>>) -> String {
+        let migrated = migrate_forms(v1_forms);
+        serialize_forms_spaced(&migrated)
+    }
+
+    /// Check eval equivalence for a migrated config (parsed through migration
+    /// pipeline) against a given command, using resolve for named predicates.
+    fn migrated_config_evaluates_ok(
+        migrated_text: &str,
+        cmd: &str,
+        args: &[String],
+        facts: &may_i_core::ContextFacts,
+    ) -> bool {
+        let config = match crate::config::parse_config(migrated_text) {
+            Ok(c) => c,
+            Err(_) => return false,
+        };
+        let resolved = match crate::resolve::validate_and_resolve(&config.rules, &config.defines) {
+            Ok(r) => r,
+            Err(_) => return false,
+        };
+        let mut config = config;
+        config.rules = resolved;
+        may_i_engine::evaluate(cmd, args, &config, facts).is_ok()
     }
 
     // ── Property tests ────────────────────────────────────────────────
@@ -240,6 +349,62 @@ mod tests {
         #[test]
         fn migration_converges(forms in any_canonical_config_cst()) {
             let _migrated = migrate_forms(forms);
+        }
+
+        // ── Compound V1 property tests ──────────────────────────────────
+
+        #[test]
+        fn v1_rule_with_context_eval_preserved(
+            (v1_forms, canonical_forms) in any_v1_rule_with_context(),
+            cmd in "[a-z][a-z0-9_-]{0,10}",
+        ) {
+            let migrated = migrate_forms(v1_forms);
+            let migrated_text = serialize_forms_spaced(&migrated);
+            let canonical_text = serialize_forms_spaced(&canonical_forms);
+
+            prop_assume!(crate::config::parse_config(&migrated_text).is_ok());
+            prop_assume!(crate::config::parse_config(&canonical_text).is_ok());
+
+            let args: Vec<String> = vec![];
+            let facts = may_i_core::ContextFacts::default();
+            prop_assert!(
+                configs_evaluate_equal(&migrated_text, &canonical_text, &cmd, &args, &facts),
+                "context eval differs:\n  v1 migrated: {}\n  canonical: {}",
+                migrated_text,
+                canonical_text
+            );
+        }
+
+        #[test]
+        fn v1_rule_with_args_migrates_and_evaluates(
+            (v1_forms, cmd_str) in any_v1_rule_with_args(),
+        ) {
+            let migrated_text = migrate_v1_to_text(v1_forms);
+            prop_assume!(crate::config::parse_config(&migrated_text).is_ok());
+
+            let args: Vec<String> = vec![];
+            let facts = may_i_core::ContextFacts::default();
+            prop_assert!(
+                migrated_config_evaluates_ok(&migrated_text, &cmd_str, &args, &facts),
+                "args rule failed to evaluate after migration:\n  text: {}",
+                migrated_text
+            );
+        }
+
+        #[test]
+        fn v1_compound_rule_migrates_and_evaluates(
+            (v1_forms, cmd_str) in any_v1_compound_rule(),
+        ) {
+            let migrated_text = migrate_v1_to_text(v1_forms);
+            prop_assume!(crate::config::parse_config(&migrated_text).is_ok());
+
+            let args: Vec<String> = vec![];
+            let facts = may_i_core::ContextFacts::default();
+            prop_assert!(
+                migrated_config_evaluates_ok(&migrated_text, &cmd_str, &args, &facts),
+                "compound rule failed to evaluate after migration:\n  text: {}",
+                migrated_text
+            );
         }
     }
 }
