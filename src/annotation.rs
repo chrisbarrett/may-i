@@ -1147,7 +1147,7 @@ mod tests {
             data in any_eval_context_data(),
         ) {
             let (cmd, args, facts) = data;
-            let ctx = EvalContext::new(&cmd, &args, &facts);
+            let ctx = EvalContext::new(&cmd, &args, &facts, EvalContext::build_bindings(&config.defines));
 
             let evaluator = Evaluator::new(&config.rules);
 

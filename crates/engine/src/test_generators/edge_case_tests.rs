@@ -2,7 +2,7 @@ use super::*;
 use crate::eval::{self, EvalContext, evaluate_predicate};
 
 fn make_ctx<'a>(command: &'a str, args: &'a [String], facts: &'a ContextFacts) -> EvalContext<'a> {
-    EvalContext::new(command, args, facts)
+    EvalContext::new(command, args, facts, Default::default())
 }
 
 // 5.1.1 Unit test: Unresolved named predicate returns Err

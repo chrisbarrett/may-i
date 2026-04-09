@@ -18,23 +18,26 @@ Trace
   29: (rule (command "rm")                          │
         (args                                       │
          (when (and                                 │
-                (or                                 │
-                 (has                               │ no
-                  [:claude-code/permission-mode     │
-                   "acceptEdits"])                  │
-                 (has [:opencode/agent              │ "build" → yes
-                       "build"]))                   │
+                (build-mode                         │
+                 (or                                │
+                  (has                              │ no
+                   [:claude-code/permission-mode    │
+                    "acceptEdits"])                 │
+                  (has [:opencode/agent             │ "build" → yes
+                        "build"])))                 │
                 (anywhere "-r"                      │
                           "--recursive"))           │
            <if-effect>)))                           │
                                                     │
   37: (rule (command "rm")                          │
         (context                                    │
-         (or                                        │
-          (has                                      │ no
-           [:claude-code/permission-mode            │
-            "acceptEdits"])                         │
-          (has [:opencode/agent "build"])))         │ "build" → yes
+         (build-mode                                │
+          (or                                       │
+           (has                                     │ no
+            [:claude-code/permission-mode           │
+             "acceptEdits"])                        │
+           (has                                     │ "build" → yes
+            [:opencode/agent "build"]))))           │
         (effect                                     │ → :allow "Non-recursive delete is allowed"
          :allow "Non-recursive delete is allowed")) │
 

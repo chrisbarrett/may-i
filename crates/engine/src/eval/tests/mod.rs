@@ -10,6 +10,8 @@ use super::positional::{
 use super::predicates::{evaluate_predicate, match_fact_pattern};
 use super::*;
 
+use std::collections::HashMap;
+
 use may_i_core::ast::{Effect, EffectResult, Predicate, Rule};
 use may_i_core::pattern::{ArgPattern, CommandPattern};
 use may_i_core::{ContextFacts, Decision, FactPattern, FactQuery, Keyword};
@@ -25,7 +27,7 @@ fn dummy_context<'a>(
     args: &'a [String],
     facts: &'a ContextFacts,
 ) -> EvalContext<'a> {
-    EvalContext::new(command, args, facts)
+    EvalContext::new(command, args, facts, Default::default())
 }
 
 #[test]
@@ -154,7 +156,7 @@ fn predicate_evaluation() {
 #[test]
 fn context_depth_tracking() {
     let facts = ContextFacts::default();
-    let ctx = EvalContext::new("test", &[], &facts).with_recursion_limit(5);
+    let ctx = EvalContext::new("test", &[], &facts, Default::default()).with_recursion_limit(5);
     assert_eq!(ctx.recursion_limit, 5);
     assert!(!ctx.is_depth_exceeded());
 
@@ -162,6 +164,7 @@ fn context_depth_tracking() {
         command: ctx.command,
         args: ctx.args,
         facts: ctx.facts,
+        bindings: Default::default(),
         recursion_depth: 5, // Set to equal recursion_limit
         recursion_limit: ctx.recursion_limit,
     };
@@ -825,7 +828,7 @@ fn may_i_pushes_via_fact() {
     let rules = vec![inner_rule, sudo_rule];
     let facts = ContextFacts::default();
     let args = vec!["rm".to_string(), "-rf".to_string()];
-    let ctx = EvalContext::new("sudo", &args, &facts);
+    let ctx = EvalContext::new("sudo", &args, &facts, Default::default());
     let evaluator = Evaluator::new(&rules);
     let result = evaluator.evaluate(&mut PureFold, &ctx).unwrap();
     // The inner "rm" evaluation should see :via = {"sudo"} and match the deny rule
@@ -904,11 +907,67 @@ fn may_i_nested_wrappers_accumulate_via() {
         "-rf".to_string(),
         "/".to_string(),
     ];
-    let ctx = EvalContext::new("sudo", &args, &facts);
+    let ctx = EvalContext::new("sudo", &args, &facts, Default::default());
     let evaluator = Evaluator::new(&rules);
     let result = evaluator.evaluate(&mut PureFold, &ctx).unwrap();
     // Inner "rm" should see :via = {"sudo", "ssh"} and match the deny rule
     assert_eq!(result.decision, Decision::Deny);
+}
+
+// --- Named predicate binding environment tests ---
+
+#[test]
+fn named_predicate_matches_when_fact_present() {
+    let mut facts = ContextFacts::default();
+    facts.insert_present(kw(":safe"));
+
+    let body = Predicate::fact_presence(":safe");
+    let bindings = HashMap::from([("safe", &body)]);
+
+    let ctx = EvalContext::new("test", &[], &facts, bindings);
+    let pred = Predicate::Named("safe".to_string());
+    let result = evaluate_predicate(&pred, &ctx).unwrap();
+    assert_eq!(result, PredicateResult::Match);
+}
+
+#[test]
+fn named_predicate_no_match_when_fact_absent() {
+    let facts = ContextFacts::default();
+
+    let body = Predicate::fact_presence(":safe");
+    let bindings = HashMap::from([("safe", &body)]);
+
+    let ctx = EvalContext::new("test", &[], &facts, bindings);
+    let pred = Predicate::Named("safe".to_string());
+    let result = evaluate_predicate(&pred, &ctx).unwrap();
+    assert_eq!(result, PredicateResult::NoMatch);
+}
+
+#[test]
+fn named_predicate_transitive_resolution() {
+    let mut facts = ContextFacts::default();
+    facts.insert_present(kw(":x"));
+
+    let body_a = Predicate::fact_presence(":x");
+    let body_b = Predicate::Named("a".to_string());
+    let bindings = HashMap::from([("a", &body_a), ("b", &body_b)]);
+
+    let ctx = EvalContext::new("test", &[], &facts, bindings);
+    let pred = Predicate::Named("b".to_string());
+    let result = evaluate_predicate(&pred, &ctx).unwrap();
+    assert_eq!(result, PredicateResult::Match);
+}
+
+#[test]
+fn named_predicate_missing_returns_unresolved_error() {
+    let facts = ContextFacts::default();
+    let ctx = EvalContext::new("test", &[], &facts, Default::default());
+    let pred = Predicate::Named("missing".to_string());
+    let result = evaluate_predicate(&pred, &ctx);
+    assert!(result.is_err());
+    assert!(
+        matches!(result.unwrap_err(), crate::EvalError::UnresolvedPredicate { ref name } if name == "missing")
+    );
 }
 
 mod properties;

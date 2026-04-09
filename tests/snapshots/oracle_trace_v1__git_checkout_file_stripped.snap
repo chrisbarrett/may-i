@@ -32,11 +32,13 @@ Trace
                            "clone"))                                   │ "checkout" = "clone" → no
            (positional "checkout" "--")                                │ "checkout" = "checkout" → yes
            …)                                                          │
-          (or                                                          │
-           (has                                                        │ no
-            [:claude-code/permission-mode                              │
-             "plan"])                                                  │
-           (has [:opencode/agent "plan"]))))                           │ no
+          (plan-mode                                                   │
+           (or                                                         │
+            (has                                                       │ no
+             [:claude-code/permission-mode                             │
+              "plan"])                                                 │
+            (has                                                       │ no
+             [:opencode/agent "plan"])))))                             │
         (effect                                                        │ → :ask "git mutation requires approval in non-writing agents"
          :ask "git mutation requires approval in non-writing agents")) │
                                                                        │

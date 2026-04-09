@@ -29,8 +29,9 @@ pub fn evaluate_with_fold<F: EvalFold>(
     fold: &mut F,
 ) -> Result<EvalResult, EvalError> {
     let expanded = expand_combined_flags(args);
+    let bindings = EvalContext::build_bindings(&config.defines);
     let evaluator = Evaluator::new(&config.rules);
-    let ctx = EvalContext::new(command, &expanded, facts);
+    let ctx = EvalContext::new(command, &expanded, facts, bindings);
     evaluator.evaluate(fold, &ctx)
 }
 
