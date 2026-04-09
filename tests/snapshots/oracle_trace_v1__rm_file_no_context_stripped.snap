@@ -1,5 +1,6 @@
 ---
 source: tests/oracle_trace_v1.rs
+assertion_line: 108
 expression: normalised
 ---
 
@@ -17,22 +18,25 @@ Trace
   29: (rule (command "rm")                          │
         (args                                       │
          (when (and                                 │
-                (or                                 │
-                 (has                               │ no
-                  [:claude-code/permission-mode     │
-                   "acceptEdits"])                  │
-                 (has [:opencode/agent              │ no
-                       "build"]))                   │
+                (build-mode                         │
+                 (or                                │
+                  (has                              │ no
+                   [:claude-code/permission-mode    │
+                    "acceptEdits"])                 │
+                  (has [:opencode/agent             │ no
+                        "build"])))                 │
                 …)                                  │
            <if-effect>)))                           │
                                                     │
   37: (rule (command "rm")                          │
         (context                                    │
-         (or                                        │
-          (has                                      │ no
-           [:claude-code/permission-mode            │
-            "acceptEdits"])                         │
-          (has [:opencode/agent "build"])))         │ no
+         (build-mode                                │
+          (or                                       │
+           (has                                     │ no
+            [:claude-code/permission-mode           │
+             "acceptEdits"])                        │
+           (has                                     │ no
+            [:opencode/agent "build"]))))           │
         (effect                                     │ → :allow "Non-recursive delete is allowed"
          :allow "Non-recursive delete is allowed")) │
                                    No matching rule │ → :ask (default)

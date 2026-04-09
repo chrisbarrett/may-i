@@ -87,7 +87,15 @@ pub(crate) fn evaluate_predicate_fold<F: EvalFold>(
             };
             Ok(fold.predicate_not(out, result))
         }
-        Predicate::Named(name) => Err(EvalError::UnresolvedPredicate { name: name.clone() }),
+        Predicate::Named(name) => {
+            if let Some(body) = ctx.bindings.get(name.as_str()) {
+                let child_out = evaluate_predicate_fold(fold, body, ctx)?;
+                let result = F::predicate_result(&child_out);
+                Ok(fold.predicate_named(name, child_out, result))
+            } else {
+                Err(EvalError::UnresolvedPredicate { name: name.clone() })
+            }
+        }
         _ => unreachable!("unknown Predicate variant"),
     }
 }

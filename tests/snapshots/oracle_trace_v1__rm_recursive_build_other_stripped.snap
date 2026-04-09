@@ -18,12 +18,13 @@ Trace
   29: (rule (command "rm")                                         │
         (args                                                      │
          (when (and                                                │
-                (or                                                │
-                 (has                                              │ no
-                  [:claude-code/permission-mode                    │
-                   "acceptEdits"])                                 │
-                 (has [:opencode/agent                             │ "build" → yes
-                       "build"]))                                  │
+                (build-mode                                        │
+                 (or                                               │
+                  (has                                             │ no
+                   [:claude-code/permission-mode                   │
+                    "acceptEdits"])                                │
+                  (has [:opencode/agent                            │ "build" → yes
+                        "build"])))                                │
                 (anywhere "-r"                                     │
                           "--recursive"))                          │
            (if (anywhere (regex                                    │

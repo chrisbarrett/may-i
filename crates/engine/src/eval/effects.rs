@@ -231,6 +231,7 @@ pub(crate) fn evaluate_effect_fold<F: EvalFold>(
                     command: &inner_cmd,
                     args: &expanded_inner,
                     facts: &inner_facts,
+                    bindings: ctx.bindings.clone(),
                     recursion_depth: ctx.recursion_depth + 1,
                     recursion_limit: ctx.recursion_limit,
                 };
@@ -432,6 +433,7 @@ fn evaluate_effect_with_owned_args_fold<F: EvalFold>(
         command: ctx.command,
         args: &owned_args,
         facts: &merged_facts,
+        bindings: ctx.bindings.clone(),
         recursion_depth: ctx.recursion_depth,
         recursion_limit: ctx.recursion_limit,
     };

@@ -1,5 +1,5 @@
-// Define resolution and validation for the unified DSL.
-// Tasks 3.1-3.5: Build resolution map, detect duplicates, undefined refs, cycles, and resolve.
+// Define validation for the unified DSL.
+// Checks: build resolution map, detect duplicates, undefined refs, and cycles.
 
 use may_i_core::ast::{Define, Effect, Predicate, Rule, Spanned};
 use may_i_core::span::Span;
@@ -279,184 +279,6 @@ fn collect_refs_from_effect_recursive(effect: &Effect, _span: Span, refs: &mut V
     }
 }
 
-/// Resolve all named predicates by inlining their definitions.
-/// Returns a new list of rules with all named predicates resolved.
-pub(crate) fn resolve_predicates(
-    rules: &[Rule],
-    defines: &[Define],
-    define_map: &DefineMap,
-) -> Result<Vec<Rule>, ResolutionError> {
-    rules
-        .iter()
-        .map(|rule| resolve_rule_predicates(rule, defines, define_map))
-        .collect()
-}
-
-fn resolve_rule_predicates(
-    rule: &Rule,
-    defines: &[Define],
-    define_map: &DefineMap,
-) -> Result<Rule, ResolutionError> {
-    let resolved_command = resolve_effect_predicates(&rule.command_effect, defines, define_map)?;
-    let resolved_effect = resolve_effect_predicates(&rule.effect, defines, define_map)?;
-
-    Ok(Rule {
-        command_effect: resolved_command,
-        effect: resolved_effect,
-        checks: rule.checks.clone(),
-        span: rule.span,
-    })
-}
-
-fn resolve_effect_predicates(
-    effect: &Spanned<Effect>,
-    defines: &[Define],
-    define_map: &DefineMap,
-) -> Result<Spanned<Effect>, ResolutionError> {
-    let resolved = match &effect.value {
-        Effect::When {
-            predicate,
-            effect: inner,
-        } => {
-            let resolved_pred = resolve_single_predicate(predicate, defines, define_map)?;
-            let resolved_inner = resolve_effect_predicates(inner, defines, define_map)?;
-            Effect::When {
-                predicate: resolved_pred,
-                effect: Box::new(resolved_inner),
-            }
-        }
-        Effect::Unless {
-            predicate,
-            effect: inner,
-        } => {
-            let resolved_pred = resolve_single_predicate(predicate, defines, define_map)?;
-            let resolved_inner = resolve_effect_predicates(inner, defines, define_map)?;
-            Effect::Unless {
-                predicate: resolved_pred,
-                effect: Box::new(resolved_inner),
-            }
-        }
-        Effect::If {
-            predicate,
-            then_effect,
-            else_effect,
-        } => {
-            let resolved_pred = resolve_single_predicate(predicate, defines, define_map)?;
-            let resolved_then = resolve_effect_predicates(then_effect, defines, define_map)?;
-            let resolved_else = resolve_effect_predicates(else_effect, defines, define_map)?;
-            Effect::If {
-                predicate: resolved_pred,
-                then_effect: Box::new(resolved_then),
-                else_effect: Box::new(resolved_else),
-            }
-        }
-        Effect::Cond { branches, fallback } => {
-            let resolved_branches: Result<Vec<_>, _> = branches
-                .iter()
-                .map(|(pred, eff)| {
-                    let resolved_pred = resolve_single_predicate(pred, defines, define_map)?;
-                    let resolved_eff = resolve_effect_predicates(eff, defines, define_map)?;
-                    Ok((resolved_pred, resolved_eff))
-                })
-                .collect();
-            let resolved_fallback = if let Some(fb) = fallback {
-                Some(Box::new(resolve_effect_predicates(
-                    fb, defines, define_map,
-                )?))
-            } else {
-                None
-            };
-            Effect::Cond {
-                branches: resolved_branches?,
-                fallback: resolved_fallback,
-            }
-        }
-        Effect::And { effects } => {
-            let resolved: Result<Vec<_>, _> = effects
-                .iter()
-                .map(|e| resolve_effect_predicates(e, defines, define_map))
-                .collect();
-            Effect::And { effects: resolved? }
-        }
-        Effect::Or { effects } => {
-            let resolved: Result<Vec<_>, _> = effects
-                .iter()
-                .map(|e| resolve_effect_predicates(e, defines, define_map))
-                .collect();
-            Effect::Or { effects: resolved? }
-        }
-        Effect::Not { effect } => {
-            let resolved = resolve_effect_predicates(effect, defines, define_map)?;
-            Effect::Not {
-                effect: Box::new(resolved),
-            }
-        }
-        other => other.clone(),
-    };
-
-    Ok(Spanned::new(resolved, effect.span))
-}
-
-fn resolve_single_predicate(
-    predicate: &Spanned<Predicate>,
-    defines: &[Define],
-    define_map: &DefineMap,
-) -> Result<Spanned<Predicate>, ResolutionError> {
-    let resolved = match &predicate.value {
-        Predicate::Named(name) => {
-            // Get the define and inline it, then resolve recursively
-            // since the inlined body may itself contain Named references.
-            if let Some((idx, _)) = define_map.get(name) {
-                let inlined = Spanned::new(defines[idx].predicate.value.clone(), predicate.span);
-                return resolve_single_predicate(&inlined, defines, define_map);
-            } else {
-                // This shouldn't happen if we checked for undefined refs first
-                return Err(ResolutionError::new(
-                    format!("internal error: undefined predicate '{name}'"),
-                    predicate.span,
-                ));
-            }
-        }
-        Predicate::And(predicates) => {
-            let resolved: Result<Vec<_>, _> = predicates
-                .iter()
-                .map(|p| {
-                    resolve_single_predicate(
-                        &Spanned::new(p.clone(), predicate.span),
-                        defines,
-                        define_map,
-                    )
-                })
-                .collect();
-            Predicate::And(resolved?.into_iter().map(|s| s.value).collect())
-        }
-        Predicate::Or(predicates) => {
-            let resolved: Result<Vec<_>, _> = predicates
-                .iter()
-                .map(|p| {
-                    resolve_single_predicate(
-                        &Spanned::new(p.clone(), predicate.span),
-                        defines,
-                        define_map,
-                    )
-                })
-                .collect();
-            Predicate::Or(resolved?.into_iter().map(|s| s.value).collect())
-        }
-        Predicate::Not(inner) => {
-            let resolved = resolve_single_predicate(
-                &Spanned::new(inner.as_ref().clone(), predicate.span),
-                defines,
-                define_map,
-            )?;
-            Predicate::Not(Box::new(resolved.value))
-        }
-        other => other.clone(),
-    };
-
-    Ok(Spanned::new(resolved, predicate.span))
-}
-
 /// Full validation pipeline for defines and rules.
 /// Performs all validation checks in the correct order.
 pub fn validate_and_resolve(
@@ -486,16 +308,8 @@ pub fn validate_and_resolve(
         return Err(errors);
     }
 
-    // Step 4: Resolve named predicates (3.5)
-    let resolved_rules = match resolve_predicates(rules, defines, &define_map) {
-        Ok(rules) => rules,
-        Err(e) => {
-            errors.push(e);
-            return Err(errors);
-        }
-    };
-
-    Ok(resolved_rules)
+    // Named predicates are resolved at eval time via the binding environment.
+    Ok(rules.to_vec())
 }
 
 #[cfg(test)]
@@ -587,27 +401,25 @@ mod tests {
     }
 
     #[test]
-    fn resolve_simple_named_predicate() {
+    fn validate_preserves_named_references() {
         let defines = vec![create_define("safe", Predicate::fact_presence(":safe"))];
         let rules = vec![create_rule_with_conditional(
             Predicate::Named("safe".to_string()),
             Effect::Allow(None),
         )];
-        let define_map = DefineMap::from_defines(&defines).unwrap();
 
-        let resolved = resolve_predicates(&rules, &defines, &define_map).unwrap();
-        assert_eq!(resolved.len(), 1);
-        // After resolution, the Named predicate in the effect should be replaced with Fact
-        match &resolved[0].effect.value {
+        let result = validate_and_resolve(&rules, &defines).unwrap();
+        assert_eq!(result.len(), 1);
+        match &result[0].effect.value {
             Effect::When { predicate, .. } => {
-                assert!(matches!(predicate.value, Predicate::Fact(_)));
+                assert!(matches!(predicate.value, Predicate::Named(_)));
             }
             _ => panic!("expected When effect"),
         }
     }
 
     #[test]
-    fn resolve_nested_predicate() {
+    fn validate_preserves_nested_named_references() {
         let defines = vec![
             create_define("a", Predicate::fact_presence(":a")),
             create_define(
@@ -622,12 +434,11 @@ mod tests {
             Predicate::Named("b".to_string()),
             Effect::Allow(None),
         )];
-        let define_map = DefineMap::from_defines(&defines).unwrap();
 
-        let resolved = resolve_predicates(&rules, &defines, &define_map).unwrap();
-        match &resolved[0].effect.value {
+        let result = validate_and_resolve(&rules, &defines).unwrap();
+        match &result[0].effect.value {
             Effect::When { predicate, .. } => {
-                assert!(matches!(predicate.value, Predicate::And(_)));
+                assert!(matches!(predicate.value, Predicate::Named(_)));
             }
             _ => panic!("expected When effect"),
         }
@@ -738,17 +549,24 @@ mod tests {
     }
 
     #[test]
-    fn resolve_not_predicate() {
+    fn validate_preserves_named_in_not() {
         let defines = vec![create_define("safe", Predicate::fact_presence(":safe"))];
         let rules = vec![create_rule_with_conditional(
             Predicate::Not(Box::new(Predicate::Named("safe".to_string()))),
             Effect::Allow(None),
         )];
-        let define_map = DefineMap::from_defines(&defines).unwrap();
 
-        let resolved = resolve_predicates(&rules, &defines, &define_map).unwrap();
-        // The predicate should be resolved within the effect
-        assert!(matches!(resolved[0].effect.value, Effect::When { .. }));
+        let result = validate_and_resolve(&rules, &defines).unwrap();
+        match &result[0].effect.value {
+            Effect::When { predicate, .. } => {
+                if let Predicate::Not(inner) = &predicate.value {
+                    assert!(matches!(inner.as_ref(), Predicate::Named(_)));
+                } else {
+                    panic!("expected Not predicate");
+                }
+            }
+            _ => panic!("expected When effect"),
+        }
     }
 
     #[test]
@@ -800,191 +618,6 @@ mod tests {
 
         let result = validate_and_resolve(&rules, &defines);
         assert!(result.is_err());
-    }
-
-    // --- Effect variant resolution tests ---
-    // Each test wraps a Named predicate inside a different Effect variant
-    // to exercise the resolution and ref-collection arms.
-
-    fn create_rule_with_effect(effect: Effect) -> Rule {
-        Rule::new(
-            Spanned::new(
-                Effect::CommandPattern(CommandPattern::Literal("test".to_string())),
-                dummy_span(),
-            ),
-            Spanned::new(effect, dummy_span()),
-            vec![],
-            dummy_span(),
-        )
-    }
-
-    #[test]
-    fn resolve_unless_with_named_predicate() {
-        let defines = vec![create_define("safe", Predicate::fact_presence(":safe"))];
-        let effect = Effect::Unless {
-            predicate: Spanned::new(Predicate::Named("safe".to_string()), dummy_span()),
-            effect: Box::new(Spanned::new(Effect::Deny(None), dummy_span())),
-        };
-        let rules = vec![create_rule_with_effect(effect)];
-        let define_map = DefineMap::from_defines(&defines).unwrap();
-
-        let resolved = resolve_predicates(&rules, &defines, &define_map).unwrap();
-        match &resolved[0].effect.value {
-            Effect::Unless { predicate, .. } => {
-                assert!(matches!(predicate.value, Predicate::Fact(_)));
-            }
-            _ => panic!("expected Unless effect"),
-        }
-    }
-
-    #[test]
-    fn resolve_if_with_named_predicate() {
-        let defines = vec![create_define("safe", Predicate::fact_presence(":safe"))];
-        let effect = Effect::If {
-            predicate: Spanned::new(Predicate::Named("safe".to_string()), dummy_span()),
-            then_effect: Box::new(Spanned::new(Effect::Allow(None), dummy_span())),
-            else_effect: Box::new(Spanned::new(Effect::Deny(None), dummy_span())),
-        };
-        let rules = vec![create_rule_with_effect(effect)];
-        let define_map = DefineMap::from_defines(&defines).unwrap();
-
-        let resolved = resolve_predicates(&rules, &defines, &define_map).unwrap();
-        match &resolved[0].effect.value {
-            Effect::If { predicate, .. } => {
-                assert!(matches!(predicate.value, Predicate::Fact(_)));
-            }
-            _ => panic!("expected If effect"),
-        }
-    }
-
-    #[test]
-    fn resolve_cond_with_named_predicate() {
-        let defines = vec![create_define("safe", Predicate::fact_presence(":safe"))];
-        let effect = Effect::Cond {
-            branches: vec![(
-                Spanned::new(Predicate::Named("safe".to_string()), dummy_span()),
-                Spanned::new(Effect::Allow(None), dummy_span()),
-            )],
-            fallback: Some(Box::new(Spanned::new(Effect::Deny(None), dummy_span()))),
-        };
-        let rules = vec![create_rule_with_effect(effect)];
-        let define_map = DefineMap::from_defines(&defines).unwrap();
-
-        let resolved = resolve_predicates(&rules, &defines, &define_map).unwrap();
-        match &resolved[0].effect.value {
-            Effect::Cond { branches, .. } => {
-                assert!(matches!(branches[0].0.value, Predicate::Fact(_)));
-            }
-            _ => panic!("expected Cond effect"),
-        }
-    }
-
-    #[test]
-    fn resolve_and_effect_with_named_predicate() {
-        let defines = vec![create_define("safe", Predicate::fact_presence(":safe"))];
-        let effect = Effect::And {
-            effects: vec![Spanned::new(
-                Effect::When {
-                    predicate: Spanned::new(Predicate::Named("safe".to_string()), dummy_span()),
-                    effect: Box::new(Spanned::new(Effect::Allow(None), dummy_span())),
-                },
-                dummy_span(),
-            )],
-        };
-        let rules = vec![create_rule_with_effect(effect)];
-        let define_map = DefineMap::from_defines(&defines).unwrap();
-
-        let resolved = resolve_predicates(&rules, &defines, &define_map).unwrap();
-        match &resolved[0].effect.value {
-            Effect::And { effects } => match &effects[0].value {
-                Effect::When { predicate, .. } => {
-                    assert!(matches!(predicate.value, Predicate::Fact(_)));
-                }
-                _ => panic!("expected When inside And"),
-            },
-            _ => panic!("expected And effect"),
-        }
-    }
-
-    #[test]
-    fn resolve_or_effect_with_named_predicate() {
-        let defines = vec![create_define("safe", Predicate::fact_presence(":safe"))];
-        let effect = Effect::Or {
-            effects: vec![Spanned::new(
-                Effect::When {
-                    predicate: Spanned::new(Predicate::Named("safe".to_string()), dummy_span()),
-                    effect: Box::new(Spanned::new(Effect::Allow(None), dummy_span())),
-                },
-                dummy_span(),
-            )],
-        };
-        let rules = vec![create_rule_with_effect(effect)];
-        let define_map = DefineMap::from_defines(&defines).unwrap();
-
-        let resolved = resolve_predicates(&rules, &defines, &define_map).unwrap();
-        match &resolved[0].effect.value {
-            Effect::Or { effects } => match &effects[0].value {
-                Effect::When { predicate, .. } => {
-                    assert!(matches!(predicate.value, Predicate::Fact(_)));
-                }
-                _ => panic!("expected When inside Or"),
-            },
-            _ => panic!("expected Or effect"),
-        }
-    }
-
-    #[test]
-    fn resolve_not_effect_with_named_predicate() {
-        let defines = vec![create_define("safe", Predicate::fact_presence(":safe"))];
-        let effect = Effect::Not {
-            effect: Box::new(Spanned::new(
-                Effect::When {
-                    predicate: Spanned::new(Predicate::Named("safe".to_string()), dummy_span()),
-                    effect: Box::new(Spanned::new(Effect::Allow(None), dummy_span())),
-                },
-                dummy_span(),
-            )),
-        };
-        let rules = vec![create_rule_with_effect(effect)];
-        let define_map = DefineMap::from_defines(&defines).unwrap();
-
-        let resolved = resolve_predicates(&rules, &defines, &define_map).unwrap();
-        match &resolved[0].effect.value {
-            Effect::Not { effect } => match &effect.value {
-                Effect::When { predicate, .. } => {
-                    assert!(matches!(predicate.value, Predicate::Fact(_)));
-                }
-                _ => panic!("expected When inside Not"),
-            },
-            _ => panic!("expected Not effect"),
-        }
-    }
-
-    #[test]
-    fn resolve_or_predicate_with_named() {
-        let defines = vec![
-            create_define("a", Predicate::fact_presence(":a")),
-            create_define("b", Predicate::fact_presence(":b")),
-        ];
-        let rules = vec![create_rule_with_conditional(
-            Predicate::Or(vec![
-                Predicate::Named("a".to_string()),
-                Predicate::Named("b".to_string()),
-            ]),
-            Effect::Allow(None),
-        )];
-        let define_map = DefineMap::from_defines(&defines).unwrap();
-
-        let resolved = resolve_predicates(&rules, &defines, &define_map).unwrap();
-        match &resolved[0].effect.value {
-            Effect::When { predicate, .. } => {
-                assert!(matches!(predicate.value, Predicate::Or(_)));
-                if let Predicate::Or(preds) = &predicate.value {
-                    assert!(preds.iter().all(|p| matches!(p, Predicate::Fact(_))));
-                }
-            }
-            _ => panic!("expected When effect"),
-        }
     }
 
     // --- Ref collection from effect variants ---

@@ -3,7 +3,7 @@ use crate::eval::{self, EvalContext, Evaluator, PredicateResult, evaluate, evalu
 use may_i_core::ast::EffectResult;
 
 fn make_ctx<'a>(command: &'a str, args: &'a [String], facts: &'a ContextFacts) -> EvalContext<'a> {
-    EvalContext::new(command, args, facts)
+    EvalContext::new(command, args, facts, Default::default())
 }
 
 fn eval_effect(effect: &Effect, ctx: &EvalContext) -> EffectResult {

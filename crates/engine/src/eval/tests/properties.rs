@@ -185,7 +185,7 @@ fn evaluate_rule_nil_short_circuits() {
     let rules = vec![rule];
     let facts = ContextFacts::default();
     let args = vec!["bad".to_string()];
-    let ctx = EvalContext::new("test", &args, &facts);
+    let ctx = EvalContext::new("test", &args, &facts, Default::default());
     let evaluator = Evaluator::new(&rules);
     let result = evaluator.evaluate(&mut PureFold, &ctx).unwrap();
     // Forbidden found → Nil → rule_not_matched → falls through to ask
@@ -232,7 +232,7 @@ fn evaluate_rule_predicate_allow_continues() {
     let rules = vec![rule];
     let facts = ContextFacts::default();
     let args = vec!["ok".to_string()];
-    let ctx = EvalContext::new("cmd", &args, &facts);
+    let ctx = EvalContext::new("cmd", &args, &facts, Default::default());
     let evaluator = Evaluator::new(&rules);
     let result = evaluator.evaluate(&mut PureFold, &ctx).unwrap();
     assert_eq!(result.decision, Decision::Allow);

@@ -3,7 +3,7 @@ use crate::eval::{self, EvalContext, Evaluator};
 use crate::fold::PureFold;
 
 fn make_ctx<'a>(command: &'a str, args: &'a [String], facts: &'a ContextFacts) -> EvalContext<'a> {
-    EvalContext::new(command, args, facts)
+    EvalContext::new(command, args, facts, Default::default())
 }
 
 proptest! {
@@ -37,7 +37,7 @@ proptest! {
 
         // Must expand flags to match the convenience wrapper's behavior.
         let expanded = eval::expand_combined_flags(&args);
-        let ctx = EvalContext::new(&cmd, &expanded, &facts);
+        let ctx = EvalContext::new(&cmd, &expanded, &facts, EvalContext::build_bindings(&config.defines));
         let evaluator = Evaluator::new(&config.rules);
         let result_fold = evaluator.evaluate(&mut PureFold, &ctx).unwrap();
 
