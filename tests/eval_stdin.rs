@@ -66,3 +66,51 @@ fn eval_rejects_empty_stdin() {
         .code(2)
         .stderr(predicate::str::contains("empty"));
 }
+
+#[test]
+fn eval_fact_flag_is_used_in_evaluation() {
+    let cfg = write_config(
+        r#"
+(define is-ssh (fact? :via/ssh))
+(rule "echo" (when is-ssh (effect :deny "no echo over ssh")))
+"#,
+    );
+    let output = may_i(&cfg)
+        .args(["--json", "eval", "--fact", ":via/ssh"])
+        .write_stdin("echo hello\n")
+        .output()
+        .expect("run");
+
+    assert!(output.status.success(), "exit 0 expected");
+
+    let resp: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("valid JSON stdout");
+
+    assert_eq!(resp["decision"], "deny");
+    assert_eq!(resp["reason"], "no echo over ssh");
+}
+
+#[test]
+fn eval_without_matching_fact_falls_through() {
+    let cfg = write_config(
+        r#"
+(define is-ssh (fact? :via/ssh))
+(rule "echo" (when is-ssh (effect :deny "no echo over ssh")))
+"#,
+    );
+    let output = may_i(&cfg)
+        .args(["--json", "eval"])
+        .write_stdin("echo hello\n")
+        .output()
+        .expect("run");
+
+    assert!(output.status.success(), "exit 0 expected");
+
+    let resp: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("valid JSON stdout");
+
+    assert_eq!(
+        resp["decision"], "ask",
+        "without the fact, rule should not match and default to ask"
+    );
+}
