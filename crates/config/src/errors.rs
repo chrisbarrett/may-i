@@ -1,7 +1,4 @@
 // Error types for config parsing diagnostics.
-// The miette Diagnostic derive generates code that triggers unused_assignments
-// false positives on struct fields.
-#![allow(unused_assignments)]
 
 use may_i_core::Span;
 use may_i_sexpr::RawError;

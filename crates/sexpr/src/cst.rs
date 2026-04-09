@@ -9,8 +9,6 @@
 // - Enables rewrite-based migration tools
 // - Pattern matching still works on the structure
 
-#![allow(clippy::vec_box)]
-
 use crate::span::Span;
 pub use may_i_core::{Trivia, TriviaAnn};
 
@@ -369,6 +367,7 @@ fn quote_string(s: &str) -> String {
 }
 
 /// Parse a string into CST nodes.
+#[allow(clippy::vec_box)]
 pub fn parse(input: &str) -> (Vec<Box<CstNode>>, Vec<crate::span::RawError>) {
     let mut parser = Parser::new(input);
     parser.parse()
@@ -389,6 +388,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    #[allow(clippy::vec_box)]
     fn parse(&mut self) -> (Vec<Box<CstNode>>, Vec<crate::span::RawError>) {
         let mut results = Vec::new();
 

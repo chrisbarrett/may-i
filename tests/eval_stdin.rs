@@ -1,32 +1,18 @@
 // Integration tests for eval reading commands from stdin.
 
-use assert_cmd::Command;
-use assert_cmd::cargo::cargo_bin_cmd;
+mod common;
+
+use common::{may_i, write_config};
 use predicates::prelude::*;
-use std::io::Write;
-use tempfile::NamedTempFile;
 
 const TEST_CONFIG: &str = r#"
 (rule "echo"
       (effect :allow "echo is safe"))
 "#;
 
-fn write_config() -> NamedTempFile {
-    let mut f = NamedTempFile::new().expect("create temp config");
-    f.write_all(TEST_CONFIG.as_bytes())
-        .expect("write temp config");
-    f
-}
-
-fn may_i(config: &NamedTempFile) -> Command {
-    let mut cmd = cargo_bin_cmd!("may-i");
-    cmd.env("MAYI_CONFIG", config.path());
-    cmd
-}
-
 #[test]
 fn eval_reads_command_from_stdin() {
-    let cfg = write_config();
+    let cfg = write_config(TEST_CONFIG);
     let output = may_i(&cfg)
         .args(["--json", "eval"])
         .write_stdin("echo hello\n")
@@ -44,7 +30,7 @@ fn eval_reads_command_from_stdin() {
 
 #[test]
 fn eval_rejects_both_argv_and_stdin() {
-    let cfg = write_config();
+    let cfg = write_config(TEST_CONFIG);
     may_i(&cfg)
         .args(["eval", "echo hello"])
         .write_stdin("echo world\n")
@@ -55,7 +41,7 @@ fn eval_rejects_both_argv_and_stdin() {
 
 #[test]
 fn eval_stdin_trims_whitespace() {
-    let cfg = write_config();
+    let cfg = write_config(TEST_CONFIG);
     let output = may_i(&cfg)
         .args(["--json", "eval"])
         .write_stdin("  echo hello  \n")
@@ -72,7 +58,7 @@ fn eval_stdin_trims_whitespace() {
 
 #[test]
 fn eval_rejects_empty_stdin() {
-    let cfg = write_config();
+    let cfg = write_config(TEST_CONFIG);
     may_i(&cfg)
         .args(["eval"])
         .write_stdin("   \n")
