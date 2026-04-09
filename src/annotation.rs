@@ -239,6 +239,7 @@ fn command_pattern_to_doc(pattern: &CommandPattern) -> Doc<()> {
                 Doc::list(cs)
             }
         }
+        _ => Doc::atom("<unknown-command-pattern>"),
     }
 }
 
@@ -275,6 +276,7 @@ fn arg_pattern_to_doc(pattern: &ArgPattern) -> Doc<()> {
             inner.extend(exprs.iter().map(|e| e.to_doc()));
             Doc::list(vec![Doc::atom("not"), Doc::list(inner)])
         }
+        _ => Doc::atom("<unknown-arg-pattern>"),
     }
 }
 
@@ -439,7 +441,7 @@ pub enum TraceEntry {
 
 /// Fold that produces `(EffectResult, Doc<Option<Ann>>)` pairs and
 /// accumulates rule-level trace entries.
-pub struct TracingFold {
+pub(crate) struct TracingFold {
     pub traces: Vec<TraceEntry>,
     source_text: Option<String>,
     pre_migration_forms: Option<Vec<(may_i_core::Span, Doc<()>)>>,
@@ -458,7 +460,7 @@ impl Default for TracingFold {
 }
 
 impl TracingFold {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             traces: Vec::new(),
             source_text: None,
@@ -468,12 +470,12 @@ impl TracingFold {
         }
     }
 
-    pub fn with_source_text(mut self, source_text: Option<String>) -> Self {
+    pub(crate) fn with_source_text(mut self, source_text: Option<String>) -> Self {
         self.source_text = source_text;
         self
     }
 
-    pub fn with_pre_migration_forms(
+    pub(crate) fn with_pre_migration_forms(
         mut self,
         forms: Option<Vec<(may_i_core::Span, Doc<()>)>>,
     ) -> Self {

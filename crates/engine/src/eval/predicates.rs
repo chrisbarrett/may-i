@@ -88,6 +88,7 @@ pub(crate) fn evaluate_predicate_fold<F: EvalFold>(
             Ok(fold.predicate_not(out, result))
         }
         Predicate::Named(name) => Err(EvalError::UnresolvedPredicate { name: name.clone() }),
+        _ => unreachable!("unknown Predicate variant"),
     }
 }
 
@@ -124,6 +125,7 @@ pub(crate) fn match_fact_pattern(pattern: &FactPattern, value: &str) -> bool {
         FactPattern::And(patterns) => patterns.iter().all(|p| match_fact_pattern(p, value)),
         FactPattern::Or(patterns) => patterns.iter().any(|p| match_fact_pattern(p, value)),
         FactPattern::Not(inner) => !match_fact_pattern(inner, value),
+        _ => false,
     }
 }
 
@@ -175,5 +177,6 @@ pub(super) fn evaluate_arg_pattern_predicate(
             }
             PredicateResult::Match
         }
+        _ => unreachable!("unknown ArgPattern variant"),
     }
 }

@@ -11,6 +11,7 @@ use may_i_core::Decision;
 
 /// Error type for evaluation failures.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum EvalError {
     /// A named predicate was not resolved before evaluation.
     UnresolvedPredicate { name: String },

@@ -67,6 +67,7 @@ impl EffectResult {
 
 /// Unified Effect type where all forms evaluate to Decision | Nil.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum Effect {
     // Terminal decisions
     /// Allow the command.
@@ -234,6 +235,7 @@ impl std::fmt::Display for Effect {
 /// Predicate for use in conditional contexts (when/unless/if/cond).
 /// Predicates evaluate to Match/NoMatch for branching decisions.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum Predicate {
     /// Fact query: checks if a fact exists or matches a pattern.
     /// Syntax: `(fact? FACT-QUERY)` (renamed from `has`)

@@ -18,7 +18,7 @@ pub struct CheckResult<T = ()> {
 }
 
 /// Result of parsing a check command string.
-pub enum ParsedCheck {
+pub(crate) enum ParsedCheck {
     /// A simple command with name and arguments.
     Simple(String, Vec<String>),
     /// An empty or assignment-only command.
@@ -28,7 +28,7 @@ pub enum ParsedCheck {
 }
 
 /// Parse a check command string into its components.
-pub fn parse_check_command(input: &str) -> ParsedCheck {
+pub(crate) fn parse_check_command(input: &str) -> ParsedCheck {
     let cmd = parser::parse(input);
     match cmd {
         Command::Simple(sc) if !sc.words.is_empty() => {

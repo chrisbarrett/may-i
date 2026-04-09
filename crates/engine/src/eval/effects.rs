@@ -242,6 +242,7 @@ pub(crate) fn evaluate_effect_fold<F: EvalFold>(
             }
             None => fold.effect_may_i_no_match(pattern),
         },
+        _ => unreachable!("unknown Effect variant"),
     })
 }
 
@@ -254,7 +255,9 @@ pub(crate) fn match_command_pattern(pattern: &CommandPattern, command: &str) -> 
             CommandPattern::Literal(s) => s == command,
             CommandPattern::Regex(re) => re.is_match(command),
             CommandPattern::Or(_) => false,
+            _ => false,
         }),
+        _ => false,
     }
 }
 
@@ -411,6 +414,7 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
             };
             fold.effect_arg_match(pattern, ctx.args, !found_forbidden, detail)
         }
+        _ => unreachable!("unknown ArgPattern variant"),
     })
 }
 

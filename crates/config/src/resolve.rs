@@ -7,6 +7,7 @@ use std::collections::{HashMap, HashSet};
 
 /// A resolution error with source span information.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct ResolutionError {
     pub message: String,
     pub span: Span,

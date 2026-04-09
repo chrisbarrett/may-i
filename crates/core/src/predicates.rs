@@ -23,6 +23,7 @@ fn quote_string(value: &str) -> String {
 
 /// A pattern for matching fact values.
 #[derive(Clone)]
+#[non_exhaustive]
 pub enum FactPattern {
     /// Exact literal match.
     Literal(String),

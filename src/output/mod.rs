@@ -127,7 +127,7 @@ fn command_row(cmd: &str, _geom: &ColumnGeometry) -> Vec<ColRow> {
 
 // ── Separator (public convenience for cmd_check) ──────────────────
 
-pub fn print_separator(indent: &str, label: Option<(&str, usize)>, term: &Terminal) {
+pub(crate) fn print_separator(indent: &str, label: Option<(&str, usize)>, term: &Terminal) {
     let hrule_label = label.map(|(text, w)| HRuleLabel {
         text: text.to_string(),
         visible_width: w,
@@ -139,7 +139,7 @@ pub fn print_separator(indent: &str, label: Option<(&str, usize)>, term: &Termin
 
 // ── Public convenience for cmd_check ──────────────────────────────
 
-pub fn render_elements(indent: &str, elements: &[Layout], term: &Terminal) {
+pub(crate) fn render_elements(indent: &str, elements: &[Layout], term: &Terminal) {
     let layout = Layout::Indent(indent.len(), Box::new(Layout::Stack(elements.to_vec())));
     write_layout(&mut std::io::stdout(), &layout, term);
 }

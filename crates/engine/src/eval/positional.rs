@@ -182,6 +182,7 @@ pub(crate) fn match_expr_with_binding<E: std::fmt::Debug + may_i_core::ToDoc>(
                 .iter()
                 .any(|b| match_expr_with_binding(&b.test, value).0)
         }
+        _ => false,
     };
 
     (matched, facts)

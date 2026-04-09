@@ -37,6 +37,7 @@ impl Quantifier {
 /// This type uses the fixpoint-of-functor pattern internally, enabling generic
 /// traversals via the `ExprF` base functor.
 #[derive(Clone)]
+#[non_exhaustive]
 pub enum Expr<E: std::fmt::Debug + ToDoc = Effect> {
     /// Exact string match.
     Literal(String),
@@ -197,6 +198,7 @@ impl<E: std::fmt::Debug + ToDoc> std::fmt::Debug for Expr<E> {
 /// Pattern for matching commands in rules.
 /// Position 1 of a rule is always the command pattern.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum CommandPattern {
     /// Exact command name match.
     Literal(String),
@@ -256,6 +258,7 @@ impl PositionalArg {
 
 /// Pattern for matching command arguments.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum ArgPattern {
     /// Match positional args by position (skip flags).
     /// Syntax: `(positional PATTERN ... [. EFFECT])`

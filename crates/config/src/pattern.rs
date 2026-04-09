@@ -16,6 +16,7 @@ fn contains_bind<E: std::fmt::Debug + may_i_core::ToDoc>(expr: &Expr<E>) -> bool
         Expr::Not(inner) => contains_bind(inner),
         Expr::Cond(branches) => branches.iter().any(|b| contains_bind(&b.test)),
         Expr::Literal(_) | Expr::Regex(_) | Expr::Wildcard => false,
+        _ => false,
     }
 }
 
