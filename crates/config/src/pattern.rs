@@ -964,4 +964,48 @@ mod tests {
             .expect_err("expected error");
         assert!(format!("{err}").contains("not valid in forbidden"));
     }
+
+    // --- Property tests ---
+
+    fn expr_eq(a: &Expr<may_i_core::Effect>, b: &Expr<may_i_core::Effect>) -> bool {
+        match (a, b) {
+            (Expr::Literal(a), Expr::Literal(b)) => a == b,
+            (Expr::Wildcard, Expr::Wildcard) => true,
+            (Expr::Regex(a), Expr::Regex(b)) => a.as_str() == b.as_str(),
+            (Expr::And(a), Expr::And(b)) | (Expr::Or(a), Expr::Or(b)) => {
+                a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| expr_eq(x, y))
+            }
+            (Expr::Not(a), Expr::Not(b)) => expr_eq(a, b),
+            _ => false,
+        }
+    }
+
+    fn is_simple_expr(expr: &Expr<may_i_core::Effect>) -> bool {
+        match expr {
+            Expr::Literal(_) | Expr::Wildcard | Expr::Regex(_) => true,
+            Expr::And(es) | Expr::Or(es) => es.iter().all(is_simple_expr),
+            Expr::Not(e) => is_simple_expr(e),
+            Expr::Cond(_) | Expr::Bind { .. } => false,
+        }
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig { cases: 256, max_shrink_iters: 50, .. proptest::prelude::ProptestConfig::default() })]
+
+        #[test]
+        fn expr_display_parse_roundtrip(expr in may_i_core::test_generators::any_expr(3)) {
+            proptest::prop_assume!(is_simple_expr(&expr));
+            let text = format!("{}", expr);
+            let (forms, errors) = may_i_sexpr::parse(&text);
+            proptest::prop_assert!(errors.is_empty(), "sexpr parse failed: {:?}\ntext: {}", errors, text);
+            proptest::prop_assert_eq!(forms.len(), 1, "expected 1 form, got {}\ntext: {}", forms.len(), text);
+
+            let reparsed = parse_expr(&forms[0]);
+            proptest::prop_assert!(reparsed.is_ok(), "parse_expr failed: {:?}\ntext: {}", reparsed.err(), text);
+            let reparsed = reparsed.unwrap();
+            proptest::prop_assert!(expr_eq(&expr, &reparsed),
+                "roundtrip mismatch:\n  original: {:?}\n  text: {}\n  reparsed: {:?}",
+                expr, text, reparsed);
+        }
+    }
 }

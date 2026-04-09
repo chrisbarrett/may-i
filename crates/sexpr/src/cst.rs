@@ -1544,6 +1544,37 @@ mod proptests {
                     "Roundtrip should preserve structure: original={:?}, reparsed={:?}", orig, rep);
             }
         }
+
+        #[test]
+        fn pretty_serialize_roundtrip(
+            input in sexpr_shape(3),
+            width in 20usize..120,
+        ) {
+            let (nodes, errors) = parse(&input);
+            prop_assume!(errors.is_empty());
+            prop_assume!(!nodes.is_empty());
+
+            for node in &nodes {
+                let pretty = node.pretty_serialize(width);
+                let (reparsed, re_errors) = parse(&pretty);
+                prop_assert!(re_errors.is_empty(),
+                    "Pretty-serialized output should reparse without errors.\n  width: {}\n  input: {:?}\n  pretty: {:?}\n  errors: {:?}",
+                    width, input, pretty, re_errors);
+                prop_assert_eq!(nodes.len(), reparsed.len(),
+                    "Pretty-serialize should preserve node count");
+            }
+
+            // Compare each node structurally
+            let all_pretty: String = nodes.iter().map(|n| n.pretty_serialize(width)).collect::<Vec<_>>().join(" ");
+            let (reparsed_all, re_errors) = parse(&all_pretty);
+            prop_assert!(re_errors.is_empty());
+            prop_assert_eq!(nodes.len(), reparsed_all.len());
+            for (orig, rep) in nodes.iter().zip(reparsed_all.iter()) {
+                prop_assert!(cst_nodes_equal(orig, rep),
+                    "Pretty-serialize roundtrip should preserve structure.\n  width: {}\n  original: {:?}\n  reparsed: {:?}",
+                    width, orig, rep);
+            }
+        }
     }
 
     #[test]

@@ -334,4 +334,116 @@ mod tests {
         })];
         assert_eq!(format_line_annotation(&anns), "");
     }
+
+    use may_i_core::Decision;
+    use proptest::prelude::*;
+
+    fn any_ann() -> BoxedStrategy<Ann> {
+        prop_oneof![
+            prop::bool::ANY.prop_map(|m| Ann::CommandMatch { matched: m }),
+            prop::bool::ANY.prop_map(|n| Ann::Combinator { result_is_nil: n }),
+            (prop::bool::ANY, proptest::option::of(1usize..1000)).prop_map(|(m, l)| {
+                Ann::RuleMatch {
+                    matched: m,
+                    line: l,
+                }
+            }),
+            (prop::bool::ANY, proptest::option::of("[a-z ]{0,10}")).prop_map(|(m, r)| {
+                Ann::EffectDecision {
+                    decision: if m { Decision::Allow } else { Decision::Deny },
+                    reason: r,
+                }
+            }),
+            ("[a-z]{1,5}", proptest::option::of("[a-z]{1,5}"))
+                .prop_map(|(k, v)| Ann::BindMatch { key: k, value: v }),
+            (prop::bool::ANY, "[a-z]{1,5}", "[a-z]{1,5}").prop_map(|(m, pat, actual)| {
+                Ann::RegexMatch {
+                    pattern: pat,
+                    actual,
+                    matched: m,
+                }
+            }),
+            (prop::bool::ANY, "[a-z]{1,5}", "[a-z]{1,5}").prop_map(|(m, actual, pat)| {
+                Ann::PositionalMatch {
+                    actual_arg: actual,
+                    pattern_text: pat,
+                    matched: m,
+                }
+            }),
+            (
+                prop::bool::ANY,
+                prop::collection::vec("[a-z]{1,5}", 0..4),
+                prop::collection::vec("[a-z]{1,5}", 0..4),
+            )
+                .prop_map(|(m, tokens, args)| Ann::ArgMatch {
+                    search_tokens: tokens,
+                    arg_set: args,
+                    matched: m,
+                }),
+            (
+                "[a-z ]{1,10}",
+                prop::bool::ANY,
+                proptest::option::of("[a-z]{1,5}"),
+            )
+                .prop_map(|(m, d, r)| Ann::MayI {
+                    inner_command: m,
+                    decision: if d { Decision::Allow } else { Decision::Deny },
+                    reason: r,
+                }),
+            (
+                "[a-z]{1,5}",
+                prop::bool::ANY,
+                proptest::option::of(prop::collection::vec("[a-z]{1,5}", 0..3)),
+                proptest::option::of("[a-z]{1,5}"),
+            )
+                .prop_map(|(qs, m, obs, fr)| Ann::FactQuery {
+                    query_source: qs,
+                    matched: m,
+                    observed: obs,
+                    failure_reason: fr,
+                }),
+        ]
+        .boxed()
+    }
+
+    fn any_annotated_doc(depth: u32) -> BoxedStrategy<Doc<Option<Ann>>> {
+        if depth == 0 {
+            prop_oneof![
+                "[a-z]{1,8}".prop_map(|s| atom(&s)),
+                ("[a-z]{1,8}", any_ann()).prop_map(|(s, a)| atom_ann(&s, a)),
+            ]
+            .boxed()
+        } else {
+            prop_oneof![
+                "[a-z]{1,8}".prop_map(|s| atom(&s)),
+                ("[a-z]{1,8}", any_ann()).prop_map(|(s, a)| atom_ann(&s, a)),
+                prop::collection::vec(any_annotated_doc(depth - 1), 0..5)
+                    .prop_map(|children| list(children)),
+                (
+                    any_ann(),
+                    prop::collection::vec(any_annotated_doc(depth - 1), 0..5)
+                )
+                    .prop_map(|(a, children)| list_ann(a, children)),
+            ]
+            .boxed()
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 256,
+            max_shrink_iters: 50,
+            ..ProptestConfig::default()
+        })]
+
+        #[test]
+        fn render_annotated_rule_never_panics(
+            doc in any_annotated_doc(3),
+            line in proptest::option::of(0usize..1000),
+            left_width in 10usize..60,
+        ) {
+            let geom = ColumnGeometry { left_width };
+            let _rows = render_annotated_rule(&doc, line, &geom);
+        }
+    }
 }

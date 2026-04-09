@@ -969,5 +969,52 @@ mod proptests {
                 );
             }
         }
+
+        #[test]
+        fn word_wrap_preserves_all_words(
+            words in prop::collection::vec("[a-z]{1,15}", 1..20),
+            max_width in 10usize..80,
+        ) {
+            let text = words.join(" ");
+            let wrapped = word_wrap(&text, max_width);
+
+            // All original words must appear in the output
+            let all_output_words: Vec<&str> = wrapped.iter()
+                .flat_map(|line| line.split_whitespace())
+                .collect();
+            prop_assert_eq!(all_output_words.len(), words.len(),
+                "word count changed: input {} words, output {} words\ninput: {:?}\nwrapped: {:?}",
+                words.len(), all_output_words.len(), words, wrapped);
+            for (orig, out) in words.iter().zip(all_output_words.iter()) {
+                prop_assert_eq!(orig.as_str(), *out,
+                    "word mismatch: original {:?} vs output {:?}", orig, out);
+            }
+        }
+
+        #[test]
+        fn word_wrap_respects_width(
+            words in prop::collection::vec("[a-z]{1,8}", 1..20),
+            max_width in 10usize..80,
+        ) {
+            let text = words.join(" ");
+            let wrapped = word_wrap(&text, max_width);
+
+            for line in &wrapped {
+                // Lines should not exceed max_width, UNLESS they contain a single
+                // word longer than max_width
+                let line_words: Vec<&str> = line.split_whitespace().collect();
+                if line_words.len() > 1 {
+                    prop_assert!(line.len() <= max_width,
+                        "multi-word line exceeds width {}: {:?} (len={})",
+                        max_width, line, line.len());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn word_wrap_empty_input() {
+        let result = word_wrap("", 80);
+        assert_eq!(result, vec![String::new()]);
     }
 }

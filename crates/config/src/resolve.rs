@@ -1072,4 +1072,58 @@ mod tests {
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0].name, "x");
     }
+
+    use proptest::prelude::*;
+
+    /// Generate a random acyclic define graph.
+    /// Each define at index i can only reference defines at indices < i (topological order).
+    fn any_acyclic_defines(size: usize) -> BoxedStrategy<Vec<Define>> {
+        let names: Vec<String> = (0..size).map(|i| format!("def_{i}")).collect();
+        let names_clone = names.clone();
+        prop::collection::vec(prop::bool::ANY, size)
+            .prop_map(move |use_ref| {
+                let mut defines = Vec::new();
+                for (i, name) in names_clone.iter().enumerate() {
+                    let predicate = if i > 0 && use_ref[i] {
+                        // Reference a previous define (acyclic)
+                        let ref_idx = i % i.max(1);
+                        Predicate::Named(names_clone[ref_idx].clone())
+                    } else {
+                        Predicate::fact_presence(":x")
+                    };
+                    defines.push(create_define(name, predicate));
+                }
+                defines
+            })
+            .boxed()
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: 256, max_shrink_iters: 50, .. ProptestConfig::default() })]
+
+        #[test]
+        fn acyclic_graphs_pass_validation(defines in any_acyclic_defines(5)) {
+            let define_map = DefineMap::from_defines(&defines).unwrap();
+            let result = detect_cycles(&defines, &define_map);
+            prop_assert!(result.is_ok(),
+                "acyclic graph should pass: {:?}", result.err());
+        }
+
+        #[test]
+        fn cyclic_graphs_are_rejected(
+            cycle_size in 2usize..6,
+        ) {
+            // Create a cycle: def_0 -> def_1 -> ... -> def_n -> def_0
+            let names: Vec<String> = (0..cycle_size).map(|i| format!("cyc_{i}")).collect();
+            let defines: Vec<Define> = names.iter().enumerate().map(|(i, name)| {
+                let next = &names[(i + 1) % cycle_size];
+                create_define(name, Predicate::Named(next.clone()))
+            }).collect();
+
+            let define_map = DefineMap::from_defines(&defines).unwrap();
+            let result = detect_cycles(&defines, &define_map);
+            prop_assert!(result.is_err(),
+                "cycle of size {} should be rejected", cycle_size);
+        }
+    }
 }

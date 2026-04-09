@@ -666,4 +666,42 @@ mod tests {
         let err = parse_config(r#"(check (with-facts :not-a-list))"#).expect_err("expected error");
         assert!(format!("{err}").contains("with-facts requires a fact vector"));
     }
+
+    use may_i_sexpr::test_generators::any_canonical_config_cst;
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 256,
+            max_shrink_iters: 50,
+            .. ProptestConfig::default()
+        })]
+
+        #[test]
+        fn config_parse_roundtrip(forms in any_canonical_config_cst()) {
+            let text: String = forms.iter().map(|f| f.serialize()).collect::<Vec<_>>().join("\n");
+
+            let config1 = parse_config(&text);
+            prop_assert!(config1.is_ok(), "first parse failed: {:?}\ntext: {}", config1.err(), text);
+            let config1 = config1.unwrap();
+
+            let config2 = parse_config(&text);
+            prop_assert!(config2.is_ok(), "second parse failed: {:?}", config2.err());
+            let config2 = config2.unwrap();
+
+            // Rule count matches the number of rule forms generated
+            let rule_count = forms.iter().filter(|f| {
+                f.as_list().is_some_and(|list| {
+                    list.first().is_some_and(|first| first.as_atom() == Some("rule"))
+                })
+            }).count();
+            prop_assert_eq!(config1.rules.len(), rule_count,
+                "rule count mismatch: expected {} from CST, got {}\ntext: {}",
+                rule_count, config1.rules.len(), text);
+
+            // Deterministic: parsing the same text twice yields equal rule counts
+            prop_assert_eq!(config1.rules.len(), config2.rules.len(),
+                "non-deterministic parse: rule counts differ");
+        }
+    }
 }
