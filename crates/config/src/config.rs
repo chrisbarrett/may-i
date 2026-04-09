@@ -681,17 +681,12 @@ mod tests {
 
         #[test]
         fn config_parse_roundtrip(forms in any_canonical_config_cst()) {
-            let text: String = forms.iter().map(|f| f.serialize()).collect::<Vec<_>>().join("\n");
-
-            let config1 = parse_config(&text);
-            prop_assert!(config1.is_ok(), "first parse failed: {:?}\ntext: {}", config1.err(), text);
+            // Step 1: CST → text → parse
+            let text1: String = forms.iter().map(|f| f.serialize()).collect::<Vec<_>>().join("\n");
+            let config1 = parse_config(&text1);
+            prop_assert!(config1.is_ok(), "first parse failed: {:?}\ntext: {}", config1.err(), text1);
             let config1 = config1.unwrap();
 
-            let config2 = parse_config(&text);
-            prop_assert!(config2.is_ok(), "second parse failed: {:?}", config2.err());
-            let config2 = config2.unwrap();
-
-            // Rule count matches the number of rule forms generated
             let rule_count = forms.iter().filter(|f| {
                 f.as_list().is_some_and(|list| {
                     list.first().is_some_and(|first| first.as_atom() == Some("rule"))
@@ -699,11 +694,20 @@ mod tests {
             }).count();
             prop_assert_eq!(config1.rules.len(), rule_count,
                 "rule count mismatch: expected {} from CST, got {}\ntext: {}",
-                rule_count, config1.rules.len(), text);
+                rule_count, config1.rules.len(), text1);
 
-            // Deterministic: parsing the same text twice yields equal rule counts
+            // Step 2: serialize (CST roundtrip) → re-parse → compare
+            let (reparsed_cst, errors) = may_i_sexpr::parse_cst(&text1);
+            prop_assert!(errors.is_empty(), "CST re-parse failed: {:?}", errors);
+            let text2: String = reparsed_cst.iter().map(|f| f.serialize()).collect::<Vec<_>>().join("\n");
+
+            let config2 = parse_config(&text2);
+            prop_assert!(config2.is_ok(), "re-parse failed: {:?}\ntext: {}", config2.err(), text2);
+            let config2 = config2.unwrap();
+
+            // Rule count must survive the roundtrip
             prop_assert_eq!(config1.rules.len(), config2.rules.len(),
-                "non-deterministic parse: rule counts differ");
+                "rule count differs after serialize roundtrip:\n  text1: {}\n  text2: {}", text1, text2);
         }
     }
 }

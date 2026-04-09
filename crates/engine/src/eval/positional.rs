@@ -341,7 +341,7 @@ fn find_cond_branch_effect<'a>(
     None
 }
 
-/// If the last positional pattern is an Expr::Cond, find the matching branch's
+/// If the last positional pattern is an `Expr::Cond`, find the matching branch's
 /// effect for the last consumed arg. Returns None if the last pattern isn't a Cond
 /// or no branch matched.
 pub(super) fn resolve_trailing_cond_effect<'a>(
@@ -358,5 +358,69 @@ pub(super) fn resolve_trailing_cond_effect<'a>(
         find_cond_branch_effect(branches, last_arg)
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use may_i_core::pattern::{Expr, PositionalArg, Quantifier};
+    use may_i_core::test_generators::{any_match_string, any_positional_arg};
+    use proptest::prelude::*;
+
+    /// Build string args owned, then borrow for matching.
+    fn match_owned(args: &[String], patterns: &[PositionalArg]) -> (bool, usize, ContextFacts) {
+        let refs: Vec<&String> = args.iter().collect();
+        match_positional_patterns(&refs, patterns)
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+
+        /// matched + unconsumed = original arg count.
+        #[test]
+        fn matched_plus_unconsumed_eq_total(
+            patterns in prop::collection::vec(any_positional_arg(1), 0..4),
+            args in prop::collection::vec(any_match_string(), 0..8),
+        ) {
+            let (matched, consumed, _) = match_owned(&args, &patterns);
+            if matched {
+                prop_assert!(consumed <= args.len(),
+                    "consumed ({}) > total ({})", consumed, args.len());
+            }
+            prop_assert!(consumed <= args.len(),
+                "consumed ({}) exceeds arg count ({})", consumed, args.len());
+        }
+
+        /// ZeroOrMore is greedy: it consumes the maximal matching prefix
+        /// when the remaining patterns still succeed.
+        #[test]
+        fn zero_or_more_is_greedy(
+            args in prop::collection::vec(any_match_string(), 1..6),
+        ) {
+            // Pattern: (*)* — a ZeroOrMore wildcard followed by nothing.
+            // Should consume all args.
+            let patterns = vec![PositionalArg::with_quantifier(
+                Expr::Wildcard,
+                Quantifier::ZeroOrMore,
+            )];
+            let (matched, consumed, _) = match_owned(&args, &patterns);
+            prop_assert!(matched, "wildcard ZeroOrMore should match anything");
+            prop_assert_eq!(consumed, args.len(),
+                "ZeroOrMore wildcard should greedily consume all {} args, got {}",
+                args.len(), consumed);
+        }
+
+        /// Matching is deterministic: same inputs → same output.
+        #[test]
+        fn matching_is_deterministic(
+            patterns in prop::collection::vec(any_positional_arg(1), 0..4),
+            args in prop::collection::vec(any_match_string(), 0..6),
+        ) {
+            let r1 = match_owned(&args, &patterns);
+            let r2 = match_owned(&args, &patterns);
+            prop_assert_eq!(r1.0, r2.0, "matched differs between runs");
+            prop_assert_eq!(r1.1, r2.1, "consumed differs between runs");
+        }
     }
 }

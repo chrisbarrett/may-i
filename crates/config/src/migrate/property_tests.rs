@@ -132,6 +132,61 @@ mod tests {
             .boxed()
     }
 
+    // ── V1 wrapper generator ──────────────────────────────────────────
+
+    /// Generates (v1_wrapper_forms, expected_command) for wrapper migration.
+    /// Wrapper form: `(wrapper CMD (positional PAT ... :command+args))`
+    /// Migrates to:  `(rule CMD (positional PAT ... . (may-i *)))`
+    fn any_v1_wrapper() -> BoxedStrategy<(Vec<Box<may_i_sexpr::CstNode>>, String)> {
+        (
+            any_command_pattern_cst(),
+            prop::collection::vec("[a-z][a-z0-9_-]{0,6}".prop_map(|s| cst_str(&s)), 0..3),
+        )
+            .prop_map(|(cmd, pats)| {
+                let mut pos_children = vec![cst_atom("positional")];
+                pos_children.extend(pats);
+                pos_children.push(cst_atom(":command+args"));
+
+                let v1 = cst_list(vec![
+                    cst_atom("wrapper"),
+                    cmd.clone(),
+                    cst_list(pos_children),
+                ]);
+                let cmd_text = cmd.serialize();
+                let cmd_str = cmd_text.trim_matches('"').to_string();
+                (vec![v1], cmd_str)
+            })
+            .boxed()
+    }
+
+    // ── V1 config generator (mixed forms) ───────────────────────────
+
+    /// Generates a (v1_forms, canonical_forms) pair mixing command rules,
+    /// defcontexts, and has→fact? rewrites.
+    fn any_v1_config() -> BoxedStrategy<(
+        Vec<Box<may_i_sexpr::CstNode>>,
+        Vec<Box<may_i_sexpr::CstNode>>,
+    )> {
+        prop::collection::vec(
+            prop_oneof![
+                any_v1_command_rule(),
+                any_v1_defcontext(),
+                any_v1_rule_with_context(),
+            ],
+            1..4,
+        )
+        .prop_map(|pairs| {
+            let mut all_v1 = Vec::new();
+            let mut all_canonical = Vec::new();
+            for (v1, canonical) in pairs {
+                all_v1.extend(v1);
+                all_canonical.extend(canonical);
+            }
+            (all_v1, all_canonical)
+        })
+        .boxed()
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────
 
     fn serialize_forms(forms: &[Box<may_i_sexpr::CstNode>]) -> String {
@@ -388,6 +443,44 @@ mod tests {
                 migrated_config_evaluates_ok(&migrated_text, &cmd_str, &args, &facts),
                 "args rule failed to evaluate after migration:\n  text: {}",
                 migrated_text
+            );
+        }
+
+        #[test]
+        fn v1_wrapper_migrates_and_evaluates(
+            (v1_forms, cmd_str) in any_v1_wrapper(),
+        ) {
+            let migrated_text = migrate_v1_to_text(v1_forms);
+            prop_assume!(crate::config::parse_config(&migrated_text).is_ok());
+
+            let args: Vec<String> = vec![];
+            let facts = may_i_core::ContextFacts::default();
+            prop_assert!(
+                migrated_config_evaluates_ok(&migrated_text, &cmd_str, &args, &facts),
+                "wrapper rule failed to evaluate after migration:\n  text: {}",
+                migrated_text
+            );
+        }
+
+        #[test]
+        fn v1_config_eval_preserved(
+            (v1_forms, canonical_forms) in any_v1_config(),
+            cmd in "[a-z][a-z0-9_-]{0,10}",
+        ) {
+            let migrated = migrate_forms(v1_forms);
+            let migrated_text = serialize_forms_spaced(&migrated);
+            let canonical_text = serialize_forms_spaced(&canonical_forms);
+
+            prop_assume!(crate::config::parse_config(&migrated_text).is_ok());
+            prop_assume!(crate::config::parse_config(&canonical_text).is_ok());
+
+            let args: Vec<String> = vec![];
+            let facts = may_i_core::ContextFacts::default();
+            prop_assert!(
+                configs_evaluate_equal(&migrated_text, &canonical_text, &cmd, &args, &facts),
+                "mixed config eval differs:\n  v1 migrated: {}\n  canonical: {}",
+                migrated_text,
+                canonical_text
             );
         }
 

@@ -266,6 +266,16 @@ mod tests {
         );
     }
 
+    // ── Task: has with compound value pattern ─────────────────────────
+
+    #[test]
+    fn has_with_compound_value_pattern() {
+        assert_migrates_to(
+            r#"(has [:key (and (regex "^prod-") (not "prod-test"))])"#,
+            r#"(fact? [:key (and (regex "^prod-") (not "prod-test"))])"#,
+        );
+    }
+
     // ── Task 5: Command patterns inside (command ...) ───────────────────
 
     #[test]
@@ -280,6 +290,24 @@ mod tests {
             &[
                 EvalCase::new("rm"),
                 EvalCase::new("rmdir"),
+                EvalCase::new("ls"),
+            ],
+        );
+    }
+
+    #[test]
+    fn command_with_multi_element_or() {
+        let v1 = r#"(rule (command (or "cat" "head" "tail")) (effect :allow "readers"))"#;
+        let v2 = r#"(rule (or "cat" "head" "tail") (effect :allow "readers"))"#;
+
+        assert_migrates_to(v1, v2);
+        assert_eval_equivalence(
+            v1,
+            v2,
+            &[
+                EvalCase::new("cat"),
+                EvalCase::new("head"),
+                EvalCase::new("tail"),
                 EvalCase::new("ls"),
             ],
         );
@@ -350,6 +378,27 @@ mod tests {
         assert!(
             output.contains(";; trailing"),
             "trailing comment lost in: {output}"
+        );
+    }
+
+    // ── Task: comments on wrapper forms ─────────────────────────────────
+
+    #[test]
+    fn leading_comment_on_wrapper_preserved() {
+        let v1 = concat!(
+            ";; timeout wrapper\n",
+            r#"(wrapper "timeout" (positional (regex "^[0-9]+$") :command+args))"#,
+        );
+
+        let (cst_nodes, errors) = may_i_sexpr::parse_cst(v1);
+        assert!(errors.is_empty());
+
+        let migrated = migrate_forms(cst_nodes);
+        let output: String = migrated.iter().map(|n| n.serialize()).collect();
+
+        assert!(
+            output.contains(";; timeout wrapper"),
+            "leading comment on wrapper lost in: {output}"
         );
     }
 

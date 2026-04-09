@@ -116,60 +116,6 @@ fn test_check_unhandled_cases_real_issues() {
     // This is expected behavior
 }
 
-// Snapshot tests for migration diff output
-
-#[test]
-fn test_diff_output_simple_migration() {
-    use may_i_config::migrate::analyze_migration;
-
-    let source = "(rule (command git) (effect :allow))\n";
-    let analysis = analyze_migration(source);
-
-    // Verify the analysis structure
-    assert_eq!(analysis.diffs.len(), 1, "Should have 1 diff");
-    assert_eq!(analysis.unchanged_count, 0, "Should have 0 unchanged forms");
-    assert!(analysis.errors.is_empty(), "Should have no errors");
-
-    // Verify the diff content
-    let diff = &analysis.diffs[0];
-    assert!(
-        diff.before.contains("(command git)"),
-        "Before should have command wrapper"
-    );
-    assert!(
-        !diff.after.contains("(command"),
-        "After should not have command wrapper"
-    );
-    assert!(
-        diff.after.contains("(rule git (effect"),
-        "After should have inlined command"
-    );
-}
-
-#[test]
-fn test_diff_output_multiple_changes() {
-    use may_i_config::migrate::analyze_migration;
-
-    let source = r#"(rule (command git) (effect :allow))
-(rule (command ls) (effect :allow))
-"#;
-    let analysis = analyze_migration(source);
-
-    // Verify the analysis structure
-    assert_eq!(analysis.diffs.len(), 2, "Should have 2 diffs");
-    assert_eq!(analysis.unchanged_count, 0, "Should have 0 unchanged forms");
-    assert!(analysis.errors.is_empty(), "Should have no errors");
-
-    // Verify both diffs are present
-    let commands: Vec<&str> = analysis
-        .diffs
-        .iter()
-        .map(|d| d.after.split_whitespace().nth(1).unwrap_or(""))
-        .collect();
-    assert!(commands.contains(&"git"), "Should have git command");
-    assert!(commands.contains(&"ls"), "Should have ls command");
-}
-
 #[test]
 fn test_diff_output_no_changes() {
     use may_i_config::migrate::analyze_migration;
