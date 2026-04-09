@@ -64,7 +64,7 @@ fn eval_rejects_empty_stdin() {
         .write_stdin("   \n")
         .assert()
         .code(2)
-        .stderr(predicate::str::contains("empty"));
+        .stderr(predicate::str::contains("no command provided"));
 }
 
 #[test]

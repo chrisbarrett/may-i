@@ -107,7 +107,8 @@ fn run() -> miette::Result<()> {
                     .take(65536)
                     .read_to_string(&mut buf)
                     .map_err(|e| miette::miette!("failed to read stdin: {e}"))?;
-                Some(buf)
+                let trimmed = buf.trim();
+                if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
             } else {
                 None
             };
