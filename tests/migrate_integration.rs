@@ -18,7 +18,8 @@ fn migrate_v1_config_produces_v2_output() {
 
 #[test]
 fn migrate_v2_config_outputs_unchanged() {
-    let cfg = write_config(r#"(rule "echo" (effect :allow "echo is safe"))"#);
+    let input = r#"(rule "echo" (effect :allow "echo is safe"))"#;
+    let cfg = write_config(input);
     let output = may_i(&cfg)
         .args(["migrate", "-o", "/dev/stdout", "--yes"])
         .output()
@@ -27,10 +28,19 @@ fn migrate_v2_config_outputs_unchanged() {
     assert!(output.status.success());
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("rule"), "output should contain the rule");
+    // The v2 config should not be structurally changed by migration.
+    // Check that no diff/change markers appear and the key elements survive.
     assert!(
-        stdout.contains(":allow"),
-        "output should preserve the effect"
+        stdout.contains(r#"(rule "echo""#),
+        "rule command should be unchanged: {stdout}"
+    );
+    assert!(
+        stdout.contains(r#"(effect :allow "echo is safe")"#),
+        "effect should be unchanged: {stdout}"
+    );
+    assert!(
+        !stdout.contains("(command"),
+        "should not introduce (command ...) wrapper: {stdout}"
     );
 }
 

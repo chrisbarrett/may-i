@@ -15,6 +15,9 @@ use may_i_engine::fold::{
 };
 
 /// Annotation carried on each Doc node in a trace.
+///
+/// Public because `TraceEntry::Rule::doc` exposes `Doc<Option<Ann>>` and
+/// `TraceEntry` is used by integration tests via `evaluate_segments`.
 #[derive(Debug, Clone)]
 pub enum Ann {
     /// Command pattern matched or not.

@@ -7,6 +7,24 @@ use common::{bash_payload, may_i, write_config};
 use predicates::prelude::*;
 
 #[test]
+fn config_flag_nonexistent_path_produces_descriptive_error() {
+    let mut cmd = cargo_bin_cmd!("may-i");
+    cmd.args(["--config", "/tmp/nonexistent-mayi-config-12345.lisp"]);
+    cmd.write_stdin(bash_payload("echo hello"));
+
+    let output = cmd.output().expect("run");
+
+    // Should fail with exit code 2 (blocking error)
+    assert_eq!(output.status.code(), Some(2), "expected exit code 2");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("not found") || stderr.contains("No such file"),
+        "stderr should mention the missing file: {stderr}"
+    );
+}
+
+#[test]
 fn hook_resolves_defined_predicates() {
     let cfg = write_config(
         r#"
