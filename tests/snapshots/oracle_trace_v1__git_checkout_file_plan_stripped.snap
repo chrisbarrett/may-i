@@ -33,7 +33,7 @@ Trace
                            "clone"))                                   │ "checkout" = "clone" → no
            (positional "checkout" "--")                                │ "checkout" = "checkout" → yes
            …)                                                          │
-          (plan-mode                                                   │
+          (plan-mode                                                   │ plan-mode → yes
            (or                                                         │
             (has                                                       │ no
              [:claude-code/permission-mode                             │

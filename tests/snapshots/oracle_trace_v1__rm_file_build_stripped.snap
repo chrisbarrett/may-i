@@ -18,7 +18,7 @@ Trace
   29: (rule (command "rm")                          │
         (args                                       │
          (when (and                                 │
-                (build-mode                         │
+                (build-mode                         │ build-mode → yes
                  (or                                │
                   (has                              │ no
                    [:claude-code/permission-mode    │
@@ -31,7 +31,7 @@ Trace
                                                     │
   37: (rule (command "rm")                          │
         (context                                    │
-         (build-mode                                │
+         (build-mode                                │ build-mode → yes
           (or                                       │
            (has                                     │ no
             [:claude-code/permission-mode           │
