@@ -14,11 +14,16 @@ use may_i_sexpr::{RawError, Sexpr};
 /// - Conditionals: `(when PREDICATE EFFECT)`, `(unless PREDICATE EFFECT)`, `(if PREDICATE THEN ELSE)`, `(cond ...)`
 /// - Recursion: `(may-i PATTERN)`
 pub fn parse_effect(sexpr: &Sexpr) -> Result<Spanned<Effect>, RawError> {
-    // Handle bare atoms and string literals: command literals
-    if let Some(atom) = sexpr.as_atom_or_str()
+    // Handle string literals: always command literals (even if they match a reserved word).
+    if let Some(s) = sexpr.as_str() {
+        let pattern = crate::command::parse_command_pattern_from_atom(s)?;
+        return Ok(Spanned::new(Effect::CommandPattern(pattern), sexpr.span()));
+    }
+
+    // Handle bare atoms: command literals unless they're reserved keywords.
+    if let Some(atom) = sexpr.as_atom()
         && !is_reserved_keyword(atom)
     {
-        // This is a command literal - treat as CommandPattern effect
         let pattern = crate::command::parse_command_pattern_from_atom(atom)?;
         return Ok(Spanned::new(Effect::CommandPattern(pattern), sexpr.span()));
     }
@@ -677,6 +682,23 @@ mod tests {
     fn if_with_too_few_args_error() {
         let err = parse_effect_str(r#"(if (fact? :via/ssh))"#).expect_err("expected error");
         assert!(format!("{err}").contains("if must have exactly 3 arguments"));
+    }
+
+    #[test]
+    fn quoted_string_matching_reserved_word_is_command_literal() {
+        // A quoted string like "or" should be a command literal, not parsed as the `or` keyword.
+        for word in &["or", "and", "not", "if", "when", "cond", "effect", "rule"] {
+            let input = format!(r#""{word}""#);
+            let result = parse_effect_str(&input);
+            assert!(
+                result.is_ok(),
+                "quoted reserved word {word:?} should parse as command literal, got: {result:?}"
+            );
+            match result.unwrap() {
+                Effect::CommandPattern(_) => {}
+                other => panic!("expected CommandPattern for {word:?}, got: {other:?}"),
+            }
+        }
     }
 
     #[test]
