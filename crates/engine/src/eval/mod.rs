@@ -11,8 +11,6 @@ pub use context::{EvalContext, PredicateResult};
 pub use entry::{Evaluator, evaluate, evaluate_with_fold};
 
 #[cfg(test)]
-pub(crate) use context::DEFAULT_RECURSION_LIMIT;
-#[cfg(test)]
 pub(crate) use effects::{evaluate_effect, evaluate_effect_fold};
 #[cfg(test)]
 pub(crate) use entry::{expand_combined_flags, positional_args};

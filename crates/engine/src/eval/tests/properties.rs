@@ -416,7 +416,7 @@ fn one_or_more_wildcard_fails_when_only_required() {
         },
     ];
 
-    let args_owned = vec!["end".to_string()];
+    let args_owned = ["end".to_string()];
     let args: Vec<&String> = args_owned.iter().collect();
     let (matched, _, _) = match_positional_patterns(&args, &patterns);
     assert!(!matched);

@@ -3,14 +3,14 @@ use proptest::prelude::*;
 
 /// Generate an arbitrary Doc tree (atoms and nested lists).
 fn arb_doc() -> impl Strategy<Value = Doc> {
-    let leaf = "[a-z_]{1,12}".prop_map(|s| Doc::atom(s));
+    let leaf = "[a-z_]{1,12}".prop_map(Doc::atom);
     leaf.prop_recursive(4, 20, 5, |inner| {
         prop_oneof![
             // Plain list.
             prop::collection::vec(inner.clone(), 0..5).prop_map(Doc::list),
             // List with a head atom (common in s-expressions).
             (
-                "[a-z]{1,8}".prop_map(|s| Doc::atom(s)),
+                "[a-z]{1,8}".prop_map(Doc::atom),
                 prop::collection::vec(inner, 0..4),
             )
                 .prop_map(|(head, mut children)| {

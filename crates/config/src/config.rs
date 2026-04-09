@@ -506,7 +506,7 @@ mod tests {
         let err = parse_config("(") // Unclosed paren
             .expect_err("expected error");
         // The error could be various things, just verify it fails
-        assert!(format!("{err}").len() > 0);
+        assert!(!format!("{err}").is_empty());
     }
 
     #[test]

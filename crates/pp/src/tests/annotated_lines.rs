@@ -2,12 +2,12 @@ use crate::*;
 use proptest::prelude::*;
 
 fn arb_doc() -> impl Strategy<Value = Doc> {
-    let leaf = "[a-z_]{1,12}".prop_map(|s| Doc::atom(s));
+    let leaf = "[a-z_]{1,12}".prop_map(Doc::atom);
     leaf.prop_recursive(4, 20, 5, |inner| {
         prop_oneof![
             prop::collection::vec(inner.clone(), 0..5).prop_map(Doc::list),
             (
-                "[a-z]{1,8}".prop_map(|s| Doc::atom(s)),
+                "[a-z]{1,8}".prop_map(Doc::atom),
                 prop::collection::vec(inner, 0..4),
             )
                 .prop_map(|(head, mut children)| {

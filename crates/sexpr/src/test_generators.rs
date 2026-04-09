@@ -51,12 +51,12 @@ pub fn any_str_content() -> BoxedStrategy<String> {
 
 /// An atom CstNode.
 pub fn any_atom_node() -> BoxedStrategy<Box<CstNode>> {
-    any_atom_string().prop_map(|s| cst_atom(s)).boxed()
+    any_atom_string().prop_map(cst_atom).boxed()
 }
 
 /// A string literal CstNode.
 pub fn any_str_node() -> BoxedStrategy<Box<CstNode>> {
-    any_str_content().prop_map(|s| cst_str(s)).boxed()
+    any_str_content().prop_map(cst_str).boxed()
 }
 
 /// A leaf CstNode (atom or string).
@@ -254,7 +254,7 @@ pub fn any_keyword_cst() -> BoxedStrategy<Box<CstNode>> {
         Just(cst_atom(":via/ssh")),
         Just(cst_atom(":in/ci")),
         Just(cst_atom(":tool/docker")),
-        "[a-z]{1,8}".prop_map(|s| cst_atom(&format!(":{}", s))),
+        "[a-z]{1,8}".prop_map(|s| cst_atom(format!(":{}", s))),
     ]
     .boxed()
 }
@@ -414,7 +414,7 @@ mod tests {
             prop_assert_eq!(parsed.len(), 1);
             // String nodes parse back as ShapeF::String in the CST parser
             prop_assert!(
-                matches!(&parsed[0].shape, ShapeF::String(s) if s == &node.as_str().unwrap_or("")),
+                matches!(&parsed[0].shape, ShapeF::String(s) if s == node.as_str().unwrap_or("")),
                 "string content mismatch:\n  serialized: {}\n  reparsed shape: {:?}",
                 text, parsed[0].shape
             );

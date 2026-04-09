@@ -320,9 +320,8 @@ mod tests {
         let _result = default_config_path();
 
         unsafe {
-            match original {
-                Some(val) => std::env::set_var("XDG_CONFIG_HOME", val),
-                None => {}
+            if let Some(val) = original {
+                std::env::set_var("XDG_CONFIG_HOME", val)
             }
         }
 

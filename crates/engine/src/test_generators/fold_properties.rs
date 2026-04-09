@@ -99,7 +99,7 @@ proptest! {
         patterns.push(PositionalArg::one(Expr::Literal(required.clone())));
 
         // With just the required arg, all optionals should be skipped.
-        let args_owned = vec![required.clone()];
+        let args_owned = [required.clone()];
         let args: Vec<&String> = args_owned.iter().collect();
         let (matched, consumed, _) = eval::match_positional_patterns(&args, &patterns);
         prop_assert!(matched, "Required arg should match when optionals are skipped");
@@ -315,9 +315,7 @@ fn contains_may_i(effect: &Effect) -> bool {
             branches, fallback, ..
         } => {
             branches.iter().any(|(_, e)| contains_may_i(&e.value))
-                || fallback
-                    .as_ref()
-                    .map_or(false, |f| contains_may_i(&f.value))
+                || fallback.as_ref().is_some_and(|f| contains_may_i(&f.value))
         }
         _ => false,
     }

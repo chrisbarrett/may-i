@@ -396,7 +396,7 @@ mod tests {
                         continuation,
                     } => {
                         assert_eq!(patterns.len(), 1);
-                        assert!(!continuation.is_some());
+                        assert!(continuation.is_none());
                     }
                     _ => panic!("expected Positional pattern, got {:?}", pattern),
                 }
