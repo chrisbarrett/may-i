@@ -64,6 +64,8 @@ pub enum Ann {
     Combinator { result_is_nil: bool },
     /// Rule-level annotation.
     RuleMatch { matched: bool, line: Option<usize> },
+    /// Named predicate (define) reference with its resolved body.
+    VarRef { name: String, matched: bool },
 }
 
 impl TriviaSource for Ann {
@@ -988,8 +990,13 @@ impl EvalFold for TracingFold {
         resolved: Self::PredicateOut,
         _result: PredicateResult,
     ) -> Self::PredicateOut {
+        let matched = resolved.0 == PredicateResult::Match;
+        let ann = Some(Ann::VarRef {
+            name: name.to_string(),
+            matched,
+        });
         let docs = vec![plain_atom(name), resolved.1];
-        (resolved.0, ann_list(docs, None))
+        (resolved.0, ann_list(docs, ann))
     }
 
     fn rule_matched(
@@ -1329,5 +1336,51 @@ mod tests {
         );
         let doc = command_pattern_to_doc(&pat);
         assert_eq!(doc.layout, LayoutHint::AlwaysBreak);
+    }
+
+    #[test]
+    fn predicate_named_produces_var_ref_annotation() {
+        use may_i_engine::fold::EvalFold;
+
+        let mut fold = TracingFold::new();
+        let child_doc = plain_atom("child-body");
+        let child = (PredicateResult::Match, child_doc);
+        let result = fold.predicate_named("build-mode", child, PredicateResult::Match);
+
+        // The output doc should be annotated with VarRef
+        assert!(
+            matches!(
+                &result.1.ann,
+                Some(Ann::VarRef { name, matched: true }) if name == "build-mode"
+            ),
+            "expected VarRef annotation, got {:?}",
+            result.1.ann
+        );
+        // Should contain the name atom and child body as children
+        match &result.1.node {
+            DocF::List(children) => {
+                assert!(children.len() >= 2, "expected at least 2 children");
+            }
+            other => panic!("expected List node, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn predicate_named_no_match_produces_var_ref_unmatched() {
+        use may_i_engine::fold::EvalFold;
+
+        let mut fold = TracingFold::new();
+        let child_doc = plain_atom("child-body");
+        let child = (PredicateResult::NoMatch, child_doc);
+        let result = fold.predicate_named("build-mode", child, PredicateResult::NoMatch);
+
+        assert!(
+            matches!(
+                &result.1.ann,
+                Some(Ann::VarRef { name, matched: false }) if name == "build-mode"
+            ),
+            "expected unmatched VarRef annotation, got {:?}",
+            result.1.ann
+        );
     }
 }

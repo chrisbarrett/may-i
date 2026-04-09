@@ -30,6 +30,22 @@ pub fn trace_to_json(entries: &[TraceEntry]) -> Vec<serde_json::Value> {
 }
 
 fn collect_json_annotations(doc: &Doc<Option<Ann>>, out: &mut Vec<serde_json::Value>) {
+    if let Some(Ann::VarRef { name, matched }) = &doc.ann {
+        // Collect child annotations into a nested body array.
+        let mut body = Vec::new();
+        if let DocF::List(children) | DocF::Vector(children) = &doc.node {
+            for child in children {
+                collect_json_annotations(child, &mut body);
+            }
+        }
+        out.push(serde_json::json!({
+            "type": "var_ref",
+            "name": name,
+            "matched": matched,
+            "body": body,
+        }));
+        return;
+    }
     if let Some(ann) = &doc.ann {
         out.push(ann_to_json(ann));
     }
@@ -116,6 +132,11 @@ fn ann_to_json(ann: &Ann) -> serde_json::Value {
             "type": "rule_match",
             "matched": matched,
             "line": line,
+        }),
+        Ann::VarRef { name, matched } => serde_json::json!({
+            "type": "var_ref",
+            "name": name,
+            "matched": matched,
         }),
     }
 }
@@ -267,6 +288,59 @@ mod tests {
         });
         assert_eq!(json["type"], "rule_match");
         assert_eq!(json["line"], 42);
+    }
+
+    #[test]
+    fn ann_to_json_var_ref_matched() {
+        let body_ann = Ann::FactQuery {
+            query_source: ":agent".into(),
+            matched: true,
+            observed: Some(vec!["build".into()]),
+            failure_reason: None,
+        };
+        let body_doc = atom_ann("(has [:agent \"build\"])", body_ann);
+        let var_doc = list_ann(
+            Ann::VarRef {
+                name: "build-mode".into(),
+                matched: true,
+            },
+            vec![atom("build-mode"), body_doc],
+        );
+
+        let mut annotations = Vec::new();
+        collect_json_annotations(&var_doc, &mut annotations);
+
+        // Should have exactly one top-level annotation: the var_ref
+        assert_eq!(annotations.len(), 1);
+        assert_eq!(annotations[0]["type"], "var_ref");
+        assert_eq!(annotations[0]["name"], "build-mode");
+        assert_eq!(annotations[0]["matched"], true);
+        // Body annotations should be nested inside
+        let body = annotations[0]["body"]
+            .as_array()
+            .expect("body should be array");
+        assert_eq!(body.len(), 1);
+        assert_eq!(body[0]["type"], "fact_query");
+    }
+
+    #[test]
+    fn ann_to_json_var_ref_unmatched() {
+        let var_doc = list_ann(
+            Ann::VarRef {
+                name: "build-mode".into(),
+                matched: false,
+            },
+            vec![atom("build-mode"), atom("child")],
+        );
+
+        let mut annotations = Vec::new();
+        collect_json_annotations(&var_doc, &mut annotations);
+
+        assert_eq!(annotations.len(), 1);
+        assert_eq!(annotations[0]["type"], "var_ref");
+        assert_eq!(annotations[0]["matched"], false);
+        // Body should be present (empty since child has no annotations)
+        assert!(annotations[0]["body"].is_array());
     }
 
     #[test]
