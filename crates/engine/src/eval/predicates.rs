@@ -2,10 +2,10 @@ use may_i_core::ast::Predicate;
 use may_i_core::pattern::ArgPattern;
 use may_i_core::{FactPattern, FactQuery};
 
-use crate::fold::{build_fact_detail, ChildResult, EvalFold};
+use crate::EvalError;
 #[cfg(test)]
 use crate::fold::PureFold;
-use crate::EvalError;
+use crate::fold::{ChildResult, EvalFold, build_fact_detail};
 
 use super::context::{EvalContext, PredicateResult};
 use super::entry::positional_args;
@@ -128,7 +128,10 @@ pub(crate) fn match_fact_pattern(pattern: &FactPattern, value: &str) -> bool {
 }
 
 /// Evaluate an arg pattern as a predicate (returns Match/NoMatch).
-pub(super) fn evaluate_arg_pattern_predicate(pattern: &ArgPattern, ctx: &EvalContext) -> PredicateResult {
+pub(super) fn evaluate_arg_pattern_predicate(
+    pattern: &ArgPattern,
+    ctx: &EvalContext,
+) -> PredicateResult {
     match pattern {
         ArgPattern::Positional {
             patterns,

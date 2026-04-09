@@ -64,7 +64,10 @@ fn word_to_string(word: &Word) -> String {
 fn evaluate_simple(input: &str, config: &Config, context: &ContextFacts) -> EvalResult {
     match parse_check_command(input) {
         ParsedCheck::Simple(cmd_name, args) => {
-            crate::eval::evaluate(&cmd_name, &args, config, context).unwrap()
+            match crate::eval::evaluate(&cmd_name, &args, config, context) {
+                Ok(result) => result,
+                Err(e) => EvalResult::new(Decision::Deny, Some(e.to_string())),
+            }
         }
         ParsedCheck::Empty => EvalResult::new(Decision::Allow, None),
         ParsedCheck::Compound => EvalResult::new(
@@ -222,6 +225,44 @@ mod tests {
         let results = run_checks(&config);
         assert_eq!(results.len(), 2);
         assert!(results.iter().all(|r| r.passed));
+    }
+
+    #[test]
+    fn unresolved_predicate_returns_error_not_panic() {
+        use may_i_core::ast::{Predicate, Spanned};
+
+        let s = Span::new(0, 0);
+        let rule = Rule {
+            command_effect: Spanned::new(
+                Effect::CommandPattern(CommandPattern::Literal("echo".into())),
+                s,
+            ),
+            effect: Spanned::new(
+                Effect::When {
+                    predicate: Spanned::new(Predicate::Named("undefined".into()), s),
+                    effect: Box::new(Spanned::new(Effect::Allow(Some("ok".into())), s)),
+                },
+                s,
+            ),
+            checks: vec![Check {
+                command: "echo hi".into(),
+                expected: Decision::Allow,
+                context: ContextFacts::default(),
+                span: s,
+            }],
+            span: s,
+        };
+
+        let config = Config {
+            rules: vec![rule],
+            ..Config::default()
+        };
+
+        // Should not panic — should return a result with an error diagnostic
+        let results = run_checks(&config);
+        assert_eq!(results.len(), 1);
+        // The check should fail since the predicate can't be resolved
+        assert!(!results[0].passed);
     }
 
     #[test]

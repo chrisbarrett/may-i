@@ -2,8 +2,8 @@ use colored::Colorize;
 use may_i_core::{Doc, DocF, LayoutHint, Trivia, TriviaSource};
 
 use crate::buffer::{EventBuffer, StringBuilder};
-use crate::output::PrettyOutput;
 use crate::indent_spec;
+use crate::output::PrettyOutput;
 
 mod layout;
 use layout::*;
@@ -158,14 +158,6 @@ fn render_node<A: Clone + TriviaSource>(
                 let mut buf = EventBuffer::new();
                 render_flat(children, dimmed, &mut buf);
                 if !buf.is_multiline() && buf.max_line_width(indent) <= width {
-                    #[cfg(debug_assertions)]
-                    {
-                        if let Some(head) = children.first().and_then(|c| c.as_atom())
-                            && head == "forbidden"
-                        {
-                            eprintln!("render_list: forbidden using render_flat");
-                        }
-                    }
                     buf.replay(out);
                     return;
                 }
@@ -238,7 +230,11 @@ fn render_node<A: Clone + TriviaSource>(
 /// Emit leading trivia from an annotation at the given indent,
 /// or fall back to `begin_line(indent)` when there's no trivia.
 /// Preserves blank lines from whitespace-only trivia.
-pub(crate) fn emit_trivia_or_line<A: TriviaSource>(ann: &A, indent: usize, out: &mut impl PrettyOutput<A>) {
+pub(crate) fn emit_trivia_or_line<A: TriviaSource>(
+    ann: &A,
+    indent: usize,
+    out: &mut impl PrettyOutput<A>,
+) {
     let leading = ann.leading_trivia();
     let has_comments = leading.iter().any(|t| matches!(t, Trivia::Comment { .. }));
     if has_comments {

@@ -1,4 +1,3 @@
-
 use crate::*;
 
 #[test]
@@ -93,4 +92,3 @@ fn test_detect_column_width_95th_percentile() {
     // Index 95 is the first long line (202 chars), which snaps to 200
     assert_eq!(detect_column_width(&source), 200);
 }
-

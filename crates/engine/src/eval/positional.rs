@@ -1,6 +1,6 @@
+use may_i_core::ContextFacts;
 use may_i_core::ast::Effect;
 use may_i_core::pattern::PositionalArg;
-use may_i_core::ContextFacts;
 
 /// Match positional patterns against args, capturing bound facts.
 /// Returns (matched, consumed_count, bound_facts) where consumed_count is the

@@ -1,4 +1,3 @@
-
 use crate::*;
 use proptest::prelude::*;
 
@@ -124,4 +123,3 @@ fn strip_ansi(s: &str) -> String {
     }
     result
 }
-

@@ -144,9 +144,9 @@ fn resolve_eval_command(
     piped_stdin: Option<String>,
 ) -> miette::Result<String> {
     match (argv, piped_stdin) {
-        (Some(_), Some(_)) => {
-            Err(miette::miette!("ambiguous input: command provided both as argument and on stdin"))
-        }
+        (Some(_), Some(_)) => Err(miette::miette!(
+            "ambiguous input: command provided both as argument and on stdin"
+        )),
         (Some(cmd), None) => Ok(cmd),
         (None, Some(content)) => {
             let trimmed = content.trim();
@@ -182,7 +182,10 @@ mod tests {
     fn resolve_both_is_ambiguous() {
         let result = resolve_eval_command(Some("ls".into()), Some("rm\n".into()));
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("ambiguous"), "expected ambiguous error, got: {err}");
+        assert!(
+            err.contains("ambiguous"),
+            "expected ambiguous error, got: {err}"
+        );
     }
 
     #[test]

@@ -1,15 +1,8 @@
-
 use super::*;
-use crate::eval::{
-    self, EvalContext, Evaluator, PredicateResult, evaluate, evaluate_predicate,
-};
+use crate::eval::{self, EvalContext, Evaluator, PredicateResult, evaluate, evaluate_predicate};
 use may_i_core::ast::EffectResult;
 
-fn make_ctx<'a>(
-    command: &'a str,
-    args: &'a [String],
-    facts: &'a ContextFacts,
-) -> EvalContext<'a> {
+fn make_ctx<'a>(command: &'a str, args: &'a [String], facts: &'a ContextFacts) -> EvalContext<'a> {
     EvalContext::new(command, args, facts)
 }
 

@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::eval::evaluate;
 
@@ -21,17 +20,13 @@ fn complex_nested_conditionals() {
                     pattern: may_i_core::FactPattern::Literal("prod".to_string()),
                 })),
                 effect: Box::new(spanned(Effect::If {
-                    predicate: spanned(Predicate::Arg(
-                        may_i_core::pattern::ArgPattern::Anywhere(vec![
-                            may_i_core::pattern::Expr::Literal("src".to_string()),
-                        ]),
-                    )),
+                    predicate: spanned(Predicate::Arg(may_i_core::pattern::ArgPattern::Anywhere(
+                        vec![may_i_core::pattern::Expr::Literal("src".to_string())],
+                    ))),
                     then_effect: Box::new(spanned(Effect::Allow(Some(
                         "prod deploy allowed".into(),
                     )))),
-                    else_effect: Box::new(spanned(Effect::Deny(Some(
-                        "prod deploy denied".into(),
-                    )))),
+                    else_effect: Box::new(spanned(Effect::Deny(Some("prod deploy denied".into())))),
                 })),
             }),
             checks: vec![],
@@ -150,9 +145,7 @@ fn combined_and_or_not_in_rule() {
                         effects: vec![
                             spanned(Effect::Allow(Some("or-allow".into()))),
                             spanned(Effect::Not {
-                                effect: Box::new(spanned(Effect::Deny(Some(
-                                    "inner-deny".into(),
-                                )))),
+                                effect: Box::new(spanned(Effect::Deny(Some("inner-deny".into())))),
                             }),
                         ],
                     }),

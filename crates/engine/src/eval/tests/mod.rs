@@ -1,9 +1,14 @@
-use super::*;
 use super::context::DEFAULT_RECURSION_LIMIT;
-use super::effects::{evaluate_effect, evaluate_effect_fold, extract_inner_command, match_command_pattern};
+use super::effects::{
+    evaluate_effect, evaluate_effect_fold, extract_inner_command, match_command_pattern,
+};
 use super::entry::{expand_combined_flags, positional_args};
-use super::positional::{build_expr_match_detail, build_positional_element_details, match_expr_with_binding, match_positional_patterns};
+use super::positional::{
+    build_expr_match_detail, build_positional_element_details, match_expr_with_binding,
+    match_positional_patterns,
+};
 use super::predicates::{evaluate_predicate, match_fact_pattern};
+use super::*;
 
 use may_i_core::ast::{Effect, EffectResult, Predicate, Rule};
 use may_i_core::pattern::{ArgPattern, CommandPattern};
@@ -905,6 +910,5 @@ fn may_i_nested_wrappers_accumulate_via() {
     // Inner "rm" should see :via = {"sudo", "ssh"} and match the deny rule
     assert_eq!(result.decision, Decision::Deny);
 }
-
 
 mod properties;

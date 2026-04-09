@@ -1,12 +1,7 @@
-
 use super::*;
 use crate::eval::{EvalContext, PredicateResult, evaluate_predicate};
 
-fn make_ctx<'a>(
-    command: &'a str,
-    args: &'a [String],
-    facts: &'a ContextFacts,
-) -> EvalContext<'a> {
+fn make_ctx<'a>(command: &'a str, args: &'a [String], facts: &'a ContextFacts) -> EvalContext<'a> {
     EvalContext::new(command, args, facts)
 }
 

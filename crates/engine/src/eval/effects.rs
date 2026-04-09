@@ -2,13 +2,13 @@ use may_i_core::ast::{Effect, EffectResult, Rule};
 use may_i_core::pattern::{ArgPattern, CommandPattern};
 use may_i_core::{ContextFacts, Decision, Keyword};
 
-use crate::fold::{ArgMatchDetail, ChildResult, EvalFold};
+use crate::EvalError;
 #[cfg(test)]
 use crate::fold::PureFold;
-use crate::EvalError;
+use crate::fold::{ArgMatchDetail, ChildResult, EvalFold};
 
 use super::context::{EvalContext, PredicateResult};
-use super::entry::{expand_combined_flags, positional_args, Evaluator};
+use super::entry::{Evaluator, expand_combined_flags, positional_args};
 use super::positional::{
     build_positional_element_details, match_positional_patterns, resolve_trailing_cond_effect,
 };
@@ -439,7 +439,10 @@ fn evaluate_effect_with_owned_args_fold<F: EvalFold>(
 /// The remaining args may contain a quoted string like `"rm -rf /"` that
 /// represents a complete sub-command. We join all args into a single string
 /// and re-parse through the shell parser to correctly handle quoting.
-pub(crate) fn extract_inner_command(_pattern: &ArgPattern, args: &[String]) -> Option<(String, Vec<String>)> {
+pub(crate) fn extract_inner_command(
+    _pattern: &ArgPattern,
+    args: &[String],
+) -> Option<(String, Vec<String>)> {
     if args.is_empty() {
         return None;
     }

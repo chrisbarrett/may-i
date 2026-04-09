@@ -716,9 +716,7 @@ fn fold_collects_atoms() {
     let doc = l(vec![a("rule"), a("foo"), l(vec![a("bar")])]);
     let atoms: Vec<String> = doc.fold(&|node, _ann| match node {
         DocF::Atom(s) => vec![s],
-        DocF::List(children) | DocF::Vector(children) => {
-            children.into_iter().flatten().collect()
-        }
+        DocF::List(children) | DocF::Vector(children) => children.into_iter().flatten().collect(),
     });
     assert_eq!(atoms, vec!["rule", "foo", "bar"]);
 }
@@ -947,4 +945,3 @@ fn dimmed_only_affects_flagged_subtree() {
         assert!(result.contains("bright"));
     });
 }
-

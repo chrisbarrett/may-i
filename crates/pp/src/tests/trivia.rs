@@ -298,4 +298,3 @@ fn blank_line_preserved_at_top_level() {
         "blank line should be preserved between top-level forms: {result:?}"
     );
 }
-

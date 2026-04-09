@@ -8,7 +8,7 @@ pub(crate) mod positional;
 pub(crate) mod predicates;
 
 pub use context::{EvalContext, PredicateResult};
-pub use entry::{evaluate, evaluate_with_fold, Evaluator};
+pub use entry::{Evaluator, evaluate, evaluate_with_fold};
 
 #[cfg(test)]
 pub(crate) use context::DEFAULT_RECURSION_LIMIT;

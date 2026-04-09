@@ -85,7 +85,7 @@ pub struct NoteHeading {
 
 impl From<String> for NoteHeading {
     fn from(s: String) -> Self {
-        let visible_width = s.len();
+        let visible_width = visible_len(&s);
         Self {
             text: s,
             visible_width,
@@ -120,7 +120,7 @@ impl Advisory {
             NoteLevel::Error => |s| s.red(),
         };
         let heading = NoteHeading {
-            visible_width: self.heading.len(),
+            visible_width: visible_len(&self.heading),
             text: colorize(&self.heading).bold().to_string(),
         };
         self.into_note_with_heading(heading)
@@ -219,7 +219,7 @@ impl ColRow {
 
     pub fn kv(label: impl Into<String>, value: impl Into<String>) -> Self {
         let label = label.into();
-        let width = label.len();
+        let width = visible_len(&label);
         Self {
             left: label,
             left_width: width,
@@ -645,6 +645,19 @@ mod tests {
         assert_eq!(row.left, "key");
         assert_eq!(row.left_width, 3);
         assert!(matches!(row.left_align, ColAlign::Left));
+    }
+
+    #[test]
+    fn note_heading_from_unicode_uses_visible_width() {
+        let heading = NoteHeading::from("ℹ Info".to_string());
+        // "ℹ Info" is 6 visible chars, not 8 bytes
+        assert_eq!(heading.visible_width, 6);
+    }
+
+    #[test]
+    fn kv_unicode_label_uses_visible_width() {
+        let row = ColRow::kv("ℹ Info", "value");
+        assert_eq!(row.left_width, 6);
     }
 
     #[test]

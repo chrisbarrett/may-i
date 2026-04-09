@@ -1,4 +1,3 @@
-
 use crate::*;
 use proptest::prelude::*;
 
@@ -240,4 +239,3 @@ fn mixed_dimmed_only_collects_non_dimmed_atom_annotations() {
         "should NOT contain dimmed atom annotation"
     );
 }
-

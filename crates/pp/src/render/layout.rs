@@ -4,7 +4,7 @@ use crate::buffer::EventBuffer;
 use crate::color::visible_len;
 use crate::output::PrettyOutput;
 use crate::render::{emit_trivia_or_line, render, render_child_on_line};
-use crate::{indent_spec, FILL_ELIGIBLE_HEADS};
+use crate::{FILL_ELIGIBLE_HEADS, indent_spec};
 
 pub(super) fn render_flat_delim<A: Clone + TriviaSource>(
     children: &[Doc<A>],
