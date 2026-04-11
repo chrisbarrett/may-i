@@ -235,7 +235,6 @@ proptest! {
         // Predicate: fact :key is present
         let pred = Predicate::Fact(may_i_core::FactQuery::Presence {
             key: key.clone(),
-            vector_syntax: false,
         });
         let inner = Effect::Allow(Some("when-matched".into()));
         let when_effect = Effect::When {
@@ -264,7 +263,6 @@ proptest! {
 
         let pred = Predicate::Fact(may_i_core::FactQuery::Presence {
             key: key.clone(),
-            vector_syntax: false,
         });
         let inner = Effect::Allow(Some("unless-matched".into()));
         let unless_effect = Effect::Unless {
@@ -293,7 +291,6 @@ proptest! {
 
         let pred = Predicate::Fact(may_i_core::FactQuery::Presence {
             key: key.clone(),
-            vector_syntax: false,
         });
         let then_eff = Effect::Allow(Some("then".into()));
         let else_eff = Effect::Deny(Some("else".into()));
@@ -332,11 +329,9 @@ proptest! {
         let always_true = Predicate::Or(vec![
             Predicate::Fact(may_i_core::FactQuery::Presence {
                 key: key.clone(),
-                vector_syntax: false,
             }),
             Predicate::Not(Box::new(Predicate::Fact(may_i_core::FactQuery::Presence {
                 key: key.clone(),
-                vector_syntax: false,
             }))),
         ]);
 
@@ -345,7 +340,6 @@ proptest! {
                 (spanned(always_true), spanned(Effect::Allow(Some("first".into())))),
                 (spanned(Predicate::Fact(may_i_core::FactQuery::Presence {
                     key: Keyword::new(":other").unwrap(),
-                    vector_syntax: false,
                 })), spanned(Effect::Deny(Some("second".into())))),
             ],
             fallback: Some(Box::new(spanned(Effect::Ask(Some("fallback".into()))))),

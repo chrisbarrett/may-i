@@ -83,7 +83,6 @@ proptest! {
         let ctx = make_ctx("test", &args, &facts);
         let pred = Predicate::Fact(may_i_core::FactQuery::Presence {
             key: key.clone(),
-            vector_syntax: false,
         });
         prop_assert_eq!(evaluate_predicate(&pred, &ctx).unwrap(), PredicateResult::Match);
     }

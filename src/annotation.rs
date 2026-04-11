@@ -1134,7 +1134,6 @@ mod tests {
     fn presence_query(key: &str) -> FactQuery {
         FactQuery::Presence {
             key: Keyword::new(key).unwrap(),
-            vector_syntax: false,
         }
     }
 

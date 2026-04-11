@@ -749,33 +749,15 @@ fn cond_short_circuits_predicates_after_first_match() {
     let effect = Effect::Cond {
         branches: vec![
             (
-                Spanned::new(
-                    Predicate::Fact(FactQuery::Presence {
-                        key: kw(":a"),
-                        vector_syntax: false,
-                    }),
-                    s,
-                ),
+                Spanned::new(Predicate::Fact(FactQuery::Presence { key: kw(":a") }), s),
                 Spanned::new(Effect::Allow(Some("first".into())), s),
             ),
             (
-                Spanned::new(
-                    Predicate::Fact(FactQuery::Presence {
-                        key: kw(":b"),
-                        vector_syntax: false,
-                    }),
-                    s,
-                ),
+                Spanned::new(Predicate::Fact(FactQuery::Presence { key: kw(":b") }), s),
                 Spanned::new(Effect::Deny(Some("second".into())), s),
             ),
             (
-                Spanned::new(
-                    Predicate::Fact(FactQuery::Presence {
-                        key: kw(":c"),
-                        vector_syntax: false,
-                    }),
-                    s,
-                ),
+                Spanned::new(Predicate::Fact(FactQuery::Presence { key: kw(":c") }), s),
                 Spanned::new(Effect::Deny(Some("third".into())), s),
             ),
         ],

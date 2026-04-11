@@ -85,12 +85,7 @@ pub fn any_fact_pattern(depth: u32) -> BoxedStrategy<FactPattern> {
 /// Generate FactQuery variants.
 pub fn any_fact_query() -> BoxedStrategy<FactQuery> {
     prop_oneof![
-        (any_keyword(), proptest::bool::ANY).prop_map(|(k, vector)| {
-            FactQuery::Presence {
-                key: k,
-                vector_syntax: vector,
-            }
-        }),
+        any_keyword().prop_map(|k| { FactQuery::Presence { key: k } }),
         (any_keyword(), any_fact_pattern(3))
             .prop_map(|(k, pattern)| { FactQuery::Value { key: k, pattern } }),
     ]
