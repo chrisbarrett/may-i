@@ -29,6 +29,11 @@ pub fn bash_payload(command: &str) -> String {
     .to_string()
 }
 
+/// Parse JSON from command output.
+pub fn parse_json(output: &std::process::Output) -> serde_json::Value {
+    serde_json::from_slice(&output.stdout).expect("parse JSON output")
+}
+
 /// Build an `assert_cmd::Command` for `may-i` with `MAYI_CONFIG` pre-set.
 pub fn may_i(config: &NamedTempFile) -> Command {
     let mut cmd = cargo_bin_cmd!("may-i");

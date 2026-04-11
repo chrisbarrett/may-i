@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{may_i, write_config};
+use common::{may_i, parse_json, write_config};
 
 // ---------------------------------------------------------------------------
 // 6.1 – End-to-end: eval with defines produces correct decision
@@ -27,8 +27,7 @@ fn eval_define_matching_produces_correct_decision() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let resp: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("valid JSON stdout");
+    let resp = parse_json(&output);
 
     assert_eq!(resp["decision"], "allow");
     assert_eq!(resp["reason"], "git is safe");
@@ -53,8 +52,7 @@ fn eval_define_not_matching_falls_through() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let resp: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("valid JSON stdout");
+    let resp = parse_json(&output);
 
     assert_eq!(
         resp["decision"], "ask",
@@ -93,10 +91,8 @@ fn eval_define_equivalent_to_inline() {
             .output()
             .expect("run inline");
 
-        let resp_define: serde_json::Value =
-            serde_json::from_slice(&out_define.stdout).expect("JSON");
-        let resp_inline: serde_json::Value =
-            serde_json::from_slice(&out_inline.stdout).expect("JSON");
+        let resp_define = parse_json(&out_define);
+        let resp_inline = parse_json(&out_inline);
 
         assert_eq!(
             resp_define["decision"], resp_inline["decision"],
@@ -131,8 +127,7 @@ fn eval_transitive_define_resolves() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let resp: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("valid JSON stdout");
+    let resp = parse_json(&output);
 
     assert_eq!(resp["decision"], "allow");
     assert_eq!(resp["reason"], "transitive match");
@@ -157,8 +152,7 @@ fn eval_json_trace_contains_var_ref_annotation() {
 
     assert!(output.status.success());
 
-    let resp: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("valid JSON stdout");
+    let resp = parse_json(&output);
 
     let trace = &resp["trace"];
     assert!(trace.is_array(), "trace should be an array");
@@ -202,8 +196,7 @@ fn eval_json_trace_var_ref_unmatched() {
 
     assert!(output.status.success());
 
-    let resp: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("valid JSON stdout");
+    let resp = parse_json(&output);
 
     let trace = &resp["trace"];
     let rules = trace.as_array().unwrap();

@@ -3,7 +3,7 @@
 mod common;
 
 use assert_cmd::cargo::cargo_bin_cmd;
-use common::{may_i, write_config};
+use common::{may_i, parse_json, write_config};
 use predicates::prelude::*;
 
 #[test]
@@ -65,8 +65,7 @@ fn check_json_produces_valid_json() {
 
     assert!(output.status.success());
 
-    let resp: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("valid JSON stdout");
+    let resp = parse_json(&output);
 
     assert_eq!(resp["passed"], 1);
     assert_eq!(resp["failed"], 0);
