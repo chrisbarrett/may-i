@@ -293,6 +293,7 @@ impl<A> CstNode<A> {
         }
     }
 
+    #[allow(clippy::type_complexity)]
     fn transform_children<F>(
         &self,
         children: &[Box<CstNode<A>>],

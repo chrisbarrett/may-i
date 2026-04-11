@@ -37,7 +37,7 @@ repos:
       # Pre-push hooks (full verification)
       - id: cargo-build-full
         name: cargo build (full)
-        entry: env RUSTFLAGS="-D warnings" cargo build
+        entry: env RUSTFLAGS="-D warnings" cargo build --workspace
         language: system
         types: [rust]
         pass_filenames: false
@@ -45,7 +45,7 @@ repos:
 
       - id: cargo-clippy-full
         name: cargo clippy (full)
-        entry: cargo clippy --fix --allow-dirty -- -D warnings
+        entry: cargo clippy --workspace --fix --allow-dirty -- -D warnings
         language: system
         types: [rust]
         pass_filenames: false
