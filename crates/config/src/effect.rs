@@ -14,6 +14,7 @@ use may_i_sexpr::{RawError, Sexpr};
 /// - Combinators: `(and EFFECT ...)`, `(or EFFECT ...)`, `(not EFFECT)`
 /// - Conditionals: `(when PREDICATE EFFECT)`, `(unless PREDICATE EFFECT)`, `(if PREDICATE THEN ELSE)`, `(cond ...)`
 /// - Recursion: `(may-i PATTERN)`
+#[must_use = "parsed effect should be used"]
 pub fn parse_effect(sexpr: &Sexpr) -> Result<Spanned<Effect>, RawError> {
     // Handle string literals: always command literals (even if they match a reserved word).
     if let Some(s) = sexpr.as_str() {

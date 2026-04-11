@@ -341,6 +341,7 @@ impl<A: Clone> CstNode<A> {
 }
 
 /// Parse a string into CST nodes.
+#[must_use]
 #[allow(clippy::vec_box)]
 pub fn parse(input: &str) -> (Vec<Box<CstNode>>, Vec<crate::span::RawError>) {
     let mut parser = Parser::new(input);

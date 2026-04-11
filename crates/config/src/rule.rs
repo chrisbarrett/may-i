@@ -17,6 +17,7 @@ use may_i_sexpr::{RawError, Sexpr};
 /// - `(rule "git" (and (positional "push") (effect :ask)))` - ask for git push
 /// - `(rule "git" (effect :deny) (check :deny "rm -rf /"))`
 /// - `(rule (or "git" "gh") (effect :allow))` - allow git or gh
+#[must_use = "parsed rule should be used"]
 pub fn parse_rule(sexpr: &Sexpr) -> Result<Spanned<Rule>, RawError> {
     let list = sexpr
         .as_list()
@@ -80,6 +81,7 @@ pub fn parse_rule(sexpr: &Sexpr) -> Result<Spanned<Rule>, RawError> {
 /// Examples:
 /// - `(define remote-prod (and (fact? :via/ssh) (fact? [:ssh/host (regex "^prod-")])))`
 /// - `(define safe-cmd (or (positional "status") (positional "log")))`
+#[must_use = "parsed define should be used"]
 pub fn parse_define(sexpr: &Sexpr) -> Result<Define, RawError> {
     let list = sexpr
         .as_list()

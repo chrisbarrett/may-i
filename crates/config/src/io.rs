@@ -10,6 +10,7 @@ pub struct LoadResult {
     pub config: may_i_core::ast::Config,
     pub source_text: Option<String>,
     pub pre_migration_forms: Option<Vec<(may_i_core::Span, may_i_core::Doc)>>,
+    pub config_path: PathBuf,
 }
 
 /// Load and parse a config file at the given path.
@@ -24,16 +25,19 @@ pub fn load(path: &Path) -> miette::Result<LoadResult> {
 
     let filename = path.display().to_string();
 
+    let config_path = path.to_path_buf();
+
     // Fast path: try canonical parsing first.
     match crate::parse_config(&content) {
         Ok(config) => Ok(LoadResult {
             config,
             source_text: Some(content),
             pre_migration_forms: None,
+            config_path,
         }),
         Err(original_err) => {
             // Slow path: attempt transparent migration from legacy syntax.
-            match try_migrate_and_parse(&content) {
+            match try_migrate_and_parse(&content, &config_path) {
                 Some(result) => Ok(result),
                 None => {
                     // Migration failed or didn't help; return the original error.
@@ -47,7 +51,7 @@ pub fn load(path: &Path) -> miette::Result<LoadResult> {
 /// Attempt to parse a config by migrating legacy CST forms to canonical syntax.
 ///
 /// Returns `Some(config)` if migration succeeds, `None` otherwise.
-fn try_migrate_and_parse(content: &str) -> Option<LoadResult> {
+fn try_migrate_and_parse(content: &str, config_path: &Path) -> Option<LoadResult> {
     let (cst_nodes, cst_errors) = may_i_sexpr::parse_cst(content);
     if !cst_errors.is_empty() {
         return None;
@@ -67,6 +71,7 @@ fn try_migrate_and_parse(content: &str) -> Option<LoadResult> {
         config,
         source_text: Some(content.to_string()),
         pre_migration_forms: Some(pre_migration_forms),
+        config_path: config_path.to_path_buf(),
     })
 }
 

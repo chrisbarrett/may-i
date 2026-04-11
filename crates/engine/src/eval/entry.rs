@@ -9,6 +9,7 @@ use super::effects::evaluate_effect_fold;
 
 /// Evaluate a command against config and context using PureFold.
 /// This is the main entry point for evaluation.
+#[must_use = "evaluation result contains the access decision"]
 pub fn evaluate(
     command: &str,
     args: &[String],
@@ -20,6 +21,7 @@ pub fn evaluate(
 }
 
 /// Evaluate a command against config and context using a custom fold.
+#[must_use = "evaluation result contains the access decision"]
 pub fn evaluate_with_fold<F: EvalFold>(
     command: &str,
     args: &[String],

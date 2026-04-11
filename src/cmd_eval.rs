@@ -4,7 +4,6 @@ use std::io::Write;
 
 use colored::Colorize;
 
-use may_i_config as config;
 use may_i_core::Decision;
 use may_i_engine as engine;
 use may_i_shell_parser as parser;
@@ -30,8 +29,9 @@ pub fn cmd_eval(
     json_mode: bool,
     config_path: Option<&std::path::Path>,
 ) -> miette::Result<()> {
-    let config_file = config::resolve_path(config_path)?;
-    let loaded: crate::loaded_config::LoadedConfig = config::load_and_resolve(config_path)?.into();
+    let loaded: crate::loaded_config::LoadedConfig =
+        may_i_config::load_and_resolve(config_path)?.into();
+    let config_file = &loaded.config_path;
     let context = parse_cli_facts(raw_facts)?;
 
     if json_mode {
@@ -51,11 +51,11 @@ pub fn cmd_eval(
         );
     } else {
         let term = output::Terminal::detect();
-        if let Some(note) = output::migration_note(&loaded, &config_file) {
+        if let Some(note) = output::migration_note(&loaded, config_file) {
             output::write_layout(&mut std::io::stderr(), &note, &term);
         }
         let (result, traces, colored_command) = evaluate_segments(command, &loaded, &context)?;
-        let display_path = output::shorten_home(&config_file);
+        let display_path = output::shorten_home(config_file);
         write_eval_output(
             &mut std::io::stdout(),
             &traces,

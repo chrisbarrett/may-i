@@ -1217,6 +1217,7 @@ mod tests {
             config: Config::default(),
             source_text: Some("(rule \"git\" :allow)".into()),
             pre_migration_forms: Some(vec![(Span::new(0, 10), Doc::<()>::atom("test"))]),
+            config_path: std::path::PathBuf::from("/tmp/test.lisp"),
         };
         let fold = TracingFold::from_loaded_config(&lc);
         assert!(fold.source_text.is_some());

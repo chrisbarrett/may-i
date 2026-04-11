@@ -4,7 +4,6 @@ use colored::Colorize;
 use may_i_pp::colorize_atom;
 
 use engine::check::CheckResult;
-use may_i_config as config;
 use may_i_engine as engine;
 
 use crate::annotation::{TraceEntry, TracingFold};
@@ -25,10 +24,11 @@ pub fn cmd_check(
     verbose: bool,
     config_path: Option<&std::path::Path>,
 ) -> miette::Result<()> {
-    let config_file = config::resolve_path(config_path)?;
-    let loaded: crate::loaded_config::LoadedConfig = config::load_and_resolve(config_path)?.into();
+    let loaded: crate::loaded_config::LoadedConfig =
+        may_i_config::load_and_resolve(config_path)?.into();
+    let config_file = &loaded.config_path;
 
-    let results = run_checks_with_traces(&loaded, &config_file)?;
+    let results = run_checks_with_traces(&loaded, config_file)?;
 
     let passed = results.iter().filter(|r| r.passed).count();
     let failed = results.len() - passed;
@@ -61,7 +61,7 @@ pub fn cmd_check(
         );
     } else {
         let term = output::Terminal::detect();
-        if let Some(note) = output::migration_note(&loaded, &config_file) {
+        if let Some(note) = output::migration_note(&loaded, config_file) {
             output::write_layout(&mut std::io::stderr(), &note, &term);
         }
         let mut failures = Vec::new();
@@ -146,7 +146,7 @@ pub fn cmd_check(
             failed.to_string().bold()
         );
         println!();
-        let display_path = output::shorten_home(&config_file);
+        let display_path = output::shorten_home(config_file);
         println!("  {} {}", "config:".dimmed(), display_path.dimmed());
     }
 
