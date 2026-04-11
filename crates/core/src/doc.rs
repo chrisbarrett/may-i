@@ -305,4 +305,64 @@ mod tests {
         });
         assert_eq!(count, 3);
     }
+
+    // ── Property tests: Doc functor laws ──────────────────────────────
+
+    use proptest::prelude::*;
+
+    fn any_doc() -> impl Strategy<Value = Doc<()>> {
+        let leaf = "[a-z_]{1,12}".prop_map(Doc::atom);
+        leaf.prop_recursive(4, 64, 8, |inner| {
+            prop_oneof![
+                prop::collection::vec(inner.clone(), 0..4).prop_map(Doc::list),
+                prop::collection::vec(inner.clone(), 0..4).prop_map(Doc::vector),
+                prop::collection::vec(inner, 0..4).prop_map(Doc::broken_list),
+            ]
+        })
+    }
+
+    /// Structural + annotation equality via fold.
+    fn docs_equal<A: PartialEq>(a: &Doc<A>, b: &Doc<A>) -> bool {
+        if a.ann != b.ann || a.layout != b.layout || a.dimmed != b.dimmed {
+            return false;
+        }
+        match (&a.node, &b.node) {
+            (DocF::Atom(sa), DocF::Atom(sb)) => sa == sb,
+            (DocF::List(ca), DocF::List(cb)) | (DocF::Vector(ca), DocF::Vector(cb)) => {
+                ca.len() == cb.len() && ca.iter().zip(cb).all(|(x, y)| docs_equal(x, y))
+            }
+            _ => false,
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: 256, max_shrink_iters: 50, .. ProptestConfig::default() })]
+
+        #[test]
+        fn map_identity(doc in any_doc()) {
+            let mapped = doc.clone().map(&|x| x);
+            prop_assert!(
+                docs_equal(&doc, &mapped),
+                "identity law failed:\n  original: {}\n  mapped:   {}",
+                doc.to_flat_string(),
+                mapped.to_flat_string()
+            );
+        }
+
+        #[test]
+        fn map_composition(doc in any_doc()) {
+            let f = |_: ()| 1u32;
+            let g = |x: u32| x + 10;
+
+            let map_f_then_g = doc.clone().map(&f).map(&g);
+            let map_fg = doc.map(&|x| g(f(x)));
+
+            prop_assert!(
+                docs_equal(&map_f_then_g, &map_fg),
+                "composition law failed:\n  f then g: {}\n  f∘g:      {}",
+                map_f_then_g.to_flat_string(),
+                map_fg.to_flat_string()
+            );
+        }
+    }
 }

@@ -187,6 +187,29 @@ mod tests {
         .boxed()
     }
 
+    // ── Canonical config with defines ────────────────────────────────
+
+    /// Generates a canonical define: `(define name (fact? :key))`.
+    fn any_canonical_define_cst() -> BoxedStrategy<Box<may_i_sexpr::CstNode>> {
+        ("[a-z][a-z0-9_-]{0,8}", any_predicate_cst(0))
+            .prop_map(|(name, pred)| cst_list(vec![cst_atom("define"), cst_atom(&name), pred]))
+            .boxed()
+    }
+
+    /// Generates a canonical config with both defines and rules that reference them.
+    fn any_canonical_config_with_defines() -> BoxedStrategy<Vec<Box<may_i_sexpr::CstNode>>> {
+        (
+            prop::collection::vec(any_canonical_define_cst(), 1..=3),
+            prop::collection::vec(any_canonical_rule_cst(), 1..=3),
+        )
+            .prop_map(|(defines, rules)| {
+                let mut forms = defines;
+                forms.extend(rules);
+                forms
+            })
+            .boxed()
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────
 
     fn serialize_forms(forms: &[Box<may_i_sexpr::CstNode>]) -> String {
@@ -498,6 +521,41 @@ mod tests {
                 "compound rule failed to evaluate after migration:\n  text: {}",
                 migrated_text
             );
+        }
+
+        // ── Migration with defines ──────────────────────────────────────
+
+        #[test]
+        fn migration_preserves_defines(forms in any_canonical_config_with_defines()) {
+            let original_text = serialize_forms_spaced(&forms);
+            let migrated = migrate_forms(forms);
+            let migrated_text = serialize_forms_spaced(&migrated);
+
+            prop_assume!(crate::config::parse_config(&original_text).is_ok());
+            prop_assume!(crate::config::parse_config(&migrated_text).is_ok());
+
+            let args: Vec<String> = vec![];
+            let facts = may_i_core::ContextFacts::default();
+            prop_assert!(
+                configs_evaluate_equal(&original_text, &migrated_text, "test-cmd", &args, &facts),
+                "migration with defines changed eval:\n  original: {}\n  migrated: {}",
+                original_text,
+                migrated_text
+            );
+        }
+
+        #[test]
+        fn migration_with_defines_is_idempotent(forms in any_canonical_config_with_defines()) {
+            let migrated_once = migrate_forms(forms);
+            let once_text = serialize_forms(&migrated_once);
+
+            let (reparsed, errors) = may_i_sexpr::cst::parse(&once_text);
+            prop_assert!(errors.is_empty(), "migrated output failed to re-parse: {:?}", errors);
+
+            let migrated_twice = migrate_forms(reparsed);
+            let twice_text = serialize_forms(&migrated_twice);
+
+            prop_assert_eq!(once_text, twice_text, "migration with defines is not idempotent");
         }
     }
 }
