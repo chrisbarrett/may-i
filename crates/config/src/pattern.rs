@@ -3,7 +3,7 @@
 
 use may_i_core::Quantifier;
 use may_i_core::ast::Effect;
-use may_i_core::pattern::{ArgPattern, PositionalArg};
+use may_i_core::pattern::{ArgPattern, MatchMode, PositionalArg};
 use may_i_core::pattern::{Expr, ExprBranch};
 use may_i_core::primitives::Keyword;
 use may_i_sexpr::{RawError, Sexpr};
@@ -290,12 +290,14 @@ fn parse_positional_form(
     }
 
     if exact {
-        Ok(ArgPattern::Exact {
+        Ok(ArgPattern::Ordered {
+            mode: MatchMode::Exact,
             patterns,
             continuation: continuation.map(Box::new),
         })
     } else {
-        Ok(ArgPattern::Positional {
+        Ok(ArgPattern::Ordered {
+            mode: MatchMode::Positional,
             patterns,
             continuation: continuation.map(Box::new),
         })
@@ -384,8 +386,10 @@ mod tests {
     fn parse_positional_simple() {
         let pattern = parse_arg(r#"(positional "push")"#).unwrap();
         match pattern {
-            ArgPattern::Positional {
-                patterns: pargs, ..
+            ArgPattern::Ordered {
+                mode: MatchMode::Positional,
+                patterns: pargs,
+                ..
             } => {
                 assert_eq!(pargs.len(), 1);
             }
@@ -397,8 +401,10 @@ mod tests {
     fn parse_positional_with_wildcard() {
         let pattern = parse_arg(r#"(positional "push" *)"#).unwrap();
         match pattern {
-            ArgPattern::Positional {
-                patterns: pargs, ..
+            ArgPattern::Ordered {
+                mode: MatchMode::Positional,
+                patterns: pargs,
+                ..
             } => {
                 assert_eq!(pargs.len(), 2);
             }
@@ -410,8 +416,10 @@ mod tests {
     fn parse_exact_pattern() {
         let pattern = parse_arg(r#"(exact "status")"#).unwrap();
         match pattern {
-            ArgPattern::Exact {
-                patterns: pargs, ..
+            ArgPattern::Ordered {
+                mode: MatchMode::Exact,
+                patterns: pargs,
+                ..
             } => {
                 assert_eq!(pargs.len(), 1);
             }
@@ -451,8 +459,10 @@ mod tests {
     fn positional_with_quantifiers() {
         let pattern = parse_arg(r#"(positional "cmd" (? "arg") (+ "more"))"#).unwrap();
         match pattern {
-            ArgPattern::Positional {
-                patterns: pargs, ..
+            ArgPattern::Ordered {
+                mode: MatchMode::Positional,
+                patterns: pargs,
+                ..
             } => {
                 assert_eq!(pargs.len(), 3);
                 assert!(matches!(pargs[0].quantifier, Quantifier::One));
@@ -510,8 +520,10 @@ mod tests {
     fn parse_positional_with_or_expression() {
         let pattern = parse_arg(r#"(positional (or "a" "b"))"#).unwrap();
         match pattern {
-            ArgPattern::Positional {
-                patterns: pargs, ..
+            ArgPattern::Ordered {
+                mode: MatchMode::Positional,
+                patterns: pargs,
+                ..
             } => {
                 assert_eq!(pargs.len(), 1);
                 assert!(matches!(pargs[0].pattern, Expr::Or(_)));
@@ -524,8 +536,10 @@ mod tests {
     fn parse_positional_with_and_expression() {
         let pattern = parse_arg(r#"(positional (and "a" "b"))"#).unwrap();
         match pattern {
-            ArgPattern::Positional {
-                patterns: pargs, ..
+            ArgPattern::Ordered {
+                mode: MatchMode::Positional,
+                patterns: pargs,
+                ..
             } => {
                 assert_eq!(pargs.len(), 1);
                 assert!(matches!(pargs[0].pattern, Expr::And(_)));
@@ -538,8 +552,10 @@ mod tests {
     fn parse_positional_with_not_expression() {
         let pattern = parse_arg(r#"(positional (not "a"))"#).unwrap();
         match pattern {
-            ArgPattern::Positional {
-                patterns: pargs, ..
+            ArgPattern::Ordered {
+                mode: MatchMode::Positional,
+                patterns: pargs,
+                ..
             } => {
                 assert_eq!(pargs.len(), 1);
                 assert!(matches!(pargs[0].pattern, Expr::Not(_)));
@@ -552,8 +568,10 @@ mod tests {
     fn parse_positional_with_optional_quantifier() {
         let pattern = parse_arg(r#"(positional (? "arg"))"#).unwrap();
         match pattern {
-            ArgPattern::Positional {
-                patterns: pargs, ..
+            ArgPattern::Ordered {
+                mode: MatchMode::Positional,
+                patterns: pargs,
+                ..
             } => {
                 assert_eq!(pargs.len(), 1);
                 assert!(matches!(pargs[0].quantifier, Quantifier::Optional));
@@ -566,8 +584,10 @@ mod tests {
     fn parse_positional_with_zero_or_more_quantifier() {
         let pattern = parse_arg(r#"(positional (* "arg"))"#).unwrap();
         match pattern {
-            ArgPattern::Positional {
-                patterns: pargs, ..
+            ArgPattern::Ordered {
+                mode: MatchMode::Positional,
+                patterns: pargs,
+                ..
             } => {
                 assert_eq!(pargs.len(), 1);
                 assert!(matches!(pargs[0].quantifier, Quantifier::ZeroOrMore));
@@ -580,8 +600,10 @@ mod tests {
     fn parse_positional_with_one_or_more_quantifier() {
         let pattern = parse_arg(r#"(positional (+ "arg"))"#).unwrap();
         match pattern {
-            ArgPattern::Positional {
-                patterns: pargs, ..
+            ArgPattern::Ordered {
+                mode: MatchMode::Positional,
+                patterns: pargs,
+                ..
             } => {
                 assert_eq!(pargs.len(), 1);
                 assert!(matches!(pargs[0].quantifier, Quantifier::OneOrMore));
@@ -613,7 +635,8 @@ mod tests {
         // (positional "git" . (effect :allow))
         let pattern = parse_arg(r#"(positional "git" . (effect :allow))"#).unwrap();
         match pattern {
-            ArgPattern::Positional {
+            ArgPattern::Ordered {
+                mode: MatchMode::Positional,
                 patterns,
                 continuation,
             } => {
@@ -629,7 +652,8 @@ mod tests {
         // (positional * . (may-i (positional *)))
         let pattern = parse_arg(r#"(positional * . (may-i (positional *)))"#).unwrap();
         match pattern {
-            ArgPattern::Positional {
+            ArgPattern::Ordered {
+                mode: MatchMode::Positional,
                 patterns,
                 continuation,
             } => {
@@ -645,7 +669,8 @@ mod tests {
         // (exact "git" "status" . (effect :allow))
         let pattern = parse_arg(r#"(exact "git" "status" . (effect :allow))"#).unwrap();
         match pattern {
-            ArgPattern::Exact {
+            ArgPattern::Ordered {
+                mode: MatchMode::Exact,
                 patterns,
                 continuation,
             } => {
@@ -672,8 +697,10 @@ mod tests {
         // Bracket notation binds matched value to the keyword
         let pattern = parse_arg(r#"(positional [:ssh/host] . (may-i *))"#).unwrap();
         match pattern {
-            ArgPattern::Positional {
-                patterns: pargs, ..
+            ArgPattern::Ordered {
+                mode: MatchMode::Positional,
+                patterns: pargs,
+                ..
             } => {
                 assert_eq!(pargs.len(), 1);
                 // The pattern should be a Bind expression with wildcard
@@ -695,8 +722,10 @@ mod tests {
         // Explicit * is optional but allowed for clarity
         let pattern = parse_arg(r#"(positional [:ssh/host *] . (may-i *))"#).unwrap();
         match pattern {
-            ArgPattern::Positional {
-                patterns: pargs, ..
+            ArgPattern::Ordered {
+                mode: MatchMode::Positional,
+                patterns: pargs,
+                ..
             } => {
                 assert_eq!(pargs.len(), 1);
                 match &pargs[0].pattern {
@@ -717,8 +746,10 @@ mod tests {
         // Should bind the matched value to :env only if it equals "prod"
         let pattern = parse_arg(r#"(positional [:env "prod"])"#).unwrap();
         match pattern {
-            ArgPattern::Positional {
-                patterns: pargs, ..
+            ArgPattern::Ordered {
+                mode: MatchMode::Positional,
+                patterns: pargs,
+                ..
             } => {
                 assert_eq!(pargs.len(), 1);
                 match &pargs[0].pattern {
@@ -738,8 +769,10 @@ mod tests {
         // (positional [:ssh/host (regex "^prod-")])
         let pattern = parse_arg(r#"(positional [:ssh/host (regex "^prod-")])"#).unwrap();
         match pattern {
-            ArgPattern::Positional {
-                patterns: pargs, ..
+            ArgPattern::Ordered {
+                mode: MatchMode::Positional,
+                patterns: pargs,
+                ..
             } => {
                 assert_eq!(pargs.len(), 1);
                 match &pargs[0].pattern {
@@ -843,8 +876,10 @@ mod tests {
             parse_arg(r#"(positional (cond ("a" (effect :allow)) (else (effect :deny))))"#)
                 .unwrap();
         match pattern {
-            ArgPattern::Positional {
-                patterns: pargs, ..
+            ArgPattern::Ordered {
+                mode: MatchMode::Positional,
+                patterns: pargs,
+                ..
             } => {
                 assert_eq!(pargs.len(), 1);
                 assert!(matches!(pargs[0].pattern, Expr::Cond(_)));
@@ -857,8 +892,10 @@ mod tests {
     fn parse_expr_if_in_positional() {
         let pattern = parse_arg(r#"(positional (if "a" (effect :allow) (effect :deny)))"#).unwrap();
         match pattern {
-            ArgPattern::Positional {
-                patterns: pargs, ..
+            ArgPattern::Ordered {
+                mode: MatchMode::Positional,
+                patterns: pargs,
+                ..
             } => {
                 assert_eq!(pargs.len(), 1);
                 assert!(matches!(pargs[0].pattern, Expr::Cond(_)));
@@ -871,8 +908,10 @@ mod tests {
     fn parse_expr_when_in_positional() {
         let pattern = parse_arg(r#"(positional (when "a" (effect :allow)))"#).unwrap();
         match pattern {
-            ArgPattern::Positional {
-                patterns: pargs, ..
+            ArgPattern::Ordered {
+                mode: MatchMode::Positional,
+                patterns: pargs,
+                ..
             } => {
                 assert_eq!(pargs.len(), 1);
                 assert!(matches!(pargs[0].pattern, Expr::Cond(_)));
@@ -885,8 +924,10 @@ mod tests {
     fn parse_expr_unless_in_positional() {
         let pattern = parse_arg(r#"(positional (unless "a" (effect :deny)))"#).unwrap();
         match pattern {
-            ArgPattern::Positional {
-                patterns: pargs, ..
+            ArgPattern::Ordered {
+                mode: MatchMode::Positional,
+                patterns: pargs,
+                ..
             } => {
                 assert_eq!(pargs.len(), 1);
                 assert!(matches!(pargs[0].pattern, Expr::Cond(_)));

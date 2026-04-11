@@ -26,9 +26,9 @@ pub fn cmd_check(
     config_path: Option<&std::path::Path>,
 ) -> miette::Result<()> {
     let config_file = config::resolve_path(config_path)?;
-    let canonical_config = config::load_and_resolve(config_path)?;
+    let loaded: crate::loaded_config::LoadedConfig = config::load_and_resolve(config_path)?.into();
 
-    let results = run_checks_with_traces(&canonical_config, &config_file)?;
+    let results = run_checks_with_traces(&loaded, &config_file)?;
 
     let passed = results.iter().filter(|r| r.passed).count();
     let failed = results.len() - passed;
@@ -61,7 +61,7 @@ pub fn cmd_check(
         );
     } else {
         let term = output::Terminal::detect();
-        if let Some(note) = output::migration_note(&canonical_config, &config_file) {
+        if let Some(note) = output::migration_note(&loaded, &config_file) {
             output::write_layout(&mut std::io::stderr(), &note, &term);
         }
         let mut failures = Vec::new();
@@ -159,7 +159,7 @@ pub fn cmd_check(
 
 /// Run all checks using TracingFold to capture traces for failure reporting.
 fn run_checks_with_traces(
-    config: &may_i_core::ast::Config,
+    loaded: &crate::loaded_config::LoadedConfig,
     config_file: &std::path::Path,
 ) -> miette::Result<Vec<CheckResult<TraceExtra>>> {
     use may_i_core::span::offset_to_line_col;
@@ -167,20 +167,23 @@ fn run_checks_with_traces(
     let file_str = config_file.display().to_string();
 
     let make_location = |span: &may_i_core::Span| -> Option<String> {
-        config.source_text.as_ref().map(|source| {
+        loaded.source_text.as_ref().map(|source| {
             let (line, col) = offset_to_line_col(source, span.start);
             format!("{file_str}:{line}:{col}")
         })
     };
 
-    engine::check::run_checks_with(config, |check| {
+    engine::check::run_checks_with(&loaded.config, |check| {
         let (cmd, args) = crate::cmd_eval::parse_command_args(&check.command);
-        let mut fold = TracingFold::new()
-            .with_source_text(config.source_text.clone())
-            .with_pre_migration_forms(config.pre_migration_forms.clone());
-        let result =
-            engine::eval::evaluate_with_fold(&cmd, &args, config, &check.context, &mut fold)
-                .map_err(|e| miette::miette!("{e}"))?;
+        let mut fold = TracingFold::from_loaded_config(loaded);
+        let result = engine::eval::evaluate_with_fold(
+            &cmd,
+            &args,
+            &loaded.config,
+            &check.context,
+            &mut fold,
+        )
+        .map_err(|e| miette::miette!("{e}"))?;
         Ok((
             result,
             TraceExtra {

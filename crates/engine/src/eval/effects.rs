@@ -1,5 +1,5 @@
 use may_i_core::ast::{Effect, EffectResult, Rule};
-use may_i_core::pattern::{ArgPattern, CommandPattern};
+use may_i_core::pattern::{ArgPattern, CommandPattern, MatchMode};
 use may_i_core::{ContextFacts, Decision, Keyword};
 
 use crate::EvalError;
@@ -33,18 +33,9 @@ pub(crate) fn evaluate_effect_fold<F: EvalFold>(
 ) -> Result<F::EffectOut, EvalError> {
     Ok(match effect {
         // Terminal effects
-        Effect::Allow(reason) => fold.effect_terminal(
-            effect,
-            EffectResult::Decision(Decision::Allow, reason.clone()),
-        ),
-        Effect::Ask(reason) => fold.effect_terminal(
-            effect,
-            EffectResult::Decision(Decision::Ask, reason.clone()),
-        ),
-        Effect::Deny(reason) => fold.effect_terminal(
-            effect,
-            EffectResult::Decision(Decision::Deny, reason.clone()),
-        ),
+        Effect::Terminal { decision, reason } => {
+            fold.effect_terminal(effect, EffectResult::Decision(*decision, reason.clone()))
+        }
 
         // Command pattern
         Effect::CommandPattern(pattern) => {
@@ -238,7 +229,13 @@ pub(crate) fn evaluate_effect_fold<F: EvalFold>(
                 fold.begin_recursive_eval();
                 let eval_result = evaluator.evaluate(fold, &inner_ctx)?;
                 let inner_result = EffectResult::Decision(eval_result.decision, eval_result.reason);
-                let inner_out = fold.effect_terminal(&Effect::Allow(None), inner_result.clone());
+                let inner_out = fold.effect_terminal(
+                    &Effect::Terminal {
+                        decision: Decision::Allow,
+                        reason: None,
+                    },
+                    inner_result.clone(),
+                );
                 fold.effect_may_i(pattern, &inner_cmd, &inner_args, inner_result, inner_out)
             }
             None => fold.effect_may_i_no_match(pattern),
@@ -270,7 +267,8 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
     rules: &[Rule],
 ) -> Result<F::EffectOut, EvalError> {
     Ok(match pattern {
-        ArgPattern::Positional {
+        ArgPattern::Ordered {
+            mode: MatchMode::Positional,
             patterns,
             continuation,
         } => {
@@ -325,7 +323,8 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                 fold.effect_arg_match(pattern, ctx.args, false, detail)
             }
         }
-        ArgPattern::Exact {
+        ArgPattern::Ordered {
+            mode: MatchMode::Exact,
             patterns,
             continuation,
         } => {

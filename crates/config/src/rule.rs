@@ -146,6 +146,7 @@ fn is_reserved_define_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use may_i_core::Decision;
     use may_i_core::ast::{Define, Effect, Predicate, Rule};
     use may_i_core::pattern::CommandPattern;
     use may_i_core::span::Span;
@@ -185,7 +186,13 @@ mod tests {
         assert!(
             matches!(rule.command_effect.value, Effect::CommandPattern(CommandPattern::Literal(ref s)) if s == "git")
         );
-        assert!(matches!(rule.effect.value, Effect::Allow(_)));
+        assert!(matches!(
+            rule.effect.value,
+            Effect::Terminal {
+                decision: Decision::Allow,
+                reason: _
+            }
+        ));
     }
 
     #[test]
@@ -303,7 +310,13 @@ mod tests {
     fn parse_rule_with_check_alongside_effect() {
         let rule =
             parse_rule_str(r#"(rule "git" (effect :allow) (check :allow "git status"))"#).unwrap();
-        assert!(matches!(rule.effect.value, Effect::Allow(_)));
+        assert!(matches!(
+            rule.effect.value,
+            Effect::Terminal {
+                decision: Decision::Allow,
+                reason: _
+            }
+        ));
         assert_eq!(rule.checks.len(), 1);
     }
 }

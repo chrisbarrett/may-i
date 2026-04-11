@@ -10,9 +10,11 @@ use may_i_core::Keyword;
 #[cfg(test)]
 use may_i_core::ast::Check;
 use may_i_core::ast::{Config, Effect, Predicate, Rule, SecurityConfig, Spanned};
-use may_i_core::{ContextFacts, Span};
 #[cfg(test)]
-use may_i_core::{Decision, pattern::CommandPattern};
+use may_i_core::pattern::CommandPattern;
+#[cfg(test)]
+use may_i_core::pattern::MatchMode;
+use may_i_core::{ContextFacts, Decision, Span};
 
 // Re-export core generators.
 pub use may_i_core::test_generators::*;
@@ -49,9 +51,18 @@ fn spanned<T>(value: T) -> Spanned<T> {
 pub fn any_terminal_effect() -> BoxedStrategy<Effect> {
     let reason = proptest::option::of("[a-zA-Z ]{1,30}");
     prop_oneof![
-        reason.clone().prop_map(Effect::Allow),
-        reason.clone().prop_map(Effect::Ask),
-        reason.prop_map(Effect::Deny),
+        reason.clone().prop_map(|r| Effect::Terminal {
+            decision: Decision::Allow,
+            reason: r
+        }),
+        reason.clone().prop_map(|r| Effect::Terminal {
+            decision: Decision::Ask,
+            reason: r
+        }),
+        reason.prop_map(|r| Effect::Terminal {
+            decision: Decision::Deny,
+            reason: r
+        }),
     ]
     .boxed()
 }
@@ -176,8 +187,6 @@ pub fn any_config(size: usize) -> BoxedStrategy<Config> {
             rules,
             security: SecurityConfig::default(),
             checks: vec![],
-            source_text: None,
-            pre_migration_forms: None,
         })
         .boxed()
 }

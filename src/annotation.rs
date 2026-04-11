@@ -4,14 +4,14 @@
 
 use may_i_core::ast::{Effect, EffectResult, Rule};
 use may_i_core::doc::{Doc, DocF, LayoutHint};
-use may_i_core::pattern::{ArgPattern, CommandPattern, Quantifier};
+use may_i_core::pattern::{ArgPattern, CommandPattern, MatchMode, Quantifier};
 use may_i_core::primitives::ToDoc;
 use may_i_core::trivia::{Trivia, TriviaSource};
 use may_i_core::{ContextFacts, Decision, FactQuery};
 
 use may_i_engine::eval::PredicateResult;
 use may_i_engine::fold::{
-    ArgMatchDetail, ChildResult, EvalFold, FactDetail, PositionalElementDetail,
+    ArgMatchDetail, ChildResult, EvalFold, FactDetail, PositionalElementDetail, PositionalMatchKind,
 };
 
 /// Annotation carried on each Doc node in a trace.
@@ -127,21 +127,13 @@ fn effect_to_static_ann_doc(effect: &Effect) -> ADoc {
 
 fn annotate_terminal_effects(doc: ADoc, effect: &Effect) -> ADoc {
     match effect {
-        Effect::Allow(reason) | Effect::Ask(reason) | Effect::Deny(reason) => {
-            let decision = match effect {
-                Effect::Allow(_) => Decision::Allow,
-                Effect::Ask(_) => Decision::Ask,
-                Effect::Deny(_) => Decision::Deny,
-                _ => unreachable!(),
-            };
-            Doc {
-                ann: Some(Ann::EffectDecision {
-                    decision,
-                    reason: reason.clone(),
-                }),
-                ..doc
-            }
-        }
+        Effect::Terminal { decision, reason } => Doc {
+            ann: Some(Ann::EffectDecision {
+                decision: *decision,
+                reason: reason.clone(),
+            }),
+            ..doc
+        },
         _ => doc,
     }
 }
@@ -260,12 +252,20 @@ fn positional_arg_to_doc(p: &may_i_core::pattern::PositionalArg) -> Doc<()> {
 
 fn arg_pattern_to_doc(pattern: &ArgPattern) -> Doc<()> {
     match pattern {
-        ArgPattern::Positional { patterns, .. } => {
+        ArgPattern::Ordered {
+            mode: MatchMode::Positional,
+            patterns,
+            ..
+        } => {
             let mut cs = vec![Doc::atom("positional")];
             cs.extend(patterns.iter().map(positional_arg_to_doc));
             Doc::list(cs)
         }
-        ArgPattern::Exact { patterns, .. } => {
+        ArgPattern::Ordered {
+            mode: MatchMode::Exact,
+            patterns,
+            ..
+        } => {
             let mut cs = vec![Doc::atom("exact")];
             cs.extend(patterns.iter().map(positional_arg_to_doc));
             Doc::list(cs)
@@ -340,7 +340,7 @@ fn annotate_pattern_element(doc: ADoc, detail: &PositionalElementDetail) -> ADoc
         }
         return Doc {
             ann: Some(Ann::BindMatch {
-                key: bind.key.clone(),
+                key: bind.key.to_string(),
                 value: bind.value.clone(),
             }),
             node: DocF::Vector(new_children),
@@ -349,7 +349,7 @@ fn annotate_pattern_element(doc: ADoc, detail: &PositionalElementDetail) -> ADoc
     }
 
     // Handle regex/literal on non-bind expressions
-    if let Some(expr_match) = &detail.expr_match {
+    if let PositionalMatchKind::Expr(expr_match) = &detail.match_kind {
         return annotate_expr_match(doc, expr_match);
     }
 
@@ -475,17 +475,14 @@ impl TracingFold {
         }
     }
 
-    pub(crate) fn with_source_text(mut self, source_text: Option<String>) -> Self {
-        self.source_text = source_text;
-        self
-    }
-
-    pub(crate) fn with_pre_migration_forms(
-        mut self,
-        forms: Option<Vec<(may_i_core::Span, Doc<()>)>>,
-    ) -> Self {
-        self.pre_migration_forms = forms;
-        self
+    pub(crate) fn from_loaded_config(lc: &crate::loaded_config::LoadedConfig) -> Self {
+        Self {
+            traces: Vec::new(),
+            source_text: lc.source_text.clone(),
+            pre_migration_forms: lc.pre_migration_forms.clone(),
+            recursive_trace_starts: Vec::new(),
+            pending_inner_traces: Vec::new(),
+        }
     }
 
     /// Append inner traces from a recursive may-i evaluation, tagging the
@@ -824,15 +821,22 @@ impl EvalFold for TracingFold {
         // move the EffectDecision annotation to the matching cond branch body so it
         // renders on the correct line rather than on the duplicate continuation.
         let trailing_cond_branch = match pattern {
-            ArgPattern::Positional {
-                continuation: None, ..
+            ArgPattern::Ordered {
+                mode: MatchMode::Positional,
+                continuation: None,
+                ..
             }
-            | ArgPattern::Exact {
-                continuation: None, ..
+            | ArgPattern::Ordered {
+                mode: MatchMode::Exact,
+                continuation: None,
+                ..
             } => detail
                 .positional_elements
                 .last()
-                .and_then(|e| e.cond_branch_index),
+                .and_then(|e| match e.match_kind {
+                    PositionalMatchKind::CondBranch(idx) => Some(idx),
+                    _ => None,
+                }),
             _ => None,
         };
 
@@ -1177,7 +1181,10 @@ mod tests {
     fn tracing_fold_default_ask() {
         let config = make_config(vec![make_rule(
             CommandPattern::Literal("other".into()),
-            Effect::Allow(None),
+            Effect::Terminal {
+                decision: Decision::Allow,
+                reason: None,
+            },
         )]);
         let entries = eval_tracing(&config, "git", &[]);
         assert!(
@@ -1195,22 +1202,24 @@ mod tests {
                 CommandPattern::Literal("git".into()),
                 CommandPattern::Literal("svn".into()),
             ]),
-            Effect::Allow(None),
+            Effect::Terminal {
+                decision: Decision::Allow,
+                reason: None,
+            },
         )]);
         let entries = eval_tracing(&config, "git", &[]);
         assert!(entries.iter().any(|e| matches!(e, TraceEntry::Rule { .. })));
     }
 
     #[test]
-    fn tracing_fold_with_source_text() {
-        let fold = TracingFold::new().with_source_text(Some("(rule \"git\" :allow)".into()));
+    fn tracing_fold_from_loaded_config() {
+        let lc = crate::loaded_config::LoadedConfig {
+            config: Config::default(),
+            source_text: Some("(rule \"git\" :allow)".into()),
+            pre_migration_forms: Some(vec![(Span::new(0, 10), Doc::<()>::atom("test"))]),
+        };
+        let fold = TracingFold::from_loaded_config(&lc);
         assert!(fold.source_text.is_some());
-    }
-
-    #[test]
-    fn tracing_fold_with_pre_migration_forms() {
-        let forms = vec![(Span::new(0, 10), Doc::<()>::atom("test"))];
-        let fold = TracingFold::new().with_pre_migration_forms(Some(forms));
         assert!(fold.pre_migration_forms.is_some());
     }
 
@@ -1221,11 +1230,15 @@ mod tests {
             Effect::Cond {
                 branches: vec![(
                     spanned(Predicate::Fact(presence_query(":env"))),
-                    spanned(Effect::Allow(None)),
+                    spanned(Effect::Terminal {
+                        decision: Decision::Allow,
+                        reason: None,
+                    }),
                 )],
-                fallback: Some(Box::new(spanned(Effect::Deny(Some(String::from(
-                    "no env",
-                )))))),
+                fallback: Some(Box::new(spanned(Effect::Terminal {
+                    decision: Decision::Deny,
+                    reason: Some(String::from("no env")),
+                }))),
             },
         )]);
         let entries = eval_tracing(&config, "git", &[]);
@@ -1238,7 +1251,10 @@ mod tests {
             CommandPattern::Literal("git".into()),
             Effect::When {
                 predicate: spanned(Predicate::Fact(presence_query(":safe"))),
-                effect: Box::new(spanned(Effect::Allow(None))),
+                effect: Box::new(spanned(Effect::Terminal {
+                    decision: Decision::Allow,
+                    reason: None,
+                })),
             },
         )]);
         let entries = eval_tracing(&config, "git", &[]);
@@ -1251,7 +1267,8 @@ mod tests {
             CommandPattern::Literal("git".into()),
             Effect::And {
                 effects: vec![
-                    spanned(Effect::ArgPattern(ArgPattern::Positional {
+                    spanned(Effect::ArgPattern(ArgPattern::Ordered {
+                        mode: MatchMode::Positional,
                         patterns: vec![PositionalArg {
                             quantifier: Quantifier::One,
                             pattern: may_i_core::pattern::Expr::Literal("push".into()),
@@ -1259,7 +1276,10 @@ mod tests {
                         }],
                         continuation: None,
                     })),
-                    spanned(Effect::Allow(None)),
+                    spanned(Effect::Terminal {
+                        decision: Decision::Allow,
+                        reason: None,
+                    }),
                 ],
             },
         )]);
@@ -1273,7 +1293,10 @@ mod tests {
             CommandPattern::Literal("git".into()),
             Effect::When {
                 predicate: spanned(Predicate::Fact(presence_query(":nonexistent"))),
-                effect: Box::new(spanned(Effect::Allow(None))),
+                effect: Box::new(spanned(Effect::Terminal {
+                    decision: Decision::Allow,
+                    reason: None,
+                })),
             },
         )]);
         let facts = ContextFacts::default();
@@ -1288,7 +1311,10 @@ mod tests {
             CommandPattern::Literal("git".into()),
             Effect::When {
                 predicate: spanned(Predicate::Fact(presence_query(":safe"))),
-                effect: Box::new(spanned(Effect::Allow(None))),
+                effect: Box::new(spanned(Effect::Terminal {
+                    decision: Decision::Allow,
+                    reason: None,
+                })),
             },
         )]);
         let mut facts = ContextFacts::default();

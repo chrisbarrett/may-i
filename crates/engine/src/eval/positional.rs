@@ -259,7 +259,7 @@ pub(crate) fn build_positional_element_details(
                 .as_ref()
                 .and_then(|v| build_expr_match_detail(inner, v));
             Some(crate::fold::BindDetail {
-                key: key.to_string(),
+                key: key.clone(),
                 value,
                 inner_match,
             })
@@ -267,32 +267,31 @@ pub(crate) fn build_positional_element_details(
             None
         };
 
-        let expr_match = if binding.is_none() && !consumed_args.is_empty() {
-            consumed_args
-                .first()
-                .and_then(|v| build_expr_match_detail(&pattern.pattern, v))
-        } else {
-            None
-        };
-
-        let cond_branch_index = if let Expr::Cond(branches) = &pattern.pattern
+        let match_kind = if let Expr::Cond(branches) = &pattern.pattern
             && !consumed_args.is_empty()
         {
             let value = &consumed_args[0];
             branches
                 .iter()
                 .position(|b| match_expr_with_binding(&b.test, value).0)
+                .map(crate::fold::PositionalMatchKind::CondBranch)
+                .unwrap_or(crate::fold::PositionalMatchKind::None)
+        } else if binding.is_none() && !consumed_args.is_empty() {
+            consumed_args
+                .first()
+                .and_then(|v| build_expr_match_detail(&pattern.pattern, v))
+                .map(crate::fold::PositionalMatchKind::Expr)
+                .unwrap_or(crate::fold::PositionalMatchKind::None)
         } else {
-            None
+            crate::fold::PositionalMatchKind::None
         };
 
         details.push(crate::fold::PositionalElementDetail {
             pattern_index: pat_idx,
             consumed_args,
             binding,
-            expr_match,
+            match_kind,
             matched: element_matched,
-            cond_branch_index,
         });
 
         arg_idx += consume_count;

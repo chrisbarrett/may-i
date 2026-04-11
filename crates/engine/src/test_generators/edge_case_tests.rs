@@ -43,7 +43,10 @@ fn deeply_nested_effect_doesnt_panic() {
     let ctx = make_ctx("test", &args, &facts);
 
     // Build a deeply nested Not chain
-    let mut effect = Effect::Allow(None);
+    let mut effect = Effect::Terminal {
+        decision: Decision::Allow,
+        reason: None,
+    };
     for _ in 0..50 {
         effect = Effect::Not {
             effect: Box::new(spanned(effect)),
@@ -61,7 +64,8 @@ fn empty_args_with_positional_pattern() {
     let facts = ContextFacts::default();
     let ctx = make_ctx("test", &args, &facts);
 
-    let pattern = may_i_core::pattern::ArgPattern::Positional {
+    let pattern = may_i_core::pattern::ArgPattern::Ordered {
+        mode: MatchMode::Positional,
         patterns: vec![may_i_core::pattern::PositionalArg {
             quantifier: may_i_core::Quantifier::One,
             pattern: may_i_core::pattern::Expr::Wildcard,
@@ -121,7 +125,10 @@ fn cond_empty_branches_with_fallback() {
 
     let cond = Effect::Cond {
         branches: vec![],
-        fallback: Some(Box::new(spanned(Effect::Deny(Some("fallback".into()))))),
+        fallback: Some(Box::new(spanned(Effect::Terminal {
+            decision: Decision::Deny,
+            reason: Some("fallback".into()),
+        }))),
     };
     let result = eval::evaluate_effect(&cond, &ctx, &[]).unwrap();
     assert_eq!(result.decision(), Some(Decision::Deny));

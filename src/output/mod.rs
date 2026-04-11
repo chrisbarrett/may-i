@@ -33,12 +33,12 @@ use crate::annotation::TraceEntry;
 
 /// Build a migration advisory note if the config was transparently migrated.
 pub fn migration_note(
-    config: &may_i_core::ast::Config,
+    loaded: &crate::loaded_config::LoadedConfig,
     config_path: &std::path::Path,
 ) -> Option<Layout> {
     use may_i_layout::NoteHeading;
 
-    if config.pre_migration_forms.is_some() {
+    if loaded.pre_migration_forms.is_some() {
         let prog = std::env::args()
             .next()
             .map(|s| {

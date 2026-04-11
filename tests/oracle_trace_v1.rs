@@ -9,6 +9,7 @@ use std::path::Path;
 use serde::Deserialize;
 
 use may_i::cmd_eval::{evaluate_segments, write_eval_output};
+use may_i::loaded_config::LoadedConfig;
 use may_i::output;
 
 #[derive(Deserialize)]
@@ -37,14 +38,16 @@ fn load_cases() -> Vec<Case> {
     cases.case
 }
 
-fn load_config() -> may_i_core::ast::Config {
+fn load_config() -> LoadedConfig {
     let config_path = fixture_dir().join("config.lisp");
-    let mut config = may_i_config::load(&config_path).expect("failed to load V1 fixture config");
+    let mut loaded: LoadedConfig = may_i_config::load(&config_path)
+        .expect("failed to load V1 fixture config")
+        .into();
     let resolved_rules =
-        may_i_config::resolve::validate_and_resolve(&config.rules, &config.defines)
+        may_i_config::resolve::validate_and_resolve(&loaded.config.rules, &loaded.config.defines)
             .expect("predicate resolution failed");
-    config.rules = resolved_rules;
-    config
+    loaded.config.rules = resolved_rules;
+    loaded
 }
 
 fn parse_facts(raw_facts: &[String]) -> may_i_core::ContextFacts {
@@ -52,7 +55,7 @@ fn parse_facts(raw_facts: &[String]) -> may_i_core::ContextFacts {
 }
 
 /// Render trace output for a command evaluation into a buffer.
-fn render_output(command: &str, config: &may_i_core::ast::Config, facts: &[String]) -> Vec<u8> {
+fn render_output(command: &str, config: &LoadedConfig, facts: &[String]) -> Vec<u8> {
     colored::control::set_override(true);
 
     let term = output::Terminal::new(80);

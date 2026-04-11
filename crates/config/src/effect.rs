@@ -2,6 +2,7 @@
 // All effect forms evaluate to Decision | Nil.
 
 use crate::is_reserved_keyword;
+use may_i_core::Decision;
 use may_i_core::ast::{Effect, Spanned};
 use may_i_sexpr::{RawError, Sexpr};
 
@@ -123,9 +124,18 @@ fn parse_terminal_effect(args: &[Sexpr], span: may_i_core::Span) -> Result<Effec
     };
 
     match kw {
-        ":allow" => Ok(Effect::Allow(reason)),
-        ":ask" => Ok(Effect::Ask(reason)),
-        ":deny" => Ok(Effect::Deny(reason)),
+        ":allow" => Ok(Effect::Terminal {
+            decision: Decision::Allow,
+            reason,
+        }),
+        ":ask" => Ok(Effect::Terminal {
+            decision: Decision::Ask,
+            reason,
+        }),
+        ":deny" => Ok(Effect::Terminal {
+            decision: Decision::Deny,
+            reason,
+        }),
         other => Err(
             RawError::new(format!("unknown effect keyword: {other}"), args[0].span())
                 .with_help("valid effect keywords: :allow, :ask, :deny"),
@@ -145,8 +155,9 @@ fn parse_may_i(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawErro
     // Allow bare `*` as shorthand for `(positional *)` - pass everything unconsumed down
     let pattern = if let Some("*") = args[0].as_atom() {
         use may_i_core::pattern::Expr;
-        use may_i_core::pattern::{ArgPattern, PositionalArg};
-        ArgPattern::Positional {
+        use may_i_core::pattern::{ArgPattern, MatchMode, PositionalArg};
+        ArgPattern::Ordered {
+            mode: MatchMode::Positional,
             patterns: vec![PositionalArg::one(Expr::Wildcard)],
             continuation: None,
         }
@@ -325,8 +336,9 @@ fn parse_not(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawError>
 #[cfg(test)]
 mod tests {
     use crate::*;
+    use may_i_core::Decision;
     use may_i_core::ast::Effect;
-    use may_i_core::pattern::ArgPattern;
+    use may_i_core::pattern::{ArgPattern, MatchMode};
     use may_i_sexpr::RawError;
 
     fn parse_effect_str(input: &str) -> Result<Effect, RawError> {
@@ -347,7 +359,10 @@ mod tests {
     fn parse_allow_effect() {
         let effect = parse_effect_str(r#"(effect :allow)"#).unwrap();
         match effect {
-            Effect::Allow(reason) => assert!(reason.is_none()),
+            Effect::Terminal {
+                decision: Decision::Allow,
+                reason,
+            } => assert!(reason.is_none()),
             _ => panic!("expected Allow"),
         }
     }
@@ -356,7 +371,10 @@ mod tests {
     fn parse_allow_with_reason() {
         let effect = parse_effect_str(r#"(effect :allow "safe command")"#).unwrap();
         match effect {
-            Effect::Allow(reason) => assert_eq!(reason.as_deref(), Some("safe command")),
+            Effect::Terminal {
+                decision: Decision::Allow,
+                reason,
+            } => assert_eq!(reason.as_deref(), Some("safe command")),
             _ => panic!("expected Allow"),
         }
     }
@@ -365,7 +383,10 @@ mod tests {
     fn parse_ask_effect() {
         let effect = parse_effect_str(r#"(effect :ask "confirm")"#).unwrap();
         match effect {
-            Effect::Ask(reason) => assert_eq!(reason.as_deref(), Some("confirm")),
+            Effect::Terminal {
+                decision: Decision::Ask,
+                reason,
+            } => assert_eq!(reason.as_deref(), Some("confirm")),
             _ => panic!("expected Ask"),
         }
     }
@@ -374,7 +395,10 @@ mod tests {
     fn parse_deny_effect() {
         let effect = parse_effect_str(r#"(effect :deny "dangerous")"#).unwrap();
         match effect {
-            Effect::Deny(reason) => assert_eq!(reason.as_deref(), Some("dangerous")),
+            Effect::Terminal {
+                decision: Decision::Deny,
+                reason,
+            } => assert_eq!(reason.as_deref(), Some("dangerous")),
             _ => panic!("expected Deny"),
         }
     }
@@ -396,7 +420,8 @@ mod tests {
             Effect::MayI { pattern } => {
                 // Verify it produces the same pattern as (may-i (positional *))
                 match pattern {
-                    ArgPattern::Positional {
+                    ArgPattern::Ordered {
+                        mode: MatchMode::Positional,
                         patterns,
                         continuation,
                     } => {
@@ -464,7 +489,10 @@ mod tests {
         // Positional patterns are now effects too
         let effect = parse_effect_str(r#"(positional "push")"#).unwrap();
         match effect {
-            Effect::ArgPattern(ArgPattern::Positional { .. }) => {}
+            Effect::ArgPattern(ArgPattern::Ordered {
+                mode: MatchMode::Positional,
+                ..
+            }) => {}
             _ => panic!("expected ArgPattern::Positional"),
         }
     }
