@@ -1,13 +1,13 @@
-pub mod command;
-pub mod config;
-pub mod effect;
-pub mod errors;
+pub(crate) mod command;
+pub(crate) mod config;
+pub(crate) mod effect;
+pub(crate) mod errors;
 pub(crate) mod io;
 pub mod migrate;
-pub mod pattern;
-pub mod predicate;
+pub(crate) mod pattern;
+pub(crate) mod predicate;
 pub mod resolve;
-pub mod rule;
+pub(crate) mod rule;
 
 #[cfg(test)]
 mod migration_tests;

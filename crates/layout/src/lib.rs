@@ -388,7 +388,7 @@ fn write_col_row(
                 cur_width += item.width;
 
                 if i == items.len() - 1 && !cur.is_empty() {
-                    lines.push(cur.clone());
+                    lines.push(std::mem::take(&mut cur));
                 }
             }
 

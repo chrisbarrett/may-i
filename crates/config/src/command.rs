@@ -6,7 +6,7 @@ use may_i_sexpr::{RawError, Sexpr};
 
 /// Parse a command pattern from an atom string.
 /// This is used when we already know the input is an atom.
-pub fn parse_command_pattern_from_atom(atom: &str) -> Result<CommandPattern, RawError> {
+pub(crate) fn parse_command_pattern_from_atom(atom: &str) -> Result<CommandPattern, RawError> {
     Ok(CommandPattern::Literal(atom.to_string()))
 }
 

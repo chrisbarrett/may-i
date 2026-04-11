@@ -1,5 +1,4 @@
 // Config parser for the unified DSL.
-// Task 2.10: Implement safe-env-vars and check parsers (preserve existing behavior)
 
 use may_i_core::Span;
 use may_i_core::ast::{Check, Config, SecurityConfig};
@@ -24,7 +23,6 @@ fn parse_decision(sexpr: &Sexpr) -> Result<Decision, RawError> {
 }
 
 /// Parse a config from an s-expression string.
-#[must_use]
 pub fn parse_config(input: &str) -> Result<Config, RawError> {
     let (forms, errors) = may_i_sexpr::parse(input);
     if let Some(err) = errors.into_iter().next() {
@@ -38,7 +36,6 @@ pub fn parse_config(input: &str) -> Result<Config, RawError> {
 ///
 /// This enables parsing from migrated CST forms that have been converted to
 /// Sexpr, without re-serializing to text.
-#[must_use]
 pub fn parse_config_from_sexprs(forms: &[Sexpr]) -> Result<Config, RawError> {
     let mut config = Config::default();
 
@@ -101,7 +98,7 @@ fn parse_safe_env_vars(
 
 /// Parse check form: (check DECISION "cmd" ...)
 /// Supports nested with-facts: (check (with-facts [[:key]] :allow "cmd"))
-pub fn parse_check(args: &[Sexpr], check_span: Span) -> Result<Vec<Check>, RawError> {
+pub(crate) fn parse_check(args: &[Sexpr], check_span: Span) -> Result<Vec<Check>, RawError> {
     let mut checks = Vec::new();
     let mut i = 0;
 

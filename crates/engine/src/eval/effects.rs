@@ -212,11 +212,11 @@ pub(crate) fn evaluate_effect_fold<F: EvalFold>(
         }
 
         // Recursion
-        Effect::MayI { pattern } => match extract_inner_command(pattern, ctx.args) {
+        Effect::MayI { pattern } => match extract_inner_command(ctx.args) {
             Some((inner_cmd, inner_args)) => {
                 let evaluator = Evaluator::new(rules);
                 let mut inner_facts = ctx.facts.clone();
-                inner_facts.push(Keyword::new(":via").unwrap(), ctx.command);
+                inner_facts.insert_scalar(Keyword::new(":via").unwrap(), ctx.command);
                 let expanded_inner = expand_combined_flags(&inner_args);
                 let inner_ctx = EvalContext {
                     command: &inner_cmd,
@@ -257,7 +257,7 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
             patterns,
             continuation,
         } => {
-            let pos_args: Vec<&String> = positional_args(ctx.args);
+            let pos_args: Vec<&str> = positional_args(ctx.args);
 
             let (pat_matched, consumed, bound_facts) =
                 match_positional_patterns(&pos_args, patterns);
@@ -365,10 +365,7 @@ fn evaluate_effect_with_owned_args_fold<F: EvalFold>(
 /// The remaining args may contain a quoted string like `"rm -rf /"` that
 /// represents a complete sub-command. We join all args into a single string
 /// and re-parse through the shell parser to correctly handle quoting.
-pub(crate) fn extract_inner_command(
-    _pattern: &ArgPattern,
-    args: &[String],
-) -> Option<(String, Vec<String>)> {
+pub(crate) fn extract_inner_command(args: &[String]) -> Option<(String, Vec<String>)> {
     if args.is_empty() {
         return None;
     }

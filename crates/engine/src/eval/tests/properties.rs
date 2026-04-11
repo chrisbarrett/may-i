@@ -122,14 +122,7 @@ fn command_pattern_nested_or() {
 fn extract_inner_command_fallback_for_non_simple() {
     // A compound command (with &&) should hit the fallback branch
     let args = vec!["echo".to_string(), "&&".to_string(), "ls".to_string()];
-    let result = extract_inner_command(
-        &may_i_core::pattern::ArgPattern::Ordered {
-            mode: MatchMode::Positional,
-            patterns: vec![],
-            continuation: None,
-        },
-        &args,
-    );
+    let result = extract_inner_command(&args);
     // Should return Some — either parsed or fallback
     assert!(result.is_some());
 }
@@ -278,7 +271,7 @@ fn build_positional_element_details_with_bind() {
     }];
 
     let arg = "prod-01".to_string();
-    let args: Vec<&String> = vec![&arg];
+    let args: Vec<&str> = vec![&arg];
     let details = build_positional_element_details(&args, &patterns, true, 1);
     assert_eq!(details.len(), 1);
     let detail = &details[0];
@@ -314,7 +307,7 @@ fn build_positional_element_details_with_cond_branch_index() {
     }];
 
     let arg = "b".to_string();
-    let args: Vec<&String> = vec![&arg];
+    let args: Vec<&str> = vec![&arg];
     let details = build_positional_element_details(&args, &patterns, true, 1);
     assert_eq!(details.len(), 1);
     assert!(matches!(
@@ -395,7 +388,7 @@ fn zero_or_more_wildcard_backtracks_for_required() {
         .into_iter()
         .map(String::from)
         .collect();
-    let args: Vec<&String> = args_owned.iter().collect();
+    let args: Vec<&str> = args_owned.iter().map(|s| s.as_str()).collect();
     let (matched, consumed, _) = match_positional_patterns(&args, &patterns);
     assert!(matched);
     assert_eq!(consumed, 4);
@@ -424,7 +417,7 @@ fn one_or_more_wildcard_backtracks_for_required() {
         .into_iter()
         .map(String::from)
         .collect();
-    let args: Vec<&String> = args_owned.iter().collect();
+    let args: Vec<&str> = args_owned.iter().map(|s| s.as_str()).collect();
     let (matched, consumed, _) = match_positional_patterns(&args, &patterns);
     assert!(matched);
     assert_eq!(consumed, 3);
@@ -450,7 +443,7 @@ fn one_or_more_wildcard_fails_when_only_required() {
     ];
 
     let args_owned = ["end".to_string()];
-    let args: Vec<&String> = args_owned.iter().collect();
+    let args: Vec<&str> = args_owned.iter().map(|s| s.as_str()).collect();
     let (matched, _, _) = match_positional_patterns(&args, &patterns);
     assert!(!matched);
 }

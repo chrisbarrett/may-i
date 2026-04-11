@@ -38,11 +38,6 @@ impl ContextFacts {
         self.values.entry(key).or_default().insert(value.into());
     }
 
-    /// Push a value onto the set at the given key, accumulating values.
-    pub fn push(&mut self, key: Keyword, value: impl Into<String>) {
-        self.values.entry(key).or_default().insert(value.into());
-    }
-
     /// Get the scalar value for a key, if it exists and has exactly one member.
     pub fn get_scalar(&self, key: &Keyword) -> Option<&str> {
         match self.values.get(key) {

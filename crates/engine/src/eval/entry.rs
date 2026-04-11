@@ -9,7 +9,6 @@ use super::effects::evaluate_effect_fold;
 
 /// Evaluate a command against config and context using PureFold.
 /// This is the main entry point for evaluation.
-#[must_use]
 pub fn evaluate(
     command: &str,
     args: &[String],
@@ -63,16 +62,16 @@ pub(crate) fn expand_combined_flags(args: &[String]) -> Vec<String> {
 /// Handles `--` as an option terminator: `--` itself is included as a
 /// positional arg, and all subsequent args are positional regardless of
 /// prefix. Long options (`--foo`) consume the following arg as their value.
-pub(crate) fn positional_args(args: &[String]) -> Vec<&String> {
+pub(crate) fn positional_args(args: &[String]) -> Vec<&str> {
     let mut result = Vec::new();
     let mut iter = args.iter().peekable();
     let mut past_terminator = false;
 
     while let Some(arg) = iter.next() {
         if past_terminator {
-            result.push(arg);
+            result.push(arg.as_str());
         } else if arg == "--" {
-            result.push(arg);
+            result.push(arg.as_str());
             past_terminator = true;
         } else if arg.starts_with("--") {
             // Long option — skip its value (next arg) if present.
@@ -87,7 +86,7 @@ pub(crate) fn positional_args(args: &[String]) -> Vec<&String> {
             // `-o file`) are ambiguous without command-specific knowledge,
             // but this matches the oracle's behaviour for most commands.
         } else {
-            result.push(arg);
+            result.push(arg.as_str());
         }
     }
     result
