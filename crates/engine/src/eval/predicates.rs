@@ -1,5 +1,5 @@
 use may_i_core::ast::Predicate;
-use may_i_core::pattern::ArgPattern;
+use may_i_core::pattern::{ArgPattern, MatchMode};
 use may_i_core::{FactPattern, FactQuery};
 
 use crate::EvalError;
@@ -143,7 +143,8 @@ pub(super) fn evaluate_arg_pattern_predicate(
     ctx: &EvalContext,
 ) -> PredicateResult {
     match pattern {
-        ArgPattern::Positional {
+        ArgPattern::Ordered {
+            mode: MatchMode::Positional,
             patterns,
             continuation: _,
         } => {
@@ -156,7 +157,8 @@ pub(super) fn evaluate_arg_pattern_predicate(
                 PredicateResult::NoMatch
             }
         }
-        ArgPattern::Exact {
+        ArgPattern::Ordered {
+            mode: MatchMode::Exact,
             patterns,
             continuation: _,
         } => {

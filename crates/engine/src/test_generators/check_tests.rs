@@ -18,7 +18,7 @@ proptest! {
                 command_effect: spanned(Effect::CommandPattern(
                     CommandPattern::Literal(cmd_name.clone()),
                 )),
-                effect: spanned(Effect::Allow(Some("allowed".into()))),
+                effect: spanned(Effect::Terminal { decision: Decision::Allow, reason: Some("allowed".into()) }),
                 checks: vec![],
                 span: dummy_span(),
             }],
@@ -46,7 +46,7 @@ proptest! {
                 command_effect: spanned(Effect::CommandPattern(
                     CommandPattern::Literal(cmd_name.clone()),
                 )),
-                effect: spanned(Effect::Deny(Some("denied".into()))),
+                effect: spanned(Effect::Terminal { decision: Decision::Deny, reason: Some("denied".into()) }),
                 checks: vec![],
                 span: dummy_span(),
             }],
@@ -93,9 +93,9 @@ proptest! {
         decision in any_decision(),
     ) {
         let effect = match decision {
-            Decision::Allow => Effect::Allow(Some("test".into())),
-            Decision::Ask => Effect::Ask(Some("test".into())),
-            Decision::Deny => Effect::Deny(Some("test".into())),
+            Decision::Allow => Effect::Terminal { decision: Decision::Allow, reason: Some("test".into()) },
+            Decision::Ask => Effect::Terminal { decision: Decision::Ask, reason: Some("test".into()) },
+            Decision::Deny => Effect::Terminal { decision: Decision::Deny, reason: Some("test".into()) },
         };
         let config = Config {
             rules: vec![Rule {
@@ -130,7 +130,7 @@ proptest! {
                 command_effect: spanned(Effect::CommandPattern(
                     CommandPattern::Literal(cmd_name.clone()),
                 )),
-                effect: spanned(Effect::Deny(Some("denied".into()))),
+                effect: spanned(Effect::Terminal { decision: Decision::Deny, reason: Some("denied".into()) }),
                 checks: vec![],
                 span: dummy_span(),
             }],

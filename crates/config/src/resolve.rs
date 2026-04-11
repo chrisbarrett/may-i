@@ -315,6 +315,7 @@ pub fn validate_and_resolve(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use may_i_core::Decision;
     use may_i_core::pattern::CommandPattern;
 
     fn dummy_span() -> Span {
@@ -364,7 +365,10 @@ mod tests {
         // Create a rule with a named predicate reference inside a conditional
         let rules = vec![create_rule_with_conditional(
             Predicate::Named("undefined".to_string()),
-            Effect::Allow(None),
+            Effect::Terminal {
+                decision: Decision::Allow,
+                reason: None,
+            },
         )];
         let define_map = DefineMap::default();
 
@@ -405,7 +409,10 @@ mod tests {
         let defines = vec![create_define("safe", Predicate::fact_presence(":safe"))];
         let rules = vec![create_rule_with_conditional(
             Predicate::Named("safe".to_string()),
-            Effect::Allow(None),
+            Effect::Terminal {
+                decision: Decision::Allow,
+                reason: None,
+            },
         )];
 
         let result = validate_and_resolve(&rules, &defines).unwrap();
@@ -432,7 +439,10 @@ mod tests {
         ];
         let rules = vec![create_rule_with_conditional(
             Predicate::Named("b".to_string()),
-            Effect::Allow(None),
+            Effect::Terminal {
+                decision: Decision::Allow,
+                reason: None,
+            },
         )];
 
         let result = validate_and_resolve(&rules, &defines).unwrap();
@@ -513,7 +523,10 @@ mod tests {
                 Predicate::fact_presence(":x"),
                 Predicate::Named("undefined".to_string()),
             ]),
-            Effect::Allow(None),
+            Effect::Terminal {
+                decision: Decision::Allow,
+                reason: None,
+            },
         )];
         let define_map = DefineMap::default();
 
@@ -526,7 +539,10 @@ mod tests {
         let defines = vec![];
         let rules = vec![create_rule_with_conditional(
             Predicate::Not(Box::new(Predicate::Named("undefined".to_string()))),
-            Effect::Allow(None),
+            Effect::Terminal {
+                decision: Decision::Allow,
+                reason: None,
+            },
         )];
         let define_map = DefineMap::default();
 
@@ -553,7 +569,10 @@ mod tests {
         let defines = vec![create_define("safe", Predicate::fact_presence(":safe"))];
         let rules = vec![create_rule_with_conditional(
             Predicate::Not(Box::new(Predicate::Named("safe".to_string()))),
-            Effect::Allow(None),
+            Effect::Terminal {
+                decision: Decision::Allow,
+                reason: None,
+            },
         )];
 
         let result = validate_and_resolve(&rules, &defines).unwrap();
@@ -574,7 +593,10 @@ mod tests {
         let defines = vec![create_define("safe", Predicate::fact_presence(":safe"))];
         let rules = vec![create_rule_with_conditional(
             Predicate::Named("safe".to_string()),
-            Effect::Allow(None),
+            Effect::Terminal {
+                decision: Decision::Allow,
+                reason: None,
+            },
         )];
 
         let result = validate_and_resolve(&rules, &defines);
@@ -601,7 +623,10 @@ mod tests {
         let defines = vec![];
         let rules = vec![create_rule_with_conditional(
             Predicate::Named("undefined".to_string()),
-            Effect::Allow(None),
+            Effect::Terminal {
+                decision: Decision::Allow,
+                reason: None,
+            },
         )];
 
         let result = validate_and_resolve(&rules, &defines);
@@ -630,11 +655,23 @@ mod tests {
                 then_effect: Box::new(Spanned::new(
                     Effect::When {
                         predicate: Spanned::new(Predicate::Named("b".to_string()), dummy_span()),
-                        effect: Box::new(Spanned::new(Effect::Allow(None), dummy_span())),
+                        effect: Box::new(Spanned::new(
+                            Effect::Terminal {
+                                decision: Decision::Allow,
+                                reason: None,
+                            },
+                            dummy_span(),
+                        )),
                     },
                     dummy_span(),
                 )),
-                else_effect: Box::new(Spanned::new(Effect::Deny(None), dummy_span())),
+                else_effect: Box::new(Spanned::new(
+                    Effect::Terminal {
+                        decision: Decision::Deny,
+                        reason: None,
+                    },
+                    dummy_span(),
+                )),
             },
             dummy_span(),
         );
@@ -651,12 +688,24 @@ mod tests {
             Effect::Cond {
                 branches: vec![(
                     Spanned::new(Predicate::Named("a".to_string()), dummy_span()),
-                    Spanned::new(Effect::Allow(None), dummy_span()),
+                    Spanned::new(
+                        Effect::Terminal {
+                            decision: Decision::Allow,
+                            reason: None,
+                        },
+                        dummy_span(),
+                    ),
                 )],
                 fallback: Some(Box::new(Spanned::new(
                     Effect::When {
                         predicate: Spanned::new(Predicate::Named("b".to_string()), dummy_span()),
-                        effect: Box::new(Spanned::new(Effect::Deny(None), dummy_span())),
+                        effect: Box::new(Spanned::new(
+                            Effect::Terminal {
+                                decision: Decision::Deny,
+                                reason: None,
+                            },
+                            dummy_span(),
+                        )),
                     },
                     dummy_span(),
                 ))),
@@ -685,7 +734,10 @@ mod tests {
                                             dummy_span(),
                                         ),
                                         effect: Box::new(Spanned::new(
-                                            Effect::Allow(None),
+                                            Effect::Terminal {
+                                                decision: Decision::Allow,
+                                                reason: None,
+                                            },
                                             dummy_span(),
                                         )),
                                     },

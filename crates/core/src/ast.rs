@@ -70,17 +70,12 @@ impl EffectResult {
 #[non_exhaustive]
 pub enum Effect {
     // Terminal decisions
-    /// Allow the command.
-    /// Syntax: `(effect :allow)` or `(effect :allow "reason")`
-    Allow(Option<String>),
-
-    /// Ask for confirmation.
-    /// Syntax: `(effect :ask)` or `(effect :ask "reason")`
-    Ask(Option<String>),
-
-    /// Deny the command.
-    /// Syntax: `(effect :deny)` or `(effect :deny "reason")`
-    Deny(Option<String>),
+    /// A terminal decision (allow, ask, or deny) with optional reason.
+    /// Syntax: `(effect :allow)`, `(effect :ask "reason")`, etc.
+    Terminal {
+        decision: Decision,
+        reason: Option<String>,
+    },
 
     // Pattern effects (return Allow on match, Nil otherwise)
     /// Command pattern match - returns Allow if command matches, Nil otherwise.
@@ -144,17 +139,26 @@ pub enum Effect {
 impl Effect {
     #[cfg(test)]
     pub(crate) fn allow(reason: Option<String>) -> Self {
-        Effect::Allow(reason)
+        Effect::Terminal {
+            decision: Decision::Allow,
+            reason,
+        }
     }
 
     #[cfg(test)]
     pub(crate) fn ask(reason: Option<String>) -> Self {
-        Effect::Ask(reason)
+        Effect::Terminal {
+            decision: Decision::Ask,
+            reason,
+        }
     }
 
     #[cfg(test)]
     pub(crate) fn deny(reason: Option<String>) -> Self {
-        Effect::Deny(reason)
+        Effect::Terminal {
+            decision: Decision::Deny,
+            reason,
+        }
     }
 
     #[cfg(test)]
@@ -174,7 +178,7 @@ impl Effect {
 
     /// Check if this is a terminal effect (Allow, Ask, or Deny).
     pub fn is_terminal(&self) -> bool {
-        matches!(self, Effect::Allow(_) | Effect::Ask(_) | Effect::Deny(_))
+        matches!(self, Effect::Terminal { .. })
     }
 
     /// Check if this effect would match the given command name.
@@ -212,12 +216,14 @@ impl std::fmt::Display for Effect {
     #[coverage(off)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Effect::Allow(None) => write!(f, "(effect :allow)"),
-            Effect::Allow(Some(r)) => write!(f, "(effect :allow \"{}\")", r),
-            Effect::Ask(None) => write!(f, "(effect :ask)"),
-            Effect::Ask(Some(r)) => write!(f, "(effect :ask \"{}\")", r),
-            Effect::Deny(None) => write!(f, "(effect :deny)"),
-            Effect::Deny(Some(r)) => write!(f, "(effect :deny \"{}\")", r),
+            Effect::Terminal {
+                decision,
+                reason: None,
+            } => write!(f, "(effect {})", decision.keyword()),
+            Effect::Terminal {
+                decision,
+                reason: Some(r),
+            } => write!(f, "(effect {} \"{}\")", decision.keyword(), r),
             Effect::CommandPattern(_) => write!(f, "<command-pattern>"),
             Effect::ArgPattern(_) => write!(f, "<arg-pattern>"),
             Effect::And { .. } => write!(f, "<and-effect>"),
@@ -414,15 +420,6 @@ pub struct Config {
 
     /// Validation checks.
     pub checks: Vec<Check>,
-
-    /// Source text for span-to-line conversion (populated by the config loader).
-    pub source_text: Option<String>,
-
-    /// Pre-migration Doc trees for each top-level form, paired with their
-    /// original source spans. Present when the config was loaded via
-    /// transparent CST-rewrite migration. Used by the trace renderer to
-    /// display original source structure instead of the rewritten V2 AST.
-    pub pre_migration_forms: Option<Vec<(Span, crate::Doc)>>,
 }
 
 /// Security configuration.
@@ -451,22 +448,8 @@ pub struct Check {
 impl ToDoc for Effect {
     fn to_doc(&self) -> Doc {
         match self {
-            Effect::Allow(reason) => {
-                let mut cs = vec![Doc::atom("effect"), Doc::atom(":allow")];
-                if let Some(r) = reason {
-                    cs.push(Doc::atom(format!("\"{r}\"")));
-                }
-                Doc::list(cs)
-            }
-            Effect::Ask(reason) => {
-                let mut cs = vec![Doc::atom("effect"), Doc::atom(":ask")];
-                if let Some(r) = reason {
-                    cs.push(Doc::atom(format!("\"{r}\"")));
-                }
-                Doc::list(cs)
-            }
-            Effect::Deny(reason) => {
-                let mut cs = vec![Doc::atom("effect"), Doc::atom(":deny")];
+            Effect::Terminal { decision, reason } => {
+                let mut cs = vec![Doc::atom("effect"), Doc::atom(decision.keyword())];
                 if let Some(r) = reason {
                     cs.push(Doc::atom(format!("\"{r}\"")));
                 }
@@ -489,7 +472,7 @@ impl ToDoc for Effect {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pattern::{ArgPattern, CommandPattern};
+    use crate::pattern::{ArgPattern, CommandPattern, MatchMode};
     use crate::span::Span;
 
     #[test]
@@ -551,19 +534,29 @@ mod tests {
     #[test]
     fn effect_allow_creates_correctly() {
         let effect = Effect::allow(Some("reason".into()));
-        assert!(matches!(effect, Effect::Allow(Some(r)) if r == "reason"));
+        assert!(
+            matches!(effect, Effect::Terminal { decision: Decision::Allow, reason: Some(r) } if r == "reason")
+        );
     }
 
     #[test]
     fn effect_ask_creates_correctly() {
         let effect = Effect::ask(None);
-        assert!(matches!(effect, Effect::Ask(None)));
+        assert!(matches!(
+            effect,
+            Effect::Terminal {
+                decision: Decision::Ask,
+                reason: None
+            }
+        ));
     }
 
     #[test]
     fn effect_deny_creates_correctly() {
         let effect = Effect::deny(Some("blocked".into()));
-        assert!(matches!(effect, Effect::Deny(Some(r)) if r == "blocked"));
+        assert!(
+            matches!(effect, Effect::Terminal { decision: Decision::Deny, reason: Some(r) } if r == "blocked")
+        );
     }
 
     #[test]
@@ -578,7 +571,7 @@ mod tests {
         let pattern = ArgPattern::positional(vec![]);
         let effect = Effect::arg_pattern(pattern.clone());
         assert!(
-            matches!(effect, Effect::ArgPattern(p) if matches!(p, ArgPattern::Positional { .. }))
+            matches!(effect, Effect::ArgPattern(p) if matches!(p, ArgPattern::Ordered { mode: MatchMode::Positional, .. }))
         );
     }
 
@@ -591,9 +584,27 @@ mod tests {
 
     #[test]
     fn effect_is_terminal_returns_correctly() {
-        assert!(Effect::Allow(None).is_terminal());
-        assert!(Effect::Ask(None).is_terminal());
-        assert!(Effect::Deny(None).is_terminal());
+        assert!(
+            Effect::Terminal {
+                decision: Decision::Allow,
+                reason: None
+            }
+            .is_terminal()
+        );
+        assert!(
+            Effect::Terminal {
+                decision: Decision::Ask,
+                reason: None
+            }
+            .is_terminal()
+        );
+        assert!(
+            Effect::Terminal {
+                decision: Decision::Deny,
+                reason: None
+            }
+            .is_terminal()
+        );
         assert!(!Effect::CommandPattern(CommandPattern::Literal("git".into())).is_terminal());
         assert!(!Effect::ArgPattern(ArgPattern::positional(vec![])).is_terminal());
     }
@@ -602,14 +613,26 @@ mod tests {
     fn effect_is_pattern_returns_correctly() {
         assert!(Effect::CommandPattern(CommandPattern::Literal("git".into())).is_pattern());
         assert!(Effect::ArgPattern(ArgPattern::positional(vec![])).is_pattern());
-        assert!(!Effect::Allow(None).is_pattern());
+        assert!(
+            !Effect::Terminal {
+                decision: Decision::Allow,
+                reason: None
+            }
+            .is_pattern()
+        );
         assert!(!Effect::And { effects: vec![] }.is_pattern());
     }
 
     #[test]
     fn effect_is_combinator_returns_correctly() {
         let span = Span { start: 0, end: 1 };
-        let effect = Spanned::new(Effect::Allow(None), span);
+        let effect = Spanned::new(
+            Effect::Terminal {
+                decision: Decision::Allow,
+                reason: None,
+            },
+            span,
+        );
 
         assert!(Effect::And { effects: vec![] }.is_combinator());
         assert!(Effect::Or { effects: vec![] }.is_combinator());
@@ -619,7 +642,13 @@ mod tests {
             }
             .is_combinator()
         );
-        assert!(!Effect::Allow(None).is_combinator());
+        assert!(
+            !Effect::Terminal {
+                decision: Decision::Allow,
+                reason: None
+            }
+            .is_combinator()
+        );
         assert!(!Effect::CommandPattern(CommandPattern::Literal("git".into())).is_combinator());
     }
 
@@ -627,7 +656,13 @@ mod tests {
     fn effect_is_conditional_returns_correctly() {
         let span = Span { start: 0, end: 1 };
         let pred = Spanned::new(Predicate::fact_presence(":test"), span);
-        let effect = Spanned::new(Effect::Allow(None), span);
+        let effect = Spanned::new(
+            Effect::Terminal {
+                decision: Decision::Allow,
+                reason: None,
+            },
+            span,
+        );
 
         assert!(
             Effect::When {
@@ -662,7 +697,13 @@ mod tests {
             .is_conditional()
         );
 
-        assert!(!Effect::Allow(None).is_conditional());
+        assert!(
+            !Effect::Terminal {
+                decision: Decision::Allow,
+                reason: None
+            }
+            .is_conditional()
+        );
     }
 
     #[test]
@@ -692,7 +733,10 @@ mod tests {
         let pred = Predicate::arg(pattern);
         assert!(matches!(
             pred,
-            Predicate::Arg(ArgPattern::Positional { .. })
+            Predicate::Arg(ArgPattern::Ordered {
+                mode: MatchMode::Positional,
+                ..
+            })
         ));
     }
 
@@ -782,37 +826,61 @@ mod tests {
 
     #[test]
     fn effect_to_doc_allow_without_reason() {
-        let doc = Effect::Allow(None).to_doc();
+        let doc = Effect::Terminal {
+            decision: Decision::Allow,
+            reason: None,
+        }
+        .to_doc();
         assert_eq!(doc_text(&doc), "(effect :allow)");
     }
 
     #[test]
     fn effect_to_doc_allow_with_reason() {
-        let doc = Effect::Allow(Some("safe command".into())).to_doc();
+        let doc = Effect::Terminal {
+            decision: Decision::Allow,
+            reason: Some("safe command".into()),
+        }
+        .to_doc();
         assert_eq!(doc_text(&doc), "(effect :allow \"safe command\")");
     }
 
     #[test]
     fn effect_to_doc_ask_without_reason() {
-        let doc = Effect::Ask(None).to_doc();
+        let doc = Effect::Terminal {
+            decision: Decision::Ask,
+            reason: None,
+        }
+        .to_doc();
         assert_eq!(doc_text(&doc), "(effect :ask)");
     }
 
     #[test]
     fn effect_to_doc_ask_with_reason() {
-        let doc = Effect::Ask(Some("confirm".into())).to_doc();
+        let doc = Effect::Terminal {
+            decision: Decision::Ask,
+            reason: Some("confirm".into()),
+        }
+        .to_doc();
         assert_eq!(doc_text(&doc), "(effect :ask \"confirm\")");
     }
 
     #[test]
     fn effect_to_doc_deny_without_reason() {
-        let doc = Effect::Deny(None).to_doc();
+        let doc = Effect::Terminal {
+            decision: Decision::Deny,
+            reason: None,
+        }
+        .to_doc();
         assert_eq!(doc_text(&doc), "(effect :deny)");
     }
 
     #[test]
     fn effect_to_doc_deny_with_reason() {
-        let doc = Effect::Deny(Some("blocked".into())).to_doc();
+        let doc = Effect::Terminal {
+            decision: Decision::Deny,
+            reason: Some("blocked".into()),
+        }
+        .to_doc();
         assert_eq!(doc_text(&doc), "(effect :deny \"blocked\")");
     }
 
@@ -843,7 +911,13 @@ mod tests {
     #[test]
     fn effect_to_doc_not_placeholder() {
         let span = Span { start: 0, end: 1 };
-        let effect = Spanned::new(Effect::Allow(None), span);
+        let effect = Spanned::new(
+            Effect::Terminal {
+                decision: Decision::Allow,
+                reason: None,
+            },
+            span,
+        );
         let doc = Effect::Not {
             effect: Box::new(effect),
         }
@@ -855,7 +929,13 @@ mod tests {
     fn effect_to_doc_when_placeholder() {
         let span = Span { start: 0, end: 1 };
         let pred = Spanned::new(Predicate::fact_presence(":test"), span);
-        let effect = Spanned::new(Effect::Allow(None), span);
+        let effect = Spanned::new(
+            Effect::Terminal {
+                decision: Decision::Allow,
+                reason: None,
+            },
+            span,
+        );
         let doc = Effect::When {
             predicate: pred,
             effect: Box::new(effect),
@@ -868,7 +948,13 @@ mod tests {
     fn effect_to_doc_unless_placeholder() {
         let span = Span { start: 0, end: 1 };
         let pred = Spanned::new(Predicate::fact_presence(":test"), span);
-        let effect = Spanned::new(Effect::Allow(None), span);
+        let effect = Spanned::new(
+            Effect::Terminal {
+                decision: Decision::Allow,
+                reason: None,
+            },
+            span,
+        );
         let doc = Effect::Unless {
             predicate: pred,
             effect: Box::new(effect),
@@ -881,7 +967,13 @@ mod tests {
     fn effect_to_doc_if_placeholder() {
         let span = Span { start: 0, end: 1 };
         let pred = Spanned::new(Predicate::fact_presence(":test"), span);
-        let effect = Spanned::new(Effect::Allow(None), span);
+        let effect = Spanned::new(
+            Effect::Terminal {
+                decision: Decision::Allow,
+                reason: None,
+            },
+            span,
+        );
         let doc = Effect::If {
             predicate: pred,
             then_effect: Box::new(effect.clone()),

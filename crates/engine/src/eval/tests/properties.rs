@@ -19,7 +19,7 @@ proptest::proptest! {
             .iter()
             .map(|s| ExprBranch {
                 test: Expr::Literal(s.clone()),
-                effect: Effect::Allow(None),
+                effect: Effect::Terminal { decision: Decision::Allow, reason: None },
             })
             .collect();
 
@@ -108,7 +108,8 @@ fn extract_inner_command_fallback_for_non_simple() {
     // A compound command (with &&) should hit the fallback branch
     let args = vec!["echo".to_string(), "&&".to_string(), "ls".to_string()];
     let result = extract_inner_command(
-        &may_i_core::pattern::ArgPattern::Positional {
+        &may_i_core::pattern::ArgPattern::Ordered {
+            mode: MatchMode::Positional,
             patterns: vec![],
             continuation: None,
         },
@@ -132,7 +133,8 @@ fn evaluate_fallback_reason_command_matched_but_args_failed() {
             s,
         ),
         Spanned::new(
-            Effect::ArgPattern(ArgPattern::Positional {
+            Effect::ArgPattern(ArgPattern::Ordered {
+                mode: MatchMode::Positional,
                 patterns: vec![PositionalArg {
                     quantifier: Quantifier::One,
                     pattern: Expr::Literal("specific-arg".into()),
@@ -210,7 +212,8 @@ fn evaluate_rule_predicate_allow_continues() {
             Effect::And {
                 effects: vec![
                     Spanned::new(
-                        Effect::ArgPattern(ArgPattern::Positional {
+                        Effect::ArgPattern(ArgPattern::Ordered {
+                            mode: MatchMode::Positional,
                             patterns: vec![PositionalArg {
                                 quantifier: Quantifier::One,
                                 pattern: Expr::Literal("ok".into()),
@@ -220,7 +223,13 @@ fn evaluate_rule_predicate_allow_continues() {
                         }),
                         s,
                     ),
-                    Spanned::new(Effect::Allow(Some("done".into())), s),
+                    Spanned::new(
+                        Effect::Terminal {
+                            decision: Decision::Allow,
+                            reason: Some("done".into()),
+                        },
+                        s,
+                    ),
                 ],
             },
             s,
@@ -260,7 +269,7 @@ fn build_positional_element_details_with_bind() {
     let detail = &details[0];
     assert!(detail.binding.is_some());
     let bind = detail.binding.as_ref().unwrap();
-    assert_eq!(bind.key, ":host");
+    assert_eq!(bind.key.to_string(), ":host");
     assert_eq!(bind.value, Some("prod-01".to_string()));
 }
 
@@ -273,11 +282,17 @@ fn build_positional_element_details_with_cond_branch_index() {
         pattern: Expr::Cond(vec![
             ExprBranch {
                 test: Expr::Literal("a".into()),
-                effect: Effect::Allow(None),
+                effect: Effect::Terminal {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
             },
             ExprBranch {
                 test: Expr::Literal("b".into()),
-                effect: Effect::Deny(None),
+                effect: Effect::Terminal {
+                    decision: Decision::Deny,
+                    reason: None,
+                },
             },
         ]),
         recursive: false,
@@ -287,7 +302,10 @@ fn build_positional_element_details_with_cond_branch_index() {
     let args: Vec<&String> = vec![&arg];
     let details = build_positional_element_details(&args, &patterns, true, 1);
     assert_eq!(details.len(), 1);
-    assert_eq!(details[0].cond_branch_index, Some(1));
+    assert!(matches!(
+        details[0].match_kind,
+        crate::fold::PositionalMatchKind::CondBranch(1)
+    ));
 }
 
 // --- FactPattern combinator tests ---
@@ -448,7 +466,13 @@ fn run_checks_with_rule_level_checks() {
             Effect::CommandPattern(CommandPattern::Literal("ls".into())),
             s,
         ),
-        effect: Spanned::new(Effect::Allow(Some("ok".into())), s),
+        effect: Spanned::new(
+            Effect::Terminal {
+                decision: Decision::Allow,
+                reason: Some("ok".into()),
+            },
+            s,
+        ),
         checks: vec![Check {
             command: "ls -la".into(),
             expected: Decision::Allow,
@@ -480,7 +504,13 @@ fn run_checks_with_config_level_checks() {
             Effect::CommandPattern(CommandPattern::Literal("git".into())),
             s,
         ),
-        effect: Spanned::new(Effect::Deny(Some("no git".into())), s),
+        effect: Spanned::new(
+            Effect::Terminal {
+                decision: Decision::Deny,
+                reason: Some("no git".into()),
+            },
+            s,
+        ),
         checks: vec![],
         span: s,
     };
@@ -756,7 +786,13 @@ fn cond_short_circuits_predicates_after_first_match() {
                     }),
                     s,
                 ),
-                Spanned::new(Effect::Allow(Some("first".into())), s),
+                Spanned::new(
+                    Effect::Terminal {
+                        decision: Decision::Allow,
+                        reason: Some("first".into()),
+                    },
+                    s,
+                ),
             ),
             (
                 Spanned::new(
@@ -766,7 +802,13 @@ fn cond_short_circuits_predicates_after_first_match() {
                     }),
                     s,
                 ),
-                Spanned::new(Effect::Deny(Some("second".into())), s),
+                Spanned::new(
+                    Effect::Terminal {
+                        decision: Decision::Deny,
+                        reason: Some("second".into()),
+                    },
+                    s,
+                ),
             ),
             (
                 Spanned::new(
@@ -776,7 +818,13 @@ fn cond_short_circuits_predicates_after_first_match() {
                     }),
                     s,
                 ),
-                Spanned::new(Effect::Deny(Some("third".into())), s),
+                Spanned::new(
+                    Effect::Terminal {
+                        decision: Decision::Deny,
+                        reason: Some("third".into()),
+                    },
+                    s,
+                ),
             ),
         ],
         fallback: None,

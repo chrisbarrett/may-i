@@ -23,10 +23,14 @@ fn complex_nested_conditionals() {
                     predicate: spanned(Predicate::Arg(may_i_core::pattern::ArgPattern::Anywhere(
                         vec![may_i_core::pattern::Expr::Literal("src".to_string())],
                     ))),
-                    then_effect: Box::new(spanned(Effect::Allow(Some(
-                        "prod deploy allowed".into(),
-                    )))),
-                    else_effect: Box::new(spanned(Effect::Deny(Some("prod deploy denied".into())))),
+                    then_effect: Box::new(spanned(Effect::Terminal {
+                        decision: Decision::Allow,
+                        reason: Some("prod deploy allowed".into()),
+                    })),
+                    else_effect: Box::new(spanned(Effect::Terminal {
+                        decision: Decision::Deny,
+                        reason: Some("prod deploy denied".into()),
+                    })),
                 })),
             }),
             checks: vec![],
@@ -68,7 +72,10 @@ fn multiple_fact_bindings() {
                         vector_syntax: false,
                     }),
                 ])),
-                effect: Box::new(spanned(Effect::Allow(Some("admin verified".into())))),
+                effect: Box::new(spanned(Effect::Terminal {
+                    decision: Decision::Allow,
+                    reason: Some("admin verified".into()),
+                })),
             }),
             checks: vec![],
             span: dummy_span(),
@@ -100,7 +107,8 @@ fn recursive_may_i_with_context() {
                     "wrapper".into(),
                 ))),
                 effect: spanned(Effect::MayI {
-                    pattern: may_i_core::pattern::ArgPattern::Positional {
+                    pattern: may_i_core::pattern::ArgPattern::Ordered {
+                        mode: MatchMode::Positional,
                         patterns: vec![],
                         continuation: None,
                     },
@@ -113,7 +121,10 @@ fn recursive_may_i_with_context() {
                 command_effect: spanned(Effect::CommandPattern(CommandPattern::Literal(
                     "inner-cmd".into(),
                 ))),
-                effect: spanned(Effect::Allow(Some("inner allowed".into()))),
+                effect: spanned(Effect::Terminal {
+                    decision: Decision::Allow,
+                    reason: Some("inner allowed".into()),
+                }),
                 checks: vec![],
                 span: dummy_span(),
             },
@@ -143,13 +154,22 @@ fn combined_and_or_not_in_rule() {
                 effects: vec![
                     spanned(Effect::Or {
                         effects: vec![
-                            spanned(Effect::Allow(Some("or-allow".into()))),
+                            spanned(Effect::Terminal {
+                                decision: Decision::Allow,
+                                reason: Some("or-allow".into()),
+                            }),
                             spanned(Effect::Not {
-                                effect: Box::new(spanned(Effect::Deny(Some("inner-deny".into())))),
+                                effect: Box::new(spanned(Effect::Terminal {
+                                    decision: Decision::Deny,
+                                    reason: Some("inner-deny".into()),
+                                })),
                             }),
                         ],
                     }),
-                    spanned(Effect::Allow(Some("and-second".into()))),
+                    spanned(Effect::Terminal {
+                        decision: Decision::Allow,
+                        reason: Some("and-second".into()),
+                    }),
                 ],
             }),
             checks: vec![],

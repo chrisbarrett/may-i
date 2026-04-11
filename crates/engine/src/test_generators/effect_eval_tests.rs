@@ -30,9 +30,9 @@ proptest! {
         reason in proptest::option::of("[a-zA-Z ]{1,20}"),
     ) {
         let effect = match decision {
-            Decision::Allow => Effect::Allow(reason.clone()),
-            Decision::Ask => Effect::Ask(reason.clone()),
-            Decision::Deny => Effect::Deny(reason.clone()),
+            Decision::Allow => Effect::Terminal { decision: Decision::Allow, reason: reason.clone() },
+            Decision::Ask => Effect::Terminal { decision: Decision::Ask, reason: reason.clone() },
+            Decision::Deny => Effect::Terminal { decision: Decision::Deny, reason: reason.clone() },
         };
         let args: Vec<String> = vec![];
         let facts = ContextFacts::default();
@@ -103,9 +103,9 @@ proptest! {
         let ctx = make_ctx(&cmd, &args, &facts);
         let effects: Vec<_> = decisions.iter().map(|d| {
             let eff = match d {
-                Decision::Allow => Effect::Allow(None),
-                Decision::Ask => Effect::Ask(None),
-                Decision::Deny => Effect::Deny(None),
+                Decision::Allow => Effect::Terminal { decision: Decision::Allow, reason: None },
+                Decision::Ask => Effect::Terminal { decision: Decision::Ask, reason: None },
+                Decision::Deny => Effect::Terminal { decision: Decision::Deny, reason: None },
             };
             spanned(eff)
         }).collect();
@@ -128,9 +128,9 @@ proptest! {
         let ctx = make_ctx(&cmd, &args, &facts);
         let nil_effect = Effect::CommandPattern(CommandPattern::Literal("__never_matches__".into()));
         let terminal = match decision {
-            Decision::Allow => Effect::Allow(None),
-            Decision::Ask => Effect::Ask(None),
-            Decision::Deny => Effect::Deny(None),
+            Decision::Allow => Effect::Terminal { decision: Decision::Allow, reason: None },
+            Decision::Ask => Effect::Terminal { decision: Decision::Ask, reason: None },
+            Decision::Deny => Effect::Terminal { decision: Decision::Deny, reason: None },
         };
         let or_effect = Effect::Or {
             effects: vec![spanned(nil_effect), spanned(terminal)],
@@ -163,7 +163,7 @@ proptest! {
         let ctx = make_ctx(&cmd, &args, &facts);
 
         // Not(Allow) -> Nil
-        let not_allow = Effect::Not { effect: Box::new(spanned(Effect::Allow(None))) };
+        let not_allow = Effect::Not { effect: Box::new(spanned(Effect::Terminal { decision: Decision::Allow, reason: None })) };
         let result = eval::evaluate_effect(&not_allow, &ctx, &[]).unwrap();
         prop_assert!(result.is_nil(), "Not(Allow) should be Nil, got {:?}", result);
 
@@ -174,12 +174,12 @@ proptest! {
         prop_assert_eq!(result.decision(), Some(Decision::Allow));
 
         // Not(Ask) -> Ask
-        let not_ask = Effect::Not { effect: Box::new(spanned(Effect::Ask(None))) };
+        let not_ask = Effect::Not { effect: Box::new(spanned(Effect::Terminal { decision: Decision::Ask, reason: None })) };
         let result = eval::evaluate_effect(&not_ask, &ctx, &[]).unwrap();
         prop_assert_eq!(result.decision(), Some(Decision::Ask));
 
         // Not(Deny) -> Deny
-        let not_deny = Effect::Not { effect: Box::new(spanned(Effect::Deny(None))) };
+        let not_deny = Effect::Not { effect: Box::new(spanned(Effect::Terminal { decision: Decision::Deny, reason: None })) };
         let result = eval::evaluate_effect(&not_deny, &ctx, &[]).unwrap();
         prop_assert_eq!(result.decision(), Some(Decision::Deny));
     }
@@ -237,7 +237,7 @@ proptest! {
             key: key.clone(),
             vector_syntax: false,
         });
-        let inner = Effect::Allow(Some("when-matched".into()));
+        let inner = Effect::Terminal { decision: Decision::Allow, reason: Some("when-matched".into()) };
         let when_effect = Effect::When {
             predicate: spanned(pred.clone()),
             effect: Box::new(spanned(inner)),
@@ -266,7 +266,7 @@ proptest! {
             key: key.clone(),
             vector_syntax: false,
         });
-        let inner = Effect::Allow(Some("unless-matched".into()));
+        let inner = Effect::Terminal { decision: Decision::Allow, reason: Some("unless-matched".into()) };
         let unless_effect = Effect::Unless {
             predicate: spanned(pred.clone()),
             effect: Box::new(spanned(inner)),
@@ -295,8 +295,8 @@ proptest! {
             key: key.clone(),
             vector_syntax: false,
         });
-        let then_eff = Effect::Allow(Some("then".into()));
-        let else_eff = Effect::Deny(Some("else".into()));
+        let then_eff = Effect::Terminal { decision: Decision::Allow, reason: Some("then".into()) };
+        let else_eff = Effect::Terminal { decision: Decision::Deny, reason: Some("else".into()) };
         let if_effect = Effect::If {
             predicate: spanned(pred.clone()),
             then_effect: Box::new(spanned(then_eff)),
@@ -342,13 +342,13 @@ proptest! {
 
         let cond_effect = Effect::Cond {
             branches: vec![
-                (spanned(always_true), spanned(Effect::Allow(Some("first".into())))),
+                (spanned(always_true), spanned(Effect::Terminal { decision: Decision::Allow, reason: Some("first".into()) })),
                 (spanned(Predicate::Fact(may_i_core::FactQuery::Presence {
                     key: Keyword::new(":other").unwrap(),
                     vector_syntax: false,
-                })), spanned(Effect::Deny(Some("second".into())))),
+                })), spanned(Effect::Terminal { decision: Decision::Deny, reason: Some("second".into()) })),
             ],
-            fallback: Some(Box::new(spanned(Effect::Ask(Some("fallback".into()))))),
+            fallback: Some(Box::new(spanned(Effect::Terminal { decision: Decision::Ask, reason: Some("fallback".into()) }))),
         };
 
         let result = eval::evaluate_effect(&cond_effect, &ctx, &[]).unwrap();
@@ -369,14 +369,14 @@ proptest! {
             command_effect: spanned(Effect::CommandPattern(
                 CommandPattern::Literal(inner_cmd),
             )),
-            effect: spanned(Effect::Allow(Some("inner-allowed".into()))),
+            effect: spanned(Effect::Terminal { decision: Decision::Allow, reason: Some("inner-allowed".into()) }),
             checks: vec![],
             span: dummy_span(),
         };
         let rules = [inner_rule];
 
         let may_i = Effect::MayI {
-            pattern: may_i_core::pattern::ArgPattern::Positional {
+            pattern: may_i_core::pattern::ArgPattern::Ordered { mode: MatchMode::Positional,
                 patterns: vec![],
                 continuation: None,
             },
@@ -427,7 +427,7 @@ proptest! {
                     command_effect: spanned(Effect::CommandPattern(
                         CommandPattern::Literal(cmd_name.clone()),
                     )),
-                    effect: spanned(Effect::Allow(Some("first".into()))),
+                    effect: spanned(Effect::Terminal { decision: Decision::Allow, reason: Some("first".into()) }),
                     checks: vec![],
                     span: dummy_span(),
                 },
@@ -435,7 +435,7 @@ proptest! {
                     command_effect: spanned(Effect::CommandPattern(
                         CommandPattern::Literal(cmd_name.clone()),
                     )),
-                    effect: spanned(Effect::Deny(Some("second".into()))),
+                    effect: spanned(Effect::Terminal { decision: Decision::Deny, reason: Some("second".into()) }),
                     checks: vec![],
                     span: dummy_span(),
                 },
@@ -469,7 +469,7 @@ proptest! {
                 )),
                 effect: spanned(Effect::When {
                     predicate: spanned(pred),
-                    effect: Box::new(spanned(Effect::Allow(Some("fact-matched".into())))),
+                    effect: Box::new(spanned(Effect::Terminal { decision: Decision::Allow, reason: Some("fact-matched".into()) })),
                 }),
                 checks: vec![],
                 span: dummy_span(),
@@ -493,7 +493,7 @@ proptest! {
                 command_effect: spanned(Effect::CommandPattern(
                     CommandPattern::Literal(cmd_name.clone()),
                 )),
-                effect: spanned(Effect::Allow(Some("matched".into()))),
+                effect: spanned(Effect::Terminal { decision: Decision::Allow, reason: Some("matched".into()) }),
                 checks: vec![],
                 span: dummy_span(),
             }],

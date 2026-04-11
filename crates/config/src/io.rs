@@ -4,12 +4,19 @@ use std::path::{Path, PathBuf};
 
 use miette::{Context, IntoDiagnostic};
 
+/// Result of loading a config file, separating core config from load metadata.
+pub struct LoadResult {
+    pub config: may_i_core::ast::Config,
+    pub source_text: Option<String>,
+    pub pre_migration_forms: Option<Vec<(may_i_core::Span, may_i_core::Doc)>>,
+}
+
 /// Load and parse a config file at the given path.
 ///
 /// If normal parsing fails, attempts transparent migration from legacy v1
 /// syntax. On successful migration, prints a warning to stderr. If migration
 /// also fails, returns the original parse error.
-pub fn load(path: &Path) -> miette::Result<may_i_core::ast::Config> {
+pub fn load(path: &Path) -> miette::Result<LoadResult> {
     let content = std::fs::read_to_string(path)
         .into_diagnostic()
         .wrap_err_with(|| format!("Failed to read {}", path.display()))?;
@@ -18,11 +25,15 @@ pub fn load(path: &Path) -> miette::Result<may_i_core::ast::Config> {
 
     // Fast path: try canonical parsing first.
     match crate::parse_config(&content) {
-        Ok(config) => Ok(config),
+        Ok(config) => Ok(LoadResult {
+            config,
+            source_text: Some(content),
+            pre_migration_forms: None,
+        }),
         Err(original_err) => {
             // Slow path: attempt transparent migration from legacy syntax.
             match try_migrate_and_parse(&content) {
-                Some(config) => Ok(config),
+                Some(result) => Ok(result),
                 None => {
                     // Migration failed or didn't help; return the original error.
                     Err(crate::ConfigError::from_raw(original_err, &content, &filename).into())
@@ -35,7 +46,7 @@ pub fn load(path: &Path) -> miette::Result<may_i_core::ast::Config> {
 /// Attempt to parse a config by migrating legacy CST forms to canonical syntax.
 ///
 /// Returns `Some(config)` if migration succeeds, `None` otherwise.
-fn try_migrate_and_parse(content: &str) -> Option<may_i_core::ast::Config> {
+fn try_migrate_and_parse(content: &str) -> Option<LoadResult> {
     let (cst_nodes, cst_errors) = may_i_sexpr::parse_cst(content);
     if !cst_errors.is_empty() {
         return None;
@@ -50,22 +61,25 @@ fn try_migrate_and_parse(content: &str) -> Option<may_i_core::ast::Config> {
     let migrated = crate::migrate::migrate_forms(cst_nodes);
     let sexprs: Vec<_> = migrated.iter().map(|n| n.to_sexpr()).collect();
 
-    let mut config = crate::parse_config_from_sexprs(&sexprs).ok()?;
-    config.source_text = Some(content.to_string());
-    config.pre_migration_forms = Some(pre_migration_forms);
-    Some(config)
+    let config = crate::parse_config_from_sexprs(&sexprs).ok()?;
+    Some(LoadResult {
+        config,
+        source_text: Some(content.to_string()),
+        pre_migration_forms: Some(pre_migration_forms),
+    })
 }
 
 /// Load and resolve a config file: resolve path, parse, and validate named predicates.
 ///
 /// This is the standard config loading pipeline shared by eval, check, and hook commands.
-pub fn load_and_resolve(override_path: Option<&Path>) -> miette::Result<may_i_core::ast::Config> {
+pub fn load_and_resolve(override_path: Option<&Path>) -> miette::Result<LoadResult> {
     let config_file = resolve_path(override_path)?;
-    let mut config = load(&config_file)?;
-    let resolved_rules = crate::resolve::validate_and_resolve(&config.rules, &config.defines)
-        .map_err(|errs| miette::miette!("Predicate resolution failed: {}", errs[0].message))?;
-    config.rules = resolved_rules;
-    Ok(config)
+    let mut result = load(&config_file)?;
+    let resolved_rules =
+        crate::resolve::validate_and_resolve(&result.config.rules, &result.config.defines)
+            .map_err(|errs| miette::miette!("Predicate resolution failed: {}", errs[0].message))?;
+    result.config.rules = resolved_rules;
+    Ok(result)
 }
 
 /// Resolve the config file path.

@@ -256,21 +256,23 @@ impl PositionalArg {
     }
 }
 
+/// Whether an ordered pattern requires exact or prefix matching.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatchMode {
+    /// Match positional args by position (skip flags), prefix match.
+    Positional,
+    /// Like Positional, but requires exactly as many positional args as patterns.
+    Exact,
+}
+
 /// Pattern for matching command arguments.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum ArgPattern {
     /// Match positional args by position (skip flags).
-    /// Syntax: `(positional PATTERN ... [. EFFECT])`
-    Positional {
-        patterns: Vec<PositionalArg>,
-        /// Optional continuation effect evaluated with remaining args.
-        continuation: Option<Box<crate::ast::Effect>>,
-    },
-
-    /// Like Positional, but requires exactly as many positional args as patterns.
-    /// Syntax: `(exact PATTERN ... [. EFFECT])`
-    Exact {
+    /// Syntax: `(positional PATTERN ... [. EFFECT])` or `(exact PATTERN ... [. EFFECT])`
+    Ordered {
+        mode: MatchMode,
         patterns: Vec<PositionalArg>,
         /// Optional continuation effect evaluated with remaining args.
         continuation: Option<Box<crate::ast::Effect>>,
@@ -288,7 +290,8 @@ pub enum ArgPattern {
 impl ArgPattern {
     /// Create a simple positional pattern from expressions.
     pub fn positional(exprs: Vec<Expr<Effect>>) -> Self {
-        ArgPattern::Positional {
+        ArgPattern::Ordered {
+            mode: MatchMode::Positional,
             patterns: exprs.into_iter().map(PositionalArg::one).collect(),
             continuation: None,
         }
@@ -299,7 +302,8 @@ impl ArgPattern {
         exprs: Vec<Expr<Effect>>,
         continuation: crate::ast::Effect,
     ) -> Self {
-        ArgPattern::Positional {
+        ArgPattern::Ordered {
+            mode: MatchMode::Positional,
             patterns: exprs.into_iter().map(PositionalArg::one).collect(),
             continuation: Some(Box::new(continuation)),
         }
@@ -307,7 +311,8 @@ impl ArgPattern {
 
     #[cfg(test)]
     pub(crate) fn exact(exprs: Vec<Expr<Effect>>) -> Self {
-        ArgPattern::Exact {
+        ArgPattern::Ordered {
+            mode: MatchMode::Exact,
             patterns: exprs.into_iter().map(PositionalArg::one).collect(),
             continuation: None,
         }
@@ -318,7 +323,8 @@ impl ArgPattern {
         exprs: Vec<Expr<Effect>>,
         continuation: crate::ast::Effect,
     ) -> Self {
-        ArgPattern::Exact {
+        ArgPattern::Ordered {
+            mode: MatchMode::Exact,
             patterns: exprs.into_iter().map(PositionalArg::one).collect(),
             continuation: Some(Box::new(continuation)),
         }
@@ -391,7 +397,7 @@ mod tests {
         let pattern =
             ArgPattern::positional(vec![Expr::Literal("a".into()), Expr::Literal("b".into())]);
         assert!(
-            matches!(pattern, ArgPattern::Positional { patterns, continuation: None } if patterns.len() == 2)
+            matches!(pattern, ArgPattern::Ordered { mode: MatchMode::Positional, patterns, continuation: None } if patterns.len() == 2)
         );
     }
 
@@ -399,7 +405,7 @@ mod tests {
     fn arg_pattern_exact_creates_correctly() {
         let pattern = ArgPattern::exact(vec![Expr::Literal("x".into())]);
         assert!(
-            matches!(pattern, ArgPattern::Exact { patterns, continuation: None } if patterns.len() == 1)
+            matches!(pattern, ArgPattern::Ordered { mode: MatchMode::Exact, patterns, continuation: None } if patterns.len() == 1)
         );
     }
 
@@ -420,7 +426,7 @@ mod tests {
         let cont = Effect::allow(None);
         let pattern = ArgPattern::positional_with_continuation(vec![], cont);
         assert!(
-            matches!(pattern, ArgPattern::Positional { continuation: Some(_), patterns } if patterns.is_empty())
+            matches!(pattern, ArgPattern::Ordered { mode: MatchMode::Positional, continuation: Some(_), patterns } if patterns.is_empty())
         );
     }
 
@@ -432,7 +438,7 @@ mod tests {
             cont,
         );
         assert!(
-            matches!(pattern, ArgPattern::Positional { continuation: Some(_), patterns } if patterns.len() == 2)
+            matches!(pattern, ArgPattern::Ordered { mode: MatchMode::Positional, continuation: Some(_), patterns } if patterns.len() == 2)
         );
     }
 
@@ -441,7 +447,7 @@ mod tests {
         let cont = Effect::deny(Some("blocked".into()));
         let pattern = ArgPattern::exact_with_continuation(vec![], cont);
         assert!(
-            matches!(pattern, ArgPattern::Exact { continuation: Some(_), patterns } if patterns.is_empty())
+            matches!(pattern, ArgPattern::Ordered { mode: MatchMode::Exact, continuation: Some(_), patterns } if patterns.is_empty())
         );
     }
 
@@ -450,7 +456,7 @@ mod tests {
         let cont = Effect::allow(Some("safe".into()));
         let pattern = ArgPattern::exact_with_continuation(vec![Expr::Literal("cmd".into())], cont);
         assert!(
-            matches!(pattern, ArgPattern::Exact { continuation: Some(_), patterns } if patterns.len() == 1)
+            matches!(pattern, ArgPattern::Ordered { mode: MatchMode::Exact, continuation: Some(_), patterns } if patterns.len() == 1)
         );
     }
 
@@ -520,7 +526,10 @@ mod tests {
     fn expr_cond_matches_if_any_branch_test_matches() {
         let expr = Expr::<Effect>::Cond(vec![ExprBranch {
             test: Expr::Literal("yes".into()),
-            effect: Effect::Allow(None),
+            effect: Effect::Terminal {
+                decision: Decision::Allow,
+                reason: None,
+            },
         }]);
         assert!(expr.is_match("yes"));
         assert!(!expr.is_match("no"));
@@ -570,7 +579,10 @@ mod tests {
     fn find_effect_in_and() {
         let inner = Expr::Cond(vec![ExprBranch {
             test: Expr::Wildcard,
-            effect: Effect::Allow(Some("found".into())),
+            effect: Effect::Terminal {
+                decision: Decision::Allow,
+                reason: Some("found".into()),
+            },
         }]);
         let expr = Expr::And(vec![inner]);
         assert!(expr.find_effect("anything").is_some());
@@ -580,7 +592,10 @@ mod tests {
     fn find_effect_in_or() {
         let inner = Expr::Cond(vec![ExprBranch {
             test: Expr::Wildcard,
-            effect: Effect::Allow(Some("found".into())),
+            effect: Effect::Terminal {
+                decision: Decision::Allow,
+                reason: Some("found".into()),
+            },
         }]);
         let expr = Expr::Or(vec![inner]);
         assert!(expr.find_effect("anything").is_some());
@@ -590,7 +605,10 @@ mod tests {
     fn find_effect_in_not() {
         let inner = Expr::Cond(vec![ExprBranch {
             test: Expr::Wildcard,
-            effect: Effect::Allow(Some("found".into())),
+            effect: Effect::Terminal {
+                decision: Decision::Allow,
+                reason: Some("found".into()),
+            },
         }]);
         let expr = Expr::Not(Box::new(inner));
         assert!(expr.find_effect("anything").is_some());
@@ -600,7 +618,10 @@ mod tests {
     fn find_effect_in_bind() {
         let inner = Expr::Cond(vec![ExprBranch {
             test: Expr::Wildcard,
-            effect: Effect::Allow(Some("found".into())),
+            effect: Effect::Terminal {
+                decision: Decision::Allow,
+                reason: Some("found".into()),
+            },
         }]);
         let expr = Expr::Bind {
             key: Keyword::new(":k").unwrap(),

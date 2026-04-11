@@ -13,7 +13,7 @@ use super::*;
 use std::collections::HashMap;
 
 use may_i_core::ast::{Effect, EffectResult, Predicate, Rule};
-use may_i_core::pattern::{ArgPattern, CommandPattern};
+use may_i_core::pattern::{ArgPattern, CommandPattern, MatchMode};
 use may_i_core::{ContextFacts, Decision, FactPattern, FactQuery, Keyword};
 
 use crate::fold::{EvalFold, PureFold};
@@ -37,15 +37,39 @@ fn evaluate_terminal_effects() {
     let rules: &[Rule] = &[];
 
     assert_eq!(
-        evaluate_effect(&Effect::Allow(None), &ctx, rules).unwrap(),
+        evaluate_effect(
+            &Effect::Terminal {
+                decision: Decision::Allow,
+                reason: None
+            },
+            &ctx,
+            rules
+        )
+        .unwrap(),
         EffectResult::Decision(Decision::Allow, None)
     );
     assert_eq!(
-        evaluate_effect(&Effect::Ask(None), &ctx, rules).unwrap(),
+        evaluate_effect(
+            &Effect::Terminal {
+                decision: Decision::Ask,
+                reason: None
+            },
+            &ctx,
+            rules
+        )
+        .unwrap(),
         EffectResult::Decision(Decision::Ask, None)
     );
     assert_eq!(
-        evaluate_effect(&Effect::Deny(None), &ctx, rules).unwrap(),
+        evaluate_effect(
+            &Effect::Terminal {
+                decision: Decision::Deny,
+                reason: None
+            },
+            &ctx,
+            rules
+        )
+        .unwrap(),
         EffectResult::Decision(Decision::Deny, None)
     );
 }
@@ -77,8 +101,20 @@ fn evaluate_and_combinator() {
 
     // All non-Nil returns last
     let effects = vec![
-        may_i_core::ast::Spanned::new(Effect::Allow(None), may_i_core::span::Span::new(0, 1)),
-        may_i_core::ast::Spanned::new(Effect::Ask(None), may_i_core::span::Span::new(0, 1)),
+        may_i_core::ast::Spanned::new(
+            Effect::Terminal {
+                decision: Decision::Allow,
+                reason: None,
+            },
+            may_i_core::span::Span::new(0, 1),
+        ),
+        may_i_core::ast::Spanned::new(
+            Effect::Terminal {
+                decision: Decision::Ask,
+                reason: None,
+            },
+            may_i_core::span::Span::new(0, 1),
+        ),
     ];
     assert_eq!(
         evaluate_effect(&Effect::And { effects }, &ctx, rules).unwrap(),
@@ -94,8 +130,20 @@ fn evaluate_or_combinator() {
 
     // Returns first non-Nil
     let effects = vec![
-        may_i_core::ast::Spanned::new(Effect::Allow(None), may_i_core::span::Span::new(0, 1)),
-        may_i_core::ast::Spanned::new(Effect::Deny(None), may_i_core::span::Span::new(0, 1)),
+        may_i_core::ast::Spanned::new(
+            Effect::Terminal {
+                decision: Decision::Allow,
+                reason: None,
+            },
+            may_i_core::span::Span::new(0, 1),
+        ),
+        may_i_core::ast::Spanned::new(
+            Effect::Terminal {
+                decision: Decision::Deny,
+                reason: None,
+            },
+            may_i_core::span::Span::new(0, 1),
+        ),
     ];
     assert_eq!(
         evaluate_effect(&Effect::Or { effects }, &ctx, rules).unwrap(),
@@ -110,8 +158,13 @@ fn evaluate_not_combinator() {
     let rules: &[Rule] = &[];
 
     // Not of Allow returns Nil
-    let effect =
-        may_i_core::ast::Spanned::new(Effect::Allow(None), may_i_core::span::Span::new(0, 1));
+    let effect = may_i_core::ast::Spanned::new(
+        Effect::Terminal {
+            decision: Decision::Allow,
+            reason: None,
+        },
+        may_i_core::span::Span::new(0, 1),
+    );
     assert_eq!(
         evaluate_effect(
             &Effect::Not {
@@ -211,14 +264,16 @@ fn positional_with_fact_binding_binds_for_continuation() {
         expr: Box::new(Expr::Wildcard),
     };
 
-    let pattern = ArgPattern::Positional {
+    let pattern = ArgPattern::Ordered {
+        mode: MatchMode::Positional,
         patterns: vec![PositionalArg {
             quantifier: Quantifier::One,
             pattern: bind_expr,
             recursive: false,
         }],
         continuation: Some(Box::new(Effect::MayI {
-            pattern: ArgPattern::Positional {
+            pattern: ArgPattern::Ordered {
+                mode: MatchMode::Positional,
                 patterns: vec![PositionalArg {
                     quantifier: Quantifier::One,
                     pattern: Expr::Wildcard,
@@ -231,7 +286,8 @@ fn positional_with_fact_binding_binds_for_continuation() {
 
     // Test that the pattern structure is correct
     match &pattern {
-        ArgPattern::Positional {
+        ArgPattern::Ordered {
+            mode: MatchMode::Positional,
             patterns,
             continuation,
         } => {
@@ -785,7 +841,8 @@ fn may_i_pushes_via_fact() {
 
     let s = Span::new(0, 1);
     let may_i_effect = Effect::MayI {
-        pattern: ArgPattern::Positional {
+        pattern: ArgPattern::Ordered {
+            mode: MatchMode::Positional,
             patterns: vec![],
             continuation: None,
         },
@@ -806,7 +863,13 @@ fn may_i_pushes_via_fact() {
                     }),
                     s,
                 ),
-                effect: Box::new(Spanned::new(Effect::Deny(Some("via sudo".to_string())), s)),
+                effect: Box::new(Spanned::new(
+                    Effect::Terminal {
+                        decision: Decision::Deny,
+                        reason: Some("via sudo".to_string()),
+                    },
+                    s,
+                )),
             },
             s,
         ),
@@ -843,7 +906,8 @@ fn may_i_nested_wrappers_accumulate_via() {
 
     let s = Span::new(0, 1);
     let may_i_effect = Effect::MayI {
-        pattern: ArgPattern::Positional {
+        pattern: ArgPattern::Ordered {
+            mode: MatchMode::Positional,
             patterns: vec![],
             continuation: None,
         },
@@ -870,7 +934,13 @@ fn may_i_nested_wrappers_accumulate_via() {
                     ]),
                     s,
                 ),
-                effect: Box::new(Spanned::new(Effect::Deny(Some("via both".to_string())), s)),
+                effect: Box::new(Spanned::new(
+                    Effect::Terminal {
+                        decision: Decision::Deny,
+                        reason: Some("via both".to_string()),
+                    },
+                    s,
+                )),
             },
             s,
         ),

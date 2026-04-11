@@ -56,6 +56,17 @@ pub enum Decision {
     Deny,
 }
 
+impl Decision {
+    /// Return the s-expression keyword for this decision (e.g. `:allow`).
+    pub fn keyword(self) -> &'static str {
+        match self {
+            Decision::Allow => ":allow",
+            Decision::Ask => ":ask",
+            Decision::Deny => ":deny",
+        }
+    }
+}
+
 impl std::fmt::Display for Decision {
     #[coverage(off)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

@@ -8,7 +8,9 @@ use arbitrary::{Arbitrary, Unstructured};
 
 use crate::ast::{Check, Config, Define, Effect, Predicate, Rule, SecurityConfig, Spanned};
 use crate::context::ContextFacts;
-use crate::pattern::{ArgPattern, CommandPattern, Expr, ExprBranch, PositionalArg, Quantifier};
+use crate::pattern::{
+    ArgPattern, CommandPattern, Expr, ExprBranch, MatchMode, PositionalArg, Quantifier,
+};
 use crate::predicates::{FactPattern, FactQuery};
 use crate::primitives::{Decision, Keyword};
 use crate::span::Span;
@@ -239,7 +241,8 @@ impl<'a> Arbitrary<'a> for ArgPattern {
                 let patterns = (0..count)
                     .map(|_| PositionalArg::arbitrary(u))
                     .collect::<arbitrary::Result<Vec<_>>>()?;
-                Ok(ArgPattern::Positional {
+                Ok(ArgPattern::Ordered {
+                    mode: MatchMode::Positional,
                     patterns,
                     continuation: None,
                 })
@@ -249,7 +252,8 @@ impl<'a> Arbitrary<'a> for ArgPattern {
                 let patterns = (0..count)
                     .map(|_| PositionalArg::arbitrary(u))
                     .collect::<arbitrary::Result<Vec<_>>>()?;
-                Ok(ArgPattern::Exact {
+                Ok(ArgPattern::Ordered {
+                    mode: MatchMode::Exact,
                     patterns,
                     continuation: None,
                 })
@@ -283,43 +287,45 @@ impl<'a> Arbitrary<'a> for Effect {
         };
 
         if !has_fuel(u) {
-            return match u.int_in_range(0..=4)? {
-                0 => Ok(Effect::Allow(reason)),
-                1 => Ok(Effect::Ask(reason)),
-                2 => Ok(Effect::Deny(reason)),
-                3 => Ok(Effect::CommandPattern(CommandPattern::arbitrary(u)?)),
+            return match u.int_in_range(0..=2)? {
+                0 => Ok(Effect::Terminal {
+                    decision: Decision::arbitrary(u)?,
+                    reason,
+                }),
+                1 => Ok(Effect::CommandPattern(CommandPattern::arbitrary(u)?)),
                 _ => Ok(Effect::ArgPattern(ArgPattern::arbitrary(u)?)),
             };
         }
 
-        match u.int_in_range(0..=10)? {
-            0 => Ok(Effect::Allow(reason)),
-            1 => Ok(Effect::Ask(reason)),
-            2 => Ok(Effect::Deny(reason)),
-            3 => Ok(Effect::CommandPattern(CommandPattern::arbitrary(u)?)),
-            4 => Ok(Effect::ArgPattern(ArgPattern::arbitrary(u)?)),
-            5 => {
+        match u.int_in_range(0..=8)? {
+            0 => Ok(Effect::Terminal {
+                decision: Decision::arbitrary(u)?,
+                reason,
+            }),
+            1 => Ok(Effect::CommandPattern(CommandPattern::arbitrary(u)?)),
+            2 => Ok(Effect::ArgPattern(ArgPattern::arbitrary(u)?)),
+            3 => {
                 let count = u.int_in_range(1..=3)?;
                 let effects = (0..count)
                     .map(|_| Spanned::arbitrary(u))
                     .collect::<arbitrary::Result<Vec<_>>>()?;
                 Ok(Effect::And { effects })
             }
-            6 => {
+            4 => {
                 let count = u.int_in_range(1..=3)?;
                 let effects = (0..count)
                     .map(|_| Spanned::arbitrary(u))
                     .collect::<arbitrary::Result<Vec<_>>>()?;
                 Ok(Effect::Or { effects })
             }
-            7 => Ok(Effect::Not {
+            5 => Ok(Effect::Not {
                 effect: Box::new(Spanned::arbitrary(u)?),
             }),
-            8 => Ok(Effect::When {
+            6 => Ok(Effect::When {
                 predicate: Spanned::arbitrary(u)?,
                 effect: Box::new(Spanned::arbitrary(u)?),
             }),
-            9 => Ok(Effect::If {
+            7 => Ok(Effect::If {
                 predicate: Spanned::arbitrary(u)?,
                 then_effect: Box::new(Spanned::arbitrary(u)?),
                 else_effect: Box::new(Spanned::arbitrary(u)?),
@@ -410,8 +416,6 @@ impl<'a> Arbitrary<'a> for Config {
             rules,
             security: SecurityConfig::default(),
             checks: vec![],
-            source_text: None,
-            pre_migration_forms: None,
         })
     }
 }

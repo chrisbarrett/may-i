@@ -3,5 +3,6 @@
 pub mod annotation;
 pub mod cmd_check;
 pub mod cmd_eval;
+pub mod loaded_config;
 pub mod output;
 pub mod runtime_facts;

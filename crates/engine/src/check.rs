@@ -143,7 +143,13 @@ mod tests {
     #[test]
     fn run_checks_passing() {
         let config = Config {
-            rules: vec![create_test_rule("ls", Effect::Allow(Some("listed".into())))],
+            rules: vec![create_test_rule(
+                "ls",
+                Effect::Terminal {
+                    decision: Decision::Allow,
+                    reason: Some("listed".into()),
+                },
+            )],
             ..Config::default()
         };
 
@@ -161,7 +167,13 @@ mod tests {
     #[test]
     fn run_checks_failing() {
         let config = Config {
-            rules: vec![create_test_rule("ls", Effect::Deny(Some("denied".into())))],
+            rules: vec![create_test_rule(
+                "ls",
+                Effect::Terminal {
+                    decision: Decision::Deny,
+                    reason: Some("denied".into()),
+                },
+            )],
             ..Config::default()
         };
 
@@ -201,7 +213,13 @@ mod tests {
                 Effect::CommandPattern(CommandPattern::Literal("echo".into())),
                 s,
             ),
-            effect: may_i_core::ast::Spanned::new(Effect::Allow(Some("ok".into())), s),
+            effect: may_i_core::ast::Spanned::new(
+                Effect::Terminal {
+                    decision: Decision::Allow,
+                    reason: Some("ok".into()),
+                },
+                s,
+            ),
             checks: vec![Check {
                 command: "echo hi".into(),
                 expected: Decision::Allow,
@@ -240,7 +258,13 @@ mod tests {
             effect: Spanned::new(
                 Effect::When {
                     predicate: Spanned::new(Predicate::Named("undefined".into()), s),
-                    effect: Box::new(Spanned::new(Effect::Allow(Some("ok".into())), s)),
+                    effect: Box::new(Spanned::new(
+                        Effect::Terminal {
+                            decision: Decision::Allow,
+                            reason: Some("ok".into()),
+                        },
+                        s,
+                    )),
                 },
                 s,
             ),

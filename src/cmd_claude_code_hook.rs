@@ -25,11 +25,11 @@ pub(crate) fn cmd_claude_code_hook(config_path: Option<&std::path::Path>) -> mie
         return Ok(());
     };
 
-    let canonical_config = config::load_and_resolve(config_path)?;
+    let loaded = config::load_and_resolve(config_path)?;
 
     let context = build_context(&payload);
     let (cmd, args) = may_i::cmd_eval::parse_command_args(&command);
-    let result = engine::eval::evaluate(&cmd, &args, &canonical_config, &context)
+    let result = engine::eval::evaluate(&cmd, &args, &loaded.config, &context)
         .map_err(|e| miette::miette!("{e}"))?;
 
     let response = render_response(result);

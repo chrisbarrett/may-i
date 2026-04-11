@@ -39,19 +39,28 @@ pub struct PositionalElementDetail {
     pub consumed_args: Vec<String>,
     /// If this was a Bind expression, the key and bound value.
     pub binding: Option<BindDetail>,
-    /// If the inner expression was a Regex, the match detail.
-    pub expr_match: Option<ExprMatchDetail>,
+    /// Kind-specific match detail (expr match, cond branch, or none).
+    pub match_kind: PositionalMatchKind,
     /// Whether this element matched.
     pub matched: bool,
-    /// If this pattern is a Cond, the index of the branch that matched.
-    pub cond_branch_index: Option<usize>,
+}
+
+/// What kind of match detail a positional element carries.
+#[derive(Debug, Clone)]
+pub enum PositionalMatchKind {
+    /// No additional match detail.
+    None,
+    /// An expression match (literal, regex, or wildcard).
+    Expr(ExprMatchDetail),
+    /// A cond branch matched; stores the index of the matching branch.
+    CondBranch(usize),
 }
 
 /// Detail about a fact binding from a positional Bind expression.
 #[derive(Debug, Clone)]
 pub struct BindDetail {
     /// The fact key (e.g. ":ssh/host").
-    pub key: String,
+    pub key: may_i_core::Keyword,
     /// The value that was bound (if matched).
     pub value: Option<String>,
     /// Inner expression match detail (for regex/literal binds).

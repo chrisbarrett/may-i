@@ -8,7 +8,7 @@ use proptest::prelude::*;
 
 use crate::ast::Effect;
 use crate::context::ContextFacts;
-use crate::pattern::{ArgPattern, CommandPattern, Expr, PositionalArg, Quantifier};
+use crate::pattern::{ArgPattern, CommandPattern, Expr, MatchMode, PositionalArg, Quantifier};
 use crate::predicates::{FactPattern, FactQuery};
 use crate::primitives::{Decision, Keyword};
 
@@ -163,13 +163,15 @@ pub fn any_arg_pattern(depth: u32) -> BoxedStrategy<ArgPattern> {
     let expr_depth = depth.min(2);
     prop_oneof![
         prop::collection::vec(any_positional_arg(expr_depth), 0..4).prop_map(|patterns| {
-            ArgPattern::Positional {
+            ArgPattern::Ordered {
+                mode: MatchMode::Positional,
                 patterns,
                 continuation: None,
             }
         }),
         prop::collection::vec(any_positional_arg(expr_depth), 0..4).prop_map(|patterns| {
-            ArgPattern::Exact {
+            ArgPattern::Ordered {
+                mode: MatchMode::Exact,
                 patterns,
                 continuation: None,
             }
@@ -472,7 +474,7 @@ mod pattern_tests {
         fn expr_find_effect_cond_returns_matching_branch(text in any_match_string()) {
             let branch = ExprBranch {
                 test: Expr::Wildcard,
-                effect: Effect::Allow(Some("matched".into())),
+                effect: Effect::Terminal { decision: Decision::Allow, reason: Some("matched".into()) },
             };
             let expr = Expr::Cond(vec![branch]);
             let found = expr.find_effect(&text);

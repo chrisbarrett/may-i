@@ -16,7 +16,7 @@ pub use command::parse_command_pattern;
 pub use config::{parse_config, parse_config_from_sexprs};
 pub use effect::parse_effect;
 pub use errors::ConfigError;
-pub use io::{load, load_and_resolve, resolve_path};
+pub use io::{LoadResult, load, load_and_resolve, resolve_path};
 pub use pattern::{parse_arg_pattern, parse_positional_arg};
 pub use predicate::parse_predicate;
 pub use rule::{parse_define, parse_rule};
