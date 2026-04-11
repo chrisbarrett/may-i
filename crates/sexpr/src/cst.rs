@@ -149,20 +149,7 @@ impl CstNode<TriviaAnn> {
     /// Note: This discards trivia (whitespace/comments) since pretty-printing
     /// reformats the output entirely.
     pub fn to_doc(&self) -> may_i_core::Doc {
-        use may_i_core::Doc;
-
-        match &self.shape {
-            ShapeF::Keyword(s) | ShapeF::Symbol(s) => Doc::atom(s.clone()),
-            ShapeF::String(s) => Doc::atom(quote_string(s)),
-            ShapeF::List(children) => {
-                let child_docs: Vec<Doc> = children.iter().map(|c| c.to_doc()).collect();
-                Doc::list(child_docs)
-            }
-            ShapeF::Vector(children) => {
-                let child_docs: Vec<Doc> = children.iter().map(|c| c.to_doc()).collect();
-                Doc::vector(child_docs)
-            }
-        }
+        self.to_doc_with_trivia().map(&|_| ())
     }
 
     /// Convert this CST node to a trivia-annotated Doc.

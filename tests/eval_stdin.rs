@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{may_i, write_config};
+use common::{may_i, parse_json, write_config};
 use predicates::prelude::*;
 
 const TEST_CONFIG: &str = r#"
@@ -21,8 +21,7 @@ fn eval_reads_command_from_stdin() {
 
     assert!(output.status.success(), "exit 0 expected");
 
-    let resp: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("valid JSON stdout");
+    let resp = parse_json(&output);
 
     assert_eq!(resp["decision"], "allow");
     assert_eq!(resp["reason"], "echo is safe");
@@ -50,8 +49,7 @@ fn eval_stdin_trims_whitespace() {
 
     assert!(output.status.success(), "exit 0 expected");
 
-    let resp: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("valid JSON stdout");
+    let resp = parse_json(&output);
 
     assert_eq!(resp["decision"], "allow");
 }
@@ -83,8 +81,7 @@ fn eval_fact_flag_is_used_in_evaluation() {
 
     assert!(output.status.success(), "exit 0 expected");
 
-    let resp: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("valid JSON stdout");
+    let resp = parse_json(&output);
 
     assert_eq!(resp["decision"], "deny");
     assert_eq!(resp["reason"], "no echo over ssh");
@@ -106,8 +103,7 @@ fn eval_without_matching_fact_falls_through() {
 
     assert!(output.status.success(), "exit 0 expected");
 
-    let resp: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("valid JSON stdout");
+    let resp = parse_json(&output);
 
     assert_eq!(
         resp["decision"], "ask",

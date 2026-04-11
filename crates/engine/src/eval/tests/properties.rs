@@ -780,15 +780,33 @@ fn cond_short_circuits_predicates_after_first_match() {
         branches: vec![
             (
                 Spanned::new(Predicate::Fact(FactQuery::Presence { key: kw(":a") }), s),
-                Spanned::new(Effect::Terminal { decision: Decision::Allow, reason: Some("first".into()) }, s),
+                Spanned::new(
+                    Effect::Terminal {
+                        decision: Decision::Allow,
+                        reason: Some("first".into()),
+                    },
+                    s,
+                ),
             ),
             (
                 Spanned::new(Predicate::Fact(FactQuery::Presence { key: kw(":b") }), s),
-                Spanned::new(Effect::Terminal { decision: Decision::Deny, reason: Some("second".into()) }, s),
+                Spanned::new(
+                    Effect::Terminal {
+                        decision: Decision::Deny,
+                        reason: Some("second".into()),
+                    },
+                    s,
+                ),
             ),
             (
                 Spanned::new(Predicate::Fact(FactQuery::Presence { key: kw(":c") }), s),
-                Spanned::new(Effect::Terminal { decision: Decision::Deny, reason: Some("third".into()) }, s),
+                Spanned::new(
+                    Effect::Terminal {
+                        decision: Decision::Deny,
+                        reason: Some("third".into()),
+                    },
+                    s,
+                ),
             ),
         ],
         fallback: None,

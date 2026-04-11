@@ -63,26 +63,7 @@ impl FactPattern {
     }
 
     pub fn to_source(&self) -> String {
-        match self {
-            FactPattern::Literal(value) => quote_string(value),
-            FactPattern::Wildcard => "*".into(),
-            FactPattern::Regex(regex) => format!("(regex {})", quote_string(regex.as_str())),
-            FactPattern::And(patterns) => {
-                let parts = patterns
-                    .iter()
-                    .map(FactPattern::to_source)
-                    .collect::<Vec<_>>();
-                format!("(and {})", parts.join(" "))
-            }
-            FactPattern::Or(patterns) => {
-                let parts = patterns
-                    .iter()
-                    .map(FactPattern::to_source)
-                    .collect::<Vec<_>>();
-                format!("(or {})", parts.join(" "))
-            }
-            FactPattern::Not(pattern) => format!("(not {})", pattern.to_source()),
-        }
+        self.to_doc().to_flat_string()
     }
 
     #[cfg(any(test, feature = "test-generators"))]
@@ -126,11 +107,6 @@ impl FactQuery {
     }
 
     pub fn to_source(&self) -> String {
-        match self {
-            FactQuery::Presence { key } => key.as_str().to_string(),
-            FactQuery::Value { key, pattern } => {
-                format!("[{} {}]", key.as_str(), pattern.to_source())
-            }
-        }
+        self.to_doc().to_flat_string()
     }
 }

@@ -143,6 +143,19 @@ impl<A> Doc<A> {
     }
 }
 
+// ── Serialisation ─────────────────────────────────────────────────
+
+impl<A> Doc<A> {
+    /// Flat s-expression string with no pretty-printing or line breaks.
+    pub fn to_flat_string(&self) -> String {
+        self.fold(&|node, _ann| match node {
+            DocF::Atom(s) => s,
+            DocF::List(parts) => format!("({})", parts.join(" ")),
+            DocF::Vector(parts) => format!("[{}]", parts.join(" ")),
+        })
+    }
+}
+
 // ── Catamorphism (fold) ────────────────────────────────────────────
 
 impl<A> Doc<A> {

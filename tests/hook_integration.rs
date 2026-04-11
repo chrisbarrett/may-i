@@ -3,7 +3,7 @@
 mod common;
 
 use assert_cmd::cargo::cargo_bin_cmd;
-use common::{bash_payload, may_i, write_config};
+use common::{bash_payload, may_i, parse_json, write_config};
 use predicates::prelude::*;
 
 #[test]
@@ -44,8 +44,7 @@ fn hook_resolves_defined_predicates() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let resp: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("valid JSON stdout");
+    let resp = parse_json(&output);
 
     assert_eq!(
         resp["hookSpecificOutput"]["permissionDecision"], "deny",
@@ -73,8 +72,7 @@ fn hook_preserves_quoted_arguments() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let resp: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("valid JSON stdout");
+    let resp = parse_json(&output);
 
     assert_eq!(
         resp["hookSpecificOutput"]["permissionDecision"], "allow",
@@ -101,8 +99,7 @@ fn hook_json_flag_produces_valid_json() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let resp: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("valid JSON stdout");
+    let resp = parse_json(&output);
 
     assert_eq!(resp["hookSpecificOutput"]["permissionDecision"], "allow");
     assert_eq!(
