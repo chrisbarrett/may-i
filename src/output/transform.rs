@@ -632,7 +632,7 @@ mod tests {
         ];
         leaf.prop_recursive(3, 15, 4, |inner| {
             prop_oneof![
-                prop::collection::vec(inner.clone(), 0..5).prop_map(|cs| list(cs)),
+                prop::collection::vec(inner.clone(), 0..5).prop_map(list),
                 (
                     prop::collection::vec("[a-z]{1,8}".prop_map(|s| s), 1..4),
                     prop::collection::vec("[a-z]{1,8}".prop_map(|s| s), 0..3),
@@ -641,14 +641,14 @@ mod tests {
                         let matched = !tokens.is_empty();
                         list_ann(
                             Ann::ArgMatch {
-                                search_tokens: tokens.iter().map(|t| t.clone()).collect(),
+                                search_tokens: tokens.clone(),
                                 arg_set: args,
                                 matched,
                             },
                             vec![atom("anywhere"), atom(&tokens[0])],
                         )
                     }),
-                prop::collection::vec(inner, 0..4).prop_map(|cs| list(cs)),
+                prop::collection::vec(inner, 0..4).prop_map(list),
             ]
         })
     }
