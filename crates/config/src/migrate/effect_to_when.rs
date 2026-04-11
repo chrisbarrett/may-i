@@ -1,11 +1,8 @@
-use super::helpers::complexity;
+use super::helpers::{complexity, tagged_list};
 use may_i_sexpr::cst::{CstNode, Shape, TriviaAnn};
 
 pub(crate) fn and_trailing_effect_to_when(node: &CstNode) -> Option<Box<CstNode>> {
-    if !node.is_tagged("and") {
-        return None;
-    }
-    let children = node.as_list()?;
+    let children = tagged_list("and", node)?;
     // Need at least: and + one predicate + effect
     if children.len() < 3 {
         return None;

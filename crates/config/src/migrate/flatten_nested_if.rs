@@ -1,11 +1,8 @@
-use super::helpers::strip_whitespace_trivia;
+use super::helpers::{strip_whitespace_trivia, tagged_list};
 use may_i_sexpr::cst::{CstNode, TriviaAnn};
 
 pub(crate) fn flatten_nested_if(node: &CstNode) -> Option<Box<CstNode>> {
-    if !node.is_tagged("if") {
-        return None;
-    }
-    let children = node.as_list()?;
+    let children = tagged_list("if", node)?;
     if children.len() != 4 {
         return None;
     }

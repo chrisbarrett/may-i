@@ -1,5 +1,23 @@
 use may_i_sexpr::cst::{CstNode, Shape, TriviaAnn};
 
+/// Extract children from a node tagged with `tag`. Returns `None` if the node
+/// is not a list whose first element is an atom equal to `tag`.
+pub(crate) fn tagged_list<'a>(tag: &str, node: &'a CstNode) -> Option<&'a [Box<CstNode>]> {
+    if !node.is_tagged(tag) {
+        return None;
+    }
+    node.as_list()
+}
+
+/// Rebuild a list node preserving the original node's annotation.
+#[allow(clippy::vec_box)] // Shape::List requires Vec<Box<CstNode>>
+pub(crate) fn rebuild_list(node: &CstNode, children: Vec<Box<CstNode>>) -> Box<CstNode> {
+    Box::new(CstNode {
+        ann: node.ann.clone(),
+        shape: Shape::List(children),
+    })
+}
+
 /// Recursively strip whitespace trivia from a node and its children, preserving
 /// comments.
 ///

@@ -1,12 +1,8 @@
-use super::helpers::strip_whitespace_trivia;
-use may_i_sexpr::cst::{CstNode, Shape};
+use super::helpers::{rebuild_list, strip_whitespace_trivia, tagged_list};
+use may_i_sexpr::cst::CstNode;
 
 pub(crate) fn rule_inline_context(node: &CstNode) -> Option<Box<CstNode>> {
-    if !node.is_tagged("rule") {
-        return None;
-    }
-
-    let children = node.as_list()?;
+    let children = tagged_list("rule", node)?;
     if children.len() < 3 {
         return None;
     }
@@ -55,10 +51,7 @@ pub(crate) fn rule_inline_context(node: &CstNode) -> Option<Box<CstNode>> {
         new_children.push(Box::new(when_node));
         new_children.extend(check_forms);
 
-        return Some(Box::new(CstNode {
-            ann: node.ann.clone(),
-            shape: Shape::List(new_children),
-        }));
+        return Some(rebuild_list(node, new_children));
     }
 
     // If we only have context but no effect, inline the context directly
@@ -70,10 +63,7 @@ pub(crate) fn rule_inline_context(node: &CstNode) -> Option<Box<CstNode>> {
         new_children.push(context_expr.unwrap());
         new_children.extend(check_forms);
 
-        return Some(Box::new(CstNode {
-            ann: node.ann.clone(),
-            shape: Shape::List(new_children),
-        }));
+        return Some(rebuild_list(node, new_children));
     }
 
     None

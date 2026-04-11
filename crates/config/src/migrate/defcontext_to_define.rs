@@ -1,11 +1,8 @@
+use super::helpers::{rebuild_list, tagged_list};
 use may_i_sexpr::cst::{CstNode, TriviaAnn};
 
 pub(crate) fn defcontext_to_define(node: &CstNode) -> Option<Box<CstNode>> {
-    if !node.is_tagged("defcontext") {
-        return None;
-    }
-
-    let children = node.as_list()?;
+    let children = tagged_list("defcontext", node)?;
     if children.len() != 3 {
         return None;
     }
@@ -23,14 +20,7 @@ pub(crate) fn defcontext_to_define(node: &CstNode) -> Option<Box<CstNode>> {
         children[2].clone(), // BODY
     ];
 
-    Some(Box::new(CstNode::list(
-        new_children,
-        TriviaAnn {
-            leading: node.ann.leading.clone(),
-            trailing: node.ann.trailing.clone(),
-            span: node.ann.span,
-        },
-    )))
+    Some(rebuild_list(node, new_children))
 }
 
 #[cfg(test)]
