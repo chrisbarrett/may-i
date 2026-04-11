@@ -104,10 +104,7 @@ fn parse_fact_query(sexpr: &Sexpr) -> Result<FactQuery, RawError> {
     // Bare atom: presence check without vector syntax
     if sexpr.as_atom().is_some() {
         let key = parse_context_key(sexpr)?;
-        return Ok(FactQuery::Presence {
-            key,
-            vector_syntax: false,
-        });
+        return Ok(FactQuery::Presence { key });
     }
 
     // Vector syntax: presence or value check
@@ -124,10 +121,7 @@ fn parse_fact_query(sexpr: &Sexpr) -> Result<FactQuery, RawError> {
     match items.len() {
         1 => {
             let key = parse_context_key(&items[0])?;
-            Ok(FactQuery::Presence {
-                key,
-                vector_syntax: true,
-            })
+            Ok(FactQuery::Presence { key })
         }
         2 => {
             let key = parse_context_key(&items[0])?;
@@ -249,9 +243,8 @@ mod tests {
     fn parse_fact_presence_bare() {
         let pred = parse_pred(r#"(fact? :via/ssh)"#).unwrap();
         match pred {
-            Predicate::Fact(FactQuery::Presence { key, vector_syntax }) => {
+            Predicate::Fact(FactQuery::Presence { key }) => {
                 assert_eq!(key, ":via/ssh");
-                assert!(!vector_syntax);
             }
             _ => panic!("expected Fact with Presence"),
         }
@@ -261,9 +254,8 @@ mod tests {
     fn parse_fact_presence_vector() {
         let pred = parse_pred(r#"(fact? [:via/ssh])"#).unwrap();
         match pred {
-            Predicate::Fact(FactQuery::Presence { key, vector_syntax }) => {
+            Predicate::Fact(FactQuery::Presence { key }) => {
                 assert_eq!(key, ":via/ssh");
-                assert!(vector_syntax);
             }
             _ => panic!("expected Fact with Presence"),
         }

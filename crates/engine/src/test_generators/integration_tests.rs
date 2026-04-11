@@ -65,7 +65,6 @@ fn multiple_fact_bindings() {
                     }),
                     Predicate::Fact(may_i_core::FactQuery::Presence {
                         key: Keyword::new(":verified").unwrap(),
-                        vector_syntax: false,
                     }),
                 ])),
                 effect: Box::new(spanned(Effect::Allow(Some("admin verified".into())))),

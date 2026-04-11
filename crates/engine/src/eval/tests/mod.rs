@@ -132,7 +132,6 @@ fn predicate_evaluation() {
 
     let pred = Predicate::Fact(FactQuery::Presence {
         key: kw(":missing"),
-        vector_syntax: false,
     });
     assert_eq!(
         evaluate_predicate(&pred, &ctx).unwrap(),
@@ -145,7 +144,6 @@ fn predicate_evaluation() {
 
     let pred = Predicate::Fact(FactQuery::Presence {
         key: kw(":present"),
-        vector_syntax: false,
     });
     assert_eq!(
         evaluate_predicate(&pred, &ctx).unwrap(),

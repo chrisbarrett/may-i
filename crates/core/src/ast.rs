@@ -268,7 +268,6 @@ impl Predicate {
     pub fn fact_presence(key: impl Into<String>) -> Self {
         Predicate::Fact(FactQuery::Presence {
             key: crate::Keyword::new(key).unwrap(),
-            vector_syntax: false,
         })
     }
 
@@ -670,7 +669,7 @@ mod tests {
         let pred = Predicate::fact_presence(":via/ssh");
         assert!(matches!(
             pred,
-            Predicate::Fact(FactQuery::Presence { key, vector_syntax: false })
+            Predicate::Fact(FactQuery::Presence { key })
             if key == ":via/ssh"
         ));
     }

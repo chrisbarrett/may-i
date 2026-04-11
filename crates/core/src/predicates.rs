@@ -109,7 +109,7 @@ impl std::fmt::Debug for FactPattern {
 #[derive(Debug, Clone)]
 pub enum FactQuery {
     /// Check if a key is present.
-    Presence { key: Keyword, vector_syntax: bool },
+    Presence { key: Keyword },
     /// Check if a key's value matches a pattern.
     Value { key: Keyword, pattern: FactPattern },
 }
@@ -118,14 +118,7 @@ impl FactQuery {
     /// Convert to a Doc representation.
     pub fn to_doc(&self) -> Doc {
         match self {
-            FactQuery::Presence {
-                key,
-                vector_syntax: false,
-            } => Doc::atom(key.as_str()),
-            FactQuery::Presence {
-                key,
-                vector_syntax: true,
-            } => Doc::vector(vec![Doc::atom(key.as_str())]),
+            FactQuery::Presence { key } => Doc::atom(key.as_str()),
             FactQuery::Value { key, pattern } => {
                 Doc::vector(vec![Doc::atom(key.as_str()), pattern.to_doc()])
             }
@@ -134,14 +127,7 @@ impl FactQuery {
 
     pub fn to_source(&self) -> String {
         match self {
-            FactQuery::Presence {
-                key,
-                vector_syntax: false,
-            } => key.as_str().to_string(),
-            FactQuery::Presence {
-                key,
-                vector_syntax: true,
-            } => format!("[{}]", key.as_str()),
+            FactQuery::Presence { key } => key.as_str().to_string(),
             FactQuery::Value { key, pattern } => {
                 format!("[{} {}]", key.as_str(), pattern.to_source())
             }

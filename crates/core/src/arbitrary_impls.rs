@@ -136,7 +136,6 @@ impl<'a> Arbitrary<'a> for FactQuery {
         if u.arbitrary()? {
             Ok(FactQuery::Presence {
                 key: Keyword::arbitrary(u)?,
-                vector_syntax: u.arbitrary()?,
             })
         } else {
             Ok(FactQuery::Value {
