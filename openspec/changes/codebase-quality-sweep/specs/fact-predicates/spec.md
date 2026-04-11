@@ -1,0 +1,16 @@
+## MODIFIED Requirements
+
+### Requirement: FactQuery enum available in predicates module
+The `FactQuery` enum (Presence, Value) SHALL be defined in `crates/core/src/predicates.rs` and re-exported from `may_i_core`. `FactQuery::Presence` SHALL carry only the `key` field — no `vector_syntax` field.
+
+#### Scenario: FactQuery can check key presence
+- **WHEN** `FactQuery::Presence { key }` is evaluated
+- **THEN** it checks if the key exists in context
+
+#### Scenario: FactQuery can check key value
+- **WHEN** `FactQuery::Value { key, pattern }` is evaluated
+- **THEN** it checks if the key's value matches the pattern
+
+#### Scenario: No vector_syntax in domain model
+- **WHEN** constructing a `FactQuery::Presence`
+- **THEN** only the `key` field SHALL be required
