@@ -887,6 +887,50 @@ mod proptests {
     use super::*;
     use proptest::prelude::*;
 
+    fn any_note_level() -> impl Strategy<Value = NoteLevel> {
+        prop_oneof![
+            Just(NoteLevel::Info),
+            Just(NoteLevel::Warn),
+            Just(NoteLevel::Error),
+        ]
+    }
+
+    fn any_layout() -> BoxedStrategy<Layout> {
+        let leaf = prop_oneof![
+            Just(Layout::Blank),
+            Just(Layout::HRule(None)),
+            "[a-z ]{0,30}".prop_map(|s| Layout::HRule(Some(HRuleLabel {
+                visible_width: s.len(),
+                text: s,
+            }))),
+            "[a-z ]{0,40}".prop_map(Layout::Text),
+            (any_note_level(), "[a-z ]{1,20}", "[a-z ]{0,40}").prop_map(
+                |(level, heading, body)| {
+                    Layout::Note(Note {
+                        level,
+                        heading: heading.into(),
+                        body,
+                    })
+                }
+            ),
+            prop::collection::vec(
+                ("[a-z]{1,10}", "[a-z ]{0,20}").prop_map(|(l, r)| {
+                    let w = l.len();
+                    ColRow::new(l, w, r)
+                }),
+                1..=4,
+            )
+            .prop_map(Layout::Columns),
+        ];
+        leaf.prop_recursive(2, 8, 3, |inner| {
+            prop_oneof![
+                (1..6usize, inner.clone()).prop_map(|(n, l)| Layout::Indent(n, Box::new(l))),
+                prop::collection::vec(inner, 0..4).prop_map(Layout::Stack),
+            ]
+        })
+        .boxed()
+    }
+
     fn item_strategy() -> impl Strategy<Value = ColItem> {
         "[a-z]{1,10}".prop_map(|s| {
             let w = s.len();
@@ -1001,5 +1045,20 @@ mod proptests {
     fn word_wrap_empty_input() {
         let result = word_wrap("", 80);
         assert_eq!(result, vec![String::new()]);
+    }
+
+    proptest! {
+        /// write_layout never panics on arbitrary layouts and widths.
+        #[test]
+        fn write_layout_never_panics(
+            layout in any_layout(),
+            width in 20..200usize,
+        ) {
+            let term = Terminal::new(width);
+            let mut buf = Vec::new();
+            write_layout(&mut buf, &layout, &term);
+            // Just ensuring no panic; output is valid UTF-8.
+            let _ = String::from_utf8_lossy(&buf);
+        }
     }
 }

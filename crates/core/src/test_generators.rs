@@ -356,6 +356,13 @@ mod context_facts_tests {
         }
 
         #[test]
+        fn merge_is_commutative(a in any_context_facts(), b in any_context_facts()) {
+            let ab = a.merge(&b);
+            let ba = b.merge(&a);
+            prop_assert_eq!(ab, ba, "merge is not commutative");
+        }
+
+        #[test]
         fn merge_with_empty_is_identity(facts in any_context_facts()) {
             let empty = ContextFacts::default();
             let merged_right = facts.merge(&empty);

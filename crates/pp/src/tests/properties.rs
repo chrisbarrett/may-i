@@ -110,3 +110,35 @@ proptest! {
 fn strip_ansi(s: &str) -> String {
     crate::strip_ansi(s)
 }
+
+// ── Pretty-print idempotency (task 10.1) ─────────────────────────
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 256, max_shrink_iters: 50, .. ProptestConfig::default() })]
+
+    #[test]
+    fn pretty_print_is_idempotent(doc in arb_doc(), width in 20..120usize) {
+        let fmt = Format { width, ..Default::default() };
+        let output1 = pretty(&doc, 0, &fmt);
+        let reparsed = parse_sexpr(&output1);
+        let output2 = pretty(&reparsed, 0, &fmt);
+        prop_assert_eq!(output1, output2,
+            "pretty-print not idempotent at width {}", width);
+    }
+
+    // ── Pretty-print width monotonicity (task 10.2) ──────────────
+
+    #[test]
+    fn narrower_width_produces_at_least_as_many_lines(
+        doc in arb_doc(),
+        w1 in 20..60usize,
+        w2 in 60..120usize,
+    ) {
+        let fmt_narrow = Format { width: w1, ..Default::default() };
+        let fmt_wide = Format { width: w2, ..Default::default() };
+        let narrow = pretty(&doc, 0, &fmt_narrow);
+        let wide = pretty(&doc, 0, &fmt_wide);
+        prop_assert!(narrow.lines().count() >= wide.lines().count(),
+            "narrow ({}) has fewer lines than wide ({}):\nnarrow:\n{}\nwide:\n{}", w1, w2, narrow, wide);
+    }
+}

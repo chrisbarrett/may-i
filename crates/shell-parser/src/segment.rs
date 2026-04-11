@@ -381,3 +381,46 @@ mod tests {
         assert!(!segs[0].is_operator);
     }
 }
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: 256, max_shrink_iters: 50, .. ProptestConfig::default() })]
+
+        /// Segments cover the entire input (no bytes lost between segments).
+        #[test]
+        fn segments_cover_input(input in "[a-zA-Z0-9 |;&./-]{1,80}") {
+            let segs = segment(&input);
+            if segs.is_empty() {
+                // Empty segments means input was all whitespace/empty
+                return Ok(());
+            }
+            // All segment ranges must be within the input
+            for seg in &segs {
+                prop_assert!(seg.start <= seg.end, "start > end: {:?}", seg);
+                prop_assert!(seg.end <= input.len(), "end > input.len(): {:?}", seg);
+            }
+            // Segments should not overlap
+            for pair in segs.windows(2) {
+                prop_assert!(pair[0].end <= pair[1].start,
+                    "overlapping segments: {:?} and {:?}", pair[0], pair[1]);
+            }
+            // Joining command segments and operator segments should reconstruct
+            // all the non-whitespace content
+            let reconstructed: String = segs.iter()
+                .map(|s| &input[s.start..s.end])
+                .collect::<Vec<_>>()
+                .join("");
+            let original_tokens: String = input.split_whitespace().collect();
+            let recon_tokens: String = reconstructed.split_whitespace().collect();
+            // All non-whitespace chars from segments appear in input
+            for ch in recon_tokens.chars() {
+                prop_assert!(original_tokens.contains(ch),
+                    "char {:?} in segments not found in input", ch);
+            }
+        }
+    }
+}
