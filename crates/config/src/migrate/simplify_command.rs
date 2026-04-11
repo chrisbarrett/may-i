@@ -1,11 +1,8 @@
-use super::helpers::strip_whitespace_trivia;
-use may_i_sexpr::cst::{CstNode, Shape};
+use super::helpers::{rebuild_list, strip_whitespace_trivia, tagged_list};
+use may_i_sexpr::cst::CstNode;
 
 pub(crate) fn rule_simplify_command(node: &CstNode) -> Option<Box<CstNode>> {
-    if !node.is_tagged("rule") {
-        return None;
-    }
-    let children = node.as_list()?;
+    let children = tagged_list("rule", node)?;
     if children.len() < 2 {
         return None;
     }
@@ -40,10 +37,7 @@ pub(crate) fn rule_simplify_command(node: &CstNode) -> Option<Box<CstNode>> {
         new_children.push(child.clone());
     }
 
-    Some(Box::new(CstNode {
-        ann: node.ann.clone(),
-        shape: Shape::List(new_children),
-    }))
+    Some(rebuild_list(node, new_children))
 }
 
 #[cfg(test)]

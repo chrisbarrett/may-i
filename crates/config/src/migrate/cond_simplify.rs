@@ -1,11 +1,8 @@
-use super::helpers::strip_whitespace_trivia;
+use super::helpers::{strip_whitespace_trivia, tagged_list};
 use may_i_sexpr::cst::{CstNode, Shape, TriviaAnn};
 
 pub(crate) fn cond_single_clause_to_if(node: &CstNode) -> Option<Box<CstNode>> {
-    if !node.is_tagged("cond") {
-        return None;
-    }
-    let children = node.as_list()?;
+    let children = tagged_list("cond", node)?;
     // Expect: cond tag + exactly 2 branches
     if children.len() != 3 {
         return None;
@@ -52,10 +49,7 @@ pub(crate) fn cond_single_clause_to_if(node: &CstNode) -> Option<Box<CstNode>> {
 }
 
 pub(crate) fn cond_absorb_else(node: &CstNode) -> Option<Box<CstNode>> {
-    if !node.is_tagged("cond") {
-        return None;
-    }
-    let children = node.as_list()?;
+    let children = tagged_list("cond", node)?;
     // Need at least cond tag + one clause + else
     if children.len() < 3 {
         return None;

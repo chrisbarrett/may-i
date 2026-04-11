@@ -6,6 +6,23 @@ use may_i_core::ast::{Check, Config, SecurityConfig};
 use may_i_core::{ContextFacts, Decision, Keyword};
 use may_i_sexpr::{RawError, Sexpr};
 
+fn parse_decision(sexpr: &Sexpr) -> Result<Decision, RawError> {
+    match sexpr.as_atom().ok_or_else(|| {
+        RawError::new(
+            "check entries must start with a decision keyword (:allow, :deny, :ask) or with-facts",
+            sexpr.span(),
+        )
+    })? {
+        ":allow" => Ok(Decision::Allow),
+        ":deny" => Ok(Decision::Deny),
+        ":ask" => Ok(Decision::Ask),
+        other => Err(
+            RawError::new(format!("unknown expected decision: {other}"), sexpr.span())
+                .with_help("valid decisions: :allow, :deny, :ask"),
+        ),
+    }
+}
+
 /// Parse a config from an s-expression string.
 #[must_use]
 pub fn parse_config(input: &str) -> Result<Config, RawError> {
@@ -102,23 +119,7 @@ pub fn parse_check(args: &[Sexpr], check_span: Span) -> Result<Vec<Check>, RawEr
         }
 
         // Parse decision keyword
-        let expected = match args[i].as_atom().ok_or_else(|| {
-            RawError::new(
-                "check entries must start with a decision keyword (:allow, :deny, :ask) or with-facts",
-                args[i].span(),
-            )
-        })? {
-            ":allow" => Decision::Allow,
-            ":deny" => Decision::Deny,
-            ":ask" => Decision::Ask,
-            other => {
-                return Err(RawError::new(
-                    format!("unknown expected decision: {other}"),
-                    args[i].span(),
-                )
-                .with_help("valid decisions: :allow, :deny, :ask"));
-            }
-        };
+        let expected = parse_decision(&args[i])?;
         i += 1;
 
         // Parse command
@@ -269,23 +270,7 @@ fn parse_check_items(
         }
 
         // Parse decision
-        let expected = match items[i].as_atom().ok_or_else(|| {
-            RawError::new(
-                "check entries must start with a decision keyword or with-facts",
-                items[i].span(),
-            )
-        })? {
-            ":allow" => Decision::Allow,
-            ":deny" => Decision::Deny,
-            ":ask" => Decision::Ask,
-            other => {
-                return Err(RawError::new(
-                    format!("unknown expected decision: {other}"),
-                    items[i].span(),
-                )
-                .with_help("valid decisions: :allow, :deny, :ask"));
-            }
-        };
+        let expected = parse_decision(&items[i])?;
         i += 1;
 
         // Parse command

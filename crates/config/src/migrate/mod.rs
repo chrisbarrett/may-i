@@ -41,6 +41,7 @@ mod property_tests;
 #[cfg(test)]
 mod regression_tests;
 
+use may_i_core::Span;
 use may_i_sexpr::cst::CstNode;
 
 /// A rewrite rule that transforms v1 syntax to canonical.
@@ -154,13 +155,6 @@ pub struct UnhandledCase {
     pub suggestion: String,
 }
 
-/// A span in the source text (for error reporting).
-#[derive(Debug, Clone, Copy)]
-pub struct Span {
-    pub start: usize,
-    pub end: usize,
-}
-
 /// A single form that will be migrated.
 #[derive(Debug, Clone)]
 pub struct MigrationDiff {
@@ -239,7 +233,7 @@ pub fn analyze_migration(source: &str) -> MigrationAnalysis {
     for err in &errors {
         migration_errors.push(MigrationError {
             message: format!("{}", err),
-            span: Span { start: 0, end: 0 },
+            span: Span::new(0, 0),
             context_before: vec![],
             context_after: vec![],
         });
@@ -258,10 +252,7 @@ pub fn analyze_migration(source: &str) -> MigrationAnalysis {
                 after: migrated,
                 context_before: extract_leading_context(form, 2),
                 context_after: extract_trailing_context(form, 2),
-                span: Span {
-                    start: form.ann.span.start,
-                    end: form.ann.span.end,
-                },
+                span: form.ann.span,
             });
         } else {
             unchanged_count += 1;

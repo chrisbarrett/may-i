@@ -184,53 +184,47 @@ fn dfs_check_cycle(
     Ok(())
 }
 
+/// Check that all named references in a list resolve to a defined name.
+fn check_refs_defined(
+    refs: &[NamedRef],
+    defined: &HashSet<String>,
+    context: &str,
+) -> Result<(), ResolutionError> {
+    for named_ref in refs {
+        if !defined.contains(&named_ref.name) {
+            let msg = if context.is_empty() {
+                format!("undefined predicate reference: '{}'", named_ref.name)
+            } else {
+                format!(
+                    "undefined predicate reference: '{}' in {}",
+                    named_ref.name, context
+                )
+            };
+            return Err(ResolutionError::new(msg, named_ref.span).with_help(format!(
+                "define '{}' before using it, or check for typos",
+                named_ref.name
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Check for undefined predicate references in a list of rules and defines.
 pub(crate) fn check_undefined_refs(
     rules: &[Rule],
     defines: &[Define],
     define_map: &DefineMap,
 ) -> Result<(), ResolutionError> {
-    // Collect all defined names
     let defined_names: HashSet<String> = define_map.names().cloned().collect();
 
-    // Check references in defines
     for define in defines {
         let refs = collect_named_refs(&define.predicate);
-        for named_ref in refs {
-            if !defined_names.contains(&named_ref.name) {
-                return Err(ResolutionError::new(
-                    format!("undefined predicate reference: '{}'", named_ref.name),
-                    named_ref.span,
-                )
-                .with_help(format!(
-                    "define '{}' before using it, or check for typos",
-                    named_ref.name
-                )));
-            }
-        }
+        check_refs_defined(&refs, &defined_names, "")?;
     }
 
-    // Check references in rules (predicates can appear in effects within conditionals)
     for rule in rules {
-        // Check effect for named predicate references
-        {
-            let refs = collect_named_refs_from_effect(&rule.effect);
-            for named_ref in refs {
-                if !defined_names.contains(&named_ref.name) {
-                    return Err(ResolutionError::new(
-                        format!(
-                            "undefined predicate reference: '{}' in rule",
-                            named_ref.name
-                        ),
-                        named_ref.span,
-                    )
-                    .with_help(format!(
-                        "define '{}' before using it, or check for typos",
-                        named_ref.name
-                    )));
-                }
-            }
-        }
+        let refs = collect_named_refs_from_effect(&rule.effect);
+        check_refs_defined(&refs, &defined_names, "rule")?;
     }
 
     Ok(())

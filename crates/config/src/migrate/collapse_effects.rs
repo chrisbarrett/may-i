@@ -1,11 +1,8 @@
-use may_i_sexpr::cst::{CstNode, Shape, TriviaAnn};
+use super::helpers::{rebuild_list, tagged_list};
+use may_i_sexpr::cst::{CstNode, TriviaAnn};
 
 pub(crate) fn rule_collapse_effects(node: &CstNode) -> Option<Box<CstNode>> {
-    if !node.is_tagged("rule") {
-        return None;
-    }
-
-    let children = node.as_list()?;
+    let children = tagged_list("rule", node)?;
     if children.len() < 2 {
         return None;
     }
@@ -49,10 +46,7 @@ pub(crate) fn rule_collapse_effects(node: &CstNode) -> Option<Box<CstNode>> {
     new_children.push(Box::new(and_node));
     new_children.extend(check_forms);
 
-    Some(Box::new(CstNode {
-        ann: node.ann.clone(),
-        shape: Shape::List(new_children),
-    }))
+    Some(rebuild_list(node, new_children))
 }
 
 #[cfg(test)]
