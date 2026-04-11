@@ -460,8 +460,7 @@ mod tests {
             prop_oneof![
                 "[a-z]{1,8}".prop_map(|s| atom(&s)),
                 ("[a-z]{1,8}", any_ann()).prop_map(|(s, a)| atom_ann(&s, a)),
-                prop::collection::vec(any_annotated_doc(depth - 1), 0..5)
-                    .prop_map(|children| list(children)),
+                prop::collection::vec(any_annotated_doc(depth - 1), 0..5).prop_map(list),
                 (
                     any_ann(),
                     prop::collection::vec(any_annotated_doc(depth - 1), 0..5)

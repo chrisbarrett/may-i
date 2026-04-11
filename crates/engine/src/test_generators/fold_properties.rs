@@ -100,7 +100,7 @@ proptest! {
 
         // With just the required arg, all optionals should be skipped.
         let args_owned = [required.clone()];
-        let args: Vec<&String> = args_owned.iter().collect();
+        let args: Vec<&str> = args_owned.iter().map(|s| s.as_str()).collect();
         let (matched, consumed, _) = eval::match_positional_patterns(&args, &patterns);
         prop_assert!(matched, "Required arg should match when optionals are skipped");
         prop_assert_eq!(consumed, 1, "Only the required arg should be consumed");
@@ -126,7 +126,7 @@ proptest! {
             .map(|i| format!("arg{i}"))
             .collect();
         args_owned.push(suffix.clone());
-        let args: Vec<&String> = args_owned.iter().collect();
+        let args: Vec<&str> = args_owned.iter().map(|s| s.as_str()).collect();
 
         let (matched, consumed, _) = eval::match_positional_patterns(&args, &patterns);
         prop_assert!(matched,
@@ -150,7 +150,7 @@ proptest! {
 
         // Build args: first `arg_count` matching, then stop.
         let args_owned: Vec<String> = (0..arg_count).map(|i| format!("p{i}")).collect();
-        let args: Vec<&String> = args_owned.iter().collect();
+        let args: Vec<&str> = args_owned.iter().map(|s| s.as_str()).collect();
 
         let (matched, consumed, _) = eval::match_positional_patterns(&args, &patterns);
         if arg_count >= pattern_count {
@@ -206,11 +206,10 @@ proptest! {
             positional.clone(),
         ];
         let result = eval::positional_args(&args);
-        let result_strs: Vec<&str> = result.iter().map(|s| s.as_str()).collect();
 
-        prop_assert!(!result_strs.contains(&opt_value.as_str()),
+        prop_assert!(!result.contains(&opt_value.as_str()),
             "Option value should be excluded from positional args");
-        prop_assert!(result_strs.contains(&positional.as_str()),
+        prop_assert!(result.contains(&positional.as_str()),
             "Positional arg should be included");
     }
 

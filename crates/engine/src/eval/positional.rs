@@ -11,14 +11,14 @@ use may_i_core::pattern::PositionalArg;
 /// greedy match first, then progressively shorter matches if subsequent
 /// patterns fail.
 pub(crate) fn match_positional_patterns(
-    args: &[&String],
+    args: &[&str],
     patterns: &[PositionalArg],
 ) -> (bool, usize, ContextFacts) {
     match_positional_recursive(args, patterns, 0, 0, ContextFacts::default())
 }
 
 fn match_positional_recursive(
-    args: &[&String],
+    args: &[&str],
     patterns: &[PositionalArg],
     pat_idx: usize,
     arg_idx: usize,
@@ -192,7 +192,7 @@ pub(crate) fn match_expr_with_binding<E: std::fmt::Debug + may_i_core::ToDoc>(
 /// Re-walks the patterns against the matched args to capture binding and
 /// expression match info for annotation purposes.
 pub(crate) fn build_positional_element_details(
-    args: &[&String],
+    args: &[&str],
     patterns: &[PositionalArg],
     matched: bool,
     consumed: usize,
@@ -345,7 +345,7 @@ fn find_cond_branch_effect<'a>(
 /// or no branch matched.
 pub(super) fn resolve_trailing_cond_effect<'a>(
     patterns: &'a [may_i_core::pattern::PositionalArg],
-    positional_args: &[&String],
+    positional_args: &[&str],
     consumed: usize,
 ) -> Option<&'a Effect> {
     if consumed == 0 {
@@ -369,7 +369,7 @@ mod tests {
 
     /// Build string args owned, then borrow for matching.
     fn match_owned(args: &[String], patterns: &[PositionalArg]) -> (bool, usize, ContextFacts) {
-        let refs: Vec<&String> = args.iter().collect();
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         match_positional_patterns(&refs, patterns)
     }
 

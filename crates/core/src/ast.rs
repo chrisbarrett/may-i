@@ -57,9 +57,9 @@ impl EffectResult {
     }
 
     #[cfg(any(test, feature = "test-generators"))]
-    pub fn reason(&self) -> Option<&String> {
+    pub fn reason(&self) -> Option<&str> {
         match self {
-            EffectResult::Decision(_, r) => r.as_ref(),
+            EffectResult::Decision(_, r) => r.as_deref(),
             EffectResult::Nil => None,
         }
     }
@@ -516,7 +516,7 @@ mod tests {
     fn effect_result_reason_returns_some_for_decision() {
         assert_eq!(
             EffectResult::Decision(Decision::Allow, Some("test".into())).reason(),
-            Some(&"test".to_string())
+            Some("test")
         );
     }
 

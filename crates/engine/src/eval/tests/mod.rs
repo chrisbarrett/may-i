@@ -425,7 +425,7 @@ fn match_positional_patterns_with_binding() {
 
     let arg1 = "git".to_string();
     let arg2 = "push".to_string();
-    let args: Vec<&String> = vec![&arg1, &arg2];
+    let args: Vec<&str> = vec![&arg1, &arg2];
     let (matched, _, facts) = match_positional_patterns(&args, &patterns);
 
     assert!(matched);
@@ -457,7 +457,7 @@ fn match_positional_patterns_no_match_with_binding() {
 
     let arg1 = "server".to_string();
     let arg2 = "wrong".to_string();
-    let args: Vec<&String> = vec![&arg1, &arg2];
+    let args: Vec<&str> = vec![&arg1, &arg2];
     let (matched, _, facts) = match_positional_patterns(&args, &patterns);
 
     assert!(!matched);
@@ -481,7 +481,7 @@ fn match_positional_patterns_optional_with_binding() {
     }];
 
     let arg1 = "value".to_string();
-    let args: Vec<&String> = vec![&arg1];
+    let args: Vec<&str> = vec![&arg1];
     let (matched, _, facts) = match_positional_patterns(&args, &patterns);
 
     assert!(matched);
@@ -505,7 +505,7 @@ fn match_positional_patterns_one_or_more_with_binding() {
 
     let arg1 = "a".to_string();
     let arg2 = "b".to_string();
-    let args: Vec<&String> = vec![&arg1, &arg2];
+    let args: Vec<&str> = vec![&arg1, &arg2];
     let (matched, _, facts) = match_positional_patterns(&args, &patterns);
 
     assert!(matched);
@@ -531,7 +531,7 @@ fn match_positional_patterns_zero_or_more_with_binding() {
 
     let arg1 = "a".to_string();
     let arg2 = "b".to_string();
-    let args: Vec<&String> = vec![&arg1, &arg2];
+    let args: Vec<&str> = vec![&arg1, &arg2];
     let (matched, _, facts) = match_positional_patterns(&args, &patterns);
 
     assert!(matched);
@@ -566,7 +566,7 @@ fn match_positional_patterns_not_enough_args() {
     ];
 
     let arg1 = "only".to_string();
-    let args: Vec<&String> = vec![&arg1];
+    let args: Vec<&str> = vec![&arg1];
     let (matched, _, _) = match_positional_patterns(&args, &patterns);
 
     assert!(!matched);
@@ -584,7 +584,7 @@ fn match_positional_patterns_one_or_more_no_args() {
         recursive: false,
     }];
 
-    let args: Vec<&String> = vec![];
+    let args: Vec<&str> = vec![];
     let (matched, _, _) = match_positional_patterns(&args, &patterns);
 
     assert!(!matched);
@@ -615,7 +615,7 @@ fn match_positional_optional_patterns_skip_to_required() {
     ];
 
     let arg1 = "c".to_string();
-    let args: Vec<&String> = vec![&arg1];
+    let args: Vec<&str> = vec![&arg1];
     let (matched, consumed, _) = match_positional_patterns(&args, &patterns);
     assert!(matched);
     assert_eq!(consumed, 1);
@@ -642,7 +642,7 @@ fn match_positional_optional_then_required_both_present() {
 
     let arg1 = "a".to_string();
     let arg2 = "b".to_string();
-    let args: Vec<&String> = vec![&arg1, &arg2];
+    let args: Vec<&str> = vec![&arg1, &arg2];
     let (matched, consumed, _) = match_positional_patterns(&args, &patterns);
     assert!(matched);
     assert_eq!(consumed, 2);
@@ -668,7 +668,7 @@ fn match_positional_optional_skipped_required_present() {
     ];
 
     let arg1 = "b".to_string();
-    let args: Vec<&String> = vec![&arg1];
+    let args: Vec<&str> = vec![&arg1];
     let (matched, consumed, _) = match_positional_patterns(&args, &patterns);
     assert!(matched);
     assert_eq!(consumed, 1);
@@ -694,7 +694,7 @@ fn match_positional_optional_present_required_missing() {
     ];
 
     let arg1 = "a".to_string();
-    let args: Vec<&String> = vec![&arg1];
+    let args: Vec<&str> = vec![&arg1];
     let (matched, _, _) = match_positional_patterns(&args, &patterns);
     assert!(!matched);
 }
@@ -721,7 +721,7 @@ fn match_positional_zero_or_more_then_required() {
     let arg1 = "a".to_string();
     let arg2 = "a".to_string();
     let arg3 = "b".to_string();
-    let args: Vec<&String> = vec![&arg1, &arg2, &arg3];
+    let args: Vec<&str> = vec![&arg1, &arg2, &arg3];
     let (matched, consumed, _) = match_positional_patterns(&args, &patterns);
     assert!(matched);
     assert_eq!(consumed, 3);
@@ -747,7 +747,7 @@ fn match_positional_zero_or_more_skipped_then_required() {
     ];
 
     let arg1 = "b".to_string();
-    let args: Vec<&String> = vec![&arg1];
+    let args: Vec<&str> = vec![&arg1];
     let (matched, consumed, _) = match_positional_patterns(&args, &patterns);
     assert!(matched);
     assert_eq!(consumed, 1);
