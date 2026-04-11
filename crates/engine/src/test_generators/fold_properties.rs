@@ -180,6 +180,39 @@ proptest! {
         prop_assert_eq!(expanded.len(), flags.len());
     }
 
+    // Property: expand_combined_flags output preserves all flag characters
+    // and non-flag args from the input.
+    #[test]
+    fn expand_flags_preserves_all_chars_and_nonflag_args(
+        nonflag_args in prop::collection::vec("[a-zA-Z0-9_./]{1,10}", 0..4),
+        flag_chars in prop::collection::vec("[a-zA-Z]", 2..6),
+        single_flags in prop::collection::vec("-[a-zA-Z]", 0..3),
+    ) {
+        let combined = format!("-{}", flag_chars.join(""));
+        let mut args: Vec<String> = nonflag_args.clone();
+        args.push(combined);
+        args.extend(single_flags.clone());
+
+        let expanded = eval::expand_combined_flags(&args);
+
+        // All non-flag args are preserved verbatim
+        for nf in &nonflag_args {
+            prop_assert!(expanded.contains(nf),
+                "non-flag arg {nf:?} missing from expanded: {expanded:?}");
+        }
+        // All flag characters appear as individual -X entries
+        for ch in &flag_chars {
+            let expected = format!("-{ch}");
+            prop_assert!(expanded.contains(&expected),
+                "flag char {ch:?} missing from expanded: {expanded:?}");
+        }
+        // Single flags preserved
+        for sf in &single_flags {
+            prop_assert!(expanded.contains(sf),
+                "single flag {sf:?} missing from expanded: {expanded:?}");
+        }
+    }
+
     // Property: expand_combined_flags leaves long options unchanged.
     #[test]
     fn expand_flags_preserves_long_options(

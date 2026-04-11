@@ -622,8 +622,50 @@ mod tests {
 
     // ── Property tests ────────────────────────────────────────────────
 
+    fn any_annotated_doc() -> impl proptest::prelude::Strategy<Value = Doc<Option<Ann>>> {
+        use proptest::prelude::*;
+
+        let leaf = prop_oneof![
+            "[a-z_]{1,12}".prop_map(|s| atom(&s)),
+            "[a-z_]{1,12}".prop_map(|s| atom_ann(&s, Ann::CommandMatch { matched: true })),
+            "[a-z_]{1,12}".prop_map(|s| atom_ann(&s, Ann::CommandMatch { matched: false })),
+        ];
+        leaf.prop_recursive(3, 15, 4, |inner| {
+            prop_oneof![
+                prop::collection::vec(inner.clone(), 0..5).prop_map(|cs| list(cs)),
+                (
+                    prop::collection::vec("[a-z]{1,8}".prop_map(|s| s), 1..4),
+                    prop::collection::vec("[a-z]{1,8}".prop_map(|s| s), 0..3),
+                )
+                    .prop_map(|(tokens, args)| {
+                        let matched = !tokens.is_empty();
+                        list_ann(
+                            Ann::ArgMatch {
+                                search_tokens: tokens.iter().map(|t| t.clone()).collect(),
+                                arg_set: args,
+                                matched,
+                            },
+                            vec![atom("anywhere"), atom(&tokens[0])],
+                        )
+                    }),
+                prop::collection::vec(inner, 0..4).prop_map(|cs| list(cs)),
+            ]
+        })
+    }
+
     proptest::proptest! {
         #![proptest_config(proptest::prelude::ProptestConfig { cases: 256, max_shrink_iters: 50, .. Default::default() })]
+
+        #[test]
+        fn truncate_matched_anywhere_is_idempotent(doc in any_annotated_doc()) {
+            let once = truncate_matched_anywhere(&doc);
+            let twice = truncate_matched_anywhere(&once);
+            proptest::prop_assert_eq!(
+                format!("{:?}", once),
+                format!("{:?}", twice),
+                "truncate_matched_anywhere not idempotent"
+            );
+        }
 
         #[test]
         fn truncate_unevaluated_caps_children(

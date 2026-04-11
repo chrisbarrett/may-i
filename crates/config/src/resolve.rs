@@ -844,5 +844,33 @@ mod tests {
         ) {
             let _ = validate_and_resolve(&rules, &defines);
         }
+
+        // TODO(task 10.7): Resolution completeness — verify no Predicate::Named
+        // after validate_and_resolve. Skipped because Named predicates are
+        // intentionally preserved and resolved at eval time via bindings
+        // (see validate_and_resolve comment at line 305).
+
+        /// After successful validation, all Named references in rules
+        /// must be defined (no dangling references).
+        #[test]
+        fn valid_configs_have_all_named_refs_defined(
+            n_defines in 1usize..5,
+            n_rules in 1usize..4,
+        ) {
+            let names: Vec<String> = (0..n_defines).map(|i| format!("def_{i}")).collect();
+            let defines: Vec<Define> = names.iter().map(|name| {
+                create_define(name, Predicate::fact_presence(":x"))
+            }).collect();
+            let rules: Vec<Rule> = (0..n_rules).map(|i| {
+                let name = &names[i % names.len()];
+                create_rule_with_conditional(
+                    Predicate::Named(name.clone()),
+                    Effect::Terminal { decision: Decision::Allow, reason: None },
+                )
+            }).collect();
+
+            let result = validate_and_resolve(&rules, &defines);
+            prop_assert!(result.is_ok(), "validation should succeed for valid configs");
+        }
     }
 }
