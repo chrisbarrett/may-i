@@ -11,6 +11,8 @@ pub(crate) mod rule;
 
 #[cfg(test)]
 mod migration_tests;
+#[cfg(test)]
+mod parser_properties;
 
 pub use command::parse_command_pattern;
 pub use config::{parse_config, parse_config_from_sexprs};

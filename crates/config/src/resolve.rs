@@ -754,6 +754,38 @@ mod tests {
 
     use proptest::prelude::*;
 
+    /// Generate an arbitrary Rule with random command pattern and terminal effect.
+    fn any_rule() -> BoxedStrategy<Rule> {
+        (
+            may_i_core::test_generators::any_command_pattern(1),
+            may_i_core::test_generators::any_decision(),
+            proptest::option::of("[a-z ]{1,20}"),
+        )
+            .prop_map(|(cmd_pat, decision, reason)| {
+                Rule::new(
+                    Spanned::new(Effect::CommandPattern(cmd_pat), dummy_span()),
+                    Spanned::new(Effect::Terminal { decision, reason }, dummy_span()),
+                    vec![],
+                    dummy_span(),
+                )
+            })
+            .boxed()
+    }
+
+    /// Generate an arbitrary Define with a simple predicate.
+    fn any_define() -> BoxedStrategy<Define> {
+        (
+            "[a-z][a-z0-9_-]{0,8}",
+            prop_oneof![
+                Just(Predicate::fact_presence(":x")),
+                Just(Predicate::fact_presence(":y")),
+                "[a-z][a-z0-9_-]{0,8}".prop_map(Predicate::Named),
+            ],
+        )
+            .prop_map(|(name, pred)| create_define(&name, pred))
+            .boxed()
+    }
+
     /// Generate a random acyclic define graph.
     /// Each define at index i can only reference defines at indices < i (topological order).
     fn any_acyclic_defines(size: usize) -> BoxedStrategy<Vec<Define>> {
@@ -803,6 +835,14 @@ mod tests {
             let result = detect_cycles(&defines, &define_map);
             prop_assert!(result.is_err(),
                 "cycle of size {} should be rejected", cycle_size);
+        }
+
+        #[test]
+        fn validate_and_resolve_never_panics(
+            rules in prop::collection::vec(any_rule(), 0..5),
+            defines in prop::collection::vec(any_define(), 0..3),
+        ) {
+            let _ = validate_and_resolve(&rules, &defines);
         }
     }
 }
