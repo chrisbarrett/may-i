@@ -144,28 +144,15 @@ pub(super) fn evaluate_arg_pattern_predicate(
 ) -> PredicateResult {
     match pattern {
         ArgPattern::Ordered {
-            mode: MatchMode::Positional,
+            mode,
             patterns,
             continuation: _,
         } => {
-            let positional_args: Vec<&String> = positional_args(ctx.args);
-
-            let (matched, _, _) = match_positional_patterns(&positional_args, patterns);
+            let pos_args: Vec<&String> = positional_args(ctx.args);
+            let (pat_matched, consumed, _) = match_positional_patterns(&pos_args, patterns);
+            let matched =
+                pat_matched && (*mode == MatchMode::Positional || consumed == pos_args.len());
             if matched {
-                PredicateResult::Match
-            } else {
-                PredicateResult::NoMatch
-            }
-        }
-        ArgPattern::Ordered {
-            mode: MatchMode::Exact,
-            patterns,
-            continuation: _,
-        } => {
-            let positional_args: Vec<&String> = positional_args(ctx.args);
-
-            let (matched, consumed, _) = match_positional_patterns(&positional_args, patterns);
-            if consumed == positional_args.len() && matched {
                 PredicateResult::Match
             } else {
                 PredicateResult::NoMatch

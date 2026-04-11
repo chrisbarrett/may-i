@@ -1,7 +1,5 @@
 use super::context::DEFAULT_RECURSION_LIMIT;
-use super::effects::{
-    evaluate_effect, evaluate_effect_fold, extract_inner_command, match_command_pattern,
-};
+use super::effects::{evaluate_effect, evaluate_effect_fold, extract_inner_command};
 use super::entry::{expand_combined_flags, positional_args};
 use super::positional::{
     build_expr_match_detail, build_positional_element_details, match_expr_with_binding,

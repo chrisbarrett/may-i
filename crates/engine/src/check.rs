@@ -3,7 +3,7 @@
 use crate::EvalResult;
 use may_i_core::ast::{Check, Config};
 use may_i_core::{ContextFacts, Decision};
-use may_i_shell_parser::{self as parser, Command, Word, WordPart};
+use may_i_shell_parser::{self as parser, Command};
 
 /// Result of evaluating a single embedded check.
 #[derive(Debug)]
@@ -29,35 +29,14 @@ pub(crate) enum ParsedCheck {
 
 /// Parse a check command string into its components.
 pub(crate) fn parse_check_command(input: &str) -> ParsedCheck {
-    let cmd = parser::parse(input);
-    match cmd {
-        Command::Simple(sc) if !sc.words.is_empty() => {
-            let cmd_name = word_to_string(&sc.words[0]);
-            let args: Vec<String> = sc.words[1..].iter().map(word_to_string).collect();
-            ParsedCheck::Simple(cmd_name, args)
+    if let Some((cmd_name, args)) = parser::parse_simple_command(input) {
+        ParsedCheck::Simple(cmd_name, args)
+    } else {
+        match parser::parse(input) {
+            Command::Simple(_) | Command::Assignment(_) => ParsedCheck::Empty,
+            _ => ParsedCheck::Compound,
         }
-        Command::Simple(_) | Command::Assignment(_) => ParsedCheck::Empty,
-        _ => ParsedCheck::Compound,
     }
-}
-
-/// Convert a Word to a string (taking the first literal part or empty string)
-fn word_to_string(word: &Word) -> String {
-    word.parts
-        .iter()
-        .map(|part| match part {
-            WordPart::Literal(s) => s.clone(),
-            WordPart::SingleQuoted(s) => s.clone(),
-            WordPart::DoubleQuoted(parts) => parts
-                .iter()
-                .map(|p| match p {
-                    WordPart::Literal(s) => s.clone(),
-                    _ => String::new(),
-                })
-                .collect(),
-            _ => String::new(),
-        })
-        .collect()
 }
 
 /// Evaluate a simple shell command string using the default evaluator.
@@ -290,12 +269,13 @@ mod tests {
     }
 
     #[test]
-    fn word_to_string_with_double_quoted() {
+    fn word_to_str_with_double_quoted() {
+        use may_i_shell_parser::{Word, WordPart};
         let word = Word {
             parts: vec![WordPart::DoubleQuoted(vec![WordPart::Literal(
                 "hello world".into(),
             )])],
         };
-        assert_eq!(word_to_string(&word), "hello world");
+        assert_eq!(word.to_str(), "hello world");
     }
 }

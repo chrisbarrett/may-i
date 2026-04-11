@@ -1,5 +1,5 @@
 use may_i_core::ast::{Effect, EffectResult, Rule};
-use may_i_core::pattern::{ArgPattern, CommandPattern, MatchMode};
+use may_i_core::pattern::{ArgPattern, MatchMode};
 use may_i_core::{ContextFacts, Decision, Keyword};
 
 use crate::EvalError;
@@ -39,7 +39,7 @@ pub(crate) fn evaluate_effect_fold<F: EvalFold>(
 
         // Command pattern
         Effect::CommandPattern(pattern) => {
-            let matched = match_command_pattern(pattern, ctx.command);
+            let matched = pattern.is_match(ctx.command);
             fold.effect_command_match(pattern, ctx.command, matched)
         }
 
@@ -244,21 +244,6 @@ pub(crate) fn evaluate_effect_fold<F: EvalFold>(
     })
 }
 
-/// Check if a command pattern matches a command string.
-pub(crate) fn match_command_pattern(pattern: &CommandPattern, command: &str) -> bool {
-    match pattern {
-        CommandPattern::Literal(s) => s == command,
-        CommandPattern::Regex(re) => re.is_match(command),
-        CommandPattern::Or(patterns) => patterns.iter().any(|p| match p {
-            CommandPattern::Literal(s) => s == command,
-            CommandPattern::Regex(re) => re.is_match(command),
-            CommandPattern::Or(_) => false,
-            _ => false,
-        }),
-        _ => false,
-    }
-}
-
 /// Evaluate an arg pattern as an effect with a fold.
 fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
     fold: &mut F,
@@ -268,27 +253,35 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
 ) -> Result<F::EffectOut, EvalError> {
     Ok(match pattern {
         ArgPattern::Ordered {
-            mode: MatchMode::Positional,
+            mode,
             patterns,
             continuation,
         } => {
-            let positional_args: Vec<&String> = positional_args(ctx.args);
+            let pos_args: Vec<&String> = positional_args(ctx.args);
 
-            let (matched, consumed, bound_facts) =
-                match_positional_patterns(&positional_args, patterns);
-            let elements =
-                build_positional_element_details(&positional_args, patterns, matched, consumed);
+            let (pat_matched, consumed, bound_facts) =
+                match_positional_patterns(&pos_args, patterns);
+            let matched =
+                pat_matched && (*mode == MatchMode::Positional || consumed == pos_args.len());
+            let elements = build_positional_element_details(&pos_args, patterns, matched, consumed);
             if matched {
-                // Check for explicit continuation first, then trailing Expr::Cond
                 let effective_continuation = continuation
                     .as_deref()
-                    .or_else(|| resolve_trailing_cond_effect(patterns, &positional_args, consumed));
+                    .or_else(|| resolve_trailing_cond_effect(patterns, &pos_args, consumed));
                 if let Some(cont) = effective_continuation {
-                    let remaining_args: Vec<String> = self::positional_args(ctx.args)
-                        .into_iter()
-                        .skip(consumed)
-                        .map(|s| s.to_string())
-                        .collect();
+                    let remaining_args: Vec<String> = match mode {
+                        MatchMode::Positional => self::positional_args(ctx.args)
+                            .into_iter()
+                            .skip(consumed)
+                            .map(|s| s.to_string())
+                            .collect(),
+                        MatchMode::Exact => ctx
+                            .args
+                            .iter()
+                            .filter(|arg| arg.starts_with('-'))
+                            .map(|s| s.to_string())
+                            .collect(),
+                    };
                     let cont_out = evaluate_effect_with_owned_args_fold(
                         fold,
                         cont,
@@ -297,86 +290,14 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                         remaining_args,
                         bound_facts,
                     )?;
-                    let detail = ArgMatchDetail {
-                        search_tokens: vec![],
-                        arg_set: ctx.args.to_vec(),
-                        matched: true,
-                        positional_elements: elements,
-                    };
+                    let detail = ArgMatchDetail::new(ctx.args.to_vec(), true, elements);
                     fold.effect_arg_continuation(pattern, ctx.args, detail, cont_out)
                 } else {
-                    let detail = ArgMatchDetail {
-                        search_tokens: vec![],
-                        arg_set: ctx.args.to_vec(),
-                        matched: true,
-                        positional_elements: elements,
-                    };
+                    let detail = ArgMatchDetail::new(ctx.args.to_vec(), true, elements);
                     fold.effect_arg_match(pattern, ctx.args, true, detail)
                 }
             } else {
-                let detail = ArgMatchDetail {
-                    search_tokens: vec![],
-                    arg_set: ctx.args.to_vec(),
-                    matched: false,
-                    positional_elements: elements,
-                };
-                fold.effect_arg_match(pattern, ctx.args, false, detail)
-            }
-        }
-        ArgPattern::Ordered {
-            mode: MatchMode::Exact,
-            patterns,
-            continuation,
-        } => {
-            let positional_args: Vec<&String> = positional_args(ctx.args);
-
-            let (matched, consumed, bound_facts) =
-                match_positional_patterns(&positional_args, patterns);
-            let exact_match = consumed == positional_args.len() && matched;
-            let elements =
-                build_positional_element_details(&positional_args, patterns, exact_match, consumed);
-            if exact_match {
-                let effective_continuation = continuation
-                    .as_deref()
-                    .or_else(|| resolve_trailing_cond_effect(patterns, &positional_args, consumed));
-                if let Some(cont) = effective_continuation {
-                    let remaining_args: Vec<String> = ctx
-                        .args
-                        .iter()
-                        .filter(|arg| arg.starts_with('-'))
-                        .map(|s| s.to_string())
-                        .collect();
-                    let cont_out = evaluate_effect_with_owned_args_fold(
-                        fold,
-                        cont,
-                        ctx,
-                        rules,
-                        remaining_args,
-                        bound_facts,
-                    )?;
-                    let detail = ArgMatchDetail {
-                        search_tokens: vec![],
-                        arg_set: ctx.args.to_vec(),
-                        matched: true,
-                        positional_elements: elements,
-                    };
-                    fold.effect_arg_continuation(pattern, ctx.args, detail, cont_out)
-                } else {
-                    let detail = ArgMatchDetail {
-                        search_tokens: vec![],
-                        arg_set: ctx.args.to_vec(),
-                        matched: true,
-                        positional_elements: elements,
-                    };
-                    fold.effect_arg_match(pattern, ctx.args, true, detail)
-                }
-            } else {
-                let detail = ArgMatchDetail {
-                    search_tokens: vec![],
-                    arg_set: ctx.args.to_vec(),
-                    matched: false,
-                    positional_elements: elements,
-                };
+                let detail = ArgMatchDetail::new(ctx.args.to_vec(), false, elements);
                 fold.effect_arg_match(pattern, ctx.args, false, detail)
             }
         }
@@ -456,19 +377,10 @@ pub(crate) fn extract_inner_command(
     // like ssh host "rm -rf /" where the quoted string is a single arg
     // containing a full command.
     let joined = args.join(" ");
-    let parsed = may_i_shell_parser::parse(&joined);
-
-    match parsed {
-        may_i_shell_parser::Command::Simple(sc) if !sc.words.is_empty() => {
-            let cmd = sc.words[0].to_str();
-            let inner_args: Vec<String> = sc.words[1..].iter().map(|w| w.to_str()).collect();
-            Some((cmd, inner_args))
-        }
-        _ => {
-            // Fallback: use first arg as command, rest as args
-            let cmd = args[0].clone();
-            let remaining = args[1..].to_vec();
-            Some((cmd, remaining))
-        }
-    }
+    may_i_shell_parser::parse_simple_command(&joined).or_else(|| {
+        // Fallback: use first arg as command, rest as args
+        let cmd = args[0].clone();
+        let remaining = args[1..].to_vec();
+        Some((cmd, remaining))
+    })
 }
