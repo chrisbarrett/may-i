@@ -3,7 +3,7 @@
 - [ ] 1.1 Add `extract_simple_commands` as public API on `Command` (currently test-only in shell-parser lib.rs) — returns `Vec<&SimpleCommand>` by recursing through `children()`
 - [ ] 1.2 Add `Word::is_dynamic()` method — returns true if any part is Parameter, CommandSubstitution, Backtick, Arithmetic, Glob, or Opaque
 - [ ] 1.3 Add `Word::extract_embedded_commands()` method — returns `Vec<&str>` of command strings from CommandSubstitution, Backtick, and ProcessSubstitution parts, recursing into DoubleQuoted inner parts
-- [ ] 1.4 Write unit tests for `extract_simple_commands` covering Pipeline, And, Or, Sequence, Background, Subshell, BraceGroup, If, For, Loop, Case, FunctionDef, Redirected, Assignment
+- [x] 1.4 Write unit tests for `extract_simple_commands` covering Pipeline, And, Or, Sequence, Background, Subshell, BraceGroup, If, For, Loop, Case, FunctionDef, Redirected, Assignment
 - [ ] 1.5 Write unit tests for `Word::is_dynamic()` covering all WordPart variants
 - [ ] 1.6 Write unit tests for `Word::extract_embedded_commands()` including nested substitutions
 
