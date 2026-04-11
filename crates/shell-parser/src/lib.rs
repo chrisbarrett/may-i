@@ -21,6 +21,20 @@ pub fn parse(input: &str) -> Command {
     parser.parse_complete()
 }
 
+/// Parse a shell string and extract the command name and arguments from a
+/// simple command. Returns `None` for empty, assignment-only, or compound
+/// commands.
+pub fn parse_simple_command(input: &str) -> Option<(String, Vec<String>)> {
+    match parse(input) {
+        Command::Simple(sc) if !sc.words.is_empty() => {
+            let cmd = sc.words[0].to_str();
+            let args: Vec<String> = sc.words[1..].iter().map(|w| w.to_str()).collect();
+            Some((cmd, args))
+        }
+        _ => None,
+    }
+}
+
 // ── Test-only helpers ────────────────────────────────────────────────
 
 #[cfg(test)]

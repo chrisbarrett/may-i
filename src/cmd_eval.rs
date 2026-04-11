@@ -17,18 +17,11 @@ use crate::runtime_facts::parse_cli_facts;
 /// parser, which correctly handles quoting. Falls back to split_whitespace
 /// for non-simple commands.
 pub fn parse_command_args(text: &str) -> (String, Vec<String>) {
-    match parser::parse(text) {
-        parser::Command::Simple(sc) if !sc.words.is_empty() => {
-            let cmd = sc.words[0].to_str();
-            let args: Vec<String> = sc.words[1..].iter().map(|w| w.to_str()).collect();
-            (cmd, args)
-        }
-        _ => {
-            let cmd = text.split_whitespace().next().unwrap_or(text).to_string();
-            let args: Vec<String> = text.split_whitespace().skip(1).map(String::from).collect();
-            (cmd, args)
-        }
-    }
+    parser::parse_simple_command(text).unwrap_or_else(|| {
+        let cmd = text.split_whitespace().next().unwrap_or(text).to_string();
+        let args: Vec<String> = text.split_whitespace().skip(1).map(String::from).collect();
+        (cmd, args)
+    })
 }
 
 pub fn cmd_eval(

@@ -92,15 +92,30 @@ fn build_expr_match_detail_regex() {
 }
 
 #[test]
-fn match_command_pattern_or_with_regex() {
+fn command_pattern_or_with_regex() {
     let re = regex::Regex::new("^git").unwrap();
     let pat = CommandPattern::Or(vec![
         CommandPattern::Literal("ls".into()),
         CommandPattern::Regex(re),
     ]);
-    assert!(match_command_pattern(&pat, "ls"));
-    assert!(match_command_pattern(&pat, "git-push"));
-    assert!(!match_command_pattern(&pat, "rm"));
+    assert!(pat.is_match("ls"));
+    assert!(pat.is_match("git-push"));
+    assert!(!pat.is_match("rm"));
+}
+
+#[test]
+fn command_pattern_nested_or() {
+    let pat = CommandPattern::Or(vec![
+        CommandPattern::Or(vec![
+            CommandPattern::Literal("git".into()),
+            CommandPattern::Literal("hg".into()),
+        ]),
+        CommandPattern::Literal("svn".into()),
+    ]);
+    assert!(pat.is_match("git"));
+    assert!(pat.is_match("hg"));
+    assert!(pat.is_match("svn"));
+    assert!(!pat.is_match("cvs"));
 }
 
 #[test]

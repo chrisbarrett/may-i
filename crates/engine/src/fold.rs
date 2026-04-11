@@ -30,6 +30,21 @@ pub struct ArgMatchDetail {
     pub positional_elements: Vec<PositionalElementDetail>,
 }
 
+impl ArgMatchDetail {
+    pub fn new(
+        arg_set: Vec<String>,
+        matched: bool,
+        positional_elements: Vec<PositionalElementDetail>,
+    ) -> Self {
+        Self {
+            search_tokens: vec![],
+            arg_set,
+            matched,
+            positional_elements,
+        }
+    }
+}
+
 /// Detail about a single positional pattern element's match result.
 #[derive(Debug, Clone)]
 pub struct PositionalElementDetail {
