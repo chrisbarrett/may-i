@@ -8,9 +8,9 @@
 
 ## 2. Fix production unwrap in check evaluation
 
-- [ ] 2.1 Write failing test: check with unresolved predicate returns diagnostic instead of panicking
-- [ ] 2.2 Replace unwrap() at check.rs:67 with error propagation into CheckResult
-- [ ] 2.3 Verify existing check tests still pass
+- [x] 2.1 Write failing test: check with unresolved predicate returns diagnostic instead of panicking
+- [x] 2.2 Replace unwrap() at check.rs:67 with error propagation into CheckResult
+- [x] 2.3 Verify existing check tests still pass
 
 ## 3. Remove debug print in pp renderer
 
