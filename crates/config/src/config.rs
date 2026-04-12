@@ -70,6 +70,15 @@ pub fn parse_config_from_sexprs(forms: &[Sexpr]) -> Result<Config, RawError> {
                 let checks = parse_check(&list[1..], form.span())?;
                 config.checks.extend(checks);
             }
+            "load" => {
+                return Err(RawError::new(
+                    "load forms should be resolved before parsing",
+                    list[0].span(),
+                )
+                .with_help(
+                    "this is an internal error — load expansion should happen in the IO layer",
+                ));
+            }
             other => {
                 return Err(RawError::new(
                     format!("unknown top-level form: {other}"),
@@ -649,6 +658,16 @@ mod tests {
     fn parse_check_with_non_list_with_facts() {
         let err = parse_config(r#"(check (with-facts :not-a-list))"#).expect_err("expected error");
         assert!(format!("{err}").contains("with-facts requires a fact vector"));
+    }
+
+    #[test]
+    fn load_form_reaching_parser_is_error() {
+        let err = parse_config(r#"(load "rules/*.lisp")"#).expect_err("expected error");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("load forms should be resolved before parsing"),
+            "got: {msg}"
+        );
     }
 
     use may_i_sexpr::test_generators::any_canonical_config_cst;
