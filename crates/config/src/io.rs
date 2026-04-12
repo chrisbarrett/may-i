@@ -3,6 +3,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use may_i_core::ast::Provenance;
 use may_i_sexpr::Sexpr;
 use miette::{Context, IntoDiagnostic};
 
@@ -43,9 +44,9 @@ pub fn load(path: &Path) -> miette::Result<LoadResult> {
     // Try canonical parse first to get sexprs.
     let (forms, parse_errors) = may_i_sexpr::parse(&content);
     if parse_errors.is_empty() {
-        // Expand loads, then parse config.
-        let expanded = expand_loads(forms, base_dir, &mut seen)?;
-        match crate::parse_config_from_sexprs(&expanded) {
+        // Expand loads, then parse config with provenance tagging.
+        let expanded = expand_loads(forms, base_dir, &mut seen, Provenance::PrimaryConfig)?;
+        match crate::parse_config_from_tagged_sexprs(&expanded) {
             Ok(config) => {
                 return Ok(LoadResult {
                     config,
@@ -103,8 +104,8 @@ fn try_migrate_and_parse(
     let migrated = crate::migrate::migrate_forms(cst_nodes);
     let sexprs: Vec<_> = migrated.iter().map(|n| n.to_sexpr()).collect();
 
-    let expanded = expand_loads(sexprs, base_dir, seen).ok()?;
-    let config = crate::parse_config_from_sexprs(&expanded).ok()?;
+    let expanded = expand_loads(sexprs, base_dir, seen, Provenance::PrimaryConfig).ok()?;
+    let config = crate::parse_config_from_tagged_sexprs(&expanded).ok()?;
     Some(LoadResult {
         config,
         source_text: Some(content.to_string()),
@@ -193,23 +194,24 @@ fn is_glob_pattern(s: &str) -> bool {
     s.contains('*') || s.contains('?') || s.contains('[')
 }
 
-/// Expand all `(load ...)` forms in a list of sexprs.
+/// Expand all `(load ...)` forms in a list of sexprs, tagging each with provenance.
 ///
-/// Replaces each `(load "<path-or-glob>")` with the sexprs from the
-/// referenced file(s). Glob patterns are expanded with lexical sort order.
-/// Cycle detection uses a set of canonical paths.
+/// Forms from the current level keep `current_provenance`. Forms from loaded
+/// files get `Loaded` provenance. Glob patterns are expanded with lexical sort
+/// order. Cycle detection uses a set of canonical paths.
 fn expand_loads(
     forms: Vec<Sexpr>,
     base_dir: &Path,
     seen: &mut HashSet<PathBuf>,
-) -> miette::Result<Vec<Sexpr>> {
+    current_provenance: Provenance,
+) -> miette::Result<Vec<(Sexpr, Provenance)>> {
     let mut result = Vec::new();
 
     for form in &forms {
         let list = match form.as_list() {
             Some(l) if !l.is_empty() && l[0].as_atom() == Some("load") => l,
             _ => {
-                result.push(form.clone());
+                result.push((form.clone(), current_provenance));
                 continue;
             }
         };
@@ -251,7 +253,7 @@ fn expand_loads(
                 let child_dir = path.parent().ok_or_else(|| {
                     miette::miette!("cannot determine parent dir of {}", path.display())
                 })?;
-                let expanded = expand_loads(child_sexprs, child_dir, seen)?;
+                let expanded = expand_loads(child_sexprs, child_dir, seen, Provenance::Loaded)?;
                 result.extend(expanded);
             }
         } else {
@@ -274,7 +276,7 @@ fn expand_loads(
             let child_dir = path.parent().ok_or_else(|| {
                 miette::miette!("cannot determine parent dir of {}", path.display())
             })?;
-            let expanded = expand_loads(child_sexprs, child_dir, seen)?;
+            let expanded = expand_loads(child_sexprs, child_dir, seen, Provenance::Loaded)?;
             result.extend(expanded);
         }
     }
@@ -699,5 +701,104 @@ mod tests {
         assert!(result.is_err());
         let msg = format!("{}", result.unwrap_err());
         assert!(msg.contains("must be a string"), "got: {msg}");
+    }
+
+    // --- Provenance tests ---
+
+    #[test]
+    fn root_config_rules_get_primary_config_provenance() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = write_file(dir.path(), "config.lisp", r#"(rule "git" (effect :allow))"#);
+        let result = load(&root).unwrap();
+        assert_eq!(result.config.rules.len(), 1);
+        assert_eq!(result.config.rules[0].provenance, Provenance::PrimaryConfig);
+    }
+
+    #[test]
+    fn root_config_defines_get_primary_config_provenance() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = write_file(
+            dir.path(),
+            "config.lisp",
+            r#"(define safe-cmd (positional "status"))"#,
+        );
+        let result = load(&root).unwrap();
+        assert_eq!(result.config.defines.len(), 1);
+        assert_eq!(
+            result.config.defines[0].provenance,
+            Provenance::PrimaryConfig
+        );
+    }
+
+    #[test]
+    fn loaded_file_rules_get_loaded_provenance() {
+        let dir = tempfile::tempdir().unwrap();
+        write_file(dir.path(), "rules.lisp", r#"(rule "echo" (effect :allow))"#);
+        let root = write_file(
+            dir.path(),
+            "config.lisp",
+            r#"(rule "git" (effect :allow))
+(load "rules.lisp")"#,
+        );
+        let result = load(&root).unwrap();
+        assert_eq!(result.config.rules.len(), 2);
+        assert_eq!(
+            result.config.rules[0].provenance,
+            Provenance::PrimaryConfig,
+            "root rule should be PrimaryConfig"
+        );
+        assert_eq!(
+            result.config.rules[1].provenance,
+            Provenance::Loaded,
+            "loaded rule should be Loaded"
+        );
+    }
+
+    #[test]
+    fn loaded_file_defines_get_loaded_provenance() {
+        let dir = tempfile::tempdir().unwrap();
+        write_file(
+            dir.path(),
+            "defs.lisp",
+            r#"(define remote-cmd (fact? :via/ssh))"#,
+        );
+        let root = write_file(
+            dir.path(),
+            "config.lisp",
+            r#"(define local-cmd (fact? :via/local))
+(load "defs.lisp")"#,
+        );
+        let result = load(&root).unwrap();
+        assert_eq!(result.config.defines.len(), 2);
+        assert_eq!(
+            result.config.defines[0].provenance,
+            Provenance::PrimaryConfig
+        );
+        assert_eq!(result.config.defines[1].provenance, Provenance::Loaded);
+    }
+
+    #[test]
+    fn recursively_loaded_rules_get_loaded_provenance() {
+        let dir = tempfile::tempdir().unwrap();
+        write_file(dir.path(), "inner.lisp", r#"(rule "cat" (effect :allow))"#);
+        write_file(
+            dir.path(),
+            "outer.lisp",
+            r#"(rule "echo" (effect :allow))
+(load "inner.lisp")"#,
+        );
+        let root = write_file(dir.path(), "config.lisp", r#"(load "outer.lisp")"#);
+        let result = load(&root).unwrap();
+        assert_eq!(result.config.rules.len(), 2);
+        assert_eq!(
+            result.config.rules[0].provenance,
+            Provenance::Loaded,
+            "outer loaded rule should be Loaded"
+        );
+        assert_eq!(
+            result.config.rules[1].provenance,
+            Provenance::Loaded,
+            "recursively loaded rule should be Loaded"
+        );
     }
 }

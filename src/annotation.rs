@@ -223,10 +223,6 @@ fn extract_context_and_effect(
 fn command_pattern_to_doc(pattern: &CommandPattern) -> Doc<()> {
     match pattern {
         CommandPattern::Literal(s) => Doc::atom(format!("\"{}\"", s)),
-        CommandPattern::Regex(re) => Doc::list(vec![
-            Doc::atom("regex"),
-            Doc::atom(format!("\"{}\"", re.as_str())),
-        ]),
         CommandPattern::Or(patterns) => {
             let mut cs = vec![Doc::atom("or")];
             cs.extend(patterns.iter().map(command_pattern_to_doc));

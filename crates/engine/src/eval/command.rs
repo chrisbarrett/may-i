@@ -134,6 +134,7 @@ mod tests {
             }),
             checks: vec![],
             span: Span::new(0, 0),
+            provenance: may_i_core::ast::Provenance::PrimaryConfig,
         }
     }
 
@@ -148,6 +149,7 @@ mod tests {
             }),
             checks: vec![],
             span: Span::new(0, 0),
+            provenance: may_i_core::ast::Provenance::PrimaryConfig,
         }
     }
 

@@ -130,12 +130,7 @@ pub fn any_positional_arg(depth: u32) -> BoxedStrategy<PositionalArg> {
 
 /// Generate recursive CommandPattern trees with depth limiting.
 pub fn any_command_pattern(depth: u32) -> BoxedStrategy<CommandPattern> {
-    let leaf = prop_oneof![
-        "[a-zA-Z][a-zA-Z0-9_-]{0,19}".prop_map(CommandPattern::Literal),
-        prop_oneof!["[a-z]+", "\\^[a-z]+"].prop_filter_map("valid regex", |s| {
-            regex::Regex::new(&s).ok().map(CommandPattern::Regex)
-        }),
-    ];
+    let leaf = "[a-zA-Z][a-zA-Z0-9_-]{0,19}".prop_map(CommandPattern::Literal);
 
     if depth == 0 {
         leaf.boxed()
@@ -389,17 +384,6 @@ mod pattern_tests {
             prop_assert!(pat.is_match(&name));
             if name != other {
                 prop_assert!(!pat.is_match(&other));
-            }
-        }
-
-        #[test]
-        fn command_regex_matches_per_regex(
-            pattern_str in "[a-z]{1,5}",
-            cmd in "[a-z]{1,10}",
-        ) {
-            if let Ok(re) = regex::Regex::new(&pattern_str) {
-                let pat = CommandPattern::Regex(re.clone());
-                prop_assert_eq!(pat.is_match(&cmd), re.is_match(&cmd));
             }
         }
 

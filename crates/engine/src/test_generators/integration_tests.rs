@@ -35,6 +35,7 @@ fn complex_nested_conditionals() {
             }),
             checks: vec![],
             span: dummy_span(),
+            provenance: may_i_core::ast::Provenance::PrimaryConfig,
         }],
         ..Config::default()
     };
@@ -78,6 +79,7 @@ fn multiple_fact_bindings() {
             }),
             checks: vec![],
             span: dummy_span(),
+            provenance: may_i_core::ast::Provenance::PrimaryConfig,
         }],
         ..Config::default()
     };
@@ -114,6 +116,7 @@ fn recursive_may_i_with_context() {
                 }),
                 checks: vec![],
                 span: dummy_span(),
+                provenance: may_i_core::ast::Provenance::PrimaryConfig,
             },
             // Inner rule: matches "inner-cmd"
             Rule {
@@ -126,6 +129,7 @@ fn recursive_may_i_with_context() {
                 }),
                 checks: vec![],
                 span: dummy_span(),
+                provenance: may_i_core::ast::Provenance::PrimaryConfig,
             },
         ],
         ..Config::default()
@@ -173,6 +177,7 @@ fn combined_and_or_not_in_rule() {
             }),
             checks: vec![],
             span: dummy_span(),
+            provenance: may_i_core::ast::Provenance::PrimaryConfig,
         }],
         ..Config::default()
     };

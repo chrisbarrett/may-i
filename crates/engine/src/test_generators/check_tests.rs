@@ -21,6 +21,7 @@ proptest! {
                 effect: spanned(Effect::Terminal { decision: Decision::Allow, reason: Some("allowed".into()) }),
                 checks: vec![],
                 span: dummy_span(),
+                provenance: may_i_core::ast::Provenance::PrimaryConfig,
             }],
             checks: vec![Check {
                 command: cmd_name,
@@ -49,6 +50,7 @@ proptest! {
                 effect: spanned(Effect::Terminal { decision: Decision::Deny, reason: Some("denied".into()) }),
                 checks: vec![],
                 span: dummy_span(),
+                provenance: may_i_core::ast::Provenance::PrimaryConfig,
             }],
             checks: vec![Check {
                 command: cmd_name,
@@ -105,6 +107,7 @@ proptest! {
                 effect: spanned(effect),
                 checks: vec![],
                 span: dummy_span(),
+                provenance: may_i_core::ast::Provenance::PrimaryConfig,
             }],
             checks: vec![Check {
                 command: cmd_name,
@@ -133,6 +136,7 @@ proptest! {
                 effect: spanned(Effect::Terminal { decision: Decision::Deny, reason: Some("denied".into()) }),
                 checks: vec![],
                 span: dummy_span(),
+                provenance: may_i_core::ast::Provenance::PrimaryConfig,
             }],
             checks: vec![Check {
                 command: cmd_name,

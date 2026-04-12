@@ -21,13 +21,10 @@ fn unresolved_predicate_returns_err() {
     );
 }
 
-// 5.1.2 Unit test: Invalid regex in pattern (error handling)
+// 5.1.2 Unit test: Literal command pattern that doesn't match returns Nil
 #[test]
-fn invalid_regex_command_pattern() {
-    // CommandPattern::Regex with a valid Regex (regex crate validates at construction)
-    // Test that a regex that matches nothing still returns Nil
-    let re = regex::Regex::new("^$").unwrap();
-    let effect = Effect::CommandPattern(CommandPattern::Regex(re));
+fn non_matching_command_pattern() {
+    let effect = Effect::CommandPattern(CommandPattern::Literal("expected".into()));
     let args: Vec<String> = vec![];
     let facts = ContextFacts::default();
     let ctx = make_ctx("notempty", &args, &facts);

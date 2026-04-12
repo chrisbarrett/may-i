@@ -203,9 +203,6 @@ pub enum CommandPattern {
     /// Exact command name match.
     Literal(String),
 
-    /// Regex pattern match.
-    Regex(regex::Regex),
-
     /// Matches any of the given command names.
     Or(Vec<CommandPattern>),
 }
@@ -215,7 +212,6 @@ impl CommandPattern {
     pub fn is_match(&self, command: &str) -> bool {
         match self {
             CommandPattern::Literal(lit) => lit == command,
-            CommandPattern::Regex(re) => re.is_match(command),
             CommandPattern::Or(patterns) => patterns.iter().any(|p| p.is_match(command)),
         }
     }
@@ -352,14 +348,6 @@ mod tests {
     fn command_pattern_literal_matches_exactly() {
         let pattern = CommandPattern::Literal("git".into());
         assert!(pattern.is_match("git"));
-        assert!(!pattern.is_match("hub"));
-    }
-
-    #[test]
-    fn command_pattern_regex_matches_pattern() {
-        let pattern = CommandPattern::Regex(regex::Regex::new("^git.*").unwrap());
-        assert!(pattern.is_match("git"));
-        assert!(pattern.is_match("github"));
         assert!(!pattern.is_match("hub"));
     }
 

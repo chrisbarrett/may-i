@@ -337,6 +337,7 @@ mod tests {
             name: name.to_string(),
             predicate: Spanned::new(predicate, dummy_span()),
             span: dummy_span(),
+            provenance: may_i_core::ast::Provenance::PrimaryConfig,
         }
     }
 

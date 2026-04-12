@@ -6,6 +6,15 @@ use crate::pattern::{ArgPattern, CommandPattern};
 use crate::primitives::{Decision, ToDoc};
 use crate::span::Span;
 
+/// Whether a config form came from the primary config or a loaded file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Provenance {
+    /// From the root config file (implicitly trusted).
+    PrimaryConfig,
+    /// From a file included via `(load ...)`.
+    Loaded,
+}
+
 /// A value with source span tracking.
 #[derive(Debug, Clone)]
 pub struct Spanned<T> {
@@ -354,6 +363,9 @@ pub struct Define {
 
     /// Source span for error reporting.
     pub span: Span,
+
+    /// Where this define came from.
+    pub provenance: Provenance,
 }
 
 impl Define {
@@ -363,6 +375,7 @@ impl Define {
             name: name.into(),
             predicate,
             span,
+            provenance: Provenance::PrimaryConfig,
         }
     }
 }
@@ -386,6 +399,9 @@ pub struct Rule {
 
     /// Source span for error reporting.
     pub span: Span,
+
+    /// Where this rule came from.
+    pub provenance: Provenance,
 }
 
 impl Rule {
@@ -401,6 +417,7 @@ impl Rule {
             effect,
             checks,
             span,
+            provenance: Provenance::PrimaryConfig,
         }
     }
 }
@@ -426,6 +443,8 @@ pub struct Config {
 pub struct SecurityConfig {
     /// Environment variables that are safe to log.
     pub safe_env_vars: std::collections::HashSet<String>,
+    /// Whether any safe-env-vars entries came from a loaded file.
+    pub has_loaded_env_vars: bool,
 }
 
 /// An embedded check for config validation.

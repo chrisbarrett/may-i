@@ -116,6 +116,7 @@ mod tests {
             effect: Spanned::new(effect, Span::new(0, 0)),
             checks: vec![],
             span: Span::new(0, 0),
+            provenance: may_i_core::ast::Provenance::PrimaryConfig,
         }
     }
 
@@ -206,6 +207,7 @@ mod tests {
                 span: s,
             }],
             span: s,
+            provenance: may_i_core::ast::Provenance::PrimaryConfig,
         };
 
         let config = Config {
@@ -254,6 +256,7 @@ mod tests {
                 span: s,
             }],
             span: s,
+            provenance: may_i_core::ast::Provenance::PrimaryConfig,
         };
 
         let config = Config {

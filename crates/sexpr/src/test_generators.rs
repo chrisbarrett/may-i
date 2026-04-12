@@ -243,7 +243,6 @@ pub fn any_command_pattern_cst() -> BoxedStrategy<Box<CstNode>> {
                 cst_list(children)
             }
         ),
-        "[a-z][a-z.*+?]{0,10}".prop_map(|s| cst_list(vec![cst_atom("regex"), cst_str(&s)])),
     ]
     .boxed()
 }

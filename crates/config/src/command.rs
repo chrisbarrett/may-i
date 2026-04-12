@@ -44,25 +44,10 @@ pub fn parse_command_pattern(sexpr: &Sexpr) -> Result<CommandPattern, RawError> 
 
                     Ok(CommandPattern::Or(patterns?))
                 }
-                "regex" => {
-                    // Parse regex pattern: (regex PATTERN)
-                    if list.len() != 2 {
-                        return Err(RawError::new(
-                            "regex must have exactly one pattern string",
-                            *span,
-                        ));
-                    }
-
-                    let pattern_str = list[1].as_atom_or_str().ok_or_else(|| {
-                        RawError::new("regex pattern must be a string", list[1].span())
-                    })?;
-
-                    let regex = regex::Regex::new(pattern_str).map_err(|e| {
-                        RawError::new(format!("invalid regex pattern: {e}"), list[1].span())
-                    })?;
-
-                    Ok(CommandPattern::Regex(regex))
-                }
+                "regex" => Err(
+                    RawError::new("regex is not supported in command position", *span)
+                        .with_help("use a literal command name or (or ...) instead"),
+                ),
                 other => Err(RawError::new(
                     format!("unknown command pattern form: {other}"),
                     list[0].span(),
@@ -120,15 +105,9 @@ mod tests {
     }
 
     #[test]
-    fn parse_regex_command() {
-        let pattern = parse(r#"(regex "^git.*$")"#).unwrap();
-        match pattern {
-            CommandPattern::Regex(re) => {
-                assert!(re.is_match("git-log"));
-                assert!(!re.is_match("hg"));
-            }
-            _ => panic!("expected Regex"),
-        }
+    fn parse_regex_command_is_error() {
+        let err = parse(r#"(regex "^git.*$")"#).expect_err("expected error");
+        assert!(format!("{err}").contains("regex is not supported in command position"));
     }
 
     #[test]
@@ -146,12 +125,6 @@ mod tests {
     }
 
     #[test]
-    fn invalid_regex_is_error() {
-        let err = parse(r#"(regex "[invalid")"#).expect_err("expected error");
-        assert!(format!("{err}").contains("invalid regex"));
-    }
-
-    #[test]
     fn parse_empty_command_pattern_error() {
         let err = parse(r#"()"#).expect_err("expected error");
         assert!(format!("{err}").contains("empty command pattern"));
@@ -161,24 +134,6 @@ mod tests {
     fn parse_or_without_patterns_error() {
         let err = parse(r#"(or)"#).expect_err("expected error");
         assert!(format!("{err}").contains("or must have at least one pattern"));
-    }
-
-    #[test]
-    fn parse_regex_without_pattern_error() {
-        let err = parse(r#"(regex)"#).expect_err("expected error");
-        assert!(format!("{err}").contains("regex must have exactly one pattern string"));
-    }
-
-    #[test]
-    fn parse_regex_with_too_many_args_error() {
-        let err = parse(r#"(regex "a" "b")"#).expect_err("expected error");
-        assert!(format!("{err}").contains("regex must have exactly one pattern string"));
-    }
-
-    #[test]
-    fn parse_regex_with_non_atom_pattern_error() {
-        let err = parse(r#"(regex ("not an atom"))"#).expect_err("expected error");
-        assert!(format!("{err}").contains("regex pattern must be a string"));
     }
 
     #[test]

@@ -15,7 +15,7 @@ mod migration_tests;
 mod parser_properties;
 
 pub use command::parse_command_pattern;
-pub use config::{parse_config, parse_config_from_sexprs};
+pub use config::{parse_config, parse_config_from_sexprs, parse_config_from_tagged_sexprs};
 pub use effect::parse_effect;
 pub use errors::ConfigError;
 pub use io::{LoadResult, load, load_and_resolve, resolve_path};
