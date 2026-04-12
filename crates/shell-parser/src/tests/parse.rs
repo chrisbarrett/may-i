@@ -2,7 +2,7 @@ use crate::*;
 
 #[test]
 fn test_parse_simple_command() {
-    let cmd = parse("echo hello world");
+    let cmd = parse("echo hello world").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(sc.command_name(), Some("echo"));
@@ -14,7 +14,7 @@ fn test_parse_simple_command() {
 
 #[test]
 fn test_empty_input() {
-    let cmd = parse("");
+    let cmd = parse("").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert!(sc.words.is_empty());
@@ -27,7 +27,7 @@ fn test_empty_input() {
 
 #[test]
 fn test_whitespace_only() {
-    let cmd = parse("   \t  ");
+    let cmd = parse("   \t  ").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert!(sc.words.is_empty());
@@ -40,7 +40,7 @@ fn test_whitespace_only() {
 
 #[test]
 fn test_pipeline() {
-    let cmd = parse("echo foo | grep bar");
+    let cmd = parse("echo foo | grep bar").into_command();
     match &cmd {
         Command::Pipeline(cmds) => {
             assert_eq!(cmds.len(), 2);
@@ -59,7 +59,7 @@ fn test_pipeline() {
 
 #[test]
 fn test_pipeline_three_commands() {
-    let cmd = parse("cat file | sort | uniq");
+    let cmd = parse("cat file | sort | uniq").into_command();
     match &cmd {
         Command::Pipeline(cmds) => assert_eq!(cmds.len(), 3),
         _ => panic!("Expected pipeline"),
@@ -70,7 +70,7 @@ fn test_pipeline_three_commands() {
 
 #[test]
 fn test_and() {
-    let cmd = parse("cmd1 && cmd2");
+    let cmd = parse("cmd1 && cmd2").into_command();
     match &cmd {
         Command::And(left, right) => {
             match left.as_ref() {
@@ -88,7 +88,7 @@ fn test_and() {
 
 #[test]
 fn test_or() {
-    let cmd = parse("cmd1 || cmd2");
+    let cmd = parse("cmd1 || cmd2").into_command();
     match &cmd {
         Command::Or(left, right) => {
             match left.as_ref() {
@@ -106,7 +106,7 @@ fn test_or() {
 
 #[test]
 fn test_and_or_chained() {
-    let cmd = parse("a && b || c");
+    let cmd = parse("a && b || c").into_command();
     match &cmd {
         Command::Or(left, _) => match left.as_ref() {
             Command::And(_, _) => {}
@@ -120,7 +120,7 @@ fn test_and_or_chained() {
 
 #[test]
 fn test_sequence() {
-    let cmd = parse("cmd1; cmd2; cmd3");
+    let cmd = parse("cmd1; cmd2; cmd3").into_command();
     match &cmd {
         Command::Sequence(cmds) => {
             assert_eq!(cmds.len(), 3);
@@ -131,7 +131,7 @@ fn test_sequence() {
 
 #[test]
 fn test_sequence_trailing_semi() {
-    let cmd = parse("cmd1; cmd2;");
+    let cmd = parse("cmd1; cmd2;").into_command();
     match &cmd {
         Command::Sequence(cmds) => assert_eq!(cmds.len(), 2),
         _ => panic!("Expected sequence"),
@@ -142,7 +142,7 @@ fn test_sequence_trailing_semi() {
 
 #[test]
 fn test_background() {
-    let cmd = parse("sleep 10 &");
+    let cmd = parse("sleep 10 &").into_command();
     match &cmd {
         Command::Background(inner) => match inner.as_ref() {
             Command::Simple(sc) => assert_eq!(sc.command_name(), Some("sleep")),
@@ -154,7 +154,7 @@ fn test_background() {
 
 #[test]
 fn test_background_in_sequence() {
-    let cmd = parse("cmd1 & cmd2");
+    let cmd = parse("cmd1 & cmd2").into_command();
     match &cmd {
         Command::Sequence(cmds) => {
             assert_eq!(cmds.len(), 2);
@@ -171,7 +171,7 @@ fn test_background_in_sequence() {
 
 #[test]
 fn test_subshell() {
-    let cmd = parse("(cmd1; cmd2)");
+    let cmd = parse("(cmd1; cmd2)").into_command();
     match &cmd {
         Command::Subshell(inner) => match inner.as_ref() {
             Command::Sequence(cmds) => assert_eq!(cmds.len(), 2),
@@ -183,7 +183,7 @@ fn test_subshell() {
 
 #[test]
 fn test_subshell_single_command() {
-    let cmd = parse("(echo hello)");
+    let cmd = parse("(echo hello)").into_command();
     match &cmd {
         Command::Subshell(inner) => match inner.as_ref() {
             Command::Simple(sc) => assert_eq!(sc.command_name(), Some("echo")),
@@ -197,7 +197,7 @@ fn test_subshell_single_command() {
 
 #[test]
 fn test_brace_group() {
-    let cmd = parse("{ cmd1; cmd2; }");
+    let cmd = parse("{ cmd1; cmd2; }").into_command();
     match &cmd {
         Command::BraceGroup(inner) => match inner.as_ref() {
             Command::Sequence(cmds) => assert_eq!(cmds.len(), 2),
@@ -211,7 +211,7 @@ fn test_brace_group() {
 
 #[test]
 fn test_if_then_fi() {
-    let cmd = parse("if true; then echo yes; fi");
+    let cmd = parse("if true; then echo yes; fi").into_command();
     match &cmd {
         Command::If {
             condition,
@@ -236,7 +236,7 @@ fn test_if_then_fi() {
 
 #[test]
 fn test_if_else() {
-    let cmd = parse("if true; then echo yes; else echo no; fi");
+    let cmd = parse("if true; then echo yes; else echo no; fi").into_command();
     match &cmd {
         Command::If { else_branch, .. } => {
             assert!(else_branch.is_some());
@@ -247,7 +247,7 @@ fn test_if_else() {
 
 #[test]
 fn test_if_elif_else() {
-    let cmd = parse("if a; then b; elif c; then d; elif e; then f; else g; fi");
+    let cmd = parse("if a; then b; elif c; then d; elif e; then f; else g; fi").into_command();
     match &cmd {
         Command::If {
             elif_branches,
@@ -265,7 +265,7 @@ fn test_if_elif_else() {
 
 #[test]
 fn test_for_loop() {
-    let cmd = parse("for x in a b c; do echo $x; done");
+    let cmd = parse("for x in a b c; do echo $x; done").into_command();
     match &cmd {
         Command::For { var, words, body } => {
             assert_eq!(var, "x");
@@ -286,7 +286,7 @@ fn test_for_loop() {
 
 #[test]
 fn test_while_loop() {
-    let cmd = parse("while true; do echo loop; done");
+    let cmd = parse("while true; do echo loop; done").into_command();
     match &cmd {
         Command::Loop {
             kind: LoopKind::While,
@@ -310,7 +310,7 @@ fn test_while_loop() {
 
 #[test]
 fn test_until_loop() {
-    let cmd = parse("until false; do echo loop; done");
+    let cmd = parse("until false; do echo loop; done").into_command();
     match &cmd {
         Command::Loop {
             kind: LoopKind::Until,
@@ -334,7 +334,7 @@ fn test_until_loop() {
 
 #[test]
 fn test_case_basic() {
-    let cmd = parse("case $x in a) echo a;; b) echo b;; esac");
+    let cmd = parse("case $x in a) echo a;; b) echo b;; esac").into_command();
     match &cmd {
         Command::Case { word, arms } => {
             assert!(word.has_dynamic_parts()); // $x is dynamic
@@ -349,7 +349,7 @@ fn test_case_basic() {
 
 #[test]
 fn test_case_multiple_patterns() {
-    let cmd = parse("case $x in a|b) echo ab;; esac");
+    let cmd = parse("case $x in a|b) echo ab;; esac").into_command();
     match &cmd {
         Command::Case { arms, .. } => {
             assert_eq!(arms[0].patterns.len(), 2);
@@ -362,7 +362,7 @@ fn test_case_multiple_patterns() {
 
 #[test]
 fn test_case_fallthrough() {
-    let cmd = parse("case $x in a) echo a;& b) echo b;; esac");
+    let cmd = parse("case $x in a) echo a;& b) echo b;; esac").into_command();
     match &cmd {
         Command::Case { arms, .. } => {
             assert_eq!(arms[0].terminator, CaseTerminator::Fallthrough);
@@ -374,7 +374,7 @@ fn test_case_fallthrough() {
 
 #[test]
 fn test_case_continue() {
-    let cmd = parse("case $x in a) echo a;;& b) echo b;; esac");
+    let cmd = parse("case $x in a) echo a;;& b) echo b;; esac").into_command();
     match &cmd {
         Command::Case { arms, .. } => {
             assert_eq!(arms[0].terminator, CaseTerminator::Continue);
@@ -385,7 +385,7 @@ fn test_case_continue() {
 
 #[test]
 fn test_case_glob_pattern() {
-    let cmd = parse("case $x in *) echo default;; esac");
+    let cmd = parse("case $x in *) echo default;; esac").into_command();
     match &cmd {
         Command::Case { arms, .. } => {
             assert_eq!(arms.len(), 1);
@@ -403,7 +403,7 @@ fn test_case_glob_pattern() {
 
 #[test]
 fn test_case_empty_body() {
-    let cmd = parse("case $x in a) ;; esac");
+    let cmd = parse("case $x in a) ;; esac").into_command();
     match &cmd {
         Command::Case { arms, .. } => {
             assert!(arms[0].body.is_none());
@@ -416,7 +416,7 @@ fn test_case_empty_body() {
 
 #[test]
 fn test_function_def() {
-    let cmd = parse("function foo() { echo hello; }");
+    let cmd = parse("function foo() { echo hello; }").into_command();
     match &cmd {
         Command::FunctionDef { name, body } => {
             assert_eq!(name, "foo");
@@ -431,7 +431,7 @@ fn test_function_def() {
 
 #[test]
 fn test_function_def_no_parens() {
-    let cmd = parse("function bar { echo hi; }");
+    let cmd = parse("function bar { echo hi; }").into_command();
     match &cmd {
         Command::FunctionDef { name, .. } => {
             assert_eq!(name, "bar");
@@ -444,7 +444,7 @@ fn test_function_def_no_parens() {
 
 #[test]
 fn test_assignment_standalone() {
-    let cmd = parse("VAR=value");
+    let cmd = parse("VAR=value").into_command();
     match &cmd {
         Command::Assignment(a) => {
             assert_eq!(a.name, "VAR");
@@ -456,7 +456,7 @@ fn test_assignment_standalone() {
 
 #[test]
 fn test_assignment_empty_value() {
-    let cmd = parse("VAR=");
+    let cmd = parse("VAR=").into_command();
     match &cmd {
         Command::Assignment(a) => {
             assert_eq!(a.name, "VAR");
@@ -468,7 +468,7 @@ fn test_assignment_empty_value() {
 
 #[test]
 fn test_assignment_with_command() {
-    let cmd = parse("VAR=value cmd arg");
+    let cmd = parse("VAR=value cmd arg").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(sc.assignments.len(), 1);
@@ -485,7 +485,7 @@ fn test_assignment_with_command() {
 
 #[test]
 fn test_comment() {
-    let cmd = parse("echo foo # this is a comment");
+    let cmd = parse("echo foo # this is a comment").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(sc.command_name(), Some("echo"));
@@ -498,7 +498,7 @@ fn test_comment() {
 
 #[test]
 fn test_comment_only() {
-    let cmd = parse("# just a comment");
+    let cmd = parse("# just a comment").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert!(sc.words.is_empty());
@@ -511,7 +511,7 @@ fn test_comment_only() {
 
 #[test]
 fn test_extract_simple_commands_from_pipeline() {
-    let cmd = parse("echo foo | grep bar | wc -l");
+    let cmd = parse("echo foo | grep bar | wc -l").into_command();
     let scs = extract_simple_commands(&cmd);
     assert_eq!(scs.len(), 3);
     assert_eq!(scs[0].command_name(), Some("echo"));
@@ -521,35 +521,35 @@ fn test_extract_simple_commands_from_pipeline() {
 
 #[test]
 fn test_extract_simple_commands_from_and_or() {
-    let cmd = parse("a && b || c");
+    let cmd = parse("a && b || c").into_command();
     let scs = extract_simple_commands(&cmd);
     assert_eq!(scs.len(), 3);
 }
 
 #[test]
 fn test_extract_simple_commands_from_sequence() {
-    let cmd = parse("a; b; c");
+    let cmd = parse("a; b; c").into_command();
     let scs = extract_simple_commands(&cmd);
     assert_eq!(scs.len(), 3);
 }
 
 #[test]
 fn test_extract_simple_commands_from_if() {
-    let cmd = parse("if a; then b; elif c; then d; else e; fi");
+    let cmd = parse("if a; then b; elif c; then d; else e; fi").into_command();
     let scs = extract_simple_commands(&cmd);
     assert_eq!(scs.len(), 5); // a, b, c, d, e
 }
 
 #[test]
 fn test_extract_simple_commands_from_for() {
-    let cmd = parse("for x in a b; do echo $x; done");
+    let cmd = parse("for x in a b; do echo $x; done").into_command();
     let scs = extract_simple_commands(&cmd);
     assert_eq!(scs.len(), 1); // just the echo
 }
 
 #[test]
 fn test_extract_simple_commands_from_while() {
-    let cmd = parse("while true; do echo loop; done");
+    let cmd = parse("while true; do echo loop; done").into_command();
     let scs = extract_simple_commands(&cmd);
     assert_eq!(scs.len(), 2);
     assert_eq!(scs[0].command_name(), Some("true"));
@@ -558,7 +558,7 @@ fn test_extract_simple_commands_from_while() {
 
 #[test]
 fn test_extract_simple_commands_from_until() {
-    let cmd = parse("until false; do echo loop; done");
+    let cmd = parse("until false; do echo loop; done").into_command();
     let scs = extract_simple_commands(&cmd);
     assert_eq!(scs.len(), 2);
     assert_eq!(scs[0].command_name(), Some("false"));
@@ -567,14 +567,14 @@ fn test_extract_simple_commands_from_until() {
 
 #[test]
 fn test_extract_simple_commands_from_case() {
-    let cmd = parse("case $x in a) echo a;; b) echo b;; esac");
+    let cmd = parse("case $x in a) echo a;; b) echo b;; esac").into_command();
     let scs = extract_simple_commands(&cmd);
     assert_eq!(scs.len(), 2);
 }
 
 #[test]
 fn test_extract_simple_commands_from_function() {
-    let cmd = parse("function foo() { echo hello; }");
+    let cmd = parse("function foo() { echo hello; }").into_command();
     let scs = extract_simple_commands(&cmd);
     assert_eq!(scs.len(), 1);
     assert_eq!(scs[0].command_name(), Some("echo"));
@@ -582,7 +582,7 @@ fn test_extract_simple_commands_from_function() {
 
 #[test]
 fn test_extract_simple_commands_from_background() {
-    let cmd = parse("sleep 10 &");
+    let cmd = parse("sleep 10 &").into_command();
     let scs = extract_simple_commands(&cmd);
     assert_eq!(scs.len(), 1);
     assert_eq!(scs[0].command_name(), Some("sleep"));
@@ -590,21 +590,21 @@ fn test_extract_simple_commands_from_background() {
 
 #[test]
 fn test_extract_simple_commands_from_subshell() {
-    let cmd = parse("(echo hello)");
+    let cmd = parse("(echo hello)").into_command();
     let scs = extract_simple_commands(&cmd);
     assert_eq!(scs.len(), 1);
 }
 
 #[test]
 fn test_extract_simple_commands_from_brace_group() {
-    let cmd = parse("{ echo hello; }");
+    let cmd = parse("{ echo hello; }").into_command();
     let scs = extract_simple_commands(&cmd);
     assert_eq!(scs.len(), 1);
 }
 
 #[test]
 fn test_extract_simple_commands_from_assignment() {
-    let cmd = parse("FOO=bar");
+    let cmd = parse("FOO=bar").into_command();
     let scs = extract_simple_commands(&cmd);
     assert_eq!(scs.len(), 0); // assignments don't contain simple commands
 }
@@ -613,14 +613,14 @@ fn test_extract_simple_commands_from_assignment() {
 
 #[test]
 fn test_extract_all_words_simple() {
-    let cmd = parse("echo hello world");
+    let cmd = parse("echo hello world").into_command();
     let words = extract_all_words(&cmd);
     assert_eq!(words.len(), 3);
 }
 
 #[test]
 fn test_extract_all_words_with_redirections() {
-    let cmd = parse("echo hello > file.txt");
+    let cmd = parse("echo hello > file.txt").into_command();
     let words = extract_all_words(&cmd);
     // echo, hello, file.txt (redirect target)
     assert_eq!(words.len(), 3);
@@ -628,7 +628,7 @@ fn test_extract_all_words_with_redirections() {
 
 #[test]
 fn test_extract_all_words_with_assignment() {
-    let cmd = parse("VAR=value cmd arg");
+    let cmd = parse("VAR=value cmd arg").into_command();
     let words = extract_all_words(&cmd);
     // assignment value + cmd + arg
     assert_eq!(words.len(), 3);
@@ -636,14 +636,14 @@ fn test_extract_all_words_with_assignment() {
 
 #[test]
 fn test_extract_all_words_standalone_assignment() {
-    let cmd = parse("VAR=value");
+    let cmd = parse("VAR=value").into_command();
     let words = extract_all_words(&cmd);
     assert_eq!(words.len(), 1); // just the assignment value
 }
 
 #[test]
 fn test_extract_all_words_from_for() {
-    let cmd = parse("for x in a b c; do echo $x; done");
+    let cmd = parse("for x in a b c; do echo $x; done").into_command();
     let words = extract_all_words(&cmd);
     // a, b, c (for-loop words) + echo, $x (body words)
     assert_eq!(words.len(), 5);
@@ -651,7 +651,7 @@ fn test_extract_all_words_from_for() {
 
 #[test]
 fn test_extract_all_words_from_case() {
-    let cmd = parse("case $x in a) echo hello;; esac");
+    let cmd = parse("case $x in a) echo hello;; esac").into_command();
     let words = extract_all_words(&cmd);
     // $x (case word) + a (pattern) + echo, hello (body words)
     assert_eq!(words.len(), 4);
@@ -659,35 +659,35 @@ fn test_extract_all_words_from_case() {
 
 #[test]
 fn test_extract_all_words_from_pipeline() {
-    let cmd = parse("echo a | grep b");
+    let cmd = parse("echo a | grep b").into_command();
     let words = extract_all_words(&cmd);
     assert_eq!(words.len(), 4); // echo, a, grep, b
 }
 
 #[test]
 fn test_extract_all_words_from_and_or() {
-    let cmd = parse("cmd1 arg1 && cmd2 arg2");
+    let cmd = parse("cmd1 arg1 && cmd2 arg2").into_command();
     let words = extract_all_words(&cmd);
     assert_eq!(words.len(), 4);
 }
 
 #[test]
 fn test_extract_all_words_from_background() {
-    let cmd = parse("echo hello &");
+    let cmd = parse("echo hello &").into_command();
     let words = extract_all_words(&cmd);
     assert_eq!(words.len(), 2);
 }
 
 #[test]
 fn test_extract_all_words_from_subshell() {
-    let cmd = parse("(echo hello)");
+    let cmd = parse("(echo hello)").into_command();
     let words = extract_all_words(&cmd);
     assert_eq!(words.len(), 2);
 }
 
 #[test]
 fn test_extract_all_words_from_if() {
-    let cmd = parse("if true; then echo yes; else echo no; fi");
+    let cmd = parse("if true; then echo yes; else echo no; fi").into_command();
     let words = extract_all_words(&cmd);
     // true, echo, yes, echo, no
     assert_eq!(words.len(), 5);
@@ -695,7 +695,7 @@ fn test_extract_all_words_from_if() {
 
 #[test]
 fn test_extract_all_words_from_while() {
-    let cmd = parse("while true; do echo x; done");
+    let cmd = parse("while true; do echo x; done").into_command();
     let words = extract_all_words(&cmd);
     // true, echo, x
     assert_eq!(words.len(), 3);
@@ -703,7 +703,7 @@ fn test_extract_all_words_from_while() {
 
 #[test]
 fn test_extract_all_words_from_function() {
-    let cmd = parse("function foo() { echo bar; }");
+    let cmd = parse("function foo() { echo bar; }").into_command();
     let words = extract_all_words(&cmd);
     assert_eq!(words.len(), 2); // echo, bar
 }
@@ -712,7 +712,7 @@ fn test_extract_all_words_from_function() {
 
 #[test]
 fn test_pipeline_with_redirections() {
-    let cmd = parse("cat < input.txt | sort > output.txt");
+    let cmd = parse("cat < input.txt | sort > output.txt").into_command();
     match &cmd {
         Command::Pipeline(cmds) => {
             assert_eq!(cmds.len(), 2);
@@ -739,7 +739,7 @@ fn test_pipeline_with_redirections() {
 
 #[test]
 fn test_complex_nested_structure() {
-    let cmd = parse("if true; then for x in a b; do echo $x; done; fi");
+    let cmd = parse("if true; then for x in a b; do echo $x; done; fi").into_command();
     match &cmd {
         Command::If { then_branch, .. } => match then_branch.as_ref() {
             Command::For { var, words, .. } => {
@@ -755,7 +755,7 @@ fn test_complex_nested_structure() {
 #[test]
 fn test_newline_separated_commands() {
     // Multiple commands separated by semicolons produce a sequence
-    let cmd = parse("echo a; echo b; echo c");
+    let cmd = parse("echo a; echo b; echo c").into_command();
     match &cmd {
         Command::Sequence(cmds) => {
             assert_eq!(cmds.len(), 3);
@@ -772,7 +772,7 @@ fn test_newline_separated_commands() {
 
 #[test]
 fn test_extract_all_words_redirect_fd_target() {
-    let cmd = parse("cmd >&2");
+    let cmd = parse("cmd >&2").into_command();
     let words = extract_all_words(&cmd);
     // cmd word only; Fd(2) is not a File target so not collected
     assert_eq!(words.len(), 1);
@@ -780,7 +780,7 @@ fn test_extract_all_words_redirect_fd_target() {
 
 #[test]
 fn test_case_with_empty_body_arm() {
-    let cmd = parse("case $x in a) ;; b) echo b;; esac");
+    let cmd = parse("case $x in a) ;; b) echo b;; esac").into_command();
     match &cmd {
         Command::Case { arms, .. } => {
             assert_eq!(arms.len(), 2);
@@ -793,21 +793,21 @@ fn test_case_with_empty_body_arm() {
 
 #[test]
 fn test_extract_simple_commands_case_empty_body() {
-    let cmd = parse("case $x in a) ;; esac");
+    let cmd = parse("case $x in a) ;; esac").into_command();
     let scs = extract_simple_commands(&cmd);
     assert_eq!(scs.len(), 0);
 }
 
 #[test]
 fn test_if_without_else() {
-    let cmd = parse("if true; then echo yes; fi");
+    let cmd = parse("if true; then echo yes; fi").into_command();
     let scs = extract_simple_commands(&cmd);
     assert_eq!(scs.len(), 2); // true + echo
 }
 
 #[test]
 fn test_extract_all_words_elif() {
-    let cmd = parse("if a; then b; elif c; then d; fi");
+    let cmd = parse("if a; then b; elif c; then d; fi").into_command();
     let words = extract_all_words(&cmd);
     // a, b, c, d
     assert_eq!(words.len(), 4);
@@ -815,7 +815,7 @@ fn test_extract_all_words_elif() {
 
 #[test]
 fn test_extract_all_words_until() {
-    let cmd = parse("until false; do echo x; done");
+    let cmd = parse("until false; do echo x; done").into_command();
     let words = extract_all_words(&cmd);
     // false, echo, x
     assert_eq!(words.len(), 3);
@@ -826,7 +826,7 @@ fn test_extract_all_words_until() {
 #[test]
 fn structural_dynamic_case_arms() {
     use std::collections::HashMap;
-    let cmd = parse("case $x in $pat) echo hi ;; esac");
+    let cmd = parse("case $x in $pat) echo hi ;; esac").into_command();
     let parts = find_structural_dynamic_parts(&cmd, &HashMap::new());
     assert!(parts.contains(&"$x".to_string()));
     assert!(parts.contains(&"$pat".to_string()));
@@ -835,14 +835,15 @@ fn structural_dynamic_case_arms() {
 #[test]
 fn structural_dynamic_elif_else() {
     use std::collections::HashMap;
-    let cmd = parse("if true; then echo a; elif $cond; then echo b; else echo c; fi");
+    let cmd =
+        parse("if true; then echo a; elif $cond; then echo b; else echo c; fi").into_command();
     let _parts = find_structural_dynamic_parts(&cmd, &HashMap::new());
 }
 
 #[test]
 fn structural_dynamic_function_body() {
     use std::collections::HashMap;
-    let cmd = parse("function foo { for x in $items; do echo $x; done; }");
+    let cmd = parse("function foo { for x in $items; do echo $x; done; }").into_command();
     let parts = find_structural_dynamic_parts(&cmd, &HashMap::new());
     assert!(parts.contains(&"$items".to_string()));
 }
@@ -850,7 +851,7 @@ fn structural_dynamic_function_body() {
 #[test]
 fn structural_dynamic_redirected() {
     use std::collections::HashMap;
-    let cmd = parse("for x in $items; do echo $x; done > /tmp/out");
+    let cmd = parse("for x in $items; do echo $x; done > /tmp/out").into_command();
     let parts = find_structural_dynamic_parts(&cmd, &HashMap::new());
     assert!(parts.contains(&"$items".to_string()));
 }
@@ -859,7 +860,7 @@ fn structural_dynamic_redirected() {
 
 #[test]
 fn extract_simple_commands_from_redirected() {
-    let cmd = parse("echo hello > /tmp/out");
+    let cmd = parse("echo hello > /tmp/out").into_command();
     let cmds = extract_simple_commands(&cmd);
     assert_eq!(cmds.len(), 1);
     assert_eq!(cmds[0].command_name(), Some("echo"));
@@ -867,7 +868,7 @@ fn extract_simple_commands_from_redirected() {
 
 #[test]
 fn extract_simple_commands_from_compound_redirected() {
-    let cmd = parse("{ echo hello; } > /tmp/out");
+    let cmd = parse("{ echo hello; } > /tmp/out").into_command();
     let cmds = extract_simple_commands(&cmd);
     assert_eq!(cmds.len(), 1);
     assert_eq!(cmds[0].command_name(), Some("echo"));
@@ -875,35 +876,35 @@ fn extract_simple_commands_from_compound_redirected() {
 
 #[test]
 fn extract_all_words_from_redirected() {
-    let cmd = parse("echo hello > /tmp/out");
+    let cmd = parse("echo hello > /tmp/out").into_command();
     let words = extract_all_words(&cmd);
     assert!(words.len() >= 3);
 }
 
 #[test]
 fn extract_all_words_from_compound_redirected() {
-    let cmd = parse("{ echo hello; } > /tmp/out");
+    let cmd = parse("{ echo hello; } > /tmp/out").into_command();
     let words = extract_all_words(&cmd);
     assert!(words.len() >= 3);
 }
 
 #[test]
 fn extract_all_words_from_compound_with_heredoc_redirect() {
-    let cmd = parse("{ cat; } <<'EOF'\nhello\nEOF\n");
+    let cmd = parse("{ cat; } <<'EOF'\nhello\nEOF\n").into_command();
     let words = extract_all_words(&cmd);
     assert_eq!(words.len(), 1);
 }
 
 #[test]
 fn extract_all_words_from_compound_with_fd_redirect() {
-    let cmd = parse("{ echo hi; } 2>&1");
+    let cmd = parse("{ echo hi; } 2>&1").into_command();
     let words = extract_all_words(&cmd);
     assert_eq!(words.len(), 2);
 }
 
 #[test]
 fn extract_all_words_from_standalone_assignment_value() {
-    let cmd = parse("x=hello");
+    let cmd = parse("x=hello").into_command();
     let words = extract_all_words(&cmd);
     assert_eq!(words.len(), 1);
     assert_eq!(words[0].to_str(), "hello");
@@ -913,7 +914,7 @@ fn extract_all_words_from_standalone_assignment_value() {
 
 #[test]
 fn newline_separated_commands_in_sequence() {
-    let cmd = parse("echo a\necho b");
+    let cmd = parse("echo a\necho b").into_command();
     match &cmd {
         Command::Sequence(cmds) => {
             assert_eq!(cmds.len(), 2);
@@ -924,7 +925,7 @@ fn newline_separated_commands_in_sequence() {
 
 #[test]
 fn background_command_in_sequence() {
-    let cmd = parse("sleep 1 & echo done");
+    let cmd = parse("sleep 1 & echo done").into_command();
     match &cmd {
         Command::Sequence(cmds) => {
             assert_eq!(cmds.len(), 2);
@@ -942,7 +943,7 @@ fn background_command_in_sequence() {
 
 #[test]
 fn case_with_leading_paren_in_pattern() {
-    let cmd = parse("case x in (a) echo a ;; esac");
+    let cmd = parse("case x in (a) echo a ;; esac").into_command();
     match &cmd {
         Command::Case { arms, .. } => {
             assert_eq!(arms.len(), 1);
@@ -956,7 +957,7 @@ fn case_with_leading_paren_in_pattern() {
 
 #[test]
 fn case_arm_without_terminator() {
-    let cmd = parse("case x in a) echo a\nesac");
+    let cmd = parse("case x in a) echo a\nesac").into_command();
     match &cmd {
         Command::Case { arms, .. } => {
             assert_eq!(arms.len(), 1);
@@ -969,7 +970,7 @@ fn case_arm_without_terminator() {
 
 #[test]
 fn for_loop_missing_var_name() {
-    let cmd = parse("for ; do echo x; done");
+    let cmd = parse("for ; do echo x; done").into_command();
     match &cmd {
         Command::For { var, .. } => {
             assert!(var.is_empty());
@@ -982,7 +983,7 @@ fn for_loop_missing_var_name() {
 
 #[test]
 fn case_empty_discriminant() {
-    let cmd = parse("case\nin a) echo x ;; esac");
+    let cmd = parse("case\nin a) echo x ;; esac").into_command();
     match &cmd {
         Command::Case { word, .. } => {
             let _ = word;
@@ -995,7 +996,7 @@ fn case_empty_discriminant() {
 
 #[test]
 fn function_missing_name() {
-    let cmd = parse("function { echo x; }");
+    let cmd = parse("function { echo x; }").into_command();
     match &cmd {
         Command::FunctionDef { name, .. } => {
             assert!(name.is_empty());
@@ -1008,7 +1009,7 @@ fn function_missing_name() {
 
 #[test]
 fn comment_then_newline_then_command() {
-    let cmd = parse("# comment\necho hello");
+    let cmd = parse("# comment\necho hello").into_command();
     let cmds = extract_simple_commands(&cmd);
     assert_eq!(cmds.len(), 1);
     assert_eq!(cmds[0].command_name(), Some("echo"));
@@ -1018,7 +1019,7 @@ fn comment_then_newline_then_command() {
 
 #[test]
 fn function_definition_parsed() {
-    let cmd = parse("greet() { echo hi; }");
+    let cmd = parse("greet() { echo hi; }").into_command();
     match &cmd {
         Command::FunctionDef { name, body } => {
             assert_eq!(name, "greet");
@@ -1034,7 +1035,7 @@ fn function_definition_parsed() {
 
 #[test]
 fn test_glob_star() {
-    let cmd = parse("echo *.txt");
+    let cmd = parse("echo *.txt").into_command();
     match &cmd {
         Command::Simple(sc) => {
             let word = &sc.words[1];
@@ -1055,7 +1056,7 @@ fn test_glob_star() {
 
 #[test]
 fn test_glob_question() {
-    let cmd = parse("echo file?.txt");
+    let cmd = parse("echo file?.txt").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert!(
@@ -1071,7 +1072,7 @@ fn test_glob_question() {
 
 #[test]
 fn test_glob_bracket() {
-    let cmd = parse("echo [abc].txt");
+    let cmd = parse("echo [abc].txt").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert!(
@@ -1090,7 +1091,7 @@ fn test_glob_bracket() {
 #[test]
 fn test_bracket_command() {
     // `[` is a shell builtin command, not a glob bracket expression.
-    let cmd = parse("[ -f foo ]");
+    let cmd = parse("[ -f foo ]").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(sc.command_name(), Some("["));
@@ -1106,7 +1107,7 @@ fn test_bracket_command() {
 #[test]
 fn test_bracket_command_in_if() {
     // `[ -f foo ]` used as a condition in an if statement.
-    let cmd = parse("if [ -f foo ]; then echo yes; fi");
+    let cmd = parse("if [ -f foo ]; then echo yes; fi").into_command();
     match &cmd {
         Command::If { condition, .. } => {
             // The condition should contain the `[` command
@@ -1128,7 +1129,7 @@ fn test_bracket_command_in_if() {
 #[test]
 fn test_double_bracket_command() {
     // `[[` is a bash keyword, not a glob expression.
-    let cmd = parse("[[ -f foo ]]");
+    let cmd = parse("[[ -f foo ]]").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(sc.command_name(), Some("[["));
@@ -1143,7 +1144,7 @@ fn test_double_bracket_command() {
 
 #[test]
 fn test_double_bracket_in_if() {
-    let cmd = parse("if [[ -f foo ]]; then echo yes; fi");
+    let cmd = parse("if [[ -f foo ]]; then echo yes; fi").into_command();
     match &cmd {
         Command::If { condition, .. } => match condition.as_ref() {
             Command::Simple(sc) => {
@@ -1164,7 +1165,7 @@ fn test_double_bracket_in_if() {
 #[test]
 fn parse_param_expansion_hash_not_length() {
     // ${#} — '#' with no identifier is not length op, falls back to flat
-    let cmd = parse("echo ${#}");
+    let cmd = parse("echo ${#}").into_command();
     if let Command::Simple(sc) = &cmd {
         assert_eq!(
             sc.words[1].parts,
@@ -1178,7 +1179,7 @@ fn parse_param_expansion_hash_not_length() {
 #[test]
 fn parse_param_expansion_hash_special() {
     // ${#*} — '#' followed by '*' (not a valid identifier), falls through
-    let cmd = parse("echo ${#*}");
+    let cmd = parse("echo ${#*}").into_command();
     if let Command::Simple(sc) = &cmd {
         // '#' not followed by ident+'}', so it restores pos and reads '#*' as flat
         assert_eq!(

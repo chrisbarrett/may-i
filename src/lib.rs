@@ -6,3 +6,4 @@ pub mod cmd_eval;
 pub mod loaded_config;
 pub mod output;
 pub mod runtime_facts;
+pub mod shell_parse_error;

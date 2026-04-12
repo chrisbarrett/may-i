@@ -20,6 +20,15 @@ pub fn trace_to_json(entries: &[TraceEntry]) -> Vec<serde_json::Value> {
                 "type": "default_ask",
                 "reason": reason,
             }),
+            TraceEntry::ParseDiagnostics { diagnostics } => serde_json::json!({
+                "type": "parse_diagnostics",
+                "diagnostics": diagnostics.iter().map(|d| serde_json::json!({
+                    "span": { "start": d.span.start, "end": d.span.end },
+                    "kind": d.kind,
+                    "severity": d.severity,
+                    "message": d.message(),
+                })).collect::<Vec<_>>(),
+            }),
             TraceEntry::Rule { doc, line, .. } => {
                 let mut annotations = Vec::new();
                 collect_json_annotations(doc, &mut annotations);

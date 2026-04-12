@@ -4,7 +4,7 @@ use crate::*;
 
 #[test]
 fn test_redirect_output() {
-    let cmd = parse("echo hello > file.txt");
+    let cmd = parse("echo hello > file.txt").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(sc.redirections.len(), 1);
@@ -21,7 +21,7 @@ fn test_redirect_output() {
 
 #[test]
 fn test_redirect_input() {
-    let cmd = parse("cat < input.txt");
+    let cmd = parse("cat < input.txt").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(sc.redirections.len(), 1);
@@ -33,7 +33,7 @@ fn test_redirect_input() {
 
 #[test]
 fn test_redirect_append() {
-    let cmd = parse("echo hello >> file.txt");
+    let cmd = parse("echo hello >> file.txt").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(sc.redirections.len(), 1);
@@ -45,7 +45,7 @@ fn test_redirect_append() {
 
 #[test]
 fn test_redirect_clobber() {
-    let cmd = parse("echo hello >| file.txt");
+    let cmd = parse("echo hello >| file.txt").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(sc.redirections.len(), 1);
@@ -57,7 +57,7 @@ fn test_redirect_clobber() {
 
 #[test]
 fn test_redirect_dup_output() {
-    let cmd = parse("cmd >&2");
+    let cmd = parse("cmd >&2").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(sc.redirections.len(), 1);
@@ -73,7 +73,7 @@ fn test_redirect_dup_output() {
 
 #[test]
 fn test_redirect_dup_input() {
-    let cmd = parse("cmd <&3");
+    let cmd = parse("cmd <&3").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(sc.redirections.len(), 1);
@@ -89,7 +89,7 @@ fn test_redirect_dup_input() {
 
 #[test]
 fn test_redirect_fd_prefix() {
-    let cmd = parse("cmd 2>errors.txt");
+    let cmd = parse("cmd 2>errors.txt").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(sc.redirections.len(), 1);
@@ -102,7 +102,7 @@ fn test_redirect_fd_prefix() {
 
 #[test]
 fn test_redirect_herestring() {
-    let cmd = parse("cat <<< hello");
+    let cmd = parse("cat <<< hello").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(sc.redirections.len(), 1);
@@ -114,7 +114,7 @@ fn test_redirect_herestring() {
 
 #[test]
 fn test_multiple_redirections() {
-    let cmd = parse("cmd > out.txt 2>&1");
+    let cmd = parse("cmd > out.txt 2>&1").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(sc.redirections.len(), 2);
@@ -125,7 +125,7 @@ fn test_multiple_redirections() {
 
 #[test]
 fn test_heredoc() {
-    let cmd = parse("cat << EOF");
+    let cmd = parse("cat << EOF").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(sc.redirections.len(), 1);
@@ -137,7 +137,7 @@ fn test_heredoc() {
 
 #[test]
 fn test_heredoc_strip() {
-    let cmd = parse("cat <<- EOF");
+    let cmd = parse("cat <<- EOF").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(sc.redirections.len(), 1);
@@ -149,7 +149,7 @@ fn test_heredoc_strip() {
 
 #[test]
 fn test_heredoc_body_basic() {
-    let cmd = parse("cat <<EOF\nhello\nworld\nEOF");
+    let cmd = parse("cat <<EOF\nhello\nworld\nEOF").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(sc.redirections.len(), 1);
@@ -166,7 +166,7 @@ fn test_heredoc_body_basic() {
 
 #[test]
 fn test_heredoc_body_strip_tabs() {
-    let cmd = parse("cat <<-EOF\n\t\thello\n\t\tworld\n\t\tEOF");
+    let cmd = parse("cat <<-EOF\n\t\thello\n\t\tworld\n\t\tEOF").into_command();
     match &cmd {
         Command::Simple(sc) => match &sc.redirections[0].target {
             RedirectionTarget::Heredoc(body) => {
@@ -180,7 +180,7 @@ fn test_heredoc_body_strip_tabs() {
 
 #[test]
 fn test_heredoc_single_quoted_delimiter() {
-    let cmd = parse("cat <<'EOF'\nhello\nEOF");
+    let cmd = parse("cat <<'EOF'\nhello\nEOF").into_command();
     match &cmd {
         Command::Simple(sc) => match &sc.redirections[0].target {
             RedirectionTarget::Heredoc(body) => {
@@ -194,7 +194,7 @@ fn test_heredoc_single_quoted_delimiter() {
 
 #[test]
 fn test_heredoc_double_quoted_delimiter() {
-    let cmd = parse("cat <<\"EOF\"\nhello\nEOF");
+    let cmd = parse("cat <<\"EOF\"\nhello\nEOF").into_command();
     match &cmd {
         Command::Simple(sc) => match &sc.redirections[0].target {
             RedirectionTarget::Heredoc(body) => {
@@ -208,7 +208,7 @@ fn test_heredoc_double_quoted_delimiter() {
 
 #[test]
 fn test_heredoc_backslash_escaped_delimiter() {
-    let cmd = parse("cat <<\\EOF\nhello\nEOF");
+    let cmd = parse("cat <<\\EOF\nhello\nEOF").into_command();
     match &cmd {
         Command::Simple(sc) => match &sc.redirections[0].target {
             RedirectionTarget::Heredoc(body) => {
@@ -222,7 +222,7 @@ fn test_heredoc_backslash_escaped_delimiter() {
 
 #[test]
 fn test_heredoc_empty_body() {
-    let cmd = parse("cat <<EOF\nEOF");
+    let cmd = parse("cat <<EOF\nEOF").into_command();
     match &cmd {
         Command::Simple(sc) => match &sc.redirections[0].target {
             RedirectionTarget::Heredoc(body) => {
@@ -236,7 +236,7 @@ fn test_heredoc_empty_body() {
 
 #[test]
 fn test_heredoc_unterminated() {
-    let cmd = parse("cat <<EOF\nhello\nworld");
+    let cmd = parse("cat <<EOF\nhello\nworld").into_command();
     match &cmd {
         Command::Simple(sc) => {
             match &sc.redirections[0].target {
@@ -254,7 +254,7 @@ fn test_heredoc_unterminated() {
 
 #[test]
 fn test_heredoc_with_command() {
-    let cmd = parse("cat <<EOF\nline\nEOF");
+    let cmd = parse("cat <<EOF\nline\nEOF").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(sc.command_name(), Some("cat"));
@@ -273,7 +273,7 @@ fn test_heredoc_with_command() {
 
 #[test]
 fn redirect_dup_fd_with_dash() {
-    let cmd = parse("echo hi 2>&-");
+    let cmd = parse("echo hi 2>&-").into_command();
     match &cmd {
         Command::Redirected { redirections, .. }
         | Command::Simple(SimpleCommand { redirections, .. }) => {
@@ -293,7 +293,7 @@ fn redirect_dup_fd_with_dash() {
 
 #[test]
 fn redirect_dup_fd_non_numeric() {
-    let cmd = parse("echo hi >&foo");
+    let cmd = parse("echo hi >&foo").into_command();
     match &cmd {
         Command::Redirected { redirections, .. } => {
             assert!(redirections.iter().any(|r| {
@@ -312,7 +312,7 @@ fn redirect_dup_fd_non_numeric() {
 #[test]
 fn parse_herestring_redirect_target() {
     // <<< with a word target
-    let cmd = parse("cat <<< hello");
+    let cmd = parse("cat <<< hello").into_command();
     if let Command::Simple(sc) = &cmd {
         assert_eq!(sc.command_name(), Some("cat"));
         assert_eq!(sc.redirections.len(), 1);

@@ -154,7 +154,7 @@ fn test_simple_command_args_empty() {
 
 #[test]
 fn test_simple_command_args_multiple() {
-    let cmd = parse("echo a b c");
+    let cmd = parse("echo a b c").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(sc.command_name(), Some("echo"));

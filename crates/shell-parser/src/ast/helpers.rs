@@ -4,12 +4,12 @@ use super::*;
 /// (and/or herestrings), the output is fully determined at parse time.
 /// Parse the inner command and return the concatenated body if static.
 pub(crate) fn try_fold_static_cat(cmd: &str) -> Option<String> {
-    let ast = crate::parse(cmd);
+    let result = crate::parse(cmd);
     // Unwrap a Redirected wrapping a Simple command
     // parse() of `cat <<'DELIM'...` always yields Command::Simple
     // because parse_simple_command consumes all redirect tokens inline.
     // Command::Redirected only wraps compound commands (if/for/while/…).
-    let sc = match &ast {
+    let sc = match &result.command {
         Command::Simple(sc) => sc,
         _ => return None,
     };

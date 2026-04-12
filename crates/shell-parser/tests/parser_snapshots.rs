@@ -7,7 +7,11 @@
 // Run: cargo test --test parser_snapshots
 // Review: cargo insta review
 
-use may_i_shell_parser::parse;
+use may_i_shell_parser::Command;
+
+fn parse(input: &str) -> Command {
+    may_i_shell_parser::parse(input).into_command()
+}
 
 // ── Simple commands & basic syntax ──────────────────────────────────
 

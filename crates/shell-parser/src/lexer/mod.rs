@@ -1,4 +1,5 @@
 use super::ast::*;
+use super::diagnostic::ParseDiagnostic;
 
 mod param_expansion;
 mod string_readers;
@@ -42,6 +43,7 @@ pub(super) struct Lexer {
     pub(super) input: Vec<char>,
     pub(super) pos: usize,
     pub(super) byte_pos: usize,
+    pub(super) diagnostics: Vec<ParseDiagnostic>,
 }
 
 impl Lexer {
@@ -50,7 +52,12 @@ impl Lexer {
             input: input.chars().collect(),
             pos: 0,
             byte_pos: 0,
+            diagnostics: Vec::new(),
         }
+    }
+
+    pub(super) fn take_diagnostics(&mut self) -> Vec<ParseDiagnostic> {
+        std::mem::take(&mut self.diagnostics)
     }
 
     pub(super) fn peek(&self) -> Option<char> {
@@ -97,6 +104,7 @@ impl Lexer {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn tokenize(&mut self) -> Vec<Token> {
         self.tokenize_with_offsets()
             .into_iter()
@@ -473,24 +481,105 @@ pub(super) fn is_redirect_start(ch: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::diagnostic::{ParseDiagnosticKind, Severity};
 
     #[test]
     fn lexer_empty_word_from_empty_parts() {
-        // Test the Word::literal("") branch in read_word_value
         let mut lex = Lexer::new("");
-        // When read_word_parts returns empty, we get Word::literal("")
         let word = lex.read_word_value();
-        // Word::literal creates a single Literal part with empty string
         assert_eq!(word.parts.len(), 1);
         assert!(matches!(&word.parts[0], WordPart::Literal(s) if s.is_empty()));
     }
 
     #[test]
     fn lexer_bracket_appends_to_literal() {
-        // Test the branch where '[' is appended to existing literal
         let mut lex = Lexer::new("a[");
         let word = lex.read_word_value();
         assert_eq!(word.parts.len(), 1);
         assert!(matches!(&word.parts[0], WordPart::Literal(s) if s == "a["));
+    }
+
+    fn tokenize_and_get_diagnostics(input: &str) -> Vec<crate::diagnostic::ParseDiagnostic> {
+        let mut lex = Lexer::new(input);
+        let _ = lex.tokenize();
+        lex.take_diagnostics()
+    }
+
+    #[test]
+    fn unterminated_single_quote() {
+        let diags = tokenize_and_get_diagnostics("echo 'hello");
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].kind, ParseDiagnosticKind::UnterminatedSingleQuote);
+        assert_eq!(diags[0].severity, Severity::Error);
+        assert_eq!(diags[0].span.start, 5); // byte offset of '
+        assert_eq!(diags[0].span.end, 11); // EOF
+    }
+
+    #[test]
+    fn unterminated_double_quote() {
+        let diags = tokenize_and_get_diagnostics("echo \"hello");
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].kind, ParseDiagnosticKind::UnterminatedDoubleQuote);
+        assert_eq!(diags[0].severity, Severity::Error);
+        assert_eq!(diags[0].span.start, 5);
+        assert_eq!(diags[0].span.end, 11);
+    }
+
+    #[test]
+    fn unterminated_backtick() {
+        let diags = tokenize_and_get_diagnostics("echo `hello");
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].kind, ParseDiagnosticKind::UnterminatedBacktick);
+        assert_eq!(diags[0].severity, Severity::Error);
+        assert_eq!(diags[0].span.start, 5);
+        assert_eq!(diags[0].span.end, 11);
+    }
+
+    #[test]
+    fn unterminated_command_substitution() {
+        let diags = tokenize_and_get_diagnostics("echo $(rm -rf /");
+        assert_eq!(diags.len(), 1);
+        assert_eq!(
+            diags[0].kind,
+            ParseDiagnosticKind::UnterminatedCommandSubstitution
+        );
+        assert_eq!(diags[0].severity, Severity::Error);
+        assert_eq!(diags[0].span.start, 5); // byte offset of $
+    }
+
+    #[test]
+    fn unterminated_arithmetic() {
+        let diags = tokenize_and_get_diagnostics("echo $((1+2");
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].kind, ParseDiagnosticKind::UnterminatedArithmetic);
+        assert_eq!(diags[0].severity, Severity::Error);
+        assert_eq!(diags[0].span.start, 5);
+    }
+
+    #[test]
+    fn unterminated_parameter_expansion() {
+        let diags = tokenize_and_get_diagnostics("echo ${VAR");
+        assert_eq!(diags.len(), 1);
+        assert_eq!(
+            diags[0].kind,
+            ParseDiagnosticKind::UnterminatedParameterExpansion
+        );
+        assert_eq!(diags[0].severity, Severity::Error);
+        assert_eq!(diags[0].span.start, 5);
+    }
+
+    #[test]
+    fn well_formed_has_no_diagnostics() {
+        let diags =
+            tokenize_and_get_diagnostics("echo 'hello' \"world\" `date` $(ls) $((1+2)) ${VAR}");
+        assert!(diags.is_empty(), "expected no diagnostics, got: {diags:?}");
+    }
+
+    #[test]
+    fn double_quote_with_semicolon_shows_ambiguity() {
+        // This is the security-critical case: echo "hello; rm -rf /
+        let diags = tokenize_and_get_diagnostics("echo \"hello; rm -rf /");
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].kind, ParseDiagnosticKind::UnterminatedDoubleQuote);
     }
 }

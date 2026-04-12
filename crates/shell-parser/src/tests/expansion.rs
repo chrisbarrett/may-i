@@ -4,7 +4,7 @@ use crate::*;
 
 #[test]
 fn test_single_quotes() {
-    let cmd = parse("echo 'hello world'");
+    let cmd = parse("echo 'hello world'").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(sc.words.len(), 2);
@@ -19,7 +19,7 @@ fn test_single_quotes() {
 
 #[test]
 fn test_double_quotes_literal() {
-    let cmd = parse(r#"echo "hello world""#);
+    let cmd = parse(r#"echo "hello world""#).into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(sc.words.len(), 2);
@@ -40,7 +40,7 @@ fn test_double_quotes_literal() {
 
 #[test]
 fn test_double_quotes_with_variable() {
-    let cmd = parse(r#"echo "hello $name""#);
+    let cmd = parse(r#"echo "hello $name""#).into_command();
     match &cmd {
         Command::Simple(sc) => match &sc.words[1].parts[0] {
             WordPart::DoubleQuoted(parts) => {
@@ -56,7 +56,7 @@ fn test_double_quotes_with_variable() {
 
 #[test]
 fn test_double_quotes_with_command_sub() {
-    let cmd = parse(r#"echo "today is $(date)""#);
+    let cmd = parse(r#"echo "today is $(date)""#).into_command();
     match &cmd {
         Command::Simple(sc) => match &sc.words[1].parts[0] {
             WordPart::DoubleQuoted(parts) => {
@@ -74,7 +74,7 @@ fn test_double_quotes_with_command_sub() {
 
 #[test]
 fn test_double_quotes_with_backtick() {
-    let cmd = parse(r#"echo "today is `date`""#);
+    let cmd = parse(r#"echo "today is `date`""#).into_command();
     match &cmd {
         Command::Simple(sc) => match &sc.words[1].parts[0] {
             WordPart::DoubleQuoted(parts) => {
@@ -92,7 +92,7 @@ fn test_double_quotes_with_backtick() {
 
 #[test]
 fn test_ansi_c_quoting() {
-    let cmd = parse("echo $'hello\\nworld'");
+    let cmd = parse("echo $'hello\\nworld'").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(sc.words.len(), 2);
@@ -109,7 +109,7 @@ fn test_ansi_c_quoting() {
 
 #[test]
 fn test_backslash_escape() {
-    let cmd = parse("echo hello\\ world");
+    let cmd = parse("echo hello\\ world").into_command();
     match &cmd {
         Command::Simple(sc) => {
             // backslash-space joins "hello" and "world" into a single word
@@ -123,7 +123,7 @@ fn test_backslash_escape() {
 
 #[test]
 fn test_double_quotes_with_escape() {
-    let cmd = parse(r#"echo "hello\"world""#);
+    let cmd = parse(r#"echo "hello\"world""#).into_command();
     match &cmd {
         Command::Simple(sc) => {
             match &sc.words[1].parts[0] {
@@ -151,7 +151,7 @@ fn test_double_quotes_with_escape() {
 
 #[test]
 fn test_parameter() {
-    let cmd = parse("echo $VAR");
+    let cmd = parse("echo $VAR").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert!(
@@ -167,7 +167,7 @@ fn test_parameter() {
 
 #[test]
 fn test_parameter_expansion() {
-    let cmd = parse("echo ${VAR}");
+    let cmd = parse("echo ${VAR}").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert!(
@@ -185,7 +185,7 @@ fn test_parameter_expansion() {
 fn test_special_variables() {
     for var in &["$@", "$?", "$$", "$!", "$#", "$*", "$-"] {
         let input = format!("echo {}", var);
-        let cmd = parse(&input);
+        let cmd = parse(&input).into_command();
         match &cmd {
             Command::Simple(sc) => {
                 assert!(
@@ -203,7 +203,7 @@ fn test_special_variables() {
 
 #[test]
 fn test_command_substitution() {
-    let cmd = parse("echo $(whoami)");
+    let cmd = parse("echo $(whoami)").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert!(
@@ -219,7 +219,7 @@ fn test_command_substitution() {
 
 #[test]
 fn test_backtick_substitution() {
-    let cmd = parse("echo `whoami`");
+    let cmd = parse("echo `whoami`").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert!(
@@ -235,7 +235,7 @@ fn test_backtick_substitution() {
 
 #[test]
 fn test_nested_command_substitution() {
-    let cmd = parse("echo $(echo $(whoami))");
+    let cmd = parse("echo $(echo $(whoami))").into_command();
     match &cmd {
         Command::Simple(sc) => match &sc.words[1].parts[0] {
             WordPart::CommandSubstitution(s) => assert_eq!(s, "echo $(whoami)"),
@@ -249,7 +249,7 @@ fn test_nested_command_substitution() {
 
 #[test]
 fn compound_command_sub_stays_dynamic() {
-    let cmd = parse("echo $(echo a; echo b)");
+    let cmd = parse("echo $(echo a; echo b)").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert!(
@@ -267,7 +267,7 @@ fn compound_command_sub_stays_dynamic() {
 
 #[test]
 fn test_arithmetic_expansion() {
-    let cmd = parse("echo $((1 + 2))");
+    let cmd = parse("echo $((1 + 2))").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert!(
@@ -285,7 +285,7 @@ fn test_arithmetic_expansion() {
 
 #[test]
 fn test_process_substitution_input() {
-    let cmd = parse("diff <(sort a) <(sort b)");
+    let cmd = parse("diff <(sort a) <(sort b)").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(sc.words.len(), 3); // diff, <(sort a), <(sort b)
@@ -303,7 +303,7 @@ fn test_process_substitution_input() {
 
 #[test]
 fn test_process_substitution_output() {
-    let cmd = parse("tee >(grep error)");
+    let cmd = parse("tee >(grep error)").into_command();
     match &cmd {
         Command::Simple(sc) => match &sc.words[1].parts[0] {
             WordPart::ProcessSubstitution { direction, command } => {
@@ -320,7 +320,7 @@ fn test_process_substitution_output() {
 
 #[test]
 fn test_brace_expansion() {
-    let cmd = parse("echo {a,b,c}");
+    let cmd = parse("echo {a,b,c}").into_command();
     match &cmd {
         Command::Simple(sc) => match &sc.words[1].parts[0] {
             WordPart::BraceExpansion(items) => {
@@ -334,7 +334,7 @@ fn test_brace_expansion() {
 
 #[test]
 fn test_brace_no_comma_is_literal() {
-    let cmd = parse("echo {foo}");
+    let cmd = parse("echo {foo}").into_command();
     match &cmd {
         Command::Simple(sc) => {
             // Without comma, should be literal { and }
@@ -349,7 +349,7 @@ fn test_brace_no_comma_is_literal() {
 
 #[test]
 fn unterminated_brace_is_literal() {
-    let cmd = parse("echo {a,b");
+    let cmd = parse("echo {a,b").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(sc.words[1].to_str(), "{a,b");
@@ -362,7 +362,7 @@ fn unterminated_brace_is_literal() {
 
 #[test]
 fn test_mixed_word_parts() {
-    let cmd = parse("echo prefix${VAR}suffix");
+    let cmd = parse("echo prefix${VAR}suffix").into_command();
     match &cmd {
         Command::Simple(sc) => {
             let word = &sc.words[1];
@@ -379,7 +379,7 @@ fn test_mixed_word_parts() {
 
 #[test]
 fn test_bare_dollar() {
-    let cmd = parse("echo $");
+    let cmd = parse("echo $").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert!(
@@ -397,7 +397,7 @@ fn test_bare_dollar() {
 
 #[test]
 fn unclosed_arithmetic_at_eof() {
-    let cmd = parse("echo $((1+2");
+    let cmd = parse("echo $((1+2").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert!(
@@ -413,7 +413,7 @@ fn unclosed_arithmetic_at_eof() {
 
 #[test]
 fn unclosed_command_sub_at_eof() {
-    let cmd = parse("echo $(whoami");
+    let cmd = parse("echo $(whoami").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert!(
@@ -431,7 +431,7 @@ fn unclosed_command_sub_at_eof() {
 
 #[test]
 fn number_not_followed_by_redirect_is_arg() {
-    let cmd = parse("echo 2foo");
+    let cmd = parse("echo 2foo").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(sc.words.len(), 2);
@@ -445,7 +445,7 @@ fn number_not_followed_by_redirect_is_arg() {
 
 #[test]
 fn assignment_with_dynamic_value_parts() {
-    let cmd = parse("x=hello$HOME");
+    let cmd = parse("x=hello$HOME").into_command();
     match &cmd {
         Command::Assignment(a) => {
             assert_eq!(a.name, "x");
@@ -461,7 +461,8 @@ fn assignment_with_dynamic_value_parts() {
 
 #[test]
 fn ansi_c_standard_escapes() {
-    let cmd = parse(r#"echo $'\\' $'\n' $'\t' $'\r' $'\a' $'\b' $'\e' $'\f' $'\v' $'\'' $'\"'"#);
+    let cmd = parse(r#"echo $'\\' $'\n' $'\t' $'\r' $'\a' $'\b' $'\e' $'\f' $'\v' $'\'' $'\"'"#)
+        .into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(sc.words[1].parts, vec![WordPart::AnsiCQuoted("\\".into())]);
@@ -497,7 +498,7 @@ fn ansi_c_standard_escapes() {
 
 #[test]
 fn ansi_c_octal_escape() {
-    let cmd = parse(r"echo $'\0101'");
+    let cmd = parse(r"echo $'\0101'").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(sc.words[1].parts, vec![WordPart::AnsiCQuoted("A".into())]);
@@ -508,7 +509,7 @@ fn ansi_c_octal_escape() {
 
 #[test]
 fn ansi_c_bare_null() {
-    let cmd = parse(r"echo $'\0'");
+    let cmd = parse(r"echo $'\0'").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(sc.words[1].parts, vec![WordPart::AnsiCQuoted("\0".into())]);
@@ -519,7 +520,7 @@ fn ansi_c_bare_null() {
 
 #[test]
 fn ansi_c_hex_escape() {
-    let cmd = parse(r"echo $'\x41'");
+    let cmd = parse(r"echo $'\x41'").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(sc.words[1].parts, vec![WordPart::AnsiCQuoted("A".into())]);
@@ -530,7 +531,7 @@ fn ansi_c_hex_escape() {
 
 #[test]
 fn ansi_c_unicode_escape() {
-    let cmd = parse(r"echo $'\u0041'");
+    let cmd = parse(r"echo $'\u0041'").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(sc.words[1].parts, vec![WordPart::AnsiCQuoted("A".into())]);
@@ -541,7 +542,7 @@ fn ansi_c_unicode_escape() {
 
 #[test]
 fn ansi_c_long_unicode_escape() {
-    let cmd = parse(r"echo $'\U00000041'");
+    let cmd = parse(r"echo $'\U00000041'").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(sc.words[1].parts, vec![WordPart::AnsiCQuoted("A".into())]);
@@ -552,7 +553,7 @@ fn ansi_c_long_unicode_escape() {
 
 #[test]
 fn ansi_c_control_char() {
-    let cmd = parse(r"echo $'\cA'");
+    let cmd = parse(r"echo $'\cA'").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(
@@ -566,7 +567,7 @@ fn ansi_c_control_char() {
 
 #[test]
 fn ansi_c_unknown_escape() {
-    let cmd = parse(r"echo $'\z'");
+    let cmd = parse(r"echo $'\z'").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(sc.words[1].parts, vec![WordPart::AnsiCQuoted("z".into())]);
@@ -577,7 +578,7 @@ fn ansi_c_unknown_escape() {
 
 #[test]
 fn ansi_c_backslash_at_eof() {
-    let cmd = parse("echo $'\\");
+    let cmd = parse("echo $'\\").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(sc.words[1].parts, vec![WordPart::AnsiCQuoted("\\".into())]);
@@ -590,7 +591,7 @@ fn ansi_c_backslash_at_eof() {
 
 #[test]
 fn ansic_hex_short_sequence() {
-    let cmd = parse("echo $'\\x4G'");
+    let cmd = parse("echo $'\\x4G'").into_command();
     match &cmd {
         Command::Simple(sc) => {
             let s = sc.words[1].to_str();
@@ -602,7 +603,7 @@ fn ansic_hex_short_sequence() {
 
 #[test]
 fn ansic_unicode_short_sequence() {
-    let cmd = parse("echo $'\\u41G'");
+    let cmd = parse("echo $'\\u41G'").into_command();
     match &cmd {
         Command::Simple(sc) => {
             let s = sc.words[1].to_str();
@@ -614,7 +615,7 @@ fn ansic_unicode_short_sequence() {
 
 #[test]
 fn ansic_unicode_big_short_sequence() {
-    let cmd = parse("echo $'\\U41G'");
+    let cmd = parse("echo $'\\U41G'").into_command();
     match &cmd {
         Command::Simple(sc) => {
             let s = sc.words[1].to_str();
@@ -628,7 +629,7 @@ fn ansic_unicode_big_short_sequence() {
 
 #[test]
 fn parse_param_length() {
-    let cmd = parse("echo ${#VAR}");
+    let cmd = parse("echo ${#VAR}").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(
@@ -645,7 +646,7 @@ fn parse_param_length() {
 
 #[test]
 fn parse_param_strip_prefix_short() {
-    let cmd = parse("echo ${VAR#*/}");
+    let cmd = parse("echo ${VAR#*/}").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(
@@ -665,7 +666,7 @@ fn parse_param_strip_prefix_short() {
 
 #[test]
 fn parse_param_strip_prefix_long() {
-    let cmd = parse("echo ${VAR##*/}");
+    let cmd = parse("echo ${VAR##*/}").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(
@@ -685,7 +686,7 @@ fn parse_param_strip_prefix_long() {
 
 #[test]
 fn parse_param_strip_suffix_short() {
-    let cmd = parse("echo ${VAR%.*}");
+    let cmd = parse("echo ${VAR%.*}").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(
@@ -705,7 +706,7 @@ fn parse_param_strip_suffix_short() {
 
 #[test]
 fn parse_param_strip_suffix_long() {
-    let cmd = parse("echo ${VAR%%.*}");
+    let cmd = parse("echo ${VAR%%.*}").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(
@@ -725,7 +726,7 @@ fn parse_param_strip_suffix_long() {
 
 #[test]
 fn parse_param_replace_first() {
-    let cmd = parse("echo ${VAR/foo/bar}");
+    let cmd = parse("echo ${VAR/foo/bar}").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(
@@ -746,7 +747,7 @@ fn parse_param_replace_first() {
 
 #[test]
 fn parse_param_replace_all() {
-    let cmd = parse("echo ${VAR//foo/bar}");
+    let cmd = parse("echo ${VAR//foo/bar}").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(
@@ -767,7 +768,7 @@ fn parse_param_replace_all() {
 
 #[test]
 fn parse_param_replace_empty_replacement() {
-    let cmd = parse("echo ${VAR/foo}");
+    let cmd = parse("echo ${VAR/foo}").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(
@@ -788,7 +789,7 @@ fn parse_param_replace_empty_replacement() {
 
 #[test]
 fn parse_param_default_colon() {
-    let cmd = parse("echo ${VAR:-fallback}");
+    let cmd = parse("echo ${VAR:-fallback}").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(
@@ -808,7 +809,7 @@ fn parse_param_default_colon() {
 
 #[test]
 fn parse_param_default_no_colon() {
-    let cmd = parse("echo ${VAR-fallback}");
+    let cmd = parse("echo ${VAR-fallback}").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(
@@ -828,7 +829,7 @@ fn parse_param_default_no_colon() {
 
 #[test]
 fn parse_param_alternative_colon() {
-    let cmd = parse("echo ${VAR:+set}");
+    let cmd = parse("echo ${VAR:+set}").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(
@@ -848,7 +849,7 @@ fn parse_param_alternative_colon() {
 
 #[test]
 fn parse_param_error_colon() {
-    let cmd = parse("echo ${VAR:?not set}");
+    let cmd = parse("echo ${VAR:?not set}").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(
@@ -868,7 +869,7 @@ fn parse_param_error_colon() {
 
 #[test]
 fn parse_param_assign_colon() {
-    let cmd = parse("echo ${VAR:=default}");
+    let cmd = parse("echo ${VAR:=default}").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(
@@ -888,7 +889,7 @@ fn parse_param_assign_colon() {
 
 #[test]
 fn parse_param_substring() {
-    let cmd = parse("echo ${VAR:2:5}");
+    let cmd = parse("echo ${VAR:2:5}").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(
@@ -908,7 +909,7 @@ fn parse_param_substring() {
 
 #[test]
 fn parse_param_substring_no_length() {
-    let cmd = parse("echo ${VAR:3}");
+    let cmd = parse("echo ${VAR:3}").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(
@@ -928,7 +929,7 @@ fn parse_param_substring_no_length() {
 
 #[test]
 fn parse_param_uppercase_first() {
-    let cmd = parse("echo ${VAR^}");
+    let cmd = parse("echo ${VAR^}").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(
@@ -945,7 +946,7 @@ fn parse_param_uppercase_first() {
 
 #[test]
 fn parse_param_uppercase_all() {
-    let cmd = parse("echo ${VAR^^}");
+    let cmd = parse("echo ${VAR^^}").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(
@@ -962,7 +963,7 @@ fn parse_param_uppercase_all() {
 
 #[test]
 fn parse_param_lowercase_first() {
-    let cmd = parse("echo ${VAR,}");
+    let cmd = parse("echo ${VAR,}").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(
@@ -979,7 +980,7 @@ fn parse_param_lowercase_first() {
 
 #[test]
 fn parse_param_lowercase_all() {
-    let cmd = parse("echo ${VAR,,}");
+    let cmd = parse("echo ${VAR,,}").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(
@@ -996,7 +997,7 @@ fn parse_param_lowercase_all() {
 
 #[test]
 fn parse_param_simple_braced_unchanged() {
-    let cmd = parse("echo ${VAR}");
+    let cmd = parse("echo ${VAR}").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(
@@ -1010,7 +1011,7 @@ fn parse_param_simple_braced_unchanged() {
 
 #[test]
 fn parse_param_op_in_double_quotes() {
-    let cmd = parse(r#"echo "${HOME##*/}""#);
+    let cmd = parse(r#"echo "${HOME##*/}""#).into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(
@@ -1034,7 +1035,7 @@ fn parse_param_op_in_double_quotes() {
 
 #[test]
 fn parse_param_expansion_no_colon_default() {
-    let cmd = parse("echo ${VAR-fallback}");
+    let cmd = parse("echo ${VAR-fallback}").into_command();
     if let Command::Simple(sc) = &cmd {
         assert_eq!(sc.words.len(), 2);
         assert_eq!(
@@ -1054,7 +1055,7 @@ fn parse_param_expansion_no_colon_default() {
 
 #[test]
 fn parse_param_expansion_no_colon_alternative() {
-    let cmd = parse("echo ${VAR+alt}");
+    let cmd = parse("echo ${VAR+alt}").into_command();
     if let Command::Simple(sc) = &cmd {
         assert_eq!(
             sc.words[1].parts,
@@ -1073,7 +1074,7 @@ fn parse_param_expansion_no_colon_alternative() {
 
 #[test]
 fn parse_param_expansion_no_colon_error() {
-    let cmd = parse("echo ${VAR?msg}");
+    let cmd = parse("echo ${VAR?msg}").into_command();
     if let Command::Simple(sc) = &cmd {
         assert_eq!(
             sc.words[1].parts,
@@ -1092,7 +1093,7 @@ fn parse_param_expansion_no_colon_error() {
 
 #[test]
 fn parse_param_expansion_no_colon_assign() {
-    let cmd = parse("echo ${VAR=val}");
+    let cmd = parse("echo ${VAR=val}").into_command();
     if let Command::Simple(sc) = &cmd {
         assert_eq!(
             sc.words[1].parts,
@@ -1111,7 +1112,7 @@ fn parse_param_expansion_no_colon_assign() {
 
 #[test]
 fn parse_param_expansion_uppercase_single() {
-    let cmd = parse("echo ${VAR^}");
+    let cmd = parse("echo ${VAR^}").into_command();
     if let Command::Simple(sc) = &cmd {
         assert_eq!(
             sc.words[1].parts,
@@ -1127,7 +1128,7 @@ fn parse_param_expansion_uppercase_single() {
 
 #[test]
 fn parse_param_expansion_uppercase_all() {
-    let cmd = parse("echo ${VAR^^}");
+    let cmd = parse("echo ${VAR^^}").into_command();
     if let Command::Simple(sc) = &cmd {
         assert_eq!(
             sc.words[1].parts,
@@ -1143,7 +1144,7 @@ fn parse_param_expansion_uppercase_all() {
 
 #[test]
 fn parse_param_expansion_lowercase_single() {
-    let cmd = parse("echo ${VAR,}");
+    let cmd = parse("echo ${VAR,}").into_command();
     if let Command::Simple(sc) = &cmd {
         assert_eq!(
             sc.words[1].parts,
@@ -1159,7 +1160,7 @@ fn parse_param_expansion_lowercase_single() {
 
 #[test]
 fn parse_param_expansion_lowercase_all() {
-    let cmd = parse("echo ${VAR,,}");
+    let cmd = parse("echo ${VAR,,}").into_command();
     if let Command::Simple(sc) = &cmd {
         assert_eq!(
             sc.words[1].parts,
@@ -1176,7 +1177,7 @@ fn parse_param_expansion_lowercase_all() {
 #[test]
 fn parse_param_expansion_unknown_operator_fallback() {
     // An operator the lexer doesn't recognise falls back to flat ParameterExpansion
-    let cmd = parse("echo ${VAR@Q}");
+    let cmd = parse("echo ${VAR@Q}").into_command();
     if let Command::Simple(sc) = &cmd {
         assert_eq!(
             sc.words[1].parts,
@@ -1190,7 +1191,7 @@ fn parse_param_expansion_unknown_operator_fallback() {
 #[test]
 fn parse_param_expansion_non_identifier_fallback() {
     // ${!VAR} — '!' is not a valid identifier start, falls back to flat
-    let cmd = parse("echo ${!VAR}");
+    let cmd = parse("echo ${!VAR}").into_command();
     if let Command::Simple(sc) = &cmd {
         assert_eq!(
             sc.words[1].parts,

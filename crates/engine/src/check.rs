@@ -32,7 +32,7 @@ pub(crate) fn parse_check_command(input: &str) -> ParsedCheck {
     if let Some((cmd_name, args)) = parser::parse_simple_command(input) {
         ParsedCheck::Simple(cmd_name, args)
     } else {
-        match parser::parse(input) {
+        match parser::parse(input).command {
             Command::Simple(_) | Command::Assignment(_) => ParsedCheck::Empty,
             _ => ParsedCheck::Compound,
         }

@@ -34,13 +34,18 @@ impl std::error::Error for EvalError {}
 pub struct EvalResult {
     pub decision: Decision,
     pub reason: Option<String>,
+    pub parse_diagnostics: Vec<may_i_shell_parser::ParseDiagnostic>,
 }
 
 impl EvalResult {
     /// Create a new EvalResult with the given decision and optional reason.
     #[must_use]
     pub fn new(decision: Decision, reason: Option<String>) -> Self {
-        Self { decision, reason }
+        Self {
+            decision,
+            reason,
+            parse_diagnostics: Vec::new(),
+        }
     }
 }
 
