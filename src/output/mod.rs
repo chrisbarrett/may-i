@@ -242,6 +242,28 @@ fn trace_to_layout(
                 row.left_align = ColAlign::Right;
                 current_rows.push(row);
             }
+            TraceEntry::ParseDiagnostics { diagnostics } => {
+                for diag in diagnostics {
+                    let severity_str = match diag.severity {
+                        may_i_shell_parser::Severity::Error => "error".red().bold().to_string(),
+                        may_i_shell_parser::Severity::Warning => {
+                            "warning".yellow().bold().to_string()
+                        }
+                    };
+                    let msg = diag.message();
+                    let label = format!("parse {severity_str}: {msg}");
+                    let label_visible = "parse ".len()
+                        + match diag.severity {
+                            may_i_shell_parser::Severity::Error => "error".len(),
+                            may_i_shell_parser::Severity::Warning => "warning".len(),
+                        }
+                        + ": ".len()
+                        + msg.len();
+                    let mut row = ColRow::new(label, label_visible, "");
+                    row.left_align = ColAlign::Right;
+                    current_rows.push(row);
+                }
+            }
         }
         first = false;
     }

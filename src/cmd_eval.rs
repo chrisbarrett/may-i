@@ -28,11 +28,32 @@ pub fn cmd_eval(
         let result =
             engine::eval::evaluate_command_with_fold(command, &loaded.config, &context, &mut fold)
                 .map_err(|e| miette::miette!("{e}"))?;
-        let json = serde_json::json!({
+        if !result.parse_diagnostics.is_empty() {
+            fold.traces.push(TraceEntry::ParseDiagnostics {
+                diagnostics: result.parse_diagnostics.clone(),
+            });
+        }
+        let mut json = serde_json::json!({
             "decision": result.decision.to_string(),
             "reason": result.reason.unwrap_or_default(),
             "trace": output::trace_to_json(&fold.traces),
         });
+        if !result.parse_diagnostics.is_empty() {
+            json["parse_diagnostics"] = serde_json::json!(
+                result
+                    .parse_diagnostics
+                    .iter()
+                    .map(|d| {
+                        serde_json::json!({
+                            "span": { "start": d.span.start, "end": d.span.end },
+                            "kind": d.kind,
+                            "severity": d.severity,
+                            "message": d.message(),
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            );
+        }
         println!(
             "{}",
             serde_json::to_string(&json).expect("response serialization is infallible")
@@ -42,8 +63,18 @@ pub fn cmd_eval(
         if let Some(note) = output::migration_note(&loaded, config_file) {
             output::write_layout(&mut std::io::stderr(), &note, &term);
         }
-        let (result, traces, colored_command) =
+        let (result, mut traces, colored_command) =
             evaluate_with_colorization(command, &loaded, &context)?;
+        if !result.parse_diagnostics.is_empty() {
+            traces.push(TraceEntry::ParseDiagnostics {
+                diagnostics: result.parse_diagnostics.clone(),
+            });
+        }
+        // Render miette diagnostics on stderr
+        for diag in &result.parse_diagnostics {
+            let err = crate::shell_parse_error::ShellParseError::from_diagnostic(diag, command);
+            let _ = writeln!(std::io::stderr(), "{:?}", miette::Report::new(err));
+        }
         let display_path = output::shorten_home(config_file);
         write_eval_output(
             &mut std::io::stdout(),

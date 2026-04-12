@@ -23,14 +23,14 @@ pub(crate) fn cmd_parse(
         command.unwrap()
     };
 
-    let ast = parser::parse(&input);
+    let result = parser::parse(&input);
 
     if json {
-        let json_output =
-            serde_json::to_string_pretty(&ast).map_err(|e| miette::miette!("JSON error: {e}"))?;
+        let json_output = serde_json::to_string_pretty(&result.command)
+            .map_err(|e| miette::miette!("JSON error: {e}"))?;
         println!("{json_output}");
     } else {
-        println!("{ast:#?}");
+        println!("{result:#?}");
     }
 
     Ok(())

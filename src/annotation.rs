@@ -444,6 +444,10 @@ pub enum TraceEntry {
     EmbeddedCommand { source: String, decision: Decision },
     /// No matching rule — default ask.
     DefaultAsk { reason: String },
+    /// Parse diagnostics were emitted.
+    ParseDiagnostics {
+        diagnostics: Vec<may_i_shell_parser::ParseDiagnostic>,
+    },
 }
 
 /// Fold that produces `(EffectResult, Doc<Option<Ann>>)` pairs and

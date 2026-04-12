@@ -55,8 +55,10 @@ fn evaluate_command_inner<F: EvalFold>(
         return Ok(EvalResult::new(Decision::Ask, Some(reason)));
     }
 
-    let cmd = parser::parse(input);
-    let units = decompose(&cmd);
+    let parse_result = parser::parse(input);
+    let diagnostics = parse_result.diagnostics.clone();
+    let has_parse_errors = parse_result.has_errors();
+    let units = decompose(&parse_result.command);
 
     if units.is_empty() {
         let reason = "empty command".to_string();
@@ -90,7 +92,15 @@ fn evaluate_command_inner<F: EvalFold>(
         }
     }
 
-    Ok(EvalResult::new(aggregate_decision, aggregate_reason))
+    // Error-severity parse diagnostics floor the decision at Ask
+    if has_parse_errors && aggregate_decision < Decision::Ask {
+        aggregate_decision = Decision::Ask;
+        aggregate_reason = Some("parse error: ambiguous command boundary".to_string());
+    }
+
+    let mut eval_result = EvalResult::new(aggregate_decision, aggregate_reason);
+    eval_result.parse_diagnostics = diagnostics;
+    Ok(eval_result)
 }
 
 #[cfg(test)]
@@ -273,6 +283,41 @@ mod tests {
     }
 
     // -- Recursion depth limit --
+
+    // -- Parse diagnostics --
+
+    #[test]
+    fn parse_error_floors_allowed_at_ask() {
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        // Unterminated double quote — Error severity
+        let result = evaluate_command(r#"echo "hello; rm -rf /"#, &config, &empty_facts()).unwrap();
+        assert_eq!(result.decision, Decision::Ask);
+        assert!(!result.parse_diagnostics.is_empty());
+    }
+
+    #[test]
+    fn parse_error_does_not_downgrade_deny() {
+        let config = config_with_rules(vec![deny_rule("rm")]);
+        // Unterminated quote + denied command — deny > ask
+        let result = evaluate_command(r#"rm "unterminated"#, &config, &empty_facts()).unwrap();
+        assert_eq!(result.decision, Decision::Deny);
+    }
+
+    #[test]
+    fn parse_warning_does_not_floor() {
+        let config = config_with_rules(vec![allow_rule("echo"), allow_rule("true")]);
+        // Missing fi — Warning severity
+        let result = evaluate_command("if true; then echo hello", &config, &empty_facts()).unwrap();
+        assert_eq!(result.decision, Decision::Allow);
+        assert!(!result.parse_diagnostics.is_empty());
+    }
+
+    #[test]
+    fn well_formed_has_no_diagnostics() {
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        let result = evaluate_command("echo hello", &config, &empty_facts()).unwrap();
+        assert!(result.parse_diagnostics.is_empty());
+    }
 
     #[test]
     fn recursion_depth_limit() {

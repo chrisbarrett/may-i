@@ -1,5 +1,6 @@
 use super::Lexer;
 use crate::ast::*;
+use crate::diagnostic::{ParseDiagnostic, ParseDiagnosticKind, Severity, Span};
 
 impl Lexer {
     pub(super) fn read_word_parts(&mut self) -> Vec<WordPart> {
@@ -9,14 +10,36 @@ impl Lexer {
                 None => break,
                 Some(ch) if super::is_metachar(ch) => break,
                 Some('\'') => {
+                    let open_pos = self.byte_pos;
                     self.advance();
                     let s = self.read_until_char('\'');
+                    if self.peek().is_none() {
+                        self.diagnostics.push(ParseDiagnostic {
+                            span: Span {
+                                start: open_pos,
+                                end: self.byte_pos,
+                            },
+                            kind: ParseDiagnosticKind::UnterminatedSingleQuote,
+                            severity: Severity::Error,
+                        });
+                    }
                     self.advance(); // skip closing quote (if present)
                     parts.push(WordPart::SingleQuoted(s));
                 }
                 Some('"') => {
+                    let open_pos = self.byte_pos;
                     self.advance();
                     let inner = self.read_double_quoted_parts();
+                    if self.peek().is_none() {
+                        self.diagnostics.push(ParseDiagnostic {
+                            span: Span {
+                                start: open_pos,
+                                end: self.byte_pos,
+                            },
+                            kind: ParseDiagnosticKind::UnterminatedDoubleQuote,
+                            severity: Severity::Error,
+                        });
+                    }
                     self.advance(); // skip closing quote (if present)
                     parts.push(WordPart::DoubleQuoted(inner));
                 }
@@ -26,8 +49,19 @@ impl Lexer {
                     }
                 }
                 Some('`') => {
+                    let open_pos = self.byte_pos;
                     self.advance();
                     let s = self.read_until_char('`');
+                    if self.peek().is_none() {
+                        self.diagnostics.push(ParseDiagnostic {
+                            span: Span {
+                                start: open_pos,
+                                end: self.byte_pos,
+                            },
+                            kind: ParseDiagnosticKind::UnterminatedBacktick,
+                            severity: Severity::Error,
+                        });
+                    }
                     self.advance(); // skip closing backtick
                     parts.push(WordPart::Backtick(s));
                 }
@@ -159,6 +193,7 @@ impl Lexer {
     }
 
     pub(super) fn read_dollar(&mut self) -> Option<WordPart> {
+        let dollar_pos = self.byte_pos;
         self.advance(); // skip $
         match self.peek() {
             Some('(') => {
@@ -166,11 +201,31 @@ impl Lexer {
                 if self.peek() == Some('(') {
                     // Arithmetic $((expr))
                     self.advance(); // skip second (
-                    let expr = self.read_until_double_paren();
+                    let (expr, found) = self.read_until_double_paren_checked();
+                    if !found {
+                        self.diagnostics.push(ParseDiagnostic {
+                            span: Span {
+                                start: dollar_pos,
+                                end: self.byte_pos,
+                            },
+                            kind: ParseDiagnosticKind::UnterminatedArithmetic,
+                            severity: Severity::Error,
+                        });
+                    }
                     Some(WordPart::Arithmetic(expr))
                 } else {
                     // Command substitution $(cmd)
-                    let cmd = self.read_balanced_parens();
+                    let (cmd, found) = self.read_balanced_parens_checked();
+                    if !found {
+                        self.diagnostics.push(ParseDiagnostic {
+                            span: Span {
+                                start: dollar_pos,
+                                end: self.byte_pos,
+                            },
+                            kind: ParseDiagnosticKind::UnterminatedCommandSubstitution,
+                            severity: Severity::Error,
+                        });
+                    }
                     // If the command substitution is `cat` fed only by
                     // static heredocs, fold it to a literal — the output
                     // is fully determined at parse time.
@@ -183,7 +238,22 @@ impl Lexer {
             }
             Some('{') => {
                 self.advance(); // skip {
-                self.read_parameter_expansion()
+                let result = self.read_parameter_expansion();
+                // Detect unterminated: if we're at EOF and last char wasn't }, it's unterminated
+                if self.peek().is_none() {
+                    let input_len = self.input.len();
+                    if input_len == 0 || self.input[input_len - 1] != '}' {
+                        self.diagnostics.push(ParseDiagnostic {
+                            span: Span {
+                                start: dollar_pos,
+                                end: self.byte_pos,
+                            },
+                            kind: ParseDiagnosticKind::UnterminatedParameterExpansion,
+                            severity: Severity::Error,
+                        });
+                    }
+                }
+                result
             }
             Some('\'') => {
                 // ANSI-C quoting $'...'

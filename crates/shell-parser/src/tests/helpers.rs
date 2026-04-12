@@ -25,7 +25,7 @@ fn abbreviate_short_single_line() {
 
 #[test]
 fn cat_heredoc_single_quoted_is_literal() {
-    let cmd = parse("echo $(cat <<'EOF'\nhello world\nEOF\n)");
+    let cmd = parse("echo $(cat <<'EOF'\nhello world\nEOF\n)").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(
@@ -39,7 +39,7 @@ fn cat_heredoc_single_quoted_is_literal() {
 
 #[test]
 fn cat_heredoc_multiline_body() {
-    let cmd = parse("echo $(cat <<'EOF'\nline one\nline two\nline three\nEOF\n)");
+    let cmd = parse("echo $(cat <<'EOF'\nline one\nline two\nline three\nEOF\n)").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(
@@ -55,7 +55,7 @@ fn cat_heredoc_multiline_body() {
 
 #[test]
 fn cat_heredoc_strip_tabs() {
-    let cmd = parse("echo $(cat <<-'EOF'\n\t\thello\n\t\tEOF\n)");
+    let cmd = parse("echo $(cat <<-'EOF'\n\t\thello\n\t\tEOF\n)").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(
@@ -69,7 +69,7 @@ fn cat_heredoc_strip_tabs() {
 
 #[test]
 fn cat_heredoc_unquoted_delim_folds() {
-    let cmd = parse("echo $(cat <<EOF\nhello\nEOF\n)");
+    let cmd = parse("echo $(cat <<EOF\nhello\nEOF\n)").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(
@@ -83,7 +83,7 @@ fn cat_heredoc_unquoted_delim_folds() {
 
 #[test]
 fn cat_heredoc_double_quoted_delim_folds() {
-    let cmd = parse("echo $(cat <<\"EOF\"\nhello\nEOF\n)");
+    let cmd = parse("echo $(cat <<\"EOF\"\nhello\nEOF\n)").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(
@@ -97,7 +97,7 @@ fn cat_heredoc_double_quoted_delim_folds() {
 
 #[test]
 fn cat_with_file_arg_stays_dynamic() {
-    let cmd = parse("echo $(cat /etc/hostname)");
+    let cmd = parse("echo $(cat /etc/hostname)").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert!(
@@ -113,7 +113,7 @@ fn cat_with_file_arg_stays_dynamic() {
 
 #[test]
 fn cat_herestring_static_folds() {
-    let cmd = parse("echo $(cat <<< 'hello')");
+    let cmd = parse("echo $(cat <<< 'hello')").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(
@@ -127,7 +127,7 @@ fn cat_herestring_static_folds() {
 
 #[test]
 fn cat_herestring_dynamic_stays() {
-    let cmd = parse("echo $(cat <<< $HOME)");
+    let cmd = parse("echo $(cat <<< $HOME)").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert!(
@@ -143,7 +143,7 @@ fn cat_herestring_dynamic_stays() {
 
 #[test]
 fn non_cat_command_sub_stays_dynamic() {
-    let cmd = parse("echo $(whoami)");
+    let cmd = parse("echo $(whoami)").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert!(
@@ -160,7 +160,7 @@ fn non_cat_command_sub_stays_dynamic() {
 #[test]
 fn cat_with_output_redirect_stays_dynamic() {
     // cat with > redirect is not purely heredoc-fed
-    let cmd = parse("echo $(cat <<'EOF'\nhello\nEOF\n > /tmp/out)");
+    let cmd = parse("echo $(cat <<'EOF'\nhello\nEOF\n > /tmp/out)").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert!(
@@ -177,7 +177,7 @@ fn cat_with_output_redirect_stays_dynamic() {
 #[test]
 fn bare_cat_stays_dynamic() {
     // bare cat with no redirections
-    let cmd = parse("echo $(cat)");
+    let cmd = parse("echo $(cat)").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert!(
@@ -195,7 +195,7 @@ fn bare_cat_stays_dynamic() {
 
 #[test]
 fn cat_heredoc_plus_herestring_concatenates() {
-    let cmd = parse("echo $(cat <<'EOF'\nfirst\nEOF\n<<< 'second')");
+    let cmd = parse("echo $(cat <<'EOF'\nfirst\nEOF\n<<< 'second')").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(
@@ -209,7 +209,7 @@ fn cat_heredoc_plus_herestring_concatenates() {
 
 #[test]
 fn cat_multiple_heredocs_concatenates() {
-    let cmd = parse("echo $(cat <<'A'\nfirst\nA\n<<'B'\nsecond\nB\n)");
+    let cmd = parse("echo $(cat <<'A'\nfirst\nA\n<<'B'\nsecond\nB\n)").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(
@@ -223,7 +223,7 @@ fn cat_multiple_heredocs_concatenates() {
 
 #[test]
 fn cat_no_input_stays_dynamic() {
-    let cmd = parse("echo $(cat)");
+    let cmd = parse("echo $(cat)").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert!(
@@ -241,7 +241,7 @@ fn cat_no_input_stays_dynamic() {
 
 #[test]
 fn cat_two_herestrings_concatenates() {
-    let cmd = parse("echo $(cat <<< 'first' <<< 'second')");
+    let cmd = parse("echo $(cat <<< 'first' <<< 'second')").into_command();
     match &cmd {
         Command::Simple(sc) => {
             assert_eq!(

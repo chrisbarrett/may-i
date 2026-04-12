@@ -135,15 +135,16 @@ impl Lexer {
         s
     }
 
-    pub(super) fn read_until_double_paren(&mut self) -> String {
+    /// Returns `(content, found_closing)`.
+    pub(super) fn read_until_double_paren_checked(&mut self) -> (String, bool) {
         let mut s = String::new();
         loop {
             match self.peek() {
-                None => break,
+                None => return (s, false),
                 Some(')') if self.peek_at(1) == Some(')') => {
                     self.advance();
                     self.advance();
-                    break;
+                    return (s, true);
                 }
                 Some(ch) => {
                     s.push(ch);
@@ -151,15 +152,19 @@ impl Lexer {
                 }
             }
         }
-        s
     }
 
     pub(super) fn read_balanced_parens(&mut self) -> String {
+        self.read_balanced_parens_checked().0
+    }
+
+    /// Returns `(content, found_closing)`.
+    pub(super) fn read_balanced_parens_checked(&mut self) -> (String, bool) {
         let mut s = String::new();
         let mut depth = 1;
         loop {
             match self.peek() {
-                None => break,
+                None => return (s, false),
                 Some('(') => {
                     depth += 1;
                     s.push('(');
@@ -169,7 +174,7 @@ impl Lexer {
                     depth -= 1;
                     if depth == 0 {
                         self.advance();
-                        break;
+                        return (s, true);
                     }
                     s.push(')');
                     self.advance();
@@ -180,6 +185,5 @@ impl Lexer {
                 }
             }
         }
-        s
     }
 }

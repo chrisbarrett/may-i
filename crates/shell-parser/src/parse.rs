@@ -1,24 +1,47 @@
 use super::ast::*;
+use super::diagnostic::{ParseDiagnostic, ParseDiagnosticKind, Severity, Span};
 use super::lexer::{Lexer, Token};
 
 pub(super) struct Parser {
-    tokens: Vec<Token>,
+    tokens: Vec<(Token, usize)>,
     pos: usize,
+    input_len: usize,
+    pub(super) diagnostics: Vec<ParseDiagnostic>,
 }
 
 impl Parser {
     pub(super) fn new(input: &str) -> Self {
         let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize();
-        Parser { tokens, pos: 0 }
+        let tokens = lexer.tokenize_with_offsets();
+        let diagnostics = lexer.take_diagnostics();
+        Parser {
+            tokens,
+            pos: 0,
+            input_len: input.len(),
+            diagnostics,
+        }
     }
 
     fn peek(&self) -> &Token {
-        self.tokens.get(self.pos).unwrap_or(&Token::Eof)
+        self.tokens
+            .get(self.pos)
+            .map(|(t, _)| t)
+            .unwrap_or(&Token::Eof)
+    }
+
+    fn current_offset(&self) -> usize {
+        self.tokens
+            .get(self.pos)
+            .map(|(_, off)| *off)
+            .unwrap_or(self.input_len)
     }
 
     fn advance(&mut self) -> Token {
-        let tok = self.tokens.get(self.pos).cloned().unwrap_or(Token::Eof);
+        let tok = self
+            .tokens
+            .get(self.pos)
+            .map(|(t, _)| t.clone())
+            .unwrap_or(Token::Eof);
         if self.pos < self.tokens.len() {
             self.pos += 1;
         }
@@ -222,7 +245,7 @@ impl Parser {
                         if self
                             .tokens
                             .get(self.pos + 1)
-                            .is_some_and(|t| matches!(t, Token::RParen))
+                            .is_some_and(|(t, _)| matches!(t, Token::RParen))
                         {
                             let name = words.pop().unwrap().to_str();
                             self.advance(); // skip LParen
@@ -248,6 +271,17 @@ impl Parser {
         // If only assignments and no words, return as assignment command
         if !assignments.is_empty() && words.is_empty() && assignments.len() == 1 {
             return Command::Assignment(assignments.pop().unwrap());
+        }
+
+        if assignments.is_empty() && words.is_empty() && redirections.is_empty() {
+            self.diagnostics.push(ParseDiagnostic {
+                span: Span {
+                    start: self.current_offset(),
+                    end: self.current_offset(),
+                },
+                kind: ParseDiagnosticKind::EmptyCommand,
+                severity: Severity::Warning,
+            });
         }
 
         Command::Simple(SimpleCommand {
@@ -327,7 +361,16 @@ impl Parser {
         }
 
         self.skip_newlines();
-        self.expect(&Token::Fi);
+        if !self.expect(&Token::Fi) {
+            self.diagnostics.push(ParseDiagnostic {
+                span: Span {
+                    start: self.current_offset(),
+                    end: self.current_offset(),
+                },
+                kind: ParseDiagnosticKind::MissingClosingKeyword { expected: "fi" },
+                severity: Severity::Warning,
+            });
+        }
 
         Command::If {
             condition: Box::new(condition),
@@ -367,7 +410,16 @@ impl Parser {
         self.skip_newlines();
         let body = self.parse_list();
         self.skip_newlines();
-        self.expect(&Token::Done);
+        if !self.expect(&Token::Done) {
+            self.diagnostics.push(ParseDiagnostic {
+                span: Span {
+                    start: self.current_offset(),
+                    end: self.current_offset(),
+                },
+                kind: ParseDiagnosticKind::MissingClosingKeyword { expected: "done" },
+                severity: Severity::Warning,
+            });
+        }
 
         Command::For {
             var,
@@ -385,7 +437,16 @@ impl Parser {
         self.skip_newlines();
         let body = self.parse_list();
         self.skip_newlines();
-        self.expect(&Token::Done);
+        if !self.expect(&Token::Done) {
+            self.diagnostics.push(ParseDiagnostic {
+                span: Span {
+                    start: self.current_offset(),
+                    end: self.current_offset(),
+                },
+                kind: ParseDiagnosticKind::MissingClosingKeyword { expected: "done" },
+                severity: Severity::Warning,
+            });
+        }
 
         Command::Loop {
             kind: LoopKind::While,
@@ -403,7 +464,16 @@ impl Parser {
         self.skip_newlines();
         let body = self.parse_list();
         self.skip_newlines();
-        self.expect(&Token::Done);
+        if !self.expect(&Token::Done) {
+            self.diagnostics.push(ParseDiagnostic {
+                span: Span {
+                    start: self.current_offset(),
+                    end: self.current_offset(),
+                },
+                kind: ParseDiagnosticKind::MissingClosingKeyword { expected: "done" },
+                severity: Severity::Warning,
+            });
+        }
 
         Command::Loop {
             kind: LoopKind::Until,
@@ -484,7 +554,16 @@ impl Parser {
             });
         }
 
-        self.expect(&Token::Esac);
+        if !self.expect(&Token::Esac) {
+            self.diagnostics.push(ParseDiagnostic {
+                span: Span {
+                    start: self.current_offset(),
+                    end: self.current_offset(),
+                },
+                kind: ParseDiagnosticKind::MissingClosingKeyword { expected: "esac" },
+                severity: Severity::Warning,
+            });
+        }
 
         Command::Case { word, arms }
     }
@@ -519,7 +598,16 @@ impl Parser {
         self.skip_newlines();
         let body = self.parse_list();
         self.skip_newlines();
-        self.expect(&Token::RParen);
+        if !self.expect(&Token::RParen) {
+            self.diagnostics.push(ParseDiagnostic {
+                span: Span {
+                    start: self.current_offset(),
+                    end: self.current_offset(),
+                },
+                kind: ParseDiagnosticKind::MissingClosingKeyword { expected: ")" },
+                severity: Severity::Warning,
+            });
+        }
 
         Command::Subshell(Box::new(body))
     }
@@ -529,8 +617,128 @@ impl Parser {
         self.skip_newlines();
         let body = self.parse_list();
         self.skip_newlines();
-        self.expect(&Token::RBrace);
+        if !self.expect(&Token::RBrace) {
+            self.diagnostics.push(ParseDiagnostic {
+                span: Span {
+                    start: self.current_offset(),
+                    end: self.current_offset(),
+                },
+                kind: ParseDiagnosticKind::MissingClosingKeyword { expected: "}" },
+                severity: Severity::Warning,
+            });
+        }
 
         Command::BraceGroup(Box::new(body))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::diagnostic::{ParseDiagnosticKind, Severity};
+
+    fn parse_diagnostics(input: &str) -> Vec<ParseDiagnostic> {
+        let mut parser = Parser::new(input);
+        let _ = parser.parse_complete();
+        parser.diagnostics
+    }
+
+    #[test]
+    fn missing_fi() {
+        let diags = parse_diagnostics("if true; then echo hello");
+        assert!(
+            diags.iter().any(|d| d.kind
+                == ParseDiagnosticKind::MissingClosingKeyword { expected: "fi" }
+                && d.severity == Severity::Warning),
+            "expected MissingClosingKeyword(fi), got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn missing_done_for() {
+        let diags = parse_diagnostics("for x in a b; do echo $x");
+        assert!(
+            diags.iter().any(|d| d.kind
+                == ParseDiagnosticKind::MissingClosingKeyword { expected: "done" }
+                && d.severity == Severity::Warning),
+            "expected MissingClosingKeyword(done), got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn missing_done_while() {
+        let diags = parse_diagnostics("while true; do echo hello");
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.kind == ParseDiagnosticKind::MissingClosingKeyword { expected: "done" }),
+            "expected MissingClosingKeyword(done), got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn missing_done_until() {
+        let diags = parse_diagnostics("until false; do echo hello");
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.kind == ParseDiagnosticKind::MissingClosingKeyword { expected: "done" }),
+            "expected MissingClosingKeyword(done), got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn missing_esac() {
+        let diags = parse_diagnostics("case $x in a) echo hi;;");
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.kind == ParseDiagnosticKind::MissingClosingKeyword { expected: "esac" }),
+            "expected MissingClosingKeyword(esac), got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn well_formed_if_no_diagnostic() {
+        let diags = parse_diagnostics("if true; then echo hello; fi");
+        assert!(
+            !diags
+                .iter()
+                .any(|d| matches!(&d.kind, ParseDiagnosticKind::MissingClosingKeyword { .. })),
+            "unexpected diagnostics: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn well_formed_for_no_diagnostic() {
+        let diags = parse_diagnostics("for x in a b; do echo $x; done");
+        assert!(
+            !diags
+                .iter()
+                .any(|d| matches!(&d.kind, ParseDiagnosticKind::MissingClosingKeyword { .. })),
+            "unexpected diagnostics: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn well_formed_case_no_diagnostic() {
+        let diags = parse_diagnostics("case $x in a) echo hi;; esac");
+        assert!(
+            !diags
+                .iter()
+                .any(|d| matches!(&d.kind, ParseDiagnosticKind::MissingClosingKeyword { .. })),
+            "unexpected diagnostics: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn simple_command_no_empty_diagnostic() {
+        let diags = parse_diagnostics("echo hello");
+        assert!(
+            !diags
+                .iter()
+                .any(|d| d.kind == ParseDiagnosticKind::EmptyCommand),
+            "unexpected EmptyCommand: {diags:?}"
+        );
     }
 }

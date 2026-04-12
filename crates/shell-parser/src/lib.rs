@@ -1,4 +1,5 @@
 mod ast;
+mod diagnostic;
 #[cfg(test)]
 mod glob;
 mod lexer;
@@ -11,21 +12,26 @@ mod segment;
 mod tests;
 
 pub use ast::*;
+pub use diagnostic::*;
 use parse::Parser;
 pub use segment::{Segment, segment};
 
-/// Parse a shell command string into an AST.
+/// Parse a shell command string into an AST with diagnostics.
 /// Returns a partial AST on malformed input (never panics).
-pub fn parse(input: &str) -> Command {
+pub fn parse(input: &str) -> ParseResult {
     let mut parser = Parser::new(input);
-    parser.parse_complete()
+    let command = parser.parse_complete();
+    ParseResult {
+        command,
+        diagnostics: parser.diagnostics,
+    }
 }
 
 /// Parse a shell string and extract the command name and arguments from a
 /// simple command. Returns `None` for empty, assignment-only, or compound
 /// commands.
 pub fn parse_simple_command(input: &str) -> Option<(String, Vec<String>)> {
-    match parse(input) {
+    match parse(input).command {
         Command::Simple(sc) if !sc.words.is_empty() => {
             let cmd = sc.words[0].to_str();
             let args: Vec<String> = sc.words[1..].iter().map(|w| w.to_str()).collect();

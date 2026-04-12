@@ -75,7 +75,7 @@ mod tests {
 
     #[test]
     fn decompose_simple_command() {
-        let cmd = parse("echo hello world");
+        let cmd = parse("echo hello world").into_command();
         let units = decompose(&cmd);
         assert_eq!(units.len(), 1);
         assert_eq!(
@@ -89,7 +89,7 @@ mod tests {
 
     #[test]
     fn decompose_pipeline() {
-        let cmd = parse("echo foo | grep bar");
+        let cmd = parse("echo foo | grep bar").into_command();
         let units = decompose(&cmd);
         assert_eq!(units.len(), 2);
         assert!(matches!(&units[0], EvalUnit::SimpleCommand { command, .. } if command == "echo"));
@@ -98,7 +98,7 @@ mod tests {
 
     #[test]
     fn decompose_and_or() {
-        let cmd = parse("a && b || c");
+        let cmd = parse("a && b || c").into_command();
         let units = decompose(&cmd);
         let commands: Vec<_> = units
             .iter()
@@ -112,14 +112,14 @@ mod tests {
 
     #[test]
     fn decompose_sequence() {
-        let cmd = parse("a; b; c");
+        let cmd = parse("a; b; c").into_command();
         let units = decompose(&cmd);
         assert_eq!(units.len(), 3);
     }
 
     #[test]
     fn decompose_subshell() {
-        let cmd = parse("(echo hello && rm -rf /)");
+        let cmd = parse("(echo hello && rm -rf /)").into_command();
         let units = decompose(&cmd);
         assert_eq!(units.len(), 2);
         assert!(matches!(&units[0], EvalUnit::SimpleCommand { command, .. } if command == "echo"));
@@ -128,7 +128,7 @@ mod tests {
 
     #[test]
     fn decompose_if() {
-        let cmd = parse("if true; then echo yes; else rm /; fi");
+        let cmd = parse("if true; then echo yes; else rm /; fi").into_command();
         let units = decompose(&cmd);
         let commands: Vec<_> = units
             .iter()
@@ -142,14 +142,14 @@ mod tests {
 
     #[test]
     fn decompose_for_loop() {
-        let cmd = parse("for x in a b; do echo $x; done");
+        let cmd = parse("for x in a b; do echo $x; done").into_command();
         let units = decompose(&cmd);
         assert!(matches!(&units[0], EvalUnit::SimpleCommand { command, .. } if command == "echo"));
     }
 
     #[test]
     fn decompose_case() {
-        let cmd = parse("case $x in a) echo a;; b) rm b;; esac");
+        let cmd = parse("case $x in a) echo a;; b) rm b;; esac").into_command();
         let units = decompose(&cmd);
         let commands: Vec<_> = units
             .iter()
@@ -163,7 +163,7 @@ mod tests {
 
     #[test]
     fn decompose_dynamic_command_name() {
-        let cmd = parse("$EDITOR file.txt");
+        let cmd = parse("$EDITOR file.txt").into_command();
         let units = decompose(&cmd);
         assert!(units.len() >= 1);
         assert!(
@@ -173,7 +173,7 @@ mod tests {
 
     #[test]
     fn decompose_glob_command_name() {
-        let cmd = parse("./bin/* --help");
+        let cmd = parse("./bin/* --help").into_command();
         let units = decompose(&cmd);
         // Glob in command name → dynamic
         assert!(
@@ -187,7 +187,7 @@ mod tests {
 
     #[test]
     fn decompose_command_substitution_in_arg() {
-        let cmd = parse("echo $(rm -rf /)");
+        let cmd = parse("echo $(rm -rf /)").into_command();
         let units = decompose(&cmd);
         assert!(
             units
@@ -203,7 +203,7 @@ mod tests {
 
     #[test]
     fn decompose_backtick_in_arg() {
-        let cmd = parse("echo `date`");
+        let cmd = parse("echo `date`").into_command();
         let units = decompose(&cmd);
         assert!(
             units
@@ -214,7 +214,7 @@ mod tests {
 
     #[test]
     fn decompose_process_substitution() {
-        let cmd = parse("diff <(ls /a) <(ls /b)");
+        let cmd = parse("diff <(ls /a) <(ls /b)").into_command();
         let units = decompose(&cmd);
         let embedded: Vec<_> = units
             .iter()
@@ -230,7 +230,7 @@ mod tests {
 
     #[test]
     fn decompose_substitution_as_command_name() {
-        let cmd = parse("$(which python) --version");
+        let cmd = parse("$(which python) --version").into_command();
         let units = decompose(&cmd);
         // Command name is dynamic → DynamicCommand
         assert!(
@@ -246,21 +246,21 @@ mod tests {
 
     #[test]
     fn decompose_empty_input() {
-        let cmd = parse("");
+        let cmd = parse("").into_command();
         let units = decompose(&cmd);
         assert!(units.is_empty());
     }
 
     #[test]
     fn decompose_assignment_only() {
-        let cmd = parse("FOO=bar");
+        let cmd = parse("FOO=bar").into_command();
         let units = decompose(&cmd);
         assert!(units.is_empty());
     }
 
     #[test]
     fn decompose_background() {
-        let cmd = parse("sleep 10 &");
+        let cmd = parse("sleep 10 &").into_command();
         let units = decompose(&cmd);
         assert_eq!(units.len(), 1);
         assert!(matches!(&units[0], EvalUnit::SimpleCommand { command, .. } if command == "sleep"));
@@ -268,7 +268,7 @@ mod tests {
 
     #[test]
     fn decompose_function_def() {
-        let cmd = parse("foo() { echo hello; }");
+        let cmd = parse("foo() { echo hello; }").into_command();
         let units = decompose(&cmd);
         assert_eq!(units.len(), 1);
         assert!(matches!(&units[0], EvalUnit::SimpleCommand { command, .. } if command == "echo"));
@@ -276,7 +276,7 @@ mod tests {
 
     #[test]
     fn decompose_redirected() {
-        let cmd = parse("echo hello > /tmp/out");
+        let cmd = parse("echo hello > /tmp/out").into_command();
         let units = decompose(&cmd);
         assert_eq!(units.len(), 1);
         assert!(matches!(&units[0], EvalUnit::SimpleCommand { command, .. } if command == "echo"));
@@ -284,7 +284,7 @@ mod tests {
 
     #[test]
     fn decompose_quoted_command_name() {
-        let cmd = parse("\"echo\" hello");
+        let cmd = parse("\"echo\" hello").into_command();
         let units = decompose(&cmd);
         assert_eq!(units.len(), 1);
         assert!(matches!(&units[0], EvalUnit::SimpleCommand { command, .. } if command == "echo"));
