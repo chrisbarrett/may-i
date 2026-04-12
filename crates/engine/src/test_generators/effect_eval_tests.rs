@@ -14,6 +14,7 @@ fn eval_effect(effect: &Effect, ctx: &EvalContext) -> EffectResult {
         effect: spanned(effect.clone()),
         checks: vec![],
         span: dummy_span(),
+        provenance: may_i_core::ast::Provenance::PrimaryConfig,
     };
     let rules = [rule];
     let evaluator = Evaluator::new(&rules);
@@ -366,6 +367,7 @@ proptest! {
             effect: spanned(Effect::Terminal { decision: Decision::Allow, reason: Some("inner-allowed".into()) }),
             checks: vec![],
             span: dummy_span(),
+            provenance: may_i_core::ast::Provenance::PrimaryConfig,
         };
         let rules = [inner_rule];
 
@@ -424,6 +426,7 @@ proptest! {
                     effect: spanned(Effect::Terminal { decision: Decision::Allow, reason: Some("first".into()) }),
                     checks: vec![],
                     span: dummy_span(),
+                    provenance: may_i_core::ast::Provenance::PrimaryConfig,
                 },
                 Rule {
                     command_effect: spanned(Effect::CommandPattern(
@@ -432,6 +435,7 @@ proptest! {
                     effect: spanned(Effect::Terminal { decision: Decision::Deny, reason: Some("second".into()) }),
                     checks: vec![],
                     span: dummy_span(),
+                    provenance: may_i_core::ast::Provenance::PrimaryConfig,
                 },
             ],
             ..Config::default()
@@ -467,6 +471,7 @@ proptest! {
                 }),
                 checks: vec![],
                 span: dummy_span(),
+                provenance: may_i_core::ast::Provenance::PrimaryConfig,
             }],
             ..Config::default()
         };
@@ -490,6 +495,7 @@ proptest! {
                 effect: spanned(Effect::Terminal { decision: Decision::Allow, reason: Some("matched".into()) }),
                 checks: vec![],
                 span: dummy_span(),
+                provenance: may_i_core::ast::Provenance::PrimaryConfig,
             }],
             ..Config::default()
         };
@@ -522,6 +528,7 @@ proptest! {
                 )),
                 checks: vec![],
                 span: dummy_span(),
+                provenance: may_i_core::ast::Provenance::PrimaryConfig,
             }],
             ..Config::default()
         };

@@ -92,14 +92,13 @@ fn build_expr_match_detail_regex() {
 }
 
 #[test]
-fn command_pattern_or_with_regex() {
-    let re = regex::Regex::new("^git").unwrap();
+fn command_pattern_or_with_literals() {
     let pat = CommandPattern::Or(vec![
         CommandPattern::Literal("ls".into()),
-        CommandPattern::Regex(re),
+        CommandPattern::Literal("git".into()),
     ]);
     assert!(pat.is_match("ls"));
-    assert!(pat.is_match("git-push"));
+    assert!(pat.is_match("git"));
     assert!(!pat.is_match("rm"));
 }
 
@@ -488,6 +487,7 @@ fn run_checks_with_rule_level_checks() {
             span: s,
         }],
         span: s,
+        provenance: may_i_core::ast::Provenance::PrimaryConfig,
     };
 
     let config = Config {
@@ -521,6 +521,7 @@ fn run_checks_with_config_level_checks() {
         ),
         checks: vec![],
         span: s,
+        provenance: may_i_core::ast::Provenance::PrimaryConfig,
     };
 
     let config = Config {

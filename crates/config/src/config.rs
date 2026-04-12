@@ -1,7 +1,7 @@
 // Config parser for the unified DSL.
 
 use may_i_core::Span;
-use may_i_core::ast::{Check, Config, SecurityConfig};
+use may_i_core::ast::{Check, Config, Provenance, SecurityConfig};
 use may_i_core::{ContextFacts, Decision, Keyword};
 use may_i_sexpr::{RawError, Sexpr};
 
@@ -65,6 +65,71 @@ pub fn parse_config_from_sexprs(forms: &[Sexpr]) -> Result<Config, RawError> {
             }
             "safe-env-vars" => {
                 parse_safe_env_vars(&list[1..], &mut config.security, form.span())?;
+            }
+            "check" => {
+                let checks = parse_check(&list[1..], form.span())?;
+                config.checks.extend(checks);
+            }
+            "load" => {
+                return Err(RawError::new(
+                    "load forms should be resolved before parsing",
+                    list[0].span(),
+                )
+                .with_help(
+                    "this is an internal error — load expansion should happen in the IO layer",
+                ));
+            }
+            other => {
+                return Err(RawError::new(
+                    format!("unknown top-level form: {other}"),
+                    list[0].span(),
+                )
+                .with_help("valid top-level forms: rule, define, safe-env-vars, check"));
+            }
+        }
+    }
+
+    Ok(config)
+}
+
+/// Parse a config from sexprs tagged with provenance.
+///
+/// Each sexpr is paired with a `Provenance` value that gets applied to the
+/// resulting `Rule` or `Define`.
+#[must_use = "parsed config should be used"]
+pub fn parse_config_from_tagged_sexprs(forms: &[(Sexpr, Provenance)]) -> Result<Config, RawError> {
+    let mut config = Config::default();
+
+    for (form, provenance) in forms {
+        let list = form
+            .as_list()
+            .ok_or_else(|| RawError::new("top-level form must be a list", form.span()))?;
+
+        if list.is_empty() {
+            return Err(RawError::new("empty top-level form", form.span()));
+        }
+
+        let tag = list[0]
+            .as_atom()
+            .ok_or_else(|| RawError::new("form tag must be an atom", list[0].span()))?;
+
+        match tag {
+            "rule" => {
+                let rule = crate::rule::parse_rule(form)?;
+                let mut rule = rule.value;
+                rule.provenance = *provenance;
+                config.rules.push(rule);
+            }
+            "define" => {
+                let mut define = crate::rule::parse_define(form)?;
+                define.provenance = *provenance;
+                config.defines.push(define);
+            }
+            "safe-env-vars" => {
+                parse_safe_env_vars(&list[1..], &mut config.security, form.span())?;
+                if *provenance == Provenance::Loaded {
+                    config.security.has_loaded_env_vars = true;
+                }
             }
             "check" => {
                 let checks = parse_check(&list[1..], form.span())?;

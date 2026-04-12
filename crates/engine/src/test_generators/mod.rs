@@ -173,6 +173,7 @@ pub fn any_rule_set(size: usize) -> BoxedStrategy<Vec<Rule>> {
             effect: spanned(effect),
             checks: vec![],
             span: dummy_span(),
+            provenance: may_i_core::ast::Provenance::PrimaryConfig,
         }),
         0..size,
     )

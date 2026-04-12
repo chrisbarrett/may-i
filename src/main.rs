@@ -73,6 +73,14 @@ enum Command {
         #[arg(long)]
         yes: bool,
     },
+    /// View or approve trust for loaded config programs
+    Trust {
+        /// Approve a specific program
+        program: Option<String>,
+        /// Approve all pending programs
+        #[arg(long)]
+        all: bool,
+    },
     /// Show detailed DSL syntax reference
     Reference,
 }
@@ -125,6 +133,9 @@ fn run() -> miette::Result<()> {
         Some(Command::Parse { command, file }) => cmd_parse::cmd_parse(command, file, cli.json)?,
         Some(Command::Migrate { output, yes }) => {
             cmd_migrate::cmd_migrate(cli.config.as_deref(), output.as_deref(), yes)?
+        }
+        Some(Command::Trust { program, all }) => {
+            may_i::cmd_trust::cmd_trust(program.as_deref(), all, cli.json, cli.config.as_deref())?
         }
         Some(Command::Reference) => cmd_help::cmd_help()?,
         None => {

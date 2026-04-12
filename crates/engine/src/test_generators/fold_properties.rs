@@ -274,6 +274,7 @@ proptest! {
                 }),
                 checks: vec![],
                 span: dummy_span(),
+                provenance: may_i_core::ast::Provenance::PrimaryConfig,
             }],
             ..Config::default()
         };
@@ -309,6 +310,7 @@ proptest! {
                     }),
                     checks: vec![],
                     span: dummy_span(),
+                    provenance: may_i_core::ast::Provenance::PrimaryConfig,
                 },
                 Rule {
                     command_effect: spanned(Effect::CommandPattern(
@@ -317,6 +319,7 @@ proptest! {
                     effect: spanned(Effect::Terminal { decision: Decision::Ask, reason: Some("fallback".into()) }),
                     checks: vec![],
                     span: dummy_span(),
+                    provenance: may_i_core::ast::Provenance::PrimaryConfig,
                 },
             ],
             ..Config::default()

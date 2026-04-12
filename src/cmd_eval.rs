@@ -23,6 +23,23 @@ pub fn cmd_eval(
     let config_file = &loaded.config_path;
     let context = parse_cli_facts(raw_facts)?;
 
+    // Trust check
+    if let Some(block) = check_trust_for_command(command, &loaded.config)? {
+        if json_mode {
+            let json = serde_json::json!({
+                "decision": "ask",
+                "reason": block,
+            });
+            println!(
+                "{}",
+                serde_json::to_string(&json).expect("response serialization is infallible")
+            );
+        } else {
+            eprintln!("{}", block);
+        }
+        return Ok(());
+    }
+
     if json_mode {
         let mut fold = TracingFold::from_loaded_config(&loaded);
         let result =
@@ -184,4 +201,49 @@ fn colorize_segments(
         }
     }
     display_parts.concat()
+}
+
+/// Check trust for the program being invoked.
+/// Returns Some(reason) to block, None to proceed.
+fn check_trust_for_command(
+    command: &str,
+    config: &may_i_core::ast::Config,
+) -> miette::Result<Option<String>> {
+    use may_i_engine::trust::compute_trust_hashes;
+
+    let hashes = compute_trust_hashes(config);
+    if hashes.programs.is_empty() {
+        return Ok(None);
+    }
+
+    let segments = parser::segment(command);
+    let segment_text = if segments.is_empty() {
+        command
+    } else {
+        &command[segments[0].start..segments[0].end]
+    };
+    let program = segment_text
+        .split_whitespace()
+        .next()
+        .unwrap_or(segment_text);
+    let program = program.rsplit('/').next().unwrap_or(program);
+
+    if let Some(computed_hash) = hashes.programs.get(program) {
+        let store_path = crate::trust_store::default_trust_store_path()
+            .ok_or_else(|| miette::miette!("cannot determine trust store path"))?;
+        let store = crate::trust_store::TrustStore::load(&store_path)
+            .map_err(|e| miette::miette!("failed to read trust store: {e}"))?;
+
+        match store.check(program, computed_hash) {
+            crate::trust_store::TrustStatus::Trusted => Ok(None),
+            crate::trust_store::TrustStatus::Changed | crate::trust_store::TrustStatus::New => {
+                Ok(Some(format!(
+                    "Loaded config rules for '{}' need trust approval. Run: may-i trust \"{}\"",
+                    program, program
+                )))
+            }
+        }
+    } else {
+        Ok(None)
+    }
 }

@@ -27,6 +27,15 @@ pub(crate) fn cmd_claude_code_hook(config_path: Option<&std::path::Path>) -> mie
 
     let loaded = config::load_and_resolve(config_path)?;
 
+    // Trust check: if the command's program has untrusted loaded content, block.
+    if let Some(block_response) = check_trust(&command, &loaded.config)? {
+        println!(
+            "{}",
+            serde_json::to_string(&block_response).expect("response serialization is infallible")
+        );
+        return Ok(());
+    }
+
     let context = build_context(&payload);
     let result = engine::eval::evaluate_command(&command, &loaded.config, &context)
         .map_err(|e| miette::miette!("{e}"))?;
@@ -99,6 +108,59 @@ fn build_context(payload: &serde_json::Value) -> ContextFacts {
     }
 
     context
+}
+
+/// Check trust for the program being invoked.
+///
+/// Returns `Some(response)` to block execution, `None` to proceed normally.
+fn check_trust(
+    command: &str,
+    config: &may_i_core::ast::Config,
+) -> miette::Result<Option<serde_json::Value>> {
+    use may_i_engine::trust::compute_trust_hashes;
+    use may_i_shell_parser as parser;
+
+    let hashes = compute_trust_hashes(config);
+    if hashes.programs.is_empty() {
+        return Ok(None);
+    }
+
+    // Extract program name from the command
+    let segments = parser::segment(command);
+    let segment_text = if segments.is_empty() {
+        command
+    } else {
+        &command[segments[0].start..segments[0].end]
+    };
+    // The segment is the full sub-command; extract just the first word (binary name)
+    let program = segment_text
+        .split_whitespace()
+        .next()
+        .unwrap_or(segment_text);
+    let program = program.rsplit('/').next().unwrap_or(program);
+
+    // Check if this program needs trust
+    if let Some(computed_hash) = hashes.programs.get(program) {
+        let store_path = may_i::trust_store::default_trust_store_path()
+            .ok_or_else(|| miette::miette!("cannot determine trust store path"))?;
+        let store = may_i::trust_store::TrustStore::load(&store_path)
+            .map_err(|e| miette::miette!("failed to read trust store: {e}"))?;
+
+        match store.check(program, computed_hash) {
+            may_i::trust_store::TrustStatus::Trusted => Ok(None),
+            may_i::trust_store::TrustStatus::Changed | may_i::trust_store::TrustStatus::New => {
+                let reason = format!(
+                    "Loaded config rules for '{}' have changed and need trust approval. Run: may-i trust \"{}\"",
+                    program, program
+                );
+                let response =
+                    render_response(EvalResult::new(may_i_core::Decision::Ask, Some(reason)));
+                Ok(Some(response))
+            }
+        }
+    } else {
+        Ok(None)
+    }
 }
 
 /// Render the evaluation result in Claude Code hook response format.

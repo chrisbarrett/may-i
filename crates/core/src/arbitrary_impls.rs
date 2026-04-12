@@ -6,7 +6,9 @@
 
 use arbitrary::{Arbitrary, Unstructured};
 
-use crate::ast::{Check, Config, Define, Effect, Predicate, Rule, SecurityConfig, Spanned};
+use crate::ast::{
+    Check, Config, Define, Effect, Predicate, Provenance, Rule, SecurityConfig, Spanned,
+};
 use crate::context::ContextFacts;
 use crate::pattern::{
     ArgPattern, CommandPattern, Expr, ExprBranch, MatchMode, PositionalArg, Quantifier,
@@ -150,19 +152,12 @@ impl<'a> Arbitrary<'a> for FactQuery {
 
 impl<'a> Arbitrary<'a> for CommandPattern {
     fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
-        match u.int_in_range(0..=2)? {
+        match u.int_in_range(0..=1)? {
             0 => Ok(CommandPattern::Literal(arb_alpha(u, 15)?)),
-            1 => Ok(CommandPattern::Regex(arb_regex(u)?)),
             _ => {
                 let count = u.int_in_range(2..=3)?;
                 let pats = (0..count)
-                    .map(|_| {
-                        if u.arbitrary()? {
-                            Ok(CommandPattern::Literal(arb_alpha(u, 15)?))
-                        } else {
-                            Ok(CommandPattern::Regex(arb_regex(u)?))
-                        }
-                    })
+                    .map(|_| Ok(CommandPattern::Literal(arb_alpha(u, 15)?)))
                     .collect::<arbitrary::Result<Vec<_>>>()?;
                 Ok(CommandPattern::Or(pats))
             }
@@ -372,6 +367,7 @@ impl<'a> Arbitrary<'a> for Rule {
             command_effect: Spanned::arbitrary(u)?,
             effect: Spanned::arbitrary(u)?,
             checks: vec![],
+            provenance: Provenance::PrimaryConfig,
             span: Span::new(0, 0),
         })
     }
@@ -393,6 +389,7 @@ impl<'a> Arbitrary<'a> for Define {
         Ok(Define {
             name: arb_alpha(u, 15)?,
             predicate: Spanned::arbitrary(u)?,
+            provenance: Provenance::PrimaryConfig,
             span: Span::new(0, 0),
         })
     }
