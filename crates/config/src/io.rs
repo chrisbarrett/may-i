@@ -101,7 +101,7 @@ pub fn resolve_path(override_path: Option<&Path>) -> miette::Result<PathBuf> {
             }
             Ok(p.to_path_buf())
         }
-        None => match env_or_default_path() {
+        None => match env_or_default_path()? {
             Some(path) => Ok(path),
             None => {
                 let path = default_config_path()
@@ -122,14 +122,18 @@ pub fn resolve_path(override_path: Option<&Path>) -> miette::Result<PathBuf> {
 }
 
 /// Find an existing config file: `$MAYI_CONFIG` then XDG/default.
-fn env_or_default_path() -> Option<PathBuf> {
+///
+/// Returns `Err` when `MAYI_CONFIG` is set but the path does not exist.
+/// Returns `Ok(None)` when no config file is found via env or default.
+fn env_or_default_path() -> miette::Result<Option<PathBuf>> {
     if let Ok(p) = std::env::var("MAYI_CONFIG") {
         let path = PathBuf::from(p);
         if path.exists() {
-            return Some(path);
+            return Ok(Some(path));
         }
+        miette::bail!("MAYI_CONFIG points to nonexistent file: {}", path.display());
     }
-    default_config_path().filter(|p| p.exists())
+    Ok(default_config_path().filter(|p| p.exists()))
 }
 
 /// The preferred config path (XDG or ~/.config fallback).
@@ -279,16 +283,24 @@ mod tests {
         writeln!(temp_file, r#"(safe-env-vars "HOME")"#).unwrap();
 
         temp_env::with_var("MAYI_CONFIG", Some(temp_file.path().as_os_str()), || {
-            let result = env_or_default_path();
+            let result = env_or_default_path().unwrap();
             assert_eq!(result, Some(temp_file.path().to_path_buf()));
         });
     }
 
     #[test]
-    fn test_env_or_default_path_nonexistent_mayi_config() {
+    fn test_env_or_default_path_nonexistent_mayi_config_errors() {
         temp_env::with_var("MAYI_CONFIG", Some("/nonexistent/path/config.lisp"), || {
-            // Should fall through to default_config_path
-            let _result = env_or_default_path();
+            let result = env_or_default_path();
+            assert!(
+                result.is_err(),
+                "should error when MAYI_CONFIG points to nonexistent file"
+            );
+            let err_msg = format!("{}", result.unwrap_err());
+            assert!(
+                err_msg.contains("/nonexistent/path/config.lisp"),
+                "error should contain the path, got: {err_msg}"
+            );
         });
     }
 

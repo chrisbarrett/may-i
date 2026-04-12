@@ -117,3 +117,14 @@ fn hook_nonexistent_config_via_flag_exits_two() {
         .code(2)
         .stderr(predicate::str::contains("not found"));
 }
+
+#[test]
+fn hook_nonexistent_mayi_config_env_exits_two() {
+    let mut cmd = cargo_bin_cmd!("may-i");
+    cmd.env("MAYI_CONFIG", "/tmp/bogus.lisp")
+        .write_stdin(bash_payload("echo hello"))
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("MAYI_CONFIG"))
+        .stderr(predicate::str::contains("nonexistent"));
+}
