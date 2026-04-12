@@ -1,5 +1,20 @@
 use super::*;
 
+/// Returns true if any part in the slice cannot be statically resolved to a
+/// known command name. This is broader than `has_dynamic_in`: it also treats
+/// Glob and Opaque parts as dynamic, since they produce unpredictable values
+/// when used as command names.
+fn is_dynamic_in(parts: &[WordPart]) -> bool {
+    parts.iter().any(|part| match part {
+        WordPart::Literal(_)
+        | WordPart::SingleQuoted(_)
+        | WordPart::AnsiCQuoted(_)
+        | WordPart::BraceExpansion(_) => false,
+        WordPart::DoubleQuoted(inner) => is_dynamic_in(inner),
+        _ => true,
+    })
+}
+
 /// Returns true if any part in the slice is a dynamic shell construct.
 /// Opaque parts are safe (trusted) and do NOT count as dynamic.
 fn has_dynamic_in(parts: &[WordPart]) -> bool {
@@ -15,6 +30,19 @@ fn has_dynamic_in(parts: &[WordPart]) -> bool {
         WordPart::Opaque(_) => false,
         _ => false,
     })
+}
+
+/// Collect command strings from embedded substitutions (CommandSubstitution,
+/// Backtick, ProcessSubstitution), recursing into DoubleQuoted.
+fn collect_embedded_commands<'a>(parts: &'a [WordPart], out: &mut Vec<&'a str>) {
+    for part in parts {
+        match part {
+            WordPart::CommandSubstitution(s) | WordPart::Backtick(s) => out.push(s),
+            WordPart::ProcessSubstitution { command, .. } => out.push(command),
+            WordPart::DoubleQuoted(inner) => collect_embedded_commands(inner, out),
+            _ => {}
+        }
+    }
 }
 
 /// Collect human-readable descriptions of dynamic parts from a part slice.
@@ -97,6 +125,23 @@ impl Word {
         Word {
             parts: vec![WordPart::Literal(s.to_string())],
         }
+    }
+
+    /// Returns true if this word cannot be statically resolved to a known value.
+    /// Broader than `has_dynamic_parts`: also treats Glob and Opaque as dynamic.
+    /// Use this for command-name checking where any non-literal part means the
+    /// command identity is unknown.
+    pub fn is_dynamic(&self) -> bool {
+        is_dynamic_in(&self.parts)
+    }
+
+    /// Extract command strings from embedded substitutions in this word's parts.
+    /// Returns sources from CommandSubstitution, Backtick, and ProcessSubstitution,
+    /// recursing into DoubleQuoted inner parts.
+    pub fn extract_embedded_commands(&self) -> Vec<&str> {
+        let mut out = Vec::new();
+        collect_embedded_commands(&self.parts, &mut out);
+        out
     }
 
     /// Returns true if this word contains dynamic shell constructs whose runtime

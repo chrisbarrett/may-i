@@ -4,7 +4,7 @@ use may_i_core::ContextFacts;
 use may_i_core::ast::{Define, Predicate};
 
 /// Maximum recursion depth for (may-i ...) evaluation.
-pub(crate) const DEFAULT_RECURSION_LIMIT: usize = 10;
+pub(super) const DEFAULT_RECURSION_LIMIT: usize = 10;
 
 /// The result of evaluating a predicate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

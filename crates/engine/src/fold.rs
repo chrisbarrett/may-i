@@ -259,6 +259,10 @@ pub trait EvalFold {
     ) -> Self::EffectOut;
     fn rule_skipped(&mut self, rule: &Rule) -> Self::EffectOut;
     fn default_ask(&mut self, reason: &str) -> Self::EffectOut;
+
+    /// Called when an embedded command (substitution) has been evaluated.
+    /// Default implementation is a no-op.
+    fn embedded_command(&mut self, _source: &str, _decision: Decision) {}
 }
 
 /// Zero-overhead fold that simply returns evaluation results unchanged.

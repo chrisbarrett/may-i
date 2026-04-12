@@ -11,6 +11,11 @@ pub fn trace_to_json(entries: &[TraceEntry]) -> Vec<serde_json::Value> {
                 "command": command,
                 "decision": decision.to_string(),
             }),
+            TraceEntry::EmbeddedCommand { source, decision } => serde_json::json!({
+                "type": "embedded_command",
+                "source": source,
+                "decision": decision.to_string(),
+            }),
             TraceEntry::DefaultAsk { reason } => serde_json::json!({
                 "type": "default_ask",
                 "reason": reason,

@@ -12,17 +12,6 @@ use crate::annotation::{TraceEntry, TracingFold};
 use crate::output;
 use crate::runtime_facts::parse_cli_facts;
 
-/// Parse a simple command string into (command_name, args) using the shell
-/// parser, which correctly handles quoting. Falls back to split_whitespace
-/// for non-simple commands.
-pub fn parse_command_args(text: &str) -> (String, Vec<String>) {
-    parser::parse_simple_command(text).unwrap_or_else(|| {
-        let cmd = text.split_whitespace().next().unwrap_or(text).to_string();
-        let args: Vec<String> = text.split_whitespace().skip(1).map(String::from).collect();
-        (cmd, args)
-    })
-}
-
 pub fn cmd_eval(
     command: &str,
     raw_facts: &[String],
@@ -36,9 +25,8 @@ pub fn cmd_eval(
 
     if json_mode {
         let mut fold = TracingFold::from_loaded_config(&loaded);
-        let (cmd, args) = parse_command_args(command);
         let result =
-            engine::eval::evaluate_with_fold(&cmd, &args, &loaded.config, &context, &mut fold)
+            engine::eval::evaluate_command_with_fold(command, &loaded.config, &context, &mut fold)
                 .map_err(|e| miette::miette!("{e}"))?;
         let json = serde_json::json!({
             "decision": result.decision.to_string(),
@@ -54,7 +42,8 @@ pub fn cmd_eval(
         if let Some(note) = output::migration_note(&loaded, config_file) {
             output::write_layout(&mut std::io::stderr(), &note, &term);
         }
-        let (result, traces, colored_command) = evaluate_segments(command, &loaded, &context)?;
+        let (result, traces, colored_command) =
+            evaluate_with_colorization(command, &loaded, &context)?;
         let display_path = output::shorten_home(config_file);
         write_eval_output(
             &mut std::io::stdout(),
@@ -111,90 +100,57 @@ pub fn write_eval_output(
     let _ = writeln!(w, "  {} {}", "config:".dimmed(), display_path.dimmed());
 }
 
-/// Evaluate each segment of a command, returning the aggregate result, traces,
-/// and a colorized display string.
-pub fn evaluate_segments(
+/// Evaluate a command using the unified pipeline, then colorize using segments
+/// for display purposes only.
+pub fn evaluate_with_colorization(
     command: &str,
     loaded: &crate::loaded_config::LoadedConfig,
     context: &may_i_core::ContextFacts,
 ) -> miette::Result<(engine::EvalResult, Vec<TraceEntry>, String)> {
+    // Use the unified evaluation pipeline for the decision
+    let mut fold = TracingFold::from_loaded_config(loaded);
+    let result =
+        engine::eval::evaluate_command_with_fold(command, &loaded.config, context, &mut fold)
+            .map_err(|e| miette::miette!("{e}"))?;
+
+    // Use segment() for display colorization only
     let segments = parser::segment(command);
+    let colored_command = if segments.is_empty() {
+        colorize_text(command, result.decision)
+    } else {
+        colorize_segments(command, &segments, loaded, context)
+    };
 
-    if segments.is_empty() {
-        let mut fold = TracingFold::from_loaded_config(loaded);
-        let (cmd, args) = parse_command_args(command);
-        let result =
-            engine::eval::evaluate_with_fold(&cmd, &args, &loaded.config, context, &mut fold)
-                .map_err(|e| miette::miette!("{e}"))?;
-        return Ok((result, fold.traces, command.to_string()));
+    Ok((result, fold.traces, colored_command))
+}
+
+fn colorize_text(text: &str, decision: Decision) -> String {
+    match decision {
+        Decision::Allow => text.green().underline().to_string(),
+        Decision::Ask => text.yellow().underline().to_string(),
+        Decision::Deny => text.red().underline().to_string(),
     }
+}
 
+/// Colorize each segment independently for display.
+fn colorize_segments(
+    command: &str,
+    segments: &[parser::Segment],
+    loaded: &crate::loaded_config::LoadedConfig,
+    context: &may_i_core::ContextFacts,
+) -> String {
     let mut display_parts = Vec::new();
-    let mut cmd_evals: Vec<(&str, engine::EvalResult, Vec<TraceEntry>)> = Vec::new();
-
-    for seg in &segments {
+    for seg in segments {
         let text = &command[seg.start..seg.end];
         if seg.is_operator {
             display_parts.push(format!(" {text} "));
         } else {
-            let mut fold = TracingFold::from_loaded_config(loaded);
-            let (cmd, args) = parse_command_args(text);
-            let result =
-                engine::eval::evaluate_with_fold(&cmd, &args, &loaded.config, context, &mut fold)
-                    .map_err(|e| miette::miette!("{e}"))?;
-            let colored = match result.decision {
-                Decision::Allow => text.green().underline().to_string(),
-                Decision::Ask => text.yellow().underline().to_string(),
-                Decision::Deny => text.red().underline().to_string(),
-            };
-            display_parts.push(colored);
-            cmd_evals.push((text, result, fold.traces));
+            // Evaluate each segment for its color
+            let decision = engine::eval::evaluate_command(text, &loaded.config, context)
+                .map(|r| r.decision)
+                .unwrap_or(Decision::Ask);
+            display_parts.push(colorize_text(text, decision));
         }
     }
-
-    let multi_segment = cmd_evals.len() > 1;
-    let mut traces = Vec::new();
-    let mut aggregate_decision = Decision::Allow;
-    let mut aggregate_reason = None;
-
-    for (text, eval, segment_traces) in &cmd_evals {
-        if multi_segment {
-            traces.push(TraceEntry::SegmentHeader {
-                command: text.to_string(),
-                decision: eval.decision,
-            });
-        }
-        traces.extend(segment_traces.iter().cloned());
-        if eval.decision >= aggregate_decision {
-            aggregate_decision = eval.decision;
-            aggregate_reason = eval.reason.clone();
-        }
-    }
-
-    let result = engine::EvalResult::new(aggregate_decision, aggregate_reason);
-    Ok((result, traces, display_parts.concat()))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_command_args_strips_leading_comment() {
-        let (cmd, args) =
-            parse_command_args("# this is a comment\nsed -i '' 's/foo/bar/g' file.txt");
-        assert_eq!(cmd, "sed");
-        assert_eq!(args[0], "-i");
-    }
-
-    #[test]
-    fn parse_command_args_comment_only() {
-        let (cmd, _args) = parse_command_args("# just a comment");
-        // Shell parser strips comments; fallback gives "#" which is acceptable
-        // The key point is it doesn't produce "\n" or other whitespace
-        assert!(
-            !cmd.trim().is_empty(),
-            "command should not be empty/whitespace, got: {cmd:?}"
-        );
-    }
+    display_parts.concat()
 }

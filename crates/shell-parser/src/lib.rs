@@ -35,16 +35,13 @@ pub fn parse_simple_command(input: &str) -> Option<(String, Vec<String>)> {
     }
 }
 
-// ── Test-only helpers ────────────────────────────────────────────────
-
-#[cfg(test)]
-pub(crate) fn extract_simple_commands(cmd: &Command) -> Vec<&SimpleCommand> {
+/// Extract all simple commands from an AST by recursing through `children()`.
+pub fn extract_simple_commands(cmd: &Command) -> Vec<&SimpleCommand> {
     let mut result = Vec::new();
     collect_simple_commands(cmd, &mut result);
     result
 }
 
-#[cfg(test)]
 fn collect_simple_commands<'a>(cmd: &'a Command, out: &mut Vec<&'a SimpleCommand>) {
     if let Command::Simple(sc) = cmd {
         out.push(sc);
