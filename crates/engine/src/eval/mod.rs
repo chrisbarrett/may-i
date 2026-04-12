@@ -1,13 +1,17 @@
 // Unified effect evaluator.
 // All effect forms evaluate to EffectResult (Decision | Nil).
 
+mod command;
 mod context;
+mod decompose;
 pub(crate) mod effects;
 mod entry;
 pub(crate) mod positional;
 pub(crate) mod predicates;
 
+pub use command::{evaluate_command, evaluate_command_with_fold};
 pub use context::{EvalContext, PredicateResult};
+pub use decompose::{EvalUnit, decompose};
 pub use entry::{Evaluator, evaluate, evaluate_with_fold};
 
 #[cfg(test)]

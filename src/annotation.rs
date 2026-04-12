@@ -440,6 +440,8 @@ pub enum TraceEntry {
         /// `may-i` evaluation.
         inner_command: Option<String>,
     },
+    /// An embedded command (substitution) was evaluated.
+    EmbeddedCommand { source: String, decision: Decision },
     /// No matching rule — default ask.
     DefaultAsk { reason: String },
 }
@@ -1089,6 +1091,13 @@ impl EvalFold for TracingFold {
             EffectResult::Decision(Decision::Ask, Some(reason.to_string())),
             doc,
         )
+    }
+
+    fn embedded_command(&mut self, source: &str, decision: Decision) {
+        self.traces.push(TraceEntry::EmbeddedCommand {
+            source: source.to_string(),
+            decision,
+        });
     }
 }
 

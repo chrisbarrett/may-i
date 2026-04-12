@@ -312,3 +312,220 @@ fn dynamic_parts_unresolved_length() {
     assert!(w.has_dynamic_parts());
     assert_eq!(w.dynamic_parts(), vec!["${#UNSET}"]);
 }
+
+// -- is_dynamic (broader than has_dynamic_parts: includes Glob and Opaque) --
+
+#[test]
+fn is_dynamic_literal_false() {
+    assert!(!Word::literal("echo").is_dynamic());
+}
+
+#[test]
+fn is_dynamic_single_quoted_false() {
+    let w = Word {
+        parts: vec![WordPart::SingleQuoted("echo".into())],
+    };
+    assert!(!w.is_dynamic());
+}
+
+#[test]
+fn is_dynamic_ansi_c_quoted_false() {
+    let w = Word {
+        parts: vec![WordPart::AnsiCQuoted("echo".into())],
+    };
+    assert!(!w.is_dynamic());
+}
+
+#[test]
+fn is_dynamic_brace_expansion_false() {
+    let w = Word {
+        parts: vec![WordPart::BraceExpansion(vec!["a".into(), "b".into()])],
+    };
+    assert!(!w.is_dynamic());
+}
+
+#[test]
+fn is_dynamic_double_quoted_static_false() {
+    let w = Word {
+        parts: vec![WordPart::DoubleQuoted(vec![WordPart::Literal(
+            "echo".into(),
+        )])],
+    };
+    assert!(!w.is_dynamic());
+}
+
+#[test]
+fn is_dynamic_parameter_true() {
+    let w = Word {
+        parts: vec![WordPart::Parameter("CMD".into())],
+    };
+    assert!(w.is_dynamic());
+}
+
+#[test]
+fn is_dynamic_parameter_expansion_true() {
+    let w = Word {
+        parts: vec![WordPart::ParameterExpansion("CMD".into())],
+    };
+    assert!(w.is_dynamic());
+}
+
+#[test]
+fn is_dynamic_parameter_expansion_op_true() {
+    let w = Word {
+        parts: vec![WordPart::ParameterExpansionOp {
+            name: "CMD".into(),
+            op: ParameterOperator::Length,
+        }],
+    };
+    assert!(w.is_dynamic());
+}
+
+#[test]
+fn is_dynamic_command_substitution_true() {
+    let w = Word {
+        parts: vec![WordPart::CommandSubstitution("which python".into())],
+    };
+    assert!(w.is_dynamic());
+}
+
+#[test]
+fn is_dynamic_backtick_true() {
+    let w = Word {
+        parts: vec![WordPart::Backtick("which python".into())],
+    };
+    assert!(w.is_dynamic());
+}
+
+#[test]
+fn is_dynamic_arithmetic_true() {
+    let w = Word {
+        parts: vec![WordPart::Arithmetic("1+1".into())],
+    };
+    assert!(w.is_dynamic());
+}
+
+#[test]
+fn is_dynamic_glob_true() {
+    let w = Word {
+        parts: vec![WordPart::Glob("*".into())],
+    };
+    assert!(w.is_dynamic());
+}
+
+#[test]
+fn is_dynamic_opaque_true() {
+    let w = Word {
+        parts: vec![WordPart::Opaque("???".into())],
+    };
+    assert!(w.is_dynamic());
+}
+
+#[test]
+fn is_dynamic_process_substitution_true() {
+    let w = Word {
+        parts: vec![WordPart::ProcessSubstitution {
+            direction: ProcessDirection::Input,
+            command: "sort file".into(),
+        }],
+    };
+    assert!(w.is_dynamic());
+}
+
+#[test]
+fn is_dynamic_double_quoted_with_parameter_true() {
+    let w = Word {
+        parts: vec![WordPart::DoubleQuoted(vec![
+            WordPart::Literal("pre".into()),
+            WordPart::Parameter("CMD".into()),
+        ])],
+    };
+    assert!(w.is_dynamic());
+}
+
+// -- extract_embedded_commands --
+
+#[test]
+fn extract_embedded_commands_literal_empty() {
+    let w = Word::literal("hello");
+    assert!(w.extract_embedded_commands().is_empty());
+}
+
+#[test]
+fn extract_embedded_commands_command_substitution() {
+    let w = Word {
+        parts: vec![WordPart::CommandSubstitution("rm -rf /".into())],
+    };
+    assert_eq!(w.extract_embedded_commands(), vec!["rm -rf /"]);
+}
+
+#[test]
+fn extract_embedded_commands_backtick() {
+    let w = Word {
+        parts: vec![WordPart::Backtick("date".into())],
+    };
+    assert_eq!(w.extract_embedded_commands(), vec!["date"]);
+}
+
+#[test]
+fn extract_embedded_commands_process_sub_input() {
+    let w = Word {
+        parts: vec![WordPart::ProcessSubstitution {
+            direction: ProcessDirection::Input,
+            command: "ls /a".into(),
+        }],
+    };
+    assert_eq!(w.extract_embedded_commands(), vec!["ls /a"]);
+}
+
+#[test]
+fn extract_embedded_commands_process_sub_output() {
+    let w = Word {
+        parts: vec![WordPart::ProcessSubstitution {
+            direction: ProcessDirection::Output,
+            command: "tee log".into(),
+        }],
+    };
+    assert_eq!(w.extract_embedded_commands(), vec!["tee log"]);
+}
+
+#[test]
+fn extract_embedded_commands_in_double_quotes() {
+    let w = Word {
+        parts: vec![WordPart::DoubleQuoted(vec![
+            WordPart::Literal("hi ".into()),
+            WordPart::CommandSubstitution("whoami".into()),
+        ])],
+    };
+    assert_eq!(w.extract_embedded_commands(), vec!["whoami"]);
+}
+
+#[test]
+fn extract_embedded_commands_multiple() {
+    let w = Word {
+        parts: vec![
+            WordPart::CommandSubstitution("cmd1".into()),
+            WordPart::Literal("-".into()),
+            WordPart::Backtick("cmd2".into()),
+        ],
+    };
+    assert_eq!(w.extract_embedded_commands(), vec!["cmd1", "cmd2"]);
+}
+
+#[test]
+fn extract_embedded_commands_parameter_not_included() {
+    let w = Word {
+        parts: vec![WordPart::Parameter("VAR".into())],
+    };
+    assert!(w.extract_embedded_commands().is_empty());
+}
+
+#[test]
+fn extract_embedded_commands_nested_double_quote() {
+    let w = Word {
+        parts: vec![WordPart::DoubleQuoted(vec![WordPart::CommandSubstitution(
+            "echo $(rm /)".into(),
+        )])],
+    };
+    assert_eq!(w.extract_embedded_commands(), vec!["echo $(rm /)"]);
+}

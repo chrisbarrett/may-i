@@ -226,6 +226,15 @@ fn trace_to_layout(
                 last_shown_facts = Some(facts);
                 current_rows.extend(render_annotated_rule(doc, *line, &geom));
             }
+            TraceEntry::EmbeddedCommand { source, decision } => {
+                let decision_str = format!(":{decision}");
+                let label = format!("{} {}", "embedded:".dimmed(), source.italic());
+                let label_visible = "embedded: ".len() + source.len();
+                let right = colorize_right(&format!("→ {decision_str}"));
+                let mut row = ColRow::new(label, label_visible, right);
+                row.left_align = ColAlign::Right;
+                current_rows.push(row);
+            }
             TraceEntry::DefaultAsk { .. } => {
                 let label = "No matching rule".italic().yellow().to_string();
                 let label_visible = "No matching rule".len();

@@ -45,5 +45,7 @@ impl EvalResult {
 }
 
 // Re-export canonical evaluator items
-pub use eval::{EvalContext, Evaluator, PredicateResult, evaluate};
+pub use eval::{
+    EvalContext, Evaluator, PredicateResult, evaluate, evaluate_command, evaluate_command_with_fold,
+};
 pub use fold::{ChildResult, EvalFold, PureFold};

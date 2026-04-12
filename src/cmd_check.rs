@@ -174,11 +174,9 @@ fn run_checks_with_traces(
     };
 
     engine::check::run_checks_with(&loaded.config, |check| {
-        let (cmd, args) = crate::cmd_eval::parse_command_args(&check.command);
         let mut fold = TracingFold::from_loaded_config(loaded);
-        let result = engine::eval::evaluate_with_fold(
-            &cmd,
-            &args,
+        let result = engine::eval::evaluate_command_with_fold(
+            &check.command,
             &loaded.config,
             &check.context,
             &mut fold,
