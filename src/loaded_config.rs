@@ -1,5 +1,7 @@
 // LoadedConfig bundles a parsed Config with source metadata needed for tracing.
 
+use std::path::PathBuf;
+
 use may_i_core::Span;
 use may_i_core::ast::Config;
 use may_i_core::doc::Doc;
@@ -9,6 +11,7 @@ pub struct LoadedConfig {
     pub config: Config,
     pub source_text: Option<String>,
     pub pre_migration_forms: Option<Vec<(Span, Doc<()>)>>,
+    pub config_path: PathBuf,
 }
 
 impl From<may_i_config::LoadResult> for LoadedConfig {
@@ -17,6 +20,7 @@ impl From<may_i_config::LoadResult> for LoadedConfig {
             config: r.config,
             source_text: r.source_text,
             pre_migration_forms: r.pre_migration_forms,
+            config_path: r.config_path,
         }
     }
 }
