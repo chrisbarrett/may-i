@@ -1,7 +1,33 @@
-## MODIFIED Requirements
+## Requirements
+
+### Requirement: FactPattern enum available in predicates module
+The `FactPattern` enum (Literal, Wildcard, Regex, And, Or, Not) SHALL be defined in `crates/core/src/predicates.rs` and re-exported from `may_i_core`.
+
+#### Scenario: FactPattern can match literal values
+- **WHEN** `FactPattern::Literal("prod")` is matched against "prod"
+- **THEN** it returns true
+
+#### Scenario: FactPattern supports boolean combinators
+- **WHEN** `FactPattern::And(vec![p1, p2])` is matched
+- **THEN** it returns true only if both patterns match
+
+### Requirement: FactQuery enum available in predicates module
+The `FactQuery` enum (Presence, Value) SHALL be defined in `crates/core/src/predicates.rs` and re-exported from `may_i_core`. `FactQuery::Presence` SHALL carry only the `key` field — no `vector_syntax` field.
+
+#### Scenario: FactQuery can check key presence
+- **WHEN** `FactQuery::Presence { key }` is evaluated
+- **THEN** it checks if the key exists in context
+
+#### Scenario: FactQuery can check key value
+- **WHEN** `FactQuery::Value { key, pattern }` is evaluated
+- **THEN** it checks if the key's value matches the pattern
+
+#### Scenario: No vector_syntax in domain model
+- **WHEN** constructing a `FactQuery::Presence`
+- **THEN** only the `key` field SHALL be required
 
 ### Requirement: FactQuery::Presence evaluates against stored facts
-`FactQuery::Presence` SHALL return Match when the queried key exists in the fact store (the set may be empty or populated). (CHANGED: fact store is now set-based; presence checks key existence regardless of set contents)
+`FactQuery::Presence` SHALL return Match when the queried key exists in the fact store (the set may be empty or populated). Fact store is set-based; presence checks key existence regardless of set contents.
 
 #### Scenario: Key present with values
 - **GIVEN** fact store contains `:via` = `{"sudo", "ssh"}`
@@ -19,7 +45,7 @@
 - **THEN** it SHALL return NoMatch
 
 ### Requirement: FactQuery::Value evaluates as set-membership test
-`FactQuery::Value` SHALL return Match when the queried key exists and the pattern matches any member of the set at that key. (CHANGED: previously matched a single scalar value; now tests set membership)
+`FactQuery::Value` SHALL return Match when the queried key exists and the pattern matches any member of the set at that key.
 
 #### Scenario: Literal matches a set member
 - **GIVEN** fact store contains `:via` = `{"sudo", "ssh"}`

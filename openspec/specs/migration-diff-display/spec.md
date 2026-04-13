@@ -1,3 +1,22 @@
+## ADDED Requirements
+
+### Requirement: Migration diff shows file path header
+The migration command SHALL display the config file path as a header before the diff, with the HOME directory prefix rewritten as `~`.
+
+#### Scenario: Standard config path
+- **WHEN** migrating a config at `/home/user/.config/may-i/config.lisp`
+- **THEN** the diff SHALL start with `~/.config/may-i/config.lisp:`
+
+#### Scenario: Config outside HOME
+- **WHEN** migrating a config at `/etc/may-i/config.lisp`
+- **THEN** the diff SHALL show the absolute path `/etc/may-i/config.lisp:`
+
+### Requirement: Diff shows changed lines with context
+The migration diff SHALL display removed lines prefixed with `-`, added lines prefixed with `+`, and unchanged context lines without prefix. It SHALL show 3 lines of context around each change.
+
+### Requirement: Diff respects NO_COLOR environment variable
+The diff output SHALL use colors (red for `-`, green for `+`) when stdout is a TTY and `NO_COLOR` environment variable is not set.
+
 ## MODIFIED Requirements
 
 ### Requirement: Migration shows diff before applying changes

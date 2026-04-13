@@ -1,4 +1,19 @@
-## ADDED Requirements
+## Requirements
+
+### Requirement: Property test generators for compound v1 forms
+The migration property test suite SHALL include generators for compound v1 configurations that exercise multiple rewrite rules simultaneously.
+
+#### Scenario: Compound rule generator
+- **WHEN** the any_v1_compound_rule generator produces a v1 config
+- **THEN** it SHALL include (command ...), (context ...), and (args ...) in a single rule
+
+#### Scenario: Wrapper generator
+- **WHEN** the any_v1_wrapper generator produces a wrapper form
+- **THEN** it SHALL include random positional patterns, flag patterns, and capture markers
+
+#### Scenario: Full config generator
+- **WHEN** the any_v1_config generator produces a config
+- **THEN** it SHALL mix rules, wrappers, defcontexts, and defines
 
 ### Requirement: Compound v1 forms preserve evaluation semantics
 Migration of v1 configs that trigger multiple rewrite rules simultaneously SHALL produce v2 configs that evaluate identically for all input commands, arguments, and facts.
@@ -22,10 +37,6 @@ All wrapper form patterns used in production configs SHALL be tested through mig
 - **WHEN** a wrapper like (wrapper "mise" (positional "exec") (flag "--" :command+args)) is migrated
 - **THEN** the resulting rule SHALL evaluate identically for wrapped commands
 
-#### Scenario: Flag-only wrapper
-- **WHEN** a wrapper like (wrapper "nix-shell" (flag "--run" :command+args)) is migrated
-- **THEN** the resulting rule SHALL evaluate identically
-
 ### Requirement: has with complex value patterns migrates correctly
 The rename_has_to_fact rewrite SHALL preserve semantics for all legal value patterns.
 
@@ -40,13 +51,5 @@ The rename_has_to_fact rewrite SHALL preserve semantics for all legal value patt
 ### Requirement: Mixed v1/v2 configs migrate correctly
 Files containing both v1 and v2 syntax SHALL only migrate the v1 forms, leaving v2 forms unchanged.
 
-#### Scenario: Mixed syntax file
-- **WHEN** a config has both (rule (command "git") ...) and (rule "ls" ...) forms
-- **THEN** only the v1 form SHALL be rewritten; the v2 form SHALL be byte-identical
-
 ### Requirement: Proptest generators cover compound v1 forms
 Property tests SHALL generate compound v1 configs and verify evaluation equivalence after migration.
-
-#### Scenario: Random compound v1 configs
-- **WHEN** arbitrary v1 configs with command+context+args are generated
-- **THEN** migration SHALL always preserve evaluation semantics

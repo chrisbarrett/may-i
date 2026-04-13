@@ -1,4 +1,65 @@
-## ADDED Requirements
+## Requirements
+
+### Requirement: TracingFold produces annotated Doc trees alongside results
+`TracingFold` SHALL implement `EvalFold` with
+`EffectOut = (EffectResult, Doc<Option<Ann>>)` and
+`PredicateOut = (PredicateResult, Doc<Option<Ann>>)`. Each fold method SHALL
+build an annotated Doc node that mirrors the s-expression structure of the
+evaluated AST node.
+
+#### Scenario: Terminal effect produces annotated doc
+- **WHEN** evaluating `Effect::Allow(Some("safe"))`
+- **THEN** the fold output contains `EffectResult::Decision(Allow, Some("safe"))`
+- **AND** a `Doc` representing `(effect :allow "safe")` with an `Ann` recording
+  the decision
+
+#### Scenario: Command match produces annotated doc
+- **WHEN** evaluating `Effect::CommandPattern(Literal("git"))` against command
+  `"git"`
+- **THEN** the `Doc` represents `"git"` with an `Ann::CommandMatch { matched: true }`
+
+#### Scenario: Short-circuited children appear dimmed
+- **GIVEN** an `And` effect where the first child returns Nil
+- **WHEN** the fold builds the doc for the And node
+- **THEN** unevaluated children's docs SHALL have `dimmed = true`
+
+### Requirement: Ann enum covers all annotation kinds
+The `Ann` enum SHALL have variants for: command match (with matched flag),
+argument match (with args and evidence), fact query result (with observed values
+and failure reasons), effect decision (with decision and reason), and
+quantifier match (with count). These correspond to the evidence needed for
+the right column in two-column trace output.
+
+#### Scenario: Arg match annotation includes evidence
+- **WHEN** `(anywhere "-r")` is evaluated against args `["-r", "-f", "/"]`
+- **THEN** the `Ann` records the search tokens, the full arg set, and whether
+  each token was found
+
+#### Scenario: Fact query annotation includes observed values
+- **WHEN** `(fact? [:opencode/agent "build"])` is evaluated and context has
+  `opencode/agent = {"plan"}`
+- **THEN** the `Ann` records the expected value `"build"`, observed set
+  `{"plan"}`, and `matched: false`
+
+### Requirement: TracingFold lives outside the engine crate
+The `TracingFold` struct, `Ann` enum, and all `Doc`-related types SHALL be
+defined in the CLI binary (`src/`), not in the engine crate. The engine crate
+SHALL NOT depend on `may-i-core::doc` for trace purposes.
+
+#### Scenario: Engine crate compiles without Doc dependency for traces
+- **WHEN** the engine crate is compiled
+- **THEN** no trace-related code in the engine imports `Doc` or `Ann`
+
+### Requirement: TracingFold handles MayI recursion
+When the evaluator processes a `MayI` effect, it SHALL call `evaluate`
+recursively with the same `TracingFold` instance. The inner evaluation produces
+its own `(EffectResult, Doc<Option<Ann>>)`. The outer `effect_may_i` method
+SHALL incorporate the inner doc as a nested trace.
+
+#### Scenario: Wrapper command shows inner trace
+- **GIVEN** a wrapper rule for `nohup` and an inner command `git push`
+- **WHEN** `may-i eval 'nohup git push'` is evaluated with `TracingFold`
+- **THEN** the trace shows the inner `git push` evaluation with full annotations
 
 ### Requirement: Two-column terminal trace layout
 The trace renderer SHALL display rule evaluations in a two-column layout: the
@@ -7,7 +68,7 @@ column contains evaluation annotations separated by a `│` divider.
 
 #### Scenario: Basic rule trace
 - **WHEN** rendering a trace for `ls -la` matching a read-only filesystem rule
-- **THEN** the left column shows the rule s-expression (e.g., `(rule (command (or "cat" "ls" ...)) (effect :allow "Read-only filesystem access"))`)
+- **THEN** the left column shows the rule s-expression
 - **AND** the right column shows `→ :allow "Read-only filesystem access"` on the
   effect line
 
@@ -33,55 +94,23 @@ the tested value, the argument set, and the match verdict.
 Terminal trace output SHALL colorise decision keywords: `:allow` in green,
 `:ask` in yellow, `:deny` in red.
 
-#### Scenario: Allow is green
-- **WHEN** the trace shows `→ :allow "reason"`
-- **THEN** `:allow` is rendered in green
-
-#### Scenario: Deny is red
-- **WHEN** the trace shows `→ :deny "reason"`
-- **THEN** `:deny` is rendered in red
-
 ### Requirement: Unevaluated branches are dimmed
 When short-circuiting skips child nodes, those nodes SHALL be rendered in dimmed
 style in the left column with no right-column annotation.
 
-#### Scenario: Or stops at first match
-- **GIVEN** `(or (positional "push") (positional "pull"))` where `"push"` matches
-- **THEN** the `(positional "pull")` line is rendered dimmed
-
 ### Requirement: Long or-lists are truncated with elision
 When a `(command (or ...))` list contains many alternatives, the renderer SHALL
 truncate after a reasonable number of items and show `…` for the rest.
-
-#### Scenario: Command list with many alternatives
-- **WHEN** a command pattern has 20+ alternatives and the matching one is present
-- **THEN** the rendered s-expression shows the matching command and a few
-  neighbours, with `…` indicating omitted items
 
 ### Requirement: Compound commands show per-segment traces
 When evaluating a compound command (e.g., `echo hello && rm -rf /`), each
 command segment SHALL be traced separately with a segment header showing the
 command text and its decision.
 
-#### Scenario: Compound command with mixed decisions
-- **WHEN** evaluating `echo hello && rm -rf /`
-- **THEN** the trace shows a header for `echo hello` (allow) and a separate
-  header for `rm -rf /` (deny)
-- **AND** each segment has its own rule trace
-
 ### Requirement: Result section shows aggregate decision
 After the trace section, the renderer SHALL print a result section showing the
 full command (colorised per-segment by decision), an arrow with the aggregate
 decision keyword, and the config file path.
-
-#### Scenario: Simple command result
-- **WHEN** `ls -la` evaluates to allow
-- **THEN** the result section shows `ls -la` followed by `→ :allow "reason"`
-  and the config path
-
-#### Scenario: Compound command result with color
-- **WHEN** `echo hello && rm -rf /` evaluates to deny
-- **THEN** `echo hello` is shown in green (allow) and `rm -rf /` in red (deny)
 
 ### Requirement: JSON trace serialises Doc<Ann> tree
 When `--json` is passed to `may-i eval`, the output SHALL include a `trace`
@@ -89,32 +118,13 @@ array where each entry contains the rule's source line, a structured
 representation of the s-expression, and an array of annotations with type,
 decision, match details, and failure reasons.
 
-#### Scenario: JSON trace for simple eval
-- **WHEN** `may-i eval --json 'ls -la'` is run
-- **THEN** the output is valid JSON with `decision`, `reason`, and `trace` fields
-- **AND** the `trace` array contains rule entries with `line`, `structure`, and
-  `annotations`
-
 ### Requirement: Check command runs all embedded checks
 `may-i check` SHALL evaluate all embedded `(check ...)` forms (both rule-level
 and top-level) and report pass/fail results.
 
-#### Scenario: All checks pass
-- **WHEN** all checks in the config match their expected decisions
-- **THEN** the output shows a summary line like `✓ N passed, 0 failed`
-
-#### Scenario: Check failure shows trace
-- **WHEN** a check's actual decision differs from its expected decision
-- **THEN** the output shows the failing check's command, location, expected vs
-  actual decisions, and a full evaluation trace
-
 ### Requirement: Check verbose mode shows passing checks
 When `may-i check -v` is run, the output SHALL list every check with its
 command and actual decision, not just failures.
-
-#### Scenario: Verbose lists all checks
-- **WHEN** `may-i check -v` is run with 10 checks
-- **THEN** all 10 checks are listed with PASS/FAIL status
 
 ### Requirement: Check JSON mode outputs structured results
 When `may-i check --json` is run, the output SHALL be a JSON object with
@@ -122,42 +132,15 @@ When `may-i check --json` is run, the output SHALL be a JSON object with
 command, expected/actual decisions, pass/fail flag, context, location, reason,
 and trace.
 
-#### Scenario: JSON check output
-- **WHEN** `may-i check --json` is run
-- **THEN** the output is valid JSON with `passed`, `failed`, and `results` fields
-
 ### Requirement: Dimmed nodes produce no right-column annotations
 When a Doc node is dimmed (representing an unevaluated branch), the renderer
 SHALL NOT produce any right-column annotation for that node or its children.
-
-#### Scenario: Dimmed effect branch has no annotation
-- **WHEN** a `(effect :deny)` node is dimmed because an earlier branch matched
-- **THEN** no `→ :deny` annotation appears in the right column for that line
-
-#### Scenario: Dimmed anywhere pattern has no annotation
-- **WHEN** an `(anywhere "token")` node is dimmed
-- **THEN** no `"token" ∈ {...} → yes/no` annotation appears
 
 ### Requirement: Structural annotation placement via AnnotatedLineBuilder
 The renderer SHALL use `AnnotatedLineBuilder` to collect annotations
 structurally during pretty-printing, rather than string-matching rendered output
 with `find_line`.
 
-#### Scenario: EffectDecision placed on correct line
-- **WHEN** `(effect :allow "reason")` is rendered in broken layout across
-  multiple lines
-- **THEN** the `→ :allow "reason"` annotation appears on the line containing
-  `(effect`, not on the `:allow` line
-
-#### Scenario: Per-token anywhere annotations
-- **WHEN** `(anywhere "t1" "t2")` with a parent ArgMatch is rendered
-- **THEN** each token atom gets its own `"t" ∈ {args} → yes/no` annotation on
-  its rendered line
-
 ### Requirement: Multiple annotations per line use priority ordering
 When multiple annotations exist on a single rendered line, the renderer SHALL
 display only the highest-priority annotation.
-
-#### Scenario: EffectDecision takes priority over ArgMatch
-- **WHEN** a line contains both an `EffectDecision` and an `ArgMatch` annotation
-- **THEN** only the `EffectDecision` annotation is shown in the right column
