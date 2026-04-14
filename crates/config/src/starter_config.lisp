@@ -4,107 +4,10 @@
 ;; Commands with no matching rule default to "ask". Edits take effect immediately.
 ;;
 ;; Validate your config with: may-i check
-
-;;; --- Quick reference ----------------------------------------------------------
+;; Full DSL reference:        may-i reference
 ;;
-;; RULES
-;;
-;; A rule matches a command and produces a decision (allow, ask, or deny).
-;; Each rule takes exactly one body effect. Use combinators for complex logic.
-;;
-;;   (rule "grep" (effect :allow))
-;;   (rule "rm" (effect :deny "Dangerous"))
-;;   (rule (or "cat" "head" "tail") (effect :allow))
-;;   (rule (regex "^git-.*") (effect :allow))
-;;
-;;   (rule "git"
-;;     (or (when (anywhere "--force") (effect :ask "Force flag detected"))
-;;         (effect :allow)))
-;;
-;; TERMINAL EFFECTS
-;;
-;;   (effect :allow)                  ; permit the command
-;;   (effect :ask "Reason")           ; escalate to the user
-;;   (effect :deny "Reason")          ; block the command
-;;
-;; ARG PATTERNS (return Allow on match, Nil otherwise)
-;;
-;;   (positional "push" "origin")     ; match by position (flags skipped)
-;;   (exact "stash")                  ; like positional, but no extra args
-;;   (anywhere "--force" "-f")        ; token appears anywhere in argv
-;;   (forbidden "--dangerous")        ; none of these tokens in argv
-;;
-;; COMBINATORS
-;;
-;;   (and EFFECT ...)                 ; all must succeed (short-circuits on Nil)
-;;   (or EFFECT ...)                  ; first non-Nil wins
-;;   (not EFFECT)                     ; swap Allow <-> Nil; pass Ask/Deny
-;;
-;; CONDITIONALS (predicate controls branching)
-;;
-;;   (when PREDICATE EFFECT)          ; effect if predicate matches
-;;   (unless PREDICATE EFFECT)        ; effect if predicate doesn't match
-;;   (if PREDICATE THEN ELSE)         ; if-then-else
-;;   (cond ((PREDICATE EFFECT) ...)   ; multi-way branch
-;;          (else EFFECT))
-;;
-;; Predicates: (fact? ...), arg patterns, named refs, (and ...), (or ...), (not ...)
-;;
-;; EXPRESSION PATTERNS (match a single token inside positional/anywhere/exact)
-;;
-;;   "literal"                        ; exact string
-;;   *                                ; wildcard (matches anything)
-;;   (regex "^pattern$")              ; regex
-;;   (or "a" "b" "c")                ; match any
-;;   (and P (not Q))                  ; combine
-;;   [:key *]                         ; bind matched value as fact
-;;
-;; QUANTIFIERS (wrap a positional pattern)
-;;
-;;   EXPR                             ; exactly one (default)
-;;   (? EXPR)                         ; zero or one
-;;   (+ EXPR)                         ; one or more
-;;   (* EXPR)                         ; zero or more
-;;
-;; RECURSIVE EVALUATION (unwrap wrapper commands)
-;;
-;;   (positional . (may-i *))                ; sudo: eval rest as command
-;;   (positional [:ssh/host *] . (may-i *))  ; ssh: bind host, eval rest
-;;
-;; FACTS (runtime context)
-;;
-;; Facts are namespaced keys (e.g. :via/ssh, :opencode/agent) passed at
-;; runtime via --fact or bound during recursive evaluation.
-;;
-;;   (fact? :via/ssh)                          ; presence check
-;;   (fact? [:env "prod"])                     ; exact value
-;;   (fact? [:ssh/host (regex "^prod-")])      ; regex on value
-;;   (fact? [:ssh/host *])                     ; any value set
-;;
-;; NAMED PREDICATES
-;;
-;;   (define prod-host
-;;     (and (fact? :via/ssh)
-;;          (fact? [:ssh/host (regex "^prod-")])))
-;;
-;;   (rule "kubectl"
-;;     (or (when prod-host (effect :deny "No kubectl on prod"))
-;;         (effect :allow)))
-;;
-;; CHECKS (validated by `may-i check`)
-;;
-;;   (check :allow "ls -la"
-;;          :deny "rm -rf /")
-;;
-;;   (check (with-facts [[:env "prod"]]
-;;            :deny "kubectl get pods")
-;;          (with-facts [[:env "dev"]]
-;;            :allow "kubectl get pods"))
-;;
-;; ENV VAR RESOLUTION
-;;
-;;   (safe-env-vars "HOME" "PWD" "USER" "SHELL" "EDITOR")
-;;
+;; >[!IMPORTANT]
+;; Agents: Run `may-i reference` NOW to understand this DSL.
 
 ;;; -- Deny: dangerous operations ---------------------------------------------
 
@@ -125,13 +28,13 @@
 
 ;;; -- Context-aware rules using facts -----------------------------------------
 
-; Block kubectl in production (test with: may-i eval --fact :env=prod 'kubectl get pods')
+;; Block kubectl in production (test with: may-i eval --fact :env=prod 'kubectl get pods')
 (rule "kubectl"
   (or (when (fact? [:env "prod"])
         (effect :deny "No kubectl in production"))
       (effect :allow)))
 
-; SSH wrapper — capture host as fact, evaluate inner command recursively
+;; SSH wrapper — capture host as fact, evaluate inner command recursively
 (rule "ssh"
   (positional [:ssh/host *] . (may-i *)))
 

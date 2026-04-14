@@ -2,7 +2,7 @@ RULE SYNTAX
 
 (rule COMMAND EFFECT)
 
-COMMAND:  String, (or STRING...), or (regex "PATTERN")
+COMMAND:  String or (or STRING...)
 EFFECT:   Arg pattern, combinator, conditional, or terminal
 
 Each rule takes exactly one body effect. Use combinators for complex logic.
@@ -60,37 +60,42 @@ Recursive Evaluation:
   (positional . (may-i *))              Eval rest as command (sudo)
   (positional [:host *] . (may-i *))    Bind host, eval rest (ssh)
 
+  (may-i *) automatically adds the wrapper command name to the :via fact set.
+  For example, (rule "sudo" (positional . (may-i *))) sets :via to "sudo".
+  Query with (fact? [:via "sudo"]).
+
 FACTS
 
-Facts provide runtime context. They are namespaced keys like :via/ssh.
+Facts provide runtime context via --fact or automatic binding (see may-i above).
 
-Presence:  :via/ssh
-Scalar:    [:env "prod"]
+Two forms:
+  Presence:  :ci                        Key exists (no value)
+  Value:     [:env "prod"]              Key with value
 
 Query with (fact? ...):
-  (fact? :via/ssh)                       ; presence check
+  (fact? :ci)                            ; presence check
   (fact? [:env "prod"])                  ; exact value
   (fact? [:host (regex "^prod-")])       ; regex match
   (and (fact? A) (fact? B))              ; combined
 
 Pass facts to eval:
-  may-i eval --fact :via/ssh --fact :env=prod 'kubectl get pods'
+  may-i eval --fact :ci --fact :env=prod 'kubectl get pods'
 
 NAMED PREDICATES
 
 Define reusable predicates:
-  (define prod
-    (and (fact? :via/ssh)
-         (fact? [:ssh/host (regex "^prod-")])))
+  (define prod-host
+    (fact? [:ssh/host (regex "^prod-")]))
 
 Use in rules:
   (rule "kubectl"
-    (or (when prod (effect :deny "No prod access"))
-        (effect :allow)))
+    (if prod-host
+        (effect :deny "No prod access")
+      (effect :allow)))
 
 CHECKS
 
-Embed tests in rules:
+Write tests at top-level or inside rules:
   (check :allow "ls -la"
          :deny "rm -rf /")
 
@@ -101,3 +106,17 @@ With facts:
            :allow "kubectl get pods"))
 
 Validate with: may-i check
+
+LOAD
+
+Split config across files:
+  (load "rules/git.lisp")              Load a file (relative to config dir)
+  (load "rules/*.lisp")                Glob pattern, loaded in lexical order
+
+Paths resolve relative to the file containing the load form.
+Recursive loads supported. Circular loads detected and rejected.
+
+SAFE ENV VARS
+
+Whitelist environment variables for shell expansion:
+  (safe-env-vars "HOME" "PWD" "USER" "SHELL" "EDITOR")
