@@ -73,6 +73,7 @@ in
 
     packages = with pkgs; [
       cargo-affected
+      cargo-insta
       cargo-tarpaulin
       prek
     ];
