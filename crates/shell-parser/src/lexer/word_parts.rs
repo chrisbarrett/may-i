@@ -116,6 +116,9 @@ impl Lexer {
                     self.advance();
                     if let Some(escaped) = self.advance() {
                         parts.push(WordPart::Literal(escaped.to_string()));
+                    } else {
+                        // Trailing backslash at EOF — treat as literal
+                        parts.push(WordPart::Literal("\\".to_string()));
                     }
                 }
                 Some(_) => {
