@@ -78,8 +78,7 @@ pub fn cmd_check(
                     println!(
                         "  {} {}",
                         "FAIL".red().bold(),
-                        format!("{} → {} (expected {})", r.command, r.actual, r.expected)
-                            .truecolor(255, 165, 0)
+                        format!("{} → {} (expected {})", r.command, r.actual, r.expected).yellow()
                     );
                 }
             }

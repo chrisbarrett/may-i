@@ -37,7 +37,7 @@ pub fn colorize_atom(s: &str, color: bool) -> String {
         return s.to_string();
     }
     if is_keyword(s) {
-        s.truecolor(120, 120, 255).to_string()
+        s.bright_blue().to_string()
     } else if is_string(s) || is_regex(s) {
         s.green().to_string()
     } else if is_colored_form(s) {

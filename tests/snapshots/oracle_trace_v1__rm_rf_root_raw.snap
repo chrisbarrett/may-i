@@ -12,7 +12,7 @@ expression: normalised
                         [32m"--recursive"[0m[2m)[0m          [2m│[0m
               [2m([0m[34manywhere[0m [32m"/"[0m[2m)[0m[2m)[0m[2m)[0m                  [2m│[0m
         [2m([0m[34meffect[0m                                 [2m│[0m [2m[0m[2m→[0m [1;31m:deny[0m [32m"Recursive deletion from root"[0m
-         [38;2;120;120;255m:deny[0m [32m"Recursive deletion from root"[0m[2m)[0m[2m)[0m [2m│[0m
+         [94m:deny[0m [32m"Recursive deletion from root"[0m[2m)[0m[2m)[0m [2m│[0m
 
 [1mResult[0m
 

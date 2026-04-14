@@ -11,7 +11,7 @@ expression: normalised
                   [2m([0m[34mpositional[0m [32m"reset"[0m[2m)[0m  [2m│[0m [2m"reset" = "reset" [0m[2m→[0m [1;32myes[0m
                   [2m([0m[34manywhere[0m [32m"--hard"[0m[2m)[0m[2m)[0m[2m)[0m [2m│[0m
         [2m([0m[34meffect[0m                         [2m│[0m [2m[0m[2m→[0m [1;33m:ask[0m [32m"Dangerous git reset"[0m
-         [38;2;120;120;255m:ask[0m [32m"Dangerous git reset"[0m[2m)[0m[2m)[0m   [2m│[0m
+         [94m:ask[0m [32m"Dangerous git reset"[0m[2m)[0m[2m)[0m   [2m│[0m
 
 [1mResult[0m
 

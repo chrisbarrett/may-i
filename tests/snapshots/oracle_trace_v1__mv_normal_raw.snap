@@ -10,7 +10,7 @@ expression: normalised
         [2m([0m[34margs[0m [2m([0m[34mif[0m [2m([0m[34manywhere[0m [32m"-f"[0m       [2m│[0m
                             [32m"--force"[0m[2m)[0m [2m│[0m
                   [2m…[0m                    [2m│[0m
-                [2m([0m[34meffect[0m [38;2;120;120;255m:allow[0m[2m)[0m[2m)[0m[2m)[0m[2m)[0m     [2m│[0m [2m[0m[2m→[0m [1;32m:allow[0m
+                [2m([0m[34meffect[0m [94m:allow[0m[2m)[0m[2m)[0m[2m)[0m[2m)[0m     [2m│[0m [2m[0m[2m→[0m [1;32m:allow[0m
 
 [1mResult[0m
 
