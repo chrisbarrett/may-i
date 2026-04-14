@@ -15,7 +15,8 @@ let
   # Include non-Rust files needed for the build
   extraFileFilter = path: type:
     (pkgs.lib.hasSuffix ".lisp" path) ||
-    (pkgs.lib.hasSuffix ".snap" path);
+    (pkgs.lib.hasSuffix ".snap" path) ||
+    (pkgs.lib.hasSuffix ".txt" path);
 
   src = pkgs.lib.cleanSourceWith {
     src = ./.;
