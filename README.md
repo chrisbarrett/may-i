@@ -21,26 +21,23 @@ commands. `rm` is denied on immutable hosts, even when snuck in via `sudo`.
 ```scheme
 ; Define a reusable predicate for immutable production hosts
 (define immutable
-  (and (fact? :via/ssh)
+  (and (fact? [:via "ssh"])
        (fact? [:ssh/host (regex "(^|@).*prod.*")])))
 
 ; Allow echo always
-(rule "echo" :effect (effect :allow "Local echo is always fine"))
+(rule "echo" (effect :allow "Local echo is always fine"))
 
 ; Deny rm on immutable hosts using the defined predicate
 (rule "rm"
-  (when immutable (effect :deny "Production hosts are immutable"))
-  :effect (effect :allow))
+  (if immutable
+      (effect :deny "Production hosts are immutable")
+      (effect :allow)))
 
 ; SSH unwraps to evaluate the inner command
-(rule "ssh"
-  (positional [:ssh/host *] . (may-i *))
-  :effect (effect :deny))
+(rule "ssh" (positional [:ssh/host *] . (may-i *)))
 
 ; Sudo unwraps to evaluate the inner command
-(rule "sudo"
-  (positional . (may-i *))
-  :effect (effect :deny))
+(rule "sudo" (positional . (may-i *)))
 ```
 
 </details>
@@ -68,26 +65,21 @@ based on the real command structure rather than brittle string matching.
 
 ## A taste of the language
 
-Rules match commands and decide what happens. Body effects are tried in order;
-`:effect` gives the fallback when nothing else matched:
+Each rule matches a command and returns a single decision. Use combinators for
+complex logic:
 
 ```scheme
 (rule "mv"
   (if (anywhere "-f" "--force")
       (effect :ask "Force moves can be destructive")
-      (effect :allow))
-  :effect (effect :deny)
-  (check :allow "mv foo bar"
-         :ask "mv -f foo bar"))
+      (effect :allow)))
 ```
 
 Wrapper commands like `ssh` and `sudo` can be unwrapped so their inner commands
 get evaluated too:
 
 ```scheme
-(rule "ssh"
-  (positional [:ssh/host *] . (may-i *))
-  :effect (effect :deny "SSH commands denied by default"))
+(rule "ssh" (positional [:ssh/host *] . (may-i *)))
 ```
 
 Facts let policies depend on runtime context — which agent is running, whether
@@ -95,25 +87,24 @@ a command was reached through `ssh`, etc:
 
 ```scheme
 (rule "kubectl"
-  (when (fact? [:env "prod"])
-    (effect :deny "No kubectl in production"))
-  :effect (effect :allow))
+  (if (fact? [:env "prod"])
+      (effect :deny "No kubectl in production")
+      (effect :allow)))
 ```
 
 Named predicates keep things readable as your policy grows:
 
 ```scheme
 (define prod-host
-  (and (fact? :via/ssh)
-       (fact? [:ssh/host (regex "^prod-")])))
+  (fact? [:ssh/host (regex "^prod-")]))
 
 (rule "rm"
-  (when (and prod-host (anywhere "-r" "--recursive"))
-    (effect :deny "Recursive delete on production hosts"))
-  :effect (effect :allow))
+  (if (and prod-host (anywhere "-r" "--recursive"))
+      (effect :deny "Recursive delete on production hosts")
+      (effect :allow)))
 ```
 
-The full language reference is in `may-i help` and the starter config comments.
+Run `may-i reference` for the full DSL documentation.
 
 ## Installation
 
@@ -201,7 +192,7 @@ syntax:
 may-i migrate ~/.config/may-i/config.lisp
 ```
 
-Options: `--dry-run`, `--diff`, `--yes` (skip confirmation).
+Options: `--output <FILE>` (write to file instead of stdout), `--yes` (skip confirmation).
 
 ### Global flags
 

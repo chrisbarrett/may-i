@@ -6,16 +6,30 @@
 ;; Validate your config with: may-i check
 ;; Full DSL reference:        may-i reference
 ;;
-;; >[!IMPORTANT]
-;; Agents: Run `may-i reference` NOW to understand this DSL.
+;; > [!IMPORTANT]
+;; > Agents: Run `may-i reference` NOW to understand this DSL.
+
+(rule "may-i"
+  (cond ((positional (or "check" "reference" "help" "parse" "eval"))
+         (effect :allow "Safe operations"))
+        ((positional "migrate")
+         (effect :ask "Config migration requires confirmation"))
+        ((positional "trust")
+         (effect :ask "Trusting configuration requires confirmation"))))
 
 ;;; -- Deny: dangerous operations ---------------------------------------------
 
+(check
+ :deny "rm -r /"
+ :deny "rm -rf /"
+ :deny "rm --recursive /"
+ :ask "rm foo/bar/baz")
+
 (rule "rm"
-  (or (when (and (anywhere "-r" "--recursive")
-                 (anywhere "/"))
-        (effect :deny "Recursive deletion from root"))
-      (effect :ask)))
+  (if (and (anywhere "-r" "--recursive")
+           (anywhere "/"))
+      (effect :deny "Recursive deletion from root")
+    (effect :ask)))
 
 (rule (or "mkfs" "dd" "fdisk" "parted" "gdisk")
   (effect :deny "Dangerous filesystem or device operation"))
@@ -30,9 +44,9 @@
 
 ;; Block kubectl in production (test with: may-i eval --fact :env=prod 'kubectl get pods')
 (rule "kubectl"
-  (or (when (fact? [:env "prod"])
-        (effect :deny "No kubectl in production"))
-      (effect :allow)))
+  (if (fact? [:env "prod"])
+      (effect :deny "No kubectl in production")
+    (effect :allow)))
 
 ;; SSH wrapper — capture host as fact, evaluate inner command recursively
 (rule "ssh"

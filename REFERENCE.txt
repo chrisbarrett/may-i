@@ -11,9 +11,9 @@ Examples:
   (rule "ls" (effect :allow))
 
   (rule "rm"
-    (or (when (anywhere "-r" "--recursive")
-          (effect :ask "Recursive deletion"))
-        (effect :allow)))
+    (if (anywhere "-r" "--recursive")
+        (effect :ask "Recursive deletion")
+      (effect :allow)))
 
 EFFECTS
 
