@@ -4,18 +4,27 @@
 // Programs with any `Loaded` provenance content require trust approval.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
 
-use may_i_core::ast::{Config, Effect, Predicate, Provenance, Rule};
+use may_i_core::ast::{Config, Effect, Predicate, Rule};
 use may_i_core::doc::DocF;
 use may_i_core::pattern::{ArgPattern, CommandPattern, Expr, MatchMode, PositionalArg, Quantifier};
 use may_i_core::primitives::ToDoc;
 use sha2::{Digest, Sha256};
 
+/// Per-program metadata including hash, canonical rule forms, and source files.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProgramMeta {
+    pub hash: String,
+    pub canonical_rules: Vec<String>,
+    pub source_files: BTreeSet<PathBuf>,
+}
+
 /// Per-program trust hash results.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrustHashes {
-    /// Map of program name (or `:safe-env-vars`) to "sha256:<hex>" hash.
-    pub programs: BTreeMap<String, String>,
+    /// Map of program name (or `:safe-env-vars`) to metadata.
+    pub programs: BTreeMap<String, ProgramMeta>,
 }
 
 /// Extract all program names from a `CommandPattern`.
@@ -43,7 +52,7 @@ fn programs_needing_trust(config: &Config) -> BTreeSet<String> {
     let loaded_defines: BTreeSet<&str> = config
         .defines
         .iter()
-        .filter(|d| d.provenance == Provenance::Loaded)
+        .filter(|d| d.provenance.is_loaded())
         .map(|d| d.name.as_str())
         .collect();
 
@@ -55,7 +64,7 @@ fn programs_needing_trust(config: &Config) -> BTreeSet<String> {
             continue;
         }
 
-        let needs_trust = rule.provenance == Provenance::Loaded
+        let needs_trust = rule.provenance.is_loaded()
             || references_any_define(&rule.effect.value, &loaded_defines);
 
         if needs_trust {
@@ -283,7 +292,7 @@ fn render_doc(doc: &may_i_core::Doc) -> String {
 /// are included.
 pub fn compute_trust_hashes(config: &Config) -> TrustHashes {
     let programs_need_trust = programs_needing_trust(config);
-    let mut hashes = BTreeMap::new();
+    let mut programs = BTreeMap::new();
 
     for program in &programs_need_trust {
         let rules_for_program: Vec<&Rule> = config
@@ -300,30 +309,51 @@ pub fn compute_trust_hashes(config: &Config) -> TrustHashes {
             continue;
         }
 
-        let canonical: Vec<String> = rules_for_program
+        let canonical_rules: Vec<String> = rules_for_program
             .iter()
             .map(|r| canonical_rule(r))
             .collect();
-        let combined = canonical.join("\n");
-
+        let combined = canonical_rules.join("\n");
         let hash = sha256_hex(&combined);
-        hashes.insert(program.clone(), hash);
+
+        let source_files: BTreeSet<PathBuf> = rules_for_program
+            .iter()
+            .filter_map(|r| r.provenance.path())
+            .map(|p| p.to_path_buf())
+            .collect();
+
+        programs.insert(
+            program.clone(),
+            ProgramMeta {
+                hash,
+                canonical_rules,
+                source_files,
+            },
+        );
     }
 
     // Handle safe-env-vars trust scope
     if config.security.has_loaded_env_vars && !config.security.safe_env_vars.is_empty() {
         let mut sorted_vars: Vec<&String> = config.security.safe_env_vars.iter().collect();
         sorted_vars.sort();
-        let canonical = sorted_vars
+        let canonical_form = sorted_vars
             .iter()
             .map(|v| format!("\"{}\"", v))
             .collect::<Vec<_>>()
             .join(" ");
-        let hash = sha256_hex(&format!("(safe-env-vars {})", canonical));
-        hashes.insert(":safe-env-vars".to_string(), hash);
+        let canonical_str = format!("(safe-env-vars {})", canonical_form);
+        let hash = sha256_hex(&canonical_str);
+        programs.insert(
+            ":safe-env-vars".to_string(),
+            ProgramMeta {
+                hash,
+                canonical_rules: vec![canonical_str],
+                source_files: BTreeSet::new(),
+            },
+        );
     }
 
-    TrustHashes { programs: hashes }
+    TrustHashes { programs }
 }
 
 /// Compute SHA-256 hash and return hex-encoded string with "sha256:" prefix.
@@ -336,9 +366,11 @@ fn sha256_hex(input: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
     use may_i_core::Decision;
-    use may_i_core::ast::{Define, Effect, Spanned};
+    use may_i_core::ast::{Define, Effect, Provenance, Spanned};
     use may_i_core::pattern::CommandPattern;
     use may_i_core::span::Span;
 
@@ -418,7 +450,9 @@ mod tests {
             vec![make_rule(
                 "git",
                 terminal(Decision::Allow, None),
-                Provenance::Loaded,
+                Provenance::Loaded {
+                    path: PathBuf::from("test"),
+                },
             )],
             vec![],
         );
@@ -447,7 +481,9 @@ mod tests {
                     key: may_i_core::Keyword::new(":net/vpn").unwrap(),
                 })),
                 span: dummy_span(),
-                provenance: Provenance::Loaded,
+                provenance: Provenance::Loaded {
+                    path: PathBuf::from("test"),
+                },
             }],
         );
         let needs = programs_needing_trust(&config);
@@ -462,7 +498,9 @@ mod tests {
             vec![make_rule(
                 "git",
                 terminal(Decision::Allow, Some("safe")),
-                Provenance::Loaded,
+                Provenance::Loaded {
+                    path: PathBuf::from("test"),
+                },
             )],
             vec![],
         );
@@ -477,7 +515,9 @@ mod tests {
             vec![make_rule(
                 "git",
                 terminal(Decision::Allow, None),
-                Provenance::Loaded,
+                Provenance::Loaded {
+                    path: PathBuf::from("test"),
+                },
             )],
             vec![],
         );
@@ -485,20 +525,28 @@ mod tests {
             vec![make_rule(
                 "git",
                 terminal(Decision::Deny, None),
-                Provenance::Loaded,
+                Provenance::Loaded {
+                    path: PathBuf::from("test"),
+                },
             )],
             vec![],
         );
         let h1 = compute_trust_hashes(&c1);
         let h2 = compute_trust_hashes(&c2);
-        assert_ne!(h1.programs["git"], h2.programs["git"]);
+        assert_ne!(h1.programs["git"].hash, h2.programs["git"].hash);
     }
 
     #[test]
     fn hash_unchanged_for_primary_only_programs() {
         let config = make_config(
             vec![
-                make_rule("git", terminal(Decision::Allow, None), Provenance::Loaded),
+                make_rule(
+                    "git",
+                    terminal(Decision::Allow, None),
+                    Provenance::Loaded {
+                        path: PathBuf::from("test"),
+                    },
+                ),
                 make_rule(
                     "ls",
                     terminal(Decision::Allow, None),
@@ -521,13 +569,25 @@ mod tests {
                     terminal(Decision::Allow, None),
                     Provenance::PrimaryConfig,
                 ),
-                make_rule("git", terminal(Decision::Deny, None), Provenance::Loaded),
+                make_rule(
+                    "git",
+                    terminal(Decision::Deny, None),
+                    Provenance::Loaded {
+                        path: PathBuf::from("test"),
+                    },
+                ),
             ],
             vec![],
         );
         let c2 = make_config(
             vec![
-                make_rule("git", terminal(Decision::Deny, None), Provenance::Loaded),
+                make_rule(
+                    "git",
+                    terminal(Decision::Deny, None),
+                    Provenance::Loaded {
+                        path: PathBuf::from("test"),
+                    },
+                ),
                 make_rule(
                     "git",
                     terminal(Decision::Allow, None),
@@ -539,7 +599,7 @@ mod tests {
         let h1 = compute_trust_hashes(&c1);
         let h2 = compute_trust_hashes(&c2);
         assert_ne!(
-            h1.programs["git"], h2.programs["git"],
+            h1.programs["git"].hash, h2.programs["git"].hash,
             "reordering rules should change hash"
         );
     }
@@ -550,12 +610,14 @@ mod tests {
             vec![make_rule(
                 "git",
                 terminal(Decision::Allow, None),
-                Provenance::Loaded,
+                Provenance::Loaded {
+                    path: PathBuf::from("test"),
+                },
             )],
             vec![],
         );
         let hashes = compute_trust_hashes(&config);
-        let hash = &hashes.programs["git"];
+        let hash = &hashes.programs["git"].hash;
         assert!(
             hash.starts_with("sha256:"),
             "hash should have sha256: prefix"
@@ -574,7 +636,9 @@ mod tests {
         let rule = make_rule(
             "git",
             terminal(Decision::Allow, Some("safe")),
-            Provenance::Loaded,
+            Provenance::Loaded {
+                path: PathBuf::from("test"),
+            },
         );
         let s1 = canonical_rule(&rule);
         let s2 = canonical_rule(&rule);
@@ -583,7 +647,13 @@ mod tests {
 
     #[test]
     fn canonical_rule_excludes_checks() {
-        let mut rule = make_rule("git", terminal(Decision::Allow, None), Provenance::Loaded);
+        let mut rule = make_rule(
+            "git",
+            terminal(Decision::Allow, None),
+            Provenance::Loaded {
+                path: PathBuf::from("test"),
+            },
+        );
         let s1 = canonical_rule(&rule);
         rule.checks.push(may_i_core::ast::Check {
             command: "git status".into(),
@@ -638,8 +708,101 @@ mod tests {
         let h1 = compute_trust_hashes(&c1);
         let h2 = compute_trust_hashes(&c2);
         assert_ne!(
-            h1.programs[":safe-env-vars"], h2.programs[":safe-env-vars"],
+            h1.programs[":safe-env-vars"].hash, h2.programs[":safe-env-vars"].hash,
             "adding env var should change hash"
         );
+    }
+
+    // --- metadata content ---
+
+    #[test]
+    fn metadata_includes_canonical_rule_forms() {
+        let config = make_config(
+            vec![make_rule(
+                "git",
+                terminal(Decision::Allow, Some("safe")),
+                Provenance::Loaded {
+                    path: PathBuf::from("test.lisp"),
+                },
+            )],
+            vec![],
+        );
+        let hashes = compute_trust_hashes(&config);
+        let meta = &hashes.programs["git"];
+        assert_eq!(meta.canonical_rules.len(), 1);
+        assert_eq!(
+            meta.canonical_rules[0],
+            r#"(rule "git" (effect :allow "safe"))"#
+        );
+    }
+
+    #[test]
+    fn metadata_includes_source_file_paths() {
+        let config = make_config(
+            vec![make_rule(
+                "git",
+                terminal(Decision::Allow, None),
+                Provenance::Loaded {
+                    path: PathBuf::from("/rules/vcs.lisp"),
+                },
+            )],
+            vec![],
+        );
+        let hashes = compute_trust_hashes(&config);
+        let meta = &hashes.programs["git"];
+        assert!(
+            meta.source_files
+                .contains(&PathBuf::from("/rules/vcs.lisp"))
+        );
+    }
+
+    #[test]
+    fn metadata_collects_multiple_source_files() {
+        let config = make_config(
+            vec![
+                Rule {
+                    command_effect: spanned(Effect::CommandPattern(CommandPattern::Literal(
+                        "git".into(),
+                    ))),
+                    effect: spanned(terminal(Decision::Allow, None)),
+                    checks: vec![],
+                    span: dummy_span(),
+                    provenance: Provenance::Loaded {
+                        path: PathBuf::from("/rules/a.lisp"),
+                    },
+                },
+                Rule {
+                    command_effect: spanned(Effect::CommandPattern(CommandPattern::Literal(
+                        "git".into(),
+                    ))),
+                    effect: spanned(terminal(Decision::Deny, None)),
+                    checks: vec![],
+                    span: dummy_span(),
+                    provenance: Provenance::Loaded {
+                        path: PathBuf::from("/rules/b.lisp"),
+                    },
+                },
+            ],
+            vec![],
+        );
+        let hashes = compute_trust_hashes(&config);
+        let meta = &hashes.programs["git"];
+        assert_eq!(meta.source_files.len(), 2);
+        assert!(meta.source_files.contains(&PathBuf::from("/rules/a.lisp")));
+        assert!(meta.source_files.contains(&PathBuf::from("/rules/b.lisp")));
+    }
+
+    #[test]
+    fn primary_only_program_excluded_from_metadata() {
+        let config = make_config(
+            vec![make_rule(
+                "ls",
+                terminal(Decision::Allow, None),
+                Provenance::PrimaryConfig,
+            )],
+            vec![],
+        );
+        let hashes = compute_trust_hashes(&config);
+        assert!(!hashes.programs.contains_key("ls"));
     }
 }

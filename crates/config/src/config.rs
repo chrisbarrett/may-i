@@ -117,17 +117,17 @@ pub fn parse_config_from_tagged_sexprs(forms: &[(Sexpr, Provenance)]) -> Result<
             "rule" => {
                 let rule = crate::rule::parse_rule(form)?;
                 let mut rule = rule.value;
-                rule.provenance = *provenance;
+                rule.provenance = provenance.clone();
                 config.rules.push(rule);
             }
             "define" => {
                 let mut define = crate::rule::parse_define(form)?;
-                define.provenance = *provenance;
+                define.provenance = provenance.clone();
                 config.defines.push(define);
             }
             "safe-env-vars" => {
                 parse_safe_env_vars(&list[1..], &mut config.security, form.span())?;
-                if *provenance == Provenance::Loaded {
+                if provenance.is_loaded() {
                     config.security.has_loaded_env_vars = true;
                 }
             }

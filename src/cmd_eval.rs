@@ -28,14 +28,15 @@ pub fn cmd_eval(
         if json_mode {
             let json = serde_json::json!({
                 "decision": "ask",
-                "reason": block,
+                "reason": block.reason,
+                "files": block.files,
             });
             println!(
                 "{}",
                 serde_json::to_string(&json).expect("response serialization is infallible")
             );
         } else {
-            eprintln!("{}", block);
+            eprintln!("{}", block.reason);
         }
         return Ok(());
     }
@@ -203,12 +204,18 @@ fn colorize_segments(
     display_parts.concat()
 }
 
+/// Trust block info returned when a command is blocked due to untrusted rules.
+struct TrustBlock {
+    reason: String,
+    files: Vec<String>,
+}
+
 /// Check trust for the program being invoked.
-/// Returns Some(reason) to block, None to proceed.
+/// Returns Some(block) to block, None to proceed.
 fn check_trust_for_command(
     command: &str,
     config: &may_i_core::ast::Config,
-) -> miette::Result<Option<String>> {
+) -> miette::Result<Option<TrustBlock>> {
     use may_i_engine::trust::compute_trust_hashes;
 
     let hashes = compute_trust_hashes(config);
@@ -228,19 +235,34 @@ fn check_trust_for_command(
         .unwrap_or(segment_text);
     let program = program.rsplit('/').next().unwrap_or(program);
 
-    if let Some(computed_hash) = hashes.programs.get(program) {
+    if let Some(meta) = hashes.programs.get(program) {
         let store_path = crate::trust_store::default_trust_store_path()
             .ok_or_else(|| miette::miette!("cannot determine trust store path"))?;
-        let store = crate::trust_store::TrustStore::load(&store_path)
+        let load_result = crate::trust_store::TrustStore::load(&store_path)
             .map_err(|e| miette::miette!("failed to read trust store: {e}"))?;
+        let store = load_result.store;
 
-        match store.check(program, computed_hash) {
+        match store.check(program, &meta.hash) {
             crate::trust_store::TrustStatus::Trusted => Ok(None),
             crate::trust_store::TrustStatus::Changed | crate::trust_store::TrustStatus::New => {
-                Ok(Some(format!(
-                    "Loaded config rules for '{}' need trust approval. Run: may-i trust \"{}\"",
-                    program, program
-                )))
+                let files: Vec<String> = meta
+                    .source_files
+                    .iter()
+                    .map(|p| crate::output::shorten_home(p))
+                    .collect();
+
+                let from_clause = if files.is_empty() {
+                    String::new()
+                } else {
+                    format!(" (from {})", files.join(", "))
+                };
+
+                let reason = format!(
+                    "Untrusted rules for '{}'{from_clause}. Run: may-i trust \"{program}\"",
+                    program
+                );
+
+                Ok(Some(TrustBlock { reason, files }))
             }
         }
     } else {
