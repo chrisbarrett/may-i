@@ -40,7 +40,7 @@ New format:
 }
 ```
 
-Backward compat: if top-level has no `"version"` key, treat as v1 (flat `{program: hash}`), migrate in-memory, write v2 on next save. No explicit migration command needed.
+No backward compatibility needed — no consumers yet. Old v1 store files are discarded on load (programs re-appear as NEW). Clean implementation.
 
 **Integrity**: The hash is the source of truth. Stored canonical forms are untrusted display metadata. On load, each entry's forms are re-hashed using the same algorithm as `compute_trust_hashes` (join with `\n`, SHA-256). Entries that pass verification load normally. Entries that fail are flagged as *suspect*.
 
@@ -133,6 +133,81 @@ Untrusted rules for 'echo' (from ~/rules/basics.lisp). Run: may-i trust "echo"
 ```
 
 Hook JSON adds `untrustedFiles` to the reason but keeps `permissionDecision` as `"ask"`. The reason string includes file paths. Structured file list goes in JSON trust listing, not in the hook response (to avoid breaking hook consumers).
+
+### 7. Trust advisory boxes via Layout::Note
+
+All user-facing subcommands (eval, check, trust, migrate, parse) SHALL render trust warnings using the `Advisory` → `Layout::Note` box UI, matching the existing migration note pattern. Hook mode and help/reference are excluded.
+
+Two box types with distinct levels:
+
+**Warning (NoteLevel::Warn) — untrusted rules:**
+
+The box adapts based on the number of untrusted programs:
+
+*Single program:*
+```
+╭─ ⚠ Untrusted rules: git ──────────────────────────╮
+│ Rules from ~/.config/may-i/config.lisp need        │
+│ approval before they take effect.                  │
+│                                                    │
+│ Approve by running:                                │
+│                                                    │
+│ $ may-i trust "git"                                │
+╰────────────────────────────────────────────────────╯
+```
+
+*Multiple programs:*
+```
+╭─ ⚠ Untrusted rules ───────────────────────────────╮
+│ 7 programs have rules that need approval: git,     │
+│ cargo, npm, docker, kubectl (and 2 more).          │
+│                                                    │
+│ Review and approve by running:                     │
+│                                                    │
+│ $ may-i trust                                      │
+╰────────────────────────────────────────────────────╯
+```
+
+When there are 5 or fewer, all names are listed. Above 5, take the first 5 and show "(and N more)".
+
+**Error (NoteLevel::Error) — trust store integrity failure:**
+
+The box shows the path to the trust store file and names the affected entries.
+
+*Specific entries tampered:*
+```
+╭─ ✗ Trust store integrity failure ──────────────────╮
+│ 3 entries in ~/.local/share/may-i/trust.json have  │
+│ mismatched hashes: git, cargo, npm.                │
+│                                                    │
+│ This may indicate tampering. Resolve by running:   │
+│                                                    │
+│ $ may-i trust                                      │
+╰────────────────────────────────────────────────────╯
+```
+
+Entry names follow the same take-5 rule as the warning box.
+
+*Whole file corrupt/unreadable:*
+```
+╭─ ✗ Trust store corrupted ──────────────────────────╮
+│ ~/.local/share/may-i/trust.json could not be       │
+│ loaded. The file may be corrupted or tampered.     │
+│ All programs will require re-approval.             │
+╰────────────────────────────────────────────────────╯
+```
+
+**Implementation:** Build `trust_warning_note()` and `trust_integrity_note()` in `src/output/mod.rs`, parallel to the existing `migration_note()`. Each subcommand calls these after loading config and trust store, rendering to stderr.
+
+### 8. Eval no longer blocks on untrusted rules
+
+Previously, `cmd_eval` returned early when trust failed, preventing evaluation. The new behavior: show the warning box, then proceed with evaluation. Untrusted rules default to `:ask`. This gives the user trace output alongside the trust warning, making it clear what would happen once they approve.
+
+Hook mode is unchanged — it continues to block with a JSON `:ask` response, since it must give Claude Code a definitive answer.
+
+### 9. Check subcommand gains trust awareness
+
+`cmd_check` currently has no trust checking — a gap. It will gain the same advisory box rendering. Checks still run (results may reflect unapproved rules), but the user sees the warning and understands the context.
 
 ## Risks / Trade-offs
 

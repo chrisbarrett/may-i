@@ -41,13 +41,10 @@ The trust store SHALL persist canonical rule forms alongside hashes so that diff
 - **WHEN** a user runs `may-i trust "echo"`
 - **THEN** the trust store file contains the hash AND the canonical rule strings for `echo`
 
-#### Scenario: Trust store loads v1 format
-- **WHEN** the trust store file contains the old flat `{program: hash}` format
-- **THEN** loading succeeds with empty canonical forms for each entry
-
 #### Scenario: Trust store writes v2 format
 - **WHEN** the trust store is saved after any modification
 - **THEN** the file uses the v2 format with `version`, `programs` map, and canonical forms
+- **AND** any pre-existing v1 format file is replaced (old entries re-appear as NEW)
 
 #### Scenario: Old canonical forms available for diff
 - **WHEN** a program's rules have changed since last approval
@@ -60,10 +57,9 @@ The trust store SHALL verify that stored canonical forms are consistent with the
 - **WHEN** the trust store is loaded and an entry's canonical forms re-hash to the stored hash
 - **THEN** the entry loads normally with canonical forms available for diff display
 
-#### Scenario: Stored forms missing (v1 migration)
-- **WHEN** the trust store was loaded from v1 format with no canonical forms
-- **THEN** the entry loads with empty canonical forms (no verification needed)
-- **AND** diff display gracefully degrades
+#### Scenario: Unrecognized store format discarded
+- **WHEN** the trust store file is in an unrecognized format (e.g., old v1)
+- **THEN** loading returns an empty store (all programs appear as NEW)
 
 #### Scenario: Verification uses same hash algorithm as compute_trust_hashes
 - **WHEN** verifying stored canonical forms
