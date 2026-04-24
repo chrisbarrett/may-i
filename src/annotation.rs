@@ -772,7 +772,25 @@ impl EvalFold for TracingFold {
         result: EffectResult,
     ) -> Self::EffectOut {
         let mut docs = vec![plain_atom("cond")];
-        for (pred, body) in branches {
+
+        // Find where trailing (Skipped, Skipped) branches start.
+        let trailing_skipped_start = {
+            let mut start = branches.len();
+            for (i, (pred, body)) in branches.iter().enumerate().rev() {
+                if matches!((pred, body), (ChildResult::Skipped, ChildResult::Skipped)) {
+                    start = i;
+                } else {
+                    break;
+                }
+            }
+            start
+        };
+        let has_trailing_skipped = trailing_skipped_start < branches.len();
+
+        for (i, (pred, body)) in branches.into_iter().enumerate() {
+            if i >= trailing_skipped_start {
+                break;
+            }
             let pred_doc = match pred {
                 ChildResult::Evaluated((_, doc)) => doc,
                 ChildResult::Skipped => dim(plain_atom("…")),
@@ -783,12 +801,17 @@ impl EvalFold for TracingFold {
             };
             docs.push(ann_list(vec![pred_doc, body_doc], None));
         }
-        if let Some(fb) = fallback {
+
+        if has_trailing_skipped {
+            // Collapse all trailing skipped branches (and skipped fallback) into one ellipsis.
+            docs.push(dim(plain_atom("…")));
+        } else if let Some(fb) = fallback {
             match fb {
                 ChildResult::Evaluated((_, doc)) => docs.push(doc),
                 ChildResult::Skipped => docs.push(dim(plain_atom("…"))),
             }
         }
+
         let ann = Some(Ann::Combinator {
             result_is_nil: result.is_nil(),
         });
@@ -1417,5 +1440,184 @@ mod tests {
             "expected unmatched VarRef annotation, got {:?}",
             result.1.ann
         );
+    }
+
+    // --- Cond trailing-branch collapsing tests ---
+
+    /// Recursively find a doc node whose head atom matches `name`.
+    fn find_doc_by_head<'a>(doc: &'a ADoc, name: &str) -> Option<&'a ADoc> {
+        if doc.head_atom() == Some(name) {
+            return Some(doc);
+        }
+        if let Some(children) = doc.children() {
+            for child in children {
+                if let Some(found) = find_doc_by_head(child, name) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+
+    fn extract_cond_doc(entries: &[TraceEntry]) -> &ADoc {
+        for entry in entries {
+            if let TraceEntry::Rule { doc, .. } = entry {
+                if let Some(cond_doc) = find_doc_by_head(doc, "cond") {
+                    return cond_doc;
+                }
+            }
+        }
+        panic!("no cond doc found in trace entries");
+    }
+
+    fn make_cond_branches(count: usize) -> Vec<(Spanned<Predicate>, Spanned<Effect>)> {
+        (0..count)
+            .map(|i| {
+                (
+                    spanned(Predicate::Fact(presence_query(
+                        // Use different keys so branches are distinguishable
+                        Box::leak(format!(":key{}", i).into_boxed_str()) as &str,
+                    ))),
+                    spanned(Effect::Terminal {
+                        decision: Decision::Allow,
+                        reason: None,
+                    }),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn cond_collapse_match_in_middle() {
+        // Branch 0: :key0 absent → predicate evaluates false
+        // Branch 1: :key1 present → matches, short-circuits
+        // Branches 2-3: skipped → should collapse to single …
+        let mut facts = ContextFacts::default();
+        facts.insert_present(Keyword::new(":key1").unwrap());
+
+        let config = make_config(vec![make_rule(
+            CommandPattern::Literal("git".into()),
+            Effect::Cond {
+                branches: make_cond_branches(4),
+                fallback: Some(Box::new(spanned(Effect::Terminal {
+                    decision: Decision::Deny,
+                    reason: None,
+                }))),
+            },
+        )]);
+        let mut fold = TracingFold::new();
+        evaluate_with_fold("git", &[], &config, &facts, &mut fold).unwrap();
+        let cond_doc = extract_cond_doc(&fold.traces);
+        let children = cond_doc.children().expect("cond should be a list");
+
+        // children: ["cond", branch0, branch1, "…"]
+        assert_eq!(
+            children.len(),
+            4,
+            "expected cond + 2 branches + 1 ellipsis, got {} children",
+            children.len()
+        );
+        assert_eq!(children[0].as_atom(), Some("cond"));
+        // Last child should be a dimmed ellipsis atom
+        let last = &children[3];
+        assert_eq!(last.as_atom(), Some("…"));
+        assert!(last.dimmed, "trailing ellipsis should be dimmed");
+    }
+
+    #[test]
+    fn cond_collapse_match_at_first_branch() {
+        // Branch 0: :key0 present → matches immediately
+        // Branches 1-3: skipped → should collapse to single …
+        let mut facts = ContextFacts::default();
+        facts.insert_present(Keyword::new(":key0").unwrap());
+
+        let config = make_config(vec![make_rule(
+            CommandPattern::Literal("git".into()),
+            Effect::Cond {
+                branches: make_cond_branches(4),
+                fallback: None,
+            },
+        )]);
+        let mut fold = TracingFold::new();
+        evaluate_with_fold("git", &[], &config, &facts, &mut fold).unwrap();
+        let cond_doc = extract_cond_doc(&fold.traces);
+        let children = cond_doc.children().expect("cond should be a list");
+
+        // children: ["cond", branch0, "…"]
+        assert_eq!(
+            children.len(),
+            3,
+            "expected cond + 1 branch + 1 ellipsis, got {} children",
+            children.len()
+        );
+        assert_eq!(children[2].as_atom(), Some("…"));
+        assert!(children[2].dimmed);
+    }
+
+    #[test]
+    fn cond_no_collapse_when_all_evaluated() {
+        // No facts match → all predicates evaluated to false, fallback used
+        let config = make_config(vec![make_rule(
+            CommandPattern::Literal("git".into()),
+            Effect::Cond {
+                branches: make_cond_branches(3),
+                fallback: Some(Box::new(spanned(Effect::Terminal {
+                    decision: Decision::Deny,
+                    reason: None,
+                }))),
+            },
+        )]);
+        let entries = eval_tracing(&config, "git", &[]);
+        let cond_doc = extract_cond_doc(&entries);
+        let children = cond_doc.children().expect("cond should be a list");
+
+        // children: ["cond", branch0, branch1, branch2, fallback]
+        assert_eq!(
+            children.len(),
+            5,
+            "expected cond + 3 branches + fallback, got {} children",
+            children.len()
+        );
+        // No trailing dimmed ellipsis — last child is the fallback (not "…")
+        let last = &children[4];
+        assert_ne!(
+            last.as_atom(),
+            Some("…"),
+            "should not have trailing ellipsis when all evaluated"
+        );
+    }
+
+    #[test]
+    fn cond_collapse_single_trailing_branch() {
+        // Branch 0: :key0 present → matches
+        // Branch 1: skipped → single trailing branch collapses to …
+        let mut facts = ContextFacts::default();
+        facts.insert_present(Keyword::new(":key0").unwrap());
+
+        let config = make_config(vec![make_rule(
+            CommandPattern::Literal("git".into()),
+            Effect::Cond {
+                branches: make_cond_branches(2),
+                fallback: Some(Box::new(spanned(Effect::Terminal {
+                    decision: Decision::Deny,
+                    reason: None,
+                }))),
+            },
+        )]);
+        let mut fold = TracingFold::new();
+        evaluate_with_fold("git", &[], &config, &facts, &mut fold).unwrap();
+        let cond_doc = extract_cond_doc(&fold.traces);
+        let children = cond_doc.children().expect("cond should be a list");
+
+        // children: ["cond", branch0, "…"]
+        // (branch1 + fallback collapsed into single "…")
+        assert_eq!(
+            children.len(),
+            3,
+            "expected cond + 1 branch + 1 ellipsis, got {} children",
+            children.len()
+        );
+        assert_eq!(children[2].as_atom(), Some("…"));
+        assert!(children[2].dimmed);
     }
 }
