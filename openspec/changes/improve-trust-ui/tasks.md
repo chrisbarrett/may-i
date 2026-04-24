@@ -53,35 +53,35 @@
 
 ## 7. Trust advisory box rendering
 
-- [ ] 7.1 Add `trust_warning_note()` to `src/output/mod.rs`: takes list of untrusted program names + source files, returns `Option<Layout>`. Single program → names it in heading + suggests `may-i trust "<program>"`. Multiple → heading "Untrusted rules", body lists names (take 5, comma-sep, "(and N more)"), suggests `may-i trust`.
-- [ ] 7.2 Add `trust_integrity_note()` to `src/output/mod.rs`: takes store path + suspect entries (or corrupt flag), returns `Layout`. Specific entries → NoteLevel::Error, names store path, lists entry names (take 5). Corrupt file → distinct "Trust store corrupted" heading, notes re-approval required.
-- [ ] 7.3 Add unit tests for both note builders: single program, multiple programs, >5 programs truncation, integrity with few entries, integrity with >5 entries, corrupt file variant.
+- [x] 7.1 Add `trust_warning_note()` to `src/output/mod.rs`: takes list of untrusted program names + source files, returns `Option<Layout>`. Single program → names it in heading + suggests `may-i trust "<program>"`. Multiple → heading "Untrusted rules", body lists names (take 5, comma-sep, "(and N more)"), suggests `may-i trust`.
+- [x] 7.2 Add `trust_integrity_note()` to `src/output/mod.rs`: takes store path + suspect entries (or corrupt flag), returns `Layout`. Specific entries → NoteLevel::Error, names store path, lists entry names (take 5). Corrupt file → distinct "Trust store corrupted" heading, notes re-approval required.
+- [x] 7.3 Add unit tests for both note builders: single program, multiple programs, >5 programs truncation, integrity with few entries, integrity with >5 entries, corrupt file variant.
 
 ## 8. Eval shows warning instead of blocking
 
-- [ ] 8.1 Change `cmd_eval` non-JSON path: replace early-return trust block with advisory box rendering + proceed with evaluation (untrusted rules default to `:ask`)
-- [ ] 8.2 JSON mode and hook mode remain unchanged (still block with `:ask` response)
-- [ ] 8.3 Add/update tests: eval with untrusted rules produces both warning box and trace output, eval JSON mode still returns ask block
+- [x] 8.1 Change `cmd_eval` non-JSON path: replace early-return trust block with advisory box rendering + proceed with evaluation (untrusted rules default to `:ask`)
+- [x] 8.2 JSON mode and hook mode remain unchanged (still block with `:ask` response)
+- [x] 8.3 Add/update tests: eval with untrusted rules produces both warning box and trace output, eval JSON mode still returns ask block
 
 ## 9. Check subcommand gains trust awareness
 
-- [ ] 9.1 Add trust hash computation + store loading to `cmd_check` non-JSON path
-- [ ] 9.2 Render trust advisory box (warning for untrusted, error for integrity) before check results
-- [ ] 9.3 Add tests: check with untrusted rules shows warning then runs checks, check JSON mode unaffected
+- [x] 9.1 Add trust hash computation + store loading to `cmd_check` non-JSON path
+- [x] 9.2 Render trust advisory box (warning for untrusted, error for integrity) before check results
+- [x] 9.3 Add tests: check with untrusted rules shows warning then runs checks, check JSON mode unaffected
 
 ## 10. Advisory boxes in remaining subcommands
 
-- [ ] 10.1 Add trust advisory rendering to `cmd_trust` non-interactive paths (integrity error box for suspect entries)
-- [ ] 10.2 Add trust advisory rendering to `cmd_migrate` and `cmd_parse` (warning box for untrusted rules)
-- [ ] 10.3 Verify hook mode and reference/help are excluded
+- [x] 10.1 Add trust advisory rendering to `cmd_trust` non-interactive paths (integrity error box for suspect entries)
+- [x] 10.2 Add trust advisory rendering to `cmd_migrate` and `cmd_parse` (warning box for untrusted rules)
+- [x] 10.3 Verify hook mode and reference/help are excluded
 
 ## 11. Final validation
 
 - [x] 11.1 Run full test suite and fix any breakage from Provenance/TrustHashes type changes
 - [x] 11.2 Manual smoke test: create config with loaded rules, verify trust listing, approve, modify, verify diff display
 - [x] 11.3 Smoke test: tamper with trust store canonical forms, verify interactive repair triggers
-- [ ] 11.4 Smoke test: eval with untrusted rules shows advisory box + trace output
-- [ ] 11.5 Smoke test: check with untrusted rules shows advisory box + check results
-- [ ] 11.6 Smoke test: >5 untrusted programs renders truncated list correctly
-- [ ] 11.7 Smoke test: tampered trust store entries render error box with store path and entry names
-- [ ] 11.8 Smoke test: corrupted trust store file renders distinct "corrupted" error box
+- [x] 11.4 Smoke test: eval with untrusted rules shows advisory box + trace output
+- [x] 11.5 Smoke test: check with untrusted rules shows advisory box + check results
+- [x] 11.6 Smoke test: >5 untrusted programs renders truncated list correctly
+- [x] 11.7 Smoke test: tampered trust store entries render error box with store path and entry names
+- [x] 11.8 Smoke test: corrupted trust store file renders distinct "corrupted" error box

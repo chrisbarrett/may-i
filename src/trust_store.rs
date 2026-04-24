@@ -53,6 +53,8 @@ pub struct SuspectEntry {
 pub struct LoadResult {
     pub store: TrustStore,
     pub suspects: Vec<SuspectEntry>,
+    /// True if the file existed but could not be parsed.
+    pub was_corrupt: bool,
 }
 
 impl Default for TrustStore {
@@ -68,15 +70,22 @@ impl TrustStore {
     /// Load the trust store from disk. Returns empty store if file doesn't exist
     /// or is in an unrecognized format. Also verifies integrity of stored entries.
     pub fn load(path: &Path) -> std::io::Result<LoadResult> {
-        let store = match std::fs::read_to_string(path) {
-            Ok(content) => serde_json::from_str::<TrustStore>(&content).unwrap_or_default(),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => TrustStore::default(),
+        let (store, was_corrupt) = match std::fs::read_to_string(path) {
+            Ok(content) => match serde_json::from_str::<TrustStore>(&content) {
+                Ok(s) => (s, false),
+                Err(_) => (TrustStore::default(), true),
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (TrustStore::default(), false),
             Err(e) => return Err(e),
         };
 
         let suspects = store.verify_integrity();
 
-        Ok(LoadResult { store, suspects })
+        Ok(LoadResult {
+            store,
+            suspects,
+            was_corrupt,
+        })
     }
 
     /// Save the trust store to disk.

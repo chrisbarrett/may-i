@@ -72,6 +72,109 @@ pub fn migration_note(
     }
 }
 
+/// Build a trust warning advisory note for untrusted programs.
+///
+/// Returns `None` if the list is empty.
+pub fn trust_warning_note(
+    programs: &[(&str, &std::collections::BTreeSet<std::path::PathBuf>)],
+) -> Option<Layout> {
+    if programs.is_empty() {
+        return None;
+    }
+
+    let (heading, detail, command) = if programs.len() == 1 {
+        let (name, files) = &programs[0];
+        let files_str = if files.is_empty() {
+            String::new()
+        } else {
+            let paths: Vec<String> = files.iter().map(|p| shorten_home(p)).collect();
+            format!(" from {}", paths.join(", "))
+        };
+        (
+            format!("Untrusted rules: {name}"),
+            format!("Rules{files_str} need approval before they take effect."),
+            format!("may-i trust \"{name}\""),
+        )
+    } else {
+        let names = format_name_list(programs.iter().map(|(n, _)| *n), programs.len());
+        (
+            "Untrusted rules".into(),
+            format!(
+                "{} programs have rules that need approval: {names}.",
+                programs.len()
+            ),
+            "may-i trust".into(),
+        )
+    };
+
+    let suggestion = if programs.len() == 1 {
+        "Approve by running:"
+    } else {
+        "Review and approve by running:"
+    };
+
+    Some(
+        Advisory {
+            level: NoteLevel::Warn,
+            heading,
+            detail,
+            suggestion: suggestion.into(),
+            command,
+        }
+        .into_layout(),
+    )
+}
+
+/// Build a trust store integrity error note.
+///
+/// If `suspect_names` is `Some`, lists the affected entry names.
+/// If `None`, indicates the whole file is corrupt.
+pub fn trust_integrity_note(
+    store_path: &std::path::Path,
+    suspect_names: Option<&[&str]>,
+) -> Layout {
+    let display_path = shorten_home(store_path);
+
+    match suspect_names {
+        Some(names) => {
+            let name_list = format_name_list(names.iter().copied(), names.len());
+            Advisory {
+                level: NoteLevel::Error,
+                heading: "Trust store integrity failure".into(),
+                detail: format!(
+                    "{} entries in {} have mismatched hashes: {name_list}.",
+                    names.len(),
+                    display_path,
+                ),
+                suggestion: "This may indicate tampering. Resolve by running:".into(),
+                command: "may-i trust".into(),
+            }
+            .into_layout()
+        }
+        None => Advisory {
+            level: NoteLevel::Error,
+            heading: "Trust store corrupted".into(),
+            detail: format!(
+                "{display_path} could not be loaded. The file may be corrupted or tampered. \
+                 All programs will require re-approval."
+            ),
+            suggestion: String::new(),
+            command: String::new(),
+        }
+        .into_layout(),
+    }
+}
+
+/// Format a list of names with take-5 truncation.
+fn format_name_list<'a>(names: impl Iterator<Item = &'a str>, total: usize) -> String {
+    let shown: Vec<&str> = names.take(5).collect();
+    let mut result = shown.join(", ");
+    if total > 5 {
+        result.push_str(&format!(" (and {} more)", total - 5));
+    }
+    result
+}
+
 // ── Column geometry (trace-specific) ──────────────────────────────
 
 const MIN_TERM_WIDTH: usize = 40;
@@ -519,5 +622,109 @@ mod tests {
             write_layout(&mut buf, &layout, &term);
             assert!(!buf.is_empty());
         }
+    }
+
+    // ── trust_warning_note tests ─────────────────────────────────
+
+    fn render_note(layout: &Layout) -> String {
+        let term = Terminal::new(60);
+        let mut buf = Vec::new();
+        write_layout(&mut buf, layout, &term);
+        let output = String::from_utf8(buf).unwrap();
+        strip_ansi(&output)
+    }
+
+    #[test]
+    fn trust_warning_note_empty_returns_none() {
+        assert!(trust_warning_note(&[]).is_none());
+    }
+
+    #[test]
+    fn trust_warning_note_single_program() {
+        let mut files = std::collections::BTreeSet::new();
+        files.insert(std::path::PathBuf::from("/tmp/rules.lisp"));
+        let layout = trust_warning_note(&[("git", &files)]).unwrap();
+        let output = render_note(&layout);
+        assert!(output.contains("Untrusted rules: git"), "{output}");
+        assert!(output.contains("/tmp/rules.lisp"), "{output}");
+        assert!(output.contains("may-i trust \"git\""), "{output}");
+    }
+
+    #[test]
+    fn trust_warning_note_multiple_programs_under_five() {
+        let files = std::collections::BTreeSet::new();
+        let programs: Vec<(&str, &std::collections::BTreeSet<std::path::PathBuf>)> =
+            vec![("git", &files), ("cargo", &files), ("npm", &files)];
+        let layout = trust_warning_note(&programs).unwrap();
+        let output = render_note(&layout);
+        assert!(output.contains("Untrusted rules"), "{output}");
+        assert!(output.contains("git"), "{output}");
+        assert!(output.contains("cargo"), "{output}");
+        assert!(output.contains("npm"), "{output}");
+        assert!(!output.contains("more"), "{output}");
+        assert!(output.contains("may-i trust"), "{output}");
+    }
+
+    #[test]
+    fn trust_warning_note_truncates_over_five() {
+        let files = std::collections::BTreeSet::new();
+        let names = ["git", "cargo", "npm", "docker", "kubectl", "node", "python"];
+        let programs: Vec<(&str, &std::collections::BTreeSet<std::path::PathBuf>)> =
+            names.iter().map(|n| (*n, &files)).collect();
+        let layout = trust_warning_note(&programs).unwrap();
+        let output = render_note(&layout);
+        assert!(output.contains("(and 2 more)"), "{output}");
+        assert!(output.contains("kubectl"), "{output}");
+        assert!(!output.contains("node"), "{output}");
+    }
+
+    // ── trust_integrity_note tests ───────────────────────────────
+
+    #[test]
+    fn trust_integrity_note_specific_entries() {
+        let path = std::path::Path::new("/tmp/trust.json");
+        let names = ["git", "cargo", "npm"];
+        let layout = trust_integrity_note(path, Some(&names));
+        let output = render_note(&layout);
+        assert!(output.contains("Trust store integrity failure"), "{output}");
+        assert!(output.contains("/tmp/trust.json"), "{output}");
+        assert!(output.contains("git"), "{output}");
+        assert!(output.contains("cargo"), "{output}");
+        assert!(output.contains("npm"), "{output}");
+        assert!(output.contains("may-i trust"), "{output}");
+    }
+
+    #[test]
+    fn trust_integrity_note_truncates_over_five() {
+        let path = std::path::Path::new("/tmp/trust.json");
+        let names = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"];
+        let layout = trust_integrity_note(path, Some(&names));
+        let output = render_note(&layout);
+        assert!(output.contains("(and 7 more)"), "{output}");
+    }
+
+    #[test]
+    fn trust_integrity_note_corrupt_file() {
+        let path = std::path::Path::new("/tmp/trust.json");
+        let layout = trust_integrity_note(path, None);
+        let output = render_note(&layout);
+        assert!(output.contains("Trust store corrupted"), "{output}");
+        assert!(output.contains("/tmp/trust.json"), "{output}");
+        assert!(output.contains("re-approval"), "{output}");
+    }
+
+    // ── format_name_list tests ───────────────────────────────────
+
+    #[test]
+    fn format_name_list_under_five() {
+        let result = format_name_list(["a", "b", "c"].iter().copied(), 3);
+        assert_eq!(result, "a, b, c");
+    }
+
+    #[test]
+    fn format_name_list_over_five() {
+        let names = ["a", "b", "c", "d", "e", "f", "g"];
+        let result = format_name_list(names.iter().copied(), 7);
+        assert_eq!(result, "a, b, c, d, e (and 2 more)");
     }
 }

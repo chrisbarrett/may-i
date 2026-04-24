@@ -61,6 +61,29 @@ pub(crate) fn cmd_migrate(
 ) -> miette::Result<()> {
     let config_file = may_i_config::resolve_path(config_path)?;
 
+    // Show trust advisory if applicable (best-effort, don't fail migration on trust errors).
+    if let Ok(loaded) = may_i_config::load_and_resolve(config_path) {
+        let hashes = may_i_engine::trust::compute_trust_hashes(&loaded.config);
+        if !hashes.programs.is_empty()
+            && let Some(store_path) = may_i::trust_store::default_trust_store_path()
+            && let Ok(load_result) = may_i::trust_store::TrustStore::load(&store_path)
+        {
+            let untrusted: Vec<(&str, &std::collections::BTreeSet<std::path::PathBuf>)> = hashes
+                .programs
+                .iter()
+                .filter(|(name, meta)| {
+                    load_result.store.check(name, &meta.hash)
+                        != may_i::trust_store::TrustStatus::Trusted
+                })
+                .map(|(name, meta)| (name.as_str(), &meta.source_files))
+                .collect();
+            if let Some(note) = may_i::output::trust_warning_note(&untrusted) {
+                let term = may_i::output::Terminal::detect();
+                may_i::output::write_layout(&mut io::stderr(), &note, &term);
+            }
+        }
+    }
+
     let source = std::fs::read_to_string(&config_file)
         .map_err(|e| miette::miette!("Failed to read config file: {e}"))?;
 

@@ -265,3 +265,119 @@ fn primary_only_config_bypasses_trust() {
         "primary-only config should bypass trust entirely"
     );
 }
+
+#[test]
+fn eval_untrusted_shows_warning_and_trace() {
+    let (_dir, config) = setup_loaded_config(
+        r#"(rule "ls" (effect :allow))"#,
+        r#"(rule "echo" (effect :allow "loaded rule"))"#,
+    );
+
+    let trust_dir = tempfile::tempdir().unwrap();
+
+    let mut cmd = cargo_bin_cmd!("may-i");
+    cmd.env("MAYI_CONFIG", config.path())
+        .env("XDG_DATA_HOME", trust_dir.path())
+        .args(["eval", "echo hello"]);
+
+    let output = cmd.output().expect("run");
+    assert!(output.status.success(), "eval should succeed");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Untrusted rules"),
+        "stderr should contain advisory box: {stderr}"
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Trace") || stdout.contains("Result"),
+        "stdout should contain trace/result output: {stdout}"
+    );
+}
+
+#[test]
+fn check_untrusted_shows_warning_then_results() {
+    let (_dir, config) = setup_loaded_config(
+        r#"(check :allow "echo hello")
+(rule "echo" (effect :allow))"#,
+        r#"(rule "echo" (effect :allow "loaded rule"))"#,
+    );
+
+    let trust_dir = tempfile::tempdir().unwrap();
+
+    let mut cmd = cargo_bin_cmd!("may-i");
+    cmd.env("MAYI_CONFIG", config.path())
+        .env("XDG_DATA_HOME", trust_dir.path())
+        .args(["check"]);
+
+    let output = cmd.output().expect("run");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Untrusted rules"),
+        "stderr should contain trust advisory: {stderr}"
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Summary"),
+        "stdout should contain check results: {stdout}"
+    );
+}
+
+#[test]
+fn check_json_unaffected_by_trust() {
+    let (_dir, config) = setup_loaded_config(
+        r#"(check :allow "echo hello")
+(rule "echo" (effect :allow))"#,
+        r#"(rule "echo" (effect :allow "loaded rule"))"#,
+    );
+
+    let trust_dir = tempfile::tempdir().unwrap();
+
+    let mut cmd = cargo_bin_cmd!("may-i");
+    cmd.env("MAYI_CONFIG", config.path())
+        .env("XDG_DATA_HOME", trust_dir.path())
+        .args(["check", "--json"]);
+
+    let output = cmd.output().expect("run");
+    assert!(output.status.success());
+
+    let resp: serde_json::Value = serde_json::from_slice(&output.stdout).expect("parse JSON");
+    assert!(
+        resp["results"].is_array(),
+        "JSON output should have results"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("Untrusted"),
+        "JSON mode should not show advisory: {stderr}"
+    );
+}
+
+#[test]
+fn eval_json_untrusted_still_blocks() {
+    let (_dir, config) = setup_loaded_config(
+        r#"(rule "ls" (effect :allow))"#,
+        r#"(rule "echo" (effect :allow "loaded rule"))"#,
+    );
+
+    let trust_dir = tempfile::tempdir().unwrap();
+
+    let mut cmd = cargo_bin_cmd!("may-i");
+    cmd.env("MAYI_CONFIG", config.path())
+        .env("XDG_DATA_HOME", trust_dir.path())
+        .args(["eval", "--json", "echo hello"]);
+
+    let output = cmd.output().expect("run");
+    assert!(output.status.success());
+
+    let resp: serde_json::Value = serde_json::from_slice(&output.stdout).expect("parse JSON");
+    assert_eq!(resp["decision"], "ask", "JSON mode should still block");
+    assert!(
+        resp["reason"].as_str().unwrap_or("").contains("trust"),
+        "reason should mention trust"
+    );
+}

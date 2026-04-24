@@ -24,20 +24,19 @@ pub fn cmd_eval(
     let context = parse_cli_facts(raw_facts)?;
 
     // Trust check
-    if let Some(block) = check_trust_for_command(command, &loaded.config)? {
-        if json_mode {
-            let json = serde_json::json!({
-                "decision": "ask",
-                "reason": block.reason,
-                "files": block.files,
-            });
-            println!(
-                "{}",
-                serde_json::to_string(&json).expect("response serialization is infallible")
-            );
-        } else {
-            eprintln!("{}", block.reason);
-        }
+    let trust_block = check_trust_for_command(command, &loaded.config)?;
+    if let Some(block) = &trust_block
+        && json_mode
+    {
+        let json = serde_json::json!({
+            "decision": "ask",
+            "reason": block.reason,
+            "files": block.files,
+        });
+        println!(
+            "{}",
+            serde_json::to_string(&json).expect("response serialization is infallible")
+        );
         return Ok(());
     }
 
@@ -79,6 +78,11 @@ pub fn cmd_eval(
     } else {
         let term = output::Terminal::detect();
         if let Some(note) = output::migration_note(&loaded, config_file) {
+            output::write_layout(&mut std::io::stderr(), &note, &term);
+        }
+        if let Some(block) = &trust_block
+            && let Some(note) = output::trust_warning_note(&[(&block.program, &block.source_files)])
+        {
             output::write_layout(&mut std::io::stderr(), &note, &term);
         }
         let (result, mut traces, colored_command) =
@@ -206,8 +210,10 @@ fn colorize_segments(
 
 /// Trust block info returned when a command is blocked due to untrusted rules.
 struct TrustBlock {
+    program: String,
     reason: String,
     files: Vec<String>,
+    source_files: std::collections::BTreeSet<std::path::PathBuf>,
 }
 
 /// Check trust for the program being invoked.
@@ -262,7 +268,12 @@ fn check_trust_for_command(
                     program
                 );
 
-                Ok(Some(TrustBlock { reason, files }))
+                Ok(Some(TrustBlock {
+                    program: program.to_string(),
+                    reason,
+                    files,
+                    source_files: meta.source_files.clone(),
+                }))
             }
         }
     } else {

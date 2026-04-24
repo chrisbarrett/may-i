@@ -489,6 +489,9 @@ fn write_note(w: &mut impl Write, indent: usize, note: &Note, term: &Terminal) {
 }
 
 /// Write a single line inside a box: "│ content                 │"
+///
+/// If `text_width` exceeds the available inner width, the right border
+/// character is omitted so the line doesn't wrap awkwardly.
 fn write_box_line(
     w: &mut impl Write,
     indent: usize,
@@ -497,15 +500,20 @@ fn write_box_line(
     text_width: usize,
 ) {
     let inner_width = box_width.saturating_sub(4);
-    let padding = inner_width.saturating_sub(text_width);
-    let _ = writeln!(
-        w,
-        "{:indent$}{} {text}{:padding$} {}",
-        "",
-        DIVIDER.dimmed(),
-        "",
-        DIVIDER.dimmed(),
-    );
+    if text_width > inner_width {
+        // Text overflows — omit right border to avoid wrapping.
+        let _ = writeln!(w, "{:indent$}{} {text}", "", DIVIDER.dimmed(),);
+    } else {
+        let padding = inner_width - text_width;
+        let _ = writeln!(
+            w,
+            "{:indent$}{} {text}{:padding$} {}",
+            "",
+            DIVIDER.dimmed(),
+            "",
+            DIVIDER.dimmed(),
+        );
+    }
 }
 
 /// Word-wrap plain text into lines fitting `max_width`.
@@ -737,6 +745,28 @@ mod tests {
                 w, first,
                 "line {} width {} != expected {}: {:?}",
                 i, w, first, stripped
+            );
+        }
+    }
+
+    #[test]
+    fn note_overflow_line_omits_right_border() {
+        let term = Terminal::new(30);
+        let long_path = "/very/long/path/that/exceeds/the/box/width/entirely";
+        let layout = Layout::Note(Note {
+            level: NoteLevel::Warn,
+            heading: "Warn".into(),
+            body: long_path.into(),
+        });
+        let s = render_to_string(&layout, 0, &term);
+        let stripped = strip_ansi(&s);
+        // The body line with the long path should not have a trailing │
+        let body_lines: Vec<&str> = stripped.lines().filter(|l| l.contains(long_path)).collect();
+        assert!(!body_lines.is_empty(), "should contain the long path");
+        for line in &body_lines {
+            assert!(
+                !line.ends_with('│'),
+                "overflow line should omit right border: {line:?}"
             );
         }
     }

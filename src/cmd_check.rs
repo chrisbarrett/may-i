@@ -64,6 +64,10 @@ pub fn cmd_check(
         if let Some(note) = output::migration_note(&loaded, config_file) {
             output::write_layout(&mut std::io::stderr(), &note, &term);
         }
+
+        // Trust advisory
+        render_trust_advisory(&loaded.config, &term);
+
         let mut failures = Vec::new();
 
         for r in &results {
@@ -210,6 +214,59 @@ fn context_to_json(context: &may_i_core::ContextFacts) -> serde_json::Value {
         }
     }
     serde_json::Value::Object(obj)
+}
+
+fn render_trust_advisory(config: &may_i_core::ast::Config, term: &output::Terminal) {
+    use may_i_engine::trust::compute_trust_hashes;
+
+    let hashes = compute_trust_hashes(config);
+    if hashes.programs.is_empty() {
+        return;
+    }
+
+    let store_path = match crate::trust_store::default_trust_store_path() {
+        Some(p) => p,
+        None => return,
+    };
+    let load_result = match crate::trust_store::TrustStore::load(&store_path) {
+        Ok(r) => r,
+        Err(_) => {
+            let note = output::trust_integrity_note(&store_path, None);
+            output::write_layout(&mut std::io::stderr(), &note, term);
+            return;
+        }
+    };
+
+    // Corrupt file
+    if load_result.was_corrupt {
+        let note = output::trust_integrity_note(&store_path, None);
+        output::write_layout(&mut std::io::stderr(), &note, term);
+    }
+
+    // Integrity check
+    if !load_result.suspects.is_empty() {
+        let names: Vec<&str> = load_result
+            .suspects
+            .iter()
+            .map(|s| s.program.as_str())
+            .collect();
+        let note = output::trust_integrity_note(&store_path, Some(&names));
+        output::write_layout(&mut std::io::stderr(), &note, term);
+    }
+
+    // Untrusted programs
+    let untrusted: Vec<(&str, &std::collections::BTreeSet<std::path::PathBuf>)> = hashes
+        .programs
+        .iter()
+        .filter(|(name, meta)| {
+            load_result.store.check(name, &meta.hash) != crate::trust_store::TrustStatus::Trusted
+        })
+        .map(|(name, meta)| (name.as_str(), &meta.source_files))
+        .collect();
+
+    if let Some(note) = output::trust_warning_note(&untrusted) {
+        output::write_layout(&mut std::io::stderr(), &note, term);
+    }
 }
 
 fn render_context(context: &may_i_core::ContextFacts) -> String {

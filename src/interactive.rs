@@ -93,12 +93,12 @@ pub fn repair_integrity(
     }
 
     if !interactive {
-        eprintln!(
-            "{}",
-            "warning: trust store contains entries with mismatched hashes. \
-             Run `may-i trust` interactively to resolve."
-                .yellow()
-        );
+        let names: Vec<&str> = suspects.iter().map(|s| s.program.as_str()).collect();
+        if let Some(store_path) = crate::trust_store::default_trust_store_path() {
+            let term = crate::output::Terminal::detect();
+            let note = crate::output::trust_integrity_note(&store_path, Some(&names));
+            crate::output::write_layout(&mut std::io::stderr(), &note, &term);
+        }
         return Ok(false);
     }
 
