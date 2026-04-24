@@ -163,7 +163,7 @@ fn trust_list_shows_new_status() {
 
     let echo_entry = arr.iter().find(|e| e["program"] == "echo");
     assert!(echo_entry.is_some(), "should list echo program");
-    assert_eq!(echo_entry.unwrap()["status"], "new");
+    assert_eq!(echo_entry.unwrap()["status"], "pending");
 }
 
 #[test]
@@ -197,7 +197,7 @@ fn trust_approve_specific_program() {
         .iter()
         .find(|e| e["program"] == "echo")
         .unwrap();
-    assert_eq!(echo_entry["status"], "trusted");
+    assert_eq!(echo_entry["status"], "approved");
 }
 
 #[test]
@@ -229,7 +229,7 @@ fn trust_all_approves_all_programs() {
     let output = list.output().expect("run trust --json");
     let resp: serde_json::Value = serde_json::from_slice(&output.stdout).expect("parse JSON");
     for entry in resp.as_array().unwrap() {
-        assert_eq!(entry["status"], "trusted", "all programs should be trusted");
+        assert_eq!(entry["status"], "approved", "all rules should be approved");
     }
 }
 

@@ -549,6 +549,7 @@ dependencies = [
  "assert_cmd",
  "clap",
  "colored",
+ "console",
  "dialoguer",
  "dirs",
  "hex",

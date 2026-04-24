@@ -5,11 +5,11 @@ use std::io::Write;
 
 use colored::Colorize;
 use may_i_config as config;
-use may_i_engine::trust::{ProgramMeta, TrustHashes, compute_trust_hashes};
+use may_i_engine::trust::{ProgramMeta, RuleMeta, TrustHashes, compute_trust_hashes};
 
 use crate::interactive;
 use crate::output;
-use crate::trust_store::{TrustStatus, TrustStore, default_trust_store_path};
+use crate::trust_store::{TrustCheck, TrustStatus, TrustStore, default_trust_store_path};
 
 /// Run the trust subcommand.
 ///
@@ -25,7 +25,7 @@ pub fn cmd_trust(
     let loaded = config::load_and_resolve(config_path)?;
     let hashes = compute_trust_hashes(&loaded.config);
 
-    if hashes.programs.is_empty() {
+    if hashes.is_empty() {
         if json_mode {
             println!("[]");
         } else {
@@ -52,31 +52,48 @@ pub fn cmd_trust(
         }
     }
 
+    let programs = hashes.programs();
+
     if all {
-        approve_all(&mut store, &hashes, &store_path, json_mode, is_tty)
+        approve_all(
+            &mut store,
+            &hashes,
+            &programs,
+            &store_path,
+            json_mode,
+            is_tty,
+        )
     } else if let Some(prog) = program {
-        approve_one(&mut store, &hashes, prog, &store_path, json_mode, is_tty)
+        approve_one(&mut store, &programs, prog, &store_path, json_mode, is_tty)
     } else {
-        list_status(&mut store, &hashes, &store_path, json_mode, is_tty)
+        list_status(
+            &mut store,
+            &hashes,
+            &programs,
+            &store_path,
+            json_mode,
+            is_tty,
+        )
     }
 }
 
 fn approve_all(
     store: &mut TrustStore,
     hashes: &TrustHashes,
+    programs: &BTreeMap<String, ProgramMeta>,
     store_path: &std::path::Path,
     json_mode: bool,
     is_tty: bool,
 ) -> miette::Result<()> {
     let approved = if is_tty {
-        let pending = interactive::pending_entries(store, hashes);
+        let pending = interactive::pending_entries(store, programs);
         if pending.is_empty() {
             eprintln!("All programs already trusted.");
             return Ok(());
         }
         interactive::interactive_approve(store, &pending)?
     } else {
-        interactive::batch_approve(store, hashes)
+        interactive::batch_approve(store, hashes, programs)
     };
 
     store
@@ -99,14 +116,13 @@ fn approve_all(
 
 fn approve_one(
     store: &mut TrustStore,
-    hashes: &TrustHashes,
+    programs: &BTreeMap<String, ProgramMeta>,
     program: &str,
     store_path: &std::path::Path,
     json_mode: bool,
     is_tty: bool,
 ) -> miette::Result<()> {
-    let meta = hashes
-        .programs
+    let meta = programs
         .get(program)
         .ok_or_else(|| miette::miette!("no loaded rules found for program '{program}'"))?;
 
@@ -157,6 +173,7 @@ fn approve_one(
 fn list_status(
     store: &mut TrustStore,
     hashes: &TrustHashes,
+    programs: &BTreeMap<String, ProgramMeta>,
     store_path: &std::path::Path,
     json_mode: bool,
     is_tty: bool,
@@ -164,11 +181,11 @@ fn list_status(
     if json_mode {
         list_status_json(store, hashes);
     } else {
-        list_status_human(store, hashes);
+        list_status_human(store, hashes, programs);
 
         // Offer to approve pending entries interactively.
         if is_tty {
-            let pending = interactive::pending_entries(store, hashes);
+            let pending = interactive::pending_entries(store, programs);
             if !pending.is_empty() {
                 eprintln!();
                 let walk = dialoguer::Confirm::new()
@@ -191,32 +208,30 @@ fn list_status(
     Ok(())
 }
 
+/// Per-rule JSON output.
 fn list_status_json(store: &TrustStore, hashes: &TrustHashes) {
     let entries: Vec<serde_json::Value> = hashes
-        .programs
+        .rules
         .iter()
-        .map(|(program, meta)| {
-            let status = store.check(program, &meta.hash);
+        .map(|rule_meta| {
+            let status = store.check_rule(&rule_meta.hash);
             let status_str = match status {
-                TrustStatus::Trusted => "trusted",
-                TrustStatus::Changed => "changed",
-                TrustStatus::New => "new",
+                TrustCheck::Approved => "approved",
+                TrustCheck::Ignored => "ignored",
+                TrustCheck::Pending => "pending",
             };
-            let files: Vec<String> = meta
-                .source_files
-                .iter()
-                .map(|p| p.display().to_string())
-                .collect();
+            let file = rule_meta
+                .source_file
+                .as_ref()
+                .map(|p| p.display().to_string());
             let mut entry = serde_json::json!({
-                "program": program,
+                "program": rule_meta.program,
+                "hash": rule_meta.hash,
+                "form": rule_meta.canonical_form,
                 "status": status_str,
-                "files": files,
-                "rules": meta.canonical_rules,
             });
-            if status == TrustStatus::Changed
-                && let Some(prev) = store.previous_rules(program)
-            {
-                entry["previousRules"] = serde_json::json!(prev);
+            if let Some(f) = file {
+                entry["file"] = serde_json::json!(f);
             }
             entry
         })
@@ -227,63 +242,80 @@ fn list_status_json(store: &TrustStore, hashes: &TrustHashes) {
     );
 }
 
-fn list_status_human(store: &TrustStore, hashes: &TrustHashes) {
+/// Per-rule human-readable listing grouped by program.
+fn list_status_human(
+    store: &TrustStore,
+    hashes: &TrustHashes,
+    programs: &BTreeMap<String, ProgramMeta>,
+) {
     let mut w = std::io::stderr();
 
-    // Partition into trusted and pending entries.
-    let mut trusted: Vec<(&str, &ProgramMeta)> = Vec::new();
-    let mut pending: Vec<(&str, &ProgramMeta, TrustStatus)> = Vec::new();
-
-    for (program, meta) in &hashes.programs {
-        let status = store.check(program, &meta.hash);
-        match status {
-            TrustStatus::Trusted => trusted.push((program.as_str(), meta)),
-            _ => pending.push((program.as_str(), meta, status)),
-        }
+    // Group rules by program.
+    let mut by_program: BTreeMap<&str, Vec<&RuleMeta>> = BTreeMap::new();
+    for rule_meta in &hashes.rules {
+        by_program
+            .entry(&rule_meta.program)
+            .or_default()
+            .push(rule_meta);
     }
 
-    // Show pending entries with detail.
-    for (program, meta, status) in &pending {
-        let status_str = match status {
-            TrustStatus::New => "NEW",
-            TrustStatus::Changed => "CHANGED",
-            TrustStatus::Trusted => unreachable!(),
-        };
-        let badge = match status {
-            TrustStatus::New => status_str.yellow().bold().to_string(),
-            TrustStatus::Changed => status_str.red().bold().to_string(),
-            TrustStatus::Trusted => unreachable!(),
-        };
+    let mut has_pending = false;
+    let mut all_approved_programs: Vec<(&str, &ProgramMeta)> = Vec::new();
 
-        let _ = writeln!(w, "  {} {}", program.bold(), badge);
+    for (program, rule_metas) in &by_program {
+        let statuses: Vec<TrustCheck> = rule_metas
+            .iter()
+            .map(|r| store.check_rule(&r.hash))
+            .collect();
 
-        for file in &meta.source_files {
-            let _ = writeln!(w, "    {} {}", "file:".dimmed(), output::shorten_home(file));
+        let all_approved = statuses.iter().all(|s| *s == TrustCheck::Approved);
+
+        if all_approved {
+            if let Some(meta) = programs.get(*program) {
+                all_approved_programs.push((program, meta));
+            }
+            continue;
         }
 
-        if *status == TrustStatus::Changed {
-            if let Some(prev) = store.previous_rules(program) {
-                render_diff(&mut w, prev, &meta.canonical_rules);
-            }
-        } else {
-            for rule in &meta.canonical_rules {
-                let _ = writeln!(w, "    {}", rule.dimmed());
+        has_pending = true;
+
+        let _ = writeln!(w, "  {}", program.bold());
+
+        for (rule_meta, status) in rule_metas.iter().zip(statuses.iter()) {
+            let (_badge_text, badge_colored) = match status {
+                TrustCheck::Approved => ("approved", "approved".green().to_string()),
+                TrustCheck::Ignored => ("ignored", "ignored".red().to_string()),
+                TrustCheck::Pending => ("pending", "pending".yellow().to_string()),
+            };
+            let _ = writeln!(
+                w,
+                "    {} {}",
+                rule_meta.canonical_form.dimmed(),
+                badge_colored,
+            );
+            if let Some(file) = &rule_meta.source_file {
+                let _ = writeln!(
+                    w,
+                    "      {} {}",
+                    "file:".dimmed(),
+                    output::shorten_home(file)
+                );
             }
         }
         let _ = writeln!(w);
     }
 
-    // Show trusted entries grouped by file.
-    if !trusted.is_empty() {
-        if !pending.is_empty() {
+    // Show fully-approved programs grouped by file.
+    if !all_approved_programs.is_empty() {
+        if has_pending {
             let _ = writeln!(w, "  {}", "Trusted:".dimmed());
         }
-        let grouped = group_by_file(&trusted);
+        let grouped = group_by_file(&all_approved_programs);
         let term = output::Terminal::detect();
         let rows: Vec<output::ColRow> = grouped
             .iter()
-            .map(|(file, programs)| {
-                let names = programs.join(", ");
+            .map(|(file, progs)| {
+                let names = progs.join(", ");
                 let right = output::shorten_home(file).dimmed().to_string();
                 output::ColRow::new(names.clone(), names.len(), right)
             })
@@ -292,30 +324,9 @@ fn list_status_human(store: &TrustStore, hashes: &TrustHashes) {
         let layout = output::Layout::Indent(2, Box::new(output::Layout::Columns(rows)));
         output::write_layout(&mut w, &layout, &term);
 
-        if pending.is_empty() {
+        if !has_pending {
             let _ = writeln!(w);
             let _ = writeln!(w, "  {}", "All trusted.".green());
-        }
-    }
-}
-
-/// Render line-level diff between old and new rule forms.
-fn render_diff(w: &mut impl Write, old: &[String], new: &[String]) {
-    let old_text = old.join("\n");
-    let new_text = new.join("\n");
-    let diff = similar::TextDiff::from_lines(&old_text, &new_text);
-
-    for change in diff.iter_all_changes() {
-        match change.tag() {
-            similar::ChangeTag::Delete => {
-                let _ = write!(w, "    {}", format!("-{}", change).red());
-            }
-            similar::ChangeTag::Insert => {
-                let _ = write!(w, "    {}", format!("+{}", change).green());
-            }
-            similar::ChangeTag::Equal => {
-                let _ = write!(w, "    {}", format!(" {}", change).dimmed());
-            }
         }
     }
 }
@@ -327,7 +338,6 @@ fn group_by_file<'a>(
     let mut map: BTreeMap<&std::path::Path, Vec<&str>> = BTreeMap::new();
     for (program, meta) in trusted {
         if meta.source_files.is_empty() {
-            // Shouldn't happen for loaded rules, but handle gracefully.
             map.entry(std::path::Path::new("<unknown>"))
                 .or_default()
                 .push(program);

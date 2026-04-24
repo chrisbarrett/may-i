@@ -25,7 +25,7 @@ pub(crate) fn cmd_claude_code_hook(config_path: Option<&std::path::Path>) -> mie
         return Ok(());
     };
 
-    let loaded = config::load_and_resolve(config_path)?;
+    let mut loaded = config::load_and_resolve(config_path)?;
 
     // Trust check: if the command's program has untrusted loaded content, block.
     if let Some(block_response) = check_trust(&command, &loaded.config)? {
@@ -34,6 +34,13 @@ pub(crate) fn cmd_claude_code_hook(config_path: Option<&std::path::Path>) -> mie
             serde_json::to_string(&block_response).expect("response serialization is infallible")
         );
         return Ok(());
+    }
+
+    // Filter out untrusted loaded rules before evaluation.
+    if let Some(store_path) = may_i::trust_store::default_trust_store_path()
+        && let Ok(load_result) = may_i::trust_store::TrustStore::load(&store_path)
+    {
+        may_i::trust_advisory::filter_trusted_rules(&mut loaded.config, &load_result.store);
     }
 
     let context = build_context(&payload);
@@ -121,9 +128,11 @@ fn check_trust(
     use may_i_shell_parser as parser;
 
     let hashes = compute_trust_hashes(config);
-    if hashes.programs.is_empty() {
+    if hashes.is_empty() {
         return Ok(None);
     }
+
+    let programs = hashes.programs();
 
     // Extract program name from the command
     let segments = parser::segment(command);
@@ -140,7 +149,7 @@ fn check_trust(
     let program = program.rsplit('/').next().unwrap_or(program);
 
     // Check if this program needs trust
-    if let Some(meta) = hashes.programs.get(program) {
+    if let Some(meta) = programs.get(program) {
         let store_path = may_i::trust_store::default_trust_store_path()
             .ok_or_else(|| miette::miette!("cannot determine trust store path"))?;
         let load_result = may_i::trust_store::TrustStore::load(&store_path)

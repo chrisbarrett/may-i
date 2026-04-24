@@ -18,12 +18,13 @@ pub fn cmd_eval(
     json_mode: bool,
     config_path: Option<&std::path::Path>,
 ) -> miette::Result<()> {
-    let loaded: crate::loaded_config::LoadedConfig =
+    let mut loaded: crate::loaded_config::LoadedConfig =
         may_i_config::load_and_resolve(config_path)?.into();
     let config_file = &loaded.config_path;
     let context = parse_cli_facts(raw_facts)?;
 
     // Trust check — in JSON mode, block if any program in the command is untrusted.
+    // Must happen before filtering so we can detect untrusted programs.
     if json_mode && let Some(block) = check_trust_json_block(command, &loaded.config)? {
         println!(
             "{}",
@@ -33,6 +34,13 @@ pub fn cmd_eval(
     }
 
     if json_mode {
+        // Filter out untrusted loaded rules before evaluation.
+        if let Some(store_path) = crate::trust_store::default_trust_store_path()
+            && let Ok(load_result) = crate::trust_store::TrustStore::load(&store_path)
+        {
+            crate::trust_advisory::filter_trusted_rules(&mut loaded.config, &load_result.store);
+        }
+
         let mut fold = TracingFold::from_loaded_config(&loaded);
         let result =
             engine::eval::evaluate_command_with_fold(command, &loaded.config, &context, &mut fold)
@@ -72,7 +80,16 @@ pub fn cmd_eval(
         if let Some(note) = output::migration_note(&loaded, config_file) {
             output::write_layout(&mut std::io::stderr(), &note, &term);
         }
+        // Render advisory BEFORE filtering (so it sees untrusted rules).
         crate::trust_advisory::render(&loaded.config, &term);
+
+        // Filter out untrusted loaded rules before evaluation.
+        if let Some(store_path) = crate::trust_store::default_trust_store_path()
+            && let Ok(load_result) = crate::trust_store::TrustStore::load(&store_path)
+        {
+            crate::trust_advisory::filter_trusted_rules(&mut loaded.config, &load_result.store);
+        }
+
         let (result, mut traces, colored_command) =
             evaluate_with_colorization(command, &loaded, &context)?;
         if !result.parse_diagnostics.is_empty() {
