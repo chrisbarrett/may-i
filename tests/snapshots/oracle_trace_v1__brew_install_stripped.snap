@@ -1,5 +1,6 @@
 ---
 source: tests/oracle_trace_v1.rs
+assertion_line: 112
 expression: normalised
 ---
 
@@ -12,8 +13,7 @@ Trace
            ((positional "install")                      │ "install" = "install" → yes
             (effect                                     │ → :deny "Package installation not allowed"
              :deny "Package installation not allowed")) │
-           (…                                           │
-            …))))                                       │
+           …)))                                         │
 
 Result
 
