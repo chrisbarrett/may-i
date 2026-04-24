@@ -61,6 +61,12 @@ pub(crate) fn cmd_migrate(
 ) -> miette::Result<()> {
     let config_file = may_i_config::resolve_path(config_path)?;
 
+    // Show trust advisory if applicable (best-effort, don't fail migration on trust errors).
+    if let Ok(loaded) = may_i_config::load_and_resolve(config_path) {
+        let term = may_i::output::Terminal::detect();
+        may_i::trust_advisory::render(&loaded.config, &term);
+    }
+
     let source = std::fs::read_to_string(&config_file)
         .map_err(|e| miette::miette!("Failed to read config file: {e}"))?;
 

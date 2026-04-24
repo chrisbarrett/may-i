@@ -10,6 +10,8 @@ When may-i blocks a command due to untrusted loaded rules, the user gets an opaq
 - **Redesigned `may-i trust` listing**: Grouped-by-file two-column layout when all trusted; detailed view with rule content and diffs for NEW/CHANGED entries.
 - **Richer block messages**: Eval and hook block messages include source file paths so users know where untrusted rules originate.
 - **Extended JSON output**: Trust listing and block responses include source files, canonical forms, and (for changed) previous forms.
+- **Per-rule trust granularity**: Trust decisions (approve/ignore) are made per individual rule, not per program. Ignored rules are filtered out of the evaluation pipeline as if they don't exist. Pending (unreviewed) rules are also inactive until explicitly approved.
+- **Interactive `git add -p` style review**: `may-i trust` presents each rule one at a time with `[y] approve  [n] ignore  [s] skip  [q] quit` keybindings. Changed rules show a diff of old vs new canonical form.
 
 ## Capabilities
 
@@ -18,6 +20,7 @@ When may-i blocks a command due to untrusted loaded rules, the user gets an opaq
 - `trust-provenance`: Track and surface the source file path for loaded rules and defines through the trust pipeline.
 - `trust-ui-listing`: Redesigned `may-i trust` listing with grouped-by-file layout, rule content display, and change diffs.
 - `trust-block-context`: Improved block messages in eval and hook modes that include source file provenance.
+- `per-rule-trust`: Per-rule trust granularity with approve/ignore/skip interactive review flow.
 
 ### Modified Capabilities
 
@@ -25,9 +28,10 @@ When may-i blocks a command due to untrusted loaded rules, the user gets an opaq
 
 - `crates/core/src/ast.rs` — `Provenance` enum gains data field; all pattern matches on `Provenance::Loaded` must update.
 - `crates/config/src/io.rs` — `expand_loads` propagates file paths into provenance.
-- `crates/engine/src/trust.rs` — `TrustHashes` struct expanded; `compute_trust_hashes` retains metadata.
-- `src/trust_store.rs` — Store format expanded with backward-compatible loading.
-- `src/cmd_trust.rs` — Complete rewrite of listing/display logic.
-- `src/cmd_eval.rs` — `check_trust_for_command` enriched with file paths.
-- `src/cmd_claude_code_hook.rs` — `check_trust` enriched with file paths.
-- `tests/trust_integration.rs` — Tests updated for new output format and metadata.
+- `crates/engine/src/trust.rs` — `TrustHashes` expanded to per-rule metadata; `compute_trust_hashes` produces per-rule entries. Eval pipeline gains trust-aware rule filtering.
+- `src/trust_store.rs` — Store format v3: per-rule entries keyed by canonical form hash, each with `approved` or `ignored` status. Migration from v2 (per-program) treats all existing approvals as approved at rule level.
+- `src/cmd_trust.rs` — Interactive review rewritten for per-rule `y/n/s/q` flow.
+- `src/interactive.rs` — `interactive_approve` replaced with `interactive_review` supporting three-way decisions per rule.
+- `src/cmd_eval.rs` — Eval filters out ignored and pending rules before evaluation.
+- `src/cmd_claude_code_hook.rs` — Hook filters out ignored and pending rules; blocks only if no approved rules exist for a matched program.
+- `tests/trust_integration.rs` — Tests updated for per-rule trust model.

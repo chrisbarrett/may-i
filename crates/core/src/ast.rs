@@ -1,18 +1,35 @@
 // Core AST types for the unified rule DSL.
 // Redesigned for unified effect model where everything returns Decision | Nil.
 
+use std::path::PathBuf;
+
 use crate::doc::Doc;
 use crate::pattern::{ArgPattern, CommandPattern};
 use crate::primitives::{Decision, ToDoc};
 use crate::span::Span;
 
 /// Whether a config form came from the primary config or a loaded file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Provenance {
     /// From the root config file (implicitly trusted).
     PrimaryConfig,
     /// From a file included via `(load ...)`.
-    Loaded,
+    Loaded { path: PathBuf },
+}
+
+impl Provenance {
+    /// Returns true if this is a `Loaded` variant (regardless of path).
+    pub fn is_loaded(&self) -> bool {
+        matches!(self, Provenance::Loaded { .. })
+    }
+
+    /// Returns the source file path if this is a `Loaded` variant.
+    pub fn path(&self) -> Option<&std::path::Path> {
+        match self {
+            Provenance::Loaded { path } => Some(path),
+            Provenance::PrimaryConfig => None,
+        }
+    }
 }
 
 /// A value with source span tracking.

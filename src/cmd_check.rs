@@ -64,6 +64,10 @@ pub fn cmd_check(
         if let Some(note) = output::migration_note(&loaded, config_file) {
             output::write_layout(&mut std::io::stderr(), &note, &term);
         }
+
+        // Trust advisory
+        crate::trust_advisory::render(&loaded.config, &term);
+
         let mut failures = Vec::new();
 
         for r in &results {

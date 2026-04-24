@@ -18,29 +18,29 @@ pub fn cmd_eval(
     json_mode: bool,
     config_path: Option<&std::path::Path>,
 ) -> miette::Result<()> {
-    let loaded: crate::loaded_config::LoadedConfig =
+    let mut loaded: crate::loaded_config::LoadedConfig =
         may_i_config::load_and_resolve(config_path)?.into();
     let config_file = &loaded.config_path;
     let context = parse_cli_facts(raw_facts)?;
 
-    // Trust check
-    if let Some(block) = check_trust_for_command(command, &loaded.config)? {
-        if json_mode {
-            let json = serde_json::json!({
-                "decision": "ask",
-                "reason": block,
-            });
-            println!(
-                "{}",
-                serde_json::to_string(&json).expect("response serialization is infallible")
-            );
-        } else {
-            eprintln!("{}", block);
-        }
+    // Trust check — in JSON mode, block if any program in the command is untrusted.
+    // Must happen before filtering so we can detect untrusted programs.
+    if json_mode && let Some(block) = check_trust_json_block(command, &loaded.config)? {
+        println!(
+            "{}",
+            serde_json::to_string(&block).expect("response serialization is infallible")
+        );
         return Ok(());
     }
 
     if json_mode {
+        // Filter out untrusted loaded rules before evaluation.
+        if let Some(store_path) = crate::trust_store::default_trust_store_path()
+            && let Ok(load_result) = crate::trust_store::TrustStore::load(&store_path)
+        {
+            crate::trust_advisory::filter_trusted_rules(&mut loaded.config, &load_result.store);
+        }
+
         let mut fold = TracingFold::from_loaded_config(&loaded);
         let result =
             engine::eval::evaluate_command_with_fold(command, &loaded.config, &context, &mut fold)
@@ -80,6 +80,16 @@ pub fn cmd_eval(
         if let Some(note) = output::migration_note(&loaded, config_file) {
             output::write_layout(&mut std::io::stderr(), &note, &term);
         }
+        // Render advisory BEFORE filtering (so it sees untrusted rules).
+        crate::trust_advisory::render(&loaded.config, &term);
+
+        // Filter out untrusted loaded rules before evaluation.
+        if let Some(store_path) = crate::trust_store::default_trust_store_path()
+            && let Ok(load_result) = crate::trust_store::TrustStore::load(&store_path)
+        {
+            crate::trust_advisory::filter_trusted_rules(&mut loaded.config, &load_result.store);
+        }
+
         let (result, mut traces, colored_command) =
             evaluate_with_colorization(command, &loaded, &context)?;
         if !result.parse_diagnostics.is_empty() {
@@ -203,47 +213,64 @@ fn colorize_segments(
     display_parts.concat()
 }
 
-/// Check trust for the program being invoked.
-/// Returns Some(reason) to block, None to proceed.
-fn check_trust_for_command(
+/// Build a JSON block response if any program in the command is untrusted.
+/// Used only for JSON/hook mode where we must return a machine-readable block.
+fn check_trust_json_block(
     command: &str,
     config: &may_i_core::ast::Config,
-) -> miette::Result<Option<String>> {
-    use may_i_engine::trust::compute_trust_hashes;
-
-    let hashes = compute_trust_hashes(config);
-    if hashes.programs.is_empty() {
+) -> miette::Result<Option<serde_json::Value>> {
+    let state = match crate::trust_advisory::compute(config) {
+        Some(s) => s,
+        None => return Ok(None),
+    };
+    if state.untrusted.is_empty() {
         return Ok(None);
     }
 
+    // Find which programs in the command are untrusted.
     let segments = parser::segment(command);
-    let segment_text = if segments.is_empty() {
-        command
+    let segment_texts: Vec<&str> = if segments.is_empty() {
+        vec![command]
     } else {
-        &command[segments[0].start..segments[0].end]
+        segments
+            .iter()
+            .filter(|s| !s.is_operator)
+            .map(|s| &command[s.start..s.end])
+            .collect()
     };
-    let program = segment_text
-        .split_whitespace()
-        .next()
-        .unwrap_or(segment_text);
-    let program = program.rsplit('/').next().unwrap_or(program);
 
-    if let Some(computed_hash) = hashes.programs.get(program) {
-        let store_path = crate::trust_store::default_trust_store_path()
-            .ok_or_else(|| miette::miette!("cannot determine trust store path"))?;
-        let store = crate::trust_store::TrustStore::load(&store_path)
-            .map_err(|e| miette::miette!("failed to read trust store: {e}"))?;
+    let untrusted_names: std::collections::BTreeSet<&str> =
+        state.untrusted.iter().map(|e| e.program.as_str()).collect();
 
-        match store.check(program, computed_hash) {
-            crate::trust_store::TrustStatus::Trusted => Ok(None),
-            crate::trust_store::TrustStatus::Changed | crate::trust_store::TrustStatus::New => {
-                Ok(Some(format!(
-                    "Loaded config rules for '{}' need trust approval. Run: may-i trust \"{}\"",
-                    program, program
-                )))
+    let mut matched = Vec::new();
+    let mut matched_files = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+
+    for text in segment_texts {
+        let program = text.split_whitespace().next().unwrap_or(text);
+        let program = program.rsplit('/').next().unwrap_or(program);
+        if !seen.insert(program) {
+            continue;
+        }
+        if untrusted_names.contains(program) {
+            matched.push(program);
+            if let Some(entry) = state.untrusted.iter().find(|e| e.program == program) {
+                matched_files.extend(entry.display_files.iter().map(|f| f.as_str()));
             }
         }
-    } else {
-        Ok(None)
     }
+
+    if matched.is_empty() {
+        return Ok(None);
+    }
+
+    let reason = format!(
+        "Untrusted rules for {}. Run: may-i trust",
+        matched.join(", ")
+    );
+    Ok(Some(serde_json::json!({
+        "decision": "ask",
+        "reason": reason,
+        "files": matched_files,
+    })))
 }

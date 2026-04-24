@@ -211,7 +211,7 @@ fn expand_loads(
         let list = match form.as_list() {
             Some(l) if !l.is_empty() && l[0].as_atom() == Some("load") => l,
             _ => {
-                result.push((form.clone(), current_provenance));
+                result.push((form.clone(), current_provenance.clone()));
                 continue;
             }
         };
@@ -253,7 +253,12 @@ fn expand_loads(
                 let child_dir = path.parent().ok_or_else(|| {
                     miette::miette!("cannot determine parent dir of {}", path.display())
                 })?;
-                let expanded = expand_loads(child_sexprs, child_dir, seen, Provenance::Loaded)?;
+                let expanded = expand_loads(
+                    child_sexprs,
+                    child_dir,
+                    seen,
+                    Provenance::Loaded { path: canonical },
+                )?;
                 result.extend(expanded);
             }
         } else {
@@ -276,7 +281,12 @@ fn expand_loads(
             let child_dir = path.parent().ok_or_else(|| {
                 miette::miette!("cannot determine parent dir of {}", path.display())
             })?;
-            let expanded = expand_loads(child_sexprs, child_dir, seen, Provenance::Loaded)?;
+            let expanded = expand_loads(
+                child_sexprs,
+                child_dir,
+                seen,
+                Provenance::Loaded { path: canonical },
+            )?;
             result.extend(expanded);
         }
     }
@@ -747,9 +757,8 @@ mod tests {
             Provenance::PrimaryConfig,
             "root rule should be PrimaryConfig"
         );
-        assert_eq!(
-            result.config.rules[1].provenance,
-            Provenance::Loaded,
+        assert!(
+            result.config.rules[1].provenance.is_loaded(),
             "loaded rule should be Loaded"
         );
     }
@@ -774,7 +783,7 @@ mod tests {
             result.config.defines[0].provenance,
             Provenance::PrimaryConfig
         );
-        assert_eq!(result.config.defines[1].provenance, Provenance::Loaded);
+        assert!(result.config.defines[1].provenance.is_loaded());
     }
 
     #[test]
@@ -790,15 +799,74 @@ mod tests {
         let root = write_file(dir.path(), "config.lisp", r#"(load "outer.lisp")"#);
         let result = load(&root).unwrap();
         assert_eq!(result.config.rules.len(), 2);
-        assert_eq!(
-            result.config.rules[0].provenance,
-            Provenance::Loaded,
+        assert!(
+            result.config.rules[0].provenance.is_loaded(),
             "outer loaded rule should be Loaded"
         );
-        assert_eq!(
-            result.config.rules[1].provenance,
-            Provenance::Loaded,
+        assert!(
+            result.config.rules[1].provenance.is_loaded(),
             "recursively loaded rule should be Loaded"
+        );
+    }
+
+    #[test]
+    fn loaded_rule_records_source_file_path() {
+        let dir = tempfile::tempdir().unwrap();
+        write_file(dir.path(), "rules.lisp", r#"(rule "echo" (effect :allow))"#);
+        let root = write_file(dir.path(), "config.lisp", r#"(load "rules.lisp")"#);
+        let result = load(&root).unwrap();
+        let path = result.config.rules[0]
+            .provenance
+            .path()
+            .expect("should have path");
+        let expected = dir.path().join("rules.lisp").canonicalize().unwrap();
+        assert_eq!(path, expected);
+    }
+
+    #[test]
+    fn loaded_define_records_source_file_path() {
+        let dir = tempfile::tempdir().unwrap();
+        write_file(
+            dir.path(),
+            "defs.lisp",
+            r#"(define remote-cmd (fact? :via/ssh))"#,
+        );
+        let root = write_file(dir.path(), "config.lisp", r#"(load "defs.lisp")"#);
+        let result = load(&root).unwrap();
+        let path = result.config.defines[0]
+            .provenance
+            .path()
+            .expect("should have path");
+        let expected = dir.path().join("defs.lisp").canonicalize().unwrap();
+        assert_eq!(path, expected);
+    }
+
+    #[test]
+    fn recursively_loaded_rules_record_their_own_file_path() {
+        let dir = tempfile::tempdir().unwrap();
+        write_file(dir.path(), "inner.lisp", r#"(rule "cat" (effect :allow))"#);
+        write_file(
+            dir.path(),
+            "outer.lisp",
+            r#"(rule "echo" (effect :allow))
+(load "inner.lisp")"#,
+        );
+        let root = write_file(dir.path(), "config.lisp", r#"(load "outer.lisp")"#);
+        let result = load(&root).unwrap();
+
+        let outer_path = result.config.rules[0].provenance.path().unwrap();
+        let inner_path = result.config.rules[1].provenance.path().unwrap();
+
+        let expected_outer = dir.path().join("outer.lisp").canonicalize().unwrap();
+        let expected_inner = dir.path().join("inner.lisp").canonicalize().unwrap();
+
+        assert_eq!(
+            outer_path, expected_outer,
+            "rule from outer.lisp should point to outer.lisp"
+        );
+        assert_eq!(
+            inner_path, expected_inner,
+            "rule from inner.lisp should point to inner.lisp"
         );
     }
 }
