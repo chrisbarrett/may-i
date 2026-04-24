@@ -52,6 +52,11 @@ pub enum Layout {
     Stack(Vec<Layout>),
     /// Pre-formatted text line(s).
     Text(String),
+    /// Wrap items across lines with a separator, like a flow/inline layout.
+    Wrap {
+        items: Vec<ColItem>,
+        separator: ColItem,
+    },
     /// Advisory note with word-wrapped body text.
     Note(Note),
 }
@@ -68,6 +73,8 @@ pub struct Note {
     pub level: NoteLevel,
     pub heading: NoteHeading,
     pub body: String,
+    /// Child layouts rendered inside the box, each separated by a dashed rule.
+    pub children: Vec<Layout>,
 }
 
 /// Heading content for a note box.
@@ -109,6 +116,7 @@ pub struct Advisory {
     pub detail: String,
     pub suggestion: String,
     pub command: String,
+    pub children: Vec<Layout>,
 }
 
 impl Advisory {
@@ -128,20 +136,30 @@ impl Advisory {
 
     /// Convert to a `Layout::Note` with a custom pre-styled heading.
     pub fn into_note_with_heading(self, heading: NoteHeading) -> Layout {
-        let mut body_parts = Vec::new();
-        if !self.detail.is_empty() {
-            body_parts.push(self.detail);
+        let mut children = self.children;
+
+        // Build suggestion + command as the last child section.
+        if !self.suggestion.is_empty() || !self.command.is_empty() {
+            let mut parts: Vec<Layout> = Vec::new();
+            let has_suggestion = !self.suggestion.is_empty();
+            if has_suggestion {
+                parts.push(Layout::Text(self.suggestion));
+            }
+            if !self.command.is_empty() {
+                if has_suggestion {
+                    parts.push(Layout::Blank);
+                }
+                let cmd_text = format!("{}{}", "$ ".dimmed(), self.command,);
+                parts.push(Layout::Text(cmd_text));
+            }
+            children.push(Layout::Stack(parts));
         }
-        if !self.suggestion.is_empty() {
-            body_parts.push(self.suggestion);
-        }
-        if !self.command.is_empty() {
-            body_parts.push(format!("$ {}", self.command));
-        }
+
         Layout::Note(Note {
             level: self.level,
             heading,
-            body: body_parts.join("\n"),
+            body: self.detail,
+            children,
         })
     }
 }
@@ -266,6 +284,9 @@ fn render_layout(w: &mut impl Write, layout: &Layout, indent: usize, term: &Term
         }
         Layout::Text(text) => {
             let _ = writeln!(w, "{:indent$}{text}", "");
+        }
+        Layout::Wrap { items, separator } => {
+            write_wrap(w, indent, items, separator, term);
         }
         Layout::Note(note) => {
             write_note(w, indent, note, term);
@@ -420,6 +441,50 @@ fn write_col_left(w: &mut impl Write, indent: usize, row: &ColRow, divider_col: 
     let _ = write!(w, "{:indent$}{:lead$}{}{:trail$}", "", "", row.left, "",);
 }
 
+fn write_wrap(
+    w: &mut impl Write,
+    indent: usize,
+    items: &[ColItem],
+    separator: &ColItem,
+    term: &Terminal,
+) {
+    let avail = term.width.saturating_sub(indent);
+    let mut lines: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut cur_width = 0;
+
+    for (i, item) in items.iter().enumerate() {
+        let need_sep = !cur.is_empty();
+        let addition = if need_sep {
+            separator.width + item.width
+        } else {
+            item.width
+        };
+
+        if !cur.is_empty() && cur_width + addition > avail {
+            cur.push_str(&separator.text);
+            lines.push(cur);
+            cur = String::new();
+            cur_width = 0;
+        }
+
+        if !cur.is_empty() {
+            cur.push_str(&separator.text);
+            cur_width += separator.width;
+        }
+        cur.push_str(&item.text);
+        cur_width += item.width;
+
+        if i == items.len() - 1 && !cur.is_empty() {
+            lines.push(std::mem::take(&mut cur));
+        }
+    }
+
+    for line in &lines {
+        let _ = writeln!(w, "{:indent$}{line}", "");
+    }
+}
+
 fn write_note(w: &mut impl Write, indent: usize, note: &Note, term: &Terminal) {
     let icon: &str = match note.level {
         NoteLevel::Info => "ℹ",
@@ -473,6 +538,27 @@ fn write_note(w: &mut impl Write, indent: usize, note: &Note, term: &Terminal) {
                     write_box_line(w, indent, usable, &line, line.len());
                 }
             }
+        }
+    }
+
+    // Child layouts rendered inside the box, each preceded by a dashed separator.
+    let mid_fill = usable.saturating_sub(2);
+    let child_term = Terminal::new(inner_width);
+    for child in &note.children {
+        let _ = writeln!(
+            w,
+            "{:indent$}{}{}{}",
+            "",
+            "├".dimmed(),
+            "┄".repeat(mid_fill).dimmed(),
+            "┤".dimmed(),
+        );
+        let mut child_buf = Vec::new();
+        render_layout(&mut child_buf, child, 0, &child_term);
+        let child_str = String::from_utf8_lossy(&child_buf);
+        for line in child_str.lines() {
+            let vis_width = visible_len(line);
+            write_box_line(w, indent, usable, line, vis_width);
         }
     }
 
@@ -660,6 +746,7 @@ mod tests {
             level: NoteLevel::Warn,
             heading: "Test heading".into(),
             body: "This is the body text.".into(),
+            children: vec![],
         });
         let s = render_to_string(&layout, 0, &term);
         insta::assert_snapshot!(strip_ansi(&s));
@@ -672,6 +759,7 @@ mod tests {
             level: NoteLevel::Info,
             heading: "FYI".into(),
             body: "Something to know.".into(),
+            children: vec![],
         });
         let s = render_to_string(&layout, 0, &term);
         insta::assert_snapshot!(strip_ansi(&s));
@@ -684,6 +772,7 @@ mod tests {
             level: NoteLevel::Error,
             heading: "Bad thing".into(),
             body: "Something went wrong.".into(),
+            children: vec![],
         });
         let s = render_to_string(&layout, 0, &term);
         insta::assert_snapshot!(strip_ansi(&s));
@@ -696,6 +785,7 @@ mod tests {
             level: NoteLevel::Warn,
             heading: "Warn".into(),
             body: "one two three four five six seven eight nine ten".into(),
+            children: vec![],
         });
         let s = render_to_string(&layout, 0, &term);
         insta::assert_snapshot!(strip_ansi(&s));
@@ -708,6 +798,7 @@ mod tests {
             level: NoteLevel::Warn,
             heading: "Heads up".into(),
             body: String::new(),
+            children: vec![],
         });
         let s = render_to_string(&layout, 0, &term);
         insta::assert_snapshot!(strip_ansi(&s));
@@ -722,6 +813,7 @@ mod tests {
                 level: NoteLevel::Info,
                 heading: "Hi".into(),
                 body: "Hello world.".into(),
+                children: vec![],
             }),
         );
         let s = render_to_string(&layout, 0, &term);
@@ -735,6 +827,7 @@ mod tests {
             level: NoteLevel::Warn,
             heading: "Short".into(),
             body: "Some body text here.".into(),
+            children: vec![],
         });
         let s = render_to_string(&layout, 0, &term);
         let stripped = strip_ansi(&s);
@@ -757,6 +850,7 @@ mod tests {
             level: NoteLevel::Warn,
             heading: "Warn".into(),
             body: long_path.into(),
+            children: vec![],
         });
         let s = render_to_string(&layout, 0, &term);
         let stripped = strip_ansi(&s);
@@ -778,6 +872,24 @@ mod tests {
             level: NoteLevel::Warn,
             heading: "Migration needed".into(),
             body: "Config format is outdated.\nRun this command:\n$ may-i migrate".into(),
+            children: vec![],
+        });
+        let s = render_to_string(&layout, 0, &term);
+        insta::assert_snapshot!(strip_ansi(&s));
+    }
+
+    #[test]
+    fn note_with_child_layout() {
+        let term = Terminal::new(50);
+        let child = Layout::Stack(vec![
+            Layout::Text("~/foo.lisp (3)".into()),
+            Layout::Text("   ls, cat, rm".into()),
+        ]);
+        let layout = Layout::Note(Note {
+            level: NoteLevel::Warn,
+            heading: "Test".into(),
+            body: "Body text.".into(),
+            children: vec![child],
         });
         let s = render_to_string(&layout, 0, &term);
         insta::assert_snapshot!(strip_ansi(&s));
@@ -792,6 +904,7 @@ mod tests {
             detail: "Tracing output may differ from the real file.".into(),
             suggestion: "Update your config to the latest syntax:".into(),
             command: "may-i migrate".into(),
+            children: vec![],
         }
         .into_layout();
         let s = render_to_string(&layout, 0, &term);
@@ -807,6 +920,7 @@ mod tests {
             detail: "Tracing output may differ from the real file.".into(),
             suggestion: "Update your config:".into(),
             command: "may-i migrate".into(),
+            children: vec![],
         }
         .into_layout();
         let s = render_to_string(&layout, 0, &term);
@@ -940,6 +1054,7 @@ mod proptests {
                         level,
                         heading: heading.into(),
                         body,
+                        children: vec![],
                     })
                 }
             ),
@@ -951,6 +1066,17 @@ mod proptests {
                 1..=4,
             )
             .prop_map(Layout::Columns),
+            prop::collection::vec(
+                "[a-z]{1,10}".prop_map(|s| {
+                    let w = s.len();
+                    ColItem::new(s, w)
+                }),
+                1..=6,
+            )
+            .prop_map(|items| Layout::Wrap {
+                items,
+                separator: ColItem::new(", ", 2),
+            }),
         ];
         leaf.prop_recursive(2, 8, 3, |inner| {
             prop_oneof![

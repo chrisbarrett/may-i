@@ -64,6 +64,7 @@ pub fn migration_note(
                     .into(),
                 suggestion: "Apply pending migrations by running:".into(),
                 command: format!("{prog} migrate"),
+                children: vec![],
             }
             .into_note_with_heading(heading),
         )
@@ -74,7 +75,8 @@ pub fn migration_note(
 
 /// Build a trust warning advisory note for untrusted programs.
 ///
-/// Returns `None` if the list is empty.
+/// Returns `None` if the list is empty. Shows a per-file summary with
+/// sampled command names inside the advisory box.
 pub fn trust_warning_note(
     programs: &[(&str, &std::collections::BTreeSet<std::path::PathBuf>)],
 ) -> Option<Layout> {
@@ -82,47 +84,72 @@ pub fn trust_warning_note(
         return None;
     }
 
-    let (heading, detail, command) = if programs.len() == 1 {
-        let (name, files) = &programs[0];
-        let files_str = if files.is_empty() {
-            String::new()
+    // Group programs by source file.
+    let mut file_to_programs: std::collections::BTreeMap<&std::path::Path, Vec<&str>> =
+        std::collections::BTreeMap::new();
+    for (name, files) in programs {
+        if files.is_empty() {
+            file_to_programs
+                .entry(std::path::Path::new("<unknown>"))
+                .or_default()
+                .push(name);
         } else {
-            let paths: Vec<String> = files.iter().map(|p| shorten_home(p)).collect();
-            format!(" from {}", paths.join(", "))
-        };
-        (
-            format!("Untrusted rules: {name}"),
-            format!("Rules{files_str} need approval before they take effect."),
-            format!("may-i trust \"{name}\""),
-        )
-    } else {
-        let names = format_name_list(programs.iter().map(|(n, _)| *n), programs.len());
-        (
-            "Untrusted rules".into(),
-            format!(
-                "{} programs have rules that need approval: {names}.",
-                programs.len()
-            ),
-            "may-i trust".into(),
-        )
-    };
+            for file in *files {
+                file_to_programs
+                    .entry(file.as_path())
+                    .or_default()
+                    .push(name);
+            }
+        }
+    }
 
-    let suggestion = if programs.len() == 1 {
-        "Approve by running:"
-    } else {
-        "Review and approve by running:"
-    };
+    let child = trust_samples(&file_to_programs);
 
     Some(
         Advisory {
             level: NoteLevel::Warn,
-            heading,
-            detail,
-            suggestion: suggestion.into(),
-            command,
+            heading: "Untrusted rules".into(),
+            detail: "Rules from these files need approval before they take effect.".into(),
+            suggestion: "Review and approve by running:".into(),
+            command: "may-i trust".into(),
+            children: vec![child],
         }
         .into_layout(),
     )
+}
+
+/// Build a layout showing per-file trust samples.
+///
+/// Each entry shows the file path (teal) with count, and up to 5 sample
+/// command names that wrap at terminal width.
+fn trust_samples(
+    file_to_programs: &std::collections::BTreeMap<&std::path::Path, Vec<&str>>,
+) -> Layout {
+    let mut children: Vec<Layout> = Vec::new();
+    for (file, progs) in file_to_programs {
+        let path = shorten_home(file);
+        let count = progs.len();
+        let header = format!("{} ({count})", path.cyan());
+        children.push(Layout::Text(header));
+
+        let take = progs.len().min(5);
+        let mut items: Vec<ColItem> = progs[..take]
+            .iter()
+            .map(|p| ColItem::new(*p, p.len()))
+            .collect();
+        if progs.len() > 5 {
+            items.push(ColItem::new("...", 3));
+        }
+        let sep_text = format!("{} ", ",".dimmed());
+        children.push(Layout::Indent(
+            3,
+            Box::new(Layout::Wrap {
+                items,
+                separator: ColItem::new(sep_text, 2),
+            }),
+        ));
+    }
+    Layout::Stack(children)
 }
 
 /// Build a trust store integrity error note.
@@ -148,6 +175,7 @@ pub fn trust_integrity_note(
                 ),
                 suggestion: "This may indicate tampering. Resolve by running:".into(),
                 command: "may-i trust".into(),
+                children: vec![],
             }
             .into_layout()
         }
@@ -160,6 +188,7 @@ pub fn trust_integrity_note(
             ),
             suggestion: String::new(),
             command: String::new(),
+            children: vec![],
         }
         .into_layout(),
     }
@@ -645,37 +674,78 @@ mod tests {
         files.insert(std::path::PathBuf::from("/tmp/rules.lisp"));
         let layout = trust_warning_note(&[("git", &files)]).unwrap();
         let output = render_note(&layout);
-        assert!(output.contains("Untrusted rules: git"), "{output}");
-        assert!(output.contains("/tmp/rules.lisp"), "{output}");
-        assert!(output.contains("may-i trust \"git\""), "{output}");
+        assert!(output.contains("Untrusted rules"), "{output}");
+        assert!(
+            output.contains("/tmp/rules.lisp (1)"),
+            "should show file with count: {output}"
+        );
+        assert!(
+            output.contains("git"),
+            "should show sampled command: {output}"
+        );
+        assert!(output.contains("may-i trust"), "{output}");
     }
 
     #[test]
-    fn trust_warning_note_multiple_programs_under_five() {
-        let files = std::collections::BTreeSet::new();
+    fn trust_warning_note_multiple_programs_same_file() {
+        let mut files = std::collections::BTreeSet::new();
+        files.insert(std::path::PathBuf::from("/tmp/rules.lisp"));
         let programs: Vec<(&str, &std::collections::BTreeSet<std::path::PathBuf>)> =
             vec![("git", &files), ("cargo", &files), ("npm", &files)];
         let layout = trust_warning_note(&programs).unwrap();
         let output = render_note(&layout);
         assert!(output.contains("Untrusted rules"), "{output}");
+        assert!(
+            output.contains("/tmp/rules.lisp (3)"),
+            "should show file with count: {output}"
+        );
         assert!(output.contains("git"), "{output}");
         assert!(output.contains("cargo"), "{output}");
         assert!(output.contains("npm"), "{output}");
-        assert!(!output.contains("more"), "{output}");
         assert!(output.contains("may-i trust"), "{output}");
     }
 
     #[test]
-    fn trust_warning_note_truncates_over_five() {
-        let files = std::collections::BTreeSet::new();
-        let names = ["git", "cargo", "npm", "docker", "kubectl", "node", "python"];
-        let programs: Vec<(&str, &std::collections::BTreeSet<std::path::PathBuf>)> =
-            names.iter().map(|n| (*n, &files)).collect();
+    fn trust_warning_note_truncates_over_five_programs() {
+        let mut files = std::collections::BTreeSet::new();
+        files.insert(std::path::PathBuf::from("/tmp/rules.lisp"));
+        let programs: Vec<(&str, &std::collections::BTreeSet<std::path::PathBuf>)> = vec![
+            ("cmd1", &files),
+            ("cmd2", &files),
+            ("cmd3", &files),
+            ("cmd4", &files),
+            ("cmd5", &files),
+            ("cmd6", &files),
+            ("cmd7", &files),
+        ];
         let layout = trust_warning_note(&programs).unwrap();
         let output = render_note(&layout);
-        assert!(output.contains("(and 2 more)"), "{output}");
-        assert!(output.contains("kubectl"), "{output}");
-        assert!(!output.contains("node"), "{output}");
+        assert!(
+            output.contains("/tmp/rules.lisp (7)"),
+            "should show count: {output}"
+        );
+        assert!(
+            output.contains("cmd1, cmd2, cmd3, cmd4, cmd5, ..."),
+            "should ellipsize after 5: {output}"
+        );
+        assert!(
+            !output.contains("cmd6"),
+            "should not show 6th program: {output}"
+        );
+    }
+
+    #[test]
+    fn trust_warning_note_multiple_files() {
+        let mut files_a = std::collections::BTreeSet::new();
+        files_a.insert(std::path::PathBuf::from("/tmp/a.lisp"));
+        let mut files_b = std::collections::BTreeSet::new();
+        files_b.insert(std::path::PathBuf::from("/tmp/b.lisp"));
+        let programs: Vec<(&str, &std::collections::BTreeSet<std::path::PathBuf>)> =
+            vec![("git", &files_a), ("npm", &files_b)];
+        let layout = trust_warning_note(&programs).unwrap();
+        let output = render_note(&layout);
+        assert!(output.contains("/tmp/a.lisp"), "{output}");
+        assert!(output.contains("/tmp/b.lisp"), "{output}");
     }
 
     // ── trust_integrity_note tests ───────────────────────────────

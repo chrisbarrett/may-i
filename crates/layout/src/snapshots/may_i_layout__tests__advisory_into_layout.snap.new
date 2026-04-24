@@ -1,11 +1,11 @@
 ---
 source: crates/layout/src/lib.rs
+assertion_line: 907
 expression: strip_ansi(&s)
 ---
 ╭─ ⚠ Outdated configuration format ────────────────────────╮
 │ Tracing output may differ from the real file.            │
 ├┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┤
 │ Update your config to the latest syntax:                 │
-│                                                          │
 │ $ may-i migrate                                          │
 ╰──────────────────────────────────────────────────────────╯

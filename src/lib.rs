@@ -9,4 +9,5 @@ pub mod loaded_config;
 pub mod output;
 pub mod runtime_facts;
 pub mod shell_parse_error;
+pub mod trust_advisory;
 pub mod trust_store;

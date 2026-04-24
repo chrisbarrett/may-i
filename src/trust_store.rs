@@ -73,7 +73,12 @@ impl TrustStore {
         let (store, was_corrupt) = match std::fs::read_to_string(path) {
             Ok(content) => match serde_json::from_str::<TrustStore>(&content) {
                 Ok(s) => (s, false),
-                Err(_) => (TrustStore::default(), true),
+                Err(_) => {
+                    // Valid JSON but wrong shape = old format (silent reset).
+                    // Invalid JSON = actual file corruption.
+                    let is_valid_json = serde_json::from_str::<serde_json::Value>(&content).is_ok();
+                    (TrustStore::default(), !is_valid_json)
+                }
             },
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => (TrustStore::default(), false),
             Err(e) => return Err(e),

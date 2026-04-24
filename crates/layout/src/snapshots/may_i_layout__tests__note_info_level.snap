@@ -1,6 +1,5 @@
 ---
 source: crates/layout/src/lib.rs
-assertion_line: 612
 expression: strip_ansi(&s)
 ---
 ╭─ ℹ FYI ────────────────────────────────────────╮

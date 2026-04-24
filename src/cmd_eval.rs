@@ -23,19 +23,11 @@ pub fn cmd_eval(
     let config_file = &loaded.config_path;
     let context = parse_cli_facts(raw_facts)?;
 
-    // Trust check
-    let trust_block = check_trust_for_command(command, &loaded.config)?;
-    if let Some(block) = &trust_block
-        && json_mode
-    {
-        let json = serde_json::json!({
-            "decision": "ask",
-            "reason": block.reason,
-            "files": block.files,
-        });
+    // Trust check — in JSON mode, block if any program in the command is untrusted.
+    if json_mode && let Some(block) = check_trust_json_block(command, &loaded.config)? {
         println!(
             "{}",
-            serde_json::to_string(&json).expect("response serialization is infallible")
+            serde_json::to_string(&block).expect("response serialization is infallible")
         );
         return Ok(());
     }
@@ -80,11 +72,7 @@ pub fn cmd_eval(
         if let Some(note) = output::migration_note(&loaded, config_file) {
             output::write_layout(&mut std::io::stderr(), &note, &term);
         }
-        if let Some(block) = &trust_block
-            && let Some(note) = output::trust_warning_note(&[(&block.program, &block.source_files)])
-        {
-            output::write_layout(&mut std::io::stderr(), &note, &term);
-        }
+        crate::trust_advisory::render(&loaded.config, &term);
         let (result, mut traces, colored_command) =
             evaluate_with_colorization(command, &loaded, &context)?;
         if !result.parse_diagnostics.is_empty() {
@@ -208,75 +196,64 @@ fn colorize_segments(
     display_parts.concat()
 }
 
-/// Trust block info returned when a command is blocked due to untrusted rules.
-struct TrustBlock {
-    program: String,
-    reason: String,
-    files: Vec<String>,
-    source_files: std::collections::BTreeSet<std::path::PathBuf>,
-}
-
-/// Check trust for the program being invoked.
-/// Returns Some(block) to block, None to proceed.
-fn check_trust_for_command(
+/// Build a JSON block response if any program in the command is untrusted.
+/// Used only for JSON/hook mode where we must return a machine-readable block.
+fn check_trust_json_block(
     command: &str,
     config: &may_i_core::ast::Config,
-) -> miette::Result<Option<TrustBlock>> {
-    use may_i_engine::trust::compute_trust_hashes;
-
-    let hashes = compute_trust_hashes(config);
-    if hashes.programs.is_empty() {
+) -> miette::Result<Option<serde_json::Value>> {
+    let state = match crate::trust_advisory::compute(config) {
+        Some(s) => s,
+        None => return Ok(None),
+    };
+    if state.untrusted.is_empty() {
         return Ok(None);
     }
 
+    // Find which programs in the command are untrusted.
     let segments = parser::segment(command);
-    let segment_text = if segments.is_empty() {
-        command
+    let segment_texts: Vec<&str> = if segments.is_empty() {
+        vec![command]
     } else {
-        &command[segments[0].start..segments[0].end]
+        segments
+            .iter()
+            .filter(|s| !s.is_operator)
+            .map(|s| &command[s.start..s.end])
+            .collect()
     };
-    let program = segment_text
-        .split_whitespace()
-        .next()
-        .unwrap_or(segment_text);
-    let program = program.rsplit('/').next().unwrap_or(program);
 
-    if let Some(meta) = hashes.programs.get(program) {
-        let store_path = crate::trust_store::default_trust_store_path()
-            .ok_or_else(|| miette::miette!("cannot determine trust store path"))?;
-        let load_result = crate::trust_store::TrustStore::load(&store_path)
-            .map_err(|e| miette::miette!("failed to read trust store: {e}"))?;
-        let store = load_result.store;
+    let untrusted_names: std::collections::BTreeSet<&str> =
+        state.untrusted.iter().map(|e| e.program.as_str()).collect();
 
-        match store.check(program, &meta.hash) {
-            crate::trust_store::TrustStatus::Trusted => Ok(None),
-            crate::trust_store::TrustStatus::Changed | crate::trust_store::TrustStatus::New => {
-                let files: Vec<String> = meta
-                    .source_files
-                    .iter()
-                    .map(|p| crate::output::shorten_home(p))
-                    .collect();
+    let mut matched = Vec::new();
+    let mut matched_files = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
 
-                let from_clause = if files.is_empty() {
-                    String::new()
-                } else {
-                    format!(" (from {})", files.join(", "))
-                };
-
-                let reason = format!(
-                    "Untrusted rules for '{}'{from_clause}. Run: may-i trust \"{program}\"",
-                    program
-                );
-
-                Ok(Some(TrustBlock {
-                    program: program.to_string(),
-                    reason,
-                    files,
-                    source_files: meta.source_files.clone(),
-                }))
+    for text in segment_texts {
+        let program = text.split_whitespace().next().unwrap_or(text);
+        let program = program.rsplit('/').next().unwrap_or(program);
+        if !seen.insert(program) {
+            continue;
+        }
+        if untrusted_names.contains(program) {
+            matched.push(program);
+            if let Some(entry) = state.untrusted.iter().find(|e| e.program == program) {
+                matched_files.extend(entry.display_files.iter().map(|f| f.as_str()));
             }
         }
-    } else {
-        Ok(None)
     }
+
+    if matched.is_empty() {
+        return Ok(None);
+    }
+
+    let reason = format!(
+        "Untrusted rules for {}. Run: may-i trust",
+        matched.join(", ")
+    );
+    Ok(Some(serde_json::json!({
+        "decision": "ask",
+        "reason": reason,
+        "files": matched_files,
+    })))
 }
