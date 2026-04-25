@@ -180,30 +180,25 @@ fn list_status(
 ) -> miette::Result<()> {
     if json_mode {
         list_status_json(store, hashes);
+        return Ok(());
+    }
+
+    let has_pending = hashes
+        .rules
+        .iter()
+        .any(|r| store.check_rule(&r.hash) == TrustCheck::Pending);
+
+    if is_tty && has_pending {
+        // Skip the full dump — go straight into per-rule review.
+        let (_approved, _summary) = interactive::interactive_review(store, hashes)?;
+        store
+            .save(store_path)
+            .map_err(|e| miette::miette!("failed to save trust store: {e}"))?;
+
+        // Show grouped-by-file trusted summary after review.
+        list_status_human(store, hashes, programs);
     } else {
         list_status_human(store, hashes, programs);
-
-        // Offer to approve pending entries interactively.
-        if is_tty {
-            let pending = interactive::pending_entries(store, programs);
-            if !pending.is_empty() {
-                eprintln!();
-                let walk = dialoguer::Confirm::new()
-                    .with_prompt("Review and approve pending entries?")
-                    .default(true)
-                    .interact()
-                    .map_err(|e| miette::miette!("prompt failed: {e}"))?;
-
-                if walk {
-                    let approved = interactive::interactive_approve(store, &pending)?;
-                    if !approved.is_empty() {
-                        store
-                            .save(store_path)
-                            .map_err(|e| miette::miette!("failed to save trust store: {e}"))?;
-                    }
-                }
-            }
-        }
     }
     Ok(())
 }
@@ -287,12 +282,12 @@ fn list_status_human(
                 TrustCheck::Ignored => ("ignored", "ignored".red().to_string()),
                 TrustCheck::Pending => ("pending", "pending".yellow().to_string()),
             };
-            let _ = writeln!(
-                w,
-                "    {} {}",
-                rule_meta.canonical_form.dimmed(),
-                badge_colored,
-            );
+            let pretty = interactive::pretty_form(&rule_meta.canonical_form, 72, false);
+            let first_line = pretty.lines().next().unwrap_or(&rule_meta.canonical_form);
+            let _ = writeln!(w, "    {} {}", first_line.dimmed(), badge_colored);
+            for line in pretty.lines().skip(1) {
+                let _ = writeln!(w, "    {}", line.dimmed());
+            }
             if let Some(file) = &rule_meta.source_file {
                 let _ = writeln!(
                     w,
