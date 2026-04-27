@@ -180,32 +180,76 @@ fn list_status(
 ) -> miette::Result<()> {
     if json_mode {
         list_status_json(store, hashes);
+        return Ok(());
+    }
+
+    let has_pending = hashes
+        .rules
+        .iter()
+        .any(|r| store.check_rule(&r.hash) == TrustCheck::Pending);
+
+    if is_tty && has_pending {
+        // Skip the full dump — go straight into per-rule review.
+        let (_approved, _summary) = interactive::interactive_review(store, hashes)?;
+        store
+            .save(store_path)
+            .map_err(|e| miette::miette!("failed to save trust store: {e}"))?;
+
+        // Show grouped-by-file trusted summary only — no rule forms.
+        print_trusted_summary(store, hashes, programs);
     } else {
         list_status_human(store, hashes, programs);
-
-        // Offer to approve pending entries interactively.
-        if is_tty {
-            let pending = interactive::pending_entries(store, programs);
-            if !pending.is_empty() {
-                eprintln!();
-                let walk = dialoguer::Confirm::new()
-                    .with_prompt("Review and approve pending entries?")
-                    .default(true)
-                    .interact()
-                    .map_err(|e| miette::miette!("prompt failed: {e}"))?;
-
-                if walk {
-                    let approved = interactive::interactive_approve(store, &pending)?;
-                    if !approved.is_empty() {
-                        store
-                            .save(store_path)
-                            .map_err(|e| miette::miette!("failed to save trust store: {e}"))?;
-                    }
-                }
-            }
-        }
     }
     Ok(())
+}
+
+/// Print only the grouped-by-file trusted summary, without re-showing any rule forms.
+fn print_trusted_summary(
+    store: &TrustStore,
+    hashes: &TrustHashes,
+    programs: &BTreeMap<String, ProgramMeta>,
+) {
+    let mut w = std::io::stderr();
+
+    let mut by_program: BTreeMap<&str, Vec<&RuleMeta>> = BTreeMap::new();
+    for rule_meta in &hashes.rules {
+        by_program
+            .entry(&rule_meta.program)
+            .or_default()
+            .push(rule_meta);
+    }
+
+    let trusted: Vec<(&str, &ProgramMeta)> = by_program
+        .iter()
+        .filter(|(_, rules)| {
+            rules
+                .iter()
+                .all(|r| store.check_rule(&r.hash) == TrustCheck::Approved)
+        })
+        .filter_map(|(program, _)| {
+            programs
+                .get_key_value(*program)
+                .map(|(k, v)| (k.as_str(), v))
+        })
+        .collect();
+
+    if trusted.is_empty() {
+        return;
+    }
+
+    let grouped = group_by_file(&trusted);
+    let term = output::Terminal::detect();
+    let rows: Vec<output::ColRow> = grouped
+        .iter()
+        .map(|(file, progs)| {
+            let names = progs.join(", ");
+            let right = output::shorten_home(file).dimmed().to_string();
+            output::ColRow::new(names.clone(), names.len(), right)
+        })
+        .collect();
+
+    let layout = output::Layout::Indent(2, Box::new(output::Layout::Columns(rows)));
+    output::write_layout(&mut w, &layout, &term);
 }
 
 /// Per-rule JSON output.
@@ -217,7 +261,7 @@ fn list_status_json(store: &TrustStore, hashes: &TrustHashes) {
             let status = store.check_rule(&rule_meta.hash);
             let status_str = match status {
                 TrustCheck::Approved => "approved",
-                TrustCheck::Ignored => "ignored",
+                TrustCheck::Blocked => "blocked",
                 TrustCheck::Pending => "pending",
             };
             let file = rule_meta
@@ -284,15 +328,15 @@ fn list_status_human(
         for (rule_meta, status) in rule_metas.iter().zip(statuses.iter()) {
             let (_badge_text, badge_colored) = match status {
                 TrustCheck::Approved => ("approved", "approved".green().to_string()),
-                TrustCheck::Ignored => ("ignored", "ignored".red().to_string()),
+                TrustCheck::Blocked => ("blocked", "blocked".red().to_string()),
                 TrustCheck::Pending => ("pending", "pending".yellow().to_string()),
             };
-            let _ = writeln!(
-                w,
-                "    {} {}",
-                rule_meta.canonical_form.dimmed(),
-                badge_colored,
-            );
+            let pretty = interactive::pretty_form(&rule_meta.canonical_form, 72, true);
+            let first_line = pretty.lines().next().unwrap_or(&rule_meta.canonical_form);
+            let _ = writeln!(w, "    {} {}", first_line, badge_colored);
+            for line in pretty.lines().skip(1) {
+                let _ = writeln!(w, "    {}", line);
+            }
             if let Some(file) = &rule_meta.source_file {
                 let _ = writeln!(
                     w,
