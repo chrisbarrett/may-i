@@ -16,3 +16,8 @@ coverage. Inspect `lcov.info` to see what was uncovered, then
   preferred.
 
 Files under `**/proptest-regressions/` are always checked in.
+
+# Release tagging
+
+Before creating a release tag, bump the `version` field in `Cargo.toml` to match
+the tag being created. The Cargo version and the git tag must agree.
