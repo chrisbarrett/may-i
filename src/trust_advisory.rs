@@ -123,7 +123,7 @@ pub fn render(config: &may_i_core::ast::Config, term: &output::Terminal) -> Opti
 ///
 /// - Primary config rules always pass through.
 /// - Loaded rules included only if per-rule hash is approved in store.
-/// - Ignored and pending loaded rules are excluded.
+/// - Blocked and pending loaded rules are excluded.
 pub fn filter_trusted_rules(config: &mut may_i_core::ast::Config, store: &TrustStore) {
     config.rules.retain(|rule| {
         if !rule.provenance.is_loaded() {
@@ -220,7 +220,7 @@ mod tests {
     }
 
     #[test]
-    fn filter_removes_ignored_loaded_rules() {
+    fn filter_removes_blocked_loaded_rules() {
         let loaded_rule = make_rule(
             "git",
             Decision::Allow,
@@ -232,13 +232,13 @@ mod tests {
         let hash = hash_rule(&form);
 
         let mut store = TrustStore::default();
-        store.ignore_rule(hash, "git".into(), form);
+        store.block_rule(hash, "git".into(), form);
 
         let mut config = make_config(vec![loaded_rule]);
         filter_trusted_rules(&mut config, &store);
         assert!(
             config.rules.is_empty(),
-            "ignored loaded rule should be removed"
+            "blocked loaded rule should be removed"
         );
     }
 

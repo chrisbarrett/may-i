@@ -25,7 +25,7 @@ use sha2::{Digest, Sha256};
 #[serde(rename_all = "lowercase")]
 pub enum RuleStatus {
     Approved,
-    Ignored,
+    Blocked,
 }
 
 /// Per-rule entry in the trust store (v3).
@@ -41,8 +41,8 @@ pub struct RuleEntry {
 pub enum TrustCheck {
     /// Rule is approved in the store.
     Approved,
-    /// Rule is explicitly ignored in the store.
-    Ignored,
+    /// Rule is explicitly blocked in the store.
+    Blocked,
     /// Rule is not in the store (never reviewed).
     Pending,
 }
@@ -170,7 +170,7 @@ impl TrustStore {
     pub fn check_rule(&self, hash: &str) -> TrustCheck {
         match self.rules.get(hash) {
             Some(entry) if entry.status == RuleStatus::Approved => TrustCheck::Approved,
-            Some(_) => TrustCheck::Ignored,
+            Some(_) => TrustCheck::Blocked,
             None => TrustCheck::Pending,
         }
     }
@@ -214,14 +214,14 @@ impl TrustStore {
         );
     }
 
-    /// Ignore a single rule.
-    pub fn ignore_rule(&mut self, hash: String, program: String, form: String) {
+    /// Block a single rule.
+    pub fn block_rule(&mut self, hash: String, program: String, form: String) {
         self.rules.insert(
             hash,
             RuleEntry {
                 program,
                 form,
-                status: RuleStatus::Ignored,
+                status: RuleStatus::Blocked,
             },
         );
     }
@@ -365,8 +365,8 @@ mod tests {
             r#""approved""#
         );
         assert_eq!(
-            serde_json::to_string(&RuleStatus::Ignored).unwrap(),
-            r#""ignored""#
+            serde_json::to_string(&RuleStatus::Blocked).unwrap(),
+            r#""blocked""#
         );
     }
 
@@ -402,26 +402,26 @@ mod tests {
     }
 
     #[test]
-    fn check_rule_ignored() {
+    fn check_rule_blocked() {
         let mut store = TrustStore::default();
-        store.ignore_rule(
+        store.block_rule(
             "sha256:abc".into(),
             "git".into(),
             r#"(rule "git" (effect :allow))"#.into(),
         );
-        assert_eq!(store.check_rule("sha256:abc"), TrustCheck::Ignored);
+        assert_eq!(store.check_rule("sha256:abc"), TrustCheck::Blocked);
     }
 
-    // --- approve_rule / ignore_rule ---
+    // --- approve_rule / block_rule ---
 
     #[test]
-    fn approve_then_ignore_changes_status() {
+    fn approve_then_block_changes_status() {
         let mut store = TrustStore::default();
         store.approve_rule("sha256:abc".into(), "git".into(), "form".into());
         assert_eq!(store.check_rule("sha256:abc"), TrustCheck::Approved);
 
-        store.ignore_rule("sha256:abc".into(), "git".into(), "form".into());
-        assert_eq!(store.check_rule("sha256:abc"), TrustCheck::Ignored);
+        store.block_rule("sha256:abc".into(), "git".into(), "form".into());
+        assert_eq!(store.check_rule("sha256:abc"), TrustCheck::Blocked);
     }
 
     // --- previous_form ---
@@ -504,14 +504,14 @@ mod tests {
 
         let form2 = r#"(rule "git" (effect :deny))"#;
         let hash2 = hash_single_rule(form2);
-        store.ignore_rule(hash2.clone(), "git".into(), form2.into());
+        store.block_rule(hash2.clone(), "git".into(), form2.into());
         store.save(&path).unwrap();
 
         let loaded = TrustStore::load(&path).unwrap();
         assert!(loaded.suspects.is_empty());
         assert!(!loaded.was_corrupt);
         assert_eq!(loaded.store.check_rule(&hash1), TrustCheck::Approved);
-        assert_eq!(loaded.store.check_rule(&hash2), TrustCheck::Ignored);
+        assert_eq!(loaded.store.check_rule(&hash2), TrustCheck::Blocked);
     }
 
     #[test]

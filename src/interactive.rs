@@ -47,7 +47,7 @@ pub fn pretty_form(canonical: &str, width: usize, color: bool) -> String {
 /// Summary of an interactive review session.
 pub struct ReviewSummary {
     pub approved: usize,
-    pub ignored: usize,
+    pub blocked: usize,
     pub skipped: usize,
 }
 
@@ -138,7 +138,7 @@ pub fn interactive_review(
     let mut approved_programs = Vec::new();
     let mut summary = ReviewSummary {
         approved: 0,
-        ignored: 0,
+        blocked: 0,
         skipped: 0,
     };
 
@@ -169,7 +169,7 @@ pub fn interactive_review(
         .iter()
         .filter(|r| {
             let check = store.check_rule(&r.hash);
-            check != TrustCheck::Approved && check != TrustCheck::Ignored
+            check != TrustCheck::Approved && check != TrustCheck::Blocked
         })
         .collect();
     let total_pending = pending.len();
@@ -224,7 +224,7 @@ pub fn interactive_review(
 
         let _ = writeln!(
             term,
-            "  {} approve  {} ignore  {} skip  {} quit  {}",
+            "  {} approve  {} block  {} skip  {} quit  {}",
             "[y]".bold(),
             "[n]".bold(),
             "[s]".bold(),
@@ -254,12 +254,12 @@ pub fn interactive_review(
                     break;
                 }
                 'n' | 'N' => {
-                    store.ignore_rule(
+                    store.block_rule(
                         rule_meta.hash.clone(),
                         rule_meta.program.clone(),
                         rule_meta.canonical_form.clone(),
                     );
-                    summary.ignored += 1;
+                    summary.blocked += 1;
                     break;
                 }
                 's' | 'S' => {
@@ -321,9 +321,9 @@ fn render_rule_detail(
     if let Some(old) = prev_form {
         render_pretty_diff(term, old, &rule_meta.canonical_form, pp_width);
     } else {
-        let pretty = pretty_form(&rule_meta.canonical_form, pp_width, false);
+        let pretty = pretty_form(&rule_meta.canonical_form, pp_width, true);
         for line in pretty.lines() {
-            let _ = writeln!(term, "    {}", line.dimmed());
+            let _ = writeln!(term, "    {}", line);
         }
     }
 
@@ -362,7 +362,7 @@ fn print_summary(term: &mut console::Term, summary: &ReviewSummary) {
         term,
         "  {}  {}  {}",
         format!("Approved: {}", summary.approved).green(),
-        format!("Ignored: {}", summary.ignored).red(),
+        format!("Blocked: {}", summary.blocked).red(),
         format!("Skipped: {}", summary.skipped).yellow(),
     );
 }
@@ -448,9 +448,9 @@ fn render_entry_detail(
         }
     } else {
         for rule in &meta.canonical_rules {
-            let pretty = pretty_form(rule, 72, false);
+            let pretty = pretty_form(rule, 72, true);
             for line in pretty.lines() {
-                let _ = writeln!(w, "    {}", line.dimmed());
+                let _ = writeln!(w, "    {}", line);
             }
         }
     }
