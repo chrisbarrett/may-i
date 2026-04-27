@@ -30,6 +30,8 @@ Forms not in this table use default function-call alignment.
 calling convention and reads naturally with function-call alignment (args align
 under the first arg).
 
+The `doc_from_sexpr` function SHALL be public API, converting `may_i_sexpr::Sexpr` nodes into `Doc<()>` trees suitable for pretty-printing. This enables canonical form strings to be parsed and pretty-printed outside of test contexts.
+
 #### Scenario: N=0 form (cond)
 - **WHEN** pretty-printing `(cond ((pred1) (effect :allow)) (else (effect :deny)))`
 - **THEN** the form always breaks with clauses at +2 and body parts on separate lines
@@ -41,6 +43,10 @@ under the first arg).
 #### Scenario: N=2 form (if)
 - **WHEN** pretty-printing `(if pred then else)`
 - **THEN** pred is special-1, then-branch is special-2, else-branch is body
+
+#### Scenario: Canonical form string round-trips through pretty-printer
+- **WHEN** a canonical form string like `(rule "git" (when (fact? :env "prod") (effect :allow)))` is parsed with `may_i_sexpr::parse` and converted with `doc_from_sexpr`
+- **THEN** `may_i_pp::pretty` produces properly indented multi-line output respecting indent specs
 
 ### Requirement: Cond Form Layout
 
