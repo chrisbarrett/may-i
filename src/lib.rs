@@ -6,6 +6,7 @@ pub mod cmd_eval;
 pub mod cmd_trust;
 pub mod interactive;
 pub mod loaded_config;
+pub mod notes;
 pub mod output;
 pub mod runtime_facts;
 pub mod shell_parse_error;

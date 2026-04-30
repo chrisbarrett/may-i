@@ -64,7 +64,10 @@ pub(crate) fn cmd_migrate(
     // Show trust advisory if applicable (best-effort, don't fail migration on trust errors).
     if let Ok(loaded) = may_i_config::load_and_resolve(config_path) {
         let term = may_i::output::Terminal::detect();
-        may_i::trust_advisory::render(&loaded.config, &term);
+        may_i::trust_advisory::write_integrity_advisories(&loaded.config, &term);
+        if let Some(layout) = may_i::trust_advisory::build_warning_layout(&loaded.config) {
+            may_i::output::write_layout(&mut std::io::stderr(), &layout, &term);
+        }
     }
 
     let source = std::fs::read_to_string(&config_file)
