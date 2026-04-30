@@ -16,38 +16,34 @@ If a change doesn't fit one of these, question whether it belongs.
 
 ## Vocabulary
 
-**Rule** — `(rule <command> <expr>)`. Pattern + effect for one top-level
-command.
+| Term                       | Definition                                                                                                |
+| -------------------------- | --------------------------------------------------------------------------------------------------------- |
+| **Rule**                   | `(rule <command> <expr>)`. Pattern + effect for one top-level command.                                    |
+| **Effect**                 | Terminal decision: `:allow`, `:ask`, `:deny`, with optional reason. See glossary.                         |
+| **Predicate**              | Boolean expr over args/facts. `(fact? :k)` / `(fact? [:k pat])` query facts. `define` names a predicate.  |
+| **Fact**                   | Runtime `key → set<string>` supplied by the harness per invocation. See glossary.                         |
+| **Pattern / Expr**         | Argument matchers and combinators. See glossary.                                                          |
+| **Recursive Check**        | `may-i *` — recursive eval of a wrapper's inner command; pushes a `:via` fact.                            |
+| **Provenance**             | `PrimaryConfig` (root file) or `Loaded { path }` (via `load`). Decides whether trust applies.             |
+| **Trust**                  | Per-rule approval keyed by canonical-form hash. See glossary.                                             |
+| **Canonical form**         | Deterministic, span-free s-expression serialisation used for hashing and diffs. Formatting/comments invisible to hash. |
+| **v1 / v2 syntax**         | v1: `(rule (command "echo") ...)`; v2 (canonical): `(rule "echo" ...)`. See glossary.                     |
 
-**Effect** — terminal decision: `:allow`, `:ask`, `:deny`, with optional reason.
-Lattice `:allow < :ask < :deny`; combiners take the strictest.
+### Glossary
 
-**Predicate** — boolean expr over args/facts. `(fact? :k)` and
-`(fact? [:k pat])` are the predicates that query facts. `define` names a
-predicate.
+**Effect** — lattice `:allow < :ask < :deny`; combiners take the strictest.
 
-**Fact** — runtime `key → set<string>`. Set-valued so wrappers stack (`:via`
-accumulates `ssh`, `sudo`). Wildcard matches non-empty set; patterns test set
-membership.
+**Fact** — set-valued so wrappers stack (`:via` accumulates `ssh`, `sudo`).
+Wildcard matches non-empty set; patterns test set membership.
 
-**Pattern / Expr** — argument matchers: literals, regex, quantifiers (`?` `*`
-`+`), combinators (`positional`, `exact`, `anywhere`, `forbidden`). `Expr::Bind`
-captures matches as facts for inner eval.
+**Pattern / Expr** — literals, regex, quantifiers (`?` `*` `+`), combinators
+(`positional`, `exact`, `anywhere`, `forbidden`). `Expr::Bind` captures matches
+as facts for inner eval.
 
-**Recursive Check (`may-i *`)** — recursive eval of a wrapper's inner command;
-pushes a `:via` fact.
+**Trust** — loaded rules inert until approved; primary rules bypass. Store v3.
 
-**Provenance** — `PrimaryConfig` (root file) or `Loaded { path }` (via `load`).
-Decides whether trust applies.
-
-**Trust** — per-rule approval keyed by canonical-form hash. Loaded rules inert
-until approved; primary rules bypass. Store v3.
-
-**Canonical form** — deterministic, span-free s-expression serialisation used
-for hashing and diffs. Formatting and comments invisible to hash.
-
-**v1 / v2 syntax** — v1: `(rule (command "echo") ...)`; v2 (canonical):
-`(rule "echo" ...)`. v1 migrated transparently for the user's config only.
+**v1 / v2 syntax** — v1 migrated transparently for the user's config only
+(`~/.config/may-i/config.lisp`); fresh and temp files must use v2.
 
 ## Boundaries
 
