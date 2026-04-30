@@ -1,0 +1,2 @@
+decision: allow
+colored: [4;32mcat file[0m | [4;32mgrep foo[0m

@@ -1,0 +1,2 @@
+decision: ask
+colored: [4;33m$EDITOR file.txt[0m

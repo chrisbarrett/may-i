@@ -138,6 +138,7 @@ fn test_simple_command_name_none() {
         assignments: vec![],
         words: vec![],
         redirections: vec![],
+        span: Span { start: 0, end: 0 },
     };
     assert_eq!(sc.command_name(), None);
 }
@@ -148,6 +149,7 @@ fn test_simple_command_args_empty() {
         assignments: vec![],
         words: vec![Word::literal("echo")],
         redirections: vec![],
+        span: Span { start: 0, end: 0 },
     };
     assert!(sc.args().is_empty());
 }
@@ -175,6 +177,7 @@ fn test_simple_command_name_non_literal() {
             parts: vec![WordPart::Parameter("cmd".to_string())],
         }],
         redirections: vec![],
+        span: Span { start: 0, end: 0 },
     };
     // command_name returns "" for non-literal first part
     assert_eq!(sc.command_name(), Some(""));

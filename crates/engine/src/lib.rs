@@ -10,6 +10,14 @@ pub mod test_generators;
 
 use may_i_core::Decision;
 
+/// A per-unit decision with the byte range of that unit in the original input.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SegmentDecision {
+    pub start: usize,
+    pub end: usize,
+    pub decision: Decision,
+}
+
 /// Error type for evaluation failures.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -36,6 +44,10 @@ pub struct EvalResult {
     pub decision: Decision,
     pub reason: Option<String>,
     pub parse_diagnostics: Vec<may_i_shell_parser::ParseDiagnostic>,
+    /// Per-unit decisions with byte ranges in the original input. Top-level
+    /// entries are pairwise non-overlapping; embedded-command entries may be
+    /// fully contained within their enclosing entry's range.
+    pub segment_decisions: Vec<SegmentDecision>,
 }
 
 impl EvalResult {
@@ -46,6 +58,7 @@ impl EvalResult {
             decision,
             reason,
             parse_diagnostics: Vec::new(),
+            segment_decisions: Vec::new(),
         }
     }
 }

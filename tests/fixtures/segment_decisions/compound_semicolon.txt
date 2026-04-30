@@ -1,0 +1,2 @@
+decision: allow
+colored: [4;32mecho a[0m ; [4;32mecho b[0m

@@ -1,0 +1,2 @@
+decision: deny
+colored: [4;32mecho a[0m && [4;31mrm -rf /[0m

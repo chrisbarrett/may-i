@@ -1,0 +1,2 @@
+decision: deny
+colored: [4;31mecho $(rm)[0m
