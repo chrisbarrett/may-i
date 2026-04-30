@@ -18,8 +18,7 @@ pub fn cmd_eval(
     json_mode: bool,
     config_path: Option<&std::path::Path>,
 ) -> miette::Result<()> {
-    let mut loaded: crate::loaded_config::LoadedConfig =
-        may_i_config::load_and_resolve(config_path)?.into();
+    let mut loaded = may_i_config::load_and_resolve(config_path)?;
     let config_file = &loaded.config_path;
     let context = parse_cli_facts(raw_facts)?;
 
@@ -41,7 +40,7 @@ pub fn cmd_eval(
             crate::trust_advisory::filter_trusted_rules(&mut loaded.config, &load_result.store);
         }
 
-        let mut fold = TracingFold::from_loaded_config(&loaded);
+        let mut fold = TracingFold::from_load_result(&loaded);
         let result =
             engine::eval::evaluate_command_with_fold(command, &loaded.config, &context, &mut fold)
                 .map_err(|e| miette::miette!("{e}"))?;
@@ -165,11 +164,11 @@ pub fn write_eval_output(
 /// for display purposes only.
 pub fn evaluate_with_colorization(
     command: &str,
-    loaded: &crate::loaded_config::LoadedConfig,
+    loaded: &may_i_config::LoadResult,
     context: &may_i_core::ContextFacts,
 ) -> miette::Result<(engine::EvalResult, Vec<TraceEntry>, String)> {
     // Use the unified evaluation pipeline for the decision
-    let mut fold = TracingFold::from_loaded_config(loaded);
+    let mut fold = TracingFold::from_load_result(loaded);
     let result =
         engine::eval::evaluate_command_with_fold(command, &loaded.config, context, &mut fold)
             .map_err(|e| miette::miette!("{e}"))?;
@@ -197,7 +196,7 @@ fn colorize_text(text: &str, decision: Decision) -> String {
 fn colorize_segments(
     command: &str,
     segments: &[parser::Segment],
-    loaded: &crate::loaded_config::LoadedConfig,
+    loaded: &may_i_config::LoadResult,
     context: &may_i_core::ContextFacts,
 ) -> String {
     let mut display_parts = Vec::new();

@@ -10,7 +10,7 @@ use crate::output;
 
 /// Build a migration advisory note if the config was transparently migrated.
 pub fn migration_note(
-    loaded: &crate::loaded_config::LoadedConfig,
+    loaded: &may_i_config::LoadResult,
     config_path: &std::path::Path,
 ) -> Option<Layout> {
     if loaded.pre_migration_forms.is_some() {
@@ -51,12 +51,12 @@ pub fn migration_note(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::loaded_config::LoadedConfig;
+    use may_i_config::LoadResult;
     use may_i_core::ast::{Config, SecurityConfig};
     use std::path::PathBuf;
 
-    fn loaded_with_pre_migration() -> LoadedConfig {
-        LoadedConfig {
+    fn loaded_with_pre_migration() -> LoadResult {
+        LoadResult {
             config: Config {
                 rules: vec![],
                 defines: vec![],
@@ -69,8 +69,8 @@ mod tests {
         }
     }
 
-    fn loaded_without_pre_migration() -> LoadedConfig {
-        LoadedConfig {
+    fn loaded_without_pre_migration() -> LoadResult {
+        LoadResult {
             config: Config {
                 rules: vec![],
                 defines: vec![],

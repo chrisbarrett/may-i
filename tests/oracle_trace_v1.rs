@@ -9,8 +9,8 @@ use std::path::Path;
 use serde::Deserialize;
 
 use may_i::cmd_eval::{evaluate_with_colorization, write_eval_output};
-use may_i::loaded_config::LoadedConfig;
 use may_i::output;
+use may_i_config::LoadResult;
 
 #[derive(Deserialize)]
 struct Cases {
@@ -38,11 +38,9 @@ fn load_cases() -> Vec<Case> {
     cases.case
 }
 
-fn load_config() -> LoadedConfig {
+fn load_config() -> LoadResult {
     let config_path = fixture_dir().join("config.lisp");
-    let mut loaded: LoadedConfig = may_i_config::load(&config_path)
-        .expect("failed to load V1 fixture config")
-        .into();
+    let mut loaded = may_i_config::load(&config_path).expect("failed to load V1 fixture config");
     let resolved_rules =
         may_i_config::resolve::validate_and_resolve(&loaded.config.rules, &loaded.config.defines)
             .expect("predicate resolution failed");
@@ -55,7 +53,7 @@ fn parse_facts(raw_facts: &[String]) -> may_i_core::ContextFacts {
 }
 
 /// Render trace output for a command evaluation into a buffer.
-fn render_output(command: &str, config: &LoadedConfig, facts: &[String]) -> Vec<u8> {
+fn render_output(command: &str, config: &LoadResult, facts: &[String]) -> Vec<u8> {
     colored::control::set_override(true);
 
     let term = output::Terminal::new(80);
