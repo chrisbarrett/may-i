@@ -11,6 +11,7 @@ use may_i_shell_parser as parser;
 use crate::annotation::{TraceEntry, TracingFold};
 use crate::output;
 use crate::runtime_facts::parse_cli_facts;
+use crate::trust_gate::{self, GateMode, GateOutcome};
 
 pub fn cmd_eval(
     command: &str,
@@ -19,25 +20,27 @@ pub fn cmd_eval(
     config_path: Option<&std::path::Path>,
 ) -> miette::Result<()> {
     let mut loaded = may_i_config::load_and_resolve(config_path)?;
-    let config_file = &loaded.config_path;
+    let config_file = &loaded.config_path.clone();
     let context = parse_cli_facts(raw_facts)?;
 
-    // Trust check — in JSON mode, block if any program in the command is untrusted.
-    // Must happen before filtering so we can detect untrusted programs.
-    if json_mode && let Some(block) = check_trust_json_block(command, &loaded.config)? {
-        println!(
-            "{}",
-            serde_json::to_string(&block).expect("response serialization is infallible")
-        );
-        return Ok(());
-    }
-
     if json_mode {
-        // Filter out untrusted loaded rules before evaluation.
-        if let Some(store_path) = crate::trust_store::default_trust_store_path()
-            && let Ok(load_result) = crate::trust_store::TrustStore::load(&store_path)
-        {
-            crate::trust_advisory::filter_trusted_rules(&mut loaded.config, &load_result.store);
+        let config = std::mem::take(&mut loaded.config);
+        match trust_gate::evaluate(config, command, GateMode::Json) {
+            GateOutcome::Block { reason, files, .. } => {
+                let block = serde_json::json!({
+                    "decision": "ask",
+                    "reason": reason,
+                    "files": files,
+                });
+                println!(
+                    "{}",
+                    serde_json::to_string(&block).expect("response serialization is infallible")
+                );
+                return Ok(());
+            }
+            GateOutcome::Proceed { config, .. } => {
+                loaded.config = config;
+            }
         }
 
         let mut fold = TracingFold::from_load_result(&loaded);
@@ -79,17 +82,18 @@ pub fn cmd_eval(
         if let Some(note) = crate::notes::migration_note(&loaded, config_file) {
             output::write_layout(&mut std::io::stderr(), &note, &term);
         }
-        // Render advisory BEFORE filtering (so it sees untrusted rules).
+        // Integrity advisories are orthogonal to the gate; render before it.
         crate::trust_advisory::write_integrity_advisories(&loaded.config, &term);
-        if let Some(layout) = crate::trust_advisory::build_warning_layout(&loaded.config) {
-            output::write_layout(&mut std::io::stderr(), &layout, &term);
-        }
 
-        // Filter out untrusted loaded rules before evaluation.
-        if let Some(store_path) = crate::trust_store::default_trust_store_path()
-            && let Ok(load_result) = crate::trust_store::TrustStore::load(&store_path)
-        {
-            crate::trust_advisory::filter_trusted_rules(&mut loaded.config, &load_result.store);
+        let config = std::mem::take(&mut loaded.config);
+        match trust_gate::evaluate(config, command, GateMode::Text) {
+            GateOutcome::Proceed { config, advisory } => {
+                loaded.config = config;
+                if let Some(layout) = advisory {
+                    output::write_layout(&mut std::io::stderr(), &layout, &term);
+                }
+            }
+            GateOutcome::Block { .. } => unreachable!("text mode never blocks"),
         }
 
         let (result, mut traces, colored_command) =
@@ -223,66 +227,4 @@ fn strictest_overlapping(
         .filter(|d| d.start < end && d.end > start)
         .map(|d| d.decision)
         .max()
-}
-
-/// Build a JSON block response if any program in the command is untrusted.
-/// Used only for JSON/hook mode where we must return a machine-readable block.
-fn check_trust_json_block(
-    command: &str,
-    config: &may_i_core::ast::Config,
-) -> miette::Result<Option<serde_json::Value>> {
-    let state = match crate::trust_advisory::compute(config) {
-        Some(s) => s,
-        None => return Ok(None),
-    };
-    if state.untrusted().is_empty() {
-        return Ok(None);
-    }
-
-    // Find which programs in the command are untrusted.
-    let segments = parser::segment(command);
-    let segment_texts: Vec<&str> = if segments.is_empty() {
-        vec![command]
-    } else {
-        segments
-            .iter()
-            .filter(|s| !s.is_operator)
-            .map(|s| &command[s.start..s.end])
-            .collect()
-    };
-
-    let untrusted_names: std::collections::BTreeSet<&str> =
-        state.untrusted().iter().map(|e| e.program()).collect();
-
-    let mut matched = Vec::new();
-    let mut matched_files = Vec::new();
-    let mut seen = std::collections::BTreeSet::new();
-
-    for text in segment_texts {
-        let program = text.split_whitespace().next().unwrap_or(text);
-        let program = program.rsplit('/').next().unwrap_or(program);
-        if !seen.insert(program) {
-            continue;
-        }
-        if untrusted_names.contains(program) {
-            matched.push(program);
-            if let Some(entry) = state.untrusted().iter().find(|e| e.program() == program) {
-                matched_files.extend(entry.display_files().iter().map(|f| f.as_str()));
-            }
-        }
-    }
-
-    if matched.is_empty() {
-        return Ok(None);
-    }
-
-    let reason = format!(
-        "Untrusted rules for {}. Run: may-i trust",
-        matched.join(", ")
-    );
-    Ok(Some(serde_json::json!({
-        "decision": "ask",
-        "reason": reason,
-        "files": matched_files,
-    })))
 }

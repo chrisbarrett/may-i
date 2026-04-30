@@ -8,6 +8,8 @@ use may_i_engine as engine;
 use may_i_engine::EvalResult;
 use miette::Context;
 
+use may_i::trust_gate::{self, GateMode, GateOutcome};
+
 pub(crate) fn cmd_claude_code_hook(config_path: Option<&std::path::Path>) -> miette::Result<()> {
     let mut input = String::new();
     std::io::stdin()
@@ -27,20 +29,21 @@ pub(crate) fn cmd_claude_code_hook(config_path: Option<&std::path::Path>) -> mie
 
     let mut loaded = config::load_and_resolve(config_path)?;
 
-    // Trust check: if the command's program has untrusted loaded content, block.
-    if let Some(block_response) = check_trust(&command, &loaded.config)? {
-        println!(
-            "{}",
-            serde_json::to_string(&block_response).expect("response serialization is infallible")
-        );
-        return Ok(());
-    }
-
-    // Filter out untrusted loaded rules before evaluation.
-    if let Some(store_path) = may_i::trust_store::default_trust_store_path()
-        && let Ok(load_result) = may_i::trust_store::TrustStore::load(&store_path)
-    {
-        may_i::trust_advisory::filter_trusted_rules(&mut loaded.config, &load_result.store);
+    let config = std::mem::take(&mut loaded.config);
+    match trust_gate::evaluate(config, &command, GateMode::Hook) {
+        GateOutcome::Block {
+            decision, reason, ..
+        } => {
+            let response = render_response(EvalResult::new(decision, Some(reason)));
+            println!(
+                "{}",
+                serde_json::to_string(&response).expect("response serialization is infallible")
+            );
+            return Ok(());
+        }
+        GateOutcome::Proceed { config, .. } => {
+            loaded.config = config;
+        }
     }
 
     let context = build_context(&payload);
@@ -115,74 +118,6 @@ fn build_context(payload: &serde_json::Value) -> ContextFacts {
     }
 
     context
-}
-
-/// Check trust for the program being invoked.
-///
-/// Returns `Some(response)` to block execution, `None` to proceed normally.
-fn check_trust(
-    command: &str,
-    config: &may_i_core::ast::Config,
-) -> miette::Result<Option<serde_json::Value>> {
-    use may_i_engine::trust::compute_trust_hashes;
-    use may_i_shell_parser as parser;
-
-    let hashes = compute_trust_hashes(config);
-    if hashes.is_empty() {
-        return Ok(None);
-    }
-
-    let programs = hashes.programs();
-
-    // Extract program name from the command
-    let segments = parser::segment(command);
-    let segment_text = if segments.is_empty() {
-        command
-    } else {
-        &command[segments[0].start..segments[0].end]
-    };
-    // The segment is the full sub-command; extract just the first word (binary name)
-    let program = segment_text
-        .split_whitespace()
-        .next()
-        .unwrap_or(segment_text);
-    let program = program.rsplit('/').next().unwrap_or(program);
-
-    // Check if this program needs trust
-    if let Some(meta) = programs.get(program) {
-        let store_path = may_i::trust_store::default_trust_store_path()
-            .ok_or_else(|| miette::miette!("cannot determine trust store path"))?;
-        let load_result = may_i::trust_store::TrustStore::load(&store_path)
-            .map_err(|e| miette::miette!("failed to read trust store: {e}"))?;
-        let store = load_result.store;
-
-        match store.check(program, &meta.hash) {
-            may_i::trust_store::TrustStatus::Trusted => Ok(None),
-            may_i::trust_store::TrustStatus::Changed | may_i::trust_store::TrustStatus::New => {
-                let files: Vec<String> = meta
-                    .source_files
-                    .iter()
-                    .map(|p| may_i::output::shorten_home(p))
-                    .collect();
-
-                let from_clause = if files.is_empty() {
-                    String::new()
-                } else {
-                    format!(" (from {})", files.join(", "))
-                };
-
-                let reason = format!(
-                    "Untrusted rules for '{}'{from_clause}. Run: may-i trust \"{program}\"",
-                    program
-                );
-                let response =
-                    render_response(EvalResult::new(may_i_core::Decision::Ask, Some(reason)));
-                Ok(Some(response))
-            }
-        }
-    } else {
-        Ok(None)
-    }
 }
 
 /// Render the evaluation result in Claude Code hook response format.

@@ -46,6 +46,8 @@ Literals, regex, quantifiers (`?` `*` `+`), combinators (`positional`, `exact`,
 ### Trust
 
 Loaded rules inert until approved; primary rules bypass. Store v3.
+`trust_gate::evaluate` is the consumer-facing surface — CLI commands consult
+it once per invocation for filtering, advisory layout, and block decisions.
 
 ### v1 / v2 syntax
 
