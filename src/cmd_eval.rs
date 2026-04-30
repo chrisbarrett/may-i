@@ -226,7 +226,7 @@ fn check_trust_json_block(
         Some(s) => s,
         None => return Ok(None),
     };
-    if state.untrusted.is_empty() {
+    if state.untrusted().is_empty() {
         return Ok(None);
     }
 
@@ -243,7 +243,7 @@ fn check_trust_json_block(
     };
 
     let untrusted_names: std::collections::BTreeSet<&str> =
-        state.untrusted.iter().map(|e| e.program.as_str()).collect();
+        state.untrusted().iter().map(|e| e.program()).collect();
 
     let mut matched = Vec::new();
     let mut matched_files = Vec::new();
@@ -257,8 +257,8 @@ fn check_trust_json_block(
         }
         if untrusted_names.contains(program) {
             matched.push(program);
-            if let Some(entry) = state.untrusted.iter().find(|e| e.program == program) {
-                matched_files.extend(entry.display_files.iter().map(|f| f.as_str()));
+            if let Some(entry) = state.untrusted().iter().find(|e| e.program() == program) {
+                matched_files.extend(entry.display_files().iter().map(|f| f.as_str()));
             }
         }
     }

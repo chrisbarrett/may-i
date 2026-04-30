@@ -15,14 +15,30 @@ use crate::trust_store::{self, TrustCheck, TrustStatus, TrustStore};
 
 /// An untrusted program entry with its provenance.
 pub struct UntrustedEntry {
-    pub program: String,
-    pub source_files: BTreeSet<PathBuf>,
-    pub display_files: Vec<String>,
+    program: String,
+    source_files: BTreeSet<PathBuf>,
+    display_files: Vec<String>,
+}
+
+impl UntrustedEntry {
+    pub fn program(&self) -> &str {
+        &self.program
+    }
+
+    pub fn display_files(&self) -> &[String] {
+        &self.display_files
+    }
 }
 
 /// Result of computing the trust state for a config.
 pub struct TrustState {
-    pub untrusted: Vec<UntrustedEntry>,
+    untrusted: Vec<UntrustedEntry>,
+}
+
+impl TrustState {
+    pub fn untrusted(&self) -> &[UntrustedEntry] {
+        &self.untrusted
+    }
 }
 
 /// Compute trust state: which programs have untrusted loaded rules.
@@ -107,7 +123,7 @@ fn build_warning_layout_from_entries(entries: &[UntrustedEntry]) -> Option<Layou
 ///
 /// If `suspect_names` is `Some`, lists the affected entry names.
 /// If `None`, indicates the whole file is corrupt.
-pub fn build_integrity_layout(store_path: &Path, suspect_names: Option<&[&str]>) -> Layout {
+pub(crate) fn build_integrity_layout(store_path: &Path, suspect_names: Option<&[&str]>) -> Layout {
     let display_path = output::shorten_home(store_path);
 
     match suspect_names {
