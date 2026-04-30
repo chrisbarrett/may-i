@@ -5,6 +5,8 @@ expression: normalised
 
 Trace
 
+  convention: :gnu │
+
                                 command │ brew list
   74: (rule (command "brew")            │
         (args (cond                     │

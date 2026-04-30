@@ -447,8 +447,7 @@ mod tests {
         Config {
             rules,
             defines,
-            security: may_i_core::ast::SecurityConfig::default(),
-            checks: vec![],
+            ..Config::default()
         }
     }
 

@@ -5,6 +5,8 @@ expression: normalised
 
 [1mTrace[0m
 
+  [2mconvention:[0m :gnu [2m│[0m
+
                                                                [2mcommand[0m [2m│[0m [1mgit checkout -- main.ts[0m
                                                                  [2mfacts[0m [2m│[0m [94m:opencode/agent[0m [32m"plan"[0m
   [2m43: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"git"[0m[2m)[0m                                            [2m│[0m

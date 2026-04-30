@@ -439,6 +439,92 @@ impl Rule {
     }
 }
 
+/// Argv tokenisation profile for a program. Selects how raw shell tokens are
+/// split into flag, flag-value, and positional streams.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Profile {
+    /// `--long`, `--long=val`, `--long val`; alpha-cluster `-rf` splits to
+    /// `-r -f`. Default when no `args-style` is declared.
+    Gnu,
+    /// Every `-foo` is a single long flag. No `--` prefix variant; no
+    /// alpha-cluster splitting.
+    SingleDashLong,
+    /// First non-dashed alphanumeric token is a flag bundle (e.g. `tar
+    /// xvzf`); subsequent tokens follow `:gnu` rules.
+    LegacyBundle,
+    /// `key=value` tokens are flag-equivalent. All other tokens are
+    /// positional.
+    KeyValue,
+}
+
+impl Profile {
+    /// Stable keyword form (`:gnu`, `:single-dash-long`, ...).
+    pub fn keyword(&self) -> &'static str {
+        match self {
+            Profile::Gnu => ":gnu",
+            Profile::SingleDashLong => ":single-dash-long",
+            Profile::LegacyBundle => ":legacy-bundle",
+            Profile::KeyValue => ":key-value",
+        }
+    }
+
+    /// Parse a profile from its keyword form.
+    pub fn from_keyword(s: &str) -> Option<Profile> {
+        match s {
+            ":gnu" => Some(Profile::Gnu),
+            ":single-dash-long" => Some(Profile::SingleDashLong),
+            ":legacy-bundle" => Some(Profile::LegacyBundle),
+            ":key-value" => Some(Profile::KeyValue),
+            _ => None,
+        }
+    }
+}
+
+impl Default for Profile {
+    fn default() -> Self {
+        Profile::Gnu
+    }
+}
+
+/// Resolved tokenisation convention for a single command. Combines a profile
+/// with any per-program list of additional value-bearing flags.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Convention {
+    pub profile: Profile,
+    pub flags_with_values: Vec<String>,
+}
+
+impl Convention {
+    /// Convention for a `:gnu` profile with no overrides — preserves the
+    /// pre-existing tokenisation behaviour.
+    pub fn gnu() -> Self {
+        Convention {
+            profile: Profile::Gnu,
+            flags_with_values: Vec::new(),
+        }
+    }
+
+    /// Returns true if `flag` is one of the additional value-bearing flags
+    /// declared via `:flags-with-values`.
+    pub fn flag_takes_value(&self, flag: &str) -> bool {
+        self.flags_with_values.iter().any(|f| f == flag)
+    }
+}
+
+/// Top-level `args-style` declaration — binds a tokenisation convention to a
+/// program name.
+#[derive(Debug, Clone)]
+pub struct ArgsStyle {
+    /// Program name (matched against `ctx.command`).
+    pub program: String,
+    /// Resolved convention.
+    pub convention: Convention,
+    /// Source span for error reporting.
+    pub span: Span,
+    /// Where this declaration came from.
+    pub provenance: Provenance,
+}
+
 /// Top-level configuration for the unified rule DSL.
 #[derive(Debug, Clone, Default)]
 pub struct Config {
@@ -453,6 +539,38 @@ pub struct Config {
 
     /// Validation checks.
     pub checks: Vec<Check>,
+
+    /// Argv tokenisation styles per program. Last declaration wins on
+    /// duplicates (with a warning emitted at parse time).
+    pub args_styles: Vec<ArgsStyle>,
+}
+
+impl Config {
+    /// Resolve the tokenisation convention for `command`. User
+    /// declarations win first (last declaration wins on duplicates); if no
+    /// user declaration exists, the built-in baseline is consulted; if
+    /// neither matches, returns the default `:gnu` convention.
+    pub fn convention_for(&self, command: &str) -> Convention {
+        if let Some(s) = self.args_styles.iter().rev().find(|s| s.program == command) {
+            return s.convention.clone();
+        }
+        baseline_convention(command).unwrap_or_default()
+    }
+}
+
+/// Built-in `args-style` baseline. Declarations here apply unless the user
+/// overrides them with their own `(args-style PROGRAM ...)` form.
+fn baseline_convention(command: &str) -> Option<Convention> {
+    let profile = match command {
+        "find" | "go" | "terraform" => Profile::SingleDashLong,
+        "tar" => Profile::LegacyBundle,
+        "dd" => Profile::KeyValue,
+        _ => return None,
+    };
+    Some(Convention {
+        profile,
+        flags_with_values: Vec::new(),
+    })
 }
 
 /// Security configuration.
@@ -857,6 +975,88 @@ mod tests {
         assert!(config.rules.is_empty());
         assert!(config.checks.is_empty());
         assert!(config.security.safe_env_vars.is_empty());
+        assert!(config.args_styles.is_empty());
+    }
+
+    #[test]
+    fn profile_keyword_roundtrip() {
+        for p in [
+            Profile::Gnu,
+            Profile::SingleDashLong,
+            Profile::LegacyBundle,
+            Profile::KeyValue,
+        ] {
+            assert_eq!(Profile::from_keyword(p.keyword()), Some(p));
+        }
+        assert_eq!(Profile::from_keyword(":bogus"), None);
+    }
+
+    #[test]
+    fn convention_default_is_gnu() {
+        let c = Convention::default();
+        assert_eq!(c.profile, Profile::Gnu);
+        assert!(c.flags_with_values.is_empty());
+        assert_eq!(c, Convention::gnu());
+    }
+
+    #[test]
+    fn convention_flag_takes_value() {
+        let c = Convention {
+            profile: Profile::Gnu,
+            flags_with_values: vec!["-n".into(), "--namespace".into()],
+        };
+        assert!(c.flag_takes_value("-n"));
+        assert!(c.flag_takes_value("--namespace"));
+        assert!(!c.flag_takes_value("-x"));
+    }
+
+    #[test]
+    fn config_convention_for_unknown_returns_gnu() {
+        let cfg = Config::default();
+        assert_eq!(cfg.convention_for("anything"), Convention::gnu());
+    }
+
+    #[test]
+    fn config_baseline_applies_when_no_user_declaration() {
+        let cfg = Config::default();
+        assert_eq!(cfg.convention_for("find").profile, Profile::SingleDashLong);
+        assert_eq!(cfg.convention_for("tar").profile, Profile::LegacyBundle);
+        assert_eq!(cfg.convention_for("dd").profile, Profile::KeyValue);
+    }
+
+    #[test]
+    fn config_user_declaration_overrides_baseline() {
+        let span = Span { start: 0, end: 1 };
+        let mut cfg = Config::default();
+        cfg.args_styles.push(ArgsStyle {
+            program: "find".into(),
+            convention: Convention::gnu(),
+            span,
+            provenance: Provenance::PrimaryConfig,
+        });
+        assert_eq!(cfg.convention_for("find").profile, Profile::Gnu);
+    }
+
+    #[test]
+    fn config_convention_for_last_wins() {
+        let span = Span { start: 0, end: 1 };
+        let mut cfg = Config::default();
+        cfg.args_styles.push(ArgsStyle {
+            program: "find".into(),
+            convention: Convention::gnu(),
+            span,
+            provenance: Provenance::PrimaryConfig,
+        });
+        cfg.args_styles.push(ArgsStyle {
+            program: "find".into(),
+            convention: Convention {
+                profile: Profile::SingleDashLong,
+                flags_with_values: vec![],
+            },
+            span,
+            provenance: Provenance::PrimaryConfig,
+        });
+        assert_eq!(cfg.convention_for("find").profile, Profile::SingleDashLong);
     }
 
     #[test]

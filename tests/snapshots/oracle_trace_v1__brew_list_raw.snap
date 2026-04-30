@@ -5,6 +5,8 @@ expression: normalised
 
 [1mTrace[0m
 
+  [2mconvention:[0m :gnu [2m│[0m
+
                                 [2mcommand[0m [2m│[0m [1mbrew list[0m
   [2m74: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"brew"[0m[2m)[0m            [2m│[0m
         [2m([0m[34margs[0m [2m([0m[34mcond[0m                     [2m│[0m

@@ -217,7 +217,9 @@ pub(crate) fn evaluate_effect_fold<F: EvalFold>(
                 let evaluator = Evaluator::new(rules);
                 let mut inner_facts = ctx.facts.clone();
                 inner_facts.insert_scalar(Keyword::new(":via").unwrap(), ctx.command);
-                let expanded_inner = expand_combined_flags(&inner_args);
+                let inner_convention = ctx.convention_for(&inner_cmd);
+                fold.record_convention(&inner_cmd, &inner_convention);
+                let expanded_inner = expand_combined_flags(&inner_args, &inner_convention);
                 let inner_ctx = EvalContext {
                     command: &inner_cmd,
                     args: &expanded_inner,
@@ -225,6 +227,8 @@ pub(crate) fn evaluate_effect_fold<F: EvalFold>(
                     bindings: ctx.bindings.clone(),
                     recursion_depth: ctx.recursion_depth + 1,
                     recursion_limit: ctx.recursion_limit,
+                    convention: inner_convention,
+                    args_styles: ctx.args_styles,
                 };
                 fold.begin_recursive_eval();
                 let eval_result = evaluator.evaluate(fold, &inner_ctx)?;
@@ -257,7 +261,7 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
             patterns,
             continuation,
         } => {
-            let pos_args: Vec<&str> = positional_args(ctx.args);
+            let pos_args: Vec<&str> = positional_args(ctx.args, &ctx.convention);
 
             let (pat_matched, consumed, bound_facts) =
                 match_positional_patterns(&pos_args, patterns);
@@ -270,7 +274,7 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                     .or_else(|| resolve_trailing_cond_effect(patterns, &pos_args, consumed));
                 if let Some(cont) = effective_continuation {
                     let remaining_args: Vec<String> = match mode {
-                        MatchMode::Positional => self::positional_args(ctx.args)
+                        MatchMode::Positional => self::positional_args(ctx.args, &ctx.convention)
                             .into_iter()
                             .skip(consumed)
                             .map(|s| s.to_string())
@@ -356,6 +360,8 @@ fn evaluate_effect_with_owned_args_fold<F: EvalFold>(
         bindings: ctx.bindings.clone(),
         recursion_depth: ctx.recursion_depth,
         recursion_limit: ctx.recursion_limit,
+        convention: ctx.convention.clone(),
+        args_styles: ctx.args_styles,
     };
     evaluate_effect_fold(fold, effect, &inner_ctx, rules)
 }

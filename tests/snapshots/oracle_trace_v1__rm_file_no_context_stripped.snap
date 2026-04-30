@@ -5,6 +5,8 @@ expression: normalised
 
 Trace
 
+  convention: :gnu │
+
                                             command │ rm foo
   24: (rule (command "rm")                          │
         (context                                    │

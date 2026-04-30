@@ -5,6 +5,9 @@ expression: normalised
 
 [1mTrace[0m
 
+  [2mconvention:[0m :gnu [2m│[0m
+  [2mconvention:[0m :gnu [2m│[0m
+
                                   [2mcommand[0m [2m│[0m [1mssh prod "rm -rf /"[0m
   [2m107: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"ssh"[0m[2m)[0m              [2m│[0m
          [2m([0m[34margs[0m [2m([0m[34mpositional[0m                [2m│[0m

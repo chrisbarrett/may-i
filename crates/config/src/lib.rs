@@ -1,3 +1,4 @@
+pub(crate) mod args_style;
 pub(crate) mod command;
 pub(crate) mod config;
 pub(crate) mod effect;
@@ -14,6 +15,7 @@ mod migration_tests;
 #[cfg(test)]
 mod parser_properties;
 
+pub use args_style::parse_args_style;
 pub use command::parse_command_pattern;
 pub use config::{parse_config, parse_config_from_sexprs, parse_config_from_tagged_sexprs};
 pub use effect::parse_effect;
@@ -43,5 +45,6 @@ pub(crate) fn is_reserved_keyword(atom: &str) -> bool {
             | "when"
             | "unless"
             | "if"
+            | "args-style"
     )
 }

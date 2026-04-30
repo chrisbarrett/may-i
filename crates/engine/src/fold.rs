@@ -193,6 +193,9 @@ pub trait EvalFold {
     /// Called before a recursive may-i evaluation begins.
     /// TracingFold uses this to track where inner traces start.
     fn begin_recursive_eval(&mut self) {}
+    /// Called once per evaluation entry with the resolved tokenisation
+    /// convention. Default: no-op.
+    fn record_convention(&mut self, _command: &str, _convention: &may_i_core::ast::Convention) {}
     fn effect_may_i(
         &mut self,
         pattern: &ArgPattern,

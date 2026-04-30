@@ -5,6 +5,8 @@ expression: normalised
 
 Trace
 
+  convention: :gnu │
+
                                 command │ git reset --hard
   43: (rule (command "git")             │
         (context (and                   │

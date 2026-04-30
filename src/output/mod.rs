@@ -199,6 +199,22 @@ fn trace_to_layout(
                 row.left_align = ColAlign::Right;
                 current_rows.push(row);
             }
+            TraceEntry::Convention {
+                command: _,
+                profile,
+                flags_with_values,
+            } => {
+                let flags_text = if flags_with_values.is_empty() {
+                    String::new()
+                } else {
+                    format!(" :flags-with-values ({})", flags_with_values.join(" "))
+                };
+                let label = format!("{} {profile}{flags_text}", "convention:".dimmed());
+                let label_visible = "convention: ".len() + profile.len() + flags_text.len();
+                let mut row = ColRow::new(label, label_visible, "");
+                row.left_align = ColAlign::Right;
+                current_rows.push(row);
+            }
             TraceEntry::ParseDiagnostics { diagnostics } => {
                 for diag in diagnostics {
                     let severity_str = match diag.severity {

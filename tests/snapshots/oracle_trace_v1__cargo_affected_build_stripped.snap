@@ -5,6 +5,8 @@ expression: normalised
 
 Trace
 
+  convention: :gnu │
+
                                   command │ cargo affected build
   95: (rule (command "cargo")             │
         (args (if (exact)                 │

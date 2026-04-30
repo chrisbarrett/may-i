@@ -5,6 +5,8 @@ expression: normalised
 
 Trace
 
+  convention: :gnu │
+
                                                                command │ git status
   43: (rule (command "git")                                            │
         (context (and                                                  │

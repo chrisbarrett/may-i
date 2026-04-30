@@ -5,6 +5,8 @@ expression: normalised
 
 Trace
 
+  convention: :gnu │
+
                              command │ cat foo
   90: (rule (command (or "cat" …))   │
         (effect                      │ → :allow "Read-only access"

@@ -5,6 +5,9 @@ expression: normalised
 
 Trace
 
+  convention: :gnu │
+  convention: :gnu │
+
                                   command │ ssh prod "rm -rf /"
   107: (rule (command "ssh")              │
          (args (positional                │

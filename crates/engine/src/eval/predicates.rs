@@ -148,7 +148,7 @@ pub(super) fn evaluate_arg_pattern_predicate(
             patterns,
             continuation: _,
         } => {
-            let pos_args: Vec<&str> = positional_args(ctx.args);
+            let pos_args: Vec<&str> = positional_args(ctx.args, &ctx.convention);
             let (pat_matched, consumed, _) = match_positional_patterns(&pos_args, patterns);
             let matched =
                 pat_matched && (*mode == MatchMode::Positional || consumed == pos_args.len());

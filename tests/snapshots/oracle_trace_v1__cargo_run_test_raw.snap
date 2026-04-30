@@ -5,6 +5,8 @@ expression: normalised
 
 [1mTrace[0m
 
+  [2mconvention:[0m :gnu [2m│[0m
+
                                   [2mcommand[0m [2m│[0m [1mcargo run -- test[0m
   [2m95: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"cargo"[0m[2m)[0m             [2m│[0m
         [2m([0m[34margs[0m [2m([0m[34mif[0m [2m([0m[34mexact[0m[2m)[0m                 [2m│[0m

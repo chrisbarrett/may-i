@@ -1,10 +1,11 @@
 ---
 source: tests/oracle_trace_v1.rs
-assertion_line: 112
 expression: normalised
 ---
 
 Trace
+
+  convention: :gnu │
 
                                                 command │ brew install foo
   74: (rule (command "brew")                            │

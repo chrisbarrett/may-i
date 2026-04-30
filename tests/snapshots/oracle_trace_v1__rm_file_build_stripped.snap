@@ -5,6 +5,8 @@ expression: normalised
 
 Trace
 
+  convention: :gnu │
+
                                             command │ rm foo
                                               facts │ :opencode/agent "build"
   24: (rule (command "rm")                          │

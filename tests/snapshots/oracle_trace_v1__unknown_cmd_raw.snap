@@ -5,6 +5,7 @@ expression: normalised
 
 [1mTrace[0m
 
+  [2mconvention:[0m :gnu [2m│[0m
   [3;33mNo matching rule[0m [2m│[0m [2m[0m[2m→[0m [1;33m:ask[0m (default)
 
 [1mResult[0m

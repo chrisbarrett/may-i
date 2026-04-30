@@ -120,3 +120,38 @@ SAFE ENV VARS
 
 Whitelist environment variables for shell expansion:
   (safe-env-vars "HOME" "PWD" "USER" "SHELL" "EDITOR")
+
+TOKENISATION
+
+Each program's argv is split into flags, flag values, and positional
+arguments under a tokenisation profile. The default is :gnu; other profiles
+are opted into per program with `args-style`.
+
+  (args-style PROGRAM :PROFILE [:flags-with-values (FLAG ...)])
+
+Profiles:
+  :gnu              short -x, long --foo, combine -rf -> -r -f, --foo=val
+                    or --foo val. Default when no args-style is declared.
+  :single-dash-long every -foo is a single long flag; no combining.
+                    Used by tools like find, go, terraform, java.
+  :legacy-bundle    first non-dashed alpha-cluster is a flag bundle
+                    (e.g. tar xvzf -> -x -v -z -f); subsequent tokens
+                    follow :gnu rules.
+  :key-value        key=value tokens are flag-equivalent; everything else
+                    is positional. Used by tools like dd.
+
+:flags-with-values lists additional flags that consume the next arg as a
+value. Layers on top of any profile.
+
+Examples:
+  (args-style "find"    :single-dash-long)
+  (args-style "tar"     :legacy-bundle)
+  (args-style "dd"      :key-value)
+  (args-style "kubectl" :gnu :flags-with-values ("-n" "--namespace"))
+
+The trace surfaces the resolved profile per evaluation.
+
+Baseline (built-in, overridden by user `args-style` declarations):
+  find, go, terraform   :single-dash-long
+  tar                   :legacy-bundle
+  dd                    :key-value

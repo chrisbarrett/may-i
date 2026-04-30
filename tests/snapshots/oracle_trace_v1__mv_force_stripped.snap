@@ -5,6 +5,8 @@ expression: normalised
 
 Trace
 
+  convention: :gnu │
+
                                         command │ mv -f a b
   83: (rule (command "mv")                      │
         (args                                   │

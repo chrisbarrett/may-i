@@ -5,6 +5,8 @@ expression: normalised
 
 Trace
 
+  convention: :gnu │
+
                                               command │ curl -d data https://example.com
   65: (rule (command "curl")                          │
         (context                                      │

@@ -5,6 +5,8 @@ expression: normalised
 
 Trace
 
+  convention: :gnu │
+
                                                                command │ git checkout -- main.ts
                                                                  facts │ :opencode/agent "plan"
   43: (rule (command "git")                                            │

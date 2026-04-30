@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use may_i_core::ContextFacts;
-use may_i_core::ast::{Define, Predicate};
+use may_i_core::ast::{ArgsStyle, Convention, Define, Predicate};
 
 /// Maximum recursion depth for (may-i ...) evaluation.
 pub(super) const DEFAULT_RECURSION_LIMIT: usize = 10;
@@ -28,10 +28,17 @@ pub struct EvalContext<'a> {
     pub recursion_depth: usize,
     /// Maximum recursion depth allowed.
     pub recursion_limit: usize,
+    /// Tokenisation convention for the current command.
+    pub convention: Convention,
+    /// All declared `args-style` entries — needed to resolve the inner
+    /// command's convention during `(may-i ...)` recursion.
+    pub args_styles: &'a [ArgsStyle],
 }
 
 impl<'a> EvalContext<'a> {
-    /// Create a new evaluation context.
+    /// Create a new evaluation context with a `:gnu` convention and no
+    /// `args-style` declarations. Used by tests; production callers go
+    /// through `with_convention`.
     pub fn new(
         command: &'a str,
         args: &'a [String],
@@ -45,7 +52,41 @@ impl<'a> EvalContext<'a> {
             bindings,
             recursion_depth: 0,
             recursion_limit: DEFAULT_RECURSION_LIMIT,
+            convention: Convention::gnu(),
+            args_styles: &[],
         }
+    }
+
+    /// Create a new evaluation context with a resolved convention.
+    pub fn with_convention(
+        command: &'a str,
+        args: &'a [String],
+        facts: &'a ContextFacts,
+        bindings: HashMap<&'a str, &'a Predicate>,
+        convention: Convention,
+        args_styles: &'a [ArgsStyle],
+    ) -> Self {
+        Self {
+            command,
+            args,
+            facts,
+            bindings,
+            recursion_depth: 0,
+            recursion_limit: DEFAULT_RECURSION_LIMIT,
+            convention,
+            args_styles,
+        }
+    }
+
+    /// Resolve the convention for `command` against the carried
+    /// `args_styles`. Falls back to `:gnu` when no declaration matches.
+    pub fn convention_for(&self, command: &str) -> Convention {
+        self.args_styles
+            .iter()
+            .rev()
+            .find(|s| s.program == command)
+            .map(|s| s.convention.clone())
+            .unwrap_or_default()
     }
 
     /// Build bindings from a slice of defines.

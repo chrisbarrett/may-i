@@ -444,6 +444,12 @@ pub enum TraceEntry {
     ParseDiagnostics {
         diagnostics: Vec<may_i_shell_parser::ParseDiagnostic>,
     },
+    /// Resolved tokenisation convention for the command being evaluated.
+    Convention {
+        command: String,
+        profile: String,
+        flags_with_values: Vec<String>,
+    },
 }
 
 /// Fold that produces `(EffectResult, Doc<Option<Ann>>)` pairs and
@@ -893,6 +899,14 @@ impl EvalFold for TracingFold {
 
     fn begin_recursive_eval(&mut self) {
         self.recursive_trace_starts.push(self.traces.len());
+    }
+
+    fn record_convention(&mut self, command: &str, convention: &may_i_core::ast::Convention) {
+        self.traces.push(TraceEntry::Convention {
+            command: command.to_string(),
+            profile: convention.profile.keyword().to_string(),
+            flags_with_values: convention.flags_with_values.clone(),
+        });
     }
 
     fn effect_may_i(
