@@ -78,7 +78,7 @@ pub fn repair_integrity(
         let names: Vec<&str> = suspects.iter().map(|s| s.program.as_str()).collect();
         if let Some(store_path) = crate::trust_store::default_trust_store_path() {
             let term = crate::output::Terminal::detect();
-            let note = crate::output::trust_integrity_note(&store_path, Some(&names));
+            let note = crate::trust_advisory::build_integrity_layout(&store_path, Some(&names));
             crate::output::write_layout(&mut std::io::stderr(), &note, &term);
         }
         return Ok(false);

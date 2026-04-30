@@ -61,12 +61,15 @@ pub fn cmd_check(
         );
     } else {
         let term = output::Terminal::detect();
-        if let Some(note) = output::migration_note(&loaded, config_file) {
+        if let Some(note) = crate::notes::migration_note(&loaded, config_file) {
             output::write_layout(&mut std::io::stderr(), &note, &term);
         }
 
         // Trust advisory
-        crate::trust_advisory::render(&loaded.config, &term);
+        crate::trust_advisory::write_integrity_advisories(&loaded.config, &term);
+        if let Some(layout) = crate::trust_advisory::build_warning_layout(&loaded.config) {
+            output::write_layout(&mut std::io::stderr(), &layout, &term);
+        }
 
         let mut failures = Vec::new();
 
