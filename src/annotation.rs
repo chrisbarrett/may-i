@@ -477,11 +477,11 @@ impl TracingFold {
         }
     }
 
-    pub(crate) fn from_loaded_config(lc: &crate::loaded_config::LoadedConfig) -> Self {
+    pub(crate) fn from_load_result(lr: &may_i_config::LoadResult) -> Self {
         Self {
             traces: Vec::new(),
-            source_text: lc.source_text.clone(),
-            pre_migration_forms: lc.pre_migration_forms.clone(),
+            source_text: lr.source_text.clone(),
+            pre_migration_forms: lr.pre_migration_forms.clone(),
             recursive_trace_starts: Vec::new(),
             pending_inner_traces: Vec::new(),
         }
@@ -1244,14 +1244,14 @@ mod tests {
     }
 
     #[test]
-    fn tracing_fold_from_loaded_config() {
-        let lc = crate::loaded_config::LoadedConfig {
+    fn tracing_fold_from_load_result() {
+        let lr = may_i_config::LoadResult {
             config: Config::default(),
             source_text: Some("(rule \"git\" :allow)".into()),
             pre_migration_forms: Some(vec![(Span::new(0, 10), Doc::<()>::atom("test"))]),
             config_path: std::path::PathBuf::from("/tmp/test.lisp"),
         };
-        let fold = TracingFold::from_loaded_config(&lc);
+        let fold = TracingFold::from_load_result(&lr);
         assert!(fold.source_text.is_some());
         assert!(fold.pre_migration_forms.is_some());
     }

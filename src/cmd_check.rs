@@ -24,8 +24,7 @@ pub fn cmd_check(
     verbose: bool,
     config_path: Option<&std::path::Path>,
 ) -> miette::Result<()> {
-    let loaded: crate::loaded_config::LoadedConfig =
-        may_i_config::load_and_resolve(config_path)?.into();
+    let loaded = may_i_config::load_and_resolve(config_path)?;
     let config_file = &loaded.config_path;
 
     let results = run_checks_with_traces(&loaded, config_file)?;
@@ -165,7 +164,7 @@ pub fn cmd_check(
 
 /// Run all checks using TracingFold to capture traces for failure reporting.
 fn run_checks_with_traces(
-    loaded: &crate::loaded_config::LoadedConfig,
+    loaded: &may_i_config::LoadResult,
     config_file: &std::path::Path,
 ) -> miette::Result<Vec<CheckResult<TraceExtra>>> {
     use may_i_core::span::offset_to_line_col;
@@ -180,7 +179,7 @@ fn run_checks_with_traces(
     };
 
     engine::check::run_checks_with(&loaded.config, |check| {
-        let mut fold = TracingFold::from_loaded_config(loaded);
+        let mut fold = TracingFold::from_load_result(loaded);
         let result = engine::eval::evaluate_command_with_fold(
             &check.command,
             &loaded.config,
