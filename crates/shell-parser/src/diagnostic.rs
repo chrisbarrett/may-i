@@ -98,6 +98,7 @@ mod tests {
             assignments: vec![],
             words: vec![],
             redirections: vec![],
+            span: Span { start: 0, end: 0 },
         })
     }
 

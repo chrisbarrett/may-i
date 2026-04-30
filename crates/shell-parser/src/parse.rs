@@ -3,6 +3,7 @@ use super::diagnostic::{ParseDiagnostic, ParseDiagnosticKind, Severity, Span};
 use super::lexer::{Lexer, Token};
 
 pub(super) struct Parser {
+    input: String,
     tokens: Vec<(Token, usize)>,
     pos: usize,
     input_len: usize,
@@ -15,6 +16,7 @@ impl Parser {
         let tokens = lexer.tokenize_with_offsets();
         let diagnostics = lexer.take_diagnostics();
         Parser {
+            input: input.to_string(),
             tokens,
             pos: 0,
             input_len: input.len(),
@@ -74,6 +76,7 @@ impl Parser {
                 assignments: vec![],
                 words: vec![],
                 redirections: vec![],
+                span: Span { start: 0, end: 0 },
             });
         }
         self.parse_list()
@@ -221,6 +224,7 @@ impl Parser {
         let mut assignments = Vec::new();
         let mut words = Vec::new();
         let mut redirections = Vec::new();
+        let span_start = self.current_offset();
 
         loop {
             match self.peek().clone() {
@@ -284,11 +288,26 @@ impl Parser {
             });
         }
 
+        let span_end = self.trimmed_end_offset(span_start);
         Command::Simple(SimpleCommand {
             assignments,
             words,
             redirections,
+            span: Span {
+                start: span_start,
+                end: span_end,
+            },
         })
+    }
+
+    /// Compute the byte offset that ends a simple command starting at
+    /// `span_start`, trimmed of trailing whitespace before the next operator
+    /// or end-of-input. Mirrors the trimming done by `segment::segment` so
+    /// segment ranges align across the two passes.
+    fn trimmed_end_offset(&self, span_start: usize) -> usize {
+        let stop = self.current_offset();
+        let between = &self.input[span_start..stop];
+        span_start + between.trim_end().len()
     }
 
     fn try_parse_assignment(&mut self) -> Option<Assignment> {
@@ -739,6 +758,61 @@ mod tests {
                 .iter()
                 .any(|d| d.kind == ParseDiagnosticKind::EmptyCommand),
             "unexpected EmptyCommand: {diags:?}"
+        );
+    }
+
+    fn first_simple(cmd: &crate::ast::Command) -> &crate::ast::SimpleCommand {
+        fn walk(cmd: &crate::ast::Command) -> Option<&crate::ast::SimpleCommand> {
+            if let crate::ast::Command::Simple(sc) = cmd {
+                return Some(sc);
+            }
+            for child in cmd.children() {
+                if let Some(sc) = walk(child) {
+                    return Some(sc);
+                }
+            }
+            None
+        }
+        walk(cmd).expect("expected at least one simple command")
+    }
+
+    fn parse_complete(input: &str) -> crate::ast::Command {
+        let mut p = Parser::new(input);
+        p.parse_complete()
+    }
+
+    #[test]
+    fn simple_command_span_single() {
+        let cmd = parse_complete("echo hi");
+        let sc = first_simple(&cmd);
+        assert_eq!(sc.span, Span { start: 0, end: 7 });
+    }
+
+    #[test]
+    fn simple_command_span_strips_trailing_whitespace() {
+        let cmd = parse_complete("echo a   ");
+        let sc = first_simple(&cmd);
+        assert_eq!(sc.span, Span { start: 0, end: 6 });
+    }
+
+    #[test]
+    fn simple_command_span_split_by_and() {
+        // "echo a && rm -rf /" — two simple commands; spans for "echo a" and
+        // "rm -rf /" — exclude operator and surrounding whitespace.
+        let cmd = parse_complete("echo a && rm -rf /");
+        let mut spans = Vec::new();
+        fn collect(c: &crate::ast::Command, out: &mut Vec<Span>) {
+            if let crate::ast::Command::Simple(sc) = c {
+                out.push(sc.span);
+            }
+            for child in c.children() {
+                collect(child, out);
+            }
+        }
+        collect(&cmd, &mut spans);
+        assert_eq!(
+            spans,
+            vec![Span { start: 0, end: 6 }, Span { start: 10, end: 18 }]
         );
     }
 }

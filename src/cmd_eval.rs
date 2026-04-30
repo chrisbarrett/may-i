@@ -167,18 +167,16 @@ pub fn evaluate_with_colorization(
     loaded: &may_i_config::LoadResult,
     context: &may_i_core::ContextFacts,
 ) -> miette::Result<(engine::EvalResult, Vec<TraceEntry>, String)> {
-    // Use the unified evaluation pipeline for the decision
     let mut fold = TracingFold::from_load_result(loaded);
     let result =
         engine::eval::evaluate_command_with_fold(command, &loaded.config, context, &mut fold)
             .map_err(|e| miette::miette!("{e}"))?;
 
-    // Use segment() for display colorization only
     let segments = parser::segment(command);
     let colored_command = if segments.is_empty() {
         colorize_text(command, result.decision)
     } else {
-        colorize_segments(command, &segments, loaded, context)
+        colorize_segments(command, &segments, &result.segment_decisions)
     };
 
     Ok((result, fold.traces, colored_command))
@@ -192,12 +190,14 @@ fn colorize_text(text: &str, decision: Decision) -> String {
     }
 }
 
-/// Colorize each segment independently for display.
+/// Colorize each top-level command segment using the engine's
+/// `segment_decisions`. The strictest decision among all engine units that
+/// overlap a parser segment determines the colour, so an `echo $(rm)`
+/// segment colours red even though the `echo` part on its own would allow.
 fn colorize_segments(
     command: &str,
     segments: &[parser::Segment],
-    loaded: &may_i_config::LoadResult,
-    context: &may_i_core::ContextFacts,
+    segment_decisions: &[engine::SegmentDecision],
 ) -> String {
     let mut display_parts = Vec::new();
     for seg in segments {
@@ -205,14 +205,24 @@ fn colorize_segments(
         if seg.is_operator {
             display_parts.push(format!(" {text} "));
         } else {
-            // Evaluate each segment for its color
-            let decision = engine::eval::evaluate_command(text, &loaded.config, context)
-                .map(|r| r.decision)
+            let decision = strictest_overlapping(seg.start, seg.end, segment_decisions)
                 .unwrap_or(Decision::Ask);
             display_parts.push(colorize_text(text, decision));
         }
     }
     display_parts.concat()
+}
+
+fn strictest_overlapping(
+    start: usize,
+    end: usize,
+    decisions: &[engine::SegmentDecision],
+) -> Option<Decision> {
+    decisions
+        .iter()
+        .filter(|d| d.start < end && d.end > start)
+        .map(|d| d.decision)
+        .max()
 }
 
 /// Build a JSON block response if any program in the command is untrusted.

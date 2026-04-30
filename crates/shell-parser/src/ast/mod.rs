@@ -1,5 +1,7 @@
 use serde::Serialize;
 
+use crate::diagnostic::Span;
+
 mod command;
 mod helpers;
 mod word;
@@ -73,11 +75,29 @@ pub enum CaseTerminator {
     Continue,    // ;;&
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Clone, PartialEq, Serialize)]
 pub struct SimpleCommand {
     pub assignments: Vec<Assignment>,
     pub words: Vec<Word>,
     pub redirections: Vec<Redirection>,
+    /// Byte range in the original input covering this simple command
+    /// (assignments + words + redirections). Empty span (0, 0) when the
+    /// AST node was constructed without a source — e.g. by tests or by
+    /// the empty-input fallback in `parse_complete`.
+    #[serde(skip)]
+    pub span: Span,
+}
+
+// Hand-rolled to keep `span` out of Debug output so AST snapshots stay
+// stable — `span` is byte offsets that are observable through other tests.
+impl std::fmt::Debug for SimpleCommand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SimpleCommand")
+            .field("assignments", &self.assignments)
+            .field("words", &self.words)
+            .field("redirections", &self.redirections)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]

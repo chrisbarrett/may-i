@@ -1,0 +1,2 @@
+decision: allow
+colored: [4;32mecho hi[0m
