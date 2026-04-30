@@ -44,7 +44,7 @@ impl TrustState {
 /// Compute trust state: which programs have untrusted loaded rules.
 ///
 /// Returns `None` if there are no loaded rules at all (trust is irrelevant).
-pub fn compute(config: &may_i_core::ast::Config) -> Option<TrustState> {
+pub(crate) fn compute(config: &may_i_core::ast::Config) -> Option<TrustState> {
     let hashes = compute_trust_hashes(config);
     if hashes.is_empty() {
         return None;
@@ -245,7 +245,7 @@ pub fn write_integrity_advisories(config: &may_i_core::ast::Config, term: &outpu
 /// - Primary config rules always pass through.
 /// - Loaded rules included only if per-rule hash is approved in store.
 /// - Blocked and pending loaded rules are excluded.
-pub fn filter_trusted_rules(config: &mut may_i_core::ast::Config, store: &TrustStore) {
+pub(crate) fn filter_trusted_rules(config: &mut may_i_core::ast::Config, store: &TrustStore) {
     config.rules.retain(|rule| {
         if !rule.provenance.is_loaded() {
             return true;

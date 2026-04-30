@@ -8,6 +8,7 @@ use may_i_engine as engine;
 
 use crate::annotation::{TraceEntry, TracingFold};
 use crate::output;
+use crate::trust_gate::{self, GateMode, GateOutcome};
 
 /// Error indicating one or more checks failed.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
@@ -25,7 +26,24 @@ pub fn cmd_check(
     config_path: Option<&std::path::Path>,
 ) -> miette::Result<()> {
     let loaded = may_i_config::load_and_resolve(config_path)?;
-    let config_file = &loaded.config_path;
+    let config_file = &loaded.config_path.clone();
+    let term = output::Terminal::detect();
+
+    // Trust integrity check (orthogonal to the gate's filtering).
+    if !json_mode {
+        crate::trust_advisory::write_integrity_advisories(&loaded.config, &term);
+    }
+
+    // Trust gate (Text mode): consult only for the advisory layout. cmd_check
+    // validates the config as authored, so the unfiltered ruleset stays in
+    // play for evaluating embedded checks.
+    let advisory = {
+        let config_for_gate = loaded.config.clone();
+        match trust_gate::evaluate(config_for_gate, "", GateMode::Text) {
+            GateOutcome::Proceed { advisory, .. } => advisory,
+            GateOutcome::Block { .. } => unreachable!("text mode never blocks"),
+        }
+    };
 
     let results = run_checks_with_traces(&loaded, config_file)?;
 
@@ -59,14 +77,10 @@ pub fn cmd_check(
             serde_json::to_string(&output).expect("response serialization is infallible")
         );
     } else {
-        let term = output::Terminal::detect();
         if let Some(note) = crate::notes::migration_note(&loaded, config_file) {
             output::write_layout(&mut std::io::stderr(), &note, &term);
         }
-
-        // Trust advisory
-        crate::trust_advisory::write_integrity_advisories(&loaded.config, &term);
-        if let Some(layout) = crate::trust_advisory::build_warning_layout(&loaded.config) {
+        if let Some(layout) = advisory {
             output::write_layout(&mut std::io::stderr(), &layout, &term);
         }
 
