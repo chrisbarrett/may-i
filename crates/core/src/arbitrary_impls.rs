@@ -413,6 +413,8 @@ impl<'a> Arbitrary<'a> for Config {
             security: SecurityConfig::default(),
             checks: vec![],
             args_styles: vec![],
+            style_specs: vec![],
+            parsers: vec![],
         })
     }
 }

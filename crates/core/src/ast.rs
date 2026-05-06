@@ -441,10 +441,11 @@ impl Rule {
 
 /// Argv tokenisation profile for a program. Selects how raw shell tokens are
 /// split into flag, flag-value, and positional streams.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Profile {
     /// `--long`, `--long=val`, `--long val`; alpha-cluster `-rf` splits to
     /// `-r -f`. Default when no `args-style` is declared.
+    #[default]
     Gnu,
     /// Every `-foo` is a single long flag. No `--` prefix variant; no
     /// alpha-cluster splitting.
@@ -480,12 +481,6 @@ impl Profile {
     }
 }
 
-impl Default for Profile {
-    fn default() -> Self {
-        Profile::Gnu
-    }
-}
-
 /// Resolved tokenisation convention for a single command. Combines a profile
 /// with any per-program list of additional value-bearing flags.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -508,6 +503,290 @@ impl Convention {
     /// declared via `:flags-with-values`.
     pub fn flag_takes_value(&self, flag: &str) -> bool {
         self.flags_with_values.iter().any(|f| f == flag)
+    }
+}
+
+/// Bare-parameter handling policy in arg-parsing styles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PunPolicy {
+    /// Bare parameter token (no value, no separator) ⇒ value-less
+    /// presence. Matches `(flag X)`, but `(parameter X *)` returns Nil.
+    Allow,
+    /// Bare parameter token ⇒ tokenisation error.
+    Error,
+}
+
+impl PunPolicy {
+    /// Stable keyword form (`:allow`, `:error`).
+    pub fn keyword(&self) -> &'static str {
+        match self {
+            PunPolicy::Allow => ":allow",
+            PunPolicy::Error => ":error",
+        }
+    }
+
+    /// Parse from keyword form.
+    pub fn from_keyword(s: &str) -> Option<Self> {
+        match s {
+            ":allow" => Some(PunPolicy::Allow),
+            ":error" => Some(PunPolicy::Error),
+            _ => None,
+        }
+    }
+}
+
+/// Raw style declaration as written in config — fields are optional and
+/// `:overrides` is unresolved. Use `StyleRegistry` to resolve into a
+/// `Style`.
+///
+/// This is a parse-time DTO: shape matches the surface PLIST grammar.
+#[derive(Debug, Clone)]
+pub struct StyleSpec {
+    /// Name bound by `(define-arg-style NAME …)`.
+    pub name: String,
+    /// `:overrides BASE` — resolve before applying this spec's keys.
+    pub overrides: Option<String>,
+    pub long_prefix: Option<String>,
+    pub short_prefix: Option<String>,
+    pub separators: Option<Vec<String>>,
+    pub combined_shorts: Option<bool>,
+    pub first_token_bundle: Option<bool>,
+    pub pun: Option<PunPolicy>,
+    pub span: Span,
+    pub provenance: Provenance,
+}
+
+/// Fully resolved arg-parsing style — defaults filled in, `:overrides`
+/// chain applied. Private fields with accessors so callers can't mint a
+/// `Style` that bypasses validation.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Style {
+    name: String,
+    long_prefix: String,
+    short_prefix: String,
+    separators: Vec<String>,
+    combined_shorts: bool,
+    first_token_bundle: bool,
+    pun: PunPolicy,
+}
+
+impl Style {
+    /// Default `gnu`-shaped style — kept here so the resolver can produce
+    /// it before the prelude has run, and so tests have a known baseline.
+    pub fn default_gnu() -> Self {
+        Self {
+            name: "gnu".into(),
+            long_prefix: "--".into(),
+            short_prefix: "-".into(),
+            separators: vec![" ".into(), "=".into()],
+            combined_shorts: true,
+            first_token_bundle: false,
+            pun: PunPolicy::Allow,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    pub fn long_prefix(&self) -> &str {
+        &self.long_prefix
+    }
+    pub fn short_prefix(&self) -> &str {
+        &self.short_prefix
+    }
+    pub fn separators(&self) -> &[String] {
+        &self.separators
+    }
+    pub fn combined_shorts(&self) -> bool {
+        self.combined_shorts
+    }
+    pub fn first_token_bundle(&self) -> bool {
+        self.first_token_bundle
+    }
+    pub fn pun(&self) -> PunPolicy {
+        self.pun
+    }
+}
+
+/// Errors from style resolution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum StyleResolveError {
+    /// `:overrides BASE` named a style that isn't registered.
+    UnknownBase { name: String, base: String },
+    /// `:overrides` chain forms a cycle.
+    Cycle { name: String },
+}
+
+impl std::fmt::Display for StyleResolveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StyleResolveError::UnknownBase { name, base } => {
+                write!(f, "style `{name}` overrides unknown base style `{base}`")
+            }
+            StyleResolveError::Cycle { name } => {
+                write!(f, "cycle in `:overrides` chain involving style `{name}`")
+            }
+        }
+    }
+}
+
+impl std::error::Error for StyleResolveError {}
+
+/// Resolves named styles by walking `:overrides` chains. Holds the raw
+/// specs; resolution is on-demand and produces a `Style`.
+#[derive(Debug, Clone, Default)]
+pub struct StyleRegistry {
+    specs: Vec<StyleSpec>,
+}
+
+impl StyleRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Insert a spec. If a spec with the same name already exists, the new
+    /// one shadows it (`resolve` walks in reverse). Caller is expected to
+    /// emit a warning on duplicates if user-visible.
+    pub fn push(&mut self, spec: StyleSpec) {
+        self.specs.push(spec);
+    }
+
+    /// Iterate registered specs (latest insertion last).
+    pub fn iter(&self) -> impl Iterator<Item = &StyleSpec> {
+        self.specs.iter()
+    }
+
+    /// Most recent spec for `name`, if any.
+    pub fn get(&self, name: &str) -> Option<&StyleSpec> {
+        self.specs.iter().rev().find(|s| s.name == name)
+    }
+
+    /// Resolve `name` to a `Style` by walking `:overrides`, then layering
+    /// spec keys (this spec last). List-valued keys *replace*, they do
+    /// not merge (per design).
+    pub fn resolve(&self, name: &str) -> Result<Style, StyleResolveError> {
+        let mut visiting = std::collections::HashSet::new();
+        self.resolve_inner(name, &mut visiting)
+    }
+
+    fn resolve_inner(
+        &self,
+        name: &str,
+        visiting: &mut std::collections::HashSet<String>,
+    ) -> Result<Style, StyleResolveError> {
+        if !visiting.insert(name.to_string()) {
+            return Err(StyleResolveError::Cycle {
+                name: name.to_string(),
+            });
+        }
+        let spec = self
+            .get(name)
+            .ok_or_else(|| StyleResolveError::UnknownBase {
+                name: name.to_string(),
+                base: name.to_string(),
+            })?;
+
+        // Start from base (or default) and overlay this spec.
+        let mut base = if let Some(base_name) = &spec.overrides {
+            match self.resolve_inner(base_name, visiting) {
+                Ok(style) => style,
+                Err(StyleResolveError::UnknownBase { base, .. }) => {
+                    return Err(StyleResolveError::UnknownBase {
+                        name: name.to_string(),
+                        base,
+                    });
+                }
+                Err(e) => return Err(e),
+            }
+        } else {
+            // No base: start from a blank slate with the GNU defaults
+            // baked in. Spec keys present below override these.
+            Style::default_gnu()
+        };
+
+        // Rename to this spec.
+        base.name = name.to_string();
+        if let Some(v) = &spec.long_prefix {
+            base.long_prefix = v.clone();
+        }
+        if let Some(v) = &spec.short_prefix {
+            base.short_prefix = v.clone();
+        }
+        if let Some(v) = &spec.separators {
+            base.separators = v.clone();
+        }
+        if let Some(v) = spec.combined_shorts {
+            base.combined_shorts = v;
+        }
+        if let Some(v) = spec.first_token_bundle {
+            base.first_token_bundle = v;
+        }
+        if let Some(v) = spec.pun {
+            base.pun = v;
+        }
+        visiting.remove(name);
+        Ok(base)
+    }
+}
+
+/// Parser-level treatment of a parameter's *value*. Future expansion
+/// slot (e.g. type-checked values).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum ParameterTreatment {
+    /// Register as value-bearing only — no extra processing of the value.
+    None,
+    /// Re-authorise the captured value as a command line via `(may-i)`.
+    /// The recursion result becomes a fact `:via NAME`; it does not
+    /// short-circuit the outer rule.
+    MayI,
+}
+
+/// One parameter declaration in a `(parser …)` body. `names` lists the
+/// short/long spellings (e.g. `["n", "namespace"]`). For a single
+/// spelling, the vector has one entry.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ParameterDecl {
+    pub names: Vec<String>,
+    pub treatment: ParameterTreatment,
+}
+
+/// Parsed `(parser PROGRAM :style STYLE BODY…)` declaration. The style is
+/// referenced by name; resolution against the `StyleRegistry` happens at
+/// `Config::parser_for` time.
+#[derive(Debug, Clone)]
+pub struct Parser {
+    pub program: String,
+    pub style_name: String,
+    /// `(flag NAME)` body items — each entry is a single short/long
+    /// spelling list.
+    pub flags: Vec<Vec<String>>,
+    pub parameters: Vec<ParameterDecl>,
+    pub span: Span,
+    pub provenance: Provenance,
+}
+
+/// Fully-resolved parser ready for the tokeniser: style is looked up,
+/// declarations carried verbatim.
+#[derive(Debug, Clone)]
+pub struct ResolvedParser {
+    pub program: String,
+    pub style: Style,
+    pub flags: Vec<Vec<String>>,
+    pub parameters: Vec<ParameterDecl>,
+}
+
+impl ResolvedParser {
+    /// Synthetic default parser used when no `(parser PROGRAM …)` is
+    /// declared: GNU style, no parameter declarations.
+    pub fn synthetic_gnu(program: impl Into<String>) -> Self {
+        Self {
+            program: program.into(),
+            style: Style::default_gnu(),
+            flags: Vec::new(),
+            parameters: Vec::new(),
+        }
     }
 }
 
@@ -543,6 +822,49 @@ pub struct Config {
     /// Argv tokenisation styles per program. Last declaration wins on
     /// duplicates (with a warning emitted at parse time).
     pub args_styles: Vec<ArgsStyle>,
+
+    /// Named arg-parsing style declarations from `(define-arg-style NAME
+    /// PLIST)` forms. Kept separate from `defines` for now; will unify
+    /// later. Last `define-arg-style` for a given name wins (with a
+    /// warning).
+    pub style_specs: Vec<StyleSpec>,
+
+    /// Per-program parser declarations from `(parser PROGRAM …)` forms.
+    pub parsers: Vec<Parser>,
+}
+
+impl Config {
+    /// Build a `StyleRegistry` from this config's `style_specs`. Cheap
+    /// (specs are small); call from `parser_for`.
+    pub fn style_registry(&self) -> StyleRegistry {
+        let mut reg = StyleRegistry::new();
+        for spec in &self.style_specs {
+            reg.push(spec.clone());
+        }
+        reg
+    }
+
+    /// Resolve a parser for `command`. Returns the user's `(parser …)`
+    /// declaration with style resolved, or a synthetic GNU parser if no
+    /// declaration matches. Style-resolution errors fall back to the
+    /// synthetic parser — caller is expected to surface them via
+    /// validation upstream.
+    pub fn parser_for(&self, command: &str) -> ResolvedParser {
+        let parser = match self.parsers.iter().rev().find(|p| p.program == command) {
+            Some(p) => p,
+            None => return ResolvedParser::synthetic_gnu(command),
+        };
+        let registry = self.style_registry();
+        let style = registry
+            .resolve(&parser.style_name)
+            .unwrap_or_else(|_| Style::default_gnu());
+        ResolvedParser {
+            program: parser.program.clone(),
+            style,
+            flags: parser.flags.clone(),
+            parameters: parser.parameters.clone(),
+        }
+    }
 }
 
 impl Config {

@@ -20,46 +20,48 @@ need to be reworked.
       `positional_args(args, &Convention)`; their replacement
       (`tokenise(args, &Parser)`) lands in §4.
 
-## 2. Style as data — `(define NAME (PLIST))`
+## 2. Style as data — `(define-arg-style NAME (PLIST))`
 
-- [ ] 2.1 Add `Style { name, long_prefix, short_prefix, separators,
-      combined_shorts, first_token_bundle, pun, overrides }` to
-      `crates/core/src/ast.rs`. Provenance / span fields per existing
-      conventions.
-- [ ] 2.2 Add `PunPolicy` enum (`Allow | Error`).
-- [ ] 2.3 Extend the existing `define` parser in
-      `crates/config/src/define.rs` (or wherever `Define` lives) so its
-      body can be a style PLIST. Keep fact-binding `define` working
-      unchanged.
-- [ ] 2.4 Add a `StyleRegistry` resolver in `crates/core/src/...` (or a
-      new `style.rs`) that:
-        - validates each style as it is added (unknown keys → error,
-          unknown `:overrides` reference → error),
-        - resolves `:overrides` chains (cycle detection → error),
-        - returns a fully-resolved `ResolvedStyle` for a given name.
-- [ ] 2.5 Round-trip tests via the existing pretty-printer.
+> **Pivot**: kept separate from `(define …)` for now. Will unify later
+> (likely via usage-inference or a typed `Define` body). The
+> `define-arg-style` form lives in its own `crates/config/src/style.rs`
+> with its own `Config::style_specs` field.
+
+- [x] 2.1 Add `Style { name, long_prefix, short_prefix, separators,
+      combined_shorts, first_token_bundle, pun }` (private fields,
+      accessors) and `StyleSpec` (raw, parse-time DTO) to
+      `crates/core/src/ast.rs`.
+- [x] 2.2 Add `PunPolicy` enum (`Allow | Error`).
+- [x] 2.3 Add a `(define-arg-style NAME (PLIST))` parser in
+      `crates/config/src/style.rs`. `Define` left untouched.
+- [x] 2.4 Add a `StyleRegistry` resolver in `crates/core/src/ast.rs`
+      that holds raw `StyleSpec`s, walks `:overrides` chains
+      (cycle/unknown-base error), and returns a fully-resolved `Style`.
+- [~] 2.5 Round-trip tests via the existing pretty-printer. (Skipped:
+      no Doc impl for Style yet; covered by the existing
+      `config_parse_roundtrip` proptest at the sexpr level.)
 
 ## 3. Prelude styles
 
-- [ ] 3.1 Author the four prelude styles (`gnu`, `single-dash-long`,
-      `legacy-bundle`, `key-value`) as source-level `(define …)` forms
-      in a new `crates/config/src/prelude/styles.lisp` (or inline as a
-      string constant if file embedding is preferred).
-- [ ] 3.2 Wire prelude loading: at `Config::new` time, parse the prelude
-      source into the same `StyleRegistry` so user `:overrides gnu`
-      resolves.
-- [ ] 3.3 Tests: each prelude style resolves; user `(define gnu …)` shadows
-      the prelude with a warning; `:overrides gnu` from user space picks
-      up the prelude version when not shadowed.
+- [x] 3.1 Author the four prelude styles (`gnu`, `single-dash-long`,
+      `legacy-bundle`, `key-value`) as source-level `(define-arg-style
+      …)` forms — inline string constant in
+      `crates/config/src/prelude.rs`.
+- [x] 3.2 Wire prelude loading: at `parse_config_from_sexprs` time, push
+      the prelude specs into `Config::style_specs` so user `:overrides
+      gnu` resolves.
+- [x] 3.3 Tests: each prelude style resolves; user `(define-arg-style gnu …)`
+      shadows the prelude (last-wins); `:overrides gnu` from user space
+      picks up the prelude version when not shadowed.
 
 ## 4. `(parser PROGRAM :style STYLE BODY…)`
 
-- [ ] 4.1 Add `ParameterTreatment` enum (`None | MayI`).
+- [x] 4.1 Add `ParameterTreatment` enum (`None | MayI`).
       `ParameterDecl { names, treatment }`.
-- [ ] 4.2 Add `Parser { program, style_name, flags, parameters,
+- [x] 4.2 Add `Parser { program, style_name, flags, parameters,
       provenance, span }` to `crates/core/src/ast.rs`. Add `Vec<Parser>`
       to `Config`.
-- [ ] 4.3 Add `crates/config/src/parser_form.rs` parsing `(parser
+- [x] 4.3 Add `crates/config/src/parser_form.rs` parsing `(parser
       PROGRAM :style STYLE BODY…)`.
         - body items: `(flag NAME)` and `(parameter NAME [FORM])`.
         - reject FORM other than `(may-i *)` in v1.
@@ -67,38 +69,51 @@ need to be reworked.
           name.
         - duplicate names within one parser body: last wins + warning.
         - duplicate parsers for the same program: last wins + warning.
-- [ ] 4.4 Add `Config::parser_for(command_name) -> ResolvedParser`,
+- [x] 4.4 Add `Config::parser_for(command_name) -> ResolvedParser`,
       returning the user-declared parser if present, otherwise a
       synthetic `gnu` parser with no declarations.
-- [ ] 4.5 Two-pass config load: collect all `(define …)` styles and
-      `(parser …)` declarations first, then validate rules. Surface a
-      clear error if a `(parser …)` references an undefined style.
+- [~] 4.5 Two-pass config load: parse-time order (define-arg-style
+      then parser) is enforced by linear processing of forms. A formal
+      collect-then-validate pass that errors when `(parser …)` names an
+      undefined style is deferred to §6 wiring (currently `parser_for`
+      falls back to gnu silently — fine for §5 red-bar, must error
+      before tokeniser swap).
 
 ## 5. Failing tests first
 
-- [ ] 5.1 Integration: `(parser "find" :style single-dash-long)` plus
+> All in `tests/parser_dsl.rs`. After §1-§4: 6 of 9 are green
+> (acceptance/parsing layers); 3 remain red and drive §6/§7. Listed
+> red ones:
+> - 5.2 (`parser_kubectl_parameter_value_pair`) — needs §6 tokeniser.
+> - 5.5 (`parser_bash_may_i_recurses`) — needs §7 may-i recursion.
+> - 5.8 (`parser_pun_error_bare_param_does_not_allow`) — needs §6
+>       :pun :error enforcement.
+
+- [x] 5.1 Integration: `(parser "find" :style single-dash-long)` plus
       `(rule "find" (forbidden "-n"))` ⇒ `find . -name foo` does NOT
-      false-fire.
-- [ ] 5.2 Integration: `(parser "kubectl" :style gnu (parameter ["n"
+      false-fire. *(Currently green: existing tokeniser doesn't false-
+      match because the rule predicate stays Ask, not Deny.)*
+- [x] 5.2 Integration: `(parser "kubectl" :style gnu (parameter ["n"
       "namespace"]))` plus `(rule "kubectl" (positional "get" "pods"))`
-      ⇒ `kubectl -n my-ns get pods` allows.
-- [ ] 5.3 Integration: `(parser "tar" :style legacy-bundle)` ⇒ `tar
+      ⇒ `kubectl -n my-ns get pods` allows. *(Red — drives §6.)*
+- [x] 5.3 Integration: `(parser "tar" :style legacy-bundle)` ⇒ `tar
       xvzf archive.tgz` first token recognised as flag bundle.
-- [ ] 5.4 Integration: `(parser "dd" :style key-value (parameter "if")
+- [x] 5.4 Integration: `(parser "dd" :style key-value (parameter "if")
       (parameter "of") (parameter "bs"))` ⇒ `dd if=foo of=bar bs=1M`
       classifies all three as parameter-value pairs.
-- [ ] 5.5 Integration: `(parser "bash" :style gnu (parameter "c" (may-i
+- [x] 5.5 Integration: `(parser "bash" :style gnu (parameter "c" (may-i
       *)))` ⇒ `bash -c "echo hi"` recurses; trace shows the inner
       evaluation under the parser declaration. No `(rule "bash" …)`
-      needed.
-- [ ] 5.6 Integration: `(define java (:overrides gnu :separators (" "
-      "=" ":")))` plus `(parser "java" :style java (parameter "Xmx"))`
-      ⇒ `java -Xmx:512m App` parses `512m` as the parameter value.
-- [ ] 5.7 Integration: `:pun :allow` — bare `--enable` matches `(flag
+      needed. *(Red — drives §7.)*
+- [x] 5.6 Integration: `(define-arg-style java (:overrides gnu
+      :separators (" " "=" ":")))` plus `(parser "java" :style java
+      (parameter "Xmx"))` ⇒ `java -Xmx:512m App` parses `512m` as the
+      parameter value.
+- [x] 5.7 Integration: `:pun :allow` — bare `--enable` matches `(flag
       "enable")` but not `(parameter "enable" *)`.
-- [ ] 5.8 Integration: `:pun :error` — bare `if` (no `=`) under `dd`
-      style fails with a tokenisation error.
-- [ ] 5.9 Regression: command without `(parser …)` ⇒ `gnu` style applies
+- [x] 5.8 Integration: `:pun :error` — bare `if` (no `=`) under `dd`
+      style fails with a tokenisation error. *(Red — drives §6.)*
+- [x] 5.9 Regression: command without `(parser …)` ⇒ `gnu` style applies
       byte-for-byte.
 
 ## 6. Tokeniser rewrite
