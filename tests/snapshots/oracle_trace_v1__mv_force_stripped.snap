@@ -10,7 +10,8 @@ Trace
                                         command │ mv -f a b
   83: (rule (command "mv")                      │
         (args                                   │
-         (if (anywhere "-f" "--force")          │
+         (if (or (flag "f")                     │
+                 …)                             │
              (effect                            │ → :ask "Force move is destructive"
               :ask "Force move is destructive") │
            …)))                                 │

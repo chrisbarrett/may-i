@@ -1,5 +1,6 @@
 ---
 source: tests/oracle_trace_v1.rs
+assertion_line: 110
 expression: normalised
 ---
 
@@ -9,10 +10,9 @@ Trace
 
                                         command │ rm -rf /
   24: (rule (command "rm")                      │
-        (context                                │
-         (and (anywhere "-r"                    │
-                        "--recursive")          │
-              (anywhere "/")))                  │
+        (context (and (or (flag "r")            │
+                          …)                    │
+                      (anywhere "/")))          │
         (effect                                 │ → :deny "Recursive deletion from root"
          :deny "Recursive deletion from root")) │
 

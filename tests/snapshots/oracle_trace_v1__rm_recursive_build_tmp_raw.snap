@@ -10,10 +10,9 @@ expression: normalised
                                                 [2mcommand[0m [2m│[0m [1mrm -r /tmp/foo[0m
                                                   [2mfacts[0m [2m│[0m [94m:opencode/agent[0m [32m"build"[0m
   [2m24: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"rm"[0m[2m)[0m                              [2m│[0m
-        [2m([0mcontext                                        [2m│[0m
-         [2m([0mand [2m([0m[34manywhere[0m [32m"-r"[0m                            [2m│[0m
-                        [32m"--recursive"[0m[2m)[0m                  [2m│[0m
-              [2m([0m[34manywhere[0m [32m"/"[0m[2m)[0m[2m)[0m[2m)[0m                          [2m│[0m
+        [2m([0mcontext [2m([0mand [2m([0mor [2m([0mflag [32m"r"[0m[2m)[0m                    [2m│[0m
+                          [2m…[0m[2m)[0m                            [2m│[0m
+                      [2m([0m[34manywhere[0m [32m"/"[0m[2m)[0m[2m)[0m[2m)[0m                  [2m│[0m
         [2m([0m[2meffect[0m                                         [2m│[0m [2m[0m[2m→[0m [1;31m:deny[0m [32m"Recursive deletion from root"[0m
          [2m:deny[0m [2m"Recursive deletion from root"[0m[2m)[0m[2m)[0m         [2m│[0m
                                                         [2m│[0m
@@ -27,8 +26,8 @@ expression: normalised
                     [32m"acceptEdits"[0m[2m][0m[2m)[0m                     [2m│[0m
                   [2m([0mhas [2m[[0m[94m:opencode/agent[0m                 [2m│[0m [2m"build" [0m[2m→[0m [1;32myes[0m
                         [32m"build"[0m[2m][0m[2m)[0m[2m)[0m[2m)[0m                     [2m│[0m
-                [2m([0m[34manywhere[0m [32m"-r"[0m                          [2m│[0m
-                          [32m"--recursive"[0m[2m)[0m[2m)[0m               [2m│[0m
+                [2m([0mor [2m([0mflag [32m"r"[0m[2m)[0m                          [2m│[0m
+                    [2m…[0m[2m)[0m[2m)[0m                                 [2m│[0m
            [2m([0m[34mif[0m [2m([0m[34manywhere[0m [2m([0mregex                         [2m│[0m
                           [32m"^/tmp/.*"[0m[2m)[0m[2m)[0m                  [2m│[0m
                [2m([0m[34meffect[0m                                  [2m│[0m [2m[0m[2m→[0m [1;32m:allow[0m [32m"Deleting tmp files is allowed"[0m

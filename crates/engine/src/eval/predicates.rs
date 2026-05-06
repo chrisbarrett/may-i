@@ -174,6 +174,31 @@ pub(super) fn evaluate_arg_pattern_predicate(
             }
             PredicateResult::Match
         }
+        ArgPattern::Flag { names } => {
+            if super::effects::flag_present_in_for_predicate(ctx.args, names) {
+                PredicateResult::Match
+            } else {
+                PredicateResult::NoMatch
+            }
+        }
+        ArgPattern::Parameter { names, form } => {
+            // In predicate position, only the value-shape forms are
+            // meaningful — `(may-i …)` returns a Decision, which has no
+            // Match/NoMatch projection.
+            match super::effects::find_parameter_value_for_predicate(ctx.args, names) {
+                Some(value) => match form {
+                    may_i_core::pattern::ParameterForm::Match(expr) => {
+                        if expr.is_match(&value) {
+                            PredicateResult::Match
+                        } else {
+                            PredicateResult::NoMatch
+                        }
+                    }
+                    may_i_core::pattern::ParameterForm::MayI => PredicateResult::NoMatch,
+                },
+                None => PredicateResult::NoMatch,
+            }
+        }
         _ => unreachable!("unknown ArgPattern variant"),
     }
 }

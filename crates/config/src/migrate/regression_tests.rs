@@ -234,13 +234,17 @@ mod tests {
     #[test]
     fn wrapper_nix_shell_run() {
         let v1 = r#"(wrapper "nix-shell" (flag "--run" :command+args))"#;
-        assert_migrates_to(v1, r#"(rule "nix-shell" (positional "--run" . (may-i *)))"#);
+        // The (positional "--run" . R) intermediate now collapses to a
+        // structured (parameter "run" R) pattern.
+        assert_migrates_to(v1, r#"(rule "nix-shell" (parameter "run" (may-i *)))"#);
     }
 
     #[test]
     fn wrapper_bash_c() {
         let v1 = r#"(wrapper "bash" (flag "-c" :command+args))"#;
-        assert_migrates_to(v1, r#"(rule "bash" (positional "-c" . (may-i *)))"#);
+        // The (positional "-c" . R) intermediate now collapses to a
+        // structured (parameter "c" R) pattern.
+        assert_migrates_to(v1, r#"(rule "bash" (parameter "c" (may-i *)))"#);
     }
 
     // ── Task 4: has → fact? with complex value patterns ────────────────

@@ -38,6 +38,8 @@ pub(crate) fn is_reserved_keyword(atom: &str) -> bool {
             | "exact"
             | "anywhere"
             | "forbidden"
+            | "flag"
+            | "parameter"
             | "="
             | "effect"
             | "may-i"

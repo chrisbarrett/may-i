@@ -67,9 +67,11 @@ mod tests {
         let input = r#"(and (positional "x") (anywhere "-f") (when ctx (effect :ask)))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let result = super::super::migrate(nodes.into_iter().next().unwrap());
+        // (anywhere "-f") collapses to the structured (flag "f") form en
+        // route through the migration pipeline.
         assert_eq!(
             result.serialize(),
-            r#"(when (and (positional "x") (anywhere "-f") ctx) (effect :ask))"#,
+            r#"(when (and (positional "x") (flag "f") ctx) (effect :ask))"#,
         );
     }
 

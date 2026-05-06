@@ -293,7 +293,31 @@ fn canonical_arg_pattern(pat: &ArgPattern) -> String {
             let inner: Vec<String> = exprs.iter().map(canonical_expr).collect();
             format!("(forbidden {})", inner.join(" "))
         }
+        ArgPattern::Flag { names } => {
+            format!("(flag {})", canonical_flag_names(names))
+        }
+        ArgPattern::Parameter { names, form } => format!(
+            "(parameter {} {})",
+            canonical_flag_names(names),
+            canonical_parameter_form(form)
+        ),
         _ => "<unknown>".to_string(),
+    }
+}
+
+fn canonical_parameter_form(form: &may_i_core::pattern::ParameterForm) -> String {
+    match form {
+        may_i_core::pattern::ParameterForm::Match(expr) => canonical_expr(expr),
+        may_i_core::pattern::ParameterForm::MayI => "(may-i *)".to_string(),
+    }
+}
+
+fn canonical_flag_names(names: &[String]) -> String {
+    if names.len() == 1 {
+        format!("\"{}\"", names[0])
+    } else {
+        let inner: Vec<String> = names.iter().map(|n| format!("\"{n}\"")).collect();
+        format!("[{}]", inner.join(" "))
     }
 }
 

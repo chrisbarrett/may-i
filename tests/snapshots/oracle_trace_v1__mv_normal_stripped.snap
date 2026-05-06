@@ -7,12 +7,12 @@ Trace
 
   convention: :gnu │
 
-                               command │ mv a b
-  83: (rule (command "mv")             │
-        (args (if (anywhere "-f"       │
-                            "--force") │
-                  …                    │
-                (effect :allow))))     │ → :allow
+                              command │ mv a b
+  83: (rule (command "mv")            │
+        (args (if (or (flag "f")      │
+                      (flag "force")) │
+                  …                   │
+                (effect :allow))))    │ → :allow
 
 Result
 

@@ -1,4 +1,5 @@
-use may_i_core::ast::{Convention, EffectResult, Profile, Rule};
+use may_i_core::ast::{Convention, Effect, EffectResult, Profile, Rule};
+use may_i_core::pattern::{ArgPattern, flag_token_for_name};
 use may_i_core::{ContextFacts, Decision};
 
 use crate::fold::{EvalFold, PureFold};
@@ -29,7 +30,7 @@ pub fn evaluate_with_fold<F: EvalFold>(
     facts: &ContextFacts,
     fold: &mut F,
 ) -> Result<EvalResult, EvalError> {
-    let convention = config.convention_for(command);
+    let convention = effective_convention(config, command);
     fold.record_convention(command, &convention);
     let expanded = expand_combined_flags(args, &convention);
     let bindings = EvalContext::build_bindings(&config.defines);
@@ -43,6 +44,99 @@ pub fn evaluate_with_fold<F: EvalFold>(
         &config.args_styles,
     );
     evaluator.evaluate(fold, &ctx)
+}
+
+/// Resolve the tokenisation convention for `command`, merging the explicit
+/// `(args-style …)` declaration with any flags implicitly registered as
+/// value-bearing by `(parameter …)` patterns in rules that target this
+/// command.
+pub(crate) fn effective_convention(config: &may_i_core::ast::Config, command: &str) -> Convention {
+    merge_implicit_value_flags(config.convention_for(command), &config.rules, command)
+}
+
+/// Merge implicit `(parameter …)` flag tokens into `convention`. Used by the
+/// top-level entry point and by `(may-i …)` recursion (where we already have
+/// the rules slice but not a full `Config`).
+pub(crate) fn merge_implicit_value_flags(
+    mut convention: Convention,
+    rules: &[Rule],
+    command: &str,
+) -> Convention {
+    for flag in collect_implicit_value_flags(rules, command) {
+        if !convention.flags_with_values.iter().any(|f| f == &flag) {
+            convention.flags_with_values.push(flag);
+        }
+    }
+    convention
+}
+
+/// Walk every rule whose command pattern can match `command` and collect the
+/// tokenised form (e.g. `-c`, `--namespace`) of every flag named by a
+/// `(parameter …)` pattern in that rule's body. The union of these flags is
+/// merged into the convention's `flags_with_values`, so the tokeniser groups
+/// `-c VAL` correctly even when `args-style` doesn't list `-c` explicitly.
+fn collect_implicit_value_flags(rules: &[Rule], command: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for rule in rules {
+        if !rule.command_effect.value.matches_command(command) {
+            continue;
+        }
+        collect_parameter_tokens(&rule.effect.value, &mut out);
+    }
+    out
+}
+
+fn collect_parameter_tokens(effect: &Effect, out: &mut Vec<String>) {
+    match effect {
+        Effect::ArgPattern(pat) => collect_from_arg_pattern(pat, out),
+        Effect::And { effects } | Effect::Or { effects } => {
+            for child in effects {
+                collect_parameter_tokens(&child.value, out);
+            }
+        }
+        Effect::Not { effect: inner } => collect_parameter_tokens(&inner.value, out),
+        Effect::When { effect: body, .. } | Effect::Unless { effect: body, .. } => {
+            collect_parameter_tokens(&body.value, out);
+        }
+        Effect::If {
+            then_effect,
+            else_effect,
+            ..
+        } => {
+            collect_parameter_tokens(&then_effect.value, out);
+            collect_parameter_tokens(&else_effect.value, out);
+        }
+        Effect::Cond { branches, fallback } => {
+            for (_, body) in branches {
+                collect_parameter_tokens(&body.value, out);
+            }
+            if let Some(fb) = fallback {
+                collect_parameter_tokens(&fb.value, out);
+            }
+        }
+        Effect::Terminal { .. } | Effect::CommandPattern(_) | Effect::MayI { .. } => {}
+        _ => {}
+    }
+}
+
+fn collect_from_arg_pattern(pat: &ArgPattern, out: &mut Vec<String>) {
+    match pat {
+        ArgPattern::Parameter { names, .. } => {
+            for name in names {
+                let token = flag_token_for_name(name);
+                if !out.iter().any(|t| t == &token) {
+                    out.push(token);
+                }
+            }
+        }
+        ArgPattern::Ordered {
+            continuation: Some(cont),
+            ..
+        } => {
+            collect_parameter_tokens(cont, out);
+        }
+        _ => {}
+    }
 }
 
 /// Expand combined short flags subject to the resolved tokenisation

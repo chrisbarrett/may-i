@@ -83,14 +83,14 @@ pub fn parse_predicate(sexpr: &Sexpr) -> Result<Predicate, RawError> {
         }
 
         // Argument patterns - delegate to the argument pattern parser
-        "positional" | "exact" | "anywhere" | "forbidden" | "=" => {
+        "positional" | "exact" | "anywhere" | "forbidden" | "flag" | "parameter" | "=" => {
             let arg_pattern = crate::pattern::parse_arg_pattern(sexpr)?;
             Ok(Predicate::Arg(arg_pattern))
         }
 
         other => Err(
             RawError::new(format!("unknown predicate form: {other}"), list[0].span()).with_help(
-                "valid predicates: fact?, and, or, not, positional, exact, anywhere, forbidden, =",
+                "valid predicates: fact?, and, or, not, positional, exact, anywhere, forbidden, flag, parameter, =",
             ),
         ),
     }

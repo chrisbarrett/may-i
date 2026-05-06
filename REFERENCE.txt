@@ -27,6 +27,32 @@ Arg Patterns (return Allow on match, Nil otherwise):
   (exact PAT...)              Like positional, no extra args allowed
   (anywhere PAT...)           Token appears anywhere in argv
   (forbidden PAT...)          None of these tokens in argv
+  (flag NAME)                 Named flag is present (any spelling)
+  (parameter NAME FORM)       Match the value of a named flag against FORM
+
+Flag and Parameter Names:
+  "x"                         Length 1 -> short flag (-x), matches in
+                              combined clusters too (`-rfx`).
+  "force"                     Length >1 -> long flag (--force), matches
+                              `--force` and `--force=VAL`.
+  ["f" "force"]               Vector -> match either spelling.
+
+  (parameter NAME FORM) consumes the flag and its value, so sibling
+  positional matchers see the remaining args correctly. The flag is also
+  implicitly added to the active :flags-with-values list, so the
+  tokeniser groups -X VAL even without an (args-style ...) declaration.
+
+  FORM is either:
+    (may-i *)         Parse the value as a command line and recurse
+    (regex "...")     Regex match the value as a single token
+    "literal"         Exact value match
+    *                 Match any value (parameter is just a presence check)
+
+  Examples:
+    (rule "rm"   (and (not (flag "r"))   (effect :allow)))
+    (rule "git"  (and (positional "push") (not (flag ["f" "force"])) (effect :allow)))
+    (rule "curl" (and (parameter ["X" "request"] "POST") (effect :allow)))
+    (rule "bash" (parameter "c" (may-i *)))     ; recurse into bash -c VAL
 
 Expression Patterns (match a single token):
   "string"                    Literal match

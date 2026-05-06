@@ -3,7 +3,7 @@
 
 use may_i_core::Quantifier;
 use may_i_core::ast::Effect;
-use may_i_core::pattern::{ArgPattern, MatchMode, PositionalArg};
+use may_i_core::pattern::{ArgPattern, MatchMode, ParameterForm, PositionalArg};
 use may_i_core::pattern::{Expr, ExprBranch};
 use may_i_core::primitives::Keyword;
 use may_i_sexpr::{RawError, Sexpr};
@@ -227,6 +227,8 @@ pub fn parse_arg_pattern(sexpr: &Sexpr) -> Result<ArgPattern, RawError> {
     match tag {
         "positional" => parse_positional_form(&list[1..], sexpr.span(), false),
         "exact" => parse_positional_form(&list[1..], sexpr.span(), true),
+        "flag" => parse_flag_form(&list[1..], sexpr.span()),
+        "parameter" => parse_parameter_form(&list[1..], sexpr.span()),
         "anywhere" => {
             let exprs: Result<Vec<Expr<Effect>>, _> = list[1..].iter().map(parse_expr).collect();
             Ok(ArgPattern::Anywhere(exprs?))
@@ -250,10 +252,107 @@ pub fn parse_arg_pattern(sexpr: &Sexpr) -> Result<ArgPattern, RawError> {
             Ok(ArgPattern::Forbidden(exprs))
         }
         other => Err(
-            RawError::new(format!("unknown argument pattern: {other}"), list[0].span())
-                .with_help("valid argument patterns: positional, exact, anywhere, forbidden"),
+            RawError::new(format!("unknown argument pattern: {other}"), list[0].span()).with_help(
+                "valid argument patterns: positional, exact, flag, parameter, anywhere, forbidden",
+            ),
         ),
     }
+}
+
+/// Parse a `(flag NAMES)` form.
+///
+/// `NAMES` is either a string (`"x"` short, `"force"` long) or a vector of two
+/// strings denoting alternative spellings of the same flag (`["f" "force"]`).
+fn parse_flag_form(args: &[Sexpr], span: may_i_core::Span) -> Result<ArgPattern, RawError> {
+    if args.len() != 1 {
+        return Err(
+            RawError::new("flag must have exactly one name argument", span)
+                .with_help("(flag \"x\") or (flag [\"x\" \"long\"])"),
+        );
+    }
+    let names = parse_flag_names(&args[0])?;
+    Ok(ArgPattern::Flag { names })
+}
+
+/// Parse a `(parameter NAMES FORM)` form. `NAMES` follows the same rules as
+/// `(flag …)`. `FORM` is either:
+/// - `(may-i …)` — recurse on the value-as-command via the evaluator;
+/// - any expression form (literal, `(regex …)`, `*`, `(or …)`, `(and …)`,
+///   `(not …)`, `[:k EXPR]` fact-bind) — match the value as a single token.
+fn parse_parameter_form(args: &[Sexpr], span: may_i_core::Span) -> Result<ArgPattern, RawError> {
+    if args.len() != 2 {
+        return Err(RawError::new(
+            "parameter must have a name and a form: (parameter NAME FORM)",
+            span,
+        ));
+    }
+    let names = parse_flag_names(&args[0])?;
+    let form = parse_parameter_form_body(&args[1])?;
+    Ok(ArgPattern::Parameter { names, form })
+}
+
+/// Parse the FORM argument of a `(parameter …)` pattern.
+fn parse_parameter_form_body(sexpr: &Sexpr) -> Result<ParameterForm, RawError> {
+    if let Some(list) = sexpr.as_list()
+        && let Some(tag) = list.first().and_then(|f| f.as_atom())
+        && tag == "may-i"
+    {
+        // (may-i ...) form. The inner pattern is currently ignored —
+        // recursion always treats the whole flag value as the command line.
+        // We accept any inner shape so that `(may-i *)` and `(may-i (positional *))`
+        // both parse, matching user expectations from the rest of the DSL.
+        if list.len() != 2 {
+            return Err(RawError::new(
+                "may-i in parameter form must have exactly one inner pattern",
+                sexpr.span(),
+            ));
+        }
+        return Ok(ParameterForm::MayI);
+    }
+    let expr = parse_expr(sexpr)?;
+    Ok(ParameterForm::Match(expr))
+}
+
+/// Parse the name argument of a `(flag …)` or `(parameter …)` form.
+///
+/// Accepts a single string or a two-element vector. Length-1 names denote
+/// short flags; longer names denote long flags. Empty names are rejected.
+fn parse_flag_names(sexpr: &Sexpr) -> Result<Vec<String>, RawError> {
+    let names = match sexpr {
+        Sexpr::String(s, span) | Sexpr::Symbol(s, span) => {
+            if s.is_empty() {
+                return Err(RawError::new("flag name must not be empty", *span));
+            }
+            vec![s.clone()]
+        }
+        Sexpr::Vector(items, span) => {
+            if items.is_empty() {
+                return Err(RawError::new(
+                    "flag name vector must contain at least one name",
+                    *span,
+                ));
+            }
+            let mut names = Vec::with_capacity(items.len());
+            for item in items {
+                let s = item.as_atom_or_str().ok_or_else(|| {
+                    RawError::new("flag name vector entry must be a string", item.span())
+                })?;
+                if s.is_empty() {
+                    return Err(RawError::new("flag name must not be empty", item.span()));
+                }
+                names.push(s.to_string());
+            }
+            names
+        }
+        _ => {
+            return Err(RawError::new(
+                "flag name must be a string or a vector of strings",
+                sexpr.span(),
+            )
+            .with_help("(flag \"x\") or (flag [\"x\" \"long\"])"));
+        }
+    };
+    Ok(names)
 }
 
 /// Parse positional/exact argument form, handling dot syntax for continuation effects.
@@ -425,6 +524,94 @@ mod tests {
             }
             _ => panic!("expected Exact"),
         }
+    }
+
+    #[test]
+    fn parse_flag_short() {
+        let pattern = parse_arg(r#"(flag "x")"#).unwrap();
+        match pattern {
+            ArgPattern::Flag { names } => assert_eq!(names, vec!["x".to_string()]),
+            _ => panic!("expected Flag"),
+        }
+    }
+
+    #[test]
+    fn parse_flag_long() {
+        let pattern = parse_arg(r#"(flag "force")"#).unwrap();
+        match pattern {
+            ArgPattern::Flag { names } => assert_eq!(names, vec!["force".to_string()]),
+            _ => panic!("expected Flag"),
+        }
+    }
+
+    #[test]
+    fn parse_flag_vector() {
+        let pattern = parse_arg(r#"(flag ["f" "force"])"#).unwrap();
+        match pattern {
+            ArgPattern::Flag { names } => {
+                assert_eq!(names, vec!["f".to_string(), "force".to_string()])
+            }
+            _ => panic!("expected Flag"),
+        }
+    }
+
+    #[test]
+    fn parse_flag_empty_name_error() {
+        let err = parse_arg(r#"(flag "")"#).expect_err("expected error");
+        assert!(format!("{err}").contains("must not be empty"));
+    }
+
+    #[test]
+    fn parse_flag_missing_name_error() {
+        let err = parse_arg(r#"(flag)"#).expect_err("expected error");
+        assert!(format!("{err}").contains("exactly one name"));
+    }
+
+    #[test]
+    fn parse_parameter_may_i_form() {
+        let pattern = parse_arg(r#"(parameter "c" (may-i *))"#).unwrap();
+        match pattern {
+            ArgPattern::Parameter { names, form } => {
+                assert_eq!(names, vec!["c".to_string()]);
+                assert!(matches!(form, ParameterForm::MayI));
+            }
+            _ => panic!("expected Parameter"),
+        }
+    }
+
+    #[test]
+    fn parse_parameter_vector_with_literal_form() {
+        let pattern = parse_arg(r#"(parameter ["X" "request"] "POST")"#).unwrap();
+        match pattern {
+            ArgPattern::Parameter { names, form } => {
+                assert_eq!(names, vec!["X".to_string(), "request".to_string()]);
+                assert!(matches!(form, ParameterForm::Match(Expr::Literal(s)) if s == "POST"));
+            }
+            _ => panic!("expected Parameter"),
+        }
+    }
+
+    #[test]
+    fn parse_parameter_regex_form() {
+        let pattern = parse_arg(r#"(parameter ["n" "namespace"] (regex "^prod-"))"#).unwrap();
+        match pattern {
+            ArgPattern::Parameter { form, .. } => {
+                assert!(matches!(form, ParameterForm::Match(Expr::Regex(_))));
+            }
+            _ => panic!("expected Parameter"),
+        }
+    }
+
+    #[test]
+    fn parse_parameter_missing_form_error() {
+        let err = parse_arg(r#"(parameter "c")"#).expect_err("expected error");
+        assert!(format!("{err}").contains("(parameter NAME FORM)"));
+    }
+
+    #[test]
+    fn parse_parameter_empty_name_error() {
+        let err = parse_arg(r#"(parameter "" *)"#).expect_err("expected error");
+        assert!(format!("{err}").contains("must not be empty"));
     }
 
     #[test]
