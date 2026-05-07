@@ -5,11 +5,15 @@ expression: normalised
 
 Trace
 
+  parser: gnu │
+
                                             command │ curl https://example.com
   65: (rule (command "curl")                        │
-        (context                                    │
-         (not (anywhere "-d" "--data" …             │
-                        "--request")))              │
+        (context (and (not (flag "d"))              │
+                      (not (flag "data"))           │
+                      (not (flag "X"))              │
+                      (not (flag                    │
+                            "request"))))           │
         (effect                                     │ → :allow "GET request (no mutating flags)"
          :allow "GET request (no mutating flags)")) │
 

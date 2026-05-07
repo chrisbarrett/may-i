@@ -40,6 +40,9 @@ pub fn parse_config(input: &str) -> Result<Config, RawError> {
 #[must_use = "parsed config should be used"]
 pub fn parse_config_from_sexprs(forms: &[Sexpr]) -> Result<Config, RawError> {
     let mut config = Config::default();
+    config
+        .style_specs
+        .extend(crate::prelude::prelude_style_specs());
 
     for form in forms {
         let list = form
@@ -70,6 +73,14 @@ pub fn parse_config_from_sexprs(forms: &[Sexpr]) -> Result<Config, RawError> {
                 let checks = parse_check(&list[1..], form.span())?;
                 config.checks.extend(checks);
             }
+            "define-arg-style" => {
+                let spec = crate::style::parse_style_definition(form)?;
+                push_style_spec(&mut config, spec);
+            }
+            "parser" => {
+                let parser = crate::parser_form::parse_parser_form(form)?;
+                push_parser(&mut config, parser);
+            }
             "load" => {
                 return Err(RawError::new(
                     "load forms should be resolved before parsing",
@@ -84,12 +95,36 @@ pub fn parse_config_from_sexprs(forms: &[Sexpr]) -> Result<Config, RawError> {
                     format!("unknown top-level form: {other}"),
                     list[0].span(),
                 )
-                .with_help("valid top-level forms: rule, define, safe-env-vars, check"));
+                .with_help(
+                    "valid top-level forms: rule, define, safe-env-vars, check, define-arg-style, parser",
+                ));
             }
         }
     }
 
     Ok(config)
+}
+
+/// Push a `Parser` onto config, warning on duplicates by program.
+fn push_parser(config: &mut Config, parser: may_i_core::ast::Parser) {
+    if config.parsers.iter().any(|p| p.program == parser.program) {
+        eprintln!(
+            "warning: duplicate (parser \"{}\" …) — last declaration wins",
+            parser.program
+        );
+    }
+    config.parsers.push(parser);
+}
+
+/// Push a `StyleSpec` onto config, warning on duplicates by name.
+fn push_style_spec(config: &mut Config, spec: may_i_core::ast::StyleSpec) {
+    if config.style_specs.iter().any(|s| s.name == spec.name) {
+        eprintln!(
+            "warning: duplicate define-arg-style for `{}` — last declaration wins",
+            spec.name
+        );
+    }
+    config.style_specs.push(spec);
 }
 
 /// Parse a config from sexprs tagged with provenance.
@@ -99,6 +134,9 @@ pub fn parse_config_from_sexprs(forms: &[Sexpr]) -> Result<Config, RawError> {
 #[must_use = "parsed config should be used"]
 pub fn parse_config_from_tagged_sexprs(forms: &[(Sexpr, Provenance)]) -> Result<Config, RawError> {
     let mut config = Config::default();
+    config
+        .style_specs
+        .extend(crate::prelude::prelude_style_specs());
 
     for (form, provenance) in forms {
         let list = form
@@ -135,6 +173,16 @@ pub fn parse_config_from_tagged_sexprs(forms: &[(Sexpr, Provenance)]) -> Result<
                 let checks = parse_check(&list[1..], form.span())?;
                 config.checks.extend(checks);
             }
+            "define-arg-style" => {
+                let mut spec = crate::style::parse_style_definition(form)?;
+                spec.provenance = provenance.clone();
+                push_style_spec(&mut config, spec);
+            }
+            "parser" => {
+                let mut parser = crate::parser_form::parse_parser_form(form)?;
+                parser.provenance = provenance.clone();
+                push_parser(&mut config, parser);
+            }
             "load" => {
                 return Err(RawError::new(
                     "load forms should be resolved before parsing",
@@ -149,7 +197,9 @@ pub fn parse_config_from_tagged_sexprs(forms: &[(Sexpr, Provenance)]) -> Result<
                     format!("unknown top-level form: {other}"),
                     list[0].span(),
                 )
-                .with_help("valid top-level forms: rule, define, safe-env-vars, check"));
+                .with_help(
+                    "valid top-level forms: rule, define, safe-env-vars, check, define-arg-style, parser",
+                ));
             }
         }
     }

@@ -5,6 +5,9 @@ expression: normalised
 
 Trace
 
+  parser: gnu │
+  parser: gnu │
+
                                   command │ ssh prod "rm -rf /"
   107: (rule (command "ssh")              │
          (args (positional                │
@@ -14,10 +17,9 @@ Trace
                                         command │ rm -rf /
                                           facts │ :ssh/host "prod", :via "ssh"
   24: (rule (command "rm")                      │
-        (context                                │
-         (and (anywhere "-r"                    │
-                        "--recursive")          │
-              (anywhere "/")))                  │
+        (context (and (or (flag "r")            │
+                          …)                    │
+                      (anywhere "/")))          │
         (effect                                 │ → :deny "Recursive deletion from root"
          :deny "Recursive deletion from root")) │
 

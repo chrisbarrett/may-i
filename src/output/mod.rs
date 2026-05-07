@@ -199,6 +199,22 @@ fn trace_to_layout(
                 row.left_align = ColAlign::Right;
                 current_rows.push(row);
             }
+            TraceEntry::Parser {
+                command: _,
+                style,
+                parameter_tokens,
+            } => {
+                let params_text = if parameter_tokens.is_empty() {
+                    String::new()
+                } else {
+                    format!(" parameters ({})", parameter_tokens.join(" "))
+                };
+                let label = format!("{} {style}{params_text}", "parser:".dimmed());
+                let label_visible = "parser: ".len() + style.len() + params_text.len();
+                let mut row = ColRow::new(label, label_visible, "");
+                row.left_align = ColAlign::Right;
+                current_rows.push(row);
+            }
             TraceEntry::ParseDiagnostics { diagnostics } => {
                 for diag in diagnostics {
                     let severity_str = match diag.severity {

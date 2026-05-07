@@ -58,9 +58,11 @@ mod tests {
         let input = r#"(and (anywhere "-r") (anywhere "/") (effect :deny "bad"))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let result = super::super::migrate(nodes.into_iter().next().unwrap());
+        // (anywhere "-r") collapses to the structured (flag "r") form en
+        // route through the migration pipeline.
         assert_eq!(
             result.serialize(),
-            r#"(when (and (anywhere "-r") (anywhere "/")) (effect :deny "bad"))"#,
+            r#"(when (and (flag "r") (anywhere "/")) (effect :deny "bad"))"#,
         );
     }
 
@@ -71,7 +73,7 @@ mod tests {
         let result = super::super::migrate(nodes.into_iter().next().unwrap());
         assert_eq!(
             result.serialize(),
-            r#"(when (anywhere "-r") (effect :allow "ok"))"#,
+            r#"(when (flag "r") (effect :allow "ok"))"#,
         );
     }
 
@@ -93,7 +95,7 @@ mod tests {
         let result = super::super::migrate(nodes.into_iter().next().unwrap());
         assert_eq!(
             result.serialize(),
-            r#"(when (and (anywhere "-f") (positional "x")) (effect :allow))"#,
+            r#"(when (and (flag "f") (positional "x")) (effect :allow))"#,
         );
     }
 

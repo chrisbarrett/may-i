@@ -214,6 +214,8 @@ fn context_depth_tracking() {
         bindings: Default::default(),
         recursion_depth: 5, // Set to equal recursion_limit
         recursion_limit: ctx.recursion_limit,
+        parser: ctx.parser.clone(),
+        config: ctx.config,
     };
     assert!(deep_ctx.is_depth_exceeded());
 }

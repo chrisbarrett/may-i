@@ -25,8 +25,11 @@ first-class:
 - `(parameter X FORM)` — extract the value of the flag and route it to
   `FORM` for further matching (`regex`, `may-i`, fact-bind, etc.).
 
-Composes with the existing `(args-style …)` profile machinery from
-`per-command-arg-style`, which is a prerequisite for this change.
+Composes with the `(parser …)` / `(define …)` parsing DSL from
+`per-command-arg-style`, which is a prerequisite for this change. Where
+parser-level `(flag …)` / `(parameter …)` declarations cover *what is a
+flag and what consumes a value*, the rule-level forms in this change
+cover *what to do when a given flag or value is present*.
 
 ## What Changes
 
@@ -45,9 +48,13 @@ Composes with the existing `(args-style …)` profile machinery from
 - **Consumption** — `(parameter X FORM)` consumes both the flag token and
   its value from the stream visible to subsequent positional matchers in
   the same rule, the same way `(positional …)` consumes its matches.
-- **Tokeniser feedback** — flags named in any `(parameter …)` form for a
-  rule are added to that rule's effective `flags_with_values` list during
-  evaluation, so the tokeniser correctly groups flag-value pairs.
+- **Tokeniser feedback** — flags named in any rule-level `(parameter …)`
+  form are added to that rule's effective value-bearing list during
+  evaluation, so the tokeniser correctly groups flag-value pairs even
+  when no parser-level declaration covers them. This rule-level implicit
+  registration is a transitional convenience; the canonical way to make a
+  parameter value-bearing is a parser-level `(parameter X)` declaration
+  (see `per-command-arg-style`).
 - **Migration rewrites** — automatic migration converts:
   - `(anywhere "-x")` ⇒ `(flag "x")`
   - `(forbidden "-x")` ⇒ `(not (flag "x"))`
@@ -85,5 +92,5 @@ Composes with the existing `(args-style …)` profile machinery from
 
 ## Dependencies
 
-- Depends on `per-command-arg-style` (the `(args-style …)` form and
-  profile-aware tokeniser). Land that first or alongside.
+- Depends on `per-command-arg-style` (the `(parser …)` / `(define …)`
+  parsing DSL and parser-aware tokeniser). Land that first or alongside.

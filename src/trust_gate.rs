@@ -245,9 +245,7 @@ mod tests {
     fn make_config(rules: Vec<Rule>) -> Config {
         Config {
             rules,
-            defines: vec![],
-            security: SecurityConfig::default(),
-            checks: vec![],
+            ..Config::default()
         }
     }
 

@@ -5,13 +5,15 @@ expression: normalised
 
 Trace
 
+  parser: gnu │
+
                                             command │ rm foo
                                               facts │ :opencode/agent "build"
   24: (rule (command "rm")                          │
-        (context                                    │
-         (and (anywhere "-r"                        │
-                        "--recursive")              │
-              …))                                   │
+        (context (and (or (flag "r")                │
+                          (flag                     │
+                           "recursive"))            │
+                      …))                           │
         (effect                                     │ → :deny "Recursive deletion from root"
          :deny "Recursive deletion from root"))     │
                                                     │
@@ -25,8 +27,8 @@ Trace
                     "acceptEdits"])                 │
                   (has [:opencode/agent             │ "build" → yes
                         "build"])))                 │
-                (anywhere "-r"                      │
-                          "--recursive"))           │
+                (or (flag "r")                      │
+                    (flag "recursive")))            │
            <if-effect>)))                           │
                                                     │
   37: (rule (command "rm")                          │

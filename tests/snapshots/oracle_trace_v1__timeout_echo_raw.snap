@@ -1,10 +1,12 @@
 ---
 source: tests/oracle_trace_v1.rs
-assertion_line: 122
 expression: normalised
 ---
 
 [1mTrace[0m
+
+  [2mparser:[0m gnu [2m│[0m
+  [2mparser:[0m gnu [2m│[0m
 
                                   [2mcommand[0m [2m│[0m [1mtimeout 30 echo hello[0m
   [2m110: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"timeout"[0m[2m)[0m          [2m│[0m

@@ -57,12 +57,7 @@ mod tests {
 
     fn loaded_with_pre_migration() -> LoadResult {
         LoadResult {
-            config: Config {
-                rules: vec![],
-                defines: vec![],
-                security: SecurityConfig::default(),
-                checks: vec![],
-            },
+            config: Config::default(),
             config_path: PathBuf::from("/tmp/config.lisp"),
             source_text: None,
             pre_migration_forms: Some(vec![]),
@@ -71,12 +66,7 @@ mod tests {
 
     fn loaded_without_pre_migration() -> LoadResult {
         LoadResult {
-            config: Config {
-                rules: vec![],
-                defines: vec![],
-                security: SecurityConfig::default(),
-                checks: vec![],
-            },
+            config: Config::default(),
             config_path: PathBuf::from("/tmp/config.lisp"),
             source_text: None,
             pre_migration_forms: None,

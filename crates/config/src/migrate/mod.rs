@@ -25,6 +25,7 @@ mod collapse_effects;
 mod cond_simplify;
 mod defcontext_to_define;
 mod effect_to_when;
+mod flag_patterns;
 mod flatten_combinators;
 mod flatten_nested_if;
 mod hoist_cond;
@@ -102,6 +103,11 @@ pub fn migration_rules() -> Vec<RewriteFn> {
         // Stage 2 — normalisation (must run after stage 1 is stable)
         Box::new(collapse_effects::rule_collapse_effects),
         Box::new(flatten_combinators::flatten_combinators),
+        // Convert string-literal flag matchers (anywhere/forbidden/positional)
+        // into the structured `(flag …)` and `(parameter …)` forms. Runs in
+        // stage 2 so it sees flat (anywhere …) clauses, not yet wrapped in
+        // (and/or) by the cosmetic phase.
+        Box::new(flag_patterns::rule_anywhere_to_flag),
         // Stage 3 — cosmetic simplification
         Box::new(cond_simplify::cond_single_clause_to_if),
         Box::new(cond_simplify::cond_absorb_else),

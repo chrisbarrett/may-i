@@ -1,10 +1,12 @@
 ---
 source: tests/oracle_trace_v1.rs
-assertion_line: 108
 expression: normalised
 ---
 
 Trace
+
+  parser: gnu │
+  parser: gnu │
 
                                   command │ timeout 30 echo hello
   110: (rule (command "timeout")          │

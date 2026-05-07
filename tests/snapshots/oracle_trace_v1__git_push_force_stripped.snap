@@ -5,6 +5,8 @@ expression: normalised
 
 Trace
 
+  parser: gnu │
+
                                   command │ git push --force
   43: (rule (command "git")               │
         (context (and                     │

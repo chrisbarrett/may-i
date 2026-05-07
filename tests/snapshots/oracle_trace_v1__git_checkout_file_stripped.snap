@@ -5,6 +5,8 @@ expression: normalised
 
 Trace
 
+  parser: gnu │
+
                                                                command │ git checkout -- main.ts
   43: (rule (command "git")                                            │
         (context (and                                                  │

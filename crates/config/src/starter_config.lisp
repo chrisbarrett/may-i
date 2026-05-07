@@ -26,8 +26,8 @@
  :ask "rm foo/bar/baz")
 
 (rule "rm"
-  (if (and (anywhere "-r" "--recursive")
-           (anywhere "/"))
+  (if (and (flag ["r" "recursive"])
+           (positional "/"))
       (effect :deny "Recursive deletion from root")
     (effect :ask)))
 
@@ -54,10 +54,10 @@
 
 (rule "rm"
   (cond
-    ((and (anywhere "-r" "--recursive")
+    ((and (flag ["r" "recursive"])
           (fact? [:ssh/host (regex "^prod-")]))
      (effect :deny "Recursive delete on production hosts"))
-    ((anywhere "-r" "--recursive")
+    ((flag ["r" "recursive"])
      (effect :ask "Confirm recursive deletion"))
     (else
      (effect :allow))))

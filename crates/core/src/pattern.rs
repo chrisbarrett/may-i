@@ -281,6 +281,30 @@ pub enum ArgPattern {
     /// Token must NOT appear anywhere in argv.
     /// Syntax: `(forbidden PATTERN ...)`
     Forbidden(Vec<Expr<Effect>>),
+
+    /// Boolean flag presence test.
+    /// Syntax: `(flag X)` where `X` is a string (single-char short, multi-char
+    /// long) or a vector `[short long]`. Non-consuming.
+    Flag { names: Vec<String> },
+
+    /// Match the value of a named flag against `form`.
+    /// Syntax: `(parameter X FORM)`. Consumes the flag and its value from the
+    /// view available to sibling positional matchers in the same rule.
+    Parameter {
+        names: Vec<String>,
+        form: ParameterForm,
+    },
+}
+
+/// How a `(parameter X FORM)` pattern interprets the flag's value.
+#[derive(Debug, Clone)]
+pub enum ParameterForm {
+    /// Match the flag value as a single token against this expression.
+    /// Supports literals, regex, wildcard, fact-bind, and `and`/`or`/`not`/`cond`.
+    Match(Expr<Effect>),
+    /// Treat the flag value as a command line and recurse via the evaluator,
+    /// the same way `(may-i …)` does over its arg slice.
+    MayI,
 }
 
 impl ArgPattern {
@@ -334,6 +358,44 @@ impl ArgPattern {
     #[cfg(test)]
     pub(crate) fn forbidden(exprs: Vec<Expr<Effect>>) -> Self {
         ArgPattern::Forbidden(exprs)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn flag(names: Vec<String>) -> Self {
+        ArgPattern::Flag { names }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn parameter_match(names: Vec<String>, form: Expr<Effect>) -> Self {
+        ArgPattern::Parameter {
+            names,
+            form: ParameterForm::Match(form),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn parameter_may_i(names: Vec<String>) -> Self {
+        ArgPattern::Parameter {
+            names,
+            form: ParameterForm::MayI,
+        }
+    }
+}
+
+/// Classify a flag name as short (single character) or long (multi character).
+/// Single-character names denote short flags; longer names denote long flags.
+pub fn is_short_flag_name(name: &str) -> bool {
+    name.chars().count() == 1
+}
+
+/// The on-the-wire token form for a flag name. `-x` for shorts, `--long` for
+/// longs. Used by both the evaluator (to match flag tokens) and the implicit
+/// value-bearing flag registration that Parameter feeds into the tokeniser.
+pub fn flag_token_for_name(name: &str) -> String {
+    if is_short_flag_name(name) {
+        format!("-{name}")
+    } else {
+        format!("--{name}")
     }
 }
 

@@ -1,149 +1,296 @@
 ## Context
 
-`crates/engine/src/eval/entry.rs:44-95` defines two functions that together
-encode an implicit single GNU-ish CLI convention:
+`crates/engine/src/eval/entry.rs` currently defines two profile-aware
+functions (`expand_combined_flags(args, &Convention)`,
+`positional_args(args, &Convention)`) that drive tokenisation. They were
+introduced by the first draft of this change as an `(args-style PROGRAM
+:PROFILE …)` declaration with four hard-coded profile keywords.
 
-- `expand_combined_flags(&[String]) -> Vec<String>` — splits `-rf` into `-r
-  -f` if every char in the cluster is alphabetic.
-- `positional_args(&[String]) -> Vec<&str>` — filters out flags, treats
-  long options (`--foo`) as consuming the next arg as a value, treats short
-  options as not consuming.
+That design conflates two concerns:
 
-Both run unconditionally at evaluator entry. There is no place a config can
-say "for `find`, don't split combined alpha flags". The same functions are
-called by `Effect::MayI` recursion (effects.rs:220, 273) and by predicates
-(predicates.rs:151).
+1. **How flags are spelled** for this program — long-prefix, short-prefix,
+   combined-shorts, separator characters between parameter and value.
+2. **Which options on this program take values** — and what to do with
+   those values (e.g. always re-authorise `bash -c VAL`).
+
+Conflating them means every new tool family forces either a new profile
+keyword or a one-off override. There is also no hook for declarative
+per-program semantic facts beyond "this token consumes the next one".
+
+This change separates the two concerns. **Style** is reusable data,
+declared once via `(define …)`, capturing concern (1). **Parser** is a
+per-program declaration that selects a style and adds parser-scoped
+`(flag …)` / `(parameter …)` forms covering concern (2).
 
 Top-level config forms today: `Rule`, `Define`, `Check`, `SecurityConfig`,
-`SafeEnvVars`, `Load`. Adding a new top-level form is well-trodden.
+`SafeEnvVars`, `Load`. Adding `Parser` is well-trodden. `Define` already
+exists for fact bindings; this change extends `Define`'s body grammar to
+accept a style PLIST.
 
 ## Goals / Non-Goals
 
 **Goals:**
-- A single `(args-style PROGRAM …)` declaration per command shifts
-  tokenisation behaviour without touching individual rules.
-- The four profiles (`:gnu`, `:single-dash-long`, `:legacy-bundle`,
-  `:key-value`) cover the working majority of real-world CLI conventions.
-- `:gnu` is the no-op default; existing configs continue to work unchanged.
-- The `(may-i …)` recursion path picks up the inner command's profile
+
+- Style is data. Anything the prelude can express, a user can express via
+  their own `(define …)`. The prelude has no special powers.
+- A single `(parser PROGRAM :style STYLE BODY…)` declaration per command
+  is the only place argv shape is configured.
+- Parser-level `(parameter X (may-i *))` declares always-on
+  re-authorisation of a parameter's value. No corresponding rule needed.
+- Default fallback: programs with no `(parser …)` use the `gnu` style
+  with no parameter declarations. Existing rule-only configs continue to
+  work for tools that match GNU conventions.
+- The `(may-i …)` recursion path picks up the inner command's parser
   automatically (lookup by `ctx.command`).
 
 **Non-Goals:**
-- Per-flag specs (`(flag-spec "-c" :takes-value)` style declarations) —
-  out of scope. The follow-on `flag-and-parameter-patterns` change adds
-  per-rule flag handling that subsumes most of this need.
-- Per-subcommand profiles (`git rebase` vs `git push`) — too granular for
-  typical needs; users can always add a separate `args-style` for the
-  subcommand if it presents as its own program (rare).
-- Inferring profiles by parsing tool help text — magical, fragile.
+
+- Per-subcommand parsers (`git rebase` vs `git push`). Subcommands are
+  unbounded for tools like `git`; the right tool here is parser-level
+  `(parameter …)` declarations that cover the cross-cutting options
+  (`-c`, `-C`, etc.). If a specific subcommand truly behaves like its own
+  program, the user can add a separate `(parser "git rebase" …)` later
+  (out of scope for this change).
+- Inferring styles by parsing tool help text — magical, fragile.
+- Type-checked parameter values (e.g. `(parameter "n" :as integer …)`) —
+  reserved as a future expansion of the parser-level FORM slot.
 
 ## Decisions
 
-### 1. Profile set: four named values
+### 1. `define` is the only way to bind a style
 
-```
-   :gnu                short -x, long --foo, combine -rf, --foo=val,
-                       --foo val. Default when not declared.
-   :single-dash-long   every -foo is a long flag, no combining,
-                       value via -foo val (no =val by default).
-   :legacy-bundle      first non-dashed cluster of letters is a flag
-                       bundle; thereafter :gnu rules.
-   :key-value          tokens of form key=value are flag-equivalent;
-                       every other token is positional.
+```lisp
+(define gnu
+  (:long-prefix "--" :short-prefix "-"
+   :separators (" " "=")
+   :combined-shorts t
+   :pun :allow))
 ```
 
-These cover ~95% of common tools. The 5% tail (BSD ps without dash,
-openssl per-subcommand) can be handled with `:flags-with-values`
-overrides or left to users to express via rule-level patterns.
+Styles are property lists. The prelude is loaded as if the user had
+written it, including its `(define …)` forms. Users can re-bind a name
+(last `define` wins, with a warning), and can derive new styles from
+existing ones.
 
-**Alternative**: orthogonal boolean attributes (`:combine-shorts? true
-:short-prefix "-"`). Rejected — increases surface area, most users
-want a profile not a checklist.
+**Alternative**: keyword-only profiles (`:gnu`, `:single-dash-long`, …).
+Rejected — keeps the system closed; new tool families need a code change.
 
-### 2. Single override: `:flags-with-values`
+### 2. Style derivation via `:overrides`
 
+```lisp
+(define legacy-bundle
+  (:overrides gnu :first-token-bundle t))
+
+(define java
+  (:overrides gnu :separators (" " "=" ":")))
 ```
-   (args-style "kubectl" :gnu
-               :flags-with-values ("-n" "--namespace"
-                                   "-c" "--container"))
+
+`:overrides BASE` is resolved at style-resolution time. Keys present in
+the deriving PLIST replace the same keys in `BASE`. **List-valued keys
+replace, they do not merge** — `:separators` in `java` above is exactly
+`(" " "=" ":")`, not `(" " "=" " " "=" ":")`. Predictability over
+convenience.
+
+Cycles in `:overrides` are a config-load error.
+
+### 3. Style PLIST keys (initial set)
+
+| Key                     | Type      | Default | Meaning                                        |
+| :---------------------- | :-------- | :------ | :--------------------------------------------- |
+| `:long-prefix`          | string    | `"--"`  | Prefix for long flags                          |
+| `:short-prefix`         | string    | `"-"`   | Prefix for short flags                         |
+| `:separators`           | list-str  | `(" ")` | Allowed separators between parameter and value |
+| `:combined-shorts`      | bool      | `nil`   | Whether `-rf` expands to `-r -f`               |
+| `:first-token-bundle`   | bool      | `nil`   | Whether first non-dashed alpha cluster is flag bundle |
+| `:pun`                  | keyword   | `:allow`| `:allow` ⇒ bare parameter occurrence is value-less; `:error` ⇒ tokenisation error |
+| `:overrides`            | symbol    | absent  | Inherit from named style                       |
+
+Unknown keys are a config-load error to keep typos from silently
+disabling features. Future keys are added by extending this table; the
+parser MUST reject keys it does not recognise.
+
+### 4. Prelude styles
+
+Shipped as auto-loaded source:
+
+```lisp
+(define gnu
+  (:long-prefix "--" :short-prefix "-"
+   :separators (" " "=")
+   :combined-shorts t
+   :pun :allow))
+
+(define single-dash-long
+  (:long-prefix "-" :short-prefix "-"
+   :separators (" " "=")
+   :combined-shorts nil
+   :pun :allow))
+
+(define legacy-bundle
+  (:overrides gnu :first-token-bundle t))
+
+(define key-value
+  (:long-prefix "" :short-prefix ""
+   :separators ("=")
+   :combined-shorts nil
+   :pun :error))
 ```
 
-Lists flags that consume the next arg as a value. Layers on top of any
-profile. Intentionally minimal — other overrides not added until a real
-need arises.
+These are bound at `Config` construction time so user `(define …)` forms
+can `:overrides` them or shadow them.
 
-### 3. Default fallback: `:gnu`
+### 5. `(parser PROGRAM :style STYLE BODY…)`
 
-Commands without an `args-style` declaration use `:gnu`. This preserves
-all existing behaviour. A user who wants stricter behaviour for unknown
-commands can declare a wildcard later (separate proposal if needed).
+```lisp
+(parser "git"
+  :style gnu
+  (parameter ["c" "command"] (may-i *))
+  (parameter ["C" "directory"]))
 
-### 4. Tokeniser shape: `Convention` value type
+(parser "tar"     :style legacy-bundle)
+(parser "find"    :style single-dash-long)
+(parser "dd"      :style key-value)
+```
+
+`BODY` accepts:
+
+- `(flag NAME)` — boolean flag declaration. `NAME` is a string or
+  `[short long]` vector. Equivalent to "this is a flag, not a parameter,
+  and never takes a value".
+- `(parameter NAME [FORM])` — value-bearing parameter. `NAME` is a string
+  or `[short long]` vector. Optional `FORM`:
+  - omitted ⇒ register as value-bearing only.
+  - `(may-i *)` ⇒ at evaluation time, parse the captured value as a
+    command line and re-authorise via the standard `(may-i …)` recursion
+    path. The decision flows back into the trace as a virtual `Effect`
+    event keyed to this parser declaration.
+  - other expressions ⇒ rejected at parse time in v1; reserved for
+    future use (`:as integer`, regex restriction, …).
+
+When the same parameter name is declared twice in one parser body, last
+wins with a warning.
+
+### 6. Match semantics in rules
+
+Unchanged from the `flag-and-parameter-patterns` design, with one
+clarification under `:pun :allow`:
+
+| Rule form                  | Bare `--enable`                 | `--enable=true`           | absent |
+| :------------------------- | :------------------------------ | :------------------------ | :----- |
+| `(flag "enable")`          | match (Allow)                   | match (Allow)             | Nil    |
+| `(parameter "enable" *)`   | Nil (no value present)          | match (Allow)             | Nil    |
+| `(parameter "enable" "true")` | Nil                          | match (Allow)             | Nil    |
+
+Under `:pun :error` the bare-`--enable` case is rejected at tokenisation;
+no rule sees it.
+
+### 7. Parser-level `(parameter X (may-i *))` — always-on recursion
+
+When the tokeniser, working under `parser P`, finds a value for parameter
+`X` declared with `(may-i *)`, it triggers a recursive `evaluate` on the
+captured value before any rule for `P` runs. The result of that recursion
+*does not* short-circuit `P`'s rule evaluation — it is recorded in the
+context (as a fact `:via X`) and surfaced in traces. A subsequent rule
+can pick it up via `(when (= :via "command") …)` or similar; in practice,
+most users will rely on the rule-level `(may-i …)` instead.
+
+Rationale: keeps the parser layer purely about *parsing* (what's a
+flag/value/positional?). The rule layer remains the only place
+*authorisation decisions* are made. The parser just guarantees that the
+right things have been parsed and recursively classified.
+
+**Alternative**: have parser-level `(parameter X (may-i *))` short-circuit
+the parent rule's decision to the recursion's result. Rejected — too
+much spooky action at a distance; users would be surprised when their
+rule body never runs.
+
+### 8. Default fallback and migration
+
+- Programs with no `(parser …)` use the `gnu` style and have no parameter
+  declarations. This preserves existing behaviour for the majority of
+  configs.
+- The existing `(args-style …)` form is removed at config-parse time.
+  Configs in the repo that use it are migrated as part of this change.
+- A `may-i migrate` rewrite converts `(args-style PROGRAM :PROFILE [...])`
+  into the equivalent `(parser PROGRAM :style STYLE)` plus zero or more
+  parameter declarations corresponding to `:flags-with-values`.
+
+### 9. Tokeniser shape
 
 ```rust
-struct Convention {
-    profile: Profile,                 // Gnu | SingleDashLong | LegacyBundle | KeyValue
-    flags_with_values: Vec<String>,   // additional value-bearing flags
+struct Style {
+    name: SymbolName,
+    long_prefix: String,
+    short_prefix: String,
+    separators: Vec<String>,
+    combined_shorts: bool,
+    first_token_bundle: bool,
+    pun: PunPolicy,
 }
+
+struct ParameterDecl {
+    names: Vec<String>,                    // short/long spellings
+    treatment: ParameterTreatment,         // None | MayI | (future)
+}
+
+struct Parser {
+    program: String,
+    style: Style,                          // resolved (overrides applied)
+    flags: Vec<Vec<String>>,               // (flag …) declarations
+    parameters: Vec<ParameterDecl>,
+}
+
+fn tokenise(args: &[String], parser: &Parser) -> AnnotatedStream;
 ```
 
-`expand_combined_flags(args, &convention)` and `positional_args(args,
-&convention)` consult the convention. A null/default convention reproduces
-current `:gnu` behaviour.
+`AnnotatedStream` is the existing annotated-token type; the new
+`tokenise` returns it directly rather than going through two passes
+(`expand_combined_flags` then `positional_args`).
 
-### 5. Lookup by command name at recursion boundary
+### 10. Trace output
 
-`evaluate_with_fold` (entry.rs:31) currently calls `expand_combined_flags`
-on the args. New version: looks up the convention for `command` first,
-then expands. `Effect::MayI` recursion already swaps `ctx.command` to the
-inner command, so the inner gets its own convention.
+Trace shows the resolved parser once per evaluation: program, style
+name, list of flags, list of parameters with treatment. Helps users
+debug "why didn't `-n` get treated as value-bearing?".
 
-### 6. Trace output
-
-Trace shows the resolved convention once per evaluation, alongside the
-parsed-args view. Helps users debug "why didn't `-n` get treated as a
-value-bearing flag?".
-
-### 7. Baseline shipped declarations (optional)
-
-A small built-in table of `args-style` declarations for tools the project
-has opinions on:
-
-```
-   (args-style "find"      :single-dash-long)
-   (args-style "go"        :single-dash-long)
-   (args-style "terraform" :single-dash-long)
-   (args-style "tar"       :legacy-bundle)
-   (args-style "dd"        :key-value)
-```
-
-User declarations override the baseline. Either ship as a built-in module
-loaded by default, or as a separate optional file users can `(load …)`.
-Lean: baseline ships as built-in; user can disable via `(args-style
-"find" :gnu)` to override.
+For parser-level `(parameter X (may-i *))` recursion, the trace nests
+the inner evaluation under the parser declaration, mirroring the
+existing `(may-i …)` rule-level rendering.
 
 ## Risks / Trade-offs
 
-- **Behaviour change for some commands.** Tools getting a non-`:gnu`
-  baseline (find, go, terraform, tar, dd) will see different tokenisation.
-  Existing rules that worked by accident may break. Mitigate: visible
-  trace showing the resolved profile; `may-i check` exercises rules
-  against representative inputs.
-- **Discoverability.** A user with a misbehaving rule may not know an
-  `args-style` declaration exists. Mitigate: trace surfaces the active
-  profile; documentation in `may-i reference`.
-- **Multiple declarations for the same program.** Last-wins with a
-  warning at config load. Could be an error instead — pick last-wins for
-  consistency with rule precedence.
-- **Performance.** Convention lookup is per-command, O(1) hash. Negligible.
+- **Breaking change to in-tree code.** `(args-style …)` already shipped
+  in this branch. The pivot removes it before the branch merges; nothing
+  external depends on it yet.
+- **Larger config surface.** Two new top-level forms (`define` body
+  extended; `parser`) instead of one (`args-style`). Mitigated by
+  per-program `(parser …)` being optional and by the prelude covering the
+  common cases.
+- **Style indirection.** A user reading `(parser "find" :style
+  single-dash-long)` has to know what `single-dash-long` means. Mitigate:
+  trace shows the resolved style PLIST inline; `may-i reference` lists
+  prelude styles.
+- **Always-on recursion is a behaviour change.** Under
+  `(parameter X (may-i *))`, every invocation triggers a recursive
+  `evaluate`. Cost is bounded by the existing recursion limit; trace
+  shows the recursion clearly. Users opt in by declaring it.
+- **Pun policy choice may surprise.** Under `gnu`'s `:pun :allow`, bare
+  `--enable` is value-less and `(parameter "enable" *)` returns Nil.
+  Users expecting "value or empty string" will need to write
+  `(or (parameter "enable" *) (flag "enable"))`. Document with examples.
 
 ## Open Questions
 
-- Should the override accept `=`-attached forms specifically? (i.e. some
-  tools accept only `--foo=val`, not `--foo val`.) Probably not for v1 —
-  add `:value-style :equals-only` later if a tool needs it.
-- Should `:single-dash-long` accept `--long` too? Lean: no — it's a
-  distinct profile. Tools that accept both (rare) declare `:gnu` and use
-  `:flags-with-values`.
-- Where in the rule grammar reference does this live? Add a "Tokenisation"
-  section to `may-i reference` output.
+- **Should `:separators` accept regex/character classes?** Default
+  string-list is enough for v1. Add later if a real tool needs it.
+- **Should parameter declarations support a default value?** Out of scope
+  — rule-level `(or (parameter X *) "default")` covers it.
+- **Where does `(parser …)` live in the load order vs `(rule …)` and
+  `(define …)`?** Parsers must be resolvable before rules tokenise their
+  args. Two options: (a) require parsers to load before any rule that
+  evaluates the same program; (b) two-pass config load: collect all
+  parsers and styles first, then resolve rules. Lean: (b) — one less
+  thing for users to think about.
+- **Multiple parsers for the same program.** Last-wins with a warning,
+  matching the rest of the system. Could be an error; lean for
+  consistency.

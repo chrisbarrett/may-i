@@ -5,12 +5,14 @@ expression: normalised
 
 Trace
 
+  parser: gnu │
+
                                             command │ rm foo
   24: (rule (command "rm")                          │
-        (context                                    │
-         (and (anywhere "-r"                        │
-                        "--recursive")              │
-              …))                                   │
+        (context (and (or (flag "r")                │
+                          (flag                     │
+                           "recursive"))            │
+                      …))                           │
         (effect                                     │ → :deny "Recursive deletion from root"
          :deny "Recursive deletion from root"))     │
                                                     │

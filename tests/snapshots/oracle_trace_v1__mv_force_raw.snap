@@ -5,10 +5,13 @@ expression: normalised
 
 [1mTrace[0m
 
+  [2mparser:[0m gnu [2m│[0m
+
                                         [2mcommand[0m [2m│[0m [1mmv -f a b[0m
   [2m83: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"mv"[0m[2m)[0m                      [2m│[0m
         [2m([0m[34margs[0m                                   [2m│[0m
-         [2m([0m[34mif[0m [2m([0m[34manywhere[0m [32m"-f"[0m [32m"--force"[0m[2m)[0m          [2m│[0m
+         [2m([0m[34mif[0m [2m([0mor [2m([0mflag [32m"f"[0m[2m)[0m                     [2m│[0m
+                 [2m…[0m[2m)[0m                             [2m│[0m
              [2m([0m[34meffect[0m                            [2m│[0m [2m[0m[2m→[0m [1;33m:ask[0m [32m"Force move is destructive"[0m
               [94m:ask[0m [32m"Force move is destructive"[0m[2m)[0m [2m│[0m
            [2m…[0m[2m)[0m[2m)[0m[2m)[0m                                 [2m│[0m

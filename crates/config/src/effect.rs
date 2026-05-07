@@ -52,7 +52,7 @@ pub fn parse_effect(sexpr: &Sexpr) -> Result<Spanned<Effect>, RawError> {
         "and" => parse_and(&list[1..], sexpr.span())?,
         "not" => parse_not(&list[1..], sexpr.span())?,
         // Pattern effects
-        "positional" | "exact" | "anywhere" | "forbidden" | "=" => {
+        "positional" | "exact" | "anywhere" | "forbidden" | "flag" | "parameter" | "=" => {
             let pattern = crate::pattern::parse_arg_pattern(sexpr)?;
             Effect::ArgPattern(pattern)
         }

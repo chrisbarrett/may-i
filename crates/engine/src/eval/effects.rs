@@ -1,5 +1,5 @@
 use may_i_core::ast::{Effect, EffectResult, Rule};
-use may_i_core::pattern::{ArgPattern, MatchMode};
+use may_i_core::pattern::{ArgPattern, MatchMode, ParameterForm, flag_token_for_name};
 use may_i_core::{ContextFacts, Decision, Keyword};
 
 use crate::EvalError;
@@ -8,7 +8,7 @@ use crate::fold::PureFold;
 use crate::fold::{ArgMatchDetail, ChildResult, EvalFold};
 
 use super::context::{EvalContext, PredicateResult};
-use super::entry::{Evaluator, expand_combined_flags, positional_args};
+use super::entry::Evaluator;
 use super::positional::{
     build_positional_element_details, match_positional_patterns, resolve_trailing_cond_effect,
 };
@@ -214,10 +214,15 @@ pub(crate) fn evaluate_effect_fold<F: EvalFold>(
         // Recursion
         Effect::MayI { pattern } => match extract_inner_command(ctx.args) {
             Some((inner_cmd, inner_args)) => {
-                let evaluator = Evaluator::new(rules);
                 let mut inner_facts = ctx.facts.clone();
                 inner_facts.insert_scalar(Keyword::new(":via").unwrap(), ctx.command);
-                let expanded_inner = expand_combined_flags(&inner_args);
+                let inner_parser = match ctx.config {
+                    Some(cfg) => cfg.parser_for_with_rules(&inner_cmd),
+                    None => may_i_core::ast::ResolvedParser::synthetic_gnu(&inner_cmd),
+                };
+                fold.record_parser(&inner_cmd, &inner_parser);
+                let expanded_inner = super::entry::tokenise(&inner_args, &inner_parser);
+                let evaluator = Evaluator::new(rules);
                 let inner_ctx = EvalContext {
                     command: &inner_cmd,
                     args: &expanded_inner,
@@ -225,6 +230,8 @@ pub(crate) fn evaluate_effect_fold<F: EvalFold>(
                     bindings: ctx.bindings.clone(),
                     recursion_depth: ctx.recursion_depth + 1,
                     recursion_limit: ctx.recursion_limit,
+                    parser: inner_parser,
+                    config: ctx.config,
                 };
                 fold.begin_recursive_eval();
                 let eval_result = evaluator.evaluate(fold, &inner_ctx)?;
@@ -257,7 +264,7 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
             patterns,
             continuation,
         } => {
-            let pos_args: Vec<&str> = positional_args(ctx.args);
+            let pos_args: Vec<&str> = super::entry::parser_positional_args(ctx.args, &ctx.parser);
 
             let (pat_matched, consumed, bound_facts) =
                 match_positional_patterns(&pos_args, patterns);
@@ -270,11 +277,13 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                     .or_else(|| resolve_trailing_cond_effect(patterns, &pos_args, consumed));
                 if let Some(cont) = effective_continuation {
                     let remaining_args: Vec<String> = match mode {
-                        MatchMode::Positional => self::positional_args(ctx.args)
-                            .into_iter()
-                            .skip(consumed)
-                            .map(|s| s.to_string())
-                            .collect(),
+                        MatchMode::Positional => {
+                            super::entry::parser_positional_args(ctx.args, &ctx.parser)
+                                .into_iter()
+                                .skip(consumed)
+                                .map(|s| s.to_string())
+                                .collect()
+                        }
                         MatchMode::Exact => ctx
                             .args
                             .iter()
@@ -335,8 +344,216 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
             };
             fold.effect_arg_match(pattern, ctx.args, !found_forbidden, detail)
         }
+        ArgPattern::Flag { names } => {
+            let matched = flag_present_in_with_parser(ctx.args, names, &ctx.parser);
+            let search_tokens: Vec<String> =
+                names.iter().map(|n| ctx.parser.token_for_name(n)).collect();
+            let detail = ArgMatchDetail {
+                search_tokens,
+                arg_set: ctx.args.to_vec(),
+                matched,
+                positional_elements: vec![],
+            };
+            fold.effect_arg_match(pattern, ctx.args, matched, detail)
+        }
+        ArgPattern::Parameter { names, form } => {
+            evaluate_parameter_fold(fold, pattern, names, form, ctx, rules)?
+        }
         _ => unreachable!("unknown ArgPattern variant"),
     })
+}
+
+/// Style-aware tokens for a list of canonical names.
+fn tokens_for_names_with_parser(
+    parser: &may_i_core::ast::ResolvedParser,
+    names: &[String],
+) -> Vec<String> {
+    names.iter().map(|n| parser.token_for_name(n)).collect()
+}
+
+/// Check whether any spelling of a `(flag …)`/`(parameter …)` named flag is
+/// present in the (already-tokenised) argument stream. `--` ends the search.
+fn flag_present_in_with_parser(
+    args: &[String],
+    names: &[String],
+    parser: &may_i_core::ast::ResolvedParser,
+) -> bool {
+    find_flag_position_with_parser(args, names, parser).is_some()
+}
+
+/// Predicate-position view of `flag_present_in_with_parser`.
+pub(super) fn flag_present_in_for_predicate(
+    args: &[String],
+    names: &[String],
+    parser: &may_i_core::ast::ResolvedParser,
+) -> bool {
+    flag_present_in_with_parser(args, names, parser)
+}
+
+/// Predicate-position view of `find_parameter_value_with_parser`.
+pub(super) fn find_parameter_value_for_predicate(
+    args: &[String],
+    names: &[String],
+    parser: &may_i_core::ast::ResolvedParser,
+) -> Option<String> {
+    find_parameter_value_with_parser(args, names, parser)
+}
+
+fn find_flag_position_with_parser(
+    args: &[String],
+    names: &[String],
+    parser: &may_i_core::ast::ResolvedParser,
+) -> Option<usize> {
+    let tokens = tokens_for_names_with_parser(parser, names);
+    for (i, arg) in args.iter().enumerate() {
+        if arg == "--" {
+            return None;
+        }
+        for tok in &tokens {
+            if arg == tok {
+                return Some(i);
+            }
+            if equals_value(arg, tok).is_some() {
+                return Some(i);
+            }
+        }
+    }
+    None
+}
+
+/// Extract the value of a named flag from the tokenised stream, supporting
+/// `-X VAL`, `-X=VAL`, `--name VAL`, and `--name=VAL` (and style-specific
+/// separators). Returns `None` when no spelling is present or when the
+/// value is missing.
+fn find_parameter_value_with_parser(
+    args: &[String],
+    names: &[String],
+    parser: &may_i_core::ast::ResolvedParser,
+) -> Option<String> {
+    let tokens = tokens_for_names_with_parser(parser, names);
+    let separators: Vec<String> = parser
+        .style
+        .separators()
+        .iter()
+        .filter(|s| !s.trim().is_empty() && s.as_str() != "=")
+        .cloned()
+        .collect();
+    let mut i = 0;
+    while i < args.len() {
+        let arg = &args[i];
+        if arg == "--" {
+            return None;
+        }
+        for tok in &tokens {
+            if arg == tok {
+                return args.get(i + 1).cloned();
+            }
+            if let Some(value) = equals_value(arg, tok) {
+                return Some(value.to_string());
+            }
+            for sep in &separators {
+                let prefix = format!("{tok}{sep}");
+                if let Some(rest) = arg.strip_prefix(&prefix) {
+                    return Some(rest.to_string());
+                }
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+/// If `arg` is the `=`-attached form of `tok`, return `Some(value)`. Empty
+/// values are preserved so `--name=` parses as the empty string.
+fn equals_value<'a>(arg: &'a str, tok: &str) -> Option<&'a str> {
+    let prefix = format!("{tok}=");
+    arg.strip_prefix(&prefix)
+}
+
+fn evaluate_parameter_fold<F: EvalFold>(
+    fold: &mut F,
+    pattern: &ArgPattern,
+    names: &[String],
+    form: &ParameterForm,
+    ctx: &EvalContext,
+    rules: &[Rule],
+) -> Result<F::EffectOut, EvalError> {
+    let search_tokens: Vec<String> = names.iter().map(|n| flag_token_for_name(n)).collect();
+    let value = find_parameter_value_with_parser(ctx.args, names, &ctx.parser);
+    let matched = value.is_some() && parameter_form_matches(form, value.as_deref().unwrap_or(""));
+    if let Some(value) = value
+        && let ParameterForm::MayI = form
+    {
+        // (parameter X (may-i …)) — recurse with the value parsed as a
+        // command line. Skip extract_inner_command's join step because the
+        // value is already exactly the inner command line.
+        let parsed = may_i_shell_parser::parse_simple_command(&value).or_else(|| {
+            // Fallback: treat the value as a single-token command with no
+            // args. Conservative — recursion will likely return Ask if no
+            // rule covers it.
+            Some((value.clone(), Vec::new()))
+        });
+        if let Some((inner_cmd, inner_args)) = parsed {
+            let evaluator = Evaluator::new(rules);
+            let mut inner_facts = ctx.facts.clone();
+            inner_facts.insert_scalar(Keyword::new(":via").unwrap(), ctx.command);
+            let inner_parser = match ctx.config {
+                Some(cfg) => cfg.parser_for_with_rules(&inner_cmd),
+                None => may_i_core::ast::ResolvedParser::synthetic_gnu(&inner_cmd),
+            };
+            fold.record_parser(&inner_cmd, &inner_parser);
+            let expanded_inner = super::entry::tokenise(&inner_args, &inner_parser);
+            let inner_ctx = EvalContext {
+                command: &inner_cmd,
+                args: &expanded_inner,
+                facts: &inner_facts,
+                bindings: ctx.bindings.clone(),
+                recursion_depth: ctx.recursion_depth + 1,
+                recursion_limit: ctx.recursion_limit,
+                parser: inner_parser,
+                config: ctx.config,
+            };
+            fold.begin_recursive_eval();
+            let eval_result = evaluator.evaluate(fold, &inner_ctx)?;
+            // Translate the recursed decision back into an EffectResult and
+            // route it through the same fold seam used by `(may-i …)`.
+            let inner_result = EffectResult::Decision(eval_result.decision, eval_result.reason);
+            let inner_out = fold.effect_terminal(
+                &Effect::Terminal {
+                    decision: Decision::Allow,
+                    reason: None,
+                },
+                inner_result.clone(),
+            );
+            let _ = search_tokens;
+            // Re-use effect_may_i so traces show the recursion.
+            return Ok(fold.effect_may_i(
+                &may_i_core::pattern::ArgPattern::positional(vec![]),
+                &inner_cmd,
+                &inner_args,
+                inner_result,
+                inner_out,
+            ));
+        }
+        // Unreachable in practice — the fallback above always returns Some.
+        unreachable!("parse_simple_command fallback should always succeed");
+    }
+    let detail = ArgMatchDetail {
+        search_tokens,
+        arg_set: ctx.args.to_vec(),
+        matched,
+        positional_elements: vec![],
+    };
+    Ok(fold.effect_arg_match(pattern, ctx.args, matched, detail))
+}
+
+/// Apply a non-recursive parameter form (anything other than `MayI`) to a
+/// single-token value.
+fn parameter_form_matches(form: &ParameterForm, value: &str) -> bool {
+    match form {
+        ParameterForm::Match(expr) => expr.is_match(value),
+        ParameterForm::MayI => false, // handled in caller
+    }
 }
 
 /// Helper to evaluate an effect with owned args and a fold.
@@ -356,6 +573,8 @@ fn evaluate_effect_with_owned_args_fold<F: EvalFold>(
         bindings: ctx.bindings.clone(),
         recursion_depth: ctx.recursion_depth,
         recursion_limit: ctx.recursion_limit,
+        parser: ctx.parser.clone(),
+        config: ctx.config,
     };
     evaluate_effect_fold(fold, effect, &inner_ctx, rules)
 }

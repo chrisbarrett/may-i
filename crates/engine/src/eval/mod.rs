@@ -12,12 +12,10 @@ pub(crate) mod predicates;
 pub use command::{evaluate_command, evaluate_command_with_fold};
 pub use context::{EvalContext, PredicateResult};
 pub use decompose::{EvalUnit, decompose};
-pub use entry::{Evaluator, evaluate, evaluate_with_fold};
+pub use entry::{Evaluator, evaluate, evaluate_with_fold, parser_positional_args, tokenise};
 
 #[cfg(test)]
 pub(crate) use effects::{evaluate_effect, evaluate_effect_fold};
-#[cfg(test)]
-pub(crate) use entry::{expand_combined_flags, positional_args};
 #[cfg(test)]
 pub(crate) use positional::match_positional_patterns;
 #[cfg(test)]

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use may_i_core::ContextFacts;
-use may_i_core::ast::{Define, Predicate};
+use may_i_core::ast::{Config, Define, Predicate, ResolvedParser};
 
 /// Maximum recursion depth for (may-i ...) evaluation.
 pub(super) const DEFAULT_RECURSION_LIMIT: usize = 10;
@@ -28,15 +28,46 @@ pub struct EvalContext<'a> {
     pub recursion_depth: usize,
     /// Maximum recursion depth allowed.
     pub recursion_limit: usize,
+    /// Resolved parser (style + parameter declarations) for the current
+    /// command. Drives both tokenisation and parser-level recursion.
+    pub parser: ResolvedParser,
+    /// Full config — needed by `(may-i …)` recursion to resolve the
+    /// inner command's parser.
+    pub config: Option<&'a Config>,
 }
 
 impl<'a> EvalContext<'a> {
-    /// Create a new evaluation context.
+    /// Create a new evaluation context with a synthetic GNU parser and
+    /// no config. Used by tests; production callers go through
+    /// `with_parser`.
     pub fn new(
         command: &'a str,
         args: &'a [String],
         facts: &'a ContextFacts,
         bindings: HashMap<&'a str, &'a Predicate>,
+    ) -> Self {
+        let parser = ResolvedParser::synthetic_gnu(command);
+        Self {
+            command,
+            args,
+            facts,
+            bindings,
+            recursion_depth: 0,
+            recursion_limit: DEFAULT_RECURSION_LIMIT,
+            parser,
+            config: None,
+        }
+    }
+
+    /// Create a new evaluation context with a fully-resolved parser
+    /// and full-config access for parser lookups during recursion.
+    pub fn with_parser(
+        command: &'a str,
+        args: &'a [String],
+        facts: &'a ContextFacts,
+        bindings: HashMap<&'a str, &'a Predicate>,
+        parser: ResolvedParser,
+        config: &'a Config,
     ) -> Self {
         Self {
             command,
@@ -45,6 +76,8 @@ impl<'a> EvalContext<'a> {
             bindings,
             recursion_depth: 0,
             recursion_limit: DEFAULT_RECURSION_LIMIT,
+            parser,
+            config: Some(config),
         }
     }
 

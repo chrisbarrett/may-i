@@ -5,13 +5,14 @@ expression: normalised
 
 Trace
 
+  parser: gnu │
+
                                                 command │ rm -r /tmp/foo
                                                   facts │ :opencode/agent "build"
   24: (rule (command "rm")                              │
-        (context                                        │
-         (and (anywhere "-r"                            │
-                        "--recursive")                  │
-              (anywhere "/")))                          │
+        (context (and (or (flag "r")                    │
+                          …)                            │
+                      (anywhere "/")))                  │
         (effect                                         │ → :deny "Recursive deletion from root"
          :deny "Recursive deletion from root"))         │
                                                         │
@@ -25,8 +26,8 @@ Trace
                     "acceptEdits"])                     │
                   (has [:opencode/agent                 │ "build" → yes
                         "build"])))                     │
-                (anywhere "-r"                          │
-                          "--recursive"))               │
+                (or (flag "r")                          │
+                    …))                                 │
            (if (anywhere (regex                         │
                           "^/tmp/.*"))                  │
                (effect                                  │ → :allow "Deleting tmp files is allowed"

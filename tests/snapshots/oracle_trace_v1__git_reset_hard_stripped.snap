@@ -5,13 +5,15 @@ expression: normalised
 
 Trace
 
-                                command │ git reset --hard
-  43: (rule (command "git")             │
-        (context (and                   │
-                  (positional "reset")  │ "reset" = "reset" → yes
-                  (anywhere "--hard"))) │
-        (effect                         │ → :ask "Dangerous git reset"
-         :ask "Dangerous git reset"))   │
+  parser: gnu │
+
+                               command │ git reset --hard
+  43: (rule (command "git")            │
+        (context (and                  │
+                  (positional "reset") │ "reset" = "reset" → yes
+                  (flag "hard")))      │
+        (effect                        │ → :ask "Dangerous git reset"
+         :ask "Dangerous git reset"))  │
 
 Result
 

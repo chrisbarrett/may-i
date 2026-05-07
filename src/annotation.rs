@@ -277,7 +277,34 @@ fn arg_pattern_to_doc(pattern: &ArgPattern) -> Doc<()> {
             inner.extend(exprs.iter().map(|e| e.to_doc()));
             Doc::list(vec![Doc::atom("not"), Doc::list(inner)])
         }
+        ArgPattern::Flag { names } => {
+            let names_doc = flag_names_to_doc(names);
+            Doc::list(vec![Doc::atom("flag"), names_doc])
+        }
+        ArgPattern::Parameter { names, form } => {
+            let names_doc = flag_names_to_doc(names);
+            let form_doc = match form {
+                may_i_core::pattern::ParameterForm::Match(expr) => expr.to_doc(),
+                may_i_core::pattern::ParameterForm::MayI => {
+                    Doc::list(vec![Doc::atom("may-i"), Doc::atom("*")])
+                }
+            };
+            Doc::list(vec![Doc::atom("parameter"), names_doc, form_doc])
+        }
         _ => Doc::atom("<unknown-arg-pattern>"),
+    }
+}
+
+fn flag_names_to_doc(names: &[String]) -> Doc<()> {
+    if names.len() == 1 {
+        Doc::atom(format!("\"{}\"", names[0]))
+    } else {
+        Doc::vector(
+            names
+                .iter()
+                .map(|n| Doc::atom(format!("\"{n}\"")))
+                .collect(),
+        )
     }
 }
 
@@ -443,6 +470,13 @@ pub enum TraceEntry {
     /// Parse diagnostics were emitted.
     ParseDiagnostics {
         diagnostics: Vec<may_i_shell_parser::ParseDiagnostic>,
+    },
+    /// Resolved parser (style + parameter spellings) for the command
+    /// being evaluated.
+    Parser {
+        command: String,
+        style: String,
+        parameter_tokens: Vec<String>,
     },
 }
 
@@ -893,6 +927,14 @@ impl EvalFold for TracingFold {
 
     fn begin_recursive_eval(&mut self) {
         self.recursive_trace_starts.push(self.traces.len());
+    }
+
+    fn record_parser(&mut self, command: &str, parser: &may_i_core::ast::ResolvedParser) {
+        self.traces.push(TraceEntry::Parser {
+            command: command.to_string(),
+            style: parser.style.name().to_string(),
+            parameter_tokens: parser.parameter_tokens(),
+        });
     }
 
     fn effect_may_i(

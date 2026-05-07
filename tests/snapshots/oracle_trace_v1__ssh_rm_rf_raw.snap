@@ -5,6 +5,9 @@ expression: normalised
 
 [1mTrace[0m
 
+  [2mparser:[0m gnu [2m│[0m
+  [2mparser:[0m gnu [2m│[0m
+
                                   [2mcommand[0m [2m│[0m [1mssh prod "rm -rf /"[0m
   [2m107: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"ssh"[0m[2m)[0m              [2m│[0m
          [2m([0m[34margs[0m [2m([0m[34mpositional[0m                [2m│[0m
@@ -14,10 +17,9 @@ expression: normalised
                                         [2mcommand[0m [2m│[0m [1mrm -rf /[0m
                                           [2mfacts[0m [2m│[0m [94m:ssh/host[0m [32m"prod"[0m[2m, [0m[94m:via[0m [32m"ssh"[0m
   [2m24: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"rm"[0m[2m)[0m                      [2m│[0m
-        [2m([0mcontext                                [2m│[0m
-         [2m([0mand [2m([0m[34manywhere[0m [32m"-r"[0m                    [2m│[0m
-                        [32m"--recursive"[0m[2m)[0m          [2m│[0m
-              [2m([0m[34manywhere[0m [32m"/"[0m[2m)[0m[2m)[0m[2m)[0m                  [2m│[0m
+        [2m([0mcontext [2m([0mand [2m([0mor [2m([0mflag [32m"r"[0m[2m)[0m            [2m│[0m
+                          [2m…[0m[2m)[0m                    [2m│[0m
+                      [2m([0m[34manywhere[0m [32m"/"[0m[2m)[0m[2m)[0m[2m)[0m          [2m│[0m
         [2m([0m[34meffect[0m                                 [2m│[0m [2m[0m[2m→[0m [1;31m:deny[0m [32m"Recursive deletion from root"[0m
          [94m:deny[0m [32m"Recursive deletion from root"[0m[2m)[0m[2m)[0m [2m│[0m
 

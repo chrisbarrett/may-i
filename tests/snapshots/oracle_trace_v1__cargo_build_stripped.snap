@@ -5,6 +5,8 @@ expression: normalised
 
 Trace
 
+  parser: gnu │
+
                                   command │ cargo build
   95: (rule (command "cargo")             │
         (args (if (exact)                 │

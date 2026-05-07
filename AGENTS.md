@@ -1,6 +1,12 @@
 This project defines a Bash command analysis & authorisation tool for agent
 harnesses.
 
+Read `CONTEXT.md` for the project's domain vocabulary before discussing design
+or writing user-facing docs. It distinguishes user-facing terms (_decision_,
+_pattern_, _rule_) from contributor-only ones (_effect_, _predicate_, the
+`ArgPattern`/`Expr<T>` split). Using the wrong word in the wrong audience is
+a recurring source of bugs.
+
 Run `cargo fmt` before staging files.
 
 > [!IMPORTANT]

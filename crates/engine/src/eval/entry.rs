@@ -1,4 +1,6 @@
-use may_i_core::ast::{EffectResult, Rule};
+#[cfg(test)]
+use may_i_core::ast::Style;
+use may_i_core::ast::{EffectResult, ParameterTreatment, PunPolicy, ResolvedParser, Rule};
 use may_i_core::{ContextFacts, Decision};
 
 use crate::fold::{EvalFold, PureFold};
@@ -29,26 +31,155 @@ pub fn evaluate_with_fold<F: EvalFold>(
     facts: &ContextFacts,
     fold: &mut F,
 ) -> Result<EvalResult, EvalError> {
-    let expanded = expand_combined_flags(args);
-    let bindings = EvalContext::build_bindings(&config.defines);
-    let evaluator = Evaluator::new(&config.rules);
-    let ctx = EvalContext::new(command, &expanded, facts, bindings);
-    evaluator.evaluate(fold, &ctx)
+    evaluate_at_depth(command, args, config, facts, fold, 0)
 }
 
-/// Expand combined short flags (e.g. `-rf` → `-r`, `-f`).
-///
-/// Only expands args that start with a single `-` followed by multiple
-/// ASCII letters. Long options (`--foo`) and args with non-letter characters
-/// (e.g. `-1`, `-p8080`) are left unchanged.
-pub(crate) fn expand_combined_flags(args: &[String]) -> Vec<String> {
+/// Common implementation; entry-points just pick a starting depth.
+pub(crate) fn evaluate_at_depth<F: EvalFold>(
+    command: &str,
+    args: &[String],
+    config: &may_i_core::ast::Config,
+    facts: &ContextFacts,
+    fold: &mut F,
+    depth: usize,
+) -> Result<EvalResult, EvalError> {
+    if depth >= super::context::DEFAULT_RECURSION_LIMIT {
+        return Ok(EvalResult::new(
+            Decision::Ask,
+            Some(format!(
+                "recursion depth limit ({}) exceeded",
+                super::context::DEFAULT_RECURSION_LIMIT
+            )),
+        ));
+    }
+    let parser = config.parser_for_with_rules(command);
+    // Pun policy: under `:pun :error`, a bare parameter token (no
+    // separator-and-value, not a recognised flag) MUST cause the
+    // tokeniser to refuse the input. Surfaced as Ask — the binary
+    // contract is "do not allow", and Ask routes back to the user.
+    if parser.style.pun() == PunPolicy::Error
+        && let Err(reason) = check_pun_error(args, &parser)
+    {
+        return Ok(EvalResult::new(Decision::Ask, Some(reason)));
+    }
+    let expanded = tokenise(args, &parser);
+    fold.record_parser(command, &parser);
+    // Parser-level `(parameter X (may-i *))` recursion. Run before
+    // rule evaluation so `:via NAME` facts are in scope; the
+    // recursion result also acts as a fallback decision when no rule
+    // matches.
+    let mut parser_recursion: Option<EvalResult> = None;
+    let mut recursion_facts = facts.clone();
+    for decl in &parser.parameters {
+        if decl.treatment != ParameterTreatment::MayI {
+            continue;
+        }
+        let Some(value) =
+            super::effects::find_parameter_value_for_predicate(&expanded, &decl.names, &parser)
+        else {
+            continue;
+        };
+        let parsed = may_i_shell_parser::parse_simple_command(&value)
+            .unwrap_or_else(|| (value.clone(), Vec::new()));
+        let (inner_cmd, inner_args) = parsed;
+        let inner_facts_seed = recursion_facts.clone();
+        let nested = evaluate_at_depth(
+            &inner_cmd,
+            &inner_args,
+            config,
+            &inner_facts_seed,
+            fold,
+            depth + 1,
+        )?;
+        if let Some(name) = decl.names.first()
+            && let Ok(key) = may_i_core::Keyword::new(":via")
+        {
+            recursion_facts.insert_scalar(key, name);
+        }
+        parser_recursion = Some(nested);
+    }
+    let bindings = EvalContext::build_bindings(&config.defines);
+    let evaluator = Evaluator::new(&config.rules);
+    let mut ctx = EvalContext::with_parser(
+        command,
+        &expanded,
+        &recursion_facts,
+        bindings,
+        parser,
+        config,
+    );
+    ctx.recursion_depth = depth;
+    let result = evaluator.evaluate(fold, &ctx)?;
+    if matches!(result.decision, Decision::Ask)
+        && let Some(rec) = parser_recursion
+    {
+        return Ok(rec);
+    }
+    Ok(result)
+}
+
+/// Tokenise `args` under `parser`. Returns the expanded token stream
+/// that downstream `parser_positional_args` and flag-matching code
+/// walks. Style-aware: combined-shorts, first-token-bundle, and
+/// prefix selection all come from `parser.style`.
+pub fn tokenise(args: &[String], parser: &ResolvedParser) -> Vec<String> {
+    let style = &parser.style;
+    if style.combined_shorts() {
+        if style.first_token_bundle() {
+            expand_legacy_bundle(args)
+        } else {
+            expand_combined_shorts(args)
+        }
+    } else if style.first_token_bundle() {
+        expand_first_token_bundle_only(args)
+    } else {
+        args.to_vec()
+    }
+}
+
+/// Pun-policy check. Returns Err when an undeclared bare token would
+/// be rejected. Triggers under `:pun :error`: every recognised
+/// parameter must appear with a value (separator or attached). Bare
+/// parameter spellings, or unknown bare tokens that look like
+/// parameters, fail.
+fn check_pun_error(args: &[String], parser: &ResolvedParser) -> Result<(), String> {
+    let style = &parser.style;
+    let separators = style.separators();
+    let mut past_terminator = false;
+    let mut iter = args.iter().peekable();
+    while let Some(arg) = iter.next() {
+        if past_terminator {
+            continue;
+        }
+        if arg == "--" {
+            past_terminator = true;
+            continue;
+        }
+        let bare_is_parameter = parser
+            .parameters
+            .iter()
+            .any(|d| d.names.iter().any(|n| n == arg));
+        let has_inline_separator = separators
+            .iter()
+            .filter(|s| !s.trim().is_empty())
+            .any(|s| arg.contains(s.as_str()));
+        if bare_is_parameter && !has_inline_separator {
+            if separators.iter().any(|s| s == " ") && iter.peek().is_some() {
+                iter.next();
+                continue;
+            }
+            return Err(format!(
+                "tokenisation error: bare parameter `{arg}` under :pun :error"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn expand_combined_shorts(args: &[String]) -> Vec<String> {
     let mut out = Vec::with_capacity(args.len());
     for arg in args {
-        if arg.starts_with('-')
-            && !arg.starts_with("--")
-            && arg.len() > 2
-            && arg[1..].chars().all(|c| c.is_ascii_alphabetic())
-        {
+        if is_combined_short_flag(arg) {
             for ch in arg[1..].chars() {
                 out.push(format!("-{ch}"));
             }
@@ -59,39 +190,131 @@ pub(crate) fn expand_combined_flags(args: &[String]) -> Vec<String> {
     out
 }
 
-/// Extract positional (non-flag) arguments from the argument list.
-///
-/// Handles `--` as an option terminator: `--` itself is included as a
-/// positional arg, and all subsequent args are positional regardless of
-/// prefix. Long options (`--foo`) consume the following arg as their value.
-pub(crate) fn positional_args(args: &[String]) -> Vec<&str> {
-    let mut result = Vec::new();
-    let mut iter = args.iter().peekable();
-    let mut past_terminator = false;
+fn is_combined_short_flag(arg: &str) -> bool {
+    arg.starts_with('-')
+        && !arg.starts_with("--")
+        && arg.len() > 2
+        && arg[1..].chars().all(|c| c.is_ascii_alphabetic())
+}
 
-    while let Some(arg) = iter.next() {
-        if past_terminator {
-            result.push(arg.as_str());
-        } else if arg == "--" {
-            result.push(arg.as_str());
-            past_terminator = true;
-        } else if arg.starts_with("--") {
-            // Long option — skip its value (next arg) if present.
-            // We assume long options that look like --opt=val are a single
-            // arg, so only skip the next arg if it doesn't contain '='.
-            if !arg.contains('=') {
-                iter.next(); // skip value
+fn expand_legacy_bundle(args: &[String]) -> Vec<String> {
+    let mut out = Vec::with_capacity(args.len());
+    let mut bundle_consumed = false;
+    for arg in args {
+        if !bundle_consumed
+            && !arg.is_empty()
+            && !arg.starts_with('-')
+            && arg.chars().all(|c| c.is_ascii_alphabetic())
+        {
+            for ch in arg.chars() {
+                out.push(format!("-{ch}"));
             }
-        } else if arg.starts_with('-') {
-            // Short flag(s) — already expanded by expand_combined_flags.
-            // Don't skip the next arg; short flags that take values (like
-            // `-o file`) are ambiguous without command-specific knowledge,
-            // but this matches the oracle's behaviour for most commands.
+            bundle_consumed = true;
+        } else if is_combined_short_flag(arg) {
+            for ch in arg[1..].chars() {
+                out.push(format!("-{ch}"));
+            }
+            bundle_consumed = true;
         } else {
-            result.push(arg.as_str());
+            out.push(arg.clone());
+            bundle_consumed = true;
         }
     }
-    result
+    out
+}
+
+/// Bundle the first non-dashed alpha token only; leave the rest
+/// untouched (no combined-shorts expansion afterwards).
+fn expand_first_token_bundle_only(args: &[String]) -> Vec<String> {
+    let mut out = Vec::with_capacity(args.len());
+    let mut consumed = false;
+    for arg in args {
+        if !consumed
+            && !arg.is_empty()
+            && !arg.starts_with('-')
+            && arg.chars().all(|c| c.is_ascii_alphabetic())
+        {
+            for ch in arg.chars() {
+                out.push(format!("-{ch}"));
+            }
+            consumed = true;
+        } else {
+            out.push(arg.clone());
+            consumed = true;
+        }
+    }
+    out
+}
+
+/// Style-aware positional-args extraction. Walks the tokenised
+/// stream, peeling off flags and parameter-value pairs per the
+/// parser's style and parameter declarations. Returns the residual
+/// positional tokens.
+pub fn parser_positional_args<'a>(args: &'a [String], parser: &ResolvedParser) -> Vec<&'a str> {
+    let style = &parser.style;
+    let long_prefix = style.long_prefix();
+    let short_prefix = style.short_prefix();
+    let separators = style.separators();
+    // Under GNU-shaped styles (`--`/`-` prefixes with `=` separator),
+    // every `--long` flag without an inline `=` is assumed to consume
+    // the next arg. Without this `(parameter X *)` rules can't see
+    // the value of an undeclared long flag.
+    let gnu_long_consumes_next =
+        long_prefix == "--" && short_prefix == "-" && separators.iter().any(|s| s == "=");
+    let mut out = Vec::new();
+    let mut iter = args.iter().enumerate().peekable();
+    let mut past_terminator = false;
+    while let Some((_, arg)) = iter.next() {
+        if past_terminator {
+            out.push(arg.as_str());
+            continue;
+        }
+        if arg == "--" {
+            out.push(arg.as_str());
+            past_terminator = true;
+            continue;
+        }
+        let starts_long = !long_prefix.is_empty() && arg.starts_with(long_prefix);
+        // Prefer the long prefix when both apply (e.g. `--` over `-`).
+        let starts_short =
+            !short_prefix.is_empty() && arg.starts_with(short_prefix) && !starts_long;
+        if starts_long || starts_short {
+            let prefix = if starts_long {
+                long_prefix
+            } else {
+                short_prefix
+            };
+            let name_with_value = &arg[prefix.len()..];
+            let inline_handled = separators
+                .iter()
+                .filter(|s| s.as_str() != " ")
+                .any(|s| name_with_value.contains(s.as_str()));
+            if inline_handled {
+                continue;
+            }
+            let is_declared_param = parser.parameter_token_matches(arg);
+            let consumes_next = is_declared_param || (starts_long && gnu_long_consumes_next);
+            if consumes_next
+                && separators.iter().any(|s| s.as_str() == " ")
+                && iter.peek().is_some()
+            {
+                iter.next();
+            }
+            continue;
+        }
+        // No prefix (key-value style). If it contains a non-trivial
+        // separator, it's flag-equivalent.
+        let is_kv = separators.iter().filter(|s| !s.trim().is_empty()).any(|s| {
+            arg.find(s.as_str())
+                .map(|i| i > 0 && i < arg.len() - 1)
+                .unwrap_or(false)
+        });
+        if long_prefix.is_empty() && short_prefix.is_empty() && is_kv {
+            continue;
+        }
+        out.push(arg.as_str());
+    }
+    out
 }
 
 /// Evaluator for rules with unified effect model.
@@ -112,7 +335,6 @@ impl<'a> Evaluator<'a> {
         fold: &mut F,
         ctx: &EvalContext,
     ) -> Result<EvalResult, EvalError> {
-        // If depth exceeded, return ask
         if ctx.is_depth_exceeded() {
             return Ok(EvalResult::new(
                 Decision::Ask,
@@ -123,7 +345,6 @@ impl<'a> Evaluator<'a> {
             ));
         }
 
-        // Evaluate rules in order, return first non-Nil result
         let mut any_command_matched = false;
         for rule in self.rules {
             let out = self.evaluate_rule(fold, rule, ctx)?;
@@ -134,7 +355,6 @@ impl<'a> Evaluator<'a> {
                     return Ok(EvalResult::new(*decision, reason.clone()));
                 }
                 EffectResult::Nil => {
-                    // Track whether any rule's command pattern matched.
                     if rule.command_effect.value.matches_command(ctx.command) {
                         any_command_matched = true;
                     }
@@ -143,7 +363,6 @@ impl<'a> Evaluator<'a> {
             }
         }
 
-        // No rules matched - return ask with a descriptive reason
         let reason = if any_command_matched {
             format!(
                 "Rules for `{}` exist but context or arguments did not match any patterns",
@@ -163,7 +382,6 @@ impl<'a> Evaluator<'a> {
         rule: &Rule,
         ctx: &EvalContext,
     ) -> Result<F::EffectOut, EvalError> {
-        // Step 1: Evaluate command effect - must return non-Nil for rule to apply
         let command_out = evaluate_effect_fold(fold, &rule.command_effect.value, ctx, self.rules)?;
         let command_result = F::effect_result(&command_out);
 
@@ -171,7 +389,6 @@ impl<'a> Evaluator<'a> {
             return Ok(fold.rule_skipped(rule));
         }
 
-        // Step 2: Evaluate the single body effect.
         let out = evaluate_effect_fold(fold, &rule.effect.value, ctx, self.rules)?;
         let result = F::effect_result(&out);
 
@@ -182,5 +399,207 @@ impl<'a> Evaluator<'a> {
                 fold.rule_matched(rule, line, ctx.facts, command_out, out)
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tokenisation_properties {
+    use super::*;
+    use may_i_core::ast::{ParameterDecl, ParameterTreatment as PT};
+    use proptest::prelude::*;
+
+    fn arg_token() -> impl Strategy<Value = String> {
+        prop_oneof![
+            "[a-z]{1,5}".prop_map(String::from),
+            "-[a-z]{1,4}".prop_map(String::from),
+            "--[a-z]{1,5}".prop_map(String::from),
+            "--[a-z]{1,5}=[a-z]{1,5}".prop_map(String::from),
+            "[a-z]{1,4}=[a-z]{1,4}".prop_map(String::from),
+            Just(String::from("--")),
+            "-[0-9]{1}".prop_map(String::from),
+        ]
+    }
+
+    fn argv() -> impl Strategy<Value = Vec<String>> {
+        proptest::collection::vec(arg_token(), 0..8)
+    }
+
+    /// Return one of the four prelude-equivalent styles by index.
+    fn style_for_idx(idx: usize) -> Style {
+        match idx {
+            0 => Style::default_gnu(),
+            1 => style_single_dash_long(),
+            2 => style_legacy_bundle(),
+            _ => style_key_value(),
+        }
+    }
+
+    fn style_single_dash_long() -> Style {
+        let spec = may_i_core::ast::StyleSpec {
+            name: "single-dash-long".into(),
+            overrides: None,
+            long_prefix: Some("-".into()),
+            short_prefix: Some("-".into()),
+            separators: Some(vec![" ".into(), "=".into()]),
+            combined_shorts: Some(false),
+            first_token_bundle: Some(false),
+            pun: Some(PunPolicy::Allow),
+            span: may_i_core::Span::new(0, 0),
+            provenance: may_i_core::ast::Provenance::PrimaryConfig,
+        };
+        let mut reg = may_i_core::ast::StyleRegistry::new();
+        reg.push(spec);
+        reg.resolve("single-dash-long").unwrap()
+    }
+
+    fn style_legacy_bundle() -> Style {
+        let spec = may_i_core::ast::StyleSpec {
+            name: "legacy-bundle".into(),
+            overrides: None,
+            long_prefix: Some("--".into()),
+            short_prefix: Some("-".into()),
+            separators: Some(vec![" ".into(), "=".into()]),
+            combined_shorts: Some(true),
+            first_token_bundle: Some(true),
+            pun: Some(PunPolicy::Allow),
+            span: may_i_core::Span::new(0, 0),
+            provenance: may_i_core::ast::Provenance::PrimaryConfig,
+        };
+        let mut reg = may_i_core::ast::StyleRegistry::new();
+        reg.push(spec);
+        reg.resolve("legacy-bundle").unwrap()
+    }
+
+    fn style_key_value() -> Style {
+        let spec = may_i_core::ast::StyleSpec {
+            name: "key-value".into(),
+            overrides: None,
+            long_prefix: Some("".into()),
+            short_prefix: Some("".into()),
+            separators: Some(vec!["=".into()]),
+            combined_shorts: Some(false),
+            first_token_bundle: Some(false),
+            pun: Some(PunPolicy::Error),
+            span: may_i_core::Span::new(0, 0),
+            provenance: may_i_core::ast::Provenance::PrimaryConfig,
+        };
+        let mut reg = may_i_core::ast::StyleRegistry::new();
+        reg.push(spec);
+        reg.resolve("key-value").unwrap()
+    }
+
+    fn parser_with_style(style: Style) -> ResolvedParser {
+        ResolvedParser {
+            program: "any".into(),
+            style,
+            flags: vec![],
+            parameters: vec![],
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: 256, max_shrink_iters: 50, .. ProptestConfig::default() })]
+
+        // 8.1 — synthetic GNU parser produces the same partition as
+        // the legacy GNU code path for arbitrary argv.
+        #[test]
+        fn parser_gnu_matches_legacy(args in argv()) {
+            let parser = parser_with_style(Style::default_gnu());
+            let expanded = tokenise(&args, &parser);
+            let legacy = expand_gnu_legacy(&args);
+            prop_assert_eq!(&expanded, &legacy);
+            let pos = parser_positional_args(&expanded, &parser);
+            let legacy_pos = positional_args_legacy(&expanded);
+            prop_assert_eq!(pos, legacy_pos);
+        }
+
+        // 8.2 — tokenisation is deterministic.
+        #[test]
+        fn parser_tokenise_deterministic(args in argv(), idx in 0usize..4) {
+            let parser = parser_with_style(style_for_idx(idx));
+            let a = tokenise(&args, &parser);
+            let b = tokenise(&args, &parser);
+            prop_assert_eq!(&a, &b);
+            let pa = parser_positional_args(&a, &parser);
+            let pb = parser_positional_args(&a, &parser);
+            prop_assert_eq!(pa, pb);
+        }
+
+        // 8.3 — under `single-dash-long`, no token is split.
+        #[test]
+        fn parser_single_dash_long_never_splits(args in argv()) {
+            let parser = parser_with_style(style_single_dash_long());
+            let expanded = tokenise(&args, &parser);
+            prop_assert_eq!(expanded.len(), args.len());
+            prop_assert_eq!(&expanded, &args);
+        }
+
+        // 8.4 — under `:pun :error`, bare parameter tokens are
+        // rejected; inline `name=val` is accepted.
+        #[test]
+        fn parser_pun_error_requires_inline_value(name in "[a-z]{1,4}", val in "[a-z]{1,4}") {
+            let mut parser = parser_with_style(style_key_value());
+            parser.parameters.push(ParameterDecl {
+                names: vec![name.clone()],
+                treatment: PT::None,
+            });
+            let bare = vec![name.clone()];
+            prop_assert!(check_pun_error(&bare, &parser).is_err());
+            let inline = vec![format!("{name}={val}")];
+            prop_assert!(check_pun_error(&inline, &parser).is_ok());
+        }
+
+        // 8.5 — :overrides resolution idempotent: rebuilding a style
+        // from its own properties yields the same tokenisation.
+        #[test]
+        fn parser_overrides_resolution_idempotent(args in argv(), idx in 0usize..4) {
+            let s = style_for_idx(idx);
+            let p1 = parser_with_style(s.clone());
+            let p2 = parser_with_style(s);
+            prop_assert_eq!(&tokenise(&args, &p1), &tokenise(&args, &p2));
+        }
+    }
+
+    /// Mirror of the pre-refactor `expand_combined_flags` GNU branch.
+    fn expand_gnu_legacy(args: &[String]) -> Vec<String> {
+        let mut out = Vec::with_capacity(args.len());
+        for arg in args {
+            if arg.starts_with('-')
+                && !arg.starts_with("--")
+                && arg.len() > 2
+                && arg[1..].chars().all(|c| c.is_ascii_alphabetic())
+            {
+                for ch in arg[1..].chars() {
+                    out.push(format!("-{ch}"));
+                }
+            } else {
+                out.push(arg.clone());
+            }
+        }
+        out
+    }
+
+    /// Mirror of the pre-refactor `positional_args` GNU branch.
+    fn positional_args_legacy(args: &[String]) -> Vec<&str> {
+        let mut result = Vec::new();
+        let mut iter = args.iter().peekable();
+        let mut past_terminator = false;
+        while let Some(arg) = iter.next() {
+            if past_terminator {
+                result.push(arg.as_str());
+            } else if arg == "--" {
+                result.push(arg.as_str());
+                past_terminator = true;
+            } else if arg.starts_with("--") {
+                if !arg.contains('=') {
+                    iter.next();
+                }
+            } else if arg.starts_with('-') {
+                // short flag — does not consume value
+            } else {
+                result.push(arg.as_str());
+            }
+        }
+        result
     }
 }
