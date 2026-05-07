@@ -63,18 +63,36 @@ rules.
   (fact? [:ssh/host (regex "^prod-")]))
 ```
 
-### Less-common forms
+### `(load "FILE")`
 
-- `(load "FILE")` — Include another config file (path or glob); useful if config
-  gets too long.
-- `(parser PROG FORMS…)` — Declare how to parse flags, options and positional
-  args for programs that don't use the default GNU style. Most commonly needed
-  for programs using the single-dashed `-long` convention.
-- `(define-arg-style …)` — Define a custom flag and option-passing convention
-  for use in parsers.
-- `(safe-env-vars NAMES…)` — Declare environment variables that may be safely
-  read. By default, only variables whose values are recovered via static
-  analysis are allowed.
+Include another config file (path or glob); useful if config gets too long.
+
+```lisp
+(load "rules/git.lisp")
+(load "rules/*.lisp")
+```
+
+Paths are relative to the current file.
+
+### `(parser PROG FORMS…)`
+
+Declare how to parse flags, options and positional args for programs that don't
+use the default GNU style.
+
+```lisp
+(parser "find" :style single-dash-long)
+```
+
+Most commonly needed for programs using the single-dashed `-long` convention.
+
+### `(define-arg-style …)`
+
+Define a custom flag and option-passing convention for use in parsers.
+
+### `(safe-env-vars NAMES…)`
+
+Declare environment variables that may be safely read. By default, only
+variables whose values are recovered via static analysis are allowed.
 
 ## Rule syntax
 
