@@ -1,4 +1,5 @@
-inputs: { self', system, ... }:
+inputs:
+{ self', system, ... }:
 let
   pkgs = import inputs.nixpkgs {
     inherit system;
@@ -13,16 +14,16 @@ let
   craneLib = (inputs.crane.mkLib pkgs).overrideToolchain (_: rustToolchain);
 
   # Include non-Rust files needed for the build
-  extraFileFilter = path: type:
-    (pkgs.lib.hasSuffix ".lisp" path) ||
-    (pkgs.lib.hasSuffix ".snap" path) ||
-    (pkgs.lib.hasSuffix ".txt" path);
+  extraFileFilter =
+    path: type:
+    (pkgs.lib.hasSuffix ".lisp" path)
+    || (pkgs.lib.hasSuffix ".snap" path)
+    || (pkgs.lib.hasSuffix ".txt" path)
+    || (pkgs.lib.hasSuffix "REFERENCE.md" path);
 
   src = pkgs.lib.cleanSourceWith {
     src = ./.;
-    filter = path: type:
-      (extraFileFilter path type) ||
-      (craneLib.filterCargoSources path type);
+    filter = path: type: (extraFileFilter path type) || (craneLib.filterCargoSources path type);
   };
 
   commonArgs = {
@@ -32,10 +33,13 @@ let
 
   cargoArtifacts = craneLib.buildDepsOnly commonArgs;
 
-  may-i = craneLib.buildPackage (commonArgs // {
-    inherit cargoArtifacts;
-    doCheck = false; # Run via cargo-nextest checks.
-  });
+  may-i = craneLib.buildPackage (
+    commonArgs
+    // {
+      inherit cargoArtifacts;
+      doCheck = false; # Run via cargo-nextest checks.
+    }
+  );
 in
 {
   formatter = pkgs.nixpkgs-fmt;
@@ -49,10 +53,13 @@ in
   checks = {
     inherit may-i;
 
-    clippy = craneLib.cargoClippy (commonArgs // {
-      inherit cargoArtifacts;
-      cargoClippyExtraArgs = "--all-targets -- --deny warnings";
-    });
+    clippy = craneLib.cargoClippy (
+      commonArgs
+      // {
+        inherit cargoArtifacts;
+        cargoClippyExtraArgs = "--all-targets -- --deny warnings";
+      }
+    );
 
     fmt = craneLib.cargoFmt { inherit src; };
 
@@ -61,12 +68,15 @@ in
       inherit src;
     };
 
-    nextest = craneLib.cargoNextest (commonArgs // {
-      inherit cargoArtifacts;
-      partitions = 1;
-      partitionType = "count";
-      cargoNextestPartitionsExtraArgs = "--no-tests=pass";
-    });
+    nextest = craneLib.cargoNextest (
+      commonArgs
+      // {
+        inherit cargoArtifacts;
+        partitions = 1;
+        partitionType = "count";
+        cargoNextestPartitionsExtraArgs = "--no-tests=pass";
+      }
+    );
   };
 
   devShells.default = craneLib.devShell {
@@ -81,7 +91,8 @@ in
 
     shellHook = ''
       prek install
-    '' + pkgs.lib.optionalString pkgs.stdenv.isDarwin ''
+    ''
+    + pkgs.lib.optionalString pkgs.stdenv.isDarwin ''
       # Workaround: rust-overlay symlinks rustfmt into a separate derivation
       # that lacks librustc_driver. Point dyld at the combined toolchain's lib.
       export DYLD_LIBRARY_PATH="${rustToolchain}/lib"
