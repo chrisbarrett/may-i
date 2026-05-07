@@ -33,6 +33,7 @@ hex = "0.4"
 console = "0.15"
 dialoguer = "0.11"
 similar = "2"
+termimad = "0.34.1"
 
 [dev-dependencies]
 assert_cmd = "2"
