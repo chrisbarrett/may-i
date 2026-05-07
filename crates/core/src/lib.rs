@@ -30,8 +30,8 @@ pub use predicates::{FactPattern, FactQuery};
 
 // Re-export canonical types
 pub use ast::{
-    ArgsStyle, Config, Convention, Define, Effect, EffectResult, ParameterDecl, ParameterTreatment,
-    Parser, Predicate, Profile, Provenance, PunPolicy, ResolvedParser, Rule, SecurityConfig,
-    Spanned, Style, StyleRegistry, StyleResolveError, StyleSpec,
+    Config, Define, Effect, EffectResult, ParameterDecl, ParameterTreatment, Parser, Predicate,
+    Provenance, PunPolicy, ResolvedParser, Rule, SecurityConfig, Spanned, Style, StyleRegistry,
+    StyleResolveError, StyleSpec,
 };
 pub use pattern::{ArgPattern, CommandPattern, Expr, ExprBranch, PositionalArg, Quantifier};

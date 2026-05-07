@@ -5,7 +5,7 @@ expression: normalised
 
 [1mTrace[0m
 
-  [2mconvention:[0m :gnu [2m│[0m
+  [2mparser:[0m gnu [2m│[0m
 
                               [2mcommand[0m [2m│[0m [1mmv a b[0m
   [2m83: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"mv"[0m[2m)[0m            [2m│[0m

@@ -8,7 +8,7 @@ use crate::fold::PureFold;
 use crate::fold::{ChildResult, EvalFold, build_fact_detail};
 
 use super::context::{EvalContext, PredicateResult};
-use super::entry::positional_args;
+use super::entry::parser_positional_args;
 use super::positional::match_positional_patterns;
 
 /// Evaluate a predicate against the context (non-generic, uses PureFold).
@@ -148,7 +148,7 @@ pub(super) fn evaluate_arg_pattern_predicate(
             patterns,
             continuation: _,
         } => {
-            let pos_args: Vec<&str> = positional_args(ctx.args, &ctx.convention);
+            let pos_args: Vec<&str> = parser_positional_args(ctx.args, &ctx.parser);
             let (pat_matched, consumed, _) = match_positional_patterns(&pos_args, patterns);
             let matched =
                 pat_matched && (*mode == MatchMode::Positional || consumed == pos_args.len());
@@ -175,7 +175,7 @@ pub(super) fn evaluate_arg_pattern_predicate(
             PredicateResult::Match
         }
         ArgPattern::Flag { names } => {
-            if super::effects::flag_present_in_for_predicate(ctx.args, names) {
+            if super::effects::flag_present_in_for_predicate(ctx.args, names, &ctx.parser) {
                 PredicateResult::Match
             } else {
                 PredicateResult::NoMatch
@@ -185,7 +185,7 @@ pub(super) fn evaluate_arg_pattern_predicate(
             // In predicate position, only the value-shape forms are
             // meaningful — `(may-i …)` returns a Decision, which has no
             // Match/NoMatch projection.
-            match super::effects::find_parameter_value_for_predicate(ctx.args, names) {
+            match super::effects::find_parameter_value_for_predicate(ctx.args, names, &ctx.parser) {
                 Some(value) => match form {
                     may_i_core::pattern::ParameterForm::Match(expr) => {
                         if expr.is_match(&value) {

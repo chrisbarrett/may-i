@@ -73,10 +73,6 @@ pub fn parse_config_from_sexprs(forms: &[Sexpr]) -> Result<Config, RawError> {
                 let checks = parse_check(&list[1..], form.span())?;
                 config.checks.extend(checks);
             }
-            "args-style" => {
-                let style = crate::args_style::parse_args_style(form)?;
-                push_args_style(&mut config, style);
-            }
             "define-arg-style" => {
                 let spec = crate::style::parse_style_definition(form)?;
                 push_style_spec(&mut config, spec);
@@ -100,7 +96,7 @@ pub fn parse_config_from_sexprs(forms: &[Sexpr]) -> Result<Config, RawError> {
                     list[0].span(),
                 )
                 .with_help(
-                    "valid top-level forms: rule, define, safe-env-vars, check, args-style, define-arg-style, parser",
+                    "valid top-level forms: rule, define, safe-env-vars, check, define-arg-style, parser",
                 ));
             }
         }
@@ -129,25 +125,6 @@ fn push_style_spec(config: &mut Config, spec: may_i_core::ast::StyleSpec) {
         );
     }
     config.style_specs.push(spec);
-}
-
-/// Push an `ArgsStyle` onto config, warning on duplicates.
-///
-/// Last declaration wins (it stays in the vec, after the previous one); the
-/// `convention_for` getter walks in reverse so trailing entries shadow
-/// earlier ones.
-fn push_args_style(config: &mut Config, style: may_i_core::ast::ArgsStyle) {
-    if config
-        .args_styles
-        .iter()
-        .any(|s| s.program == style.program)
-    {
-        eprintln!(
-            "warning: duplicate args-style declaration for `{}` — last declaration wins",
-            style.program
-        );
-    }
-    config.args_styles.push(style);
 }
 
 /// Parse a config from sexprs tagged with provenance.
@@ -196,11 +173,6 @@ pub fn parse_config_from_tagged_sexprs(forms: &[(Sexpr, Provenance)]) -> Result<
                 let checks = parse_check(&list[1..], form.span())?;
                 config.checks.extend(checks);
             }
-            "args-style" => {
-                let mut style = crate::args_style::parse_args_style(form)?;
-                style.provenance = provenance.clone();
-                push_args_style(&mut config, style);
-            }
             "define-arg-style" => {
                 let mut spec = crate::style::parse_style_definition(form)?;
                 spec.provenance = provenance.clone();
@@ -226,7 +198,7 @@ pub fn parse_config_from_tagged_sexprs(forms: &[(Sexpr, Provenance)]) -> Result<
                     list[0].span(),
                 )
                 .with_help(
-                    "valid top-level forms: rule, define, safe-env-vars, check, args-style, define-arg-style, parser",
+                    "valid top-level forms: rule, define, safe-env-vars, check, define-arg-style, parser",
                 ));
             }
         }
@@ -450,63 +422,6 @@ fn parse_check_items(
 mod tests {
     use super::*;
     use may_i_core::Decision;
-
-    #[test]
-    fn parse_args_style_simple() {
-        let config = parse_config(r#"(args-style "find" :single-dash-long)"#).unwrap();
-        assert_eq!(config.args_styles.len(), 1);
-        assert_eq!(config.args_styles[0].program, "find");
-        assert_eq!(
-            config.args_styles[0].convention.profile,
-            may_i_core::ast::Profile::SingleDashLong
-        );
-    }
-
-    #[test]
-    fn parse_args_style_with_overrides() {
-        let config =
-            parse_config(r#"(args-style "kubectl" :gnu :flags-with-values ("-n" "--namespace"))"#)
-                .unwrap();
-        assert_eq!(
-            config.args_styles[0].convention.flags_with_values,
-            vec!["-n".to_string(), "--namespace".to_string()]
-        );
-    }
-
-    #[test]
-    fn parse_args_style_duplicate_keeps_both_last_wins() {
-        let config = parse_config(
-            r#"(args-style "find" :gnu)
-               (args-style "find" :single-dash-long)"#,
-        )
-        .unwrap();
-        assert_eq!(config.args_styles.len(), 2);
-        assert_eq!(
-            config.convention_for("find").profile,
-            may_i_core::ast::Profile::SingleDashLong
-        );
-    }
-
-    #[test]
-    fn args_style_roundtrips_via_sexpr() {
-        let text = r#"(args-style "kubectl" :gnu :flags-with-values ("-n" "--namespace"))"#;
-        let (cst, errs) = may_i_sexpr::parse_cst(text);
-        assert!(errs.is_empty(), "{errs:?}");
-        let reserialised: String = cst.iter().map(|f| f.serialize()).collect();
-        let cfg = parse_config(&reserialised).expect("re-parse failed");
-        assert_eq!(cfg.args_styles.len(), 1);
-        assert_eq!(cfg.args_styles[0].program, "kubectl");
-        assert_eq!(
-            cfg.args_styles[0].convention.flags_with_values,
-            vec!["-n".to_string(), "--namespace".to_string()]
-        );
-    }
-
-    #[test]
-    fn parse_args_style_unknown_profile_errors() {
-        let err = parse_config(r#"(args-style "find" :weird)"#).expect_err("expected error");
-        assert!(format!("{err}").contains("unknown args-style profile"));
-    }
 
     #[test]
     fn parse_empty_config() {

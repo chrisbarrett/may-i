@@ -5,7 +5,7 @@ expression: normalised
 
 Trace
 
-  convention: :gnu │
+  parser: gnu │
 
                                                                command │ git checkout -- main.ts
                                                                  facts │ :opencode/agent "plan"

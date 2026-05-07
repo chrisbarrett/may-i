@@ -29,15 +29,15 @@ pub fn trace_to_json(entries: &[TraceEntry]) -> Vec<serde_json::Value> {
                     "message": d.message(),
                 })).collect::<Vec<_>>(),
             }),
-            TraceEntry::Convention {
+            TraceEntry::Parser {
                 command,
-                profile,
-                flags_with_values,
+                style,
+                parameter_tokens,
             } => serde_json::json!({
-                "type": "convention",
+                "type": "parser",
                 "command": command,
-                "profile": profile,
-                "flags_with_values": flags_with_values,
+                "style": style,
+                "parameter_tokens": parameter_tokens,
             }),
             TraceEntry::Rule { doc, line, .. } => {
                 let mut annotations = Vec::new();

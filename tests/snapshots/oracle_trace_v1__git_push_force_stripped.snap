@@ -5,7 +5,7 @@ expression: normalised
 
 Trace
 
-  convention: :gnu │
+  parser: gnu │
 
                                   command │ git push --force
   43: (rule (command "git")               │

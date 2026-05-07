@@ -439,73 +439,6 @@ impl Rule {
     }
 }
 
-/// Argv tokenisation profile for a program. Selects how raw shell tokens are
-/// split into flag, flag-value, and positional streams.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum Profile {
-    /// `--long`, `--long=val`, `--long val`; alpha-cluster `-rf` splits to
-    /// `-r -f`. Default when no `args-style` is declared.
-    #[default]
-    Gnu,
-    /// Every `-foo` is a single long flag. No `--` prefix variant; no
-    /// alpha-cluster splitting.
-    SingleDashLong,
-    /// First non-dashed alphanumeric token is a flag bundle (e.g. `tar
-    /// xvzf`); subsequent tokens follow `:gnu` rules.
-    LegacyBundle,
-    /// `key=value` tokens are flag-equivalent. All other tokens are
-    /// positional.
-    KeyValue,
-}
-
-impl Profile {
-    /// Stable keyword form (`:gnu`, `:single-dash-long`, ...).
-    pub fn keyword(&self) -> &'static str {
-        match self {
-            Profile::Gnu => ":gnu",
-            Profile::SingleDashLong => ":single-dash-long",
-            Profile::LegacyBundle => ":legacy-bundle",
-            Profile::KeyValue => ":key-value",
-        }
-    }
-
-    /// Parse a profile from its keyword form.
-    pub fn from_keyword(s: &str) -> Option<Profile> {
-        match s {
-            ":gnu" => Some(Profile::Gnu),
-            ":single-dash-long" => Some(Profile::SingleDashLong),
-            ":legacy-bundle" => Some(Profile::LegacyBundle),
-            ":key-value" => Some(Profile::KeyValue),
-            _ => None,
-        }
-    }
-}
-
-/// Resolved tokenisation convention for a single command. Combines a profile
-/// with any per-program list of additional value-bearing flags.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Convention {
-    pub profile: Profile,
-    pub flags_with_values: Vec<String>,
-}
-
-impl Convention {
-    /// Convention for a `:gnu` profile with no overrides — preserves the
-    /// pre-existing tokenisation behaviour.
-    pub fn gnu() -> Self {
-        Convention {
-            profile: Profile::Gnu,
-            flags_with_values: Vec::new(),
-        }
-    }
-
-    /// Returns true if `flag` is one of the additional value-bearing flags
-    /// declared via `:flags-with-values`.
-    pub fn flag_takes_value(&self, flag: &str) -> bool {
-        self.flags_with_values.iter().any(|f| f == flag)
-    }
-}
-
 /// Bare-parameter handling policy in arg-parsing styles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PunPolicy {
@@ -788,20 +721,46 @@ impl ResolvedParser {
             parameters: Vec::new(),
         }
     }
-}
 
-/// Top-level `args-style` declaration — binds a tokenisation convention to a
-/// program name.
-#[derive(Debug, Clone)]
-pub struct ArgsStyle {
-    /// Program name (matched against `ctx.command`).
-    pub program: String,
-    /// Resolved convention.
-    pub convention: Convention,
-    /// Source span for error reporting.
-    pub span: Span,
-    /// Where this declaration came from.
-    pub provenance: Provenance,
+    /// Style-aware token form for a parameter/flag name.
+    ///
+    /// Single-character names are short flags (use the style's
+    /// short-prefix); multi-character names are long flags (use the
+    /// style's long-prefix).
+    pub fn token_for_name(&self, name: &str) -> String {
+        if crate::pattern::is_short_flag_name(name) {
+            format!("{}{}", self.style.short_prefix(), name)
+        } else {
+            format!("{}{}", self.style.long_prefix(), name)
+        }
+    }
+
+    /// All on-the-wire spellings of every parameter declared in this parser.
+    pub fn parameter_tokens(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        for decl in &self.parameters {
+            for name in &decl.names {
+                let tok = self.token_for_name(name);
+                if !out.iter().any(|t| t == &tok) {
+                    out.push(tok);
+                }
+            }
+        }
+        out
+    }
+
+    /// True if `tok` matches any declared parameter spelling.
+    pub fn parameter_token_matches(&self, tok: &str) -> bool {
+        self.parameter_tokens().iter().any(|t| t == tok)
+    }
+
+    /// Find the `ParameterDecl` whose declared spellings include the
+    /// canonical short/long *name* of `tok`.
+    pub fn parameter_decl_for_token(&self, tok: &str) -> Option<&ParameterDecl> {
+        self.parameters
+            .iter()
+            .find(|decl| decl.names.iter().any(|n| self.token_for_name(n) == tok))
+    }
 }
 
 /// Top-level configuration for the unified rule DSL.
@@ -818,10 +777,6 @@ pub struct Config {
 
     /// Validation checks.
     pub checks: Vec<Check>,
-
-    /// Argv tokenisation styles per program. Last declaration wins on
-    /// duplicates (with a warning emitted at parse time).
-    pub args_styles: Vec<ArgsStyle>,
 
     /// Named arg-parsing style declarations from `(define-arg-style NAME
     /// PLIST)` forms. Kept separate from `defines` for now; will unify
@@ -845,14 +800,13 @@ impl Config {
     }
 
     /// Resolve a parser for `command`. Returns the user's `(parser …)`
-    /// declaration with style resolved, or a synthetic GNU parser if no
-    /// declaration matches. Style-resolution errors fall back to the
-    /// synthetic parser — caller is expected to surface them via
+    /// declaration with style resolved, or a synthetic GNU parser if
+    /// no declaration matches. Style-resolution errors fall back to
+    /// the synthetic parser — caller is expected to surface them via
     /// validation upstream.
     pub fn parser_for(&self, command: &str) -> ResolvedParser {
-        let parser = match self.parsers.iter().rev().find(|p| p.program == command) {
-            Some(p) => p,
-            None => return ResolvedParser::synthetic_gnu(command),
+        let Some(parser) = self.parsers.iter().rev().find(|p| p.program == command) else {
+            return ResolvedParser::synthetic_gnu(command);
         };
         let registry = self.style_registry();
         let style = registry
@@ -865,34 +819,87 @@ impl Config {
             parameters: parser.parameters.clone(),
         }
     }
-}
 
-impl Config {
-    /// Resolve the tokenisation convention for `command`. User
-    /// declarations win first (last declaration wins on duplicates); if no
-    /// user declaration exists, the built-in baseline is consulted; if
-    /// neither matches, returns the default `:gnu` convention.
-    pub fn convention_for(&self, command: &str) -> Convention {
-        if let Some(s) = self.args_styles.iter().rev().find(|s| s.program == command) {
-            return s.convention.clone();
+    /// Like `parser_for`, but additionally merges into the resolved
+    /// parser any parameter spellings implied by `(parameter X …)`
+    /// patterns in rules whose command pattern matches `command`. This
+    /// preserves the historic behaviour where rule-level `(parameter …)`
+    /// implicitly registers value-bearing flags.
+    pub fn parser_for_with_rules(&self, command: &str) -> ResolvedParser {
+        let mut parser = self.parser_for(command);
+        let existing: Vec<String> = parser
+            .parameters
+            .iter()
+            .flat_map(|d| d.names.clone())
+            .collect();
+        for name in collect_implicit_parameter_names(&self.rules, command) {
+            if !existing.iter().any(|n| n == &name) {
+                parser.parameters.push(ParameterDecl {
+                    names: vec![name],
+                    treatment: ParameterTreatment::None,
+                });
+            }
         }
-        baseline_convention(command).unwrap_or_default()
+        parser
     }
 }
 
-/// Built-in `args-style` baseline. Declarations here apply unless the user
-/// overrides them with their own `(args-style PROGRAM ...)` form.
-fn baseline_convention(command: &str) -> Option<Convention> {
-    let profile = match command {
-        "find" | "go" | "terraform" => Profile::SingleDashLong,
-        "tar" => Profile::LegacyBundle,
-        "dd" => Profile::KeyValue,
-        _ => return None,
-    };
-    Some(Convention {
-        profile,
-        flags_with_values: Vec::new(),
-    })
+/// Walk every rule whose command pattern can match `command` and collect
+/// the canonical names of every `(parameter …)` pattern in that rule's
+/// body. Used by `Config::parser_for_with_rules` to back-fill the
+/// parser with implicit value-bearing parameter declarations.
+fn collect_implicit_parameter_names(rules: &[Rule], command: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for rule in rules {
+        if !rule.command_effect.value.matches_command(command) {
+            continue;
+        }
+        collect_parameter_names_in_effect(&rule.effect.value, &mut out);
+    }
+    out
+}
+
+fn collect_parameter_names_in_effect(effect: &Effect, out: &mut Vec<String>) {
+    use crate::pattern::ArgPattern;
+    match effect {
+        Effect::ArgPattern(ArgPattern::Parameter { names, .. }) => {
+            for name in names {
+                if !out.iter().any(|n| n == name) {
+                    out.push(name.clone());
+                }
+            }
+        }
+        Effect::ArgPattern(ArgPattern::Ordered {
+            continuation: Some(cont),
+            ..
+        }) => collect_parameter_names_in_effect(cont, out),
+        Effect::And { effects } | Effect::Or { effects } => {
+            for child in effects {
+                collect_parameter_names_in_effect(&child.value, out);
+            }
+        }
+        Effect::Not { effect: inner } => collect_parameter_names_in_effect(&inner.value, out),
+        Effect::When { effect: body, .. } | Effect::Unless { effect: body, .. } => {
+            collect_parameter_names_in_effect(&body.value, out);
+        }
+        Effect::If {
+            then_effect,
+            else_effect,
+            ..
+        } => {
+            collect_parameter_names_in_effect(&then_effect.value, out);
+            collect_parameter_names_in_effect(&else_effect.value, out);
+        }
+        Effect::Cond { branches, fallback } => {
+            for (_, body) in branches {
+                collect_parameter_names_in_effect(&body.value, out);
+            }
+            if let Some(fb) = fallback {
+                collect_parameter_names_in_effect(&fb.value, out);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Security configuration.
@@ -1297,88 +1304,8 @@ mod tests {
         assert!(config.rules.is_empty());
         assert!(config.checks.is_empty());
         assert!(config.security.safe_env_vars.is_empty());
-        assert!(config.args_styles.is_empty());
-    }
-
-    #[test]
-    fn profile_keyword_roundtrip() {
-        for p in [
-            Profile::Gnu,
-            Profile::SingleDashLong,
-            Profile::LegacyBundle,
-            Profile::KeyValue,
-        ] {
-            assert_eq!(Profile::from_keyword(p.keyword()), Some(p));
-        }
-        assert_eq!(Profile::from_keyword(":bogus"), None);
-    }
-
-    #[test]
-    fn convention_default_is_gnu() {
-        let c = Convention::default();
-        assert_eq!(c.profile, Profile::Gnu);
-        assert!(c.flags_with_values.is_empty());
-        assert_eq!(c, Convention::gnu());
-    }
-
-    #[test]
-    fn convention_flag_takes_value() {
-        let c = Convention {
-            profile: Profile::Gnu,
-            flags_with_values: vec!["-n".into(), "--namespace".into()],
-        };
-        assert!(c.flag_takes_value("-n"));
-        assert!(c.flag_takes_value("--namespace"));
-        assert!(!c.flag_takes_value("-x"));
-    }
-
-    #[test]
-    fn config_convention_for_unknown_returns_gnu() {
-        let cfg = Config::default();
-        assert_eq!(cfg.convention_for("anything"), Convention::gnu());
-    }
-
-    #[test]
-    fn config_baseline_applies_when_no_user_declaration() {
-        let cfg = Config::default();
-        assert_eq!(cfg.convention_for("find").profile, Profile::SingleDashLong);
-        assert_eq!(cfg.convention_for("tar").profile, Profile::LegacyBundle);
-        assert_eq!(cfg.convention_for("dd").profile, Profile::KeyValue);
-    }
-
-    #[test]
-    fn config_user_declaration_overrides_baseline() {
-        let span = Span { start: 0, end: 1 };
-        let mut cfg = Config::default();
-        cfg.args_styles.push(ArgsStyle {
-            program: "find".into(),
-            convention: Convention::gnu(),
-            span,
-            provenance: Provenance::PrimaryConfig,
-        });
-        assert_eq!(cfg.convention_for("find").profile, Profile::Gnu);
-    }
-
-    #[test]
-    fn config_convention_for_last_wins() {
-        let span = Span { start: 0, end: 1 };
-        let mut cfg = Config::default();
-        cfg.args_styles.push(ArgsStyle {
-            program: "find".into(),
-            convention: Convention::gnu(),
-            span,
-            provenance: Provenance::PrimaryConfig,
-        });
-        cfg.args_styles.push(ArgsStyle {
-            program: "find".into(),
-            convention: Convention {
-                profile: Profile::SingleDashLong,
-                flags_with_values: vec![],
-            },
-            span,
-            provenance: Provenance::PrimaryConfig,
-        });
-        assert_eq!(cfg.convention_for("find").profile, Profile::SingleDashLong);
+        assert!(config.parsers.is_empty());
+        assert!(config.style_specs.is_empty());
     }
 
     #[test]

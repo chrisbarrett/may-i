@@ -5,8 +5,8 @@ expression: normalised
 
 Trace
 
-  convention: :gnu │
-  convention: :gnu │
+  parser: gnu │
+  parser: gnu │
 
                                   command │ timeout 30 echo hello
   110: (rule (command "timeout")          │

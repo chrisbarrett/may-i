@@ -36,7 +36,7 @@ proptest! {
         let result_convenience = eval::evaluate(&cmd, &args, &config, &facts).unwrap();
 
         // Must expand flags to match the convenience wrapper's behavior.
-        let expanded = eval::expand_combined_flags(&args, &may_i_core::Convention::gnu());
+        let expanded = eval::tokenise(&args, &may_i_core::ast::ResolvedParser::synthetic_gnu("any"));
         let ctx = EvalContext::new(&cmd, &expanded, &facts, EvalContext::build_bindings(&config.defines));
         let evaluator = Evaluator::new(&config.rules);
         let result_fold = evaluator.evaluate(&mut PureFold, &ctx).unwrap();
@@ -169,7 +169,7 @@ proptest! {
     ) {
         let combined = format!("-{}", flags.join(""));
         let args = vec![combined.clone()];
-        let expanded = eval::expand_combined_flags(&args, &may_i_core::Convention::gnu());
+        let expanded = eval::tokenise(&args, &may_i_core::ast::ResolvedParser::synthetic_gnu("any"));
 
         // Each flag should be present as -X
         for f in &flags {
@@ -193,7 +193,7 @@ proptest! {
         args.push(combined);
         args.extend(single_flags.clone());
 
-        let expanded = eval::expand_combined_flags(&args, &may_i_core::Convention::gnu());
+        let expanded = eval::tokenise(&args, &may_i_core::ast::ResolvedParser::synthetic_gnu("any"));
 
         // All non-flag args are preserved verbatim
         for nf in &nonflag_args {
@@ -219,7 +219,7 @@ proptest! {
         opt in "--[a-zA-Z]{1,10}",
     ) {
         let args = vec![opt.clone()];
-        let expanded = eval::expand_combined_flags(&args, &may_i_core::Convention::gnu());
+        let expanded = eval::tokenise(&args, &may_i_core::ast::ResolvedParser::synthetic_gnu("any"));
         prop_assert_eq!(expanded, args, "Long options should not be expanded");
     }
 
@@ -238,7 +238,8 @@ proptest! {
             opt_value.clone(),
             positional.clone(),
         ];
-        let result = eval::positional_args(&args, &may_i_core::Convention::gnu());
+        let parser = may_i_core::ast::ResolvedParser::synthetic_gnu("any");
+        let result = eval::parser_positional_args(&args, &parser);
 
         prop_assert!(!result.contains(&opt_value.as_str()),
             "Option value should be excluded from positional args");

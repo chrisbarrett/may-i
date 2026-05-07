@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use may_i_core::ContextFacts;
-use may_i_core::ast::{ArgsStyle, Convention, Define, Predicate};
+use may_i_core::ast::{Config, Define, Predicate, ResolvedParser};
 
 /// Maximum recursion depth for (may-i ...) evaluation.
 pub(super) const DEFAULT_RECURSION_LIMIT: usize = 10;
@@ -28,23 +28,25 @@ pub struct EvalContext<'a> {
     pub recursion_depth: usize,
     /// Maximum recursion depth allowed.
     pub recursion_limit: usize,
-    /// Tokenisation convention for the current command.
-    pub convention: Convention,
-    /// All declared `args-style` entries — needed to resolve the inner
-    /// command's convention during `(may-i ...)` recursion.
-    pub args_styles: &'a [ArgsStyle],
+    /// Resolved parser (style + parameter declarations) for the current
+    /// command. Drives both tokenisation and parser-level recursion.
+    pub parser: ResolvedParser,
+    /// Full config — needed by `(may-i …)` recursion to resolve the
+    /// inner command's parser.
+    pub config: Option<&'a Config>,
 }
 
 impl<'a> EvalContext<'a> {
-    /// Create a new evaluation context with a `:gnu` convention and no
-    /// `args-style` declarations. Used by tests; production callers go
-    /// through `with_convention`.
+    /// Create a new evaluation context with a synthetic GNU parser and
+    /// no config. Used by tests; production callers go through
+    /// `with_parser`.
     pub fn new(
         command: &'a str,
         args: &'a [String],
         facts: &'a ContextFacts,
         bindings: HashMap<&'a str, &'a Predicate>,
     ) -> Self {
+        let parser = ResolvedParser::synthetic_gnu(command);
         Self {
             command,
             args,
@@ -52,19 +54,20 @@ impl<'a> EvalContext<'a> {
             bindings,
             recursion_depth: 0,
             recursion_limit: DEFAULT_RECURSION_LIMIT,
-            convention: Convention::gnu(),
-            args_styles: &[],
+            parser,
+            config: None,
         }
     }
 
-    /// Create a new evaluation context with a resolved convention.
-    pub fn with_convention(
+    /// Create a new evaluation context with a fully-resolved parser
+    /// and full-config access for parser lookups during recursion.
+    pub fn with_parser(
         command: &'a str,
         args: &'a [String],
         facts: &'a ContextFacts,
         bindings: HashMap<&'a str, &'a Predicate>,
-        convention: Convention,
-        args_styles: &'a [ArgsStyle],
+        parser: ResolvedParser,
+        config: &'a Config,
     ) -> Self {
         Self {
             command,
@@ -73,20 +76,9 @@ impl<'a> EvalContext<'a> {
             bindings,
             recursion_depth: 0,
             recursion_limit: DEFAULT_RECURSION_LIMIT,
-            convention,
-            args_styles,
+            parser,
+            config: Some(config),
         }
-    }
-
-    /// Resolve the convention for `command` against the carried
-    /// `args_styles`. Falls back to `:gnu` when no declaration matches.
-    pub fn convention_for(&self, command: &str) -> Convention {
-        self.args_styles
-            .iter()
-            .rev()
-            .find(|s| s.program == command)
-            .map(|s| s.convention.clone())
-            .unwrap_or_default()
     }
 
     /// Build bindings from a slice of defines.

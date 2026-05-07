@@ -5,7 +5,7 @@ expression: normalised
 
 Trace
 
-  convention: :gnu │
+       parser: gnu │
   No matching rule │ → :ask (default)
 
 Result

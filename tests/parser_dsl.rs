@@ -40,7 +40,6 @@ fn parser_find_single_dash_long_no_false_fire() {
 // (parameter ["n" "namespace"])) — `-n my-ns` groups; positional stream
 // is [get, pods].
 #[test]
-#[ignore = "pending §6 tokeniser rewrite"]
 fn parser_kubectl_parameter_value_pair() {
     let cfg = r#"
 (parser "kubectl" :style gnu (parameter ["n" "namespace"]))
@@ -82,7 +81,6 @@ fn parser_dd_key_value_classifies_all_kvs() {
 // (parameter "c" (may-i *))) — inner `echo hi` re-authorised by may-i;
 // no rule for "bash" needed (the may-i recursion sources the decision).
 #[test]
-#[ignore = "pending §7 parser-level may-i recursion"]
 fn parser_bash_may_i_recurses() {
     let cfg = r#"
 (parser "bash" :style gnu (parameter "c" (may-i *)))
@@ -122,7 +120,6 @@ fn parser_pun_allow_bare_param_matches_flag() {
 // (Ask = fall-through) at minimum; ideally the engine would propagate
 // a parse error, but the binary contract is "do not allow".
 #[test]
-#[ignore = "pending §6 :pun :error enforcement"]
 fn parser_pun_error_bare_param_does_not_allow() {
     let cfg = r#"
 (parser "dd" :style key-value (parameter "if"))

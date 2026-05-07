@@ -5,7 +5,7 @@ expression: normalised
 
 Trace
 
-  convention: :gnu │
+  parser: gnu │
 
                                 command │ brew list
   74: (rule (command "brew")            │

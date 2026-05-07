@@ -199,18 +199,18 @@ fn trace_to_layout(
                 row.left_align = ColAlign::Right;
                 current_rows.push(row);
             }
-            TraceEntry::Convention {
+            TraceEntry::Parser {
                 command: _,
-                profile,
-                flags_with_values,
+                style,
+                parameter_tokens,
             } => {
-                let flags_text = if flags_with_values.is_empty() {
+                let params_text = if parameter_tokens.is_empty() {
                     String::new()
                 } else {
-                    format!(" :flags-with-values ({})", flags_with_values.join(" "))
+                    format!(" parameters ({})", parameter_tokens.join(" "))
                 };
-                let label = format!("{} {profile}{flags_text}", "convention:".dimmed());
-                let label_visible = "convention: ".len() + profile.len() + flags_text.len();
+                let label = format!("{} {style}{params_text}", "parser:".dimmed());
+                let label_visible = "parser: ".len() + style.len() + params_text.len();
                 let mut row = ColRow::new(label, label_visible, "");
                 row.left_align = ColAlign::Right;
                 current_rows.push(row);

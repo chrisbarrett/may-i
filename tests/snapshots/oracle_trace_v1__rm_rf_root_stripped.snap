@@ -1,12 +1,11 @@
 ---
 source: tests/oracle_trace_v1.rs
-assertion_line: 110
 expression: normalised
 ---
 
 Trace
 
-  convention: :gnu │
+  parser: gnu │
 
                                         command │ rm -rf /
   24: (rule (command "rm")                      │

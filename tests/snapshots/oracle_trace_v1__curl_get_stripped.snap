@@ -5,7 +5,7 @@ expression: normalised
 
 Trace
 
-  convention: :gnu │
+  parser: gnu │
 
                                             command │ curl https://example.com
   65: (rule (command "curl")                        │
