@@ -3,6 +3,10 @@ harnesses.
 
 Run `cargo fmt` before staging files.
 
+> [!IMPORTANT]
+> Project is pre-1.0; back-compatibility not required. Use migration system to
+> define user config migrations if necessary.
+
 ## Testing
 
 Prefer property tests; fall back to targeted unit tests for hard-to-hit
