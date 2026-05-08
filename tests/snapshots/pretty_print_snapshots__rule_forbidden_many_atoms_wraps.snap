@@ -1,0 +1,9 @@
+---
+source: tests/pretty_print_snapshots.rs
+assertion_line: 196
+expression: out
+---
+(rule "rm"
+  (and (forbidden "-r" "-R" "--recursive" "-rf" "-fr" "-rR" "--force" "-Rf"
+                  "-fR" "/")
+       (allow)))

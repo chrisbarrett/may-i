@@ -1,0 +1,6 @@
+---
+source: tests/pretty_print_snapshots.rs
+assertion_line: 248
+expression: out
+---
+(parser "find" (style single-dash-long))

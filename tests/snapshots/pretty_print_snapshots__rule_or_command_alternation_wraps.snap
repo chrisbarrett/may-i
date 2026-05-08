@@ -1,0 +1,9 @@
+---
+source: tests/pretty_print_snapshots.rs
+assertion_line: 74
+expression: out
+---
+(rule (or "date" "hostname" "uname" "uptime" "ps" "top" "htop" "pgrep" "lsof"
+          "df" "du" "id" "whoami" "groups" "printenv" "env" "which" "whereis"
+          "type" "command" "netstat" "scutil")
+  (allow "Read-only system state access"))

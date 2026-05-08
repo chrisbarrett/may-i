@@ -1,0 +1,8 @@
+---
+source: tests/pretty_print_snapshots.rs
+assertion_line: 88
+expression: out
+---
+(rule "rm"
+  (when (flag "r")
+    (ask "recursive")))

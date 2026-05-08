@@ -1,0 +1,10 @@
+---
+source: tests/pretty_print_snapshots.rs
+assertion_line: 371
+expression: out
+---
+(rule "rm"
+  (and
+   (flag "r")
+   (anywhere "/")
+   (deny)))

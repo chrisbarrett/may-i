@@ -1,0 +1,7 @@
+---
+source: tests/pretty_print_snapshots.rs
+assertion_line: 179
+expression: out
+---
+(rule "rm"
+  (and (anywhere "-r") (deny)))

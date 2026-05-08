@@ -1,0 +1,7 @@
+---
+source: tests/pretty_print_snapshots.rs
+assertion_line: 147
+expression: out
+---
+(rule "rm"
+  (and (positional (* (regex "^/tmp/"))) (allow)))

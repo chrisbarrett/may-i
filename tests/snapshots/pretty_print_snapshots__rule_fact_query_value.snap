@@ -1,0 +1,8 @@
+---
+source: tests/pretty_print_snapshots.rs
+assertion_line: 232
+expression: out
+---
+(rule "rm"
+  (when (fact? [:ssh/host (regex "^prod-")])
+    (deny "production host")))

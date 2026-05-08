@@ -1,0 +1,7 @@
+---
+source: tests/pretty_print_snapshots.rs
+assertion_line: 185
+expression: out
+---
+(rule "git"
+  (and (forbidden "--force") (allow)))

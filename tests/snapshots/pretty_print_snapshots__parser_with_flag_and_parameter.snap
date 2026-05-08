@@ -1,0 +1,6 @@
+---
+source: tests/pretty_print_snapshots.rs
+assertion_line: 256
+expression: out
+---
+(parser "kubectl" (style gnu) (flag "v") (parameter ["n" "namespace"]))

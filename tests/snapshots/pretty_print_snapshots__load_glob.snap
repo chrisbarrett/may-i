@@ -1,0 +1,6 @@
+---
+source: tests/pretty_print_snapshots.rs
+assertion_line: 351
+expression: out
+---
+(load "rules/*.lisp")

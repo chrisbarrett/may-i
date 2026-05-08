@@ -1,0 +1,7 @@
+---
+source: tests/pretty_print_snapshots.rs
+assertion_line: 173
+expression: out
+---
+(rule "curl"
+  (and (parameter ["X" "request"] (regex "^GET$")) (allow)))

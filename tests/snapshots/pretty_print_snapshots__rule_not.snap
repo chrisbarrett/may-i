@@ -1,0 +1,7 @@
+---
+source: tests/pretty_print_snapshots.rs
+assertion_line: 80
+expression: out
+---
+(rule "rm"
+  (and (not (flag "r")) (allow "non-recursive")))

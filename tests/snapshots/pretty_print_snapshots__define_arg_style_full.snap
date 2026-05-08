@@ -1,0 +1,11 @@
+---
+source: tests/pretty_print_snapshots.rs
+assertion_line: 309
+expression: out
+---
+(define-arg-style gnu
+                  (long-prefix "--")
+                  (short-prefix "-")
+                  (separators " " "=")
+                  (combined-shorts t)
+                  (pun :allow))

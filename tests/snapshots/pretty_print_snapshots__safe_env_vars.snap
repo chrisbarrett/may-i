@@ -1,0 +1,6 @@
+---
+source: tests/pretty_print_snapshots.rs
+assertion_line: 345
+expression: out
+---
+(safe-env-vars "HOME" "USER" "PATH")

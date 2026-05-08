@@ -1,0 +1,7 @@
+---
+source: tests/pretty_print_snapshots.rs
+assertion_line: 37
+expression: out
+---
+(rule "ls"
+  (allow "safe ls"))

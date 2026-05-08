@@ -1,0 +1,6 @@
+---
+source: tests/pretty_print_snapshots.rs
+assertion_line: 262
+expression: out
+---
+(parser "sudo" (style gnu) (tail (after :flags)))

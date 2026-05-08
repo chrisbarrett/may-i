@@ -1,0 +1,7 @@
+---
+source: tests/pretty_print_snapshots.rs
+assertion_line: 43
+expression: out
+---
+(rule "rm"
+  (ask "Recursive deletion — confirm the target"))

@@ -1,0 +1,7 @@
+---
+source: tests/pretty_print_snapshots.rs
+assertion_line: 153
+expression: out
+---
+(rule "true"
+  (and (exact) (allow)))

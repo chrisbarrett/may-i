@@ -1,0 +1,6 @@
+---
+source: tests/pretty_print_snapshots.rs
+assertion_line: 327
+expression: out
+---
+(check (allow "ls -la") (ask "rm -rf /tmp/foo") (deny "rm -rf /"))

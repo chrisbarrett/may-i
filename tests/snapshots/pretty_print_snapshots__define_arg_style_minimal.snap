@@ -1,0 +1,6 @@
+---
+source: tests/pretty_print_snapshots.rs
+assertion_line: 296
+expression: out
+---
+(define-arg-style gnu (long-prefix "--") (short-prefix "-"))

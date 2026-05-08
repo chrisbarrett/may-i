@@ -1,0 +1,7 @@
+---
+source: tests/pretty_print_snapshots.rs
+assertion_line: 210
+expression: out
+---
+(rule "sudo"
+  (tail (authorise)))

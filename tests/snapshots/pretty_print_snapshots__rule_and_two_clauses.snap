@@ -1,0 +1,7 @@
+---
+source: tests/pretty_print_snapshots.rs
+assertion_line: 57
+expression: out
+---
+(rule "git"
+  (and (positional "push") (allow "push ok")))

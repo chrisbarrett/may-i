@@ -1,0 +1,9 @@
+---
+source: tests/pretty_print_snapshots.rs
+assertion_line: 279
+expression: out
+---
+(parser "find" (style single-dash-long)
+               (parameter "exec" (many-till (or ";" "+")))
+               (parameter "execdir" (many-till (or ";" "+")))
+               (parameter ["name" "type" "size"]))

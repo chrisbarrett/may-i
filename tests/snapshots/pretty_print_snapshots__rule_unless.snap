@@ -1,0 +1,8 @@
+---
+source: tests/pretty_print_snapshots.rs
+assertion_line: 94
+expression: out
+---
+(rule "rm"
+  (unless (flag "r")
+    (allow)))

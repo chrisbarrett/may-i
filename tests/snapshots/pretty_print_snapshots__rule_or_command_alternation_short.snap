@@ -1,0 +1,7 @@
+---
+source: tests/pretty_print_snapshots.rs
+assertion_line: 63
+expression: out
+---
+(rule (or "ls" "ll" "la")
+  (allow))
