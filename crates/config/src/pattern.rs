@@ -412,25 +412,20 @@ fn parse_positional_form(
 ) -> Result<ArgPattern, RawError> {
     // Check for dot syntax: patterns before dot, continuation effect after
     let mut patterns: Vec<PositionalArg> = Vec::new();
-    let mut continuation: Option<may_i_core::ast::Effect> = None;
+    let continuation: Option<may_i_core::ast::Effect> = None;
     let mut i = 0;
 
     while i < args.len() {
-        // Check for dot syntax: `.` followed by continuation effect
         if let Some(atom) = args[i].as_atom()
             && atom == "."
         {
-            if i + 1 >= args.len() {
-                return Err(RawError::new(
-                    "dot notation requires an effect after the dot",
-                    args[i].span(),
-                ));
-            }
-            // Parse the continuation effect
-            let spanned_effect = crate::effect::parse_effect(&args[i + 1])?;
-            continuation = Some(spanned_effect.value);
-            i += 2;
-            continue;
+            return Err(
+                RawError::new("dotted-tail continuation is retired", args[i].span()).with_help(
+                    "rewrite as a sibling matcher composed via (and …): \
+                 `(positional ITEM…)` and `(tail (authorise))`. \
+                 Run `may-i migrate` to convert legacy syntax.",
+                ),
+            );
         }
 
         patterns.push(parse_positional_arg(&args[i])?);
@@ -867,44 +862,15 @@ mod tests {
     }
 
     #[test]
-    fn parse_positional_with_dot_notation() {
-        // (positional "git" . (allow))
-        let pattern = parse_arg(r#"(positional "git" . (allow))"#).unwrap();
-        match pattern {
-            ArgPattern::Ordered {
-                mode: MatchMode::Positional,
-                patterns,
-                continuation,
-            } => {
-                assert_eq!(patterns.len(), 1);
-                assert!(continuation.is_some());
-            }
-            _ => panic!("expected Positional with continuation"),
-        }
+    fn dotted_tail_continuation_is_rejected_in_positional() {
+        let err = parse_arg(r#"(positional "git" . (allow))"#).expect_err("expected error");
+        assert!(format!("{err}").contains("dotted-tail continuation is retired"));
     }
 
     #[test]
-    fn parse_exact_with_dot_notation() {
-        // (exact "git" "status" . (allow))
-        let pattern = parse_arg(r#"(exact "git" "status" . (allow))"#).unwrap();
-        match pattern {
-            ArgPattern::Ordered {
-                mode: MatchMode::Exact,
-                patterns,
-                continuation,
-            } => {
-                assert_eq!(patterns.len(), 2);
-                assert!(continuation.is_some());
-            }
-            _ => panic!("expected Exact with continuation"),
-        }
-    }
-
-    #[test]
-    fn parse_positional_dot_without_effect_error() {
-        // (positional "git" .)
-        let err = parse_arg(r#"(positional "git" .)"#).expect_err("expected error");
-        assert!(format!("{err}").contains("requires an effect after the dot"));
+    fn dotted_tail_continuation_is_rejected_in_exact() {
+        let err = parse_arg(r#"(exact "git" "status" . (allow))"#).expect_err("expected error");
+        assert!(format!("{err}").contains("dotted-tail continuation is retired"));
     }
 
     // --- Tests for fact binding (Expr::Bind) ---
@@ -912,9 +878,9 @@ mod tests {
 
     #[test]
     fn parse_positional_with_fact_binding_simple() {
-        // (positional [:ssh/host] . (authorise))
-        // Bracket notation binds matched value to the keyword
-        let pattern = parse_arg(r#"(positional [:ssh/host] . (authorise))"#).unwrap();
+        // (positional [:ssh/host])
+        // Bracket notation binds matched value to the keyword.
+        let pattern = parse_arg(r#"(positional [:ssh/host])"#).unwrap();
         match pattern {
             ArgPattern::Ordered {
                 mode: MatchMode::Positional,
@@ -922,7 +888,6 @@ mod tests {
                 ..
             } => {
                 assert_eq!(pargs.len(), 1);
-                // The pattern should be a Bind expression with wildcard
                 match &pargs[0].pattern {
                     Expr::Bind { key, expr } => {
                         assert_eq!(key.as_str(), ":ssh/host");
@@ -937,9 +902,9 @@ mod tests {
 
     #[test]
     fn parse_positional_with_fact_binding_explicit_wildcard() {
-        // (positional [:ssh/host *] . (authorise))
-        // Explicit * is optional but allowed for clarity
-        let pattern = parse_arg(r#"(positional [:ssh/host *] . (authorise))"#).unwrap();
+        // (positional [:ssh/host *])
+        // Explicit * is optional but allowed for clarity.
+        let pattern = parse_arg(r#"(positional [:ssh/host *])"#).unwrap();
         match pattern {
             ArgPattern::Ordered {
                 mode: MatchMode::Positional,

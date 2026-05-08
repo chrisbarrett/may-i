@@ -48,9 +48,11 @@
       (deny "No kubectl in production")
     (allow)))
 
-;; SSH wrapper — capture host as fact, evaluate inner command recursively
+;; SSH wrapper — capture host as fact, evaluate inner command recursively.
+;; The tail (everything after the host) is recursed into as an inner command.
 (rule "ssh"
-  (positional [:ssh/host *] . (authorise)))
+  (and (positional [:ssh/host *])
+       (tail (authorise))))
 
 (rule "rm"
   (cond
