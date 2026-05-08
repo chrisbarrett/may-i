@@ -26,6 +26,7 @@ mod collapse_effects;
 mod cond_simplify;
 mod defcontext_to_define;
 mod define_arg_style_form;
+mod effect_to_decision_verb;
 mod effect_to_when;
 mod flag_patterns;
 mod flatten_combinators;
@@ -121,6 +122,10 @@ pub fn migration_rules() -> Vec<RewriteFn> {
         Box::new(or_when_to_if::or_leading_when_to_if),
         Box::new(flatten_nested_if::flatten_nested_if),
         Box::new(predicate_pushdown::predicate_pushdown),
+        // Final pass: retire `(effect :decision …)` in favour of bare decision
+        // verbs. Runs after every rule that constructs or rewrites `(effect …)`
+        // forms so the input shape is stable before this rewrite.
+        Box::new(effect_to_decision_verb::effect_to_decision_verb),
     ]
 }
 
@@ -352,24 +357,20 @@ mod tests {
 
     #[test]
     fn test_migrate_top_level() {
-        let input = "(rule (command git) (effect :allow))";
+        let input = "(rule (command git) (allow))";
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let node = nodes.into_iter().next().unwrap();
         let result = migrate(node);
-        assert_eq!(result.serialize(), "(rule git (effect :allow))");
+        assert_eq!(result.serialize(), "(rule git (allow))");
     }
 
     #[test]
     fn test_migrate_forms() {
-        let input = "(rule (command git) (effect :allow))\n(defcontext ssh (has :via/ssh))";
+        let input = "(rule (command git) (allow))\n(defcontext ssh (has :via/ssh))";
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let results = migrate_forms(nodes);
         assert_eq!(results.len(), 2);
-        assert!(
-            results[0]
-                .serialize()
-                .contains("(rule git (effect :allow))")
-        );
+        assert!(results[0].serialize().contains("(rule git (allow))"));
         assert!(
             results[1]
                 .serialize()
@@ -379,7 +380,7 @@ mod tests {
 
     #[test]
     fn test_validate_migration_success() {
-        let input = "(rule (command git) (effect :allow))";
+        let input = "(rule (command git) (allow))";
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let migrated = migrate(nodes.into_iter().next().unwrap());
         let result = validate_migration(&migrated.serialize());
@@ -410,7 +411,7 @@ mod tests {
 
     #[test]
     fn test_check_unhandled_cases_context() {
-        let input = "(rule x (context y) (effect :allow))";
+        let input = "(rule x (context y) (allow))";
         let warnings = check_unhandled_cases(input);
         assert!(!warnings.is_empty());
         assert!(warnings[0].description.contains("context"));

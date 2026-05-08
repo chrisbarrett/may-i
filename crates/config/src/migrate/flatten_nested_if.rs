@@ -102,12 +102,12 @@ pub(crate) fn flatten_nested_if(node: &CstNode) -> Option<Box<CstNode>> {
 mod tests {
     #[test]
     fn test_flatten_nested_if_unless() {
-        let input = r#"(if (exact) (effect :allow) (unless danger (effect :deny)))"#;
+        let input = r#"(if (exact) (allow) (unless danger (deny)))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let result = super::super::migrate(nodes.into_iter().next().unwrap());
         assert_eq!(
             result.serialize(),
-            r#"(cond ((exact) (effect :allow)) ((not danger) (effect :deny)))"#,
+            r#"(cond ((exact) (allow)) ((not danger) (deny)))"#,
         );
     }
 }

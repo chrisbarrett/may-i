@@ -54,33 +54,32 @@ pub(crate) fn or_leading_when_to_if(node: &CstNode) -> Option<Box<CstNode>> {
 mod tests {
     #[test]
     fn test_or_all_whens_to_cond() {
-        let input =
-            r#"(or (when (exact) (effect :allow)) (when (positional "info") (effect :allow)))"#;
+        let input = r#"(or (when (exact) (allow)) (when (positional "info") (allow)))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let result = super::super::migrate(nodes.into_iter().next().unwrap());
         assert_eq!(
             result.serialize(),
-            r#"(cond ((exact) (effect :allow)) ((positional "info") (effect :allow)))"#,
+            r#"(cond ((exact) (allow)) ((positional "info") (allow)))"#,
         );
     }
 
     #[test]
     fn test_or_whens_with_else_to_cond() {
-        let input = r#"(or (when (exact) (effect :allow)) (when (positional "info") (effect :allow)) (effect :deny))"#;
+        let input = r#"(or (when (exact) (allow)) (when (positional "info") (allow)) (deny))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let result = super::super::migrate(nodes.into_iter().next().unwrap());
         assert_eq!(
             result.serialize(),
-            r#"(cond ((exact) (effect :allow)) ((positional "info") (effect :allow)) (else (effect :deny)))"#,
+            r#"(cond ((exact) (allow)) ((positional "info") (allow)) (else (deny)))"#,
         );
     }
 
     #[test]
     fn test_or_single_when_no_cond() {
-        let input = r#"(or (when (exact) (effect :allow)))"#;
+        let input = r#"(or (when (exact) (allow)))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let result = super::super::migrate(nodes.into_iter().next().unwrap());
-        assert_eq!(result.serialize(), r#"(or (when (exact) (effect :allow)))"#);
+        assert_eq!(result.serialize(), r#"(or (when (exact) (allow)))"#);
     }
 
     #[test]
@@ -97,8 +96,7 @@ mod tests {
 
     #[test]
     fn test_and_whens_not_converted() {
-        let input =
-            r#"(and (when (exact) (effect :allow)) (when (positional "x") (effect :deny)))"#;
+        let input = r#"(and (when (exact) (allow)) (when (positional "x") (deny)))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let result = super::super::migrate(nodes.into_iter().next().unwrap());
         assert!(

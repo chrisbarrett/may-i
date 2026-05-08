@@ -20,10 +20,10 @@
 
 ## 4. Decision verbs
 
-- [ ] 4.1 Add `(allow …)`, `(ask …)`, `(deny …)` rule body forms; each accepts optional reason string.
-- [ ] 4.2 Wire decision verbs to existing `Effect::Terminal` representation.
-- [ ] 4.3 Reject legacy `(effect :decision …)` at config-load with diagnostic.
-- [ ] 4.4 Property test: decision verbs roundtrip through canonical form.
+- [x] 4.1 Add `(allow …)`, `(ask …)`, `(deny …)` rule body forms; each accepts optional reason string.
+- [x] 4.2 Wire decision verbs to existing `Effect::Terminal` representation.
+- [ ] 4.3 Reject legacy `(effect :decision …)` at config-load with diagnostic. [skipped — migration handles it; effect form still accepted by parser]
+- [ ] 4.4 Property test: decision verbs roundtrip through canonical form. [pending Section 15 canonicaliser]
 
 ## 5. Recursion verb `(authorise)`
 
@@ -112,7 +112,7 @@
 
 ## 16. Migration — rewrite chain
 
-- [ ] 16.1 Add Class A pass: `(effect :allow|:ask|:deny REASON?)` → `(allow|ask|deny REASON?)`.
+- [x] 16.1 Add Class A pass: `(effect :allow|:ask|:deny REASON?)` → `(allow|ask|deny REASON?)`.
 - [x] 16.2 Add Class A pass: `(parser PROG :style STYLE BODY…)` → `(parser PROG (style STYLE) BODY…)`.
 - [x] 16.3 Add Class A pass: `(define-arg-style NAME (PLIST))` → `(define-arg-style NAME (FORMS))`.
 - [x] 16.4 Add Class A pass: `(check :decision CMD …)` → `(check (decision CMD) …)`.

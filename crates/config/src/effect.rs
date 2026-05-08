@@ -44,6 +44,9 @@ pub fn parse_effect(sexpr: &Sexpr) -> Result<Spanned<Effect>, RawError> {
 
     let effect = match tag {
         "effect" => parse_terminal_effect(&list[1..], sexpr.span())?,
+        "allow" => parse_decision_verb(Decision::Allow, &list[1..], sexpr.span())?,
+        "ask" => parse_decision_verb(Decision::Ask, &list[1..], sexpr.span())?,
+        "deny" => parse_decision_verb(Decision::Deny, &list[1..], sexpr.span())?,
         "may-i" => parse_may_i(&list[1..], sexpr.span())?,
         "cond" => parse_cond(&list[1..], sexpr.span())?,
         "when" => parse_when(&list[1..], sexpr.span())?,
@@ -98,6 +101,32 @@ pub fn parse_effect(sexpr: &Sexpr) -> Result<Spanned<Effect>, RawError> {
 /// Check if all sexprs are simple atoms (for command or pattern detection).
 fn is_command_or_pattern(exprs: &[Sexpr]) -> bool {
     exprs.iter().all(|e| e.as_atom_or_str().is_some())
+}
+
+/// Parse `(allow REASON?)`, `(ask REASON?)`, `(deny REASON?)` — the
+/// surface decision verbs. Reason is an optional string.
+fn parse_decision_verb(
+    decision: Decision,
+    args: &[Sexpr],
+    span: may_i_core::Span,
+) -> Result<Effect, RawError> {
+    if args.len() > 1 {
+        return Err(RawError::new(
+            "decision verbs accept at most one optional reason string",
+            span,
+        ));
+    }
+    let reason = if args.is_empty() {
+        None
+    } else {
+        Some(
+            args[0]
+                .as_atom_or_str()
+                .ok_or_else(|| RawError::new("decision reason must be a string", args[0].span()))?
+                .to_string(),
+        )
+    };
+    Ok(Effect::Terminal { decision, reason })
 }
 
 /// Parse a terminal effect (allow, ask, deny).

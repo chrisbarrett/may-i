@@ -258,27 +258,15 @@ pub fn any_keyword_cst() -> BoxedStrategy<Box<CstNode>> {
     .boxed()
 }
 
-/// A terminal effect: `(effect :allow/:ask/:deny ["reason"])`.
+/// A terminal decision verb: `(allow|ask|deny ["reason"])`.
 pub fn any_terminal_effect_cst() -> BoxedStrategy<Box<CstNode>> {
     prop_oneof![
-        Just(cst_list(vec![cst_atom("effect"), cst_atom(":allow")])),
-        Just(cst_list(vec![cst_atom("effect"), cst_atom(":deny")])),
-        Just(cst_list(vec![cst_atom("effect"), cst_atom(":ask")])),
-        "[a-z ]{1,20}".prop_map(|r| cst_list(vec![
-            cst_atom("effect"),
-            cst_atom(":allow"),
-            cst_str(r.trim())
-        ])),
-        "[a-z ]{1,20}".prop_map(|r| cst_list(vec![
-            cst_atom("effect"),
-            cst_atom(":ask"),
-            cst_str(r.trim())
-        ])),
-        "[a-z ]{1,20}".prop_map(|r| cst_list(vec![
-            cst_atom("effect"),
-            cst_atom(":deny"),
-            cst_str(r.trim())
-        ])),
+        Just(cst_list(vec![cst_atom("allow")])),
+        Just(cst_list(vec![cst_atom("deny")])),
+        Just(cst_list(vec![cst_atom("ask")])),
+        "[a-z ]{1,20}".prop_map(|r| cst_list(vec![cst_atom("allow"), cst_str(r.trim())])),
+        "[a-z ]{1,20}".prop_map(|r| cst_list(vec![cst_atom("ask"), cst_str(r.trim())])),
+        "[a-z ]{1,20}".prop_map(|r| cst_list(vec![cst_atom("deny"), cst_str(r.trim())])),
     ]
     .boxed()
 }

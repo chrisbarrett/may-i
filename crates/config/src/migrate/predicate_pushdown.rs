@@ -53,64 +53,64 @@ pub(crate) fn predicate_pushdown(node: &CstNode) -> Option<Box<CstNode>> {
 mod tests {
     #[test]
     fn test_and_trailing_when_pushdown() {
-        let input = r#"(and (positional "fmt") (when build-mode (effect :allow)))"#;
+        let input = r#"(and (positional "fmt") (when build-mode (allow)))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let result = super::super::migrate(nodes.into_iter().next().unwrap());
         assert_eq!(
             result.serialize(),
-            r#"(when (and (positional "fmt") build-mode) (effect :allow))"#,
+            r#"(when (and (positional "fmt") build-mode) (allow))"#,
         );
     }
 
     #[test]
     fn test_and_trailing_when_multiple_preds() {
-        let input = r#"(and (positional "x") (anywhere "-f") (when ctx (effect :ask)))"#;
+        let input = r#"(and (positional "x") (anywhere "-f") (when ctx (ask)))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let result = super::super::migrate(nodes.into_iter().next().unwrap());
         // (anywhere "-f") collapses to the structured (flag "f") form en
         // route through the migration pipeline.
         assert_eq!(
             result.serialize(),
-            r#"(when (and (positional "x") (flag "f") ctx) (effect :ask))"#,
+            r#"(when (and (positional "x") (flag "f") ctx) (ask))"#,
         );
     }
 
     #[test]
     fn test_and_trailing_unless_pushdown() {
-        let input = r#"(and (positional "x") (unless danger (effect :allow)))"#;
+        let input = r#"(and (positional "x") (unless danger (allow)))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let result = super::super::migrate(nodes.into_iter().next().unwrap());
         assert_eq!(
             result.serialize(),
-            r#"(unless (and (positional "x") danger) (effect :allow))"#,
+            r#"(unless (and (positional "x") danger) (allow))"#,
         );
     }
 
     #[test]
     fn test_or_trailing_when_pushdown() {
-        let input = r#"(or (positional "a") (when ctx (effect :allow)))"#;
+        let input = r#"(or (positional "a") (when ctx (allow)))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let result = super::super::migrate(nodes.into_iter().next().unwrap());
         assert_eq!(
             result.serialize(),
-            r#"(when (or (positional "a") ctx) (effect :allow))"#,
+            r#"(when (or (positional "a") ctx) (allow))"#,
         );
     }
 
     #[test]
     fn test_or_trailing_unless_pushdown() {
-        let input = r#"(or (positional "a") (unless bad (effect :deny)))"#;
+        let input = r#"(or (positional "a") (unless bad (deny)))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let result = super::super::migrate(nodes.into_iter().next().unwrap());
         assert_eq!(
             result.serialize(),
-            r#"(unless (or (positional "a") bad) (effect :deny))"#,
+            r#"(unless (or (positional "a") bad) (deny))"#,
         );
     }
 
     #[test]
     fn test_pushdown_no_match_when_not_last() {
-        let input = r#"(and (when ctx (effect :allow)) (positional "x"))"#;
+        let input = r#"(and (when ctx (allow)) (positional "x"))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let result = super::super::migrate(nodes.into_iter().next().unwrap());
         assert!(
@@ -122,20 +122,20 @@ mod tests {
 
     #[test]
     fn test_pushdown_no_match_too_few_children() {
-        let input = r#"(and (when ctx (effect :allow)))"#;
+        let input = r#"(and (when ctx (allow)))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let result = super::super::migrate(nodes.into_iter().next().unwrap());
-        assert_eq!(result.serialize(), "(and (when ctx (effect :allow)))");
+        assert_eq!(result.serialize(), "(and (when ctx (allow)))");
     }
 
     #[test]
     fn test_pushdown_single_pred_unwraps_combinator() {
-        let input = r#"(and (positional "x") (when ctx (effect :allow)))"#;
+        let input = r#"(and (positional "x") (when ctx (allow)))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let result = super::super::migrate(nodes.into_iter().next().unwrap());
         assert_eq!(
             result.serialize(),
-            r#"(when (and (positional "x") ctx) (effect :allow))"#,
+            r#"(when (and (positional "x") ctx) (allow))"#,
         );
     }
 }

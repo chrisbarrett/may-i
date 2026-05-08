@@ -46,11 +46,11 @@ mod tests {
 
     #[test]
     fn test_rule_simplify_command() {
-        let input = "(rule (command git) (effect :allow))";
+        let input = "(rule (command git) (allow))";
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let node = nodes.into_iter().next().unwrap();
         let result = rule_simplify_command(&node).unwrap();
-        assert_eq!(result.serialize(), "(rule git (effect :allow))");
+        assert_eq!(result.serialize(), "(rule git (allow))");
     }
 
     #[test]
@@ -73,7 +73,7 @@ mod tests {
 
     #[test]
     fn test_rule_simplify_command_not_command_tag() {
-        let input = "(rule git (effect :allow))";
+        let input = "(rule git (allow))";
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let node = nodes.into_iter().next().unwrap();
         let result = rule_simplify_command(&node);
@@ -82,7 +82,7 @@ mod tests {
 
     #[test]
     fn test_rule_simplify_command_wrong_size() {
-        let input = "(rule (command git extra) (effect :allow))";
+        let input = "(rule (command git extra) (allow))";
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let node = nodes.into_iter().next().unwrap();
         let result = rule_simplify_command(&node);
