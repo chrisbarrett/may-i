@@ -382,7 +382,7 @@ mod tests {
             let canonical_rule = cst_list(vec![
                 cst_atom("rule"),
                 cst_str(&cmd),
-                cst_list(vec![cst_atom("when"), canonical_pred, cst_list(vec![cst_atom("effect"), cst_atom(":allow")])]),
+                cst_list(vec![cst_atom("when"), canonical_pred, cst_list(vec![cst_atom("allow")])]),
             ]);
 
             let migrated = migrate_forms(vec![v1_rule]);

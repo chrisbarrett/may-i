@@ -13,8 +13,8 @@ Trace
         (context (and (or (flag "r")                               │
                           …)                                       │
                       (anywhere "/")))                             │
-        (effect                                                    │ → :deny "Recursive deletion from root"
-         :deny "Recursive deletion from root"))                    │
+        (deny                                                      │ → :deny "Recursive deletion from root"
+         "Recursive deletion from root"))                          │
                                                                    │
   29: (rule (command "rm")                                         │
         (args                                                      │

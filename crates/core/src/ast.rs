@@ -107,7 +107,7 @@ impl EffectResult {
 pub enum Effect {
     // Terminal decisions
     /// A terminal decision (allow, ask, or deny) with optional reason.
-    /// Syntax: `(effect :allow)`, `(effect :ask "reason")`, etc.
+    /// Syntax: `(allow)`, `(ask "reason")`, etc.
     Terminal {
         decision: Decision,
         reason: Option<String>,
@@ -996,7 +996,12 @@ impl ToDoc for Effect {
     fn to_doc(&self) -> Doc {
         match self {
             Effect::Terminal { decision, reason } => {
-                let mut cs = vec![Doc::atom("effect"), Doc::atom(decision.keyword())];
+                let verb = match decision {
+                    Decision::Allow => "allow",
+                    Decision::Ask => "ask",
+                    Decision::Deny => "deny",
+                };
+                let mut cs = vec![Doc::atom(verb)];
                 if let Some(r) = reason {
                     cs.push(Doc::atom(format!("\"{r}\"")));
                 }
@@ -1380,7 +1385,7 @@ mod tests {
             reason: None,
         }
         .to_doc();
-        assert_eq!(doc_text(&doc), "(effect :allow)");
+        assert_eq!(doc_text(&doc), "(allow)");
     }
 
     #[test]
@@ -1390,7 +1395,7 @@ mod tests {
             reason: Some("safe command".into()),
         }
         .to_doc();
-        assert_eq!(doc_text(&doc), "(effect :allow \"safe command\")");
+        assert_eq!(doc_text(&doc), "(allow \"safe command\")");
     }
 
     #[test]
@@ -1400,7 +1405,7 @@ mod tests {
             reason: None,
         }
         .to_doc();
-        assert_eq!(doc_text(&doc), "(effect :ask)");
+        assert_eq!(doc_text(&doc), "(ask)");
     }
 
     #[test]
@@ -1410,7 +1415,7 @@ mod tests {
             reason: Some("confirm".into()),
         }
         .to_doc();
-        assert_eq!(doc_text(&doc), "(effect :ask \"confirm\")");
+        assert_eq!(doc_text(&doc), "(ask \"confirm\")");
     }
 
     #[test]
@@ -1420,7 +1425,7 @@ mod tests {
             reason: None,
         }
         .to_doc();
-        assert_eq!(doc_text(&doc), "(effect :deny)");
+        assert_eq!(doc_text(&doc), "(deny)");
     }
 
     #[test]
@@ -1430,7 +1435,7 @@ mod tests {
             reason: Some("blocked".into()),
         }
         .to_doc();
-        assert_eq!(doc_text(&doc), "(effect :deny \"blocked\")");
+        assert_eq!(doc_text(&doc), "(deny \"blocked\")");
     }
 
     #[test]

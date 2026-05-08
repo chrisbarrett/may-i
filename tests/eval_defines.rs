@@ -13,7 +13,7 @@ fn eval_define_matching_produces_correct_decision() {
     let cfg = write_config(
         r#"
 (define is-safe (fact? :safe/context))
-(rule "git" (when is-safe (effect :allow "git is safe")))
+(rule "git" (when is-safe (allow "git is safe")))
 "#,
     );
     let output = may_i(&cfg)
@@ -38,7 +38,7 @@ fn eval_define_not_matching_falls_through() {
     let cfg = write_config(
         r#"
 (define is-safe (fact? :safe/context))
-(rule "git" (when is-safe (effect :allow "git is safe")))
+(rule "git" (when is-safe (allow "git is safe")))
 "#,
     );
     let output = may_i(&cfg)
@@ -66,13 +66,13 @@ fn eval_define_equivalent_to_inline() {
     let cfg_define = write_config(
         r#"
 (define is-safe (fact? :safe/context))
-(rule "git" (when is-safe (effect :deny "blocked")))
+(rule "git" (when is-safe (deny "blocked")))
 "#,
     );
     // Equivalent config with inline predicate
     let cfg_inline = write_config(
         r#"
-(rule "git" (when (fact? :safe/context) (effect :deny "blocked")))
+(rule "git" (when (fact? :safe/context) (deny "blocked")))
 "#,
     );
 
@@ -113,7 +113,7 @@ fn eval_transitive_define_resolves() {
         r#"
 (define base-check (fact? :trusted))
 (define combined base-check)
-(rule "git" (when combined (effect :allow "transitive match")))
+(rule "git" (when combined (allow "transitive match")))
 "#,
     );
     let output = may_i(&cfg)
@@ -142,7 +142,7 @@ fn eval_json_trace_contains_var_ref_annotation() {
     let cfg = write_config(
         r#"
 (define is-safe (fact? :safe/context))
-(rule "git" (when is-safe (effect :allow "git is safe")))
+(rule "git" (when is-safe (allow "git is safe")))
 "#,
     );
     let output = may_i(&cfg)
@@ -186,7 +186,7 @@ fn eval_json_trace_var_ref_unmatched() {
     let cfg = write_config(
         r#"
 (define is-safe (fact? :safe/context))
-(rule "git" (when is-safe (effect :allow "git is safe")))
+(rule "git" (when is-safe (allow "git is safe")))
 "#,
     );
     let output = may_i(&cfg)

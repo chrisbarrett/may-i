@@ -30,7 +30,7 @@ fn hook_resolves_defined_predicates() {
         r#"
 (define is-cc (fact? :client/claude-code))
 (rule "rm"
-      (when is-cc (effect :deny "CC denied")))
+      (when is-cc (deny "CC denied")))
 "#,
     );
     let output = may_i(&cfg)
@@ -58,7 +58,7 @@ fn hook_preserves_quoted_arguments() {
         r#"
 (rule "echo"
       (args (positional "hello world"))
-      (effect :allow "matched quoted arg"))
+      (allow "matched quoted arg"))
 "#,
     );
     let output = may_i(&cfg)
@@ -84,7 +84,7 @@ fn hook_preserves_quoted_arguments() {
 fn hook_json_flag_produces_valid_json() {
     let cfg = write_config(
         r#"
-(rule "echo" (effect :allow "echo is safe"))
+(rule "echo" (allow "echo is safe"))
 "#,
     );
     let output = may_i(&cfg)

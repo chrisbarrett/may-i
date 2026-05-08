@@ -9,11 +9,11 @@ use may_i_sexpr::{RawError, Sexpr};
 /// Parse an effect from an s-expression list.
 ///
 /// Syntax:
-/// - Terminal effects: `(effect :allow)`, `(effect :ask)`, `(effect :deny)` with optional reason
+/// - Terminal effects: `(allow)`, `(ask)`, `(deny)` with optional reason
 /// - Pattern effects: command strings, `(positional ...)`, `(exact ...)`, `(anywhere ...)`, `(forbidden ...)`
 /// - Combinators: `(and EFFECT ...)`, `(or EFFECT ...)`, `(not EFFECT)`
 /// - Conditionals: `(when PREDICATE EFFECT)`, `(unless PREDICATE EFFECT)`, `(if PREDICATE THEN ELSE)`, `(cond ...)`
-/// - Recursion: `(may-i PATTERN)`
+/// - Recursion: `(authorise)` (inside a host context)
 #[must_use = "parsed effect should be used"]
 pub fn parse_effect(sexpr: &Sexpr) -> Result<Spanned<Effect>, RawError> {
     // Handle string literals: always command literals (even if they match a reserved word).
@@ -43,11 +43,23 @@ pub fn parse_effect(sexpr: &Sexpr) -> Result<Spanned<Effect>, RawError> {
         .ok_or_else(|| RawError::new("effect tag must be an atom", list[0].span()))?;
 
     let effect = match tag {
-        "effect" => parse_terminal_effect(&list[1..], sexpr.span())?,
+        "effect" => {
+            return Err(RawError::new(
+                "(effect :decision …) is retired; use (allow|ask|deny REASON?)",
+                list[0].span(),
+            )
+            .with_help("run `may-i migrate` to convert legacy syntax"));
+        }
         "allow" => parse_decision_verb(Decision::Allow, &list[1..], sexpr.span())?,
         "ask" => parse_decision_verb(Decision::Ask, &list[1..], sexpr.span())?,
         "deny" => parse_decision_verb(Decision::Deny, &list[1..], sexpr.span())?,
-        "may-i" => parse_may_i(&list[1..], sexpr.span())?,
+        "may-i" => {
+            return Err(RawError::new(
+                "(may-i …) is retired; use (authorise) inside a host context",
+                list[0].span(),
+            )
+            .with_help("run `may-i migrate` to convert legacy syntax"));
+        }
         "authorise" => parse_authorise(&list[1..], sexpr.span())?,
         "cond" => parse_cond(&list[1..], sexpr.span())?,
         "when" => parse_when(&list[1..], sexpr.span())?,
@@ -90,7 +102,7 @@ pub fn parse_effect(sexpr: &Sexpr) -> Result<Spanned<Effect>, RawError> {
             } else {
                 return Err(
                     RawError::new(format!("unknown effect form: {other}"), list[0].span())
-                        .with_help("valid effects: effect, may-i, cond, when, unless, if, and, or, not, positional, exact, anywhere, forbidden"),
+                        .with_help("valid effects: allow, ask, deny, authorise, cond, when, unless, if, and, or, not, positional, exact, anywhere, forbidden, flag, parameter, tail"),
                 );
             }
         }
@@ -130,54 +142,10 @@ fn parse_decision_verb(
     Ok(Effect::Terminal { decision, reason })
 }
 
-/// Parse a terminal effect (allow, ask, deny).
-fn parse_terminal_effect(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawError> {
-    if args.is_empty() {
-        return Err(RawError::new(
-            "effect must have a keyword (:allow, :ask, or :deny)",
-            span,
-        ));
-    }
-
-    let kw = args[0]
-        .as_atom()
-        .ok_or_else(|| RawError::new("effect keyword must be an atom", args[0].span()))?;
-
-    let reason = if args.len() > 1 {
-        Some(
-            args[1]
-                .as_atom_or_str()
-                .ok_or_else(|| RawError::new("effect reason must be a string", args[1].span()))?
-                .to_string(),
-        )
-    } else {
-        None
-    };
-
-    match kw {
-        ":allow" => Ok(Effect::Terminal {
-            decision: Decision::Allow,
-            reason,
-        }),
-        ":ask" => Ok(Effect::Terminal {
-            decision: Decision::Ask,
-            reason,
-        }),
-        ":deny" => Ok(Effect::Terminal {
-            decision: Decision::Deny,
-            reason,
-        }),
-        other => Err(
-            RawError::new(format!("unknown effect keyword: {other}"), args[0].span())
-                .with_help("valid effect keywords: :allow, :ask, :deny"),
-        ),
-    }
-}
-
-/// Parse `(authorise)` — the bare recursion verb that succeeds `(may-i *)`.
-/// The host context (parameter, tail, positional slot) supplies the operand;
-/// at effect-position root it falls back to "consume all unconsumed argv",
-/// matching the historical `(may-i *)` semantics.
+/// Parse `(authorise)` — the recursion verb. Inside a host context
+/// (`(parameter NAME (authorise))`, `(tail (authorise))`, or as a
+/// positional element) the host supplies the operand; at effect-position
+/// root it falls back to "consume all unconsumed argv".
 fn parse_authorise(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawError> {
     if !args.is_empty() {
         return Err(RawError::new("(authorise) takes no arguments", span));
@@ -188,30 +156,6 @@ fn parse_authorise(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, Raw
         mode: MatchMode::Positional,
         patterns: vec![PositionalArg::one(Expr::Wildcard)],
         continuation: None,
-    };
-    Ok(Effect::MayI { pattern })
-}
-
-/// Parse a recursive evaluation effect.
-fn parse_may_i(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawError> {
-    if args.len() != 1 {
-        return Err(RawError::new(
-            "may-i must have exactly one argument pattern",
-            span,
-        ));
-    }
-
-    // Allow bare `*` as shorthand for `(positional *)` - pass everything unconsumed down
-    let pattern = if let Some("*") = args[0].as_atom() {
-        use may_i_core::pattern::Expr;
-        use may_i_core::pattern::{ArgPattern, MatchMode, PositionalArg};
-        ArgPattern::Ordered {
-            mode: MatchMode::Positional,
-            patterns: vec![PositionalArg::one(Expr::Wildcard)],
-            continuation: None,
-        }
-    } else {
-        crate::pattern::parse_arg_pattern(&args[0])?
     };
     Ok(Effect::MayI { pattern })
 }
@@ -406,7 +350,7 @@ mod tests {
 
     #[test]
     fn parse_allow_effect() {
-        let effect = parse_effect_str(r#"(effect :allow)"#).unwrap();
+        let effect = parse_effect_str(r#"(allow)"#).unwrap();
         match effect {
             Effect::Terminal {
                 decision: Decision::Allow,
@@ -418,7 +362,7 @@ mod tests {
 
     #[test]
     fn parse_allow_with_reason() {
-        let effect = parse_effect_str(r#"(effect :allow "safe command")"#).unwrap();
+        let effect = parse_effect_str(r#"(allow "safe command")"#).unwrap();
         match effect {
             Effect::Terminal {
                 decision: Decision::Allow,
@@ -430,7 +374,7 @@ mod tests {
 
     #[test]
     fn parse_ask_effect() {
-        let effect = parse_effect_str(r#"(effect :ask "confirm")"#).unwrap();
+        let effect = parse_effect_str(r#"(ask "confirm")"#).unwrap();
         match effect {
             Effect::Terminal {
                 decision: Decision::Ask,
@@ -442,7 +386,7 @@ mod tests {
 
     #[test]
     fn parse_deny_effect() {
-        let effect = parse_effect_str(r#"(effect :deny "dangerous")"#).unwrap();
+        let effect = parse_effect_str(r#"(deny "dangerous")"#).unwrap();
         match effect {
             Effect::Terminal {
                 decision: Decision::Deny,
@@ -453,8 +397,8 @@ mod tests {
     }
 
     #[test]
-    fn parse_may_i_effect() {
-        let effect = parse_effect_str(r#"(may-i (positional *))"#).unwrap();
+    fn parse_authorise_effect() {
+        let effect = parse_effect_str(r#"(authorise)"#).unwrap();
         match effect {
             Effect::MayI { .. } => {}
             _ => panic!("expected MayI"),
@@ -462,9 +406,20 @@ mod tests {
     }
 
     #[test]
-    fn parse_may_i_with_bare_star_shorthand() {
-        // Bare `*` is shorthand for `(positional *)` - pass everything unconsumed down
-        let effect = parse_effect_str(r#"(may-i *)"#).unwrap();
+    fn legacy_may_i_form_rejected() {
+        let err = parse_effect_str(r#"(may-i (positional *))"#).expect_err("expected error");
+        assert!(format!("{err}").contains("(may-i …) is retired"));
+    }
+
+    #[test]
+    fn legacy_effect_form_rejected() {
+        let err = parse_effect_str(r#"(effect :allow)"#).expect_err("expected error");
+        assert!(format!("{err}").contains("(effect :decision …) is retired"));
+    }
+
+    #[test]
+    fn parse_authorise_pattern_shape() {
+        let effect = parse_effect_str(r#"(authorise)"#).unwrap();
         match effect {
             Effect::MayI { pattern } => {
                 // Verify it produces the same pattern as (may-i (positional *))
@@ -486,7 +441,7 @@ mod tests {
 
     #[test]
     fn parse_when_effect() {
-        let effect = parse_effect_str(r#"(when (fact? :via/ssh) (effect :allow))"#).unwrap();
+        let effect = parse_effect_str(r#"(when (fact? :via/ssh) (allow))"#).unwrap();
         match effect {
             Effect::When { .. } => {}
             _ => panic!("expected When"),
@@ -495,7 +450,7 @@ mod tests {
 
     #[test]
     fn parse_unless_effect() {
-        let effect = parse_effect_str(r#"(unless (fact? :dangerous) (effect :allow))"#).unwrap();
+        let effect = parse_effect_str(r#"(unless (fact? :dangerous) (allow))"#).unwrap();
         match effect {
             Effect::Unless { .. } => {}
             _ => panic!("expected Unless"),
@@ -504,8 +459,7 @@ mod tests {
 
     #[test]
     fn parse_if_effect() {
-        let effect =
-            parse_effect_str(r#"(if (fact? :via/ssh) (effect :allow) (effect :ask))"#).unwrap();
+        let effect = parse_effect_str(r#"(if (fact? :via/ssh) (allow) (ask))"#).unwrap();
         match effect {
             Effect::If { .. } => {}
             _ => panic!("expected If"),
@@ -517,9 +471,9 @@ mod tests {
         let effect = parse_effect_str(
             r#"
             (cond
-                ((fact? :via/ssh) (effect :allow))
-                ((positional "push") (effect :ask))
-                (else (effect :deny)))
+                ((fact? :via/ssh) (allow))
+                ((positional "push") (ask))
+                (else (deny)))
         "#,
         )
         .unwrap();
@@ -548,7 +502,7 @@ mod tests {
 
     #[test]
     fn parse_and_effect() {
-        let effect = parse_effect_str(r#"(and (positional "push") (effect :allow))"#).unwrap();
+        let effect = parse_effect_str(r#"(and (positional "push") (allow))"#).unwrap();
         match effect {
             Effect::And { effects } => {
                 assert_eq!(effects.len(), 2);
@@ -559,7 +513,7 @@ mod tests {
 
     #[test]
     fn parse_or_effect() {
-        let effect = parse_effect_str(r#"(or (positional "push") (effect :allow))"#).unwrap();
+        let effect = parse_effect_str(r#"(or (positional "push") (allow))"#).unwrap();
         match effect {
             Effect::Or { effects } => {
                 assert_eq!(effects.len(), 2);
@@ -582,8 +536,8 @@ mod tests {
         let err = parse_effect_str(
             r#"
             (cond
-                (else (effect :deny))
-                ((fact? :via/ssh) (effect :allow)))
+                (else (deny))
+                ((fact? :via/ssh) (allow)))
         "#,
         )
         .expect_err("expected error");
@@ -591,21 +545,12 @@ mod tests {
     }
 
     #[test]
-    fn parse_may_i_with_exact_pattern() {
-        let effect = parse_effect_str(r#"(may-i (exact "git" "push"))"#).unwrap();
-        match effect {
-            Effect::MayI { .. } => {}
-            _ => panic!("expected MayI with Exact pattern"),
-        }
-    }
-
-    #[test]
     fn parse_cond_without_else() {
         let effect = parse_effect_str(
             r#"
             (cond
-                ((fact? :via/ssh) (effect :allow))
-                ((positional "push") (effect :ask)))
+                ((fact? :via/ssh) (allow))
+                ((positional "push") (ask)))
         "#,
         )
         .unwrap();
@@ -625,8 +570,8 @@ mod tests {
             r#"
             (when (fact? :via/ssh)
                 (cond
-                    ((positional "push") (effect :ask))
-                    (else (effect :allow))))
+                    ((positional "push") (ask))
+                    (else (allow))))
         "#,
         )
         .unwrap();
@@ -637,18 +582,6 @@ mod tests {
             }
             _ => panic!("expected When with nested Cond"),
         }
-    }
-
-    #[test]
-    fn invalid_effect_keyword_is_error() {
-        let err = parse_effect_str(r#"(effect :invalid)"#).expect_err("expected error");
-        assert!(format!("{err}").contains("unknown effect keyword"));
-    }
-
-    #[test]
-    fn may_i_without_pattern_is_error() {
-        let err = parse_effect_str(r#"(may-i)"#).expect_err("expected error");
-        assert!(format!("{err}").contains("pattern"));
     }
 
     #[test]
@@ -678,29 +611,15 @@ mod tests {
     }
 
     #[test]
-    fn effect_without_keyword_error() {
+    fn legacy_effect_bare_form_rejected() {
         let err = parse_effect_str(r#"(effect)"#).expect_err("expected error");
-        assert!(format!("{err}").contains("effect must have a keyword"));
+        assert!(format!("{err}").contains("(effect :decision …) is retired"));
     }
 
     #[test]
-    fn effect_non_atom_keyword_error() {
-        let err = parse_effect_str(r#"(effect ("not an atom"))"#).expect_err("expected error");
-        assert!(format!("{err}").contains("effect keyword must be an atom"));
-    }
-
-    #[test]
-    fn effect_with_non_atom_reason_error() {
-        let err =
-            parse_effect_str(r#"(effect :allow ("not an atom"))"#).expect_err("expected error");
-        assert!(format!("{err}").contains("effect reason must be a string"));
-    }
-
-    #[test]
-    fn may_i_with_too_many_args_error() {
-        let err = parse_effect_str(r#"(may-i (positional *) (positional *))"#)
-            .expect_err("expected error");
-        assert!(format!("{err}").contains("may-i must have exactly one"));
+    fn legacy_may_i_bare_form_rejected() {
+        let err = parse_effect_str(r#"(may-i)"#).expect_err("expected error");
+        assert!(format!("{err}").contains("(may-i …) is retired"));
     }
 
     #[test]
@@ -723,8 +642,7 @@ mod tests {
 
     #[test]
     fn cond_else_with_too_many_effects_error() {
-        let err = parse_effect_str(r#"(cond (else (effect :allow) (effect :deny)))"#)
-            .expect_err("expected error");
+        let err = parse_effect_str(r#"(cond (else (allow) (deny)))"#).expect_err("expected error");
         assert!(format!("{err}").contains("else branch must have exactly one effect"));
     }
 
@@ -744,7 +662,7 @@ mod tests {
 
     #[test]
     fn when_with_too_many_args_error() {
-        let err = parse_effect_str(r#"(when (fact? :via/ssh) (effect :allow) (effect :deny))"#)
+        let err = parse_effect_str(r#"(when (fact? :via/ssh) (allow) (deny))"#)
             .expect_err("expected error");
         assert!(format!("{err}").contains("when must have exactly"));
     }
@@ -780,10 +698,8 @@ mod tests {
 
     #[test]
     fn if_with_too_many_args_error() {
-        let err = parse_effect_str(
-            r#"(if (fact? :via/ssh) (effect :allow) (effect :deny) (effect :ask))"#,
-        )
-        .expect_err("expected error");
+        let err = parse_effect_str(r#"(if (fact? :via/ssh) (allow) (deny) (ask))"#)
+            .expect_err("expected error");
         assert!(format!("{err}").contains("if must have exactly 3 arguments"));
     }
 }

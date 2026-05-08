@@ -19,12 +19,12 @@ Trace
                  (cond                    │
                    ((or "install"         │
                         "uninstall")      │
-                    (effect :deny))       │ → :deny
+                    (deny))               │ → :deny
                    ((or "build"           │
                         "b"               │
                         …                 │
                         "clippy")         │
-                    (effect :allow)))     │
+                    (allow)))             │
                  (effect :deny)))))       │
 
 Result

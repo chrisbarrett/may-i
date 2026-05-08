@@ -25,8 +25,8 @@ fn eval(config_text: &str, command: &str, argv: &[&str]) -> Decision {
 fn parser_find_single_dash_long_no_false_fire() {
     let cfg = r#"
 (parser "find" (style single-dash-long))
-(rule "find" (and (anywhere "-n") (effect :deny "matched -n")))
-(rule "find" (effect :allow))
+(rule "find" (and (anywhere "-n") (deny "matched -n")))
+(rule "find" (allow))
 "#;
     let decision = eval(cfg, "find", &[".", "-name", "foo"]);
     assert_eq!(
@@ -43,7 +43,7 @@ fn parser_find_single_dash_long_no_false_fire() {
 fn parser_kubectl_parameter_value_pair() {
     let cfg = r#"
 (parser "kubectl" (style gnu) (parameter ["n" "namespace"]))
-(rule "kubectl" (and (positional "get" "pods") (effect :allow)))
+(rule "kubectl" (and (positional "get" "pods") (allow)))
 "#;
     let decision = eval(cfg, "kubectl", &["-n", "my-ns", "get", "pods"]);
     assert_eq!(decision, Decision::Allow);
@@ -55,7 +55,7 @@ fn parser_kubectl_parameter_value_pair() {
 fn parser_tar_legacy_bundle_first_token_is_flags() {
     let cfg = r#"
 (parser "tar" (style legacy-bundle))
-(rule "tar" (and (exact "archive.tgz") (effect :allow)))
+(rule "tar" (and (exact "archive.tgz") (allow)))
 "#;
     let decision = eval(cfg, "tar", &["xvzf", "archive.tgz"]);
     assert_eq!(decision, Decision::Allow);
@@ -71,20 +71,20 @@ fn parser_dd_key_value_classifies_all_kvs() {
   (parameter "if")
   (parameter "of")
   (parameter "bs"))
-(rule "dd" (and (exact) (effect :allow)))
+(rule "dd" (and (exact) (allow)))
 "#;
     let decision = eval(cfg, "dd", &["if=foo", "of=bar", "bs=1M"]);
     assert_eq!(decision, Decision::Allow);
 }
 
 // 5.5: `bash -c "echo hi"` under (parser "bash" (style gnu)
-// (parameter "c" (may-i *))) — inner `echo hi` re-authorised by may-i;
+// (parameter "c" (authorise))) — inner `echo hi` re-authorised by may-i;
 // no rule for "bash" needed (the may-i recursion sources the decision).
 #[test]
 fn parser_bash_may_i_recurses() {
     let cfg = r#"
-(parser "bash" (style gnu) (parameter "c" (may-i *)))
-(rule "echo" (effect :allow "safe"))
+(parser "bash" (style gnu) (parameter "c" (authorise)))
+(rule "echo" (allow "safe"))
 "#;
     let decision = eval(cfg, "bash", &["-c", "echo hi"]);
     assert_eq!(decision, Decision::Allow);
@@ -97,7 +97,7 @@ fn parser_java_overrides_separators() {
     let cfg = r#"
 (define-arg-style java (overrides gnu) (separators " " "=" ":"))
 (parser "java" (style java) (parameter "Xmx"))
-(rule "java" (and (positional "App") (effect :allow)))
+(rule "java" (and (positional "App") (allow)))
 "#;
     let decision = eval(cfg, "java", &["-Xmx:512m", "App"]);
     assert_eq!(decision, Decision::Allow);
@@ -109,7 +109,7 @@ fn parser_java_overrides_separators() {
 fn parser_pun_allow_bare_param_matches_flag() {
     let cfg = r#"
 (parser "tool" (style gnu) (parameter "enable"))
-(rule "tool" (and (flag "enable") (effect :allow)))
+(rule "tool" (and (flag "enable") (allow)))
 "#;
     let decision = eval(cfg, "tool", &["--enable"]);
     assert_eq!(decision, Decision::Allow);
@@ -123,7 +123,7 @@ fn parser_pun_allow_bare_param_matches_flag() {
 fn parser_pun_error_bare_param_does_not_allow() {
     let cfg = r#"
 (parser "dd" (style key-value) (parameter "if"))
-(rule "dd" (effect :allow))
+(rule "dd" (allow))
 "#;
     let decision = eval(cfg, "dd", &["if", "foo"]);
     assert_ne!(
@@ -138,7 +138,7 @@ fn parser_pun_error_bare_param_does_not_allow() {
 #[test]
 fn parser_default_fallback_is_gnu() {
     let cfg = r#"
-(rule "rm" (and (anywhere "-r") (effect :deny "recursive")))
+(rule "rm" (and (anywhere "-r") (deny "recursive")))
 "#;
     let decision = eval(cfg, "rm", &["-rf", "/tmp/junk"]);
     assert_eq!(decision, Decision::Deny);

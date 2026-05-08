@@ -481,7 +481,7 @@ mod tests {
         let mut temp_file = tempfile::NamedTempFile::new().unwrap();
         writeln!(
             temp_file,
-            r#"(rule "git" (and (positional "status") (effect :allow)))"#
+            r#"(rule "git" (and (positional "status") (allow)))"#
         )
         .unwrap();
         let result = load(temp_file.path());
@@ -625,11 +625,7 @@ mod tests {
     #[test]
     fn load_single_file_splices_forms() {
         let dir = tempfile::tempdir().unwrap();
-        write_file(
-            dir.path(),
-            "rules.lisp",
-            r#"(rule "echo" (effect :allow "safe"))"#,
-        );
+        write_file(dir.path(), "rules.lisp", r#"(rule "echo" (allow "safe"))"#);
         let root = write_file(
             dir.path(),
             "config.lisp",
@@ -647,12 +643,12 @@ mod tests {
         write_file(
             dir.path(),
             "rules/02-git.lisp",
-            r#"(rule "git" (effect :allow "git"))"#,
+            r#"(rule "git" (allow "git"))"#,
         );
         write_file(
             dir.path(),
             "rules/01-echo.lisp",
-            r#"(rule "echo" (effect :allow "echo"))"#,
+            r#"(rule "echo" (allow "echo"))"#,
         );
         let root = write_file(dir.path(), "config.lisp", r#"(load "rules/*.lisp")"#);
         let result = load(&root).unwrap();
@@ -694,12 +690,12 @@ mod tests {
         write_file(
             dir.path(),
             "rules/sub/extra.lisp",
-            r#"(rule "cat" (effect :allow "cat"))"#,
+            r#"(rule "cat" (allow "cat"))"#,
         );
         write_file(
             dir.path(),
             "rules/main.lisp",
-            r#"(rule "echo" (effect :allow "echo"))
+            r#"(rule "echo" (allow "echo"))
 (load "sub/extra.lisp")"#,
         );
         let root = write_file(dir.path(), "config.lisp", r#"(load "rules/main.lisp")"#);
@@ -791,7 +787,7 @@ mod tests {
     #[test]
     fn root_config_rules_get_primary_config_provenance() {
         let dir = tempfile::tempdir().unwrap();
-        let root = write_file(dir.path(), "config.lisp", r#"(rule "git" (effect :allow))"#);
+        let root = write_file(dir.path(), "config.lisp", r#"(rule "git" (allow))"#);
         let result = load(&root).unwrap();
         assert_eq!(result.config.rules.len(), 1);
         assert_eq!(result.config.rules[0].provenance, Provenance::PrimaryConfig);
@@ -816,11 +812,11 @@ mod tests {
     #[test]
     fn loaded_file_rules_get_loaded_provenance() {
         let dir = tempfile::tempdir().unwrap();
-        write_file(dir.path(), "rules.lisp", r#"(rule "echo" (effect :allow))"#);
+        write_file(dir.path(), "rules.lisp", r#"(rule "echo" (allow))"#);
         let root = write_file(
             dir.path(),
             "config.lisp",
-            r#"(rule "git" (effect :allow))
+            r#"(rule "git" (allow))
 (load "rules.lisp")"#,
         );
         let result = load(&root).unwrap();
@@ -862,11 +858,11 @@ mod tests {
     #[test]
     fn recursively_loaded_rules_get_loaded_provenance() {
         let dir = tempfile::tempdir().unwrap();
-        write_file(dir.path(), "inner.lisp", r#"(rule "cat" (effect :allow))"#);
+        write_file(dir.path(), "inner.lisp", r#"(rule "cat" (allow))"#);
         write_file(
             dir.path(),
             "outer.lisp",
-            r#"(rule "echo" (effect :allow))
+            r#"(rule "echo" (allow))
 (load "inner.lisp")"#,
         );
         let root = write_file(dir.path(), "config.lisp", r#"(load "outer.lisp")"#);
@@ -885,7 +881,7 @@ mod tests {
     #[test]
     fn loaded_rule_records_source_file_path() {
         let dir = tempfile::tempdir().unwrap();
-        write_file(dir.path(), "rules.lisp", r#"(rule "echo" (effect :allow))"#);
+        write_file(dir.path(), "rules.lisp", r#"(rule "echo" (allow))"#);
         let root = write_file(dir.path(), "config.lisp", r#"(load "rules.lisp")"#);
         let result = load(&root).unwrap();
         let path = result.config.rules[0]
@@ -917,11 +913,11 @@ mod tests {
     #[test]
     fn recursively_loaded_rules_record_their_own_file_path() {
         let dir = tempfile::tempdir().unwrap();
-        write_file(dir.path(), "inner.lisp", r#"(rule "cat" (effect :allow))"#);
+        write_file(dir.path(), "inner.lisp", r#"(rule "cat" (allow))"#);
         write_file(
             dir.path(),
             "outer.lisp",
-            r#"(rule "echo" (effect :allow))
+            r#"(rule "echo" (allow))
 (load "inner.lisp")"#,
         );
         let root = write_file(dir.path(), "config.lisp", r#"(load "outer.lisp")"#);

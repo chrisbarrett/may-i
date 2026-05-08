@@ -548,7 +548,7 @@ fn broken_zero_inline_uses_drop_indent() {
 
 #[test]
 fn two_line_multiline_last_child_not_inlined() {
-    // (and (positional "fmt") (when build-mode (effect :allow)))
+    // (and (positional "fmt") (when build-mode (allow)))
     // The (when ...) is 2 lines and should NOT inline after (positional "fmt")
     let doc = l(vec![
         a("and"),
@@ -834,7 +834,7 @@ fn body_indent_two_children() {
 
 #[test]
 fn if_keeps_multiline_condition_inline() {
-    // (if (or "a" "b") (effect :allow "yes") (effect :deny "no"))
+    // (if (or "a" "b") (allow "yes") (deny "no"))
     // The condition is multiline but should stay on the if line.
     // With (indent 2): condition and then-branch are special args.
     let cond = l(vec![

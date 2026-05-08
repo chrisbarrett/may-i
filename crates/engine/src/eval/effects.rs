@@ -381,9 +381,9 @@ fn evaluate_tail_authorise_fold<F: EvalFold>(
     rules: &[Rule],
 ) -> Result<F::EffectOut, EvalError> {
     let split = super::entry::split_outer_tail(ctx.args, &ctx.parser);
-    // When the parser declares no tail, fall back to the full argv —
-    // this matches the legacy `(may-i *)` semantics for rule bodies that
-    // recurse without a wrapper-boundary spec.
+    // When the parser declares no tail, fall back to the full argv — the
+    // recursion semantics for rule bodies that recurse without a
+    // wrapper-boundary spec.
     let tail_slice: &[String] = split.tail.unwrap_or(ctx.args);
     let owned: Vec<String> = tail_slice.to_vec();
     Ok(match extract_inner_command(&owned) {

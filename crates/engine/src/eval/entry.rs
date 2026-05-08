@@ -64,7 +64,7 @@ pub(crate) fn evaluate_at_depth<F: EvalFold>(
     }
     let expanded = tokenise(args, &parser);
     fold.record_parser(command, &parser);
-    // Parser-level `(parameter X (may-i *))` recursion. Run before
+    // Parser-level `(parameter X (authorise))` recursion. Run before
     // rule evaluation so `:via NAME` facts are in scope; the
     // recursion result also acts as a fallback decision when no rule
     // matches.

@@ -27,8 +27,8 @@ fn setup_loaded_config(
 #[test]
 fn eval_blocked_on_first_load() {
     let (_dir, config) = setup_loaded_config(
-        r#"(rule "ls" (effect :allow))"#,
-        r#"(rule "echo" (effect :allow "loaded rule"))"#,
+        r#"(rule "ls" (allow))"#,
+        r#"(rule "echo" (allow "loaded rule"))"#,
     );
 
     // Use a custom trust store path that doesn't exist (fresh)
@@ -68,7 +68,7 @@ fn eval_blocked_on_first_load() {
 
 #[test]
 fn eval_succeeds_after_approval() {
-    let (_dir, config) = setup_loaded_config("", r#"(rule "echo" (effect :allow "loaded rule"))"#);
+    let (_dir, config) = setup_loaded_config("", r#"(rule "echo" (allow "loaded rule"))"#);
 
     let trust_dir = tempfile::tempdir().unwrap();
 
@@ -110,7 +110,7 @@ fn eval_succeeds_after_approval() {
 fn eval_blocked_on_change() {
     let dir = tempfile::tempdir().unwrap();
     let rules_path = dir.path().join("rules.lisp");
-    std::fs::write(&rules_path, r#"(rule "echo" (effect :allow "v1"))"#).unwrap();
+    std::fs::write(&rules_path, r#"(rule "echo" (allow "v1"))"#).unwrap();
 
     let mut config = tempfile::NamedTempFile::new().unwrap();
     write!(config, "(load \"{}\")", rules_path.display()).unwrap();
@@ -126,7 +126,7 @@ fn eval_blocked_on_change() {
     approve.output().expect("approve");
 
     // Modify the loaded file
-    std::fs::write(&rules_path, r#"(rule "echo" (effect :deny "v2 changed"))"#).unwrap();
+    std::fs::write(&rules_path, r#"(rule "echo" (deny "v2 changed"))"#).unwrap();
 
     // Evaluate — should block because hash changed
     let mut cmd = cargo_bin_cmd!("may-i");
@@ -146,7 +146,7 @@ fn eval_blocked_on_change() {
 
 #[test]
 fn trust_list_shows_new_status() {
-    let (_dir, config) = setup_loaded_config("", r#"(rule "echo" (effect :allow "loaded rule"))"#);
+    let (_dir, config) = setup_loaded_config("", r#"(rule "echo" (allow "loaded rule"))"#);
     let trust_dir = tempfile::tempdir().unwrap();
 
     let mut cmd = cargo_bin_cmd!("may-i");
@@ -168,7 +168,7 @@ fn trust_list_shows_new_status() {
 
 #[test]
 fn trust_approve_specific_program() {
-    let (_dir, config) = setup_loaded_config("", r#"(rule "echo" (effect :allow "loaded rule"))"#);
+    let (_dir, config) = setup_loaded_config("", r#"(rule "echo" (allow "loaded rule"))"#);
     let trust_dir = tempfile::tempdir().unwrap();
 
     // Approve just "echo"
@@ -204,8 +204,8 @@ fn trust_approve_specific_program() {
 fn trust_all_approves_all_programs() {
     let (_dir, config) = setup_loaded_config(
         "",
-        r#"(rule "echo" (effect :allow "loaded"))
-(rule "cat" (effect :allow "loaded"))"#,
+        r#"(rule "echo" (allow "loaded"))
+(rule "cat" (allow "loaded"))"#,
     );
     let trust_dir = tempfile::tempdir().unwrap();
 
@@ -235,7 +235,7 @@ fn trust_all_approves_all_programs() {
 
 #[test]
 fn trust_nonexistent_program_fails() {
-    let (_dir, config) = setup_loaded_config("", r#"(rule "echo" (effect :allow "loaded"))"#);
+    let (_dir, config) = setup_loaded_config("", r#"(rule "echo" (allow "loaded"))"#);
     let trust_dir = tempfile::tempdir().unwrap();
 
     let mut cmd = cargo_bin_cmd!("may-i");
@@ -248,7 +248,7 @@ fn trust_nonexistent_program_fails() {
 
 #[test]
 fn primary_only_config_bypasses_trust() {
-    let config = common::write_config(r#"(rule "echo" (effect :allow "safe"))"#);
+    let config = common::write_config(r#"(rule "echo" (allow "safe"))"#);
     let trust_dir = tempfile::tempdir().unwrap();
 
     let mut cmd = cargo_bin_cmd!("may-i");
@@ -269,8 +269,8 @@ fn primary_only_config_bypasses_trust() {
 #[test]
 fn eval_untrusted_shows_warning_and_trace() {
     let (_dir, config) = setup_loaded_config(
-        r#"(rule "ls" (effect :allow))"#,
-        r#"(rule "echo" (effect :allow "loaded rule"))"#,
+        r#"(rule "ls" (allow))"#,
+        r#"(rule "echo" (allow "loaded rule"))"#,
     );
 
     let trust_dir = tempfile::tempdir().unwrap();
@@ -300,8 +300,8 @@ fn eval_untrusted_shows_warning_and_trace() {
 fn check_untrusted_shows_warning_then_results() {
     let (_dir, config) = setup_loaded_config(
         r#"(check :allow "echo hello")
-(rule "echo" (effect :allow))"#,
-        r#"(rule "echo" (effect :allow "loaded rule"))"#,
+(rule "echo" (allow))"#,
+        r#"(rule "echo" (allow "loaded rule"))"#,
     );
 
     let trust_dir = tempfile::tempdir().unwrap();
@@ -330,8 +330,8 @@ fn check_untrusted_shows_warning_then_results() {
 fn check_json_unaffected_by_trust() {
     let (_dir, config) = setup_loaded_config(
         r#"(check :allow "echo hello")
-(rule "echo" (effect :allow))"#,
-        r#"(rule "echo" (effect :allow "loaded rule"))"#,
+(rule "echo" (allow))"#,
+        r#"(rule "echo" (allow "loaded rule"))"#,
     );
 
     let trust_dir = tempfile::tempdir().unwrap();
@@ -360,8 +360,8 @@ fn check_json_unaffected_by_trust() {
 #[test]
 fn eval_json_untrusted_still_blocks() {
     let (_dir, config) = setup_loaded_config(
-        r#"(rule "ls" (effect :allow))"#,
-        r#"(rule "echo" (effect :allow "loaded rule"))"#,
+        r#"(rule "ls" (allow))"#,
+        r#"(rule "echo" (allow "loaded rule"))"#,
     );
 
     let trust_dir = tempfile::tempdir().unwrap();

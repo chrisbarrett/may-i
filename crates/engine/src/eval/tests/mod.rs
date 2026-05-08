@@ -253,7 +253,7 @@ fn positional_with_fact_binding_binds_for_continuation() {
     use may_i_core::pattern::{ArgPattern, PositionalArg};
     use may_i_core::{Expr, Keyword, Quantifier};
 
-    // Build: (positional [:ssh/host] . (may-i *))
+    // Build: (positional [:ssh/host] . (authorise))
     // Simple binding - [:kw] is equivalent to [:kw *]
     let bind_expr = Expr::Bind {
         key: Keyword::new(":ssh/host").unwrap(),
@@ -873,7 +873,7 @@ fn may_i_pushes_via_fact() {
         s,
     );
 
-    // Rule for "sudo": (may-i *)
+    // Rule for "sudo": (authorise)
     let sudo_rule = Rule::new(
         Spanned::new(
             Effect::CommandPattern(CommandPattern::Literal("sudo".to_string())),

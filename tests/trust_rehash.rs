@@ -1,6 +1,6 @@
 // Integration test for the Class A trust-hash rehash performed by
 // `may-i migrate` (§19). When the canonical-form rendering of a rule
-// changes (e.g. `(effect :allow)` → `(allow)`), an existing approval
+// changes (e.g. `(allow)` → `(allow)`), an existing approval
 // for that rule SHALL carry forward without re-prompting.
 
 mod common;
@@ -16,11 +16,7 @@ fn class_a_rehash_preserves_approval() {
     // engine treats the loaded rules as needing trust approval.
     let dir = tempfile::tempdir().unwrap();
     let rules_path = dir.path().join("rules.lisp");
-    std::fs::write(
-        &rules_path,
-        r#"(rule "echo" (effect :allow "from loaded file"))"#,
-    )
-    .unwrap();
+    std::fs::write(&rules_path, r#"(rule "echo" (allow "from loaded file"))"#).unwrap();
     let mut config = tempfile::NamedTempFile::new().unwrap();
     write!(config, "(load \"{}\")", rules_path.display()).unwrap();
 

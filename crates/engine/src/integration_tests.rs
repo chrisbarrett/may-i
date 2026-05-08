@@ -49,8 +49,8 @@ fn integration_rule_with_fact_predicate() {
     let config = parse_config(
         r#"
         (rule "git"
-            (when (fact? :via/ssh) (effect :ask "SSH operations require confirmation"))
-            :effect (effect :deny))
+            (when (fact? :via/ssh) (ask "SSH operations require confirmation"))
+            :effect (deny))
     "#,
     )
     .unwrap();
@@ -82,8 +82,8 @@ fn integration_rule_with_and_combinator() {
     let config = parse_config(
         r#"
         (rule "git"
-            (when (and (fact? :via/ssh) (positional "push")) (effect :ask))
-            :effect (effect :deny))
+            (when (and (fact? :via/ssh) (positional "push")) (ask))
+            :effect (deny))
     "#,
     )
     .unwrap();
@@ -100,8 +100,8 @@ fn integration_rule_with_or_combinator() {
     let config = parse_config(
         r#"
         (rule "git"
-            (when (or (positional "push") (positional "pull")) (effect :allow))
-            :effect (effect :deny))
+            (when (or (positional "push") (positional "pull")) (allow))
+            :effect (deny))
     "#,
     )
     .unwrap();
@@ -120,8 +120,8 @@ fn integration_rule_with_not_combinator() {
     let config = parse_config(
         r#"
         (rule "git"
-            (when (not (anywhere "--force")) (effect :allow))
-            :effect (effect :deny))
+            (when (not (anywhere "--force")) (allow))
+            :effect (deny))
     "#,
     )
     .unwrap();
@@ -147,8 +147,8 @@ fn integration_rule_with_when_effect() {
     let config = parse_config(
         r#"
         (rule "git"
-            (when (fact? :via/ssh) (effect :ask))
-            :effect (effect :deny))
+            (when (fact? :via/ssh) (ask))
+            :effect (deny))
     "#,
     )
     .unwrap();
@@ -165,8 +165,8 @@ fn integration_rule_with_unless_effect() {
     let config = parse_config(
         r#"
         (rule "git"
-            (unless (fact? :local) (effect :ask))
-            :effect (effect :allow))
+            (unless (fact? :local) (ask))
+            :effect (allow))
     "#,
     )
     .unwrap();
@@ -182,8 +182,8 @@ fn integration_rule_with_if_effect() {
     let config = parse_config(
         r#"
         (rule "git"
-            (if (fact? :via/ssh) (effect :ask) (effect :allow))
-            :effect (effect :deny))
+            (if (fact? :via/ssh) (ask) (allow))
+            :effect (deny))
     "#,
     )
     .unwrap();
@@ -202,10 +202,10 @@ fn integration_rule_with_case_effect() {
         r#"
         (rule "git"
             (cond
-                ((positional "push") (effect :ask))
-                ((positional "pull") (effect :allow))
-                (else (effect :deny)))
-            :effect (effect :deny))
+                ((positional "push") (ask))
+                ((positional "pull") (allow))
+                (else (deny)))
+            :effect (deny))
     "#,
     )
     .unwrap();
@@ -228,8 +228,8 @@ fn integration_named_predicate_with_define() {
         r#"
         (define ssh-session (fact? :via/ssh))
         (rule "git"
-            (when ssh-session (effect :ask))
-            :effect (effect :deny))
+            (when ssh-session (ask))
+            :effect (deny))
     "#,
     )
     .unwrap();
@@ -255,8 +255,8 @@ fn integration_multiple_rules_most_restrictive_wins() {
     let config = parse_config(
         r#"
         (rule "git"
-            (when (positional "rm") (effect :deny "git rm is restricted"))
-            :effect (effect :allow))
+            (when (positional "rm") (deny "git rm is restricted"))
+            :effect (allow))
     "#,
     )
     .unwrap();
@@ -298,8 +298,8 @@ fn integration_forbidden_pattern() {
     let config = parse_config(
         r#"
         (rule "git"
-            (when (forbidden "--force") (effect :allow))
-            :effect (effect :deny))
+            (when (forbidden "--force") (allow))
+            :effect (deny))
     "#,
     )
     .unwrap();
@@ -325,8 +325,8 @@ fn integration_anywhere_pattern() {
     let config = parse_config(
         r#"
         (rule "rm"
-            (when (anywhere "-r") (effect :ask "Recursive delete requires confirmation"))
-            :effect (effect :allow))
+            (when (anywhere "-r") (ask "Recursive delete requires confirmation"))
+            :effect (allow))
     "#,
     )
     .unwrap();
@@ -365,8 +365,8 @@ fn integration_exact_pattern_requires_all_args() {
     let config = parse_config(
         r#"
         (rule "git"
-            (when (exact "status") (effect :allow))
-            :effect (effect :ask))
+            (when (exact "status") (allow))
+            :effect (ask))
     "#,
     )
     .unwrap();
@@ -395,8 +395,8 @@ fn integration_complex_nested_combinators() {
             (when (and
                 (or (positional "apply") (positional "delete"))
                 (fact? [:env "prod"]))
-                (effect :deny "No mutations in prod"))
-            :effect (effect :allow))
+                (deny "No mutations in prod"))
+            :effect (allow))
     "#,
     )
     .unwrap();
@@ -417,12 +417,12 @@ fn integration_complex_nested_combinators() {
 
 #[test]
 fn integration_dot_notation_simple() {
-    // (positional "git" . (effect :allow)) matches "git" followed by anything
+    // (positional "git" . (allow)) matches "git" followed by anything
     let config = parse_config(
         r#"
         (rule "cmd"
-            (positional "git" . (effect :allow))
-            :effect (effect :deny))
+            (positional "git" . (allow))
+            :effect (deny))
     "#,
     )
     .unwrap();
@@ -464,7 +464,7 @@ fn integration_dot_notation_with_may_i() {
         r#"
         (rule "ssh"
             (positional * . (may-i (positional *)))
-            :effect (effect :deny "No SSH allowed by default"))
+            :effect (deny "No SSH allowed by default"))
         
         (rule "ls" :effect :allow)
         (rule "rm" :effect [:deny "rm is dangerous"])
@@ -504,8 +504,8 @@ fn integration_dot_notation_exact() {
     let config = parse_config(
         r#"
         (rule "cmd"
-            (exact "git" "status" . (effect :allow))
-            :effect (effect :deny))
+            (exact "git" "status" . (allow))
+            :effect (deny))
     "#,
     )
     .unwrap();
@@ -522,7 +522,7 @@ fn integration_dot_notation_exact() {
     assert_eq!(result.decision, Decision::Allow);
 
     // With flag - exact pattern still matches because flags are skipped
-    // The continuation (effect :allow) is evaluated
+    // The continuation (allow) is evaluated
     let result = evaluate(
         "cmd",
         &[

@@ -727,7 +727,7 @@ mod tests {
 
     #[test]
     fn test_special_form_indent_rule() {
-        let result = pretty("(rule \"rm\" (when build-mode (effect :allow)))", 25);
+        let result = pretty("(rule \"rm\" (when build-mode (allow)))", 25);
         // rule body indents +2
         for line in result.lines().skip(1) {
             let indent = line.len() - line.trim_start().len();
@@ -1283,11 +1283,11 @@ mod tests {
     #[test]
     fn test_cascade_preserved_in_rule() {
         // Source rule form with children on separate lines should stay cascaded.
-        let input = "(rule (or \"cp\" \"mkdir\" \"touch\")\n      (effect :allow \"Low-risk filesystem operation\"))";
+        let input = "(rule (or \"cp\" \"mkdir\" \"touch\")\n      (allow \"Low-risk filesystem operation\"))";
         let result = pretty(input, 80);
         assert_eq!(
             result,
-            "(rule (or \"cp\" \"mkdir\" \"touch\")\n  (effect :allow \"Low-risk filesystem operation\"))",
+            "(rule (or \"cp\" \"mkdir\" \"touch\")\n  (allow \"Low-risk filesystem operation\"))",
             "cascade should be preserved, got:\n{result}"
         );
     }
@@ -1296,9 +1296,9 @@ mod tests {
     fn test_rule_body_always_breaks() {
         // rule has N=1 indent spec: body args always go to a new line at +2
         // regardless of how the source was formatted.
-        let input = "(rule \"rm\" (effect :allow))";
+        let input = "(rule \"rm\" (allow))";
         let result = pretty(input, 80);
-        assert_eq!(result, "(rule \"rm\"\n  (effect :allow))");
+        assert_eq!(result, "(rule \"rm\"\n  (allow))");
     }
 
     // ── Cond clause rendering ────────────────────────────────────
@@ -1307,10 +1307,10 @@ mod tests {
     fn test_cond_clause_always_breaks_after_predicate() {
         // Cond clauses should always break after the predicate, with the
         // effect aligned at paren_col + 1 (same level as the predicate).
-        let input = "(cond\n  ((pred) (effect :allow))\n  (else (effect :ask)))";
+        let input = "(cond\n  ((pred) (allow))\n  (else (ask)))";
         let result = pretty(input, 80);
         assert_eq!(
-            result, "(cond\n  ((pred)\n   (effect :allow))\n  (else\n   (effect :ask)))",
+            result, "(cond\n  ((pred)\n   (allow))\n  (else\n   (ask)))",
             "cond clauses should break after predicate, got:\n{result}"
         );
     }
@@ -1319,7 +1319,7 @@ mod tests {
     fn test_cond_clause_uses_computed_indent_not_source_trivia() {
         // When source children are placed in a newly-constructed cond clause,
         // the effect should use computed indentation (not original source trivia).
-        let input = "(if (anywhere \"--force\" \"-f\") (effect :ask \"desc\"))";
+        let input = "(if (anywhere \"--force\" \"-f\") (ask \"desc\"))";
         let (nodes, _) = parse(input);
         let if_children = nodes[0].as_list().unwrap();
         let pred = &if_children[1];
@@ -1339,7 +1339,7 @@ mod tests {
         );
         let result = cond_node.pretty_serialize(80);
         assert_eq!(
-            result, "(cond\n  ((anywhere \"--force\" \"-f\")\n   (effect :ask \"desc\")))",
+            result, "(cond\n  ((anywhere \"--force\" \"-f\")\n   (ask \"desc\")))",
             "cond clause children should use computed indent, got:\n{result}"
         );
     }
@@ -1563,7 +1563,7 @@ mod proptests {
 
     #[test]
     fn edge_case_multiline_list_roundtrip() {
-        let input = "(rule\n  (command \"git\")\n  (effect :allow))";
+        let input = "(rule\n  (command \"git\")\n  (allow))";
         let (nodes, errors) = parse(input);
         assert!(errors.is_empty());
         assert_eq!(nodes.len(), 1);
@@ -1954,7 +1954,7 @@ mod proptests {
     #[test]
     fn pretty_serialize_cond_clauses_properly_indented() {
         // Cond clauses should each be on their own line with proper indentation
-        let input = r#"(rule "cmd" (cond ((anywhere "--eval") (effect :ask "Dangerous")) (else (effect :allow))))"#;
+        let input = r#"(rule "cmd" (cond ((anywhere "--eval") (ask "Dangerous")) (else (allow))))"#;
         let (nodes, errors) = parse(input);
         assert!(errors.is_empty());
 
@@ -2011,7 +2011,7 @@ mod proptests {
     #[test]
     fn pretty_serialize_cond_else_clause_formatting() {
         // Else clause should format the same as other clauses
-        let input = "(cond ((test) (effect)) (else (effect :allow)))";
+        let input = "(cond ((test) (effect)) (else (allow)))";
         let (nodes, errors) = parse(input);
         assert!(errors.is_empty());
 
@@ -2188,7 +2188,7 @@ mod proptests {
     #[test]
     fn pretty_serialize_head_with_first_arg_stays_together() {
         // The head and first argument should stay on the same line
-        let input = "(rule \"openspec\" (effect :allow) (check :allow \"test\"))";
+        let input = "(rule \"openspec\" (allow) (check :allow \"test\"))";
         let (nodes, errors) = parse(input);
         assert!(errors.is_empty());
 
@@ -2208,7 +2208,7 @@ mod proptests {
     #[test]
     fn pretty_serialize_no_extra_blank_lines() {
         // Breaking should not add extra blank lines
-        let input = "(rule \"openspec\" (effect :allow) (check :allow \"test\"))";
+        let input = "(rule \"openspec\" (allow) (check :allow \"test\"))";
         let (nodes, errors) = parse(input);
         assert!(errors.is_empty());
 
@@ -2227,7 +2227,7 @@ mod proptests {
     fn pretty_serialize_original_openspec_example() {
         // Test the exact example from the issue
         let input = r#"(rule (command "openspec")
-      (effect :allow)
+      (allow)
       (check :allow "openspec status --change 'foo'"
              :allow "openspec instructions apply --change 'bar'"))"#;
         let (nodes, errors) = parse(input);
@@ -2252,10 +2252,7 @@ mod proptests {
         );
 
         // Check structure is preserved
-        assert!(
-            pretty.contains("(effect :allow)"),
-            "Should have effect form"
-        );
+        assert!(pretty.contains("(allow)"), "Should have effect form");
         assert!(pretty.contains("(check"), "Should have check form");
     }
 

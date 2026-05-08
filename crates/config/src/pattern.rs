@@ -618,7 +618,7 @@ mod tests {
 
     #[test]
     fn parse_parameter_may_i_form() {
-        let pattern = parse_arg(r#"(parameter "c" (may-i *))"#).unwrap();
+        let pattern = parse_arg(r#"(parameter "c" (authorise))"#).unwrap();
         match pattern {
             ArgPattern::Parameter { names, form } => {
                 assert_eq!(names, vec!["c".to_string()]);
@@ -868,8 +868,8 @@ mod tests {
 
     #[test]
     fn parse_positional_with_dot_notation() {
-        // (positional "git" . (effect :allow))
-        let pattern = parse_arg(r#"(positional "git" . (effect :allow))"#).unwrap();
+        // (positional "git" . (allow))
+        let pattern = parse_arg(r#"(positional "git" . (allow))"#).unwrap();
         match pattern {
             ArgPattern::Ordered {
                 mode: MatchMode::Positional,
@@ -884,26 +884,9 @@ mod tests {
     }
 
     #[test]
-    fn parse_positional_with_dot_notation_may_i() {
-        // (positional * . (may-i (positional *)))
-        let pattern = parse_arg(r#"(positional * . (may-i (positional *)))"#).unwrap();
-        match pattern {
-            ArgPattern::Ordered {
-                mode: MatchMode::Positional,
-                patterns,
-                continuation,
-            } => {
-                assert_eq!(patterns.len(), 1);
-                assert!(continuation.is_some());
-            }
-            _ => panic!("expected Positional with may-i continuation"),
-        }
-    }
-
-    #[test]
     fn parse_exact_with_dot_notation() {
-        // (exact "git" "status" . (effect :allow))
-        let pattern = parse_arg(r#"(exact "git" "status" . (effect :allow))"#).unwrap();
+        // (exact "git" "status" . (allow))
+        let pattern = parse_arg(r#"(exact "git" "status" . (allow))"#).unwrap();
         match pattern {
             ArgPattern::Ordered {
                 mode: MatchMode::Exact,
@@ -929,9 +912,9 @@ mod tests {
 
     #[test]
     fn parse_positional_with_fact_binding_simple() {
-        // (positional [:ssh/host] . (may-i *))
+        // (positional [:ssh/host] . (authorise))
         // Bracket notation binds matched value to the keyword
-        let pattern = parse_arg(r#"(positional [:ssh/host] . (may-i *))"#).unwrap();
+        let pattern = parse_arg(r#"(positional [:ssh/host] . (authorise))"#).unwrap();
         match pattern {
             ArgPattern::Ordered {
                 mode: MatchMode::Positional,
@@ -954,9 +937,9 @@ mod tests {
 
     #[test]
     fn parse_positional_with_fact_binding_explicit_wildcard() {
-        // (positional [:ssh/host *] . (may-i *))
+        // (positional [:ssh/host *] . (authorise))
         // Explicit * is optional but allowed for clarity
-        let pattern = parse_arg(r#"(positional [:ssh/host *] . (may-i *))"#).unwrap();
+        let pattern = parse_arg(r#"(positional [:ssh/host *] . (authorise))"#).unwrap();
         match pattern {
             ArgPattern::Ordered {
                 mode: MatchMode::Positional,
@@ -1108,9 +1091,7 @@ mod tests {
 
     #[test]
     fn parse_expr_cond_in_positional() {
-        let pattern =
-            parse_arg(r#"(positional (cond ("a" (effect :allow)) (else (effect :deny))))"#)
-                .unwrap();
+        let pattern = parse_arg(r#"(positional (cond ("a" (allow)) (else (deny))))"#).unwrap();
         match pattern {
             ArgPattern::Ordered {
                 mode: MatchMode::Positional,
@@ -1126,7 +1107,7 @@ mod tests {
 
     #[test]
     fn parse_expr_if_in_positional() {
-        let pattern = parse_arg(r#"(positional (if "a" (effect :allow) (effect :deny)))"#).unwrap();
+        let pattern = parse_arg(r#"(positional (if "a" (allow) (deny)))"#).unwrap();
         match pattern {
             ArgPattern::Ordered {
                 mode: MatchMode::Positional,
@@ -1142,7 +1123,7 @@ mod tests {
 
     #[test]
     fn parse_expr_when_in_positional() {
-        let pattern = parse_arg(r#"(positional (when "a" (effect :allow)))"#).unwrap();
+        let pattern = parse_arg(r#"(positional (when "a" (allow)))"#).unwrap();
         match pattern {
             ArgPattern::Ordered {
                 mode: MatchMode::Positional,
@@ -1158,7 +1139,7 @@ mod tests {
 
     #[test]
     fn parse_expr_unless_in_positional() {
-        let pattern = parse_arg(r#"(positional (unless "a" (effect :deny)))"#).unwrap();
+        let pattern = parse_arg(r#"(positional (unless "a" (deny)))"#).unwrap();
         match pattern {
             ArgPattern::Ordered {
                 mode: MatchMode::Positional,
@@ -1182,22 +1163,21 @@ mod tests {
 
     #[test]
     fn parse_cond_else_wrong_arity_error() {
-        let err = parse_arg(r#"(positional (cond (else (effect :allow) (effect :deny))))"#)
-            .expect_err("expected error");
+        let err =
+            parse_arg(r#"(positional (cond (else (allow) (deny))))"#).expect_err("expected error");
         assert!(format!("{err}").contains("else branch must have exactly one effect"));
     }
 
     #[test]
     fn parse_cond_branch_wrong_arity_error() {
-        let err = parse_arg(r#"(positional (cond ("a" (effect :allow) "extra")))"#)
-            .expect_err("expected error");
+        let err =
+            parse_arg(r#"(positional (cond ("a" (allow) "extra")))"#).expect_err("expected error");
         assert!(format!("{err}").contains("cond branch must have (test effect) form"));
     }
 
     #[test]
     fn parse_if_wrong_arity_error() {
-        let err =
-            parse_arg(r#"(positional (if "a" (effect :allow)))"#).expect_err("expected error");
+        let err = parse_arg(r#"(positional (if "a" (allow)))"#).expect_err("expected error");
         assert!(format!("{err}").contains("if must have exactly 3 arguments"));
     }
 
@@ -1237,8 +1217,8 @@ mod tests {
 
     #[test]
     fn forbidden_rejects_bind_in_cond() {
-        let err = parse_arg(r#"(forbidden (cond ([:key *] (effect :allow))))"#)
-            .expect_err("expected error");
+        let err =
+            parse_arg(r#"(forbidden (cond ([:key *] (allow))))"#).expect_err("expected error");
         assert!(format!("{err}").contains("not valid in forbidden"));
     }
 

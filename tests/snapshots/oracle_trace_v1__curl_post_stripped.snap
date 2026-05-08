@@ -13,8 +13,8 @@ Trace
                       …                               │
                       …                               │
                       …))                             │
-        (effect                                       │ → :allow "GET request (no mutating flags)"
-         :allow "GET request (no mutating flags)"))   │
+        (allow                                        │ → :allow "GET request (no mutating flags)"
+         "GET request (no mutating flags)"))          │
                                                       │
   69: (rule (command "curl")                          │
         (effect                                       │ → :ask "Network operation requires approval"

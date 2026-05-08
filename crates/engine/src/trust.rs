@@ -236,7 +236,7 @@ fn canonical_effect(effect: &Effect) -> String {
             format!("({})", parts.join(" "))
         }
         Effect::MayI { pattern } => {
-            // The bare `(may-i *)` form (the common case after migration)
+            // The bare `(authorise)` form (the common case after migration)
             // canonicalises as `(authorise)` — the new surface verb. Any
             // non-trivial pattern keeps the legacy `(may-i …)` rendering
             // until those forms also retire.
@@ -251,7 +251,7 @@ fn canonical_effect(effect: &Effect) -> String {
 }
 
 /// True if `pattern` is `(positional *)` — the canonical wildcard
-/// continuation that `(may-i *)` desugars to.
+/// continuation that `(authorise)` resolves to internally.
 fn is_wildcard_positional(pattern: &ArgPattern) -> bool {
     matches!(
         pattern,

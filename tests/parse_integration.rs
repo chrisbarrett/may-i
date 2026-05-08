@@ -5,7 +5,7 @@ mod common;
 use common::{may_i, write_config};
 use predicates::prelude::*;
 
-const MINIMAL_CONFIG: &str = r#"(rule "echo" (effect :allow "ok"))"#;
+const MINIMAL_CONFIG: &str = r#"(rule "echo" (allow "ok"))"#;
 
 #[test]
 fn parse_simple_command_exits_zero() {

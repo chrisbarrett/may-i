@@ -13,8 +13,8 @@ expression: normalised
                       [2m…[0m                               [2m│[0m
                       [2m…[0m                               [2m│[0m
                       [2m…[0m[2m)[0m[2m)[0m                             [2m│[0m
-        [2m([0m[2meffect[0m                                       [2m│[0m [2m[0m[2m→[0m [1;32m:allow[0m [32m"GET request (no mutating flags)"[0m
-         [2m:allow[0m [2m"GET request (no mutating flags)"[0m[2m)[0m[2m)[0m   [2m│[0m
+        [2m([0m[2mallow[0m                                        [2m│[0m [2m[0m[2m→[0m [1;32m:allow[0m [32m"GET request (no mutating flags)"[0m
+         [2m"GET request (no mutating flags)"[0m[2m)[0m[2m)[0m          [2m│[0m
                                                       [2m│[0m
   [2m69: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"curl"[0m[2m)[0m                          [2m│[0m
         [2m([0m[34meffect[0m                                       [2m│[0m [2m[0m[2m→[0m [1;33m:ask[0m [32m"Network operation requires approval"[0m

@@ -7,7 +7,7 @@
 //
 // NAME: a string (single spelling) or [short long] vector (two
 // spellings). The optional FORM after a parameter name is a treatment
-// declaration; in v2 only `(may-i *)` is accepted (the new
+// declaration; in v2 only `(authorise)` is accepted (the new
 // `(authorise)` verb arrives in a later slice of the dsl-coherence
 // change).
 
@@ -246,7 +246,7 @@ fn parse_names(args: &[Sexpr], tag: &str, span: may_i_core::Span) -> Result<Vec<
 /// declaration. The body is exactly one form, and its head determines
 /// whether it sets the value treatment or the capture-shape:
 ///
-/// - `(authorise)` / `(may-i *)` — value treatment is [`ParameterTreatment::MayI`].
+/// - `(authorise)` — value treatment is [`ParameterTreatment::MayI`].
 /// - `(many-till PAT)` — capture-shape is multi-token until PAT matches.
 fn parse_parameter_body(sexpr: &Sexpr) -> Result<(ParameterTreatment, Capture), RawError> {
     let list = sexpr.as_list().ok_or_else(|| {
@@ -271,24 +271,11 @@ fn parse_parameter_body(sexpr: &Sexpr) -> Result<(ParameterTreatment, Capture), 
             }
             Ok((ParameterTreatment::MayI, Capture::Single))
         }
-        "may-i" => {
-            if list.len() != 2 {
-                return Err(RawError::new(
-                    "(may-i *) is the only legacy FORM accepted; prefer (authorise)",
-                    sexpr.span(),
-                ));
-            }
-            let star = list[1]
-                .as_atom()
-                .ok_or_else(|| RawError::new("expected `*` after may-i", list[1].span()))?;
-            if star != "*" {
-                return Err(RawError::new(
-                    format!("expected `*` after may-i, got `{star}`"),
-                    list[1].span(),
-                ));
-            }
-            Ok((ParameterTreatment::MayI, Capture::Single))
-        }
+        "may-i" => Err(RawError::new(
+            "(may-i …) is retired; use (authorise) inside the parameter body",
+            list[0].span(),
+        )
+        .with_help("run `may-i migrate` to convert legacy syntax")),
         "many-till" => {
             if list.len() != 2 {
                 return Err(RawError::new(
@@ -301,7 +288,7 @@ fn parse_parameter_body(sexpr: &Sexpr) -> Result<(ParameterTreatment, Capture), 
         }
         other => Err(
             RawError::new(format!("unsupported parameter FORM: {other}"), sexpr.span())
-                .with_help("use (authorise), (may-i *), or (many-till PAT)"),
+                .with_help("use (authorise) or (many-till PAT)"),
         ),
     }
 }
@@ -378,12 +365,21 @@ mod tests {
     }
 
     #[test]
-    fn parses_may_i_treatment() {
+    fn parses_authorise_treatment() {
         let p = parse_parser_form(&first_form(
-            r#"(parser "bash" (style gnu) (parameter "c" (may-i *)))"#,
+            r#"(parser "bash" (style gnu) (parameter "c" (authorise)))"#,
         ))
         .unwrap();
         assert_eq!(p.parameters[0].treatment, ParameterTreatment::MayI);
+    }
+
+    #[test]
+    fn legacy_may_i_in_parameter_body_rejected() {
+        let err = parse_parser_form(&first_form(
+            r#"(parser "bash" (style gnu) (parameter "c" (may-i *)))"#,
+        ))
+        .unwrap_err();
+        assert!(format!("{err}").contains("(may-i …) is retired"));
     }
 
     #[test]

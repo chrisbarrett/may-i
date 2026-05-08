@@ -10,7 +10,7 @@ use common::{bash_payload, may_i, parse_json, write_config};
 fn hook_compound_command_evaluates_all_parts() {
     let cfg = write_config(
         r#"
-(rule "echo" (effect :allow))
+(rule "echo" (allow))
 "#,
     );
     let output = may_i(&cfg)
@@ -36,8 +36,8 @@ fn hook_compound_command_evaluates_all_parts() {
 fn hook_embedded_substitution_denied() {
     let cfg = write_config(
         r#"
-(rule "echo" (effect :allow))
-(rule "rm" (effect :deny "rm denied"))
+(rule "echo" (allow))
+(rule "rm" (deny "rm denied"))
 "#,
     );
     let output = may_i(&cfg)
@@ -63,7 +63,7 @@ fn hook_embedded_substitution_denied() {
 fn hook_dynamic_command_name_asks() {
     let cfg = write_config(
         r#"
-(rule "echo" (effect :allow))
+(rule "echo" (allow))
 "#,
     );
     let output = may_i(&cfg)
@@ -96,8 +96,8 @@ fn hook_dynamic_command_name_asks() {
 fn hook_if_then_rm_denied() {
     let cfg = write_config(
         r#"
-(rule "true" (effect :allow))
-(rule "rm" (effect :deny "rm denied"))
+(rule "true" (allow))
+(rule "rm" (deny "rm denied"))
 "#,
     );
     let output = may_i(&cfg)
@@ -123,7 +123,7 @@ fn hook_if_then_rm_denied() {
 fn hook_empty_command_asks() {
     let cfg = write_config(
         r#"
-(rule "echo" (effect :allow))
+(rule "echo" (allow))
 "#,
     );
     let output = may_i(&cfg)
@@ -149,8 +149,8 @@ fn hook_empty_command_asks() {
 fn json_and_pretty_agree_on_compound_commands() {
     let cfg = write_config(
         r#"
-(rule "echo" (effect :allow))
-(rule "rm" (effect :deny "rm denied"))
+(rule "echo" (allow))
+(rule "rm" (deny "rm denied"))
 "#,
     );
 
@@ -197,8 +197,8 @@ fn json_and_pretty_agree_on_compound_commands() {
 fn deeply_nested_substitution_depth_limit() {
     let cfg = write_config(
         r#"
-(rule "echo" (effect :allow))
-(rule "rm" (effect :allow))
+(rule "echo" (allow))
+(rule "rm" (allow))
 "#,
     );
 

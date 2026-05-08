@@ -107,7 +107,7 @@ fn migration_preserves_comments() {
 fn validate_migration_success() {
     // Test that properly migrated (new syntax) configs pass validation
     let migrated = r#"
-        (rule "git" (effect :allow))
+        (rule "git" (allow))
         (define safe (fact? :local))
     "#;
 
