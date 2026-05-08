@@ -175,12 +175,14 @@ fn parse_names(args: &[Sexpr], tag: &str, span: may_i_core::Span) -> Result<Vec<
     parse_name(&args[0])
 }
 
-/// Parse the optional FORM after `(parameter NAME …)`. Only `(may-i *)`
-/// is accepted in v2 (pending the `(authorise)` slice of dsl-coherence).
+/// Parse the optional FORM after `(parameter NAME …)`. The bare
+/// `(authorise)` verb is the canonical form; legacy `(may-i *)` still
+/// parses for source-level back-compat during the dsl-coherence
+/// transition (the migration rewrites it).
 fn parse_treatment(sexpr: &Sexpr) -> Result<ParameterTreatment, RawError> {
     let list = sexpr.as_list().ok_or_else(|| {
         RawError::new(
-            "parameter FORM must be a list, e.g. (may-i *)",
+            "parameter FORM must be a list, e.g. (authorise)",
             sexpr.span(),
         )
     })?;
@@ -191,10 +193,19 @@ fn parse_treatment(sexpr: &Sexpr) -> Result<ParameterTreatment, RawError> {
         .as_atom()
         .ok_or_else(|| RawError::new("parameter FORM tag must be an atom", list[0].span()))?;
     match head {
+        "authorise" => {
+            if list.len() != 1 {
+                return Err(RawError::new(
+                    "(authorise) takes no arguments",
+                    sexpr.span(),
+                ));
+            }
+            Ok(ParameterTreatment::MayI)
+        }
         "may-i" => {
             if list.len() != 2 {
                 return Err(RawError::new(
-                    "(may-i *) is the only FORM accepted in v2",
+                    "(may-i *) is the only legacy FORM accepted; prefer (authorise)",
                     sexpr.span(),
                 ));
             }
@@ -211,7 +222,7 @@ fn parse_treatment(sexpr: &Sexpr) -> Result<ParameterTreatment, RawError> {
         }
         other => Err(
             RawError::new(format!("unsupported parameter FORM: {other}"), sexpr.span())
-                .with_help("only (may-i *) is accepted in v2"),
+                .with_help("use (authorise) — bare, no arguments"),
         ),
     }
 }

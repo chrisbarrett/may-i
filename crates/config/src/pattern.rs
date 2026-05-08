@@ -295,19 +295,28 @@ fn parse_parameter_form(args: &[Sexpr], span: may_i_core::Span) -> Result<ArgPat
 fn parse_parameter_form_body(sexpr: &Sexpr) -> Result<ParameterForm, RawError> {
     if let Some(list) = sexpr.as_list()
         && let Some(tag) = list.first().and_then(|f| f.as_atom())
-        && tag == "may-i"
     {
-        // (may-i ...) form. The inner pattern is currently ignored —
-        // recursion always treats the whole flag value as the command line.
-        // We accept any inner shape so that `(may-i *)` and `(may-i (positional *))`
-        // both parse, matching user expectations from the rest of the DSL.
-        if list.len() != 2 {
-            return Err(RawError::new(
-                "may-i in parameter form must have exactly one inner pattern",
-                sexpr.span(),
-            ));
+        // `(authorise)` — canonical recursion verb. Bare, no arguments.
+        if tag == "authorise" {
+            if list.len() != 1 {
+                return Err(RawError::new(
+                    "(authorise) takes no arguments",
+                    sexpr.span(),
+                ));
+            }
+            return Ok(ParameterForm::MayI);
         }
-        return Ok(ParameterForm::MayI);
+        // Legacy `(may-i …)` form. Inner pattern is ignored; recursion
+        // always treats the whole flag value as the command line.
+        if tag == "may-i" {
+            if list.len() != 2 {
+                return Err(RawError::new(
+                    "may-i in parameter form must have exactly one inner pattern",
+                    sexpr.span(),
+                ));
+            }
+            return Ok(ParameterForm::MayI);
+        }
     }
     let expr = parse_expr(sexpr)?;
     Ok(ParameterForm::Match(expr))

@@ -48,6 +48,7 @@ pub fn parse_effect(sexpr: &Sexpr) -> Result<Spanned<Effect>, RawError> {
         "ask" => parse_decision_verb(Decision::Ask, &list[1..], sexpr.span())?,
         "deny" => parse_decision_verb(Decision::Deny, &list[1..], sexpr.span())?,
         "may-i" => parse_may_i(&list[1..], sexpr.span())?,
+        "authorise" => parse_authorise(&list[1..], sexpr.span())?,
         "cond" => parse_cond(&list[1..], sexpr.span())?,
         "when" => parse_when(&list[1..], sexpr.span())?,
         "unless" => parse_unless(&list[1..], sexpr.span())?,
@@ -171,6 +172,24 @@ fn parse_terminal_effect(args: &[Sexpr], span: may_i_core::Span) -> Result<Effec
                 .with_help("valid effect keywords: :allow, :ask, :deny"),
         ),
     }
+}
+
+/// Parse `(authorise)` — the bare recursion verb that succeeds `(may-i *)`.
+/// The host context (parameter, tail, positional slot) supplies the operand;
+/// at effect-position root it falls back to "consume all unconsumed argv",
+/// matching the historical `(may-i *)` semantics.
+fn parse_authorise(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawError> {
+    if !args.is_empty() {
+        return Err(RawError::new("(authorise) takes no arguments", span));
+    }
+    use may_i_core::pattern::Expr;
+    use may_i_core::pattern::{ArgPattern, MatchMode, PositionalArg};
+    let pattern = ArgPattern::Ordered {
+        mode: MatchMode::Positional,
+        patterns: vec![PositionalArg::one(Expr::Wildcard)],
+        continuation: None,
+    };
+    Ok(Effect::MayI { pattern })
 }
 
 /// Parse a recursive evaluation effect.

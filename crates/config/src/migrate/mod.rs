@@ -34,6 +34,7 @@ mod flatten_nested_if;
 mod hoist_cond;
 mod inline_args;
 mod inline_context;
+mod may_i_to_authorise;
 mod or_when_to_if;
 mod parser_style_form;
 mod predicate_pushdown;
@@ -107,6 +108,7 @@ pub fn migration_rules() -> Vec<RewriteFn> {
         Box::new(parser_style_form::parser_style_to_form),
         Box::new(define_arg_style_form::define_arg_style_to_form),
         Box::new(check_form::check_to_form),
+        Box::new(may_i_to_authorise::may_i_to_authorise),
         // Stage 2 — normalisation (must run after stage 1 is stable)
         Box::new(collapse_effects::rule_collapse_effects),
         Box::new(flatten_combinators::flatten_combinators),

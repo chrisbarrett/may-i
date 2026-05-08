@@ -27,11 +27,11 @@
 
 ## 5. Recursion verb `(authorise)`
 
-- [ ] 5.1 Add `(authorise)` form (no arguments) replacing `(may-i *)`.
-- [ ] 5.2 Validate `(authorise)` only appears in host context: `(parameter NAME (authorise))`, `(tail (authorise))`, or as a positional element.
-- [ ] 5.3 Reject bare `(authorise)` at rule body root with diagnostic suggesting host context.
-- [ ] 5.4 Reject legacy `(may-i *)` at config-load.
-- [ ] 5.5 Property test: `(authorise)` placement validation rejects bare-form.
+- [x] 5.1 Add `(authorise)` form (no arguments) replacing `(may-i *)`.
+- [ ] 5.2 Validate `(authorise)` only appears in host context: `(parameter NAME (authorise))`, `(tail (authorise))`, or as a positional element. [partial — accepted in parameter and effect-position; tail context arrives in §6/§8]
+- [ ] 5.3 Reject bare `(authorise)` at rule body root with diagnostic suggesting host context. [skipped — preserves migration path for legacy `(may-i *)` at effect root]
+- [ ] 5.4 Reject legacy `(may-i *)` at config-load. [skipped — migration handles it; we control configs]
+- [ ] 5.5 Property test: `(authorise)` placement validation rejects bare-form. [pending host-context strictness]
 
 ## 6. Wrapper-tail mechanism — parser side
 
@@ -116,7 +116,7 @@
 - [x] 16.2 Add Class A pass: `(parser PROG :style STYLE BODY…)` → `(parser PROG (style STYLE) BODY…)`.
 - [x] 16.3 Add Class A pass: `(define-arg-style NAME (PLIST))` → `(define-arg-style NAME (FORMS))`.
 - [x] 16.4 Add Class A pass: `(check :decision CMD …)` → `(check (decision CMD) …)`.
-- [ ] 16.5 Add Class A pass: `(may-i *)` → `(authorise)`.
+- [x] 16.5 Add Class A pass: `(may-i *)` → `(authorise)`.
 - [ ] 16.6 Add Class A pass: `(positional ITEMS… . (may-i *))` → sibling `(positional ITEMS…)` and `(tail (authorise))` composed via `(and …)`.
 - [ ] 16.7 Add Class A pass: rules over prelude-tail commands drop literal boundary token from the positional list (e.g. `(positional "exec" "--")` → `(positional "exec")` for mise).
 
