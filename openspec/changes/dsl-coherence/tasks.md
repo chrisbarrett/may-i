@@ -1,0 +1,174 @@
+## 1. AST and grammar — form-list parser body
+
+- [ ] 1.1 Add `(style …)` form to parser body grammar; remove `:style` PLIST key parsing.
+- [ ] 1.2 Validate parser body: exactly one `(style …)`, at most one `(tail …)`, recognised kinds only.
+- [ ] 1.3 Diagnostics for legacy `:style …` form pointing to `(style …)`.
+- [ ] 1.4 Property test: every form-list parser body roundtrips through parser and canonicaliser unchanged.
+
+## 2. AST and grammar — form-list define-arg-style
+
+- [ ] 2.1 Replace PLIST attribute parsing in `define-arg-style` with form-list grammar.
+- [ ] 2.2 Add attribute forms: `(overrides …)`, `(long-prefix …)`, `(short-prefix …)`, `(separators …+)`, `(combined-shorts BOOL)`, `(first-token-bundle BOOL)`, `(pun :KEYWORD)`.
+- [ ] 2.3 Reject duplicate attribute declarations with last-wins + warning.
+- [ ] 2.4 Diagnostics for legacy PLIST body pointing to form-list shape.
+
+## 3. AST and grammar — form-list check
+
+- [ ] 3.1 Replace `(check :decision CMD …)` PLIST grammar with `(check (decision CMD R?) …)` form-list.
+- [ ] 3.2 Validate decision tag in each case is `allow`/`ask`/`deny`.
+- [ ] 3.3 Diagnostics for legacy PLIST body pointing to form-list shape.
+
+## 4. Decision verbs
+
+- [ ] 4.1 Add `(allow …)`, `(ask …)`, `(deny …)` rule body forms; each accepts optional reason string.
+- [ ] 4.2 Wire decision verbs to existing `Effect::Terminal` representation.
+- [ ] 4.3 Reject legacy `(effect :decision …)` at config-load with diagnostic.
+- [ ] 4.4 Property test: decision verbs roundtrip through canonical form.
+
+## 5. Recursion verb `(authorise)`
+
+- [ ] 5.1 Add `(authorise)` form (no arguments) replacing `(may-i *)`.
+- [ ] 5.2 Validate `(authorise)` only appears in host context: `(parameter NAME (authorise))`, `(tail (authorise))`, or as a positional element.
+- [ ] 5.3 Reject bare `(authorise)` at rule body root with diagnostic suggesting host context.
+- [ ] 5.4 Reject legacy `(may-i *)` at config-load.
+- [ ] 5.5 Property test: `(authorise)` placement validation rejects bare-form.
+
+## 6. Wrapper-tail mechanism — parser side
+
+- [ ] 6.1 Add `(tail (after VALUE))` declaration to parser body grammar.
+- [ ] 6.2 Define closed enum for `:flags` keyword tag; reject other keywords.
+- [ ] 6.3 Add `Tail` field to `ResolvedParser` with variants `AfterFlags` and `AfterToken(String)`.
+- [ ] 6.4 Reject multiple `(tail …)` declarations per parser.
+- [ ] 6.5 Reject `(tail (after VALUE))` of unrecognised shape.
+
+## 7. Wrapper-tail mechanism — tokeniser split
+
+- [ ] 7.1 Extend tokenisation to produce `(outer, tail)` slices when parser declares `(tail …)`.
+- [ ] 7.2 For `AfterFlags`: outer ends after last flag/parameter consumed; tail starts at first non-flag.
+- [ ] 7.3 For `AfterToken("--")` (or other): outer ends before token; token consumed; tail starts at next.
+- [ ] 7.4 Preserve verbatim ordering in tail (no flag interpretation, no expansion).
+- [ ] 7.5 Property test: outer ⊕ boundary ⊕ tail = original argv (modulo dropped boundary token where applicable).
+
+## 8. Wrapper-tail mechanism — rule side
+
+- [ ] 8.1 Add `(tail (authorise))` rule body form.
+- [ ] 8.2 Resolve span source: parser-declared tail slice if present, else residual positionals after preceding `(positional …)` matches.
+- [ ] 8.3 Reuse existing `extract_inner_command` join-and-reparse for span → inner command + argv.
+- [ ] 8.4 Restrict `(tail X)` body to `(authorise)` only; reject other shapes at config-load.
+
+## 9. Matcher scoping
+
+- [ ] 9.1 Plumb the `(outer, tail)` split through eval contexts; argv matchers consult outer slice when parser declares `(tail …)`.
+- [ ] 9.2 Update `(flag …)`, `(parameter …)`, `(positional …)`, `(exact …)`, `(anywhere …)`, `(forbidden …)` to honour the outer/whole boundary.
+- [ ] 9.3 Property test: with `(tail …)` declared, no argv matcher sees a tail-slice token.
+
+## 10. Lever A — `(anywhere)` and `(forbidden)` honour `--`
+
+- [ ] 10.1 Update `(anywhere …)` evaluator to stop scanning at `--` (independent of `(tail …)` declaration).
+- [ ] 10.2 Update `(forbidden …)` evaluator likewise.
+- [ ] 10.3 Add unit test for git-style: `git diff -- --foo` does not match `(anywhere "--foo")`.
+- [ ] 10.4 Add unit test for `(forbidden "--foo")` succeeds when target is post-`--`.
+
+## 11. Improper-list removal
+
+- [ ] 11.1 Remove dotted-tail support from `(positional …)` parser; reject improper lists with diagnostic suggesting `(tail (authorise))`.
+- [ ] 11.2 Remove dotted-tail evaluation path from positional matcher.
+
+## 12. `(parameter NAME (many-till PAT))` capture-shape
+
+- [ ] 12.1 Add `(many-till PAT)` parser-side parameter body form.
+- [ ] 12.2 Extend `ParameterDecl` with `Capture::ManyTill(Pattern)` variant alongside existing single-token.
+- [ ] 12.3 Tokeniser: when consuming a `ManyTill` parameter, walk tokens until PAT matches; consume terminator.
+- [ ] 12.4 End-of-argv without terminator emits error-severity diagnostic; floor decision to `:ask`.
+- [ ] 12.5 Reject `(many-till …)` at rule body level (parser-side only).
+- [ ] 12.6 Multi-occurrence: capture each occurrence's tokens separately; expose as iterator.
+- [ ] 12.7 Rule-side `(parameter NAME (authorise))` against `ManyTill` joins captured tokens with spaces, parses-and-recurses (existing extract_inner_command).
+- [ ] 12.8 Multi-occurrence rule body fires once per occurrence; combiner takes strictest.
+- [ ] 12.9 Property test: single-occurrence `ManyTill` matches existing single-token behaviour for capture-then-authorise.
+
+## 13. Prelude wrapper parsers
+
+- [ ] 13.1 Update prelude to declare parsers for sudo, env, timeout, time, su, ionice, chrt with `(tail (after :flags))`.
+- [ ] 13.2 Declare `xargs` parser with parameter `["n" "I" "L" "P" "d"]`, flags `["0" "r"]`, `(tail (after :flags))`.
+- [ ] 13.3 Declare `nice`, `watch` parsers with their parameters and `(tail (after :flags))`.
+- [ ] 13.4 Declare `mise` parser with `(tail (after "--"))`.
+- [ ] 13.5 Declare `find` parser with `(parameter "exec"|"execdir"|"ok" (many-till (or ";" "+")))` and the standard predicate parameters.
+- [ ] 13.6 Integration test: `sudo rm -rf /tmp/x` with prelude + a deny-rm-r rule returns `:deny`.
+- [ ] 13.7 Integration test: `find . -exec rm -rf / \;` with prelude + a deny-rm-r rule returns `:deny`.
+
+## 14. Trace renderer
+
+- [ ] 14.1 Render outer/tail split when parser declares `(tail …)`.
+- [ ] 14.2 Show resolved boundary spec (`(after :flags)` or `(after "--")`) in trace header.
+- [ ] 14.3 Snapshot test: trace for sudo command shows outer/tail split.
+
+## 15. Canonical form ordering
+
+- [ ] 15.1 Sort parser body declarations: style first, flags alphabetical, parameters alphabetical, tail last.
+- [ ] 15.2 Sort define-arg-style attributes alphabetically.
+- [ ] 15.3 Sort check cases alphabetically by command string.
+- [ ] 15.4 Preserve rule order (rules are semantic).
+- [ ] 15.5 Property test: equivalent configs differing in declaration order produce the same canonical form.
+
+## 16. Migration — rewrite chain
+
+- [ ] 16.1 Add Class A pass: `(effect :allow|:ask|:deny REASON?)` → `(allow|ask|deny REASON?)`.
+- [ ] 16.2 Add Class A pass: `(parser PROG :style STYLE BODY…)` → `(parser PROG (style STYLE) BODY…)`.
+- [ ] 16.3 Add Class A pass: `(define-arg-style NAME (PLIST))` → `(define-arg-style NAME (FORMS))`.
+- [ ] 16.4 Add Class A pass: `(check :decision CMD …)` → `(check (decision CMD) …)`.
+- [ ] 16.5 Add Class A pass: `(may-i *)` → `(authorise)`.
+- [ ] 16.6 Add Class A pass: `(positional ITEMS… . (may-i *))` → sibling `(positional ITEMS…)` and `(tail (authorise))` composed via `(and …)`.
+- [ ] 16.7 Add Class A pass: rules over prelude-tail commands drop literal boundary token from the positional list (e.g. `(positional "exec" "--")` → `(positional "exec")` for mise).
+
+## 17. Migration — load-graph walker
+
+- [ ] 17.1 Implement transitive `(load …)` walker for `may-i migrate`.
+- [ ] 17.2 Resolve relative paths against each loading file.
+- [ ] 17.3 Expand globs at migration time.
+- [ ] 17.4 Dedupe to prevent cycles.
+- [ ] 17.5 Detect read-only files; emit "skipped, not writable" with file path.
+- [ ] 17.6 Add `--dry-run` flag to `may-i migrate` showing planned rewrites without applying.
+- [ ] 17.7 Integration test: primary config loading two files migrates all three.
+
+## 18. Migration — Class B warning
+
+- [ ] 18.1 After migration, scan resolved rules for any rule covering a wrapper command (sudo, xargs, env, timeout, nice, time, watch, su, ionice, chrt, mise, find).
+- [ ] 18.2 Emit a prominent warning naming affected commands and recommending `may-i check`.
+- [ ] 18.3 Warning suppressed when no wrapper rules present.
+
+## 19. Trust-hash auto-update
+
+- [ ] 19.1 Implement Class A trust-hash rehash: stored hash updates to new canonical form, approval preserved.
+- [ ] 19.2 Surface rehash count in migration output.
+- [ ] 19.3 Test: trusted rule with Class A rewrite remains trusted post-migration with new hash.
+
+## 20. Tests — fixtures and regressions
+
+- [ ] 20.1 Rewrite all integration test fixtures to new syntax.
+- [ ] 20.2 Update `**/proptest-regressions/` files where canonical form changed; preserve existing seeds.
+- [ ] 20.3 Verify all existing scenarios from per-command-arg-style change still pass under new syntax.
+- [ ] 20.4 Add integration test reproducing the sudo silent-bypass and asserting it now blocks.
+- [ ] 20.5 Add integration test for find -exec authorisation.
+
+## 21. Docs
+
+- [ ] 21.1 Update REFERENCE.md: drop `(effect …)` from user-facing forms; add `(allow|ask|deny)`.
+- [ ] 21.2 Add REFERENCE.md section on `(tail (after …))` parser declaration and `(tail (authorise))` rule reference.
+- [ ] 21.3 Add REFERENCE.md section on `(parameter NAME (many-till PAT))` and find example.
+- [ ] 21.4 Add REFERENCE.md doc note on stdin-blindspot for xargs/parallel.
+- [ ] 21.5 Update CONTEXT.md: drop "effect" from user vocabulary table; add "tail" and "authorise"; keep "Effect" only in contributor section.
+- [ ] 21.6 Update example configs in `examples/`.
+
+## 22. Migrate user's config and verify
+
+- [ ] 22.1 Run `may-i migrate --dry-run` on `~/.config/may-i/config.lisp`; review output.
+- [ ] 22.2 Apply migration; verify trust hashes carried over.
+- [ ] 22.3 Run `may-i check` cases; verify all pass.
+- [ ] 22.4 Spot-check trace output for a wrapper command (e.g. `may-i eval 'sudo ls'`); confirm outer/tail rendering.
+
+## 23. Release
+
+- [ ] 23.1 Bump `Cargo.toml` version per CLAUDE.md release process.
+- [ ] 23.2 Run `cargo fmt`; ensure clean.
+- [ ] 23.3 Run `cargo tarpaulin`; inspect coverage; fill gaps with proptest or surgical unit tests.
+- [ ] 23.4 Cut release tag matching the new Cargo version.
