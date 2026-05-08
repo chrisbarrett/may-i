@@ -8,6 +8,7 @@ use crate::fold::PureFold;
 use crate::fold::{ChildResult, EvalFold, build_fact_detail};
 
 use super::context::{EvalContext, PredicateResult};
+use super::effects::scan_until_double_dash;
 use super::entry::parser_positional_args;
 use super::positional::match_positional_patterns;
 
@@ -159,16 +160,18 @@ pub(super) fn evaluate_arg_pattern_predicate(
             }
         }
         ArgPattern::Anywhere(exprs) => {
+            let outer = scan_until_double_dash(ctx.args);
             for expr in exprs {
-                if ctx.args.iter().any(|arg| expr.is_match(arg)) {
+                if outer.iter().any(|arg| expr.is_match(arg)) {
                     return PredicateResult::Match;
                 }
             }
             PredicateResult::NoMatch
         }
         ArgPattern::Forbidden(exprs) => {
+            let outer = scan_until_double_dash(ctx.args);
             for expr in exprs {
-                if ctx.args.iter().any(|arg| expr.is_match(arg)) {
+                if outer.iter().any(|arg| expr.is_match(arg)) {
                     return PredicateResult::NoMatch;
                 }
             }

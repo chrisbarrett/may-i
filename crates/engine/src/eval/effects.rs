@@ -311,10 +311,14 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
             }
         }
         ArgPattern::Anywhere(exprs) => {
+            // Honour `--` as a flag-stop: tokens after `--` are
+            // path/positional, not flag-shaped, so `(anywhere "--foo")`
+            // SHALL NOT match `git diff -- --foo`.
+            let outer = scan_until_double_dash(ctx.args);
             let mut matched = false;
             let search_tokens: Vec<String> = exprs.iter().map(|e| format!("{e}")).collect();
             for expr in exprs {
-                if ctx.args.iter().any(|arg| expr.is_match(arg)) {
+                if outer.iter().any(|arg| expr.is_match(arg)) {
                     matched = true;
                     break;
                 }
@@ -328,10 +332,14 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
             fold.effect_arg_match(pattern, ctx.args, matched, detail)
         }
         ArgPattern::Forbidden(exprs) => {
+            // Same `--` boundary as `(anywhere …)`: `(forbidden "--foo")`
+            // SHALL succeed (i.e. matched=true) when the target only
+            // appears post-`--`.
+            let outer = scan_until_double_dash(ctx.args);
             let mut found_forbidden = false;
             let search_tokens: Vec<String> = exprs.iter().map(|e| format!("{e}")).collect();
             for expr in exprs {
-                if ctx.args.iter().any(|arg| expr.is_match(arg)) {
+                if outer.iter().any(|arg| expr.is_match(arg)) {
                     found_forbidden = true;
                     break;
                 }
@@ -429,6 +437,16 @@ fn evaluate_tail_authorise_fold<F: EvalFold>(
             fold.effect_arg_match(pattern, ctx.args, false, detail)
         }
     })
+}
+
+/// Slice of `args` up to (but not including) the first literal `--`
+/// token. Used by `(anywhere …)` and `(forbidden …)` so a token after
+/// the GNU flag-stop is treated as a path/positional rather than a flag.
+pub(super) fn scan_until_double_dash(args: &[String]) -> &[String] {
+    match args.iter().position(|a| a == "--") {
+        Some(idx) => &args[..idx],
+        None => args,
+    }
 }
 
 /// Style-aware tokens for a list of canonical names.
@@ -667,4 +685,31 @@ pub(crate) fn extract_inner_command(args: &[String]) -> Option<(String, Vec<Stri
         let remaining = args[1..].to_vec();
         Some((cmd, remaining))
     })
+}
+
+#[cfg(test)]
+mod scan_double_dash_tests {
+    use super::*;
+
+    fn argv(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn no_terminator_returns_full_slice() {
+        let args = argv(&["-r", "-f", "/tmp/x"]);
+        assert_eq!(scan_until_double_dash(&args), &args[..]);
+    }
+
+    #[test]
+    fn terminator_truncates_slice() {
+        let args = argv(&["diff", "--", "--foo"]);
+        assert_eq!(scan_until_double_dash(&args), &["diff".to_string()]);
+    }
+
+    #[test]
+    fn terminator_at_start_yields_empty() {
+        let args = argv(&["--", "--foo"]);
+        assert_eq!(scan_until_double_dash(&args), &[] as &[String]);
+    }
 }

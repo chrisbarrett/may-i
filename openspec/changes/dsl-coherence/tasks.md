@@ -64,10 +64,10 @@
 
 ## 10. Lever A — `(anywhere)` and `(forbidden)` honour `--`
 
-- [ ] 10.1 Update `(anywhere …)` evaluator to stop scanning at `--` (independent of `(tail …)` declaration).
-- [ ] 10.2 Update `(forbidden …)` evaluator likewise.
-- [ ] 10.3 Add unit test for git-style: `git diff -- --foo` does not match `(anywhere "--foo")`.
-- [ ] 10.4 Add unit test for `(forbidden "--foo")` succeeds when target is post-`--`.
+- [x] 10.1 Update `(anywhere …)` evaluator to stop scanning at `--` (independent of `(tail …)` declaration).
+- [x] 10.2 Update `(forbidden …)` evaluator likewise.
+- [x] 10.3 Add unit test for git-style: `git diff -- --foo` does not match `(anywhere "--foo")`.
+- [x] 10.4 Add unit test for `(forbidden "--foo")` succeeds when target is post-`--`.
 
 ## 11. Improper-list removal
 
