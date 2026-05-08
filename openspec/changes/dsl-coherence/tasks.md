@@ -133,15 +133,15 @@ Decision-verb and `(authorise)` canonicalisation: rule trust hashes now render a
 
 ## 18. Migration — Class B warning
 
-- [ ] 18.1 After migration, scan resolved rules for any rule covering a wrapper command (sudo, xargs, env, timeout, nice, time, watch, su, ionice, chrt, mise, find).
-- [ ] 18.2 Emit a prominent warning naming affected commands and recommending `may-i check`.
-- [ ] 18.3 Warning suppressed when no wrapper rules present.
+- [x] 18.1 After migration, scan resolved rules for any rule covering a wrapper command (sudo, xargs, env, timeout, nice, time, watch, su, ionice, chrt, mise, find).
+- [x] 18.2 Emit a prominent warning naming affected commands and recommending `may-i check`.
+- [x] 18.3 Warning suppressed when no wrapper rules present.
 
 ## 19. Trust-hash auto-update
 
-- [ ] 19.1 Implement Class A trust-hash rehash: stored hash updates to new canonical form, approval preserved.
-- [ ] 19.2 Surface rehash count in migration output.
-- [ ] 19.3 Test: trusted rule with Class A rewrite remains trusted post-migration with new hash.
+- [x] 19.1 Implement Class A trust-hash rehash: stored hash updates to new canonical form, approval preserved.
+- [x] 19.2 Surface rehash count in migration output.
+- [x] 19.3 Test: trusted rule with Class A rewrite remains trusted post-migration with new hash.
 
 ## 20. Tests — fixtures and regressions
 

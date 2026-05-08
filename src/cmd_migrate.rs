@@ -191,9 +191,115 @@ pub(crate) fn cmd_migrate(
                 .map_err(|e| miette::miette!("Failed to write {}: {e}", path.display()))?;
         }
         println!("Migrated {} file(s) in-place.", changed_files.len());
+
+        // Class A trust-hash rehash: re-canonicalise every approved rule
+        // entry so existing approvals carry over to the new canonical form.
+        let rehashed = rehash_trust_store_class_a()?;
+        if rehashed > 0 {
+            println!(
+                "Rehashed {rehashed} trust entr{} to the new canonical form.",
+                if rehashed == 1 { "y" } else { "ies" }
+            );
+        }
+
+        // Class B warning: the wrapper-boundary fix may change behaviour
+        // for rules over sudo/xargs/etc. Re-load and scan the resolved
+        // ruleset so users know to re-run their `(check …)` cases.
+        if let Ok(loaded) = may_i_config::load_and_resolve(config_path) {
+            warn_about_wrapper_rules(&loaded.config);
+        }
     }
 
     Ok(())
+}
+
+/// Re-canonicalise every rule entry in the trust store and rewrite the
+/// store with new hashes. Approvals (Approved/Blocked status) carry
+/// forward to the new key. Returns the number of entries whose hash
+/// changed.
+fn rehash_trust_store_class_a() -> miette::Result<usize> {
+    use may_i::trust_store::{RuleEntry, TrustStore, default_trust_store_path};
+
+    let Some(store_path) = default_trust_store_path() else {
+        return Ok(0);
+    };
+    if !store_path.exists() {
+        return Ok(0);
+    }
+    let load = TrustStore::load(&store_path)
+        .map_err(|e| miette::miette!("Failed to load trust store: {e}"))?;
+    let mut store = load.store;
+    let mut rehashed = 0usize;
+    let entries: Vec<(String, RuleEntry)> = store
+        .iter_rules()
+        .map(|(h, e)| (h.to_string(), e.clone()))
+        .collect();
+    for (old_hash, entry) in entries {
+        let Some(new_form) = recanonicalise_rule_form(&entry.form) else {
+            continue;
+        };
+        if new_form == entry.form {
+            continue;
+        }
+        let new_hash = may_i_engine::trust::hash_rule(&new_form);
+        if new_hash == old_hash {
+            continue;
+        }
+        store.replace_rule(&old_hash, new_hash, new_form);
+        rehashed += 1;
+    }
+    if rehashed > 0 {
+        store
+            .save(&store_path)
+            .map_err(|e| miette::miette!("Failed to save trust store: {e}"))?;
+    }
+    Ok(rehashed)
+}
+
+/// Re-parse a stored canonical rule form and re-emit it with the
+/// current canonicaliser. Returns `None` if the form fails to parse —
+/// caller leaves such entries untouched.
+fn recanonicalise_rule_form(form: &str) -> Option<String> {
+    let (forms, errs) = may_i_sexpr::parse(form);
+    if !errs.is_empty() {
+        return None;
+    }
+    let sexpr = forms.into_iter().next()?;
+    let rule = may_i_config::parse_rule(&sexpr).ok()?;
+    Some(may_i_engine::trust::canonical_rule(&rule.value))
+}
+
+/// Emit a prominent warning naming any wrapper commands (sudo, xargs,
+/// env, …) covered by user rules. The wrapper-boundary fix may change
+/// these rules' behaviour even though the rule text is unchanged.
+fn warn_about_wrapper_rules(config: &may_i_core::ast::Config) {
+    const WRAPPERS: &[&str] = &[
+        "sudo", "xargs", "env", "timeout", "nice", "time", "watch", "su", "ionice", "chrt", "mise",
+        "find",
+    ];
+    let mut affected: Vec<&str> = Vec::new();
+    for rule in &config.rules {
+        if let may_i_core::ast::Effect::CommandPattern(pat) = &rule.command_effect.value {
+            for program in may_i_engine::trust::extract_program_names(pat) {
+                if WRAPPERS.contains(&program) && !affected.contains(&program) {
+                    let canonical = WRAPPERS.iter().copied().find(|w| *w == program).unwrap();
+                    affected.push(canonical);
+                }
+            }
+        }
+    }
+    if affected.is_empty() {
+        return;
+    }
+    let names = affected.join(", ");
+    let bar = "━".repeat(72);
+    eprintln!();
+    eprintln!("{bar}");
+    eprintln!("⚠ wrapper-boundary fix may change behaviour for rules covering:");
+    eprintln!("    {names}");
+    eprintln!();
+    eprintln!("Run `may-i check` to verify your test cases still pass.");
+    eprintln!("{bar}");
 }
 
 #[cfg(test)]
