@@ -1,11 +1,12 @@
-// Prelude `(define-arg-style …)` declarations, auto-loaded into every
-// parsed config so user `:overrides gnu` resolves out of the box.
+// Prelude `(define-arg-style …)` and `(parser …)` declarations, auto-loaded
+// into every parsed config so user `(overrides gnu)` resolves out of the
+// box and common wrapper tools (sudo, xargs, env, …) come pre-declared.
 //
-// User declarations come after prelude entries in `Config::style_specs`,
-// so user `(define-arg-style gnu …)` shadows the prelude (last-wins
-// per `StyleRegistry::get`).
+// User declarations come after prelude entries, so user
+// `(define-arg-style gnu …)` or `(parser "sudo" …)` shadows the prelude
+// (last-wins per the relevant registry).
 
-use may_i_core::ast::StyleSpec;
+use may_i_core::ast::{Parser, StyleSpec};
 
 const PRELUDE_SOURCE: &str = r#"
 (define-arg-style gnu
@@ -34,6 +35,33 @@ const PRELUDE_SOURCE: &str = r#"
   (pun :error))
 "#;
 
+/// Prelude `(parser …)` declarations for the common wrapper tools. Each
+/// declares a `(tail (after …))` boundary so the engine's outer/tail
+/// split runs without the user having to redeclare the wrapper shape.
+///
+/// `find` is intentionally absent until `(many-till …)` lands in §12;
+/// it cannot be modelled correctly without multi-token capture.
+const PRELUDE_PARSER_SOURCE: &str = r#"
+(parser "sudo"    (style gnu) (tail (after :flags)))
+(parser "env"     (style gnu) (tail (after :flags)))
+(parser "timeout" (style gnu) (tail (after :flags)))
+(parser "time"    (style gnu) (tail (after :flags)))
+(parser "su"      (style gnu) (tail (after :flags)))
+(parser "ionice"  (style gnu) (tail (after :flags)))
+(parser "chrt"    (style gnu) (tail (after :flags)))
+(parser "xargs"
+  (style gnu)
+  (parameter ["n" "I" "L" "P" "d"])
+  (flag ["0" "r"])
+  (tail (after :flags)))
+(parser "nice"    (style gnu) (parameter "n") (tail (after :flags)))
+(parser "watch"
+  (style gnu)
+  (parameter ["n" "interval"])
+  (tail (after :flags)))
+(parser "mise"    (style gnu) (tail (after "--")))
+"#;
+
 /// Parse the prelude source into `StyleSpec`s. Panics if the prelude is
 /// malformed — that's a build-time programming error, not user input.
 pub fn prelude_style_specs() -> Vec<StyleSpec> {
@@ -47,6 +75,22 @@ pub fn prelude_style_specs() -> Vec<StyleSpec> {
         specs.push(spec);
     }
     specs
+}
+
+/// Parse the prelude wrapper-parser source into `Parser`s. Panics if
+/// malformed — build-time programming error, not user input.
+pub fn prelude_parsers() -> Vec<Parser> {
+    let (forms, errs) = may_i_sexpr::parse(PRELUDE_PARSER_SOURCE);
+    assert!(errs.is_empty(), "prelude parser parse errors: {errs:?}");
+
+    let mut parsers = Vec::with_capacity(forms.len());
+    for form in &forms {
+        let mut parser = crate::parser_form::parse_parser_form(form)
+            .expect("prelude parser declaration failed to parse");
+        parser.provenance = may_i_core::ast::Provenance::Prelude;
+        parsers.push(parser);
+    }
+    parsers
 }
 
 #[cfg(test)]

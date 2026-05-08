@@ -108,3 +108,44 @@ fn sudo_rm_rf_recurses_through_tail_authorise() {
         "sudo rm -rf must delegate to inner rm rules and deny"
     );
 }
+
+// 13.6: with the prelude's `sudo` parser auto-loaded, the user only
+// needs to add `(rule "sudo" (tail (authorise)))` and a deny-rm-r rule
+// for `sudo rm -rf` to block.
+#[test]
+fn prelude_sudo_parser_enables_tail_authorise() {
+    let cfg = r#"
+(rule "sudo" (tail (authorise)))
+(rule "rm" (and (anywhere "-r") (deny "recursive rm denied")))
+(rule "rm" (allow))
+"#;
+    let decision = eval(cfg, "sudo", &["rm", "-rf", "/tmp/x"]);
+    assert_eq!(decision, Decision::Deny);
+}
+
+// Prelude `xargs` parser declares parameters, flags, and AfterFlags
+// tail; `(rule "xargs" (tail (authorise)))` recurses on the inner
+// command despite the wrapper's `-n 4` parameter.
+#[test]
+fn prelude_xargs_parser_with_parameter() {
+    let cfg = r#"
+(rule "xargs" (tail (authorise)))
+(rule "rm" (and (anywhere "-r") (deny "recursive rm denied")))
+(rule "rm" (allow))
+"#;
+    let decision = eval(cfg, "xargs", &["-n", "4", "rm", "-rf", "/tmp/x"]);
+    assert_eq!(decision, Decision::Deny);
+}
+
+// Prelude `mise` parser uses `(after "--")` rather than `:flags`; the
+// boundary token is consumed.
+#[test]
+fn prelude_mise_parser_after_double_dash() {
+    let cfg = r#"
+(rule "mise" (tail (authorise)))
+(rule "rm" (and (anywhere "-r") (deny "recursive rm denied")))
+(rule "rm" (allow))
+"#;
+    let decision = eval(cfg, "mise", &["exec", "node", "--", "rm", "-rf", "/tmp/x"]);
+    assert_eq!(decision, Decision::Deny);
+}

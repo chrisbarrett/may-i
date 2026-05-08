@@ -38,6 +38,7 @@ pub fn parse_config_from_sexprs(forms: &[Sexpr]) -> Result<Config, RawError> {
     config
         .style_specs
         .extend(crate::prelude::prelude_style_specs());
+    config.parsers.extend(crate::prelude::prelude_parsers());
 
     for form in forms {
         let list = form
@@ -100,9 +101,16 @@ pub fn parse_config_from_sexprs(forms: &[Sexpr]) -> Result<Config, RawError> {
     Ok(config)
 }
 
-/// Push a `Parser` onto config, warning on duplicates by program.
+/// Push a `Parser` onto config, warning on duplicates by program. User
+/// declarations that shadow a prelude-shipped parser are silent — the
+/// prelude is the binary's default that the user is expected to be able
+/// to override.
 fn push_parser(config: &mut Config, parser: may_i_core::ast::Parser) {
-    if config.parsers.iter().any(|p| p.program == parser.program) {
+    let existing_non_prelude = config
+        .parsers
+        .iter()
+        .any(|p| p.program == parser.program && !p.provenance.is_prelude());
+    if existing_non_prelude {
         eprintln!(
             "warning: duplicate (parser \"{}\" …) — last declaration wins",
             parser.program
@@ -132,6 +140,7 @@ pub fn parse_config_from_tagged_sexprs(forms: &[(Sexpr, Provenance)]) -> Result<
     config
         .style_specs
         .extend(crate::prelude::prelude_style_specs());
+    config.parsers.extend(crate::prelude::prelude_parsers());
 
     for (form, provenance) in forms {
         let list = form

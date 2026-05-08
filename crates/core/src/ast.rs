@@ -15,6 +15,10 @@ pub enum Provenance {
     PrimaryConfig,
     /// From a file included via `(load ...)`.
     Loaded { path: PathBuf },
+    /// Shipped with the binary (e.g. wrapper-tool parser declarations).
+    /// Implicitly trusted; user declarations of the same name shadow
+    /// without a duplicate warning.
+    Prelude,
 }
 
 impl Provenance {
@@ -23,11 +27,17 @@ impl Provenance {
         matches!(self, Provenance::Loaded { .. })
     }
 
+    /// Returns true if this entry came from the binary's built-in
+    /// prelude rather than a user-authored config.
+    pub fn is_prelude(&self) -> bool {
+        matches!(self, Provenance::Prelude)
+    }
+
     /// Returns the source file path if this is a `Loaded` variant.
     pub fn path(&self) -> Option<&std::path::Path> {
         match self {
             Provenance::Loaded { path } => Some(path),
-            Provenance::PrimaryConfig => None,
+            Provenance::PrimaryConfig | Provenance::Prelude => None,
         }
     }
 }

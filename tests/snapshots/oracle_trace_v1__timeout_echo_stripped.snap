@@ -5,24 +5,19 @@ expression: normalised
 
 Trace
 
-       parser: gnu │
-       parser: gnu │
-  No matching rule │ → :ask (default)
+  parser: gnu │
 
-                                          command │ timeout 30 echo hello
-  110: (rule (command "timeout")                  │
-         (args                                    │
-          (and                                    │
-           (positional                            │
-            (regex "^[0-9]+$"))                   │ "30" ~ (regex "^[0-9]+$") → yes
-           (<unknown-arg-pattern>                 │ (authorise) ∈ {"30", "echo", "hello"} → yes
-            (effect                               │ → :ask "No rule for command `30`"
-             :ask "No rule for command `30`"))))) │
+                                 command │ timeout 30 echo hello
+  110: (rule (command "timeout")         │
+         (args (and (positional          │
+                     (regex "^[0-9]+$")) │
+                    …)))                 │
+                        No matching rule │ → :ask (default)
 
 Result
 
   timeout 30 echo hello
 
-  → :ask "No rule for command `30`"
+  → :ask "Rules for `timeout` exist but context or arguments did not match any patterns"
 
   config: <config-path>

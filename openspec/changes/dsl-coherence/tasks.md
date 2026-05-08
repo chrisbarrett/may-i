@@ -88,13 +88,13 @@
 
 ## 13. Prelude wrapper parsers
 
-- [ ] 13.1 Update prelude to declare parsers for sudo, env, timeout, time, su, ionice, chrt with `(tail (after :flags))`.
-- [ ] 13.2 Declare `xargs` parser with parameter `["n" "I" "L" "P" "d"]`, flags `["0" "r"]`, `(tail (after :flags))`.
-- [ ] 13.3 Declare `nice`, `watch` parsers with their parameters and `(tail (after :flags))`.
-- [ ] 13.4 Declare `mise` parser with `(tail (after "--"))`.
-- [ ] 13.5 Declare `find` parser with `(parameter "exec"|"execdir"|"ok" (many-till (or ";" "+")))` and the standard predicate parameters.
-- [ ] 13.6 Integration test: `sudo rm -rf /tmp/x` with prelude + a deny-rm-r rule returns `:deny`.
-- [ ] 13.7 Integration test: `find . -exec rm -rf / \;` with prelude + a deny-rm-r rule returns `:deny`.
+- [x] 13.1 Update prelude to declare parsers for sudo, env, timeout, time, su, ionice, chrt with `(tail (after :flags))`.
+- [x] 13.2 Declare `xargs` parser with parameter `["n" "I" "L" "P" "d"]`, flags `["0" "r"]`, `(tail (after :flags))`.
+- [x] 13.3 Declare `nice`, `watch` parsers with their parameters and `(tail (after :flags))`.
+- [x] 13.4 Declare `mise` parser with `(tail (after "--"))`.
+- [ ] 13.5 Declare `find` parser with `(parameter "exec"|"execdir"|"ok" (many-till (or ";" "+")))` and the standard predicate parameters. [pending §12 many-till]
+- [x] 13.6 Integration test: `sudo rm -rf /tmp/x` with prelude + a deny-rm-r rule returns `:deny`.
+- [ ] 13.7 Integration test: `find . -exec rm -rf / \;` with prelude + a deny-rm-r rule returns `:deny`. [pending §12 many-till]
 
 ## 14. Trace renderer
 
