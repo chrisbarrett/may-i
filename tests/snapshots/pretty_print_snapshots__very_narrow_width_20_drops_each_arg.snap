@@ -1,8 +1,10 @@
 ---
 source: tests/pretty_print_snapshots.rs
-assertion_line: 371
 expression: out
 ---
+── input (width 20) ──
+(rule "rm" (and (flag "r") (anywhere "/") (deny)))
+── output ──
 (rule "rm"
   (and
    (flag "r")

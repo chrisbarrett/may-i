@@ -1,7 +1,9 @@
 ---
 source: tests/pretty_print_snapshots.rs
-assertion_line: 210
 expression: out
 ---
+── input (width 80) ──
+(rule "sudo" (tail (authorise)))
+── output ──
 (rule "sudo"
   (tail (authorise)))

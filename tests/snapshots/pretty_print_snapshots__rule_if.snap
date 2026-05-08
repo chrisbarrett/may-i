@@ -1,8 +1,10 @@
 ---
 source: tests/pretty_print_snapshots.rs
-assertion_line: 100
 expression: out
 ---
+── input (width 80) ──
+(rule "rm" (if (flag "r") (ask "recursive") (allow)))
+── output ──
 (rule "rm"
   (if (flag "r")
       (ask "recursive")

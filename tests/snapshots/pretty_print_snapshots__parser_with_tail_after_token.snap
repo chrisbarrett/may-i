@@ -1,6 +1,8 @@
 ---
 source: tests/pretty_print_snapshots.rs
-assertion_line: 268
 expression: out
 ---
+── input (width 80) ──
+(parser "mise" (style gnu) (tail (after "--")))
+── output ──
 (parser "mise" (style gnu) (tail (after "--")))

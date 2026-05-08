@@ -1,8 +1,19 @@
 ---
 source: tests/pretty_print_snapshots.rs
-assertion_line: 131
 expression: out
 ---
+── input (width 80) ──
+(rule (or "terraform" "tofu")
+  (cond
+   ((or (exact) (positional "version"))
+    (allow "Program introspection"))
+
+   ((positional (or "fmt" "init" "plan" "test" "validate"))
+    (allow "Safe operation"))
+
+   ((positional (or "apply" "destroy"))
+    (ask "Infra change requires confirmation"))))
+── output ──
 (rule (or "terraform" "tofu")
   (cond
     ((or (exact) (positional "version"))

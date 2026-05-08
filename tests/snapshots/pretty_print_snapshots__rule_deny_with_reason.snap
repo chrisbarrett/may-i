@@ -1,7 +1,9 @@
 ---
 source: tests/pretty_print_snapshots.rs
-assertion_line: 49
 expression: out
 ---
+── input (width 80) ──
+(rule "rm" (deny "No filesystem operations on production hosts"))
+── output ──
 (rule "rm"
   (deny "No filesystem operations on production hosts"))

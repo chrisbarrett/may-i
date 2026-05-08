@@ -1,8 +1,13 @@
 ---
 source: tests/pretty_print_snapshots.rs
-assertion_line: 111
 expression: out
 ---
+── input (width 80) ──
+(rule "rm"
+  (cond ((positional "/") (deny "filesystem root"))
+        ((flag ["r" "recursive"]) (ask "recursive"))
+        (else (allow))))
+── output ──
 (rule "rm"
   (cond
     ((positional "/")

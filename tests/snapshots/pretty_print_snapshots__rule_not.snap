@@ -1,7 +1,9 @@
 ---
 source: tests/pretty_print_snapshots.rs
-assertion_line: 80
 expression: out
 ---
+── input (width 80) ──
+(rule "rm" (and (not (flag "r")) (allow "non-recursive")))
+── output ──
 (rule "rm"
   (and (not (flag "r")) (allow "non-recursive")))

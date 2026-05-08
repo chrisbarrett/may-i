@@ -1,8 +1,10 @@
 ---
 source: tests/pretty_print_snapshots.rs
-assertion_line: 362
 expression: out
 ---
+── input (width 30) ──
+(rule "git" (and (positional "push") (allow "push is fine")))
+── output ──
 (rule "git"
   (and (positional "push")
        (allow "push is fine")))

@@ -1,6 +1,8 @@
 ---
 source: tests/pretty_print_snapshots.rs
-assertion_line: 248
 expression: out
 ---
+── input (width 80) ──
+(parser "find" (style single-dash-long))
+── output ──
 (parser "find" (style single-dash-long))

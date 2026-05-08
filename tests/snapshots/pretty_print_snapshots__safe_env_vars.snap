@@ -1,6 +1,8 @@
 ---
 source: tests/pretty_print_snapshots.rs
-assertion_line: 345
 expression: out
 ---
+── input (width 80) ──
+(safe-env-vars "HOME" "USER" "PATH")
+── output ──
 (safe-env-vars "HOME" "USER" "PATH")

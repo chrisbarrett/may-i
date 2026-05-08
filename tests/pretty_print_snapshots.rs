@@ -9,6 +9,10 @@
 
 use may_i_sexpr::parse_cst;
 
+/// Render `input` at width 80 and emit a snapshot string that includes
+/// both the input source and the pretty-printed output, separated by a
+/// banner. Including the input lets a reviewer scan the snapshots and
+/// see the transformation without cross-referencing the test file.
 fn render(input: &str) -> String {
     render_at_width(input, 80)
 }
@@ -16,11 +20,16 @@ fn render(input: &str) -> String {
 fn render_at_width(input: &str, width: usize) -> String {
     let (forms, errs) = parse_cst(input);
     assert!(errs.is_empty(), "parse errors: {errs:?}");
-    forms
+    let output = forms
         .iter()
         .map(|f| f.pretty_serialize(width))
         .collect::<Vec<_>>()
-        .join("\n")
+        .join("\n");
+    format!(
+        "── input (width {width}) ──\n{}\n── output ──\n{}",
+        input.trim_end(),
+        output.trim_end()
+    )
 }
 
 // ── Rule body — decision verbs ────────────────────────────────────────

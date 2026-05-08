@@ -1,8 +1,12 @@
 ---
 source: tests/pretty_print_snapshots.rs
-assertion_line: 337
 expression: out
 ---
+── input (width 80) ──
+(check (with-facts [[:client/opencode] [:via/ssh]]
+  (allow "git push")
+  (deny "rm /etc/passwd")))
+── output ──
 (check (with-facts [[:client/opencode] [:via/ssh]]
          (allow "git push")
          (deny "rm /etc/passwd")))

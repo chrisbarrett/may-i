@@ -1,7 +1,9 @@
 ---
 source: tests/pretty_print_snapshots.rs
-assertion_line: 159
 expression: out
 ---
+── input (width 80) ──
+(rule "rm" (and (flag "r") (deny)))
+── output ──
 (rule "rm"
   (and (flag "r") (deny)))

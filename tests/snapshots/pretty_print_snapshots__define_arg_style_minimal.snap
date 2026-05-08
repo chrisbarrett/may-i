@@ -1,6 +1,8 @@
 ---
 source: tests/pretty_print_snapshots.rs
-assertion_line: 296
 expression: out
 ---
+── input (width 80) ──
+(define-arg-style gnu (long-prefix "--") (short-prefix "-"))
+── output ──
 (define-arg-style gnu (long-prefix "--") (short-prefix "-"))
