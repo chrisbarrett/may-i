@@ -81,9 +81,9 @@
 - [x] 12.3 Tokeniser: when consuming a `ManyTill` parameter, walk tokens until PAT matches; consume terminator.
 - [x] 12.4 End-of-argv without terminator emits error-severity diagnostic; floor decision to `:ask`. [returns None → rule cannot match → :ask via default fallback; explicit diagnostic deferred]
 - [x] 12.5 Reject `(many-till …)` at rule body level (parser-side only). [rule-side parameter form parser doesn't recognise many-till — falls through to parse_expr which rejects]
-- [ ] 12.6 Multi-occurrence: capture each occurrence's tokens separately; expose as iterator. [single-occurrence covers the dominant find -exec case; multi-occurrence deferred]
+- [x] 12.6 Multi-occurrence: capture each occurrence's tokens separately; expose as iterator.
 - [x] 12.7 Rule-side `(parameter NAME (authorise))` against `ManyTill` joins captured tokens with spaces, parses-and-recurses (existing extract_inner_command).
-- [ ] 12.8 Multi-occurrence rule body fires once per occurrence; combiner takes strictest. [pending 12.6]
+- [x] 12.8 Multi-occurrence rule body fires once per occurrence; combiner takes strictest.
 - [x] 12.9 Property test: single-occurrence `ManyTill` matches existing single-token behaviour for capture-then-authorise. [integration tests cover the equivalence; full proptest deferred]
 
 ## 13. Prelude wrapper parsers

@@ -167,3 +167,74 @@ fn prelude_find_exec_authorises_captured_inner_command() {
         "find -exec rm -rf must capture the inner command and route to rm rules"
     );
 }
+
+// 12.6/12.8: multi-occurrence many-till — the rule body fires once per
+// occurrence and the strictest decision wins. Trailing -exec denies.
+#[test]
+fn find_multi_exec_strictest_wins_when_second_denies() {
+    let cfg = r#"
+(rule "find" (parameter "exec" (authorise)))
+(rule "rm" (and (anywhere "-r") (deny "recursive rm denied")))
+(rule "rm" (allow))
+(rule "ls" (allow))
+"#;
+    let decision = eval(
+        cfg,
+        "find",
+        &[".", "-exec", "ls", ";", "-exec", "rm", "-rf", "/", ";"],
+    );
+    assert_eq!(
+        decision,
+        Decision::Deny,
+        "second -exec must be evaluated; deny in any occurrence wins"
+    );
+}
+
+// Leading -exec denies; later allow occurrences cannot rescue the
+// strictness — deny still wins.
+#[test]
+fn find_multi_exec_strictest_wins_when_first_denies() {
+    let cfg = r#"
+(rule "find" (parameter "exec" (authorise)))
+(rule "rm" (and (anywhere "-r") (deny "recursive rm denied")))
+(rule "rm" (allow))
+(rule "ls" (allow))
+"#;
+    let decision = eval(
+        cfg,
+        "find",
+        &[".", "-exec", "rm", "-rf", "/", ";", "-exec", "ls", ";"],
+    );
+    assert_eq!(decision, Decision::Deny);
+}
+
+// All occurrences allow → the rule allows.
+#[test]
+fn find_multi_exec_all_allow() {
+    let cfg = r#"
+(rule "find" (parameter "exec" (authorise)))
+(rule "ls" (allow))
+"#;
+    let decision = eval(
+        cfg,
+        "find",
+        &[".", "-exec", "ls", ";", "-exec", "ls", "-l", ";"],
+    );
+    assert_eq!(decision, Decision::Allow);
+}
+
+// Mixed allow + ask → ask wins (strictest non-deny).
+#[test]
+fn find_multi_exec_mixed_allow_ask() {
+    let cfg = r#"
+(rule "find" (parameter "exec" (authorise)))
+(rule "ls" (allow))
+"#;
+    // Second occurrence has no covering rule → defaults to ask.
+    let decision = eval(
+        cfg,
+        "find",
+        &[".", "-exec", "ls", ";", "-exec", "unknown-cmd", ";"],
+    );
+    assert_eq!(decision, Decision::Ask);
+}
