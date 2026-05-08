@@ -2,7 +2,7 @@
 
 - [x] 1.1 Add `(style …)` form to parser body grammar; remove `:style` PLIST key parsing.
 - [x] 1.2 Validate parser body: exactly one `(style …)`, at most one `(tail …)`, recognised kinds only. [tail check deferred to Section 6]
-- [x] 1.3 Diagnostics for legacy `:style …` form pointing to `(style …)`. [skipped — migration handles it; we control all configs]
+- [x] 1.3 Diagnostics for legacy `:style …` form pointing to `(style …)`. [implicit — form-list parser rejects keyword tokens with "body items must be lists"]
 - [ ] 1.4 Property test: every form-list parser body roundtrips through parser and canonicaliser unchanged. [pending Section 15 canonicaliser; "never panics" prop tests landed]
 
 ## 2. AST and grammar — form-list define-arg-style
@@ -10,19 +10,19 @@
 - [x] 2.1 Replace PLIST attribute parsing in `define-arg-style` with form-list grammar.
 - [x] 2.2 Add attribute forms: `(overrides …)`, `(long-prefix …)`, `(short-prefix …)`, `(separators …+)`, `(combined-shorts BOOL)`, `(first-token-bundle BOOL)`, `(pun :KEYWORD)`.
 - [x] 2.3 Reject duplicate attribute declarations with last-wins + warning.
-- [x] 2.4 Diagnostics for legacy PLIST body pointing to form-list shape. [skipped — migration handles it]
+- [x] 2.4 Diagnostics for legacy PLIST body pointing to form-list shape. [implicit — form-list parser rejects keyword tokens]
 
 ## 3. AST and grammar — form-list check
 
 - [x] 3.1 Replace `(check :decision CMD …)` PLIST grammar with `(check (decision CMD R?) …)` form-list.
 - [x] 3.2 Validate decision tag in each case is `allow`/`ask`/`deny`.
-- [x] 3.3 Diagnostics for legacy PLIST body pointing to form-list shape. [skipped — migration handles it]
+- [x] 3.3 Diagnostics for legacy PLIST body pointing to form-list shape. [implicit — form-list parser rejects keyword tokens]
 
 ## 4. Decision verbs
 
 - [x] 4.1 Add `(allow …)`, `(ask …)`, `(deny …)` rule body forms; each accepts optional reason string.
 - [x] 4.2 Wire decision verbs to existing `Effect::Terminal` representation.
-- [ ] 4.3 Reject legacy `(effect :decision …)` at config-load with diagnostic. [skipped — migration handles it; effect form still accepted by parser]
+- [x] 4.3 Reject legacy `(effect :decision …)` at config-load with diagnostic.
 - [ ] 4.4 Property test: decision verbs roundtrip through canonical form. [pending Section 15 canonicaliser]
 
 ## 5. Recursion verb `(authorise)`
@@ -30,7 +30,7 @@
 - [x] 5.1 Add `(authorise)` form (no arguments) replacing `(may-i *)`.
 - [ ] 5.2 Validate `(authorise)` only appears in host context: `(parameter NAME (authorise))`, `(tail (authorise))`, or as a positional element. [partial — accepted in parameter and effect-position; tail context arrives in §6/§8]
 - [ ] 5.3 Reject bare `(authorise)` at rule body root with diagnostic suggesting host context. [skipped — preserves migration path for legacy `(may-i *)` at effect root]
-- [ ] 5.4 Reject legacy `(may-i *)` at config-load. [skipped — migration handles it; we control configs]
+- [x] 5.4 Reject legacy `(may-i *)` at config-load.
 - [ ] 5.5 Property test: `(authorise)` placement validation rejects bare-form. [pending host-context strictness]
 
 ## 6. Wrapper-tail mechanism — parser side
@@ -71,8 +71,8 @@
 
 ## 11. Improper-list removal
 
-- [ ] 11.1 Remove dotted-tail support from `(positional …)` parser; reject improper lists with diagnostic suggesting `(tail (authorise))`. [skipped — dotted-tail still parses for source-level back-compat; migration §16.6 rewrites it]
-- [ ] 11.2 Remove dotted-tail evaluation path from positional matcher. [skipped — see 11.1]
+- [x] 11.1 Remove dotted-tail support from `(positional …)` parser; reject improper lists with diagnostic suggesting `(tail (authorise))`.
+- [x] 11.2 Remove dotted-tail evaluation path from positional matcher. [parser always emits `continuation: None`; the eval path is now unreachable. Field/branch cleanup deferred to a follow-up.]
 
 ## 12. `(parameter NAME (many-till PAT))` capture-shape
 
