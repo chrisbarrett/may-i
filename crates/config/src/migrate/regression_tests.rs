@@ -219,9 +219,13 @@ mod tests {
     #[test]
     fn wrapper_mise_exec() {
         let v1 = r#"(wrapper "mise" (positional "exec") (flag "--" :command+args))"#;
+        // Mise's prelude parser declares `(tail (after "--"))`, so the
+        // tokeniser eats the boundary before the outer style runs. The
+        // prelude_tail_drop pass strips the literal `"--"` from the
+        // positional list — the rule keeps matching against `mise exec …`.
         assert_migrates_to(
             v1,
-            r#"(rule "mise" (and (positional "exec" "--") (tail (authorise))))"#,
+            r#"(rule "mise" (and (positional "exec") (tail (authorise))))"#,
         );
     }
 

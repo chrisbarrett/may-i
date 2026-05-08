@@ -119,7 +119,7 @@ Decision-verb and `(authorise)` canonicalisation: rule trust hashes now render a
 - [x] 16.4 Add Class A pass: `(check :decision CMD …)` → `(check (decision CMD) …)`.
 - [x] 16.5 Add Class A pass: `(may-i *)` → `(authorise)`.
 - [x] 16.6 Add Class A pass: `(positional ITEMS… . (may-i *))` → sibling `(positional ITEMS…)` and `(tail (authorise))` composed via `(and …)`.
-- [ ] 16.7 Add Class A pass: rules over prelude-tail commands drop literal boundary token from the positional list (e.g. `(positional "exec" "--")` → `(positional "exec")` for mise).
+- [x] 16.7 Add Class A pass: rules over prelude-tail commands drop literal boundary token from the positional list (e.g. `(positional "exec" "--")` → `(positional "exec")` for mise).
 
 ## 17. Migration — load-graph walker
 
