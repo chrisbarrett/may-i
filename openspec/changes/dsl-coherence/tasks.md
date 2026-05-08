@@ -104,11 +104,12 @@
 
 ## 15. Canonical form ordering
 
-- [ ] 15.1 Sort parser body declarations: style first, flags alphabetical, parameters alphabetical, tail last.
-- [ ] 15.2 Sort define-arg-style attributes alphabetically.
-- [ ] 15.3 Sort check cases alphabetically by command string.
-- [ ] 15.4 Preserve rule order (rules are semantic).
-- [ ] 15.5 Property test: equivalent configs differing in declaration order produce the same canonical form.
+- [ ] 15.1 Sort parser body declarations: style first, flags alphabetical, parameters alphabetical, tail last. [deferred — parser bodies are not trust-hashed; ordering matters for `may-i fmt`, which is out of scope per design.md]
+- [ ] 15.2 Sort define-arg-style attributes alphabetically. [deferred — same as 15.1]
+- [ ] 15.3 Sort check cases alphabetically by command string. [deferred — checks are not trust-hashed]
+- [x] 15.4 Preserve rule order (rules are semantic).
+- [ ] 15.5 Property test: equivalent configs differing in declaration order produce the same canonical form. [deferred — pending 15.1–15.3]
+Decision-verb and `(authorise)` canonicalisation: rule trust hashes now render as `(allow)`, `(ask)`, `(deny)`, and `(authorise)` for the bare wildcard recursion.
 
 ## 16. Migration — rewrite chain
 
