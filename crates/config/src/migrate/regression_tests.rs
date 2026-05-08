@@ -212,7 +212,7 @@ mod tests {
         let v1 = r#"(wrapper "timeout" (positional (regex "^[0-9]+$") :command+args))"#;
         assert_migrates_to(
             v1,
-            r#"(rule "timeout" (positional (regex "^[0-9]+$") . (authorise)))"#,
+            r#"(rule "timeout" (and (positional (regex "^[0-9]+$")) (tail (authorise))))"#,
         );
     }
 
@@ -221,7 +221,7 @@ mod tests {
         let v1 = r#"(wrapper "mise" (positional "exec") (flag "--" :command+args))"#;
         assert_migrates_to(
             v1,
-            r#"(rule "mise" (positional "exec" "--" . (authorise)))"#,
+            r#"(rule "mise" (and (positional "exec" "--") (tail (authorise))))"#,
         );
     }
 
@@ -230,7 +230,7 @@ mod tests {
         let v1 = r#"(wrapper "nix" (positional (or "shell" "develop")) (flag "--command" :command+args))"#;
         assert_migrates_to(
             v1,
-            r#"(rule "nix" (positional (or "shell" "develop") "--command" . (authorise)))"#,
+            r#"(rule "nix" (and (positional (or "shell" "develop") "--command") (tail (authorise))))"#,
         );
     }
 

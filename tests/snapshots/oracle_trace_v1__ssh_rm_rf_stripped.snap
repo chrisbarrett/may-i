@@ -5,28 +5,23 @@ expression: normalised
 
 Trace
 
-  parser: gnu │
-  parser: gnu │
+       parser: gnu │
+       parser: gnu │
+  No matching rule │ → :ask (default)
 
-                                  command │ ssh prod "rm -rf /"
-  107: (rule (command "ssh")              │
-         (args (positional                │
-                [:ssh/host *]             │ facts += :ssh/host "prod"
-                (may-i (positional *))))) │ `rm -rf /` → :deny "Recursive deletion from root"
-
-                                        command │ rm -rf /
-                                          facts │ :ssh/host "prod", :via "ssh"
-  24: (rule (command "rm")                      │
-        (context (and (or (flag "r")            │
-                          …)                    │
-                      (anywhere "/")))          │
-        (effect                                 │ → :deny "Recursive deletion from root"
-         :deny "Recursive deletion from root")) │
+                                            command │ ssh prod "rm -rf /"
+  107: (rule (command "ssh")                        │
+         (args                                      │
+          (and                                      │
+           (positional [:ssh/host *])               │ facts += :ssh/host "prod"
+           (<unknown-arg-pattern>                   │ (authorise) ∈ {"prod", "rm -rf /"} → yes
+            (effect                                 │ → :ask "No rule for command `prod`"
+             :ask "No rule for command `prod`"))))) │
 
 Result
 
   ssh prod "rm -rf /"
 
-  → :deny "Recursive deletion from root"
+  → :ask "No rule for command `prod`"
 
   config: <config-path>

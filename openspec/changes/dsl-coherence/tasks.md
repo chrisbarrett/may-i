@@ -71,8 +71,8 @@
 
 ## 11. Improper-list removal
 
-- [ ] 11.1 Remove dotted-tail support from `(positional …)` parser; reject improper lists with diagnostic suggesting `(tail (authorise))`.
-- [ ] 11.2 Remove dotted-tail evaluation path from positional matcher.
+- [ ] 11.1 Remove dotted-tail support from `(positional …)` parser; reject improper lists with diagnostic suggesting `(tail (authorise))`. [skipped — dotted-tail still parses for source-level back-compat; migration §16.6 rewrites it]
+- [ ] 11.2 Remove dotted-tail evaluation path from positional matcher. [skipped — see 11.1]
 
 ## 12. `(parameter NAME (many-till PAT))` capture-shape
 
@@ -117,7 +117,7 @@
 - [x] 16.3 Add Class A pass: `(define-arg-style NAME (PLIST))` → `(define-arg-style NAME (FORMS))`.
 - [x] 16.4 Add Class A pass: `(check :decision CMD …)` → `(check (decision CMD) …)`.
 - [x] 16.5 Add Class A pass: `(may-i *)` → `(authorise)`.
-- [ ] 16.6 Add Class A pass: `(positional ITEMS… . (may-i *))` → sibling `(positional ITEMS…)` and `(tail (authorise))` composed via `(and …)`.
+- [x] 16.6 Add Class A pass: `(positional ITEMS… . (may-i *))` → sibling `(positional ITEMS…)` and `(tail (authorise))` composed via `(and …)`.
 - [ ] 16.7 Add Class A pass: rules over prelude-tail commands drop literal boundary token from the positional list (e.g. `(positional "exec" "--")` → `(positional "exec")` for mise).
 
 ## 17. Migration — load-graph walker

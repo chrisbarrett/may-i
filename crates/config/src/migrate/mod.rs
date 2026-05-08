@@ -37,6 +37,7 @@ mod inline_context;
 mod may_i_to_authorise;
 mod or_when_to_if;
 mod parser_style_form;
+mod positional_dotted_tail;
 mod predicate_pushdown;
 mod rename_has_to_fact;
 mod simplify_command;
@@ -117,6 +118,10 @@ pub fn migration_rules() -> Vec<RewriteFn> {
         // stage 2 so it sees flat (anywhere …) clauses, not yet wrapped in
         // (and/or) by the cosmetic phase.
         Box::new(flag_patterns::rule_anywhere_to_flag),
+        // Run after flag_patterns so `(positional "-c" . R)` first
+        // collapses to `(parameter "c" R)` where applicable; only true
+        // dotted-tail forms reach this rewrite.
+        Box::new(positional_dotted_tail::positional_dotted_tail),
         // Stage 3 — cosmetic simplification
         Box::new(cond_simplify::cond_single_clause_to_if),
         Box::new(cond_simplify::cond_absorb_else),
