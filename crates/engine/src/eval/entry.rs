@@ -326,10 +326,6 @@ pub fn parser_positional_args<'a>(args: &'a [String], parser: &ResolvedParser) -
 /// `outer` covers the whole argv.
 #[derive(Debug)]
 pub(super) struct ArgvSplit<'a> {
-    // `outer` will be consumed by matcher-scoping in §9 (`(flag …)`,
-    // `(parameter …)`, `(positional …)`). Until then, only the tail
-    // path uses the split.
-    #[allow(dead_code)]
     pub outer: &'a [String],
     pub tail: Option<&'a [String]>,
 }

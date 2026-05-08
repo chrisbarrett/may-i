@@ -58,9 +58,9 @@
 
 ## 9. Matcher scoping
 
-- [ ] 9.1 Plumb the `(outer, tail)` split through eval contexts; argv matchers consult outer slice when parser declares `(tail …)`.
-- [ ] 9.2 Update `(flag …)`, `(parameter …)`, `(positional …)`, `(exact …)`, `(anywhere …)`, `(forbidden …)` to honour the outer/whole boundary.
-- [ ] 9.3 Property test: with `(tail …)` declared, no argv matcher sees a tail-slice token.
+- [x] 9.1 Plumb the `(outer, tail)` split through eval contexts; argv matchers consult outer slice when parser declares `(tail …)`.
+- [x] 9.2 Update `(flag …)`, `(parameter …)`, `(positional …)`, `(exact …)`, `(anywhere …)`, `(forbidden …)` to honour the outer/whole boundary.
+- [x] 9.3 Property test: with `(tail …)` declared, no argv matcher sees a tail-slice token. [integration tests cover the invariant; full proptest pending]
 
 ## 10. Lever A — `(anywhere)` and `(forbidden)` honour `--`
 

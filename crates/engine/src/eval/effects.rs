@@ -258,13 +258,14 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
     ctx: &EvalContext,
     rules: &[Rule],
 ) -> Result<F::EffectOut, EvalError> {
+    let outer_args: &[String] = matcher_scope(ctx);
     Ok(match pattern {
         ArgPattern::Ordered {
             mode,
             patterns,
             continuation,
         } => {
-            let pos_args: Vec<&str> = super::entry::parser_positional_args(ctx.args, &ctx.parser);
+            let pos_args: Vec<&str> = super::entry::parser_positional_args(outer_args, &ctx.parser);
 
             let (pat_matched, consumed, bound_facts) =
                 match_positional_patterns(&pos_args, patterns);
@@ -278,14 +279,13 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                 if let Some(cont) = effective_continuation {
                     let remaining_args: Vec<String> = match mode {
                         MatchMode::Positional => {
-                            super::entry::parser_positional_args(ctx.args, &ctx.parser)
+                            super::entry::parser_positional_args(outer_args, &ctx.parser)
                                 .into_iter()
                                 .skip(consumed)
                                 .map(|s| s.to_string())
                                 .collect()
                         }
-                        MatchMode::Exact => ctx
-                            .args
+                        MatchMode::Exact => outer_args
                             .iter()
                             .filter(|arg| arg.starts_with('-'))
                             .map(|s| s.to_string())
@@ -313,8 +313,10 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
         ArgPattern::Anywhere(exprs) => {
             // Honour `--` as a flag-stop: tokens after `--` are
             // path/positional, not flag-shaped, so `(anywhere "--foo")`
-            // SHALL NOT match `git diff -- --foo`.
-            let outer = scan_until_double_dash(ctx.args);
+            // SHALL NOT match `git diff -- --foo`. Combined with the
+            // wrapper-tail scope: outer_args excludes the tail, and
+            // scan_until_double_dash further trims at `--`.
+            let outer = scan_until_double_dash(outer_args);
             let mut matched = false;
             let search_tokens: Vec<String> = exprs.iter().map(|e| format!("{e}")).collect();
             for expr in exprs {
@@ -332,10 +334,8 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
             fold.effect_arg_match(pattern, ctx.args, matched, detail)
         }
         ArgPattern::Forbidden(exprs) => {
-            // Same `--` boundary as `(anywhere …)`: `(forbidden "--foo")`
-            // SHALL succeed (i.e. matched=true) when the target only
-            // appears post-`--`.
-            let outer = scan_until_double_dash(ctx.args);
+            // Same `--` and tail boundary as `(anywhere …)`.
+            let outer = scan_until_double_dash(outer_args);
             let mut found_forbidden = false;
             let search_tokens: Vec<String> = exprs.iter().map(|e| format!("{e}")).collect();
             for expr in exprs {
@@ -353,7 +353,7 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
             fold.effect_arg_match(pattern, ctx.args, !found_forbidden, detail)
         }
         ArgPattern::Flag { names } => {
-            let matched = flag_present_in_with_parser(ctx.args, names, &ctx.parser);
+            let matched = flag_present_in_with_parser(outer_args, names, &ctx.parser);
             let search_tokens: Vec<String> =
                 names.iter().map(|n| ctx.parser.token_for_name(n)).collect();
             let detail = ArgMatchDetail {
@@ -437,6 +437,13 @@ fn evaluate_tail_authorise_fold<F: EvalFold>(
             fold.effect_arg_match(pattern, ctx.args, false, detail)
         }
     })
+}
+
+/// Effective argv slice for argv-matchers. When the parser declares
+/// `(tail (after …))` the slice is restricted to the outer span; the
+/// tail is exclusively addressable via `(tail (authorise))`.
+pub(super) fn matcher_scope<'a>(ctx: &'a EvalContext) -> &'a [String] {
+    super::entry::split_outer_tail(ctx.args, &ctx.parser).outer
 }
 
 /// Slice of `args` up to (but not including) the first literal `--`
@@ -565,7 +572,8 @@ fn evaluate_parameter_fold<F: EvalFold>(
     rules: &[Rule],
 ) -> Result<F::EffectOut, EvalError> {
     let search_tokens: Vec<String> = names.iter().map(|n| flag_token_for_name(n)).collect();
-    let value = find_parameter_value_with_parser(ctx.args, names, &ctx.parser);
+    let outer_args = matcher_scope(ctx);
+    let value = find_parameter_value_with_parser(outer_args, names, &ctx.parser);
     let matched = value.is_some() && parameter_form_matches(form, value.as_deref().unwrap_or(""));
     if let Some(value) = value
         && let ParameterForm::MayI = form

@@ -8,7 +8,7 @@ use crate::fold::PureFold;
 use crate::fold::{ChildResult, EvalFold, build_fact_detail};
 
 use super::context::{EvalContext, PredicateResult};
-use super::effects::scan_until_double_dash;
+use super::effects::{matcher_scope, scan_until_double_dash};
 use super::entry::parser_positional_args;
 use super::positional::match_positional_patterns;
 
@@ -143,13 +143,14 @@ pub(super) fn evaluate_arg_pattern_predicate(
     pattern: &ArgPattern,
     ctx: &EvalContext,
 ) -> PredicateResult {
+    let outer_args = matcher_scope(ctx);
     match pattern {
         ArgPattern::Ordered {
             mode,
             patterns,
             continuation: _,
         } => {
-            let pos_args: Vec<&str> = parser_positional_args(ctx.args, &ctx.parser);
+            let pos_args: Vec<&str> = parser_positional_args(outer_args, &ctx.parser);
             let (pat_matched, consumed, _) = match_positional_patterns(&pos_args, patterns);
             let matched =
                 pat_matched && (*mode == MatchMode::Positional || consumed == pos_args.len());
@@ -160,7 +161,7 @@ pub(super) fn evaluate_arg_pattern_predicate(
             }
         }
         ArgPattern::Anywhere(exprs) => {
-            let outer = scan_until_double_dash(ctx.args);
+            let outer = scan_until_double_dash(outer_args);
             for expr in exprs {
                 if outer.iter().any(|arg| expr.is_match(arg)) {
                     return PredicateResult::Match;
@@ -169,7 +170,7 @@ pub(super) fn evaluate_arg_pattern_predicate(
             PredicateResult::NoMatch
         }
         ArgPattern::Forbidden(exprs) => {
-            let outer = scan_until_double_dash(ctx.args);
+            let outer = scan_until_double_dash(outer_args);
             for expr in exprs {
                 if outer.iter().any(|arg| expr.is_match(arg)) {
                     return PredicateResult::NoMatch;
@@ -178,7 +179,7 @@ pub(super) fn evaluate_arg_pattern_predicate(
             PredicateResult::Match
         }
         ArgPattern::Flag { names } => {
-            if super::effects::flag_present_in_for_predicate(ctx.args, names, &ctx.parser) {
+            if super::effects::flag_present_in_for_predicate(outer_args, names, &ctx.parser) {
                 PredicateResult::Match
             } else {
                 PredicateResult::NoMatch
@@ -188,7 +189,8 @@ pub(super) fn evaluate_arg_pattern_predicate(
             // In predicate position, only the value-shape forms are
             // meaningful — `(may-i …)` returns a Decision, which has no
             // Match/NoMatch projection.
-            match super::effects::find_parameter_value_for_predicate(ctx.args, names, &ctx.parser) {
+            match super::effects::find_parameter_value_for_predicate(outer_args, names, &ctx.parser)
+            {
                 Some(value) => match form {
                     may_i_core::pattern::ParameterForm::Match(expr) => {
                         if expr.is_match(&value) {
