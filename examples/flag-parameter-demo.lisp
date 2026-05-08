@@ -5,20 +5,20 @@
       (and (not (flag "r"))
            (not (flag "R"))
            (not (flag "recursive"))
-           (effect :allow "non-recursive delete")))
+           (allow "non-recursive delete")))
 
 ;; Allow git push only without -f / --force.
 (rule "git"
       (and (positional "push")
            (not (flag ["f" "force"]))
-           (effect :allow "non-force push")))
+           (allow "non-force push")))
 
 ;; curl: allow GET-style requests; ask for mutating verbs.
 (rule "curl"
       (and (parameter ["X" "request"] (regex "^GET$"))
-           (effect :allow "read-only request")))
+           (allow "read-only request")))
 
 ;; Recurse into bash -c VAL: the value is parsed as a command line and
 ;; evaluated against the rule set.
-(rule "echo" (effect :allow))
-(rule "bash" (parameter "c" (may-i *)))
+(rule "echo" (allow))
+(rule "bash" (parameter "c" (authorise)))

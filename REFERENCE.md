@@ -28,25 +28,25 @@ Define automatic allow/ask/deny rules for programs. Rules can inspect arguments
 and runtime facts to determine how to proceed.
 
 ```lisp
-(rule "ls" (effect :allow))
+(rule "ls" (allow))
 
 ;; Checking for dangerous flags:
 (rule "rm"
   (if (flag ["r" "recursive"])
-      (effect :ask "Recursive deletion")
-    (effect :allow)))
+      (ask "Recursive deletion")
+    (allow)))
 
 ;; More complex branching:
 (rule "rm"
   (cond
     ((positional "/")
-     (effect :deny "Attempt to delete filesystem root"))
+     (deny "Attempt to delete filesystem root"))
 
     ((flag ["r" "recursive"])
-     (effect :ask "Recursive deletion"))
+     (ask "Recursive deletion"))
 
     (else
-     (effect :allow))))
+     (allow))))
 ```
 
 ### `(check …)`
@@ -55,9 +55,9 @@ Define runnable tests for your rules to make sure given commands have the
 expected outcome. Worth doing for complex rules with lots of branching.
 
 ```lisp
-(check :allow "ls -la"
-       :ask "rm -rf /tmp/foo"
-       :deny "rm -rf /")
+(check (allow "ls -la")
+       (ask "rm -rf /tmp/foo")
+       (deny "rm -rf /"))
 ```
 
 Run with `may-i check`.
@@ -89,7 +89,7 @@ Declare how to parse flags, options and positional args for programs that don't
 use the default GNU style.
 
 ```lisp
-(parser "find" :style single-dash-long)
+(parser "find" (style single-dash-long))
 ```
 
 Most commonly needed for programs using the single-dashed `-long` convention.
@@ -107,13 +107,13 @@ variables whose values are recovered via static analysis are allowed.
 
 When `may-i` evaluates a shell command, it searches for `rule` definitions
 you've written with a matching program name. It then tests the shell command
-against each matching rule until it hits an explicit `(effect ...)` form, which
-determines whether the command is allowed, blocked, or triggers a permission
-prompt.
+against each matching rule until it hits an explicit decision verb
+(`(allow …)`, `(ask …)`, `(deny …)`), which determines whether the command
+is allowed, blocked, or triggers a permission prompt.
 
 > [!IMPORTANT]
 > A future iteration will make rule evaluation order-independent, such that the
-> most restrictive effect always wins.
+> most restrictive decision always wins.
 
 `may-i` contains a full shell language parser, and it will run you rules over
 every command it finds. This means control flow structures, subshells and other
@@ -121,8 +121,8 @@ shell constructs are understood and scanned for nested commands.
 
 A rule body either:
 
-- **Allows, asks, or denies** — via `(effect :allow)`, `(effect :ask "…")`, or
-  `(effect :deny "…")`. That's the rule's answer.
+- **Allows, asks, or denies** — via `(allow)`, `(ask "…")`, or
+  `(deny "…")`. That's the rule's answer.
 - **Doesn't match the current command** — for example, an argv pattern that
   doesn't fire, or a conditional whose predicate is false. Evaluation moves on
   to the next rule.
@@ -136,23 +136,23 @@ running the command.
 
 ## Deciding whether to prompt for permission
 
-A rule's answer is spelled `(effect DECISION)` or `(effect DECISION REASON)`,
-where `DECISION` is one of:
+A rule's answer is spelled `(VERB)` or `(VERB REASON)`, where `VERB` is
+one of:
 
-| Decision | When to use                                                                 |
-| :------- | :-------------------------------------------------------------------------- |
-| `:allow` | The command is safe in this context. No prompt; the agent proceeds.         |
-| `:ask`   | The command needs human confirmation. The user sees the reason and chooses. |
-| `:deny`  | The command must not run. The agent is told why and cannot proceed.         |
+| Verb      | When to use                                                                 |
+| :-------- | :-------------------------------------------------------------------------- |
+| `(allow)` | The command is safe in this context. No prompt; the agent proceeds.         |
+| `(ask)`   | The command needs human confirmation. The user sees the reason and chooses. |
+| `(deny)`  | The command must not run. The agent is told why and cannot proceed.         |
 
 `REASON` is an optional explanatory string shown in traces and permission
 prompts. These are helpful for figuring out which branch matched in a complex
 set of rules.
 
 ```lisp
-(effect :allow)
-(effect :ask "Recursive deletion — confirm the target")
-(effect :deny "No filesystem operations on production hosts")
+(allow)
+(ask "Recursive deletion — confirm the target")
+(deny "No filesystem operations on production hosts")
 ```
 
 ## Matching arguments
@@ -165,7 +165,7 @@ match (so they compose with terminals) and Nil otherwise.
 Match a boolean flag like `-r` or `--force`.
 
 ```lisp
-(rule "rm" (and (not (flag "r")) (effect :allow)))   ; allow non-recursive rm
+(rule "rm" (and (not (flag "r")) (allow)))   ; allow non-recursive rm
 ```
 
 `NAME` is a flag spelling without its dashes:
@@ -184,7 +184,7 @@ shifts left in the positional stream.
 
 ```lisp
 (rule "curl"
-  (and (parameter ["X" "request"] "POST") (effect :allow)))
+  (and (parameter ["X" "request"] "POST") (allow)))
 ```
 
 `FORM` constrains the captured value:
@@ -194,7 +194,7 @@ shifts left in the positional stream.
 | `*`           | Any value is present. Use this as a presence check.           |
 | `"literal"`   | The value is exactly `"literal"`.                             |
 | `(regex "…")` | The value matches the regex.                                  |
-| `(may-i *)`   | The value is itself a command line — recurse and re-evaluate. |
+| `(authorise)`   | The value is itself a command line — recurse and re-evaluate. |
 
 ### `(positional PAT…)`
 
@@ -202,7 +202,7 @@ Match positional arguments — the ones left over after flags and parameters are
 consumed. Patterns are matched in order.
 
 ```lisp
-(rule "git" (and (positional "push") (effect :ask "Push needs review")))
+(rule "git" (and (positional "push") (ask "Push needs review")))
 ```
 
 Quantifiers wrap individual patterns so a `(positional …)` can match
@@ -250,7 +250,7 @@ see the captured value as `:key`.
 
 ## Composing rule bodies
 
-A rule has exactly one body, so combinators glue patterns and effects together:
+A rule has exactly one body, so combinators glue patterns and decisions together:
 
 | Form            | Result                                                            |
 | :-------------- | :---------------------------------------------------------------- |
@@ -272,44 +272,88 @@ Conditionals branch on a predicate (an arg pattern, `(fact? …)`, a named
 (rule "rm"
   (cond
     ((positional "/")
-     (effect :deny "Refusing to touch the filesystem root"))
+     (deny "Refusing to touch the filesystem root"))
 
     ((flag ["r" "recursive"])
-     (effect :ask "Recursive deletion"))
+     (ask "Recursive deletion"))
 
     (else
-     (effect :allow))))
+     (allow))))
 ```
 
 ## Recursing into wrapped commands
 
 Some commands are wrappers — `sudo`, `ssh`, `bash -c`, `xargs` — and the real
-risk is in the inner command. `(may-i *)` evaluates that inner command line
-against your rules, with the wrapper recorded as `:via`.
+risk is in the inner command. `(authorise)` evaluates that inner command line
+against your rules, with the wrapper recorded as `:via`. The verb is bare
+(no arguments); the host context tells the engine which span to recurse on.
+
+### Tail-recursion via `(tail (authorise))`
+
+For wrappers whose inner command sits after the wrapper's outer flags
+(sudo, env, timeout, xargs, etc.), declare the boundary on the parser
+side and recurse on the tail in the rule.
 
 ```lisp
-;; sudo CMD ARGS… — re-evaluate the inner command.
-(rule "sudo"
-  (positional . (may-i *)))
+;; Prelude already ships this declaration; shown for illustration:
+(parser "sudo" (style gnu) (tail (after :flags)))
 
-;; ssh HOST CMD ARGS… — capture the host as a fact, re-evaluate the rest.
-(rule "ssh"
-  (positional [:ssh/host *] . (may-i *)))
+(rule "sudo"
+  (tail (authorise)))
 ```
 
-Inside the recursion, `(fact? [:via "sudo"])` lets a downstream rule know it's
-running through `sudo`. Combine with bound facts to write rules like "no
-recursive `rm` over `ssh`".
+`(tail (after :flags))` says "outer slice ends after the last flag/parameter
+is consumed; everything after that is the tail". Use `(tail (after "TOK"))`
+for wrappers like `mise` whose inner command starts after a literal `--`.
 
-`(parameter NAME (may-i *))` does the same for value-bearing flags whose value
-is itself a command line — most usefully `bash -c`:
+When the parser declares a tail, all argv matchers in the rule body
+(`(flag …)`, `(parameter …)`, `(positional …)`, `(anywhere …)`,
+`(forbidden …)`) scope to the outer slice — the tail is exclusively
+addressable via `(tail (authorise))`.
+
+The prelude ships parser declarations for `sudo`, `env`, `timeout`,
+`time`, `su`, `ionice`, `chrt`, `xargs`, `nice`, `watch`, `mise`, and
+`find`, so most wrappers Just Work once you add the recursion rule.
+
+### Capturing multi-token values: `find -exec … ;`
+
+`(parameter NAME (authorise))` recurses on a value-bearing flag whose
+value is itself a command line — most usefully `bash -c`:
 
 ```lisp
-(parser "bash" :style gnu (parameter "c" (may-i *)))
+(parser "bash" (style gnu) (parameter "c" (authorise)))
 
 ;; Now `bash -c "echo hi"` recurses into the rule for echo.
-(rule "echo" (effect :allow))
+(rule "echo" (allow))
 ```
+
+For `find -exec rm … \;` the inner command spans multiple argv tokens
+terminated by `;` or `+`. Declare the parameter with a `(many-till PAT)`
+capture-shape on the parser side; the rule then sees the joined tokens as
+a single command line.
+
+```lisp
+;; Prelude already ships this declaration; shown for illustration:
+(parser "find"
+  (style single-dash-long)
+  (parameter "exec"    (many-till (or ";" "+")))
+  (parameter "execdir" (many-till (or ";" "+")))
+  (parameter "ok"      (many-till (or ";" "+"))))
+
+(rule "find" (parameter "exec" (authorise)))
+;; `find . -exec rm -rf / \;` now routes to the rule for `rm`.
+```
+
+Inside the recursion, `(fact? [:via "sudo"])` lets a downstream rule know
+it's running through `sudo`. Combine with bound facts to write rules
+like "no recursive `rm` over `ssh`".
+
+> [!NOTE]
+> **Stdin blindspot for `xargs` and `parallel`.** When `xargs` reads
+> commands from stdin (the common case), `may-i` cannot statically see
+> the inner argv. Tail recursion authorises the literal arguments on the
+> command line; rules that need to tighten further should branch on
+> `(fact? [:via "xargs"])` and refuse without confirmation.
 
 ## Facts
 
@@ -332,8 +376,8 @@ Query inside a rule with `(fact? …)`:
 ```lisp
 (rule "kubectl"
   (if (fact? [:env "prod"])
-      (effect :deny "No kubectl in production")
-    (effect :allow)))
+      (deny "No kubectl in production")
+    (allow)))
 ```
 
 `(fact? …)` accepts the same expression patterns as argv matchers — literals,
@@ -355,12 +399,12 @@ When the same condition shows up in several rules, lift it into a `(define …)`
 
 (rule "kubectl"
   (if prod-host
-      (effect :deny "No kubectl on prod hosts")
-    (effect :allow)))
+      (deny "No kubectl on prod hosts")
+    (allow)))
 
 (rule "rm"
   (when (and prod-host (flag ["r" "recursive"]))
-    (effect :deny "No recursive rm on prod hosts")))
+    (deny "No recursive rm on prod hosts")))
 ```
 
 A `(define …)` body is any predicate — `(fact? …)`, an arg pattern, a
@@ -372,9 +416,9 @@ combinator, or a reference to another `(define …)`.
 command line; `may-i check` runs them all and reports failures.
 
 ```lisp
-(check :allow "ls -la"
-       :ask   "rm -rf /tmp/foo"
-       :deny  "rm -rf /")
+(check (allow "ls -la")
+       (ask   "rm -rf /tmp/foo")
+       (deny  "rm -rf /"))
 ```
 
 To assert behaviour under specific facts, wrap entries in `(with-facts …)`:
@@ -439,16 +483,16 @@ optionally `(define-arg-style …)`.
 treat these specific flags as value-bearing.
 
 ```lisp
-(parser "find" :style single-dash-long)
+(parser "find" (style single-dash-long))
 
-(parser "kubectl" :style gnu
+(parser "kubectl" (style gnu)
   (parameter ["n" "namespace"]))
 
-(parser "dd" :style key-value
+(parser "dd" (style key-value)
   (parameter "if") (parameter "of") (parameter "bs"))
 
-(parser "bash" :style gnu
-  (parameter "c" (may-i *)))    ; -c VAL is a sub-command, recurse into it
+(parser "bash" (style gnu)
+  (parameter "c" (authorise)))    ; -c VAL is a sub-command, recurse into it
 ```
 
 The body declares parser-scoped flags and parameters:
@@ -457,7 +501,7 @@ The body declares parser-scoped flags and parameters:
 | :--------------------------- | :-------------------------------------------------------------------------------------------------------- |
 | `(flag NAME)`                | `NAME` is a pure boolean flag — it never takes a value.                                                   |
 | `(parameter NAME)`           | `NAME` is value-bearing. The tokeniser groups `-NAME VAL` so rules see them paired.                       |
-| `(parameter NAME (may-i *))` | As above, plus re-evaluate the captured value as a command line on every invocation (`:via` is recorded). |
+| `(parameter NAME (authorise))` | As above, plus re-evaluate the captured value as a command line on every invocation (`:via` is recorded). |
 
 `NAME` follows the same rules as `(flag …)` in rules — a string (`"n"` short,
 `"namespace"` long) or a `[short long]` vector.
@@ -475,31 +519,32 @@ Programs without a `(parser …)` use `gnu`.
 
 ### `(define-arg-style …)` — your own styles
 
-Bind a parsing style to a name with a property list:
+Bind a parsing style to a name with attribute forms:
 
 ```lisp
 ;; Java accepts -Xmx=512m, -Xmx 512m, and -Xmx:512m.
 (define-arg-style java
-  (:overrides gnu :separators (" " "=" ":")))
+  (overrides gnu)
+  (separators " " "=" ":"))
 
-(parser "java" :style java
+(parser "java" (style java)
   (parameter "Xmx") (parameter "Xms"))
 ```
 
-The recognised PLIST keys describe how flags are spelled, _not_ which flags a
-program has:
+The recognised attribute forms describe how flags are spelled, _not_ which
+flags a program has:
 
-| Key                   | Type    | Default  | Meaning                                                                                                          |
-| :-------------------- | :------ | :------- | :--------------------------------------------------------------------------------------------------------------- |
-| `:long-prefix`        | string  | `"--"`   | Long-flag prefix.                                                                                                |
-| `:short-prefix`       | string  | `"-"`    | Short-flag prefix.                                                                                               |
-| `:separators`         | (str…)  | `(" ")`  | Separators between a parameter and its value.                                                                    |
-| `:combined-shorts`    | bool    | `nil`    | `-rf` expands to `-r -f`.                                                                                        |
-| `:first-token-bundle` | bool    | `nil`    | First non-dashed cluster is a flag bundle.                                                                       |
-| `:pun`                | keyword | `:allow` | `:allow` ⇒ a bare parameter is treated as value-less. `:error` ⇒ a bare parameter is a tokenisation error.       |
-| `:overrides`          | symbol  | _none_   | Inherit from another style; this PLIST replaces only the keys it lists. List-valued keys _replace_, don't merge. |
+| Form                       | Type    | Default  | Meaning                                                                                                            |
+| :------------------------- | :------ | :------- | :----------------------------------------------------------------------------------------------------------------- |
+| `(long-prefix STRING)`     | string  | `"--"`   | Long-flag prefix.                                                                                                  |
+| `(short-prefix STRING)`    | string  | `"-"`    | Short-flag prefix.                                                                                                 |
+| `(separators STRING…)`     | str…    | `(" ")`  | Separators between a parameter and its value. Variadic.                                                            |
+| `(combined-shorts BOOL)`   | bool    | `nil`    | `-rf` expands to `-r -f`.                                                                                          |
+| `(first-token-bundle BOOL)`| bool    | `nil`    | First non-dashed cluster is a flag bundle.                                                                         |
+| `(pun KEYWORD)`            | keyword | `:allow` | `:allow` ⇒ a bare parameter is treated as value-less. `:error` ⇒ a bare parameter is a tokenisation error.         |
+| `(overrides NAME)`         | atom    | _none_   | Inherit from another style; this declaration replaces only the attributes it lists. List-valued attrs _replace_.   |
 
-Cycles in `:overrides` and unknown keys are config-load errors.
+Cycles in `(overrides …)` and unknown attribute names are config-load errors.
 
 > [!NOTE]
 > The trace output (`may-i eval`) shows the resolved style and parameter list
@@ -518,5 +563,5 @@ If you're an agent reading this:
   combined short flags like `-rf`.
 - **Add a `(parser …)` only when GNU defaults misclassify a tool's argv.** Most
   programs work out of the box.
-- **When recursing via `(may-i *)`, land the inner rule first.** Then test with
+- **When recursing via `(authorise)`, land the inner rule first.** Then test with
   `may-i eval 'wrapper inner-cmd …'` to confirm both layers fire.

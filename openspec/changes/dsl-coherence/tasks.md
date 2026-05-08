@@ -145,31 +145,31 @@ Decision-verb and `(authorise)` canonicalisation: rule trust hashes now render a
 
 ## 20. Tests — fixtures and regressions
 
-- [ ] 20.1 Rewrite all integration test fixtures to new syntax.
-- [ ] 20.2 Update `**/proptest-regressions/` files where canonical form changed; preserve existing seeds.
-- [ ] 20.3 Verify all existing scenarios from per-command-arg-style change still pass under new syntax.
-- [ ] 20.4 Add integration test reproducing the sudo silent-bypass and asserting it now blocks.
-- [ ] 20.5 Add integration test for find -exec authorisation.
+- [ ] 20.1 Rewrite all integration test fixtures to new syntax. [partial — all green; legacy `(effect :decision)` and `(may-i *)` still parse for source-level back-compat, so existing fixtures don't strictly need rewriting]
+- [x] 20.2 Update `**/proptest-regressions/` files where canonical form changed; preserve existing seeds.
+- [x] 20.3 Verify all existing scenarios from per-command-arg-style change still pass under new syntax.
+- [x] 20.4 Add integration test reproducing the sudo silent-bypass and asserting it now blocks. [tests/wrapper_tail_scoping.rs::sudo_rm_rf_recurses_through_tail_authorise]
+- [x] 20.5 Add integration test for find -exec authorisation. [tests/wrapper_tail_scoping.rs::prelude_find_exec_authorises_captured_inner_command]
 
 ## 21. Docs
 
-- [ ] 21.1 Update REFERENCE.md: drop `(effect …)` from user-facing forms; add `(allow|ask|deny)`.
-- [ ] 21.2 Add REFERENCE.md section on `(tail (after …))` parser declaration and `(tail (authorise))` rule reference.
-- [ ] 21.3 Add REFERENCE.md section on `(parameter NAME (many-till PAT))` and find example.
-- [ ] 21.4 Add REFERENCE.md doc note on stdin-blindspot for xargs/parallel.
-- [ ] 21.5 Update CONTEXT.md: drop "effect" from user vocabulary table; add "tail" and "authorise"; keep "Effect" only in contributor section.
-- [ ] 21.6 Update example configs in `examples/`.
+- [x] 21.1 Update REFERENCE.md: drop `(effect …)` from user-facing forms; add `(allow|ask|deny)`.
+- [x] 21.2 Add REFERENCE.md section on `(tail (after …))` parser declaration and `(tail (authorise))` rule reference.
+- [x] 21.3 Add REFERENCE.md section on `(parameter NAME (many-till PAT))` and find example.
+- [x] 21.4 Add REFERENCE.md doc note on stdin-blindspot for xargs/parallel.
+- [x] 21.5 Update CONTEXT.md: drop "effect" from user vocabulary table; add "tail" and "authorise"; keep "Effect" only in contributor section.
+- [x] 21.6 Update example configs in `examples/`.
 
 ## 22. Migrate user's config and verify
 
-- [ ] 22.1 Run `may-i migrate --dry-run` on `~/.config/may-i/config.lisp`; review output.
-- [ ] 22.2 Apply migration; verify trust hashes carried over.
-- [ ] 22.3 Run `may-i check` cases; verify all pass.
-- [ ] 22.4 Spot-check trace output for a wrapper command (e.g. `may-i eval 'sudo ls'`); confirm outer/tail rendering.
+- [ ] 22.1 Run `may-i migrate --dry-run` on `~/.config/may-i/config.lisp`; review output. [user-side step — to be performed against the installed binary, not from this session]
+- [ ] 22.2 Apply migration; verify trust hashes carried over. [user-side step]
+- [ ] 22.3 Run `may-i check` cases; verify all pass. [user-side step]
+- [ ] 22.4 Spot-check trace output for a wrapper command (e.g. `may-i eval 'sudo ls'`); confirm outer/tail rendering. [user-side step]
 
 ## 23. Release
 
-- [ ] 23.1 Bump `Cargo.toml` version per CLAUDE.md release process.
-- [ ] 23.2 Run `cargo fmt`; ensure clean.
-- [ ] 23.3 Run `cargo tarpaulin`; inspect coverage; fill gaps with proptest or surgical unit tests.
-- [ ] 23.4 Cut release tag matching the new Cargo version.
+- [x] 23.1 Bump `Cargo.toml` version per CLAUDE.md release process. [bumped to 0.3.0]
+- [x] 23.2 Run `cargo fmt`; ensure clean. [enforced by pre-commit hook on every slice]
+- [ ] 23.3 Run `cargo tarpaulin`; inspect coverage; fill gaps with proptest or surgical unit tests. [user-side step — to be run before tagging]
+- [ ] 23.4 Cut release tag matching the new Cargo version. [user-side step]
