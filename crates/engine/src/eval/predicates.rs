@@ -199,6 +199,9 @@ pub(super) fn evaluate_arg_pattern_predicate(
                 None => PredicateResult::NoMatch,
             }
         }
+        // (tail (authorise)) yields a Decision via recursion — it has no
+        // Match/NoMatch projection in predicate position.
+        ArgPattern::Tail => PredicateResult::NoMatch,
         _ => unreachable!("unknown ArgPattern variant"),
     }
 }

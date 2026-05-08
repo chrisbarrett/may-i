@@ -50,6 +50,7 @@ pub(crate) fn is_reserved_keyword(atom: &str) -> bool {
             | "deny"
             | "may-i"
             | "authorise"
+            | "tail"
             | "cond"
             | "when"
             | "unless"

@@ -43,18 +43,18 @@
 
 ## 7. Wrapper-tail mechanism — tokeniser split
 
-- [ ] 7.1 Extend tokenisation to produce `(outer, tail)` slices when parser declares `(tail …)`.
-- [ ] 7.2 For `AfterFlags`: outer ends after last flag/parameter consumed; tail starts at first non-flag.
-- [ ] 7.3 For `AfterToken("--")` (or other): outer ends before token; token consumed; tail starts at next.
-- [ ] 7.4 Preserve verbatim ordering in tail (no flag interpretation, no expansion).
-- [ ] 7.5 Property test: outer ⊕ boundary ⊕ tail = original argv (modulo dropped boundary token where applicable).
+- [x] 7.1 Extend tokenisation to produce `(outer, tail)` slices when parser declares `(tail …)`.
+- [x] 7.2 For `AfterFlags`: outer ends after last flag/parameter consumed; tail starts at first non-flag.
+- [x] 7.3 For `AfterToken("--")` (or other): outer ends before token; token consumed; tail starts at next.
+- [x] 7.4 Preserve verbatim ordering in tail (no flag interpretation, no expansion).
+- [x] 7.5 Property test: outer ⊕ boundary ⊕ tail = original argv (modulo dropped boundary token where applicable).
 
 ## 8. Wrapper-tail mechanism — rule side
 
-- [ ] 8.1 Add `(tail (authorise))` rule body form.
-- [ ] 8.2 Resolve span source: parser-declared tail slice if present, else residual positionals after preceding `(positional …)` matches.
-- [ ] 8.3 Reuse existing `extract_inner_command` join-and-reparse for span → inner command + argv.
-- [ ] 8.4 Restrict `(tail X)` body to `(authorise)` only; reject other shapes at config-load.
+- [x] 8.1 Add `(tail (authorise))` rule body form.
+- [x] 8.2 Resolve span source: parser-declared tail slice if present, else residual positionals after preceding `(positional …)` matches. [parser-decl path lands; "residual positionals" fallback uses entire argv pending §9 matcher-scoping work]
+- [x] 8.3 Reuse existing `extract_inner_command` join-and-reparse for span → inner command + argv.
+- [x] 8.4 Restrict `(tail X)` body to `(authorise)` only; reject other shapes at config-load.
 
 ## 9. Matcher scoping
 

@@ -359,7 +359,75 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
         ArgPattern::Parameter { names, form } => {
             evaluate_parameter_fold(fold, pattern, names, form, ctx, rules)?
         }
+        ArgPattern::Tail => evaluate_tail_authorise_fold(fold, pattern, ctx, rules)?,
         _ => unreachable!("unknown ArgPattern variant"),
+    })
+}
+
+/// Evaluate `(tail (authorise))`. Resolves the tail slice from the
+/// parser's `(tail (after …))` declaration and recurses on it as a
+/// command line via [`extract_inner_command`].
+fn evaluate_tail_authorise_fold<F: EvalFold>(
+    fold: &mut F,
+    pattern: &ArgPattern,
+    ctx: &EvalContext,
+    rules: &[Rule],
+) -> Result<F::EffectOut, EvalError> {
+    let split = super::entry::split_outer_tail(ctx.args, &ctx.parser);
+    // When the parser declares no tail, fall back to the full argv —
+    // this matches the legacy `(may-i *)` semantics for rule bodies that
+    // recurse without a wrapper-boundary spec.
+    let tail_slice: &[String] = split.tail.unwrap_or(ctx.args);
+    let owned: Vec<String> = tail_slice.to_vec();
+    Ok(match extract_inner_command(&owned) {
+        Some((inner_cmd, inner_args)) => {
+            let mut inner_facts = ctx.facts.clone();
+            inner_facts.insert_scalar(Keyword::new(":via").unwrap(), ctx.command);
+            let inner_parser = match ctx.config {
+                Some(cfg) => cfg.parser_for_with_rules(&inner_cmd),
+                None => may_i_core::ast::ResolvedParser::synthetic_gnu(&inner_cmd),
+            };
+            fold.record_parser(&inner_cmd, &inner_parser);
+            let expanded_inner = super::entry::tokenise(&inner_args, &inner_parser);
+            let evaluator = Evaluator::new(rules);
+            let inner_ctx = EvalContext {
+                command: &inner_cmd,
+                args: &expanded_inner,
+                facts: &inner_facts,
+                bindings: ctx.bindings.clone(),
+                recursion_depth: ctx.recursion_depth + 1,
+                recursion_limit: ctx.recursion_limit,
+                parser: inner_parser,
+                config: ctx.config,
+            };
+            fold.begin_recursive_eval();
+            let eval_result = evaluator.evaluate(fold, &inner_ctx)?;
+            let detail = ArgMatchDetail {
+                search_tokens: vec!["(authorise)".to_string()],
+                arg_set: ctx.args.to_vec(),
+                matched: true,
+                positional_elements: vec![],
+            };
+            // Surface the recursive decision via effect_arg_continuation
+            // so the trace renders the inner evaluation as a child.
+            let inner_terminal = fold.effect_terminal(
+                &Effect::Terminal {
+                    decision: eval_result.decision,
+                    reason: eval_result.reason.clone(),
+                },
+                EffectResult::Decision(eval_result.decision, eval_result.reason),
+            );
+            fold.effect_arg_continuation(pattern, ctx.args, detail, inner_terminal)
+        }
+        None => {
+            let detail = ArgMatchDetail {
+                search_tokens: vec!["(authorise)".to_string()],
+                arg_set: ctx.args.to_vec(),
+                matched: false,
+                positional_elements: vec![],
+            };
+            fold.effect_arg_match(pattern, ctx.args, false, detail)
+        }
     })
 }
 

@@ -229,6 +229,7 @@ pub fn parse_arg_pattern(sexpr: &Sexpr) -> Result<ArgPattern, RawError> {
         "exact" => parse_positional_form(&list[1..], sexpr.span(), true),
         "flag" => parse_flag_form(&list[1..], sexpr.span()),
         "parameter" => parse_parameter_form(&list[1..], sexpr.span()),
+        "tail" => parse_tail_pattern(&list[1..], sexpr.span()),
         "anywhere" => {
             let exprs: Result<Vec<Expr<Effect>>, _> = list[1..].iter().map(parse_expr).collect();
             Ok(ArgPattern::Anywhere(exprs?))
@@ -257,6 +258,37 @@ pub fn parse_arg_pattern(sexpr: &Sexpr) -> Result<ArgPattern, RawError> {
             ),
         ),
     }
+}
+
+/// Parse `(tail (authorise))` — the rule-side tail recursion form. The
+/// body is restricted to a bare `(authorise)` verb; matching against
+/// the tail-as-string via regex etc. is intentionally not supported
+/// (recurse into the inner ruleset instead).
+fn parse_tail_pattern(args: &[Sexpr], span: may_i_core::Span) -> Result<ArgPattern, RawError> {
+    if args.len() != 1 {
+        return Err(RawError::new("(tail …) takes exactly one body form", span)
+            .with_help("(tail (authorise))"));
+    }
+    let body = args[0]
+        .as_list()
+        .ok_or_else(|| RawError::new("(tail …) body must be a list", args[0].span()))?;
+    let head = body
+        .first()
+        .and_then(|f| f.as_atom())
+        .ok_or_else(|| RawError::new("(tail …) body must start with a verb", args[0].span()))?;
+    if head != "authorise" {
+        return Err(RawError::new(
+            format!("(tail …) body must be (authorise), got `{head}`"),
+            args[0].span(),
+        ));
+    }
+    if body.len() != 1 {
+        return Err(RawError::new(
+            "(authorise) inside (tail …) takes no arguments",
+            args[0].span(),
+        ));
+    }
+    Ok(ArgPattern::Tail)
 }
 
 /// Parse a `(flag NAMES)` form.

@@ -301,6 +301,7 @@ fn canonical_arg_pattern(pat: &ArgPattern) -> String {
             canonical_flag_names(names),
             canonical_parameter_form(form)
         ),
+        ArgPattern::Tail => "(tail (authorise))".to_string(),
         _ => "<unknown>".to_string(),
     }
 }
