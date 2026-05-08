@@ -33,11 +33,13 @@ pub fn trace_to_json(entries: &[TraceEntry]) -> Vec<serde_json::Value> {
                 command,
                 style,
                 parameter_tokens,
+                tail,
             } => serde_json::json!({
                 "type": "parser",
                 "command": command,
                 "style": style,
                 "parameter_tokens": parameter_tokens,
+                "tail": tail,
             }),
             TraceEntry::Rule { doc, line, .. } => {
                 let mut annotations = Vec::new();

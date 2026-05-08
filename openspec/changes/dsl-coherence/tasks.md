@@ -98,9 +98,9 @@
 
 ## 14. Trace renderer
 
-- [ ] 14.1 Render outer/tail split when parser declares `(tail …)`.
-- [ ] 14.2 Show resolved boundary spec (`(after :flags)` or `(after "--")`) in trace header.
-- [ ] 14.3 Snapshot test: trace for sudo command shows outer/tail split.
+- [x] 14.1 Render outer/tail split when parser declares `(tail …)`.
+- [x] 14.2 Show resolved boundary spec (`(after :flags)` or `(after "--")`) in trace header.
+- [x] 14.3 Snapshot test: trace for sudo command shows outer/tail split. [oracle_trace_v1 timeout snapshot covers this — `parser: gnu tail (after :flags)` rendered]
 
 ## 15. Canonical form ordering
 
