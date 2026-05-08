@@ -1,7 +1,7 @@
 // Migration command — convert v1 configs to canonical syntax.
 
 use std::io::{self, IsTerminal, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use colored::Colorize;
 use may_i_config::migrate::{migrate_forms, validate_migration};
@@ -58,6 +58,7 @@ pub(crate) fn cmd_migrate(
     config_path: Option<&Path>,
     output: Option<&str>,
     yes: bool,
+    dry_run: bool,
 ) -> miette::Result<()> {
     let config_file = may_i_config::resolve_path(config_path)?;
 
@@ -70,46 +71,96 @@ pub(crate) fn cmd_migrate(
         }
     }
 
-    let source = std::fs::read_to_string(&config_file)
-        .map_err(|e| miette::miette!("Failed to read config file: {e}"))?;
+    // When `-o` is provided we operate on the root file only — the user
+    // is asking for a single migrated artifact at a specific path.
+    // Otherwise walk the `(load …)` graph and migrate every reachable
+    // file in place (or just preview, with --dry-run).
+    let output_path = output.map(Path::new);
+    let files: Vec<PathBuf> = if output_path.is_some() {
+        vec![config_file.clone()]
+    } else {
+        may_i_config::walk_load_graph(&config_file)?
+    };
 
-    let (original_forms, parse_errors) = parse_cst(&source);
+    let mut changed_files: Vec<(PathBuf, String, String)> = Vec::new();
+    let mut skipped_readonly: Vec<PathBuf> = Vec::new();
 
-    if let Some(err) = parse_errors.first() {
-        return Err(may_i_config::ConfigError::from_raw(
-            err.clone(),
-            &source,
-            &config_file.display().to_string(),
-        )
-        .into());
+    for file in &files {
+        let source = std::fs::read_to_string(file)
+            .map_err(|e| miette::miette!("Failed to read {}: {e}", file.display()))?;
+
+        let (original_forms, parse_errors) = parse_cst(&source);
+        if let Some(err) = parse_errors.first() {
+            return Err(may_i_config::ConfigError::from_raw(
+                err.clone(),
+                &source,
+                &file.display().to_string(),
+            )
+            .into());
+        }
+
+        let migrated_forms = migrate_forms(original_forms.clone());
+        let column_width = detect_column_width(&source);
+        let output_text = migrated_forms
+            .iter()
+            .map(|f| f.pretty_serialize(column_width))
+            .collect::<Vec<_>>()
+            .join("");
+
+        if let Err(validation_errors) = validate_migration(&output_text)
+            && let Some(raw_err) = validation_errors.first()
+        {
+            return Err(may_i_config::ConfigError::from_raw(
+                raw_err.clone(),
+                &output_text,
+                "<migrated-output>",
+            )
+            .into());
+        }
+
+        if source != output_text {
+            // Detect read-only files up front so the user gets a clear
+            // signal rather than a write failure mid-walk.
+            let metadata = std::fs::metadata(file)
+                .map_err(|e| miette::miette!("Failed to stat {}: {e}", file.display()))?;
+            if metadata.permissions().readonly() {
+                skipped_readonly.push(file.clone());
+                continue;
+            }
+            changed_files.push((file.clone(), source, output_text));
+        }
     }
 
-    let migrated_forms = migrate_forms(original_forms.clone());
-    let column_width = detect_column_width(&source);
-
-    let output_text = migrated_forms
-        .iter()
-        .map(|f| f.pretty_serialize(column_width))
-        .collect::<Vec<_>>()
-        .join("");
-
-    if let Err(validation_errors) = validate_migration(&output_text)
-        && let Some(raw_err) = validation_errors.first()
-    {
-        return Err(may_i_config::ConfigError::from_raw(
-            raw_err.clone(),
-            &output_text,
-            "<migrated-output>",
-        )
-        .into());
+    for path in &skipped_readonly {
+        eprintln!("warning: skipped, not writable: {}", path.display());
     }
 
-    let has_changes = source != output_text;
+    if changed_files.is_empty() {
+        println!("No migration needed - all files up to date.");
+        return Ok(());
+    }
 
-    if has_changes && !yes {
-        let diff_output = generate_diff(&source, &output_text, &config_file, should_use_color());
-        if !diff_output.is_empty() {
-            println!("{}", diff_output);
+    let use_color = should_use_color();
+    if dry_run {
+        for (path, before, after) in &changed_files {
+            let diff = generate_diff(before, after, path, use_color);
+            if !diff.is_empty() {
+                println!("{diff}");
+            }
+        }
+        println!(
+            "Dry run: {} file(s) would be migrated. Re-run without --dry-run to apply.",
+            changed_files.len()
+        );
+        return Ok(());
+    }
+
+    if !yes {
+        for (path, before, after) in &changed_files {
+            let diff = generate_diff(before, after, path, use_color);
+            if !diff.is_empty() {
+                println!("{diff}");
+            }
         }
 
         let is_tty = io::stdin().is_terminal() && io::stdout().is_terminal();
@@ -118,7 +169,8 @@ pub(crate) fn cmd_migrate(
             return Ok(());
         }
 
-        let response = prompt_confirm("Apply migration? [y/N] ")
+        let prompt = format!("Apply migration to {} file(s)? [y/N] ", changed_files.len());
+        let response = prompt_confirm(&prompt)
             .map_err(|e| miette::miette!("Failed to read prompt response: {e}"))?;
 
         if response.is_empty() || !response.to_lowercase().starts_with('y') {
@@ -127,21 +179,18 @@ pub(crate) fn cmd_migrate(
         }
     }
 
-    let output_path = output.map(Path::new);
-
     if let Some(path) = output_path {
+        // Single-file mode — write to the explicit output path.
+        let (_, _, output_text) = changed_files.into_iter().next().unwrap();
         std::fs::write(path, output_text)
             .map_err(|e| miette::miette!("Failed to write output file: {e}"))?;
         println!("Migrated config written to {}", path.display());
-    } else if has_changes {
-        std::fs::write(&config_file, output_text)
-            .map_err(|e| miette::miette!("Failed to write config file: {e}"))?;
-        println!(
-            "Migrated config written to {} (in-place)",
-            config_file.display()
-        );
     } else {
-        println!("No migration needed - config is already up to date.");
+        for (path, _, output_text) in &changed_files {
+            std::fs::write(path, output_text)
+                .map_err(|e| miette::miette!("Failed to write {}: {e}", path.display()))?;
+        }
+        println!("Migrated {} file(s) in-place.", changed_files.len());
     }
 
     Ok(())

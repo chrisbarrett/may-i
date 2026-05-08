@@ -840,10 +840,7 @@ mod tests {
         let programs = hashes.programs();
         let meta = &programs["git"];
         assert_eq!(meta.canonical_rules.len(), 1);
-        assert_eq!(
-            meta.canonical_rules[0],
-            r#"(rule "git" (effect :allow "safe"))"#
-        );
+        assert_eq!(meta.canonical_rules[0], r#"(rule "git" (allow "safe"))"#);
     }
 
     // --- canonical_rule ---

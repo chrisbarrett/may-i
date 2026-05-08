@@ -193,6 +193,75 @@ fn load_file_sexprs(path: &Path) -> miette::Result<Vec<Sexpr>> {
     Ok(sexprs)
 }
 
+/// Walk the `(load …)` graph rooted at `start`, returning every reachable
+/// file path in load order (root first). Globs are expanded; cycles are
+/// dedupped via canonical paths.
+///
+/// The walker skips files that fail to read or parse — those will surface
+/// as errors when the migration tool tries to process them.
+pub fn walk_load_graph(start: &Path) -> miette::Result<Vec<PathBuf>> {
+    let canonical = start
+        .canonicalize()
+        .into_diagnostic()
+        .wrap_err_with(|| format!("Failed to canonicalize {}", start.display()))?;
+    let mut seen = HashSet::new();
+    seen.insert(canonical.clone());
+    let mut result: Vec<PathBuf> = vec![canonical];
+    walk_into(start, &mut seen, &mut result)?;
+    Ok(result)
+}
+
+fn walk_into(
+    file: &Path,
+    seen: &mut HashSet<PathBuf>,
+    result: &mut Vec<PathBuf>,
+) -> miette::Result<()> {
+    let Ok(content) = std::fs::read_to_string(file) else {
+        return Ok(());
+    };
+    let (forms, _errors) = may_i_sexpr::parse(&content);
+    let base_dir = file
+        .parent()
+        .ok_or_else(|| miette::miette!("cannot determine parent dir of {}", file.display()))?;
+    for form in &forms {
+        let Some(list) = form.as_list() else {
+            continue;
+        };
+        if list.is_empty() || list[0].as_atom() != Some("load") {
+            continue;
+        }
+        let pattern_str = parse_load_arg(list)?;
+        let resolved = if Path::new(pattern_str).is_absolute() {
+            pattern_str.to_string()
+        } else {
+            base_dir.join(pattern_str).display().to_string()
+        };
+        let matches: Vec<PathBuf> = if is_glob_pattern(&resolved) {
+            let mut m: Vec<PathBuf> = glob::glob(&resolved)
+                .into_diagnostic()
+                .wrap_err_with(|| format!("invalid glob pattern: {resolved}"))?
+                .filter_map(|e| e.ok())
+                .collect();
+            m.sort();
+            m
+        } else {
+            let p = PathBuf::from(&resolved);
+            if p.exists() { vec![p] } else { vec![] }
+        };
+        for path in matches {
+            let canonical = match path.canonicalize() {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            if seen.insert(canonical.clone()) {
+                result.push(canonical.clone());
+                walk_into(&path, seen, result)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Returns true if the pattern contains glob metacharacters.
 fn is_glob_pattern(s: &str) -> bool {
     s.contains('*') || s.contains('?') || s.contains('[')

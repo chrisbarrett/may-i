@@ -72,6 +72,10 @@ enum Command {
         /// Skip confirmation prompt (non-TTY requires this flag)
         #[arg(long)]
         yes: bool,
+        /// Show planned rewrites without modifying any file. Walks the
+        /// `(load …)` graph and reports per-file diffs.
+        #[arg(long)]
+        dry_run: bool,
     },
     /// View or approve trust for loaded config programs
     Trust {
@@ -131,9 +135,11 @@ fn run() -> miette::Result<()> {
             may_i::cmd_check::cmd_check(cli.json, verbose, cli.config.as_deref())?
         }
         Some(Command::Parse { command, file }) => cmd_parse::cmd_parse(command, file, cli.json)?,
-        Some(Command::Migrate { output, yes }) => {
-            cmd_migrate::cmd_migrate(cli.config.as_deref(), output.as_deref(), yes)?
-        }
+        Some(Command::Migrate {
+            output,
+            yes,
+            dry_run,
+        }) => cmd_migrate::cmd_migrate(cli.config.as_deref(), output.as_deref(), yes, dry_run)?,
         Some(Command::Trust { program, all }) => {
             may_i::cmd_trust::cmd_trust(program.as_deref(), all, cli.json, cli.config.as_deref())?
         }

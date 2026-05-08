@@ -148,8 +148,26 @@ pub fn migrate_forms(forms: Vec<Box<CstNode>>) -> Vec<Box<CstNode>> {
 
 /// Validate that migrated output can be parsed with the canonical parser.
 /// Returns Ok(()) if valid, or Err with a list of validation errors.
+///
+/// Top-level `(load …)` forms are tolerated — the IO layer expands them
+/// before strict parsing. A migrated file that contains only `(load …)`
+/// (and no inline rules/etc.) would otherwise fail the strict parser.
 pub fn validate_migration(migrated_text: &str) -> Result<(), Vec<may_i_sexpr::RawError>> {
-    match crate::config::parse_config(migrated_text) {
+    let (forms, _) = may_i_sexpr::parse(migrated_text);
+    let non_load: Vec<may_i_sexpr::Sexpr> = forms
+        .iter()
+        .filter(|f| {
+            f.as_list()
+                .and_then(|l| l.first())
+                .and_then(|t| t.as_atom())
+                != Some("load")
+        })
+        .cloned()
+        .collect();
+    if non_load.is_empty() {
+        return Ok(());
+    }
+    match crate::config::parse_config_from_sexprs(&non_load) {
         Ok(_) => Ok(()),
         Err(e) => Err(vec![e]),
     }

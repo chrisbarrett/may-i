@@ -123,13 +123,13 @@ Decision-verb and `(authorise)` canonicalisation: rule trust hashes now render a
 
 ## 17. Migration — load-graph walker
 
-- [ ] 17.1 Implement transitive `(load …)` walker for `may-i migrate`.
-- [ ] 17.2 Resolve relative paths against each loading file.
-- [ ] 17.3 Expand globs at migration time.
-- [ ] 17.4 Dedupe to prevent cycles.
-- [ ] 17.5 Detect read-only files; emit "skipped, not writable" with file path.
-- [ ] 17.6 Add `--dry-run` flag to `may-i migrate` showing planned rewrites without applying.
-- [ ] 17.7 Integration test: primary config loading two files migrates all three.
+- [x] 17.1 Implement transitive `(load …)` walker for `may-i migrate`.
+- [x] 17.2 Resolve relative paths against each loading file.
+- [x] 17.3 Expand globs at migration time.
+- [x] 17.4 Dedupe to prevent cycles.
+- [x] 17.5 Detect read-only files; emit "skipped, not writable" with file path.
+- [x] 17.6 Add `--dry-run` flag to `may-i migrate` showing planned rewrites without applying.
+- [x] 17.7 Integration test: primary config loading two files migrates all three.
 
 ## 18. Migration — Class B warning
 
