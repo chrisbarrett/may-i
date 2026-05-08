@@ -1157,18 +1157,21 @@ mod tests {
 
     #[test]
     fn test_preserved_multiline_packed_layout() {
+        // Atom-only fill-eligible forms (`or`, `and`, `forbidden`,
+        // `anywhere`, `positional`) prefer fill layout over preserving
+        // user line breaks: when the contents fit on one line, they
+        // pack flat; when they don't, wrapped atoms align under the
+        // first arg. The trivia-guided "preserve user break columns"
+        // path applies to non-fill-eligible forms only.
         let input = "(or \"a\" \"b\"\n    \"c\" \"d\")";
         let (nodes, errors) = parse(input);
         assert!(errors.is_empty());
 
         let wrapped = wrap_in_rule(nodes.into_iter().next().unwrap());
         let result = wrapped.pretty_serialize(80);
-        // The or node should preserve its line break structure,
-        // with indentation recomputed for the new nesting context.
-        // or is at col 6, so function-call alignment = 6+1+2+1 = 10
         assert!(
-            result.contains("\"a\" \"b\"\n          \"c\" \"d\""),
-            "multi-line packed layout should be preserved (with recomputed indent), got:\n{result}"
+            result.contains(r#"(or "a" "b" "c" "d")"#),
+            "atom-only or should pack flat when contents fit, got:\n{result}"
         );
     }
 
