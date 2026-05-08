@@ -149,3 +149,21 @@ fn prelude_mise_parser_after_double_dash() {
     let decision = eval(cfg, "mise", &["exec", "node", "--", "rm", "-rf", "/tmp/x"]);
     assert_eq!(decision, Decision::Deny);
 }
+
+// 13.7: `find . -exec rm -rf / \;` with the prelude's `find` parser
+// (which uses `(many-till (or ";" "+"))` for `-exec`) authorises the
+// captured inner command. A deny-rm-r rule fires.
+#[test]
+fn prelude_find_exec_authorises_captured_inner_command() {
+    let cfg = r#"
+(rule "find" (parameter "exec" (authorise)))
+(rule "rm" (and (anywhere "-r") (deny "recursive rm denied")))
+(rule "rm" (allow))
+"#;
+    let decision = eval(cfg, "find", &[".", "-exec", "rm", "-rf", "/", ";"]);
+    assert_eq!(
+        decision,
+        Decision::Deny,
+        "find -exec rm -rf must capture the inner command and route to rm rules"
+    );
+}

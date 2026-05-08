@@ -20,6 +20,14 @@ fn contains_bind<E: std::fmt::Debug + may_i_core::ToDoc>(expr: &Expr<E>) -> bool
     }
 }
 
+/// Parse a single-token capture-terminator expression. Used by
+/// `(parameter NAME (many-till PAT))` in parser bodies. Thin wrapper
+/// over the internal `parse_expr` so other modules don't need to depend
+/// on the unstable internal helper signature.
+pub(crate) fn parse_expr_for_capture(sexpr: &Sexpr) -> Result<Expr<Effect>, RawError> {
+    parse_expr(sexpr)
+}
+
 /// Parse a simple expression pattern from an s-expression.
 fn parse_expr(sexpr: &Sexpr) -> Result<Expr<Effect>, RawError> {
     match sexpr {

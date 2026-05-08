@@ -686,13 +686,36 @@ pub enum ParameterTreatment {
     MayI,
 }
 
+/// Capture-shape of a parameter declaration. The default is single-token
+/// (the parameter consumes one trailing token); `ManyTill` consumes
+/// multiple tokens until a terminator pattern matches, used to model
+/// `find -exec … ;` and friends.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum Capture {
+    /// Single-token capture (the historical and default behaviour).
+    Single,
+    /// Multi-token capture: consume tokens after the parameter occurrence
+    /// until a token matches `terminator`. The terminator is consumed and
+    /// discarded; the captured value is the tokens before it joined with
+    /// single spaces.
+    ManyTill {
+        /// Single-token expression matched against each candidate
+        /// terminator.
+        terminator: crate::pattern::Expr<Effect>,
+    },
+}
+
 /// One parameter declaration in a `(parser …)` body. `names` lists the
 /// short/long spellings (e.g. `["n", "namespace"]`). For a single
 /// spelling, the vector has one entry.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone)]
 pub struct ParameterDecl {
     pub names: Vec<String>,
     pub treatment: ParameterTreatment,
+    /// How the parameter consumes tokens at tokenisation time. Defaults
+    /// to single-token capture; `ManyTill` supports `find -exec … ;`.
+    pub capture: Capture,
 }
 
 /// Wrapper-tail boundary spec declared via `(tail (after VALUE))` in a
@@ -790,6 +813,17 @@ impl ResolvedParser {
             .iter()
             .find(|decl| decl.names.iter().any(|n| self.token_for_name(n) == tok))
     }
+
+    /// Find the `ParameterDecl` whose token-form is in `tokens`. Used
+    /// when the caller has already computed the token list and wants to
+    /// look the matching declaration up cheaply.
+    pub fn parameter_decl_for_token_in(&self, tokens: &[String]) -> Option<&ParameterDecl> {
+        self.parameters.iter().find(|decl| {
+            decl.names
+                .iter()
+                .any(|n| tokens.iter().any(|t| t == &self.token_for_name(n)))
+        })
+    }
 }
 
 /// Top-level configuration for the unified rule DSL.
@@ -867,6 +901,7 @@ impl Config {
                 parser.parameters.push(ParameterDecl {
                     names: vec![name],
                     treatment: ParameterTreatment::None,
+                    capture: Capture::Single,
                 });
             }
         }

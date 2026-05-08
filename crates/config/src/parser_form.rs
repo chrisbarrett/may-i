@@ -11,7 +11,7 @@
 // `(authorise)` verb arrives in a later slice of the dsl-coherence
 // change).
 
-use may_i_core::ast::{ParameterDecl, ParameterTreatment, Parser, Provenance, Tail};
+use may_i_core::ast::{Capture, ParameterDecl, ParameterTreatment, Parser, Provenance, Tail};
 use may_i_sexpr::{RawError, Sexpr};
 
 /// Parse a top-level `(parser PROGRAM (style STYLE) BODY…)` form.
@@ -86,10 +86,10 @@ pub fn parse_parser_form(sexpr: &Sexpr) -> Result<Parser, RawError> {
                     return Err(RawError::new("parameter requires a name", item.span()));
                 }
                 let names = parse_name(&item_list[1])?;
-                let treatment = if item_list.len() >= 3 {
-                    parse_treatment(&item_list[2])?
+                let (treatment, capture) = if item_list.len() >= 3 {
+                    parse_parameter_body(&item_list[2])?
                 } else {
-                    ParameterTreatment::None
+                    (ParameterTreatment::None, Capture::Single)
                 };
                 if item_list.len() > 3 {
                     return Err(RawError::new(
@@ -105,7 +105,11 @@ pub fn parse_parser_form(sexpr: &Sexpr) -> Result<Parser, RawError> {
                     &mut parameters,
                     item.span(),
                 )?;
-                parameters.push(ParameterDecl { names, treatment });
+                parameters.push(ParameterDecl {
+                    names,
+                    treatment,
+                    capture,
+                });
             }
             "tail" => {
                 if tail.is_some() {
@@ -238,14 +242,16 @@ fn parse_names(args: &[Sexpr], tag: &str, span: may_i_core::Span) -> Result<Vec<
     parse_name(&args[0])
 }
 
-/// Parse the optional FORM after `(parameter NAME …)`. The bare
-/// `(authorise)` verb is the canonical form; legacy `(may-i *)` still
-/// parses for source-level back-compat during the dsl-coherence
-/// transition (the migration rewrites it).
-fn parse_treatment(sexpr: &Sexpr) -> Result<ParameterTreatment, RawError> {
+/// Parse the optional body slot after `(parameter NAME …)` in a parser
+/// declaration. The body is exactly one form, and its head determines
+/// whether it sets the value treatment or the capture-shape:
+///
+/// - `(authorise)` / `(may-i *)` — value treatment is [`ParameterTreatment::MayI`].
+/// - `(many-till PAT)` — capture-shape is multi-token until PAT matches.
+fn parse_parameter_body(sexpr: &Sexpr) -> Result<(ParameterTreatment, Capture), RawError> {
     let list = sexpr.as_list().ok_or_else(|| {
         RawError::new(
-            "parameter FORM must be a list, e.g. (authorise)",
+            "parameter FORM must be a list, e.g. (authorise) or (many-till …)",
             sexpr.span(),
         )
     })?;
@@ -263,7 +269,7 @@ fn parse_treatment(sexpr: &Sexpr) -> Result<ParameterTreatment, RawError> {
                     sexpr.span(),
                 ));
             }
-            Ok(ParameterTreatment::MayI)
+            Ok((ParameterTreatment::MayI, Capture::Single))
         }
         "may-i" => {
             if list.len() != 2 {
@@ -281,11 +287,21 @@ fn parse_treatment(sexpr: &Sexpr) -> Result<ParameterTreatment, RawError> {
                     list[1].span(),
                 ));
             }
-            Ok(ParameterTreatment::MayI)
+            Ok((ParameterTreatment::MayI, Capture::Single))
+        }
+        "many-till" => {
+            if list.len() != 2 {
+                return Err(RawError::new(
+                    "(many-till PAT) takes exactly one terminator pattern",
+                    sexpr.span(),
+                ));
+            }
+            let terminator = crate::pattern::parse_expr_for_capture(&list[1])?;
+            Ok((ParameterTreatment::None, Capture::ManyTill { terminator }))
         }
         other => Err(
             RawError::new(format!("unsupported parameter FORM: {other}"), sexpr.span())
-                .with_help("use (authorise) — bare, no arguments"),
+                .with_help("use (authorise), (may-i *), or (many-till PAT)"),
         ),
     }
 }

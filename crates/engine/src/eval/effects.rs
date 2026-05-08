@@ -518,6 +518,12 @@ fn find_flag_position_with_parser(
 /// `-X VAL`, `-X=VAL`, `--name VAL`, and `--name=VAL` (and style-specific
 /// separators). Returns `None` when no spelling is present or when the
 /// value is missing.
+///
+/// When the parameter's `capture` is `ManyTill`, the value is the
+/// space-joined token sequence from after the parameter occurrence up
+/// to (but not including) the terminator-matching token. Inline
+/// `name=val` is treated as a single-token capture even for ManyTill —
+/// the inline form lacks the multi-token shape.
 fn find_parameter_value_with_parser(
     args: &[String],
     names: &[String],
@@ -531,6 +537,13 @@ fn find_parameter_value_with_parser(
         .filter(|s| !s.trim().is_empty() && s.as_str() != "=")
         .cloned()
         .collect();
+    let many_till_terminator =
+        parser
+            .parameter_decl_for_token_in(&tokens)
+            .and_then(|d| match &d.capture {
+                may_i_core::ast::Capture::ManyTill { terminator } => Some(terminator.clone()),
+                _ => None,
+            });
     let mut i = 0;
     while i < args.len() {
         let arg = &args[i];
@@ -539,6 +552,9 @@ fn find_parameter_value_with_parser(
         }
         for tok in &tokens {
             if arg == tok {
+                if let Some(term) = &many_till_terminator {
+                    return collect_many_till(args, i + 1, term);
+                }
                 return args.get(i + 1).cloned();
             }
             if let Some(value) = equals_value(arg, tok) {
@@ -558,6 +574,28 @@ fn find_parameter_value_with_parser(
 
 /// If `arg` is the `=`-attached form of `tok`, return `Some(value)`. Empty
 /// values are preserved so `--name=` parses as the empty string.
+/// Walk `args` from `start` collecting tokens until one matches
+/// `terminator`. Returns `Some(joined)` on a hit (terminator consumed)
+/// and `None` if end-of-argv was reached without a match — per spec,
+/// the missing-terminator case surfaces as "no value available", which
+/// floors the rule body's decision to `:ask` via the existing combiner.
+fn collect_many_till(
+    args: &[String],
+    start: usize,
+    terminator: &may_i_core::pattern::Expr<may_i_core::ast::Effect>,
+) -> Option<String> {
+    let mut captured: Vec<String> = Vec::new();
+    let mut i = start;
+    while i < args.len() {
+        if terminator.is_match(&args[i]) {
+            return Some(captured.join(" "));
+        }
+        captured.push(args[i].clone());
+        i += 1;
+    }
+    None
+}
+
 fn equals_value<'a>(arg: &'a str, tok: &str) -> Option<&'a str> {
     let prefix = format!("{tok}=");
     arg.strip_prefix(&prefix)

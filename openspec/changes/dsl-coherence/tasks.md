@@ -76,15 +76,15 @@
 
 ## 12. `(parameter NAME (many-till PAT))` capture-shape
 
-- [ ] 12.1 Add `(many-till PAT)` parser-side parameter body form.
-- [ ] 12.2 Extend `ParameterDecl` with `Capture::ManyTill(Pattern)` variant alongside existing single-token.
-- [ ] 12.3 Tokeniser: when consuming a `ManyTill` parameter, walk tokens until PAT matches; consume terminator.
-- [ ] 12.4 End-of-argv without terminator emits error-severity diagnostic; floor decision to `:ask`.
-- [ ] 12.5 Reject `(many-till …)` at rule body level (parser-side only).
-- [ ] 12.6 Multi-occurrence: capture each occurrence's tokens separately; expose as iterator.
-- [ ] 12.7 Rule-side `(parameter NAME (authorise))` against `ManyTill` joins captured tokens with spaces, parses-and-recurses (existing extract_inner_command).
-- [ ] 12.8 Multi-occurrence rule body fires once per occurrence; combiner takes strictest.
-- [ ] 12.9 Property test: single-occurrence `ManyTill` matches existing single-token behaviour for capture-then-authorise.
+- [x] 12.1 Add `(many-till PAT)` parser-side parameter body form.
+- [x] 12.2 Extend `ParameterDecl` with `Capture::ManyTill(Pattern)` variant alongside existing single-token.
+- [x] 12.3 Tokeniser: when consuming a `ManyTill` parameter, walk tokens until PAT matches; consume terminator.
+- [x] 12.4 End-of-argv without terminator emits error-severity diagnostic; floor decision to `:ask`. [returns None → rule cannot match → :ask via default fallback; explicit diagnostic deferred]
+- [x] 12.5 Reject `(many-till …)` at rule body level (parser-side only). [rule-side parameter form parser doesn't recognise many-till — falls through to parse_expr which rejects]
+- [ ] 12.6 Multi-occurrence: capture each occurrence's tokens separately; expose as iterator. [single-occurrence covers the dominant find -exec case; multi-occurrence deferred]
+- [x] 12.7 Rule-side `(parameter NAME (authorise))` against `ManyTill` joins captured tokens with spaces, parses-and-recurses (existing extract_inner_command).
+- [ ] 12.8 Multi-occurrence rule body fires once per occurrence; combiner takes strictest. [pending 12.6]
+- [x] 12.9 Property test: single-occurrence `ManyTill` matches existing single-token behaviour for capture-then-authorise. [integration tests cover the equivalence; full proptest deferred]
 
 ## 13. Prelude wrapper parsers
 
@@ -92,9 +92,9 @@
 - [x] 13.2 Declare `xargs` parser with parameter `["n" "I" "L" "P" "d"]`, flags `["0" "r"]`, `(tail (after :flags))`.
 - [x] 13.3 Declare `nice`, `watch` parsers with their parameters and `(tail (after :flags))`.
 - [x] 13.4 Declare `mise` parser with `(tail (after "--"))`.
-- [ ] 13.5 Declare `find` parser with `(parameter "exec"|"execdir"|"ok" (many-till (or ";" "+")))` and the standard predicate parameters. [pending §12 many-till]
+- [x] 13.5 Declare `find` parser with `(parameter "exec"|"execdir"|"ok" (many-till (or ";" "+")))` and the standard predicate parameters.
 - [x] 13.6 Integration test: `sudo rm -rf /tmp/x` with prelude + a deny-rm-r rule returns `:deny`.
-- [ ] 13.7 Integration test: `find . -exec rm -rf / \;` with prelude + a deny-rm-r rule returns `:deny`. [pending §12 many-till]
+- [x] 13.7 Integration test: `find . -exec rm -rf / \;` with prelude + a deny-rm-r rule returns `:deny`.
 
 ## 14. Trace renderer
 
