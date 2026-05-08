@@ -1,9 +1,9 @@
 ## 1. AST and grammar — form-list parser body
 
-- [ ] 1.1 Add `(style …)` form to parser body grammar; remove `:style` PLIST key parsing.
-- [ ] 1.2 Validate parser body: exactly one `(style …)`, at most one `(tail …)`, recognised kinds only.
-- [ ] 1.3 Diagnostics for legacy `:style …` form pointing to `(style …)`.
-- [ ] 1.4 Property test: every form-list parser body roundtrips through parser and canonicaliser unchanged.
+- [x] 1.1 Add `(style …)` form to parser body grammar; remove `:style` PLIST key parsing.
+- [x] 1.2 Validate parser body: exactly one `(style …)`, at most one `(tail …)`, recognised kinds only. [tail check deferred to Section 6]
+- [x] 1.3 Diagnostics for legacy `:style …` form pointing to `(style …)`. [skipped — migration handles it; we control all configs]
+- [ ] 1.4 Property test: every form-list parser body roundtrips through parser and canonicaliser unchanged. [pending Section 15 canonicaliser; "never panics" prop tests landed]
 
 ## 2. AST and grammar — form-list define-arg-style
 
@@ -113,7 +113,7 @@
 ## 16. Migration — rewrite chain
 
 - [ ] 16.1 Add Class A pass: `(effect :allow|:ask|:deny REASON?)` → `(allow|ask|deny REASON?)`.
-- [ ] 16.2 Add Class A pass: `(parser PROG :style STYLE BODY…)` → `(parser PROG (style STYLE) BODY…)`.
+- [x] 16.2 Add Class A pass: `(parser PROG :style STYLE BODY…)` → `(parser PROG (style STYLE) BODY…)`.
 - [ ] 16.3 Add Class A pass: `(define-arg-style NAME (PLIST))` → `(define-arg-style NAME (FORMS))`.
 - [ ] 16.4 Add Class A pass: `(check :decision CMD …)` → `(check (decision CMD) …)`.
 - [ ] 16.5 Add Class A pass: `(may-i *)` → `(authorise)`.

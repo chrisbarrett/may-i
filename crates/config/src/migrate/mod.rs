@@ -32,6 +32,7 @@ mod hoist_cond;
 mod inline_args;
 mod inline_context;
 mod or_when_to_if;
+mod parser_style_form;
 mod predicate_pushdown;
 mod rename_has_to_fact;
 mod simplify_command;
@@ -100,6 +101,7 @@ pub fn migration_rules() -> Vec<RewriteFn> {
         Box::new(wrapper_to_rule::wrapper_to_rule),
         Box::new(defcontext_to_define::defcontext_to_define),
         Box::new(rename_has_to_fact::rename_has_to_fact),
+        Box::new(parser_style_form::parser_style_to_form),
         // Stage 2 — normalisation (must run after stage 1 is stable)
         Box::new(collapse_effects::rule_collapse_effects),
         Box::new(flatten_combinators::flatten_combinators),
