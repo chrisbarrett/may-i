@@ -11,7 +11,7 @@
 // `(authorise)` verb arrives in a later slice of the dsl-coherence
 // change).
 
-use may_i_core::ast::{ParameterDecl, ParameterTreatment, Parser, Provenance};
+use may_i_core::ast::{ParameterDecl, ParameterTreatment, Parser, Provenance, Tail};
 use may_i_sexpr::{RawError, Sexpr};
 
 /// Parse a top-level `(parser PROGRAM (style STYLE) BODY…)` form.
@@ -36,6 +36,7 @@ pub fn parse_parser_form(sexpr: &Sexpr) -> Result<Parser, RawError> {
     let mut style_name: Option<String> = None;
     let mut flags: Vec<Vec<String>> = Vec::new();
     let mut parameters: Vec<ParameterDecl> = Vec::new();
+    let mut tail: Option<Tail> = None;
     let mut declared_names: std::collections::HashMap<String, &'static str> =
         std::collections::HashMap::new();
 
@@ -106,12 +107,23 @@ pub fn parse_parser_form(sexpr: &Sexpr) -> Result<Parser, RawError> {
                 )?;
                 parameters.push(ParameterDecl { names, treatment });
             }
+            "tail" => {
+                if tail.is_some() {
+                    return Err(RawError::new(
+                        "parser body declares (tail …) more than once",
+                        item.span(),
+                    ));
+                }
+                tail = Some(parse_tail_decl(&item_list[1..], item.span())?);
+            }
             other => {
                 return Err(RawError::new(
                     format!("unknown parser body item: {other}"),
                     item.span(),
                 )
-                .with_help("body items: (style …), (flag NAME), (parameter NAME [FORM])"));
+                .with_help(
+                    "body items: (style …), (flag NAME), (parameter NAME [FORM]), (tail (after …))",
+                ));
             }
         }
     }
@@ -129,9 +141,60 @@ pub fn parse_parser_form(sexpr: &Sexpr) -> Result<Parser, RawError> {
         style_name,
         flags,
         parameters,
+        tail,
         span: sexpr.span(),
         provenance: Provenance::PrimaryConfig,
     })
+}
+
+/// Parse the body of a `(tail …)` declaration in a parser body.
+///
+/// Recognised shapes:
+/// - `(tail (after :flags))` — wrapper-style boundary at end of outer flags
+/// - `(tail (after "TOK"))` — explicit token boundary (e.g. `--`)
+fn parse_tail_decl(args: &[Sexpr], span: may_i_core::Span) -> Result<Tail, RawError> {
+    if args.len() != 1 {
+        return Err(
+            RawError::new("(tail …) takes exactly one (after VALUE) form", span)
+                .with_help("(tail (after :flags)) or (tail (after \"--\"))"),
+        );
+    }
+    let after_list = args[0]
+        .as_list()
+        .ok_or_else(|| RawError::new("(tail …) body must be (after VALUE)", args[0].span()))?;
+    if after_list.first().and_then(Sexpr::as_atom) != Some("after") {
+        return Err(RawError::new(
+            "(tail …) body must start with `after`",
+            args[0].span(),
+        ));
+    }
+    if after_list.len() != 2 {
+        return Err(RawError::new(
+            "(after …) takes exactly one VALUE",
+            args[0].span(),
+        ));
+    }
+    let value = &after_list[1];
+    if let Some(s) = value.as_str() {
+        return Ok(Tail::AfterToken(s.to_string()));
+    }
+    if let Some(atom) = value.as_atom() {
+        match atom {
+            ":flags" => return Ok(Tail::AfterFlags),
+            other if other.starts_with(':') => {
+                return Err(RawError::new(
+                    format!("unrecognised tail keyword: {other}"),
+                    value.span(),
+                )
+                .with_help("only `:flags` is recognised"));
+            }
+            _ => {}
+        }
+    }
+    Err(RawError::new(
+        "(after VALUE) value must be `:flags` or a string literal token",
+        value.span(),
+    ))
 }
 
 /// Parse a single NAME — either a string atom or a `[short long]` vector.
@@ -339,6 +402,49 @@ mod tests {
             format!("{err}").contains("unsupported parameter FORM"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn parses_tail_after_flags() {
+        let p = parse_parser_form(&first_form(
+            r#"(parser "sudo" (style gnu) (tail (after :flags)))"#,
+        ))
+        .unwrap();
+        assert_eq!(p.tail, Some(Tail::AfterFlags));
+    }
+
+    #[test]
+    fn parses_tail_after_token() {
+        let p = parse_parser_form(&first_form(
+            r#"(parser "mise" (style gnu) (tail (after "--")))"#,
+        ))
+        .unwrap();
+        assert_eq!(p.tail, Some(Tail::AfterToken("--".to_string())));
+    }
+
+    #[test]
+    fn rejects_duplicate_tail() {
+        let err = parse_parser_form(&first_form(
+            r#"(parser "x" (style gnu) (tail (after :flags)) (tail (after "--")))"#,
+        ))
+        .unwrap_err();
+        assert!(format!("{err}").contains("more than once"));
+    }
+
+    #[test]
+    fn rejects_unknown_tail_keyword() {
+        let err = parse_parser_form(&first_form(
+            r#"(parser "x" (style gnu) (tail (after :wibble)))"#,
+        ))
+        .unwrap_err();
+        assert!(format!("{err}").contains(":wibble"));
+    }
+
+    #[test]
+    fn rejects_tail_without_after() {
+        let err = parse_parser_form(&first_form(r#"(parser "x" (style gnu) (tail :flags))"#))
+            .unwrap_err();
+        assert!(format!("{err}").contains("(after VALUE)"));
     }
 
     #[test]

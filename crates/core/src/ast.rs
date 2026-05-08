@@ -685,7 +685,21 @@ pub struct ParameterDecl {
     pub treatment: ParameterTreatment,
 }
 
-/// Parsed `(parser PROGRAM :style STYLE BODY…)` declaration. The style is
+/// Wrapper-tail boundary spec declared via `(tail (after VALUE))` in a
+/// parser body. Drives the tokeniser's outer/tail split for wrapper tools
+/// like sudo/xargs/env (boundary = end of outer flags) and mise (boundary
+/// = explicit `--` token).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Tail {
+    /// `(tail (after :flags))` — outer slice ends after the last flag or
+    /// parameter is consumed; tail begins at the first non-flag token.
+    AfterFlags,
+    /// `(tail (after "--"))` — outer slice ends before the literal token;
+    /// the boundary token itself is consumed.
+    AfterToken(String),
+}
+
+/// Parsed `(parser PROGRAM (style STYLE) BODY…)` declaration. The style is
 /// referenced by name; resolution against the `StyleRegistry` happens at
 /// `Config::parser_for` time.
 #[derive(Debug, Clone)]
@@ -696,6 +710,9 @@ pub struct Parser {
     /// spelling list.
     pub flags: Vec<Vec<String>>,
     pub parameters: Vec<ParameterDecl>,
+    /// Optional `(tail (after VALUE))` declaration. `None` for parsers
+    /// without a wrapper-boundary; the tokeniser does not split argv.
+    pub tail: Option<Tail>,
     pub span: Span,
     pub provenance: Provenance,
 }
@@ -708,6 +725,7 @@ pub struct ResolvedParser {
     pub style: Style,
     pub flags: Vec<Vec<String>>,
     pub parameters: Vec<ParameterDecl>,
+    pub tail: Option<Tail>,
 }
 
 impl ResolvedParser {
@@ -719,6 +737,7 @@ impl ResolvedParser {
             style: Style::default_gnu(),
             flags: Vec::new(),
             parameters: Vec::new(),
+            tail: None,
         }
     }
 
@@ -817,6 +836,7 @@ impl Config {
             style,
             flags: parser.flags.clone(),
             parameters: parser.parameters.clone(),
+            tail: parser.tail.clone(),
         }
     }
 

@@ -35,11 +35,11 @@
 
 ## 6. Wrapper-tail mechanism — parser side
 
-- [ ] 6.1 Add `(tail (after VALUE))` declaration to parser body grammar.
-- [ ] 6.2 Define closed enum for `:flags` keyword tag; reject other keywords.
-- [ ] 6.3 Add `Tail` field to `ResolvedParser` with variants `AfterFlags` and `AfterToken(String)`.
-- [ ] 6.4 Reject multiple `(tail …)` declarations per parser.
-- [ ] 6.5 Reject `(tail (after VALUE))` of unrecognised shape.
+- [x] 6.1 Add `(tail (after VALUE))` declaration to parser body grammar.
+- [x] 6.2 Define closed enum for `:flags` keyword tag; reject other keywords.
+- [x] 6.3 Add `Tail` field to `ResolvedParser` with variants `AfterFlags` and `AfterToken(String)`.
+- [x] 6.4 Reject multiple `(tail …)` declarations per parser.
+- [x] 6.5 Reject `(tail (after VALUE))` of unrecognised shape.
 
 ## 7. Wrapper-tail mechanism — tokeniser split
 

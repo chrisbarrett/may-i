@@ -32,6 +32,6 @@ pub use predicates::{FactPattern, FactQuery};
 pub use ast::{
     Config, Define, Effect, EffectResult, ParameterDecl, ParameterTreatment, Parser, Predicate,
     Provenance, PunPolicy, ResolvedParser, Rule, SecurityConfig, Spanned, Style, StyleRegistry,
-    StyleResolveError, StyleSpec,
+    StyleResolveError, StyleSpec, Tail,
 };
 pub use pattern::{ArgPattern, CommandPattern, Expr, ExprBranch, PositionalArg, Quantifier};

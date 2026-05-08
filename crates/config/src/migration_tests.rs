@@ -59,7 +59,8 @@ fn migration_wrapper_to_rule() {
 
     assert!(output.contains("rule"));
     assert!(output.contains("ssh"));
-    assert!(output.contains("may-i"));
+    assert!(output.contains("authorise"));
+    assert!(!output.contains("may-i"));
     assert!(!output.contains("wrapper"));
 }
 

@@ -494,6 +494,7 @@ mod tokenisation_properties {
             style,
             flags: vec![],
             parameters: vec![],
+            tail: None,
         }
     }
 

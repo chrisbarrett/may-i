@@ -212,14 +212,17 @@ mod tests {
         let v1 = r#"(wrapper "timeout" (positional (regex "^[0-9]+$") :command+args))"#;
         assert_migrates_to(
             v1,
-            r#"(rule "timeout" (positional (regex "^[0-9]+$") . (may-i *)))"#,
+            r#"(rule "timeout" (positional (regex "^[0-9]+$") . (authorise)))"#,
         );
     }
 
     #[test]
     fn wrapper_mise_exec() {
         let v1 = r#"(wrapper "mise" (positional "exec") (flag "--" :command+args))"#;
-        assert_migrates_to(v1, r#"(rule "mise" (positional "exec" "--" . (may-i *)))"#);
+        assert_migrates_to(
+            v1,
+            r#"(rule "mise" (positional "exec" "--" . (authorise)))"#,
+        );
     }
 
     #[test]
@@ -227,7 +230,7 @@ mod tests {
         let v1 = r#"(wrapper "nix" (positional (or "shell" "develop")) (flag "--command" :command+args))"#;
         assert_migrates_to(
             v1,
-            r#"(rule "nix" (positional (or "shell" "develop") "--command" . (may-i *)))"#,
+            r#"(rule "nix" (positional (or "shell" "develop") "--command" . (authorise)))"#,
         );
     }
 
@@ -236,7 +239,7 @@ mod tests {
         let v1 = r#"(wrapper "nix-shell" (flag "--run" :command+args))"#;
         // The (positional "--run" . R) intermediate now collapses to a
         // structured (parameter "run" R) pattern.
-        assert_migrates_to(v1, r#"(rule "nix-shell" (parameter "run" (may-i *)))"#);
+        assert_migrates_to(v1, r#"(rule "nix-shell" (parameter "run" (authorise)))"#);
     }
 
     #[test]
@@ -244,7 +247,7 @@ mod tests {
         let v1 = r#"(wrapper "bash" (flag "-c" :command+args))"#;
         // The (positional "-c" . R) intermediate now collapses to a
         // structured (parameter "c" R) pattern.
-        assert_migrates_to(v1, r#"(rule "bash" (parameter "c" (may-i *)))"#);
+        assert_migrates_to(v1, r#"(rule "bash" (parameter "c" (authorise)))"#);
     }
 
     // ── Task 4: has → fact? with complex value patterns ────────────────
