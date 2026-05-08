@@ -90,12 +90,12 @@ fn parser_bash_may_i_recurses() {
     assert_eq!(decision, Decision::Allow);
 }
 
-// 5.6: (define-arg-style java (:overrides gnu :separators (" " "=" ":")))
+// 5.6: (define-arg-style java (overrides gnu) (separators " " "=" ":"))
 // — `java -Xmx:512m App` parses `512m` as the parameter value.
 #[test]
 fn parser_java_overrides_separators() {
     let cfg = r#"
-(define-arg-style java (:overrides gnu :separators (" " "=" ":")))
+(define-arg-style java (overrides gnu) (separators " " "=" ":"))
 (parser "java" (style java) (parameter "Xmx"))
 (rule "java" (and (positional "App") (effect :allow)))
 "#;

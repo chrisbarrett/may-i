@@ -7,10 +7,10 @@
 
 ## 2. AST and grammar — form-list define-arg-style
 
-- [ ] 2.1 Replace PLIST attribute parsing in `define-arg-style` with form-list grammar.
-- [ ] 2.2 Add attribute forms: `(overrides …)`, `(long-prefix …)`, `(short-prefix …)`, `(separators …+)`, `(combined-shorts BOOL)`, `(first-token-bundle BOOL)`, `(pun :KEYWORD)`.
-- [ ] 2.3 Reject duplicate attribute declarations with last-wins + warning.
-- [ ] 2.4 Diagnostics for legacy PLIST body pointing to form-list shape.
+- [x] 2.1 Replace PLIST attribute parsing in `define-arg-style` with form-list grammar.
+- [x] 2.2 Add attribute forms: `(overrides …)`, `(long-prefix …)`, `(short-prefix …)`, `(separators …+)`, `(combined-shorts BOOL)`, `(first-token-bundle BOOL)`, `(pun :KEYWORD)`.
+- [x] 2.3 Reject duplicate attribute declarations with last-wins + warning.
+- [x] 2.4 Diagnostics for legacy PLIST body pointing to form-list shape. [skipped — migration handles it]
 
 ## 3. AST and grammar — form-list check
 
@@ -114,7 +114,7 @@
 
 - [ ] 16.1 Add Class A pass: `(effect :allow|:ask|:deny REASON?)` → `(allow|ask|deny REASON?)`.
 - [x] 16.2 Add Class A pass: `(parser PROG :style STYLE BODY…)` → `(parser PROG (style STYLE) BODY…)`.
-- [ ] 16.3 Add Class A pass: `(define-arg-style NAME (PLIST))` → `(define-arg-style NAME (FORMS))`.
+- [x] 16.3 Add Class A pass: `(define-arg-style NAME (PLIST))` → `(define-arg-style NAME (FORMS))`.
 - [ ] 16.4 Add Class A pass: `(check :decision CMD …)` → `(check (decision CMD) …)`.
 - [ ] 16.5 Add Class A pass: `(may-i *)` → `(authorise)`.
 - [ ] 16.6 Add Class A pass: `(positional ITEMS… . (may-i *))` → sibling `(positional ITEMS…)` and `(tail (authorise))` composed via `(and …)`.

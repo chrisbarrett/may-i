@@ -24,6 +24,7 @@ pub(crate) mod helpers;
 mod collapse_effects;
 mod cond_simplify;
 mod defcontext_to_define;
+mod define_arg_style_form;
 mod effect_to_when;
 mod flag_patterns;
 mod flatten_combinators;
@@ -102,6 +103,7 @@ pub fn migration_rules() -> Vec<RewriteFn> {
         Box::new(defcontext_to_define::defcontext_to_define),
         Box::new(rename_has_to_fact::rename_has_to_fact),
         Box::new(parser_style_form::parser_style_to_form),
+        Box::new(define_arg_style_form::define_arg_style_to_form),
         // Stage 2 — normalisation (must run after stage 1 is stable)
         Box::new(collapse_effects::rule_collapse_effects),
         Box::new(flatten_combinators::flatten_combinators),

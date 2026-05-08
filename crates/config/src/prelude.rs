@@ -9,28 +9,29 @@ use may_i_core::ast::StyleSpec;
 
 const PRELUDE_SOURCE: &str = r#"
 (define-arg-style gnu
-  (:long-prefix "--"
-   :short-prefix "-"
-   :separators (" " "=")
-   :combined-shorts t
-   :pun :allow))
+  (long-prefix "--")
+  (short-prefix "-")
+  (separators " " "=")
+  (combined-shorts t)
+  (pun :allow))
 
 (define-arg-style single-dash-long
-  (:long-prefix "-"
-   :short-prefix "-"
-   :separators (" " "=")
-   :combined-shorts nil
-   :pun :allow))
+  (long-prefix "-")
+  (short-prefix "-")
+  (separators " " "=")
+  (combined-shorts nil)
+  (pun :allow))
 
 (define-arg-style legacy-bundle
-  (:overrides gnu :first-token-bundle t))
+  (overrides gnu)
+  (first-token-bundle t))
 
 (define-arg-style key-value
-  (:long-prefix ""
-   :short-prefix ""
-   :separators ("=")
-   :combined-shorts nil
-   :pun :error))
+  (long-prefix "")
+  (short-prefix "")
+  (separators "=")
+  (combined-shorts nil)
+  (pun :error))
 "#;
 
 /// Parse the prelude source into `StyleSpec`s. Panics if the prelude is
@@ -104,7 +105,7 @@ mod tests {
         // Simulate the order that parse_config uses: prelude first, then user.
         let mut reg = registry_from_prelude();
         let form = {
-            let (forms, errs) = may_i_sexpr::parse(r#"(define-arg-style gnu (:long-prefix "++"))"#);
+            let (forms, errs) = may_i_sexpr::parse(r#"(define-arg-style gnu (long-prefix "++"))"#);
             assert!(errs.is_empty());
             forms.into_iter().next().unwrap()
         };
@@ -118,7 +119,7 @@ mod tests {
         let mut reg = registry_from_prelude();
         let form = {
             let (forms, errs) = may_i_sexpr::parse(
-                r#"(define-arg-style java (:overrides gnu :separators (" " "=" ":")))"#,
+                r#"(define-arg-style java (overrides gnu) (separators " " "=" ":"))"#,
             );
             assert!(errs.is_empty());
             forms.into_iter().next().unwrap()
