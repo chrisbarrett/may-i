@@ -33,7 +33,7 @@ pub fn load(path: &Path) -> miette::Result<LoadResult> {
         .into_diagnostic()
         .wrap_err_with(|| format!("Failed to canonicalize {}", path.display()))?;
     let mut seen = HashSet::new();
-    seen.insert(canonical);
+    seen.insert(canonical.clone());
 
     let base_dir = path
         .parent()
@@ -57,7 +57,11 @@ pub fn load(path: &Path) -> miette::Result<LoadResult> {
             }
             Err(config_err) => {
                 // Config parsing failed — try migration before giving up.
-                match try_migrate_and_parse(&content, &config_path, base_dir, &mut seen) {
+                // Use a fresh `seen` so re-expansion of `(load …)` on the
+                // migrated forms is not blocked by the failed attempt above.
+                let mut retry_seen = HashSet::new();
+                retry_seen.insert(canonical.clone());
+                match try_migrate_and_parse(&content, &config_path, base_dir, &mut retry_seen) {
                     Some(result) => return Ok(result),
                     None => {
                         return Err(

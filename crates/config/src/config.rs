@@ -5,19 +5,14 @@ use may_i_core::ast::{Check, Config, Provenance, SecurityConfig};
 use may_i_core::{ContextFacts, Decision, Keyword};
 use may_i_sexpr::{RawError, Sexpr};
 
-fn parse_decision(sexpr: &Sexpr) -> Result<Decision, RawError> {
-    match sexpr.as_atom().ok_or_else(|| {
-        RawError::new(
-            "check entries must start with a decision keyword (:allow, :deny, :ask) or with-facts",
-            sexpr.span(),
-        )
-    })? {
-        ":allow" => Ok(Decision::Allow),
-        ":deny" => Ok(Decision::Deny),
-        ":ask" => Ok(Decision::Ask),
+fn parse_decision_tag(atom: &str, span: Span) -> Result<Decision, RawError> {
+    match atom {
+        "allow" => Ok(Decision::Allow),
+        "deny" => Ok(Decision::Deny),
+        "ask" => Ok(Decision::Ask),
         other => Err(
-            RawError::new(format!("unknown expected decision: {other}"), sexpr.span())
-                .with_help("valid decisions: :allow, :deny, :ask"),
+            RawError::new(format!("unknown decision tag: {other}"), span)
+                .with_help("valid decisions: allow, ask, deny"),
         ),
     }
 }
@@ -222,50 +217,10 @@ fn parse_safe_env_vars(
     Ok(())
 }
 
-/// Parse check form: (check DECISION "cmd" ...)
-/// Supports nested with-facts: (check (with-facts [[:key]] :allow "cmd"))
+/// Parse check form: (check (DECISION "cmd" REASON?) …)
+/// Supports nested with-facts: (check (with-facts [[:key]] (allow "cmd")))
 pub(crate) fn parse_check(args: &[Sexpr], check_span: Span) -> Result<Vec<Check>, RawError> {
-    let mut checks = Vec::new();
-    let mut i = 0;
-
-    while i < args.len() {
-        // Check for with-facts wrapper
-        if let Some(list) = args[i].as_list()
-            && let Some("with-facts") = list.first().and_then(Sexpr::as_atom)
-        {
-            let with_facts_checks = parse_with_facts(list, &ContextFacts::default(), check_span)?;
-            checks.extend(with_facts_checks);
-            i += 1;
-            continue;
-        }
-
-        // Parse decision keyword
-        let expected = parse_decision(&args[i])?;
-        i += 1;
-
-        // Parse command
-        if i >= args.len() {
-            return Err(RawError::new(
-                "check must provide a command after each decision",
-                check_span,
-            )
-            .with_help("use :allow \"cmd\" or (with-facts [[:key]] :allow \"cmd\")"));
-        }
-
-        let cmd = args[i]
-            .as_atom_or_str()
-            .ok_or_else(|| RawError::new("check command must be a string", args[i].span()))?;
-
-        checks.push(Check {
-            command: cmd.to_string(),
-            expected,
-            context: ContextFacts::default(),
-            span: args[i].span(),
-        });
-        i += 1;
-    }
-
-    Ok(checks)
+    parse_check_items(args, &ContextFacts::default(), check_span)
 }
 
 /// Parse with-facts form: (with-facts [[:key] [:key "value"]] :allow "cmd" ...)
@@ -279,7 +234,7 @@ fn parse_with_facts(
             "with-facts must have a fact vector",
             list.first().map_or(Span::new(0, 0), Sexpr::span),
         )
-        .with_help("use (with-facts [[:client/opencode]] :allow \"cmd\")"));
+        .with_help("use (with-facts [[:client/opencode]] (allow \"cmd\"))"));
     }
 
     let facts = parse_fact_literal(&list[1])?;
@@ -370,49 +325,61 @@ fn parse_context_key(sexpr: &Sexpr) -> Result<Keyword, RawError> {
     })
 }
 
-/// Parse check items with a given context.
+/// Parse check items with a given context. Each item must be either a
+/// `(with-facts …)` wrapper or a `(DECISION "cmd" REASON?)` form.
 fn parse_check_items(
     items: &[Sexpr],
     context: &ContextFacts,
     check_span: Span,
 ) -> Result<Vec<Check>, RawError> {
     let mut checks = Vec::new();
-    let mut i = 0;
 
-    while i < items.len() {
-        // Check for nested with-facts
-        if let Some(list) = items[i].as_list()
-            && let Some("with-facts") = list.first().and_then(Sexpr::as_atom)
-        {
-            let nested_checks = parse_with_facts(list, context, check_span)?;
-            checks.extend(nested_checks);
-            i += 1;
+    for item in items {
+        let list = item.as_list().ok_or_else(|| {
+            RawError::new(
+                "check items must be lists like (allow \"cmd\") or (with-facts …)",
+                item.span(),
+            )
+        })?;
+        if list.is_empty() {
+            return Err(RawError::new("empty check item", item.span()));
+        }
+        let head = list[0]
+            .as_atom()
+            .ok_or_else(|| RawError::new("check item tag must be an atom", list[0].span()))?;
+
+        if head == "with-facts" {
+            let nested = parse_with_facts(list, context, check_span)?;
+            checks.extend(nested);
             continue;
         }
 
-        // Parse decision
-        let expected = parse_decision(&items[i])?;
-        i += 1;
-
-        // Parse command
-        if i >= items.len() {
+        let expected = parse_decision_tag(head, list[0].span())?;
+        if list.len() < 2 {
             return Err(RawError::new(
-                "check must provide a command after each decision",
-                check_span,
+                format!("({head} …) requires a command string"),
+                item.span(),
             ));
         }
-
-        let cmd = items[i]
+        if list.len() > 3 {
+            return Err(RawError::new(
+                format!("({head} \"cmd\" REASON?) takes at most one optional reason"),
+                item.span(),
+            ));
+        }
+        let cmd = list[1]
             .as_atom_or_str()
-            .ok_or_else(|| RawError::new("check command must be a string", items[i].span()))?;
+            .ok_or_else(|| RawError::new("check command must be a string", list[1].span()))?;
+        // REASON is currently accepted but discarded — the existing Check struct
+        // does not carry it. Decision verbs landing in §4 will surface reasons
+        // through traces; check reasons can ride on that.
 
         checks.push(Check {
             command: cmd.to_string(),
             expected,
             context: context.clone(),
-            span: items[i].span(),
+            span: list[1].span(),
         });
-        i += 1;
     }
 
     Ok(checks)
@@ -443,7 +410,7 @@ mod tests {
 
     #[test]
     fn parse_simple_check() {
-        let config = parse_config(r#"(check :allow "git status" :deny "rm -rf /")"#).unwrap();
+        let config = parse_config(r#"(check (allow "git status") (deny "rm -rf /"))"#).unwrap();
         assert_eq!(config.checks.len(), 2);
         assert_eq!(config.checks[0].command, "git status");
         assert!(matches!(config.checks[0].expected, Decision::Allow));
@@ -453,7 +420,7 @@ mod tests {
 
     #[test]
     fn parse_check_with_ask() {
-        let config = parse_config(r#"(check :ask "ssh prod-server")"#).unwrap();
+        let config = parse_config(r#"(check (ask "ssh prod-server"))"#).unwrap();
         assert_eq!(config.checks.len(), 1);
         assert!(matches!(config.checks[0].expected, Decision::Ask));
     }
@@ -464,7 +431,7 @@ mod tests {
             r#"
             (check
                 (with-facts [[:client/opencode] [:via/ssh]]
-                    :allow "git push"))
+                    (allow "git push")))
         "#,
         )
         .unwrap();
@@ -488,7 +455,7 @@ mod tests {
             (check
                 (with-facts [[:client/opencode]]
                     (with-facts [[:via/ssh]]
-                        :allow "git push")))
+                        (allow "git push"))))
         "#,
         )
         .unwrap();
@@ -511,7 +478,7 @@ mod tests {
             r#"
             (check
                 (with-facts [[:opencode/agent "build"]]
-                    :allow "npm install"))
+                    (allow "npm install")))
         "#,
         )
         .unwrap();
@@ -534,14 +501,13 @@ mod tests {
 
     #[test]
     fn check_rejects_invalid_decision() {
-        let err = parse_config(r#"(check :invalid "cmd")"#).expect_err("expected error");
-        assert!(format!("{err}").contains("unknown expected decision"));
+        let err = parse_config(r#"(check (invalid "cmd"))"#).expect_err("expected error");
+        assert!(format!("{err}").contains("unknown decision tag"));
     }
 
     #[test]
     fn check_accepts_string_commands() {
-        // Atoms are strings in sexpr
-        let config = parse_config(r#"(check :allow "git status" :deny "rm")"#).unwrap();
+        let config = parse_config(r#"(check (allow "git status") (deny "rm"))"#).unwrap();
         assert_eq!(config.checks.len(), 2);
         assert_eq!(config.checks[0].command, "git status");
         assert_eq!(config.checks[1].command, "rm");
@@ -549,8 +515,8 @@ mod tests {
 
     #[test]
     fn check_requires_command_after_decision() {
-        let err = parse_config(r#"(check :allow)"#).expect_err("expected error");
-        assert!(format!("{err}").contains("provide a command"));
+        let err = parse_config(r#"(check (allow))"#).expect_err("expected error");
+        assert!(format!("{err}").contains("requires a command"));
     }
 
     #[test]
@@ -559,7 +525,7 @@ mod tests {
             r#"
             (check
                 (with-facts [[:client/opencode] [:client/opencode]]
-                    :allow "cmd"))
+                    (allow "cmd")))
         "#,
         )
         .expect_err("expected error");
@@ -572,7 +538,7 @@ mod tests {
             r#"
             (check
                 (with-facts [[invalid-key]]
-                    :allow "cmd"))
+                    (allow "cmd")))
         "#,
         )
         .expect_err("expected error");
@@ -592,11 +558,11 @@ mod tests {
             
             (rule "git" (and (or (positional "status") (positional "log")) (effect :allow)))
             (rule "git" (and (positional "push") (effect :ask)))
-            
+
             (check
-                :allow "git status"
-                (with-facts [[:client/opencode]] :allow "git push")
-                :deny "rm -rf /")
+                (allow "git status")
+                (with-facts [[:client/opencode]] (allow "git push"))
+                (deny "rm -rf /"))
         "#,
         )
         .unwrap();
@@ -653,11 +619,11 @@ mod tests {
             r#"
             (check
                 (with-facts [[:client/opencode]]
-                    :invalid "cmd"))
+                    (invalid "cmd")))
         "#,
         )
         .expect_err("expected error");
-        assert!(format!("{err}").contains("unknown expected decision"));
+        assert!(format!("{err}").contains("unknown decision tag"));
     }
 
     #[test]
@@ -666,11 +632,11 @@ mod tests {
             r#"
             (check
                 (with-facts [[:client/opencode]]
-                    :allow))
+                    (allow)))
         "#,
         )
         .expect_err("expected error");
-        assert!(format!("{err}").contains("provide a command"));
+        assert!(format!("{err}").contains("requires a command"));
     }
 
     #[test]
@@ -679,7 +645,7 @@ mod tests {
             r#"
             (check
                 (with-facts [[:client/opencode]]
-                    :allow (not-a-string)))
+                    (allow (not-a-string))))
         "#,
         )
         .expect_err("expected error");
@@ -704,7 +670,7 @@ mod tests {
             r#"
             (check
                 (with-facts [not-a-vector]
-                    :allow "cmd"))
+                    (allow "cmd")))
         "#,
         )
         .expect_err("expected error");
@@ -717,7 +683,7 @@ mod tests {
             r#"
             (check
                 (with-facts [[]]
-                    :allow "cmd"))
+                    (allow "cmd")))
         "#,
         )
         .expect_err("expected error");
@@ -730,7 +696,7 @@ mod tests {
             r#"
             (check
                 (with-facts [[:key "value" "extra"]]
-                    :allow "cmd"))
+                    (allow "cmd")))
         "#,
         )
         .expect_err("expected error");
@@ -743,7 +709,7 @@ mod tests {
             r#"
             (check
                 (with-facts [[:key (not-a-string)]]
-                    :allow "cmd"))
+                    (allow "cmd")))
         "#,
         )
         .expect_err("expected error");
@@ -756,17 +722,17 @@ mod tests {
             r#"
             (check
                 (with-facts [[:client/opencode]]
-                    (not-an-atom) "cmd"))
+                    ((not-an-atom) "cmd")))
         "#,
         )
         .expect_err("expected error");
-        assert!(format!("{err}").contains("decision keyword"));
+        assert!(format!("{err}").contains("tag must be an atom"));
     }
 
     #[test]
     fn parse_check_non_atom_decision() {
-        let err = parse_config(r#"(check ("not-an-atom") "cmd")"#).expect_err("expected error");
-        assert!(format!("{err}").contains("check entries must start with a decision keyword"));
+        let err = parse_config(r#"(check ((not-an-atom) "cmd"))"#).expect_err("expected error");
+        assert!(format!("{err}").contains("tag must be an atom"));
     }
 
     #[test]

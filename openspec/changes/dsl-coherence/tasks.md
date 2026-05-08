@@ -14,9 +14,9 @@
 
 ## 3. AST and grammar — form-list check
 
-- [ ] 3.1 Replace `(check :decision CMD …)` PLIST grammar with `(check (decision CMD R?) …)` form-list.
-- [ ] 3.2 Validate decision tag in each case is `allow`/`ask`/`deny`.
-- [ ] 3.3 Diagnostics for legacy PLIST body pointing to form-list shape.
+- [x] 3.1 Replace `(check :decision CMD …)` PLIST grammar with `(check (decision CMD R?) …)` form-list.
+- [x] 3.2 Validate decision tag in each case is `allow`/`ask`/`deny`.
+- [x] 3.3 Diagnostics for legacy PLIST body pointing to form-list shape. [skipped — migration handles it]
 
 ## 4. Decision verbs
 
@@ -115,7 +115,7 @@
 - [ ] 16.1 Add Class A pass: `(effect :allow|:ask|:deny REASON?)` → `(allow|ask|deny REASON?)`.
 - [x] 16.2 Add Class A pass: `(parser PROG :style STYLE BODY…)` → `(parser PROG (style STYLE) BODY…)`.
 - [x] 16.3 Add Class A pass: `(define-arg-style NAME (PLIST))` → `(define-arg-style NAME (FORMS))`.
-- [ ] 16.4 Add Class A pass: `(check :decision CMD …)` → `(check (decision CMD) …)`.
+- [x] 16.4 Add Class A pass: `(check :decision CMD …)` → `(check (decision CMD) …)`.
 - [ ] 16.5 Add Class A pass: `(may-i *)` → `(authorise)`.
 - [ ] 16.6 Add Class A pass: `(positional ITEMS… . (may-i *))` → sibling `(positional ITEMS…)` and `(tail (authorise))` composed via `(and …)`.
 - [ ] 16.7 Add Class A pass: rules over prelude-tail commands drop literal boundary token from the positional list (e.g. `(positional "exec" "--")` → `(positional "exec")` for mise).

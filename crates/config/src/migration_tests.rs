@@ -177,14 +177,15 @@ fn migration_multiple_forms() {
 }
 
 #[test]
-fn migration_preserves_check_forms() {
+fn migration_rewrites_check_to_form_list() {
     let input = r#"(check :allow "git status")"#;
     let node = parse_single(input);
     let result = migrate(node);
     let output = result.serialize();
 
     assert!(output.contains("check"));
-    assert!(output.contains(":allow"));
+    assert!(output.contains("(allow"));
+    assert!(!output.contains(":allow"));
     assert!(output.contains("git status"));
 }
 

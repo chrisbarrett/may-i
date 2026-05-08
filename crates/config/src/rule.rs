@@ -311,7 +311,7 @@ mod tests {
     #[test]
     fn parse_rule_with_check_alongside_effect() {
         let rule =
-            parse_rule_str(r#"(rule "git" (effect :allow) (check :allow "git status"))"#).unwrap();
+            parse_rule_str(r#"(rule "git" (effect :allow) (check (allow "git status")))"#).unwrap();
         assert!(matches!(
             rule.effect.value,
             Effect::Terminal {

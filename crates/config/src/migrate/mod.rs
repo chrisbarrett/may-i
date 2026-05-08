@@ -21,6 +21,7 @@
 pub(crate) mod helpers;
 
 // Rewrite rules — one module per rule (or small related group).
+mod check_form;
 mod collapse_effects;
 mod cond_simplify;
 mod defcontext_to_define;
@@ -104,6 +105,7 @@ pub fn migration_rules() -> Vec<RewriteFn> {
         Box::new(rename_has_to_fact::rename_has_to_fact),
         Box::new(parser_style_form::parser_style_to_form),
         Box::new(define_arg_style_form::define_arg_style_to_form),
+        Box::new(check_form::check_to_form),
         // Stage 2 — normalisation (must run after stage 1 is stable)
         Box::new(collapse_effects::rule_collapse_effects),
         Box::new(flatten_combinators::flatten_combinators),
