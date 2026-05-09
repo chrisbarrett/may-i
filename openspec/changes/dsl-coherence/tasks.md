@@ -3,7 +3,7 @@
 - [x] 1.1 Add `(style …)` form to parser body grammar; remove `:style` PLIST key parsing.
 - [x] 1.2 Validate parser body: exactly one `(style …)`, at most one `(tail …)`, recognised kinds only. [tail check deferred to Section 6]
 - [x] 1.3 Diagnostics for legacy `:style …` form pointing to `(style …)`. [implicit — form-list parser rejects keyword tokens with "body items must be lists"]
-- [ ] 1.4 Property test: every form-list parser body roundtrips through parser and canonicaliser unchanged. [pending Section 15 canonicaliser; "never panics" prop tests landed]
+- [x] 1.4 Property test: every form-list parser body roundtrips through parser and canonicaliser unchanged. [closed by `may-i-fmt-command`: see `parser_body_canonical_roundtrips` in `crates/config/src/canonicalise.rs`]
 
 ## 2. AST and grammar — form-list define-arg-style
 
@@ -23,7 +23,7 @@
 - [x] 4.1 Add `(allow …)`, `(ask …)`, `(deny …)` rule body forms; each accepts optional reason string.
 - [x] 4.2 Wire decision verbs to existing `Effect::Terminal` representation.
 - [x] 4.3 Reject legacy `(effect :decision …)` at config-load with diagnostic.
-- [ ] 4.4 Property test: decision verbs roundtrip through canonical form. [pending Section 15 canonicaliser]
+- [x] 4.4 Property test: decision verbs roundtrip through canonical form. [closed by `may-i-fmt-command`: see `decision_verbs_roundtrip_through_canonical` in `crates/config/src/canonicalise.rs`]
 
 ## 5. Recursion verb `(authorise)`
 
@@ -104,11 +104,11 @@
 
 ## 15. Canonical form ordering
 
-- [ ] 15.1 Sort parser body declarations: style first, flags alphabetical, parameters alphabetical, tail last. [deferred — parser bodies are not trust-hashed; ordering matters for `may-i fmt`, which is out of scope per design.md]
-- [ ] 15.2 Sort define-arg-style attributes alphabetically. [deferred — same as 15.1]
-- [ ] 15.3 Sort check cases alphabetically by command string. [deferred — checks are not trust-hashed]
+- [x] 15.1 Sort parser body declarations: style first, flags alphabetical, parameters alphabetical, tail last. [closed by `may-i-fmt-command`: see `sort_parser_body` in `crates/config/src/canonicalise.rs`]
+- [x] 15.2 Sort define-arg-style attributes alphabetically. [closed by `may-i-fmt-command`: see `sort_define_arg_style_body`]
+- [x] 15.3 Sort check cases alphabetically by command string. [closed by `may-i-fmt-command`: see `sort_check_body`]
 - [x] 15.4 Preserve rule order (rules are semantic).
-- [ ] 15.5 Property test: equivalent configs differing in declaration order produce the same canonical form. [deferred — pending 15.1–15.3]
+- [x] 15.5 Property test: equivalent configs differing in declaration order produce the same canonical form. [closed by `may-i-fmt-command`: see `parser_permutations_render_identically`]
 Decision-verb and `(authorise)` canonicalisation: rule trust hashes now render as `(allow)`, `(ask)`, `(deny)`, and `(authorise)` for the bare wildcard recursion.
 
 ## 16. Migration — rewrite chain

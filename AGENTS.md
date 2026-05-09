@@ -7,7 +7,9 @@ _pattern_, _rule_) from contributor-only ones (_effect_, _predicate_, the
 `ArgPattern`/`Expr<T>` split). Using the wrong word in the wrong audience is
 a recurring source of bugs.
 
-Run `cargo fmt` before staging files.
+Run `cargo fmt` before staging files. The analog for `.lisp` configs in
+`examples/` is `may-i fmt` — it canonicalises whitespace and declaration
+order; run it before staging changes to example configs.
 
 > [!IMPORTANT]
 > Project is pre-1.0; back-compatibility not required. Use migration system to

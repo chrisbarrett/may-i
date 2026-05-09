@@ -550,6 +550,58 @@ Cycles in `(overrides …)` and unknown attribute names are config-load errors.
 > The trace output (`may-i eval`) shows the resolved style and parameter list
 > per evaluation, so you can confirm a `(parser …)` is doing what you expect.
 
+## Formatting configs with `may-i fmt`
+
+`may-i fmt` rewrites configs to canonical form. Use it from editors,
+pre-commit hooks, or CI. It is the analog of `cargo fmt` for `.lisp`
+config files.
+
+```sh
+may-i fmt PATH [PATH…]   # format files in place
+may-i fmt                # walk (load …) graph from primary config
+cat foo.lisp | may-i fmt # stdin → stdout filter
+may-i fmt -              # explicit stdin
+may-i fmt --check …      # exit 0 (clean) / 1 (would change) / 2 (error); no writes
+```
+
+What `fmt` does:
+
+- Pretty-prints whitespace using the column width detected from source.
+- Sorts declaration-order-insensitive bodies into a deterministic order:
+    - **Parser body**: `(style …)` first, then `(flag …)` declarations
+      alphabetised by name, then `(parameter …)` declarations
+      alphabetised by name, then `(tail …)` last.
+    - **`define-arg-style` body**: attribute forms alphabetised by head
+      atom (`combined-shorts` < `long-prefix` < … < `separators`).
+    - **`(check …)` body**: cases alphabetised by command string.
+    - **Rule bodies**: order **preserved** — rule body forms evaluate
+      short-circuit, so order is semantic.
+- Sorts the name vector in `(flag VEC)` and `(parameter VEC …)`
+  declarations: `(flag ["r" "0"])` becomes `(flag ["0" "r"])`. Vectors
+  in any other position (separators, prefixes, rule bodies) are
+  order-significant and are left untouched.
+
+What `fmt` does **not** do:
+
+- It never silently rewrites legacy syntax. If the input contains
+  forms the canonical loader rejects (e.g. `(effect :allow)`,
+  `(may-i *)`), `fmt` formats the input as-is and emits a stderr
+  warning suggesting `may-i migrate`. Migration is the explicit
+  user-invoked path.
+- It does not change rule order or rule body order — both are semantic.
+
+**Comments travel with their owning form.** A comment placed between
+two body declarations is owned by the form that follows it; sorting
+moves comment + form as a unit. A "section header" comment between
+two flags will migrate with whichever flag now sits below it under
+the canonical sort order.
+
+Exit codes (also via `--check`):
+
+- `0` — every input matches its canonical form.
+- `1` — at least one input would change (`--check` only).
+- `2` — parse error, IO error, or other blocking failure.
+
 ## Notes for agents
 
 If you're an agent reading this:

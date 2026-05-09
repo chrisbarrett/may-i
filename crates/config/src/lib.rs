@@ -1,3 +1,4 @@
+pub mod canonicalise;
 pub(crate) mod command;
 pub(crate) mod config;
 pub(crate) mod effect;
@@ -17,6 +18,7 @@ mod migration_tests;
 #[cfg(test)]
 mod parser_properties;
 
+pub use canonicalise::{canonicalise_forms, canonicalise_node};
 pub use command::parse_command_pattern;
 pub use config::{parse_config, parse_config_from_sexprs, parse_config_from_tagged_sexprs};
 pub use effect::parse_effect;
