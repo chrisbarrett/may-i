@@ -1,0 +1,45 @@
+---
+source: tests/pretty_print_snapshots.rs
+expression: out
+---
+── input (width 80) ──
+(safe-env-vars "HOME" "USER")
+
+(define safe-cmd (or (positional "status") (positional "log")))
+
+(parser "kubectl" (style gnu) (parameter ["n" "namespace"]))
+
+(rule "ls" (allow))
+
+(rule "rm"
+  (cond ((positional "/") (deny "root"))
+        ((flag "r") (ask "recursive"))
+        (else (allow))))
+
+(check (allow "ls -la") (deny "rm -rf /"))
+── output ──
+(safe-env-vars "HOME" "USER")
+
+
+(define safe-cmd
+  (or (positional "status") (positional "log")))
+
+
+(parser "kubectl" (style gnu) (parameter ["n" "namespace"]))
+
+
+(rule "ls"
+  (allow))
+
+
+(rule "rm"
+  (cond
+   ((positional "/")
+    (deny "root"))
+   ((flag "r")
+    (ask "recursive"))
+   (else
+    (allow))))
+
+
+(check (allow "ls -la") (deny "rm -rf /"))

@@ -241,6 +241,17 @@ impl TrustStore {
         }
     }
 
+    /// Replace an entry's hash key (and rewrite its `form`) without
+    /// changing its approval status. Used by Class A trust rehash when
+    /// the canonical-form rendering changes but the rule's semantics
+    /// don't.
+    pub fn replace_rule(&mut self, old_hash: &str, new_hash: String, new_form: String) {
+        if let Some(mut entry) = self.rules.remove(old_hash) {
+            entry.form = new_form;
+            self.rules.insert(new_hash, entry);
+        }
+    }
+
     /// Get previously stored canonical forms for a program (for diff computation).
     pub fn previous_rules(&self, program: &str) -> Option<Vec<String>> {
         let forms: Vec<String> = self

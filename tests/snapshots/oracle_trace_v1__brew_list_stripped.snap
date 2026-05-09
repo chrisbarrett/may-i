@@ -7,14 +7,14 @@ Trace
 
   parser: gnu │
 
-                                command │ brew list
-  74: (rule (command "brew")            │
-        (args (cond                     │
-                ((positional "install") │ "list" = "install" → no
-                 …)                     │
-                ((positional            │
-                  (or "list" "search")) │ "list" = "list" → yes
-                 (effect :allow)))))    │ → :allow
+                               command │ brew list
+  74: (rule (command "brew")           │
+        (args (cond                    │
+               ((positional "install") │ "list" = "install" → no
+                …)                     │
+               ((positional            │
+                 (or "list" "search")) │ "list" = "list" → yes
+                (effect :allow)))))    │ → :allow
 
 Result
 

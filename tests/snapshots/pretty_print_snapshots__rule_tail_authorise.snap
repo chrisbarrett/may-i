@@ -1,0 +1,9 @@
+---
+source: tests/pretty_print_snapshots.rs
+expression: out
+---
+── input (width 80) ──
+(rule "sudo" (tail (authorise)))
+── output ──
+(rule "sudo"
+  (tail (authorise)))

@@ -29,7 +29,7 @@ fn test_migration_analysis_no_changes() {
     use may_i_config::migrate::analyze_migration;
 
     // Already canonical syntax (unified style) - no changes needed
-    let source = "(rule git (effect :allow))";
+    let source = "(rule git (allow))";
     let analysis = analyze_migration(source);
 
     assert!(
@@ -72,7 +72,7 @@ fn test_migration_analysis_multiple_forms() {
     let source = r#"
 (rule (command git) (effect :allow))
 (defcontext ssh (has :via/ssh))
-(rule ls (effect :allow))
+(rule ls (allow))
 "#;
 
     let analysis = analyze_migration(source);
@@ -120,7 +120,7 @@ fn test_check_unhandled_cases_real_issues() {
 fn test_diff_output_no_changes() {
     use may_i_config::migrate::analyze_migration;
 
-    let source = "(rule git (effect :allow))\n";
+    let source = "(rule git (allow))\n";
     let analysis = analyze_migration(source);
 
     // Verify the analysis structure

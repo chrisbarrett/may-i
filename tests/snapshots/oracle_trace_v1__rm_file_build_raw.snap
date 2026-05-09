@@ -14,8 +14,8 @@ expression: normalised
                           [2m([0mflag                     [2m│[0m
                            [32m"recursive"[0m[2m)[0m[2m)[0m            [2m│[0m
                       [2m…[0m[2m)[0m[2m)[0m                           [2m│[0m
-        [2m([0m[2meffect[0m                                     [2m│[0m [2m[0m[2m→[0m [1;31m:deny[0m [32m"Recursive deletion from root"[0m
-         [2m:deny[0m [2m"Recursive deletion from root"[0m[2m)[0m[2m)[0m     [2m│[0m
+        [2m([0m[2mdeny[0m                                       [2m│[0m [2m[0m[2m→[0m [1;31m:deny[0m [32m"Recursive deletion from root"[0m
+         [2m"Recursive deletion from root"[0m[2m)[0m[2m)[0m           [2m│[0m
                                                     [2m│[0m
   [2m29: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"rm"[0m[2m)[0m                          [2m│[0m
         [2m([0m[34margs[0m                                       [2m│[0m

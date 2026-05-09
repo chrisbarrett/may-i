@@ -152,21 +152,18 @@ pub(crate) fn cond_absorb_else(node: &CstNode) -> Option<Box<CstNode>> {
 mod tests {
     #[test]
     fn test_cond_single_clause_else_to_if() {
-        let input = "(cond ((pred) (effect :allow)) (else (effect :deny)))";
+        let input = "(cond ((pred) (allow)) (else (deny)))";
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let result = super::super::migrate(nodes.into_iter().next().unwrap());
-        assert_eq!(
-            result.serialize(),
-            "(if (pred) (effect :allow) (effect :deny))"
-        );
+        assert_eq!(result.serialize(), "(if (pred) (allow) (deny))");
     }
 
     #[test]
     fn test_cond_single_clause_no_else_unchanged() {
-        let input = "(cond ((pred) (effect :allow)))";
+        let input = "(cond ((pred) (allow)))";
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let result = super::super::migrate(nodes.into_iter().next().unwrap());
-        assert_eq!(result.serialize(), "(cond ((pred) (effect :allow)))");
+        assert_eq!(result.serialize(), "(cond ((pred) (allow)))");
     }
 
     #[test]
@@ -182,68 +179,66 @@ mod tests {
 
     #[test]
     fn test_cond_else_if_absorption() {
-        let input = r#"(cond ((exact) (effect :allow)) (else (if (positional "x") (effect :ask) (effect :deny))))"#;
+        let input = r#"(cond ((exact) (allow)) (else (if (positional "x") (ask) (deny))))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let result = super::super::migrate(nodes.into_iter().next().unwrap());
         assert_eq!(
             result.serialize(),
-            r#"(cond ((exact) (effect :allow)) ((positional "x") (effect :ask)) (else (effect :deny)))"#,
+            r#"(cond ((exact) (allow)) ((positional "x") (ask)) (else (deny)))"#,
         );
     }
 
     #[test]
     fn test_cond_else_when_absorption() {
-        let input =
-            r#"(cond ((exact) (effect :allow)) (else (when (positional "x") (effect :ask))))"#;
+        let input = r#"(cond ((exact) (allow)) (else (when (positional "x") (ask))))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let result = super::super::migrate(nodes.into_iter().next().unwrap());
         assert_eq!(
             result.serialize(),
-            r#"(cond ((exact) (effect :allow)) ((positional "x") (effect :ask)))"#,
+            r#"(cond ((exact) (allow)) ((positional "x") (ask)))"#,
         );
     }
 
     #[test]
     fn test_cond_else_cond_absorption() {
-        let input = r#"(cond ((exact) (effect :allow)) (else (cond ((positional "x") (effect :ask)) (else (effect :deny)))))"#;
+        let input =
+            r#"(cond ((exact) (allow)) (else (cond ((positional "x") (ask)) (else (deny)))))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let result = super::super::migrate(nodes.into_iter().next().unwrap());
         assert_eq!(
             result.serialize(),
-            r#"(cond ((exact) (effect :allow)) ((positional "x") (effect :ask)) (else (effect :deny)))"#,
+            r#"(cond ((exact) (allow)) ((positional "x") (ask)) (else (deny)))"#,
         );
     }
 
     #[test]
     fn test_cond_multi_clause_else_if_absorption() {
-        let input = r#"(cond ((exact) (effect :allow)) ((positional "a") (effect :ask)) (else (if (positional "b") (effect :deny) (effect :allow))))"#;
+        let input = r#"(cond ((exact) (allow)) ((positional "a") (ask)) (else (if (positional "b") (deny) (allow))))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let result = super::super::migrate(nodes.into_iter().next().unwrap());
         assert_eq!(
             result.serialize(),
-            r#"(cond ((exact) (effect :allow)) ((positional "a") (effect :ask)) ((positional "b") (effect :deny)) (else (effect :allow)))"#,
+            r#"(cond ((exact) (allow)) ((positional "a") (ask)) ((positional "b") (deny)) (else (allow)))"#,
         );
     }
 
     #[test]
     fn test_cond_else_non_conditional_unchanged() {
-        let input = r#"(cond ((exact) (effect :allow)) (else (effect :deny)))"#;
+        let input = r#"(cond ((exact) (allow)) (else (deny)))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let result = super::super::migrate(nodes.into_iter().next().unwrap());
-        assert_eq!(
-            result.serialize(),
-            r#"(if (exact) (effect :allow) (effect :deny))"#,
-        );
+        assert_eq!(result.serialize(), r#"(if (exact) (allow) (deny))"#,);
     }
 
     #[test]
     fn test_cond_else_unless_absorption() {
-        let input = r#"(cond ((exact) (effect :allow)) ((positional "a") (effect :ask)) (else (unless danger (effect :deny))))"#;
+        let input =
+            r#"(cond ((exact) (allow)) ((positional "a") (ask)) (else (unless danger (deny))))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let result = super::super::migrate(nodes.into_iter().next().unwrap());
         assert_eq!(
             result.serialize(),
-            r#"(cond ((exact) (effect :allow)) ((positional "a") (effect :ask)) ((not danger) (effect :deny)))"#,
+            r#"(cond ((exact) (allow)) ((positional "a") (ask)) ((not danger) (deny)))"#,
         );
     }
 }

@@ -11,11 +11,11 @@
 
 (rule "may-i"
   (cond ((positional (or "check" "reference" "help" "parse" "eval"))
-         (effect :allow "Safe operations"))
+         (allow "Safe operations"))
         ((positional "migrate")
-         (effect :ask "Config migration requires confirmation"))
+         (ask "Config migration requires confirmation"))
         ((positional "trust")
-         (effect :ask "Trusting configuration requires confirmation"))))
+         (ask "Trusting configuration requires confirmation"))))
 
 ;;; -- Deny: dangerous operations ---------------------------------------------
 
@@ -28,62 +28,64 @@
 (rule "rm"
   (if (and (flag ["r" "recursive"])
            (positional "/"))
-      (effect :deny "Recursive deletion from root")
-    (effect :ask)))
+      (deny "Recursive deletion from root")
+    (ask)))
 
 (rule (or "mkfs" "dd" "fdisk" "parted" "gdisk")
-  (effect :deny "Dangerous filesystem or device operation"))
+  (deny "Dangerous filesystem or device operation"))
 
 (rule (or "shutdown" "reboot" "halt" "poweroff" "init")
-  (effect :deny "System power control"))
+  (deny "System power control"))
 
 (rule (or "iptables" "nft" "pfctl")
-  (effect :deny "Firewall manipulation"))
+  (deny "Firewall manipulation"))
 
 ;;; -- Context-aware rules using facts -----------------------------------------
 
 ;; Block kubectl in production (test with: may-i eval --fact :env=prod 'kubectl get pods')
 (rule "kubectl"
   (if (fact? [:env "prod"])
-      (effect :deny "No kubectl in production")
-    (effect :allow)))
+      (deny "No kubectl in production")
+    (allow)))
 
-;; SSH wrapper — capture host as fact, evaluate inner command recursively
+;; SSH wrapper — capture host as fact, evaluate inner command recursively.
+;; The tail (everything after the host) is recursed into as an inner command.
 (rule "ssh"
-  (positional [:ssh/host *] . (may-i *)))
+  (and (positional [:ssh/host *])
+       (tail (authorise))))
 
 (rule "rm"
   (cond
     ((and (flag ["r" "recursive"])
           (fact? [:ssh/host (regex "^prod-")]))
-     (effect :deny "Recursive delete on production hosts"))
+     (deny "Recursive delete on production hosts"))
     ((flag ["r" "recursive"])
-     (effect :ask "Confirm recursive deletion"))
+     (ask "Confirm recursive deletion"))
     (else
-     (effect :allow))))
+     (allow))))
 
 ;;; -- Allow: read-only operations ---------------------------------------------
 
 (rule (or "cat" "head" "tail" "less" "more" "wc" "sort" "uniq")
-  (effect :allow "Read-only file operations"))
+  (allow "Read-only file operations"))
 
 (rule (or "ls" "tree" "file" "stat" "du" "df")
-  (effect :allow "Read-only filesystem inspection"))
+  (allow "Read-only filesystem inspection"))
 
 (rule (or "grep" "rg" "ag" "ack")
-  (effect :allow "Text search"))
+  (allow "Text search"))
 
 (rule (or "locate" "which" "whereis" "type")
-  (effect :allow "File and command lookup"))
+  (allow "File and command lookup"))
 
 (rule (or "echo" "printf" "true" "false" "test" "[")
-  (effect :allow "Shell builtins"))
+  (allow "Shell builtins"))
 
 (rule (or "date" "hostname" "uname" "whoami" "id" "printenv" "env")
-  (effect :allow "System information"))
+  (allow "System information"))
 
 (rule (or "ps" "top" "uptime" "free" "vmstat" "iostat")
-  (effect :allow "Process and system monitoring"))
+  (allow "Process and system monitoring"))
 
 (rule (or "basename" "dirname" "realpath" "readlink" "pwd")
-  (effect :allow "Path utilities"))
+  (allow "Path utilities"))

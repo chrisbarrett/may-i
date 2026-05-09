@@ -19,10 +19,10 @@ fn run(command: &str) -> (String, String) {
     colored::control::set_override(true);
     let cfg = common::write_config(
         r#"
-(rule "echo" (effect :allow))
-(rule "cat" (effect :allow))
-(rule "grep" (effect :allow))
-(rule "rm" (effect :deny "rm denied"))
+(rule "echo" (allow))
+(rule "cat" (allow))
+(rule "grep" (allow))
+(rule "rm" (deny "rm denied"))
 "#,
     );
     let loaded = may_i_config::load_and_resolve(Some(cfg.path())).expect("load config");

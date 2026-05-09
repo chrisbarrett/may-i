@@ -20,6 +20,14 @@ fn contains_bind<E: std::fmt::Debug + may_i_core::ToDoc>(expr: &Expr<E>) -> bool
     }
 }
 
+/// Parse a single-token capture-terminator expression. Used by
+/// `(parameter NAME (many-till PAT))` in parser bodies. Thin wrapper
+/// over the internal `parse_expr` so other modules don't need to depend
+/// on the unstable internal helper signature.
+pub(crate) fn parse_expr_for_capture(sexpr: &Sexpr) -> Result<Expr<Effect>, RawError> {
+    parse_expr(sexpr)
+}
+
 /// Parse a simple expression pattern from an s-expression.
 fn parse_expr(sexpr: &Sexpr) -> Result<Expr<Effect>, RawError> {
     match sexpr {
@@ -229,6 +237,7 @@ pub fn parse_arg_pattern(sexpr: &Sexpr) -> Result<ArgPattern, RawError> {
         "exact" => parse_positional_form(&list[1..], sexpr.span(), true),
         "flag" => parse_flag_form(&list[1..], sexpr.span()),
         "parameter" => parse_parameter_form(&list[1..], sexpr.span()),
+        "tail" => parse_tail_pattern(&list[1..], sexpr.span()),
         "anywhere" => {
             let exprs: Result<Vec<Expr<Effect>>, _> = list[1..].iter().map(parse_expr).collect();
             Ok(ArgPattern::Anywhere(exprs?))
@@ -257,6 +266,37 @@ pub fn parse_arg_pattern(sexpr: &Sexpr) -> Result<ArgPattern, RawError> {
             ),
         ),
     }
+}
+
+/// Parse `(tail (authorise))` — the rule-side tail recursion form. The
+/// body is restricted to a bare `(authorise)` verb; matching against
+/// the tail-as-string via regex etc. is intentionally not supported
+/// (recurse into the inner ruleset instead).
+fn parse_tail_pattern(args: &[Sexpr], span: may_i_core::Span) -> Result<ArgPattern, RawError> {
+    if args.len() != 1 {
+        return Err(RawError::new("(tail …) takes exactly one body form", span)
+            .with_help("(tail (authorise))"));
+    }
+    let body = args[0]
+        .as_list()
+        .ok_or_else(|| RawError::new("(tail …) body must be a list", args[0].span()))?;
+    let head = body
+        .first()
+        .and_then(|f| f.as_atom())
+        .ok_or_else(|| RawError::new("(tail …) body must start with a verb", args[0].span()))?;
+    if head != "authorise" {
+        return Err(RawError::new(
+            format!("(tail …) body must be (authorise), got `{head}`"),
+            args[0].span(),
+        ));
+    }
+    if body.len() != 1 {
+        return Err(RawError::new(
+            "(authorise) inside (tail …) takes no arguments",
+            args[0].span(),
+        ));
+    }
+    Ok(ArgPattern::Tail)
 }
 
 /// Parse a `(flag NAMES)` form.
@@ -295,19 +335,24 @@ fn parse_parameter_form(args: &[Sexpr], span: may_i_core::Span) -> Result<ArgPat
 fn parse_parameter_form_body(sexpr: &Sexpr) -> Result<ParameterForm, RawError> {
     if let Some(list) = sexpr.as_list()
         && let Some(tag) = list.first().and_then(|f| f.as_atom())
-        && tag == "may-i"
     {
-        // (may-i ...) form. The inner pattern is currently ignored —
-        // recursion always treats the whole flag value as the command line.
-        // We accept any inner shape so that `(may-i *)` and `(may-i (positional *))`
-        // both parse, matching user expectations from the rest of the DSL.
-        if list.len() != 2 {
-            return Err(RawError::new(
-                "may-i in parameter form must have exactly one inner pattern",
-                sexpr.span(),
-            ));
+        // `(authorise)` — recursion verb in parameter-body host context.
+        if tag == "authorise" {
+            if list.len() != 1 {
+                return Err(RawError::new(
+                    "(authorise) takes no arguments",
+                    sexpr.span(),
+                ));
+            }
+            return Ok(ParameterForm::MayI);
         }
-        return Ok(ParameterForm::MayI);
+        if tag == "may-i" {
+            return Err(RawError::new(
+                "(may-i …) is retired; use (authorise) inside the parameter body",
+                sexpr.span(),
+            )
+            .with_help("run `may-i migrate` to convert legacy syntax"));
+        }
     }
     let expr = parse_expr(sexpr)?;
     Ok(ParameterForm::Match(expr))
@@ -363,25 +408,20 @@ fn parse_positional_form(
 ) -> Result<ArgPattern, RawError> {
     // Check for dot syntax: patterns before dot, continuation effect after
     let mut patterns: Vec<PositionalArg> = Vec::new();
-    let mut continuation: Option<may_i_core::ast::Effect> = None;
+    let continuation: Option<may_i_core::ast::Effect> = None;
     let mut i = 0;
 
     while i < args.len() {
-        // Check for dot syntax: `.` followed by continuation effect
         if let Some(atom) = args[i].as_atom()
             && atom == "."
         {
-            if i + 1 >= args.len() {
-                return Err(RawError::new(
-                    "dot notation requires an effect after the dot",
-                    args[i].span(),
-                ));
-            }
-            // Parse the continuation effect
-            let spanned_effect = crate::effect::parse_effect(&args[i + 1])?;
-            continuation = Some(spanned_effect.value);
-            i += 2;
-            continue;
+            return Err(
+                RawError::new("dotted-tail continuation is retired", args[i].span()).with_help(
+                    "rewrite as a sibling matcher composed via (and …): \
+                 `(positional ITEM…)` and `(tail (authorise))`. \
+                 Run `may-i migrate` to convert legacy syntax.",
+                ),
+            );
         }
 
         patterns.push(parse_positional_arg(&args[i])?);
@@ -569,7 +609,7 @@ mod tests {
 
     #[test]
     fn parse_parameter_may_i_form() {
-        let pattern = parse_arg(r#"(parameter "c" (may-i *))"#).unwrap();
+        let pattern = parse_arg(r#"(parameter "c" (authorise))"#).unwrap();
         match pattern {
             ArgPattern::Parameter { names, form } => {
                 assert_eq!(names, vec!["c".to_string()]);
@@ -818,61 +858,15 @@ mod tests {
     }
 
     #[test]
-    fn parse_positional_with_dot_notation() {
-        // (positional "git" . (effect :allow))
-        let pattern = parse_arg(r#"(positional "git" . (effect :allow))"#).unwrap();
-        match pattern {
-            ArgPattern::Ordered {
-                mode: MatchMode::Positional,
-                patterns,
-                continuation,
-            } => {
-                assert_eq!(patterns.len(), 1);
-                assert!(continuation.is_some());
-            }
-            _ => panic!("expected Positional with continuation"),
-        }
+    fn dotted_tail_continuation_is_rejected_in_positional() {
+        let err = parse_arg(r#"(positional "git" . (allow))"#).expect_err("expected error");
+        assert!(format!("{err}").contains("dotted-tail continuation is retired"));
     }
 
     #[test]
-    fn parse_positional_with_dot_notation_may_i() {
-        // (positional * . (may-i (positional *)))
-        let pattern = parse_arg(r#"(positional * . (may-i (positional *)))"#).unwrap();
-        match pattern {
-            ArgPattern::Ordered {
-                mode: MatchMode::Positional,
-                patterns,
-                continuation,
-            } => {
-                assert_eq!(patterns.len(), 1);
-                assert!(continuation.is_some());
-            }
-            _ => panic!("expected Positional with may-i continuation"),
-        }
-    }
-
-    #[test]
-    fn parse_exact_with_dot_notation() {
-        // (exact "git" "status" . (effect :allow))
-        let pattern = parse_arg(r#"(exact "git" "status" . (effect :allow))"#).unwrap();
-        match pattern {
-            ArgPattern::Ordered {
-                mode: MatchMode::Exact,
-                patterns,
-                continuation,
-            } => {
-                assert_eq!(patterns.len(), 2);
-                assert!(continuation.is_some());
-            }
-            _ => panic!("expected Exact with continuation"),
-        }
-    }
-
-    #[test]
-    fn parse_positional_dot_without_effect_error() {
-        // (positional "git" .)
-        let err = parse_arg(r#"(positional "git" .)"#).expect_err("expected error");
-        assert!(format!("{err}").contains("requires an effect after the dot"));
+    fn dotted_tail_continuation_is_rejected_in_exact() {
+        let err = parse_arg(r#"(exact "git" "status" . (allow))"#).expect_err("expected error");
+        assert!(format!("{err}").contains("dotted-tail continuation is retired"));
     }
 
     // --- Tests for fact binding (Expr::Bind) ---
@@ -880,9 +874,9 @@ mod tests {
 
     #[test]
     fn parse_positional_with_fact_binding_simple() {
-        // (positional [:ssh/host] . (may-i *))
-        // Bracket notation binds matched value to the keyword
-        let pattern = parse_arg(r#"(positional [:ssh/host] . (may-i *))"#).unwrap();
+        // (positional [:ssh/host])
+        // Bracket notation binds matched value to the keyword.
+        let pattern = parse_arg(r#"(positional [:ssh/host])"#).unwrap();
         match pattern {
             ArgPattern::Ordered {
                 mode: MatchMode::Positional,
@@ -890,7 +884,6 @@ mod tests {
                 ..
             } => {
                 assert_eq!(pargs.len(), 1);
-                // The pattern should be a Bind expression with wildcard
                 match &pargs[0].pattern {
                     Expr::Bind { key, expr } => {
                         assert_eq!(key.as_str(), ":ssh/host");
@@ -905,9 +898,9 @@ mod tests {
 
     #[test]
     fn parse_positional_with_fact_binding_explicit_wildcard() {
-        // (positional [:ssh/host *] . (may-i *))
-        // Explicit * is optional but allowed for clarity
-        let pattern = parse_arg(r#"(positional [:ssh/host *] . (may-i *))"#).unwrap();
+        // (positional [:ssh/host *])
+        // Explicit * is optional but allowed for clarity.
+        let pattern = parse_arg(r#"(positional [:ssh/host *])"#).unwrap();
         match pattern {
             ArgPattern::Ordered {
                 mode: MatchMode::Positional,
@@ -1059,9 +1052,7 @@ mod tests {
 
     #[test]
     fn parse_expr_cond_in_positional() {
-        let pattern =
-            parse_arg(r#"(positional (cond ("a" (effect :allow)) (else (effect :deny))))"#)
-                .unwrap();
+        let pattern = parse_arg(r#"(positional (cond ("a" (allow)) (else (deny))))"#).unwrap();
         match pattern {
             ArgPattern::Ordered {
                 mode: MatchMode::Positional,
@@ -1077,7 +1068,7 @@ mod tests {
 
     #[test]
     fn parse_expr_if_in_positional() {
-        let pattern = parse_arg(r#"(positional (if "a" (effect :allow) (effect :deny)))"#).unwrap();
+        let pattern = parse_arg(r#"(positional (if "a" (allow) (deny)))"#).unwrap();
         match pattern {
             ArgPattern::Ordered {
                 mode: MatchMode::Positional,
@@ -1093,7 +1084,7 @@ mod tests {
 
     #[test]
     fn parse_expr_when_in_positional() {
-        let pattern = parse_arg(r#"(positional (when "a" (effect :allow)))"#).unwrap();
+        let pattern = parse_arg(r#"(positional (when "a" (allow)))"#).unwrap();
         match pattern {
             ArgPattern::Ordered {
                 mode: MatchMode::Positional,
@@ -1109,7 +1100,7 @@ mod tests {
 
     #[test]
     fn parse_expr_unless_in_positional() {
-        let pattern = parse_arg(r#"(positional (unless "a" (effect :deny)))"#).unwrap();
+        let pattern = parse_arg(r#"(positional (unless "a" (deny)))"#).unwrap();
         match pattern {
             ArgPattern::Ordered {
                 mode: MatchMode::Positional,
@@ -1133,22 +1124,21 @@ mod tests {
 
     #[test]
     fn parse_cond_else_wrong_arity_error() {
-        let err = parse_arg(r#"(positional (cond (else (effect :allow) (effect :deny))))"#)
-            .expect_err("expected error");
+        let err =
+            parse_arg(r#"(positional (cond (else (allow) (deny))))"#).expect_err("expected error");
         assert!(format!("{err}").contains("else branch must have exactly one effect"));
     }
 
     #[test]
     fn parse_cond_branch_wrong_arity_error() {
-        let err = parse_arg(r#"(positional (cond ("a" (effect :allow) "extra")))"#)
-            .expect_err("expected error");
+        let err =
+            parse_arg(r#"(positional (cond ("a" (allow) "extra")))"#).expect_err("expected error");
         assert!(format!("{err}").contains("cond branch must have (test effect) form"));
     }
 
     #[test]
     fn parse_if_wrong_arity_error() {
-        let err =
-            parse_arg(r#"(positional (if "a" (effect :allow)))"#).expect_err("expected error");
+        let err = parse_arg(r#"(positional (if "a" (allow)))"#).expect_err("expected error");
         assert!(format!("{err}").contains("if must have exactly 3 arguments"));
     }
 
@@ -1188,8 +1178,8 @@ mod tests {
 
     #[test]
     fn forbidden_rejects_bind_in_cond() {
-        let err = parse_arg(r#"(forbidden (cond ([:key *] (effect :allow))))"#)
-            .expect_err("expected error");
+        let err =
+            parse_arg(r#"(forbidden (cond ([:key *] (allow))))"#).expect_err("expected error");
         assert!(format!("{err}").contains("not valid in forbidden"));
     }
 

@@ -195,7 +195,7 @@ mod tests {
 
     #[test]
     fn test_hoist_cond_no_cond() {
-        let input = "(rule git (args (positional)) (effect :allow))";
+        let input = "(rule git (args (positional)) (allow))";
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let node = nodes.into_iter().next().unwrap();
         let result = hoist_cond(&node);
@@ -204,7 +204,7 @@ mod tests {
 
     #[test]
     fn test_hoist_cond_with_if() {
-        let input = r#"(rule "mv" (args (if (anywhere "-f") (effect :ask) (effect :allow))) (effect :allow))"#;
+        let input = r#"(rule "mv" (args (if (anywhere "-f") (ask) (allow))) (allow))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let node = nodes.into_iter().next().unwrap();
         let result = hoist_cond(&node).unwrap();

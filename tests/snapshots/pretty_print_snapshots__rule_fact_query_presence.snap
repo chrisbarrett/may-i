@@ -1,0 +1,10 @@
+---
+source: tests/pretty_print_snapshots.rs
+expression: out
+---
+── input (width 80) ──
+(rule "rm" (when (fact? :via/ssh) (deny "no rm over ssh")))
+── output ──
+(rule "rm"
+  (when (fact? :via/ssh)
+    (deny "no rm over ssh")))

@@ -3,7 +3,6 @@ use may_i_core::pattern::{ArgPattern, MatchMode, ParameterForm, flag_token_for_n
 use may_i_core::{ContextFacts, Decision, Keyword};
 
 use crate::EvalError;
-#[cfg(test)]
 use crate::fold::PureFold;
 use crate::fold::{ArgMatchDetail, ChildResult, EvalFold};
 
@@ -258,13 +257,14 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
     ctx: &EvalContext,
     rules: &[Rule],
 ) -> Result<F::EffectOut, EvalError> {
+    let outer_args: &[String] = matcher_scope(ctx);
     Ok(match pattern {
         ArgPattern::Ordered {
             mode,
             patterns,
             continuation,
         } => {
-            let pos_args: Vec<&str> = super::entry::parser_positional_args(ctx.args, &ctx.parser);
+            let pos_args: Vec<&str> = super::entry::parser_positional_args(outer_args, &ctx.parser);
 
             let (pat_matched, consumed, bound_facts) =
                 match_positional_patterns(&pos_args, patterns);
@@ -278,14 +278,13 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                 if let Some(cont) = effective_continuation {
                     let remaining_args: Vec<String> = match mode {
                         MatchMode::Positional => {
-                            super::entry::parser_positional_args(ctx.args, &ctx.parser)
+                            super::entry::parser_positional_args(outer_args, &ctx.parser)
                                 .into_iter()
                                 .skip(consumed)
                                 .map(|s| s.to_string())
                                 .collect()
                         }
-                        MatchMode::Exact => ctx
-                            .args
+                        MatchMode::Exact => outer_args
                             .iter()
                             .filter(|arg| arg.starts_with('-'))
                             .map(|s| s.to_string())
@@ -311,10 +310,16 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
             }
         }
         ArgPattern::Anywhere(exprs) => {
+            // Honour `--` as a flag-stop: tokens after `--` are
+            // path/positional, not flag-shaped, so `(anywhere "--foo")`
+            // SHALL NOT match `git diff -- --foo`. Combined with the
+            // wrapper-tail scope: outer_args excludes the tail, and
+            // scan_until_double_dash further trims at `--`.
+            let outer = scan_until_double_dash(outer_args);
             let mut matched = false;
             let search_tokens: Vec<String> = exprs.iter().map(|e| format!("{e}")).collect();
             for expr in exprs {
-                if ctx.args.iter().any(|arg| expr.is_match(arg)) {
+                if outer.iter().any(|arg| expr.is_match(arg)) {
                     matched = true;
                     break;
                 }
@@ -328,10 +333,12 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
             fold.effect_arg_match(pattern, ctx.args, matched, detail)
         }
         ArgPattern::Forbidden(exprs) => {
+            // Same `--` and tail boundary as `(anywhere …)`.
+            let outer = scan_until_double_dash(outer_args);
             let mut found_forbidden = false;
             let search_tokens: Vec<String> = exprs.iter().map(|e| format!("{e}")).collect();
             for expr in exprs {
-                if ctx.args.iter().any(|arg| expr.is_match(arg)) {
+                if outer.iter().any(|arg| expr.is_match(arg)) {
                     found_forbidden = true;
                     break;
                 }
@@ -345,7 +352,7 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
             fold.effect_arg_match(pattern, ctx.args, !found_forbidden, detail)
         }
         ArgPattern::Flag { names } => {
-            let matched = flag_present_in_with_parser(ctx.args, names, &ctx.parser);
+            let matched = flag_present_in_with_parser(outer_args, names, &ctx.parser);
             let search_tokens: Vec<String> =
                 names.iter().map(|n| ctx.parser.token_for_name(n)).collect();
             let detail = ArgMatchDetail {
@@ -359,8 +366,93 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
         ArgPattern::Parameter { names, form } => {
             evaluate_parameter_fold(fold, pattern, names, form, ctx, rules)?
         }
+        ArgPattern::Tail => evaluate_tail_authorise_fold(fold, pattern, ctx, rules)?,
         _ => unreachable!("unknown ArgPattern variant"),
     })
+}
+
+/// Evaluate `(tail (authorise))`. Resolves the tail slice from the
+/// parser's `(tail (after …))` declaration and recurses on it as a
+/// command line via [`extract_inner_command`].
+fn evaluate_tail_authorise_fold<F: EvalFold>(
+    fold: &mut F,
+    pattern: &ArgPattern,
+    ctx: &EvalContext,
+    rules: &[Rule],
+) -> Result<F::EffectOut, EvalError> {
+    let split = super::entry::split_outer_tail(ctx.args, &ctx.parser);
+    // When the parser declares no tail, fall back to the full argv — the
+    // recursion semantics for rule bodies that recurse without a
+    // wrapper-boundary spec.
+    let tail_slice: &[String] = split.tail.unwrap_or(ctx.args);
+    let owned: Vec<String> = tail_slice.to_vec();
+    Ok(match extract_inner_command(&owned) {
+        Some((inner_cmd, inner_args)) => {
+            let mut inner_facts = ctx.facts.clone();
+            inner_facts.insert_scalar(Keyword::new(":via").unwrap(), ctx.command);
+            let inner_parser = match ctx.config {
+                Some(cfg) => cfg.parser_for_with_rules(&inner_cmd),
+                None => may_i_core::ast::ResolvedParser::synthetic_gnu(&inner_cmd),
+            };
+            fold.record_parser(&inner_cmd, &inner_parser);
+            let expanded_inner = super::entry::tokenise(&inner_args, &inner_parser);
+            let evaluator = Evaluator::new(rules);
+            let inner_ctx = EvalContext {
+                command: &inner_cmd,
+                args: &expanded_inner,
+                facts: &inner_facts,
+                bindings: ctx.bindings.clone(),
+                recursion_depth: ctx.recursion_depth + 1,
+                recursion_limit: ctx.recursion_limit,
+                parser: inner_parser,
+                config: ctx.config,
+            };
+            fold.begin_recursive_eval();
+            let eval_result = evaluator.evaluate(fold, &inner_ctx)?;
+            let detail = ArgMatchDetail {
+                search_tokens: vec!["(authorise)".to_string()],
+                arg_set: ctx.args.to_vec(),
+                matched: true,
+                positional_elements: vec![],
+            };
+            // Surface the recursive decision via effect_arg_continuation
+            // so the trace renders the inner evaluation as a child.
+            let inner_terminal = fold.effect_terminal(
+                &Effect::Terminal {
+                    decision: eval_result.decision,
+                    reason: eval_result.reason.clone(),
+                },
+                EffectResult::Decision(eval_result.decision, eval_result.reason),
+            );
+            fold.effect_arg_continuation(pattern, ctx.args, detail, inner_terminal)
+        }
+        None => {
+            let detail = ArgMatchDetail {
+                search_tokens: vec!["(authorise)".to_string()],
+                arg_set: ctx.args.to_vec(),
+                matched: false,
+                positional_elements: vec![],
+            };
+            fold.effect_arg_match(pattern, ctx.args, false, detail)
+        }
+    })
+}
+
+/// Effective argv slice for argv-matchers. When the parser declares
+/// `(tail (after …))` the slice is restricted to the outer span; the
+/// tail is exclusively addressable via `(tail (authorise))`.
+pub(super) fn matcher_scope<'a>(ctx: &'a EvalContext) -> &'a [String] {
+    super::entry::split_outer_tail(ctx.args, &ctx.parser).outer
+}
+
+/// Slice of `args` up to (but not including) the first literal `--`
+/// token. Used by `(anywhere …)` and `(forbidden …)` so a token after
+/// the GNU flag-stop is treated as a path/positional rather than a flag.
+pub(super) fn scan_until_double_dash(args: &[String]) -> &[String] {
+    match args.iter().position(|a| a == "--") {
+        Some(idx) => &args[..idx],
+        None => args,
+    }
 }
 
 /// Style-aware tokens for a list of canonical names.
@@ -425,6 +517,12 @@ fn find_flag_position_with_parser(
 /// `-X VAL`, `-X=VAL`, `--name VAL`, and `--name=VAL` (and style-specific
 /// separators). Returns `None` when no spelling is present or when the
 /// value is missing.
+///
+/// When the parameter's `capture` is `ManyTill`, the value is the
+/// space-joined token sequence from after the parameter occurrence up
+/// to (but not including) the terminator-matching token. Inline
+/// `name=val` is treated as a single-token capture even for ManyTill —
+/// the inline form lacks the multi-token shape.
 fn find_parameter_value_with_parser(
     args: &[String],
     names: &[String],
@@ -438,6 +536,13 @@ fn find_parameter_value_with_parser(
         .filter(|s| !s.trim().is_empty() && s.as_str() != "=")
         .cloned()
         .collect();
+    let many_till_terminator =
+        parser
+            .parameter_decl_for_token_in(&tokens)
+            .and_then(|d| match &d.capture {
+                may_i_core::ast::Capture::ManyTill { terminator } => Some(terminator.clone()),
+                _ => None,
+            });
     let mut i = 0;
     while i < args.len() {
         let arg = &args[i];
@@ -446,6 +551,9 @@ fn find_parameter_value_with_parser(
         }
         for tok in &tokens {
             if arg == tok {
+                if let Some(term) = &many_till_terminator {
+                    return collect_many_till(args, i + 1, term);
+                }
                 return args.get(i + 1).cloned();
             }
             if let Some(value) = equals_value(arg, tok) {
@@ -465,6 +573,28 @@ fn find_parameter_value_with_parser(
 
 /// If `arg` is the `=`-attached form of `tok`, return `Some(value)`. Empty
 /// values are preserved so `--name=` parses as the empty string.
+/// Walk `args` from `start` collecting tokens until one matches
+/// `terminator`. Returns `Some(joined)` on a hit (terminator consumed)
+/// and `None` if end-of-argv was reached without a match — per spec,
+/// the missing-terminator case surfaces as "no value available", which
+/// floors the rule body's decision to `:ask` via the existing combiner.
+fn collect_many_till(
+    args: &[String],
+    start: usize,
+    terminator: &may_i_core::pattern::Expr<may_i_core::ast::Effect>,
+) -> Option<String> {
+    let mut captured: Vec<String> = Vec::new();
+    let mut i = start;
+    while i < args.len() {
+        if terminator.is_match(&args[i]) {
+            return Some(captured.join(" "));
+        }
+        captured.push(args[i].clone());
+        i += 1;
+    }
+    None
+}
+
 fn equals_value<'a>(arg: &'a str, tok: &str) -> Option<&'a str> {
     let prefix = format!("{tok}=");
     arg.strip_prefix(&prefix)
@@ -479,64 +609,42 @@ fn evaluate_parameter_fold<F: EvalFold>(
     rules: &[Rule],
 ) -> Result<F::EffectOut, EvalError> {
     let search_tokens: Vec<String> = names.iter().map(|n| flag_token_for_name(n)).collect();
-    let value = find_parameter_value_with_parser(ctx.args, names, &ctx.parser);
+    let outer_args = matcher_scope(ctx);
+
+    // Many-till + (authorise): each occurrence is its own recursion.
+    // The strictest decision across occurrences wins (Deny > Ask > Allow),
+    // matching the rule body's existing strictness combiner.
+    let tokens = tokens_for_names_with_parser(&ctx.parser, names);
+    let many_till = ctx
+        .parser
+        .parameter_decl_for_token_in(&tokens)
+        .and_then(|d| match &d.capture {
+            may_i_core::ast::Capture::ManyTill { terminator } => Some(terminator.clone()),
+            _ => None,
+        });
+    if matches!(form, ParameterForm::MayI)
+        && let Some(terminator) = many_till
+    {
+        let values = find_many_till_values_with_parser(outer_args, names, &ctx.parser, &terminator);
+        return evaluate_multi_occurrence_authorise(
+            fold,
+            pattern,
+            &values,
+            ctx,
+            rules,
+            search_tokens,
+        );
+    }
+
+    let value = find_parameter_value_with_parser(outer_args, names, &ctx.parser);
     let matched = value.is_some() && parameter_form_matches(form, value.as_deref().unwrap_or(""));
     if let Some(value) = value
         && let ParameterForm::MayI = form
     {
-        // (parameter X (may-i …)) — recurse with the value parsed as a
-        // command line. Skip extract_inner_command's join step because the
-        // value is already exactly the inner command line.
-        let parsed = may_i_shell_parser::parse_simple_command(&value).or_else(|| {
-            // Fallback: treat the value as a single-token command with no
-            // args. Conservative — recursion will likely return Ask if no
-            // rule covers it.
-            Some((value.clone(), Vec::new()))
-        });
-        if let Some((inner_cmd, inner_args)) = parsed {
-            let evaluator = Evaluator::new(rules);
-            let mut inner_facts = ctx.facts.clone();
-            inner_facts.insert_scalar(Keyword::new(":via").unwrap(), ctx.command);
-            let inner_parser = match ctx.config {
-                Some(cfg) => cfg.parser_for_with_rules(&inner_cmd),
-                None => may_i_core::ast::ResolvedParser::synthetic_gnu(&inner_cmd),
-            };
-            fold.record_parser(&inner_cmd, &inner_parser);
-            let expanded_inner = super::entry::tokenise(&inner_args, &inner_parser);
-            let inner_ctx = EvalContext {
-                command: &inner_cmd,
-                args: &expanded_inner,
-                facts: &inner_facts,
-                bindings: ctx.bindings.clone(),
-                recursion_depth: ctx.recursion_depth + 1,
-                recursion_limit: ctx.recursion_limit,
-                parser: inner_parser,
-                config: ctx.config,
-            };
-            fold.begin_recursive_eval();
-            let eval_result = evaluator.evaluate(fold, &inner_ctx)?;
-            // Translate the recursed decision back into an EffectResult and
-            // route it through the same fold seam used by `(may-i …)`.
-            let inner_result = EffectResult::Decision(eval_result.decision, eval_result.reason);
-            let inner_out = fold.effect_terminal(
-                &Effect::Terminal {
-                    decision: Decision::Allow,
-                    reason: None,
-                },
-                inner_result.clone(),
-            );
-            let _ = search_tokens;
-            // Re-use effect_may_i so traces show the recursion.
-            return Ok(fold.effect_may_i(
-                &may_i_core::pattern::ArgPattern::positional(vec![]),
-                &inner_cmd,
-                &inner_args,
-                inner_result,
-                inner_out,
-            ));
-        }
-        // Unreachable in practice — the fallback above always returns Some.
-        unreachable!("parse_simple_command fallback should always succeed");
+        // (parameter X (authorise)) single-token capture — recurse with the
+        // value parsed as a command line.
+        let _ = search_tokens;
+        return recurse_into_inner_command(fold, &value, ctx, rules);
     }
     let detail = ArgMatchDetail {
         search_tokens,
@@ -545,6 +653,178 @@ fn evaluate_parameter_fold<F: EvalFold>(
         positional_elements: vec![],
     };
     Ok(fold.effect_arg_match(pattern, ctx.args, matched, detail))
+}
+
+/// Recurse into a captured command-line value (single occurrence).
+///
+/// Joins the value into a parsed `(command, args)` tuple, runs it through
+/// the evaluator under a fresh context with `:via` set, and emits an
+/// `effect_may_i` so the trace shows the recursion. Used by both the
+/// single-token capture path and the per-occurrence many-till path.
+fn recurse_into_inner_command<F: EvalFold>(
+    fold: &mut F,
+    value: &str,
+    ctx: &EvalContext,
+    rules: &[Rule],
+) -> Result<F::EffectOut, EvalError> {
+    let (inner_cmd, inner_args) = may_i_shell_parser::parse_simple_command(value)
+        .unwrap_or_else(|| (value.to_string(), Vec::new()));
+    let evaluator = Evaluator::new(rules);
+    let mut inner_facts = ctx.facts.clone();
+    inner_facts.insert_scalar(Keyword::new(":via").unwrap(), ctx.command);
+    let inner_parser = match ctx.config {
+        Some(cfg) => cfg.parser_for_with_rules(&inner_cmd),
+        None => may_i_core::ast::ResolvedParser::synthetic_gnu(&inner_cmd),
+    };
+    fold.record_parser(&inner_cmd, &inner_parser);
+    let expanded_inner = super::entry::tokenise(&inner_args, &inner_parser);
+    let inner_ctx = EvalContext {
+        command: &inner_cmd,
+        args: &expanded_inner,
+        facts: &inner_facts,
+        bindings: ctx.bindings.clone(),
+        recursion_depth: ctx.recursion_depth + 1,
+        recursion_limit: ctx.recursion_limit,
+        parser: inner_parser,
+        config: ctx.config,
+    };
+    fold.begin_recursive_eval();
+    let eval_result = evaluator.evaluate(fold, &inner_ctx)?;
+    let inner_result = EffectResult::Decision(eval_result.decision, eval_result.reason);
+    let inner_out = fold.effect_terminal(
+        &Effect::Terminal {
+            decision: Decision::Allow,
+            reason: None,
+        },
+        inner_result.clone(),
+    );
+    Ok(fold.effect_may_i(
+        &may_i_core::pattern::ArgPattern::positional(vec![]),
+        &inner_cmd,
+        &inner_args,
+        inner_result,
+        inner_out,
+    ))
+}
+
+/// Evaluate `(parameter NAME (authorise))` against a many-till capture
+/// that may have multiple occurrences in argv.
+///
+/// Each occurrence's captured command is evaluated independently. The
+/// strictest decision wins (Deny > Ask > Allow). When more than one
+/// occurrence is present, the dry-run uses `PureFold` to find the
+/// strictest occurrence; only that occurrence is then re-evaluated under
+/// the caller's fold so trace fidelity goes to the deciding command.
+fn evaluate_multi_occurrence_authorise<F: EvalFold>(
+    fold: &mut F,
+    pattern: &ArgPattern,
+    values: &[String],
+    ctx: &EvalContext,
+    rules: &[Rule],
+    search_tokens: Vec<String>,
+) -> Result<F::EffectOut, EvalError> {
+    if values.is_empty() {
+        let detail = ArgMatchDetail {
+            search_tokens,
+            arg_set: ctx.args.to_vec(),
+            matched: false,
+            positional_elements: vec![],
+        };
+        return Ok(fold.effect_arg_match(pattern, ctx.args, false, detail));
+    }
+    if values.len() == 1 {
+        return recurse_into_inner_command(fold, &values[0], ctx, rules);
+    }
+
+    let mut winner_idx = 0;
+    let mut winner_decision: Option<Decision> = None;
+    for (i, value) in values.iter().enumerate() {
+        let mut pure = PureFold;
+        let result = recurse_into_inner_command(&mut pure, value, ctx, rules)?;
+        if let EffectResult::Decision(decision, _) = result {
+            let stricter = match winner_decision {
+                None => true,
+                Some(prev) => decision > prev,
+            };
+            if stricter {
+                winner_decision = Some(decision);
+                winner_idx = i;
+            }
+        }
+    }
+    recurse_into_inner_command(fold, &values[winner_idx], ctx, rules)
+}
+
+/// Walk the entire arg slice collecting every many-till occurrence's
+/// captured value (tokens between the parameter token and its
+/// terminator, joined with single spaces). A `--` token short-circuits
+/// the scan. An occurrence whose terminator is missing from argv is
+/// dropped — the rule cannot match against an unbounded capture.
+fn find_many_till_values_with_parser(
+    args: &[String],
+    names: &[String],
+    parser: &may_i_core::ast::ResolvedParser,
+    terminator: &may_i_core::pattern::Expr<may_i_core::ast::Effect>,
+) -> Vec<String> {
+    let tokens = tokens_for_names_with_parser(parser, names);
+    let separators: Vec<String> = parser
+        .style
+        .separators()
+        .iter()
+        .filter(|s| !s.trim().is_empty() && s.as_str() != "=")
+        .cloned()
+        .collect();
+
+    let mut values = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        let arg = &args[i];
+        if arg == "--" {
+            break;
+        }
+        let mut consumed = false;
+        for tok in &tokens {
+            if arg == tok {
+                let start = i + 1;
+                let mut j = start;
+                while j < args.len() && !terminator.is_match(&args[j]) {
+                    j += 1;
+                }
+                if j < args.len() {
+                    values.push(args[start..j].join(" "));
+                    i = j + 1;
+                    consumed = true;
+                } else {
+                    return values;
+                }
+                break;
+            }
+            if let Some(value) = equals_value(arg, tok) {
+                values.push(value.to_string());
+                i += 1;
+                consumed = true;
+                break;
+            }
+            let mut sep_inline = false;
+            for sep in &separators {
+                let prefix = format!("{tok}{sep}");
+                if let Some(rest) = arg.strip_prefix(&prefix) {
+                    values.push(rest.to_string());
+                    sep_inline = true;
+                    break;
+                }
+            }
+            if sep_inline {
+                i += 1;
+                consumed = true;
+                break;
+            }
+        }
+        if !consumed {
+            i += 1;
+        }
+    }
+    values
 }
 
 /// Apply a non-recursive parameter form (anything other than `MayI`) to a
@@ -599,4 +879,31 @@ pub(crate) fn extract_inner_command(args: &[String]) -> Option<(String, Vec<Stri
         let remaining = args[1..].to_vec();
         Some((cmd, remaining))
     })
+}
+
+#[cfg(test)]
+mod scan_double_dash_tests {
+    use super::*;
+
+    fn argv(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn no_terminator_returns_full_slice() {
+        let args = argv(&["-r", "-f", "/tmp/x"]);
+        assert_eq!(scan_until_double_dash(&args), &args[..]);
+    }
+
+    #[test]
+    fn terminator_truncates_slice() {
+        let args = argv(&["diff", "--", "--foo"]);
+        assert_eq!(scan_until_double_dash(&args), &["diff".to_string()]);
+    }
+
+    #[test]
+    fn terminator_at_start_yields_empty() {
+        let args = argv(&["--", "--foo"]);
+        assert_eq!(scan_until_double_dash(&args), &[] as &[String]);
+    }
 }

@@ -1,0 +1,8 @@
+---
+source: tests/pretty_print_snapshots.rs
+expression: out
+---
+── input (width 80) ──
+(parser "kubectl" (style gnu) (flag "v") (parameter ["n" "namespace"]))
+── output ──
+(parser "kubectl" (style gnu) (flag "v") (parameter ["n" "namespace"]))

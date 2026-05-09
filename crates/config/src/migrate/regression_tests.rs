@@ -119,8 +119,8 @@ mod tests {
 
     #[test]
     fn compound_command_context_args_effect() {
-        let v1 = r#"(rule (command "git") (context (has :via/ssh)) (args (positional "push")) (effect :deny "no pushing over ssh"))"#;
-        let v2 = r#"(rule "git" (when (fact? :via/ssh) (and (positional "push") (effect :deny "no pushing over ssh"))))"#;
+        let v1 = r#"(rule (command "git") (context (has :via/ssh)) (args (positional "push")) (deny "no pushing over ssh"))"#;
+        let v2 = r#"(rule "git" (when (fact? :via/ssh) (and (positional "push") (deny "no pushing over ssh"))))"#;
 
         assert_eval_equivalence(
             v1,
@@ -143,12 +143,12 @@ mod tests {
         let v1 = concat!(
             r#"(defcontext rp (and (has :via/ssh) (has [:ssh/host (regex "^prod")])))"#,
             "\n",
-            r#"(rule (command "git") (context rp) (effect :ask "production ssh"))"#,
+            r#"(rule (command "git") (context rp) (ask "production ssh"))"#,
         );
         let v2 = concat!(
             r#"(define rp (and (fact? :via/ssh) (fact? [:ssh/host (regex "^prod")])))"#,
             "\n",
-            r#"(rule "git" (when rp (effect :ask "production ssh")))"#,
+            r#"(rule "git" (when rp (ask "production ssh")))"#,
         );
 
         assert_eval_equivalence(
@@ -169,8 +169,8 @@ mod tests {
 
     #[test]
     fn multi_clause_cond_in_args() {
-        let v1 = r#"(rule (command "git") (args (cond ((positional "push") (effect :ask "push")) ((positional "status") (effect :allow "status")) (else (effect :ask "other")))))"#;
-        let v2 = r#"(rule "git" (cond ((positional "push") (effect :ask "push")) ((positional "status") (effect :allow "status")) (else (effect :ask "other"))))"#;
+        let v1 = r#"(rule (command "git") (args (cond ((positional "push") (ask "push")) ((positional "status") (allow "status")) (else (ask "other")))))"#;
+        let v2 = r#"(rule "git" (cond ((positional "push") (ask "push")) ((positional "status") (allow "status")) (else (ask "other"))))"#;
 
         assert_eval_equivalence(
             v1,
@@ -188,11 +188,11 @@ mod tests {
     fn named_predicate_ref() {
         let v1 = concat!(
             "(defcontext x (has :via/ssh))\n",
-            r#"(rule (command "git") (context x) (effect :allow "ssh ok"))"#,
+            r#"(rule (command "git") (context x) (allow "ssh ok"))"#,
         );
         let v2 = concat!(
             "(define x (fact? :via/ssh))\n",
-            r#"(rule "git" (when x (effect :allow "ssh ok")))"#,
+            r#"(rule "git" (when x (allow "ssh ok")))"#,
         );
 
         assert_eval_equivalence(
@@ -212,14 +212,22 @@ mod tests {
         let v1 = r#"(wrapper "timeout" (positional (regex "^[0-9]+$") :command+args))"#;
         assert_migrates_to(
             v1,
-            r#"(rule "timeout" (positional (regex "^[0-9]+$") . (may-i *)))"#,
+            r#"(rule "timeout" (and (positional (regex "^[0-9]+$")) (tail (authorise))))"#,
         );
     }
 
     #[test]
     fn wrapper_mise_exec() {
         let v1 = r#"(wrapper "mise" (positional "exec") (flag "--" :command+args))"#;
-        assert_migrates_to(v1, r#"(rule "mise" (positional "exec" "--" . (may-i *)))"#);
+        // mise no longer ships in the prelude. Migration emits the
+        // dotted-tail collapse but does not strip the literal `"--"`;
+        // the user is responsible for declaring the parser themselves
+        // (typically `(parser "mise" (style gnu) (tail (after "--")))`)
+        // and dropping the boundary literal in the same edit.
+        assert_migrates_to(
+            v1,
+            r#"(rule "mise" (and (positional "exec" "--") (tail (authorise))))"#,
+        );
     }
 
     #[test]
@@ -227,7 +235,7 @@ mod tests {
         let v1 = r#"(wrapper "nix" (positional (or "shell" "develop")) (flag "--command" :command+args))"#;
         assert_migrates_to(
             v1,
-            r#"(rule "nix" (positional (or "shell" "develop") "--command" . (may-i *)))"#,
+            r#"(rule "nix" (and (positional (or "shell" "develop") "--command") (tail (authorise))))"#,
         );
     }
 
@@ -236,7 +244,7 @@ mod tests {
         let v1 = r#"(wrapper "nix-shell" (flag "--run" :command+args))"#;
         // The (positional "--run" . R) intermediate now collapses to a
         // structured (parameter "run" R) pattern.
-        assert_migrates_to(v1, r#"(rule "nix-shell" (parameter "run" (may-i *)))"#);
+        assert_migrates_to(v1, r#"(rule "nix-shell" (parameter "run" (authorise)))"#);
     }
 
     #[test]
@@ -244,7 +252,7 @@ mod tests {
         let v1 = r#"(wrapper "bash" (flag "-c" :command+args))"#;
         // The (positional "-c" . R) intermediate now collapses to a
         // structured (parameter "c" R) pattern.
-        assert_migrates_to(v1, r#"(rule "bash" (parameter "c" (may-i *)))"#);
+        assert_migrates_to(v1, r#"(rule "bash" (parameter "c" (authorise)))"#);
     }
 
     // ── Task 4: has → fact? with complex value patterns ────────────────
@@ -284,8 +292,8 @@ mod tests {
 
     #[test]
     fn command_with_or_pattern() {
-        let v1 = r#"(rule (command (or "rm" "rmdir")) (effect :deny "reason"))"#;
-        let v2 = r#"(rule (or "rm" "rmdir") (effect :deny "reason"))"#;
+        let v1 = r#"(rule (command (or "rm" "rmdir")) (deny "reason"))"#;
+        let v2 = r#"(rule (or "rm" "rmdir") (deny "reason"))"#;
 
         assert_migrates_to(v1, v2);
         assert_eval_equivalence(
@@ -301,8 +309,8 @@ mod tests {
 
     #[test]
     fn command_with_multi_element_or() {
-        let v1 = r#"(rule (command (or "cat" "head" "tail")) (effect :allow "readers"))"#;
-        let v2 = r#"(rule (or "cat" "head" "tail") (effect :allow "readers"))"#;
+        let v1 = r#"(rule (command (or "cat" "head" "tail")) (allow "readers"))"#;
+        let v2 = r#"(rule (or "cat" "head" "tail") (allow "readers"))"#;
 
         assert_migrates_to(v1, v2);
         assert_eval_equivalence(
@@ -319,8 +327,8 @@ mod tests {
 
     #[test]
     fn command_with_regex_pattern() {
-        let v1 = r#"(rule (command (regex "^git-")) (effect :allow "reason"))"#;
-        assert_migrates_to(v1, r#"(rule (regex "^git-") (effect :allow "reason"))"#);
+        let v1 = r#"(rule (command (regex "^git-")) (allow "reason"))"#;
+        assert_migrates_to(v1, r#"(rule (regex "^git-") (allow "reason"))"#);
     }
 
     // ── Task 6: Comment/trivia preservation ─────────────────────────────
@@ -329,10 +337,10 @@ mod tests {
     fn comments_between_top_level_forms() {
         let v1 = concat!(
             ";; First rule\n",
-            r#"(rule (command "git") (effect :allow))"#,
+            r#"(rule (command "git") (allow))"#,
             "\n\n",
             ";; Second rule\n",
-            r#"(rule (command "ls") (effect :allow))"#,
+            r#"(rule (command "ls") (allow))"#,
         );
 
         let (cst_nodes, errors) = may_i_sexpr::parse_cst(v1);
@@ -350,7 +358,7 @@ mod tests {
         let v1 = concat!(
             ";; This is a multi-line\n",
             ";; comment block\n",
-            r#"(rule (command "git") (effect :allow))"#,
+            r#"(rule (command "git") (allow))"#,
         );
 
         let (cst_nodes, errors) = may_i_sexpr::parse_cst(v1);
@@ -371,7 +379,7 @@ mod tests {
 
     #[test]
     fn trailing_comment_on_closing_paren() {
-        let v1 = "(rule (command \"git\") (effect :allow)) ;; trailing";
+        let v1 = "(rule (command \"git\") (allow)) ;; trailing";
 
         let (cst_nodes, errors) = may_i_sexpr::parse_cst(v1);
         assert!(errors.is_empty());
@@ -411,9 +419,9 @@ mod tests {
     #[test]
     fn mixed_v1_and_v2_rules() {
         let mixed = concat!(
-            r#"(rule "ls" (effect :allow "already v2"))"#,
+            r#"(rule "ls" (allow "already v2"))"#,
             "\n",
-            r#"(rule (command "git") (effect :deny "v1 form"))"#,
+            r#"(rule (command "git") (deny "v1 form"))"#,
         );
 
         let (cst_nodes, errors) = may_i_sexpr::parse_cst(mixed);
@@ -428,12 +436,12 @@ mod tests {
 
         // v2 rule should be unchanged
         assert!(
-            output.contains(r#"(rule "ls" (effect :allow "already v2"))"#),
+            output.contains(r#"(rule "ls" (allow "already v2"))"#),
             "v2 rule was modified: {output}"
         );
         // v1 rule should be migrated
         assert!(
-            output.contains(r#"(rule "git" (effect :deny "v1 form"))"#),
+            output.contains(r#"(rule "git" (deny "v1 form"))"#),
             "v1 rule not migrated: {output}"
         );
 
@@ -449,9 +457,9 @@ mod tests {
     #[test]
     fn idempotent_on_canonical_config() {
         let v2 = concat!(
-            r#"(rule "git" (effect :allow "ok"))"#,
+            r#"(rule "git" (allow "ok"))"#,
             "\n",
-            r#"(rule "ls" (when (fact? :via/ssh) (effect :ask "ssh")))"#,
+            r#"(rule "ls" (when (fact? :via/ssh) (ask "ssh")))"#,
         );
 
         let (cst_nodes, errors) = may_i_sexpr::parse_cst(v2);

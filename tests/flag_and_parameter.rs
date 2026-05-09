@@ -16,13 +16,13 @@ fn eval(config_text: &str, command: &str, argv: &[&str]) -> Decision {
     res.decision
 }
 
-// 3.1: `(rule "bash" (parameter "c" (may-i *)))` evaluates `bash -c "echo hi"`
+// 3.1: `(rule "bash" (parameter "c" (authorise)))` evaluates `bash -c "echo hi"`
 // correctly — recurses into the inner `echo hi` command.
 #[test]
 fn parameter_with_may_i_recurses_into_value() {
     let cfg = r#"
-(rule "echo" (effect :allow "echo always allowed"))
-(rule "bash" (parameter "c" (may-i *)))
+(rule "echo" (allow "echo always allowed"))
+(rule "bash" (parameter "c" (authorise)))
 "#;
     let decision = eval(cfg, "bash", &["-c", "echo hi"]);
     assert_eq!(decision, Decision::Allow, "bash -c should recurse to echo");
@@ -32,7 +32,7 @@ fn parameter_with_may_i_recurses_into_value() {
 #[test]
 fn not_flag_allows_when_flag_absent() {
     let cfg = r#"
-(rule "rm" (and (not (flag "r")) (effect :allow "no -r")))
+(rule "rm" (and (not (flag "r")) (allow "no -r")))
 "#;
     let decision = eval(cfg, "rm", &["file"]);
     assert_eq!(decision, Decision::Allow);
@@ -42,7 +42,7 @@ fn not_flag_allows_when_flag_absent() {
 #[test]
 fn not_flag_rejects_when_flag_present() {
     let cfg = r#"
-(rule "rm" (and (not (flag "r")) (effect :allow "no -r")))
+(rule "rm" (and (not (flag "r")) (allow "no -r")))
 "#;
     let decision = eval(cfg, "rm", &["-r", "dir"]);
     assert_eq!(decision, Decision::Ask);
@@ -52,7 +52,7 @@ fn not_flag_rejects_when_flag_present() {
 #[test]
 fn flag_matches_inside_combined_short_cluster() {
     let cfg = r#"
-(rule "rm" (and (not (flag "r")) (effect :allow "no -r")))
+(rule "rm" (and (not (flag "r")) (allow "no -r")))
 "#;
     let decision = eval(cfg, "rm", &["-rf", "dir"]);
     assert_eq!(decision, Decision::Ask);
@@ -62,7 +62,7 @@ fn flag_matches_inside_combined_short_cluster() {
 #[test]
 fn flag_vector_matches_short_form() {
     let cfg = r#"
-(rule "git" (and (positional "push") (not (flag ["f" "force"])) (effect :allow)))
+(rule "git" (and (positional "push") (not (flag ["f" "force"])) (allow)))
 "#;
     let decision = eval(cfg, "git", &["push", "-f"]);
     assert_eq!(decision, Decision::Ask);
@@ -72,7 +72,7 @@ fn flag_vector_matches_short_form() {
 #[test]
 fn flag_vector_matches_long_form() {
     let cfg = r#"
-(rule "git" (and (positional "push") (not (flag ["f" "force"])) (effect :allow)))
+(rule "git" (and (positional "push") (not (flag ["f" "force"])) (allow)))
 "#;
     let decision = eval(cfg, "git", &["push", "--force"]);
     assert_eq!(decision, Decision::Ask);
@@ -82,7 +82,7 @@ fn flag_vector_matches_long_form() {
 #[test]
 fn parameter_matches_short_value() {
     let cfg = r#"
-(rule "curl" (and (parameter ["X" "request"] "POST") (effect :allow)))
+(rule "curl" (and (parameter ["X" "request"] "POST") (allow)))
 "#;
     let decision = eval(cfg, "curl", &["-X", "POST", "https://example.com"]);
     assert_eq!(decision, Decision::Allow);
@@ -92,7 +92,7 @@ fn parameter_matches_short_value() {
 #[test]
 fn parameter_matches_long_equals_value() {
     let cfg = r#"
-(rule "curl" (and (parameter ["X" "request"] "POST") (effect :allow)))
+(rule "curl" (and (parameter ["X" "request"] "POST") (allow)))
 "#;
     let decision = eval(cfg, "curl", &["--request=POST", "https://example.com"]);
     assert_eq!(decision, Decision::Allow);
@@ -102,7 +102,7 @@ fn parameter_matches_long_equals_value() {
 #[test]
 fn parameter_does_not_match_different_value() {
     let cfg = r#"
-(rule "curl" (and (parameter ["X" "request"] "POST") (effect :allow)))
+(rule "curl" (and (parameter ["X" "request"] "POST") (allow)))
 "#;
     let decision = eval(cfg, "curl", &["-X", "GET"]);
     assert_eq!(decision, Decision::Ask);
@@ -112,7 +112,7 @@ fn parameter_does_not_match_different_value() {
 #[test]
 fn parameter_absent_flag_does_not_match() {
     let cfg = r#"
-(rule "curl" (and (parameter ["X" "request"] "POST") (effect :allow)))
+(rule "curl" (and (parameter ["X" "request"] "POST") (allow)))
 "#;
     let decision = eval(cfg, "curl", &["https://example.com"]);
     assert_eq!(decision, Decision::Ask);
@@ -129,7 +129,7 @@ fn parameter_consumes_flag_and_value_for_sibling_positional() {
 (rule "kubectl"
   (and (parameter ["n" "namespace"] (regex ".*"))
        (positional "get" "pods")
-       (effect :allow)))
+       (allow)))
 "#;
     let decision = eval(cfg, "kubectl", &["-n", "my-ns", "get", "pods"]);
     assert_eq!(decision, Decision::Allow);
@@ -172,7 +172,7 @@ proptest! {
         let name = if is_long { "longflag" } else { "x" };
         let (args, expected_present) = build_args(name, &sprinkle);
         let cfg = format!(
-            r#"(rule "tool" (and (flag "{name}") (effect :allow)))"#
+            r#"(rule "tool" (and (flag "{name}") (allow)))"#
         );
         let config = parse_config(&cfg).unwrap();
         let facts = ContextFacts::default();
@@ -207,10 +207,10 @@ proptest! {
         ];
         for argv in cases {
             let cfg_flag = format!(
-                r#"(rule "tool" (and (flag "{name}") (effect :allow)))"#
+                r#"(rule "tool" (and (flag "{name}") (allow)))"#
             );
             let cfg_param = format!(
-                r#"(rule "tool" (and (parameter "{name}" *) (effect :allow)))"#
+                r#"(rule "tool" (and (parameter "{name}" *) (allow)))"#
             );
             let facts = ContextFacts::default();
             let cf = parse_config(&cfg_flag).unwrap();
@@ -230,8 +230,8 @@ proptest! {
     fn property_flag_and_not_flag_are_dual(
         sprinkle in proptest::collection::vec(any::<bool>(), 0..6),
     ) {
-        let cfg_pos = r#"(rule "tool" (and (flag "x") (effect :allow)))"#;
-        let cfg_neg = r#"(rule "tool" (and (not (flag "x")) (effect :allow)))"#;
+        let cfg_pos = r#"(rule "tool" (and (flag "x") (allow)))"#;
+        let cfg_neg = r#"(rule "tool" (and (not (flag "x")) (allow)))"#;
         let (args, _) = build_args("x", &sprinkle);
         let facts = ContextFacts::default();
         let cp = parse_config(cfg_pos).unwrap();
@@ -255,7 +255,7 @@ fn flag_does_not_consume_tokens() {
 (rule "git"
   (and (flag "v")
        (positional "show" "log")
-       (effect :allow)))
+       (allow)))
 "#;
     let decision = eval(cfg, "git", &["-v", "show", "log"]);
     assert_eq!(decision, Decision::Allow);

@@ -1,0 +1,9 @@
+---
+source: tests/pretty_print_snapshots.rs
+expression: out
+---
+── input (width 80) ──
+(rule (or "ls" "ll" "la") (allow))
+── output ──
+(rule (or "ls" "ll" "la")
+  (allow))

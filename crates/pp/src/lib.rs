@@ -217,22 +217,12 @@ fn snap_to_preset(width: usize) -> usize {
 
 // ── Indent specs ────────────────────────────────────────────────────
 
-/// Per-identifier indent specs, mapping head atoms to the number of
-/// "special" arguments before the body.  Modelled after Emacs Lisp's
-/// `(declare (indent N))`:
-///
-///   N = 0  →  all children are body (indent +2 from paren)
-///   N = 1  →  first arg on head line, rest are body
-///   N = 2  →  first two args special, rest are body
-///   …
-///
-/// Identifiers not in this table use the default heuristic (align under
-/// first arg when inline, indent +1 when dropped).
 /// Forms with Emacs-Lisp-style `(declare (indent N))` body indentation.
 /// N controls how many children after the head are "special" (stay near the
 /// head) before the body, which is indented +2 from the opening paren.
 ///
-///   N = 0  →  all children are body (indent +2)
+///   N = 0  →  reserved for forms with dedicated renderers (currently only
+///             `cond`); the default body-indent of +2 does not apply
 ///   N = 1  →  first arg is special (inline if fits), rest are body (+2)
 ///   N = 2  →  first two args special, rest are body (+2)
 ///

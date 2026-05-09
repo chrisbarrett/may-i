@@ -1,0 +1,8 @@
+---
+source: tests/pretty_print_snapshots.rs
+expression: out
+---
+── input (width 80) ──
+(check (allow "ls -la") (ask "rm -rf /tmp/foo") (deny "rm -rf /"))
+── output ──
+(check (allow "ls -la") (ask "rm -rf /tmp/foo") (deny "rm -rf /"))

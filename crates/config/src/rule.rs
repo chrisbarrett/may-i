@@ -13,10 +13,10 @@ use may_i_sexpr::{RawError, Sexpr};
 /// more than one non-check body form produce a parse error.
 ///
 /// Examples:
-/// - `(rule "git" (effect :allow))` - allow all git commands
-/// - `(rule "git" (and (positional "push") (effect :ask)))` - ask for git push
-/// - `(rule "git" (effect :deny) (check :deny "rm -rf /"))`
-/// - `(rule (or "git" "gh") (effect :allow))` - allow git or gh
+/// - `(rule "git" (allow))` - allow all git commands
+/// - `(rule "git" (and (positional "push") (ask)))` - ask for git push
+/// - `(rule "git" (deny) (check :deny "rm -rf /"))`
+/// - `(rule (or "git" "gh") (allow))` - allow git or gh
 #[must_use = "parsed rule should be used"]
 pub fn parse_rule(sexpr: &Sexpr) -> Result<Spanned<Rule>, RawError> {
     let list = sexpr
@@ -184,7 +184,7 @@ mod tests {
 
     #[test]
     fn parse_simple_rule() {
-        let rule = parse_rule_str(r#"(rule "git" (effect :allow))"#).unwrap();
+        let rule = parse_rule_str(r#"(rule "git" (allow))"#).unwrap();
         assert!(
             matches!(rule.command_effect.value, Effect::CommandPattern(CommandPattern::Literal(ref s)) if s == "git")
         );
@@ -199,8 +199,7 @@ mod tests {
 
     #[test]
     fn parse_rule_with_and_combinator() {
-        let rule =
-            parse_rule_str(r#"(rule "git" (and (positional "push") (effect :ask)))"#).unwrap();
+        let rule = parse_rule_str(r#"(rule "git" (and (positional "push") (ask)))"#).unwrap();
         assert!(
             matches!(rule.command_effect.value, Effect::CommandPattern(CommandPattern::Literal(ref s)) if s == "git")
         );
@@ -209,7 +208,7 @@ mod tests {
 
     #[test]
     fn parse_rule_with_or_command() {
-        let rule = parse_rule_str(r#"(rule (or "git" "gh") (effect :allow))"#).unwrap();
+        let rule = parse_rule_str(r#"(rule (or "git" "gh") (allow))"#).unwrap();
         assert!(matches!(
             rule.command_effect.value,
             Effect::CommandPattern(CommandPattern::Or(_))
@@ -246,7 +245,7 @@ mod tests {
         let rule = parse_rule_str(
             r#"
             (rule "git"
-                (when (fact? :via/ssh) (effect :allow)))
+                (when (fact? :via/ssh) (allow)))
         "#,
         )
         .unwrap();
@@ -259,9 +258,9 @@ mod tests {
             r#"
             (rule "git"
                 (cond
-                    ((positional "status") (effect :allow))
-                    ((positional "push") (effect :ask))
-                    (else (effect :deny))))
+                    ((positional "status") (allow))
+                    ((positional "push") (ask))
+                    (else (deny))))
         "#,
         )
         .unwrap();
@@ -289,8 +288,7 @@ mod tests {
 
     #[test]
     fn multiple_effects_are_error() {
-        let err = parse_rule_str(r#"(rule "git" (effect :allow) (effect :deny))"#)
-            .expect_err("expected error");
+        let err = parse_rule_str(r#"(rule "git" (allow) (deny))"#).expect_err("expected error");
         let msg = format!("{err}");
         assert!(msg.contains("exactly one effect"));
         assert!(err.help.as_deref().unwrap_or("").contains("combinator"));
@@ -309,9 +307,33 @@ mod tests {
     }
 
     #[test]
+    fn bare_authorise_at_rule_body_root_rejected() {
+        let err = parse_rule_str(r#"(rule "ssh" (authorise))"#).expect_err("expected error");
+        assert!(
+            format!("{err}").contains("bare (authorise) is not allowed at effect position"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn bare_authorise_inside_combinator_rejected() {
+        let err = parse_rule_str(r#"(rule "ssh" (and (positional "host") (authorise)))"#)
+            .expect_err("expected error");
+        assert!(
+            format!("{err}").contains("bare (authorise) is not allowed at effect position"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn tail_authorise_at_rule_body_root_accepted() {
+        let rule = parse_rule_str(r#"(rule "ssh" (tail (authorise)))"#).unwrap();
+        assert!(matches!(rule.effect.value, Effect::ArgPattern(_)));
+    }
+
+    #[test]
     fn parse_rule_with_check_alongside_effect() {
-        let rule =
-            parse_rule_str(r#"(rule "git" (effect :allow) (check :allow "git status"))"#).unwrap();
+        let rule = parse_rule_str(r#"(rule "git" (allow) (check (allow "git status")))"#).unwrap();
         assert!(matches!(
             rule.effect.value,
             Effect::Terminal {

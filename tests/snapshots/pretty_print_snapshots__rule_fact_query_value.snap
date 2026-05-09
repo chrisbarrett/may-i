@@ -1,0 +1,10 @@
+---
+source: tests/pretty_print_snapshots.rs
+expression: out
+---
+── input (width 80) ──
+(rule "rm" (when (fact? [:ssh/host (regex "^prod-")]) (deny "production host")))
+── output ──
+(rule "rm"
+  (when (fact? [:ssh/host (regex "^prod-")])
+    (deny "production host")))

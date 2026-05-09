@@ -1,0 +1,9 @@
+---
+source: tests/pretty_print_snapshots.rs
+expression: out
+---
+── input (width 80) ──
+(rule "git" (and (positional "push") (allow "push ok")))
+── output ──
+(rule "git"
+  (and (positional "push") (allow "push ok")))

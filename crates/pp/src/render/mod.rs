@@ -145,15 +145,33 @@ fn render_node<A: Clone + TriviaSource>(
                     .iter()
                     .any(|c| c.ann.trailing_trivia().iter().any(|t| t.has_newline()));
 
-            // When trivia forces breaks, use trivia-guided layout that
-            // preserves the author's per-child line break decisions.
+            let must_break = doc.layout == LayoutHint::AlwaysBreak
+                || children.iter().any(|c| c.layout == LayoutHint::AlwaysBreak);
+
+            // Fill-eligible forms (and/or/forbidden/anywhere/positional with
+            // all-atom args) take precedence over trivia-guided layout —
+            // trivia-guided cascades to the column of the last inline atom,
+            // which produces deep right-side indents for long atom lists.
+            // Fill always aligns wrapped atoms under the first arg.
+            if !must_break && is_fill_eligible(children) {
+                let mut buf = EventBuffer::new();
+                render_flat(children, dimmed, &mut buf);
+                if !buf.is_multiline() && buf.max_line_width(indent) <= width {
+                    buf.replay(out);
+                    return;
+                }
+                render_fill(children, indent, width, dimmed, out);
+                return;
+            }
+
+            // When trivia forces breaks (and the form isn't fill-eligible),
+            // use trivia-guided layout that preserves the author's per-child
+            // line break decisions.
             if has_trivia_break {
                 render_trivia_guided_delim(children, indent, width, dimmed, '(', ')', out);
                 return;
             }
 
-            let must_break = doc.layout == LayoutHint::AlwaysBreak
-                || children.iter().any(|c| c.layout == LayoutHint::AlwaysBreak);
             if !must_break {
                 let mut buf = EventBuffer::new();
                 render_flat(children, dimmed, &mut buf);
@@ -161,12 +179,6 @@ fn render_node<A: Clone + TriviaSource>(
                     buf.replay(out);
                     return;
                 }
-            }
-            // Fill layout: and/or/forbidden with all-atom args flow across lines.
-            // Skipped when AlwaysBreak is set (caller requires broken output).
-            if !must_break && is_fill_eligible(children) {
-                render_fill(children, indent, width, dimmed, out);
-                return;
             }
             if !must_break {
                 let mut buf = EventBuffer::new();

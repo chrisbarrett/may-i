@@ -17,14 +17,14 @@ expression: normalised
                   [2m([0mor [32m"watch"[0m [32m"run"[0m [32m"r"[0m[2m)[0m[2m)[0m [2m│[0m
                  [2m([0m? [32m"--"[0m[2m)[0m                 [2m│[0m
                  [2m([0m[34mcond[0m                    [2m│[0m
-                   [2m([0m[2m([0mor [32m"install"[0m         [2m│[0m
-                        [32m"uninstall"[0m[2m)[0m      [2m│[0m
-                    [2m([0m[34meffect[0m [94m:deny[0m[2m)[0m[2m)[0m       [2m│[0m [2m[0m[2m→[0m [1;31m:deny[0m
-                   [2m([0m[2m([0mor [32m"build"[0m           [2m│[0m
-                        [32m"b"[0m               [2m│[0m
-                        [2m…[0m                 [2m│[0m
-                        [32m"clippy"[0m[2m)[0m         [2m│[0m
-                    [2m([0m[34meffect[0m [94m:allow[0m[2m)[0m[2m)[0m[2m)[0m     [2m│[0m
+                  [2m([0m[2m([0mor [32m"install"[0m          [2m│[0m
+                       [32m"uninstall"[0m[2m)[0m       [2m│[0m
+                   [2m([0mdeny[2m)[0m[2m)[0m                [2m│[0m [2m[0m[2m→[0m [1;31m:deny[0m
+                  [2m([0m[2m([0mor [32m"build"[0m            [2m│[0m
+                       [32m"b"[0m                [2m│[0m
+                       [2m…[0m                  [2m│[0m
+                       [32m"clippy"[0m[2m)[0m          [2m│[0m
+                   [2m([0mallow[2m)[0m[2m)[0m[2m)[0m              [2m│[0m
                  [2m([0m[34meffect[0m [94m:deny[0m[2m)[0m[2m)[0m[2m)[0m[2m)[0m[2m)[0m       [2m│[0m
 
 [1mResult[0m

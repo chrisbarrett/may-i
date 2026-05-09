@@ -9,7 +9,7 @@ use predicates::prelude::*;
 #[test]
 fn check_valid_config_exits_zero() {
     let cfg = write_config(
-        r#"(rule "echo" (effect :allow "echo is safe")
+        r#"(rule "echo" (allow "echo is safe")
   (check :allow "echo hello"))"#,
     );
     may_i(&cfg)
@@ -22,7 +22,7 @@ fn check_valid_config_exits_zero() {
 #[test]
 fn check_failing_assertion_exits_nonzero() {
     let cfg = write_config(
-        r#"(rule "echo" (effect :allow "echo is safe")
+        r#"(rule "echo" (allow "echo is safe")
   (check :deny "echo hello"))"#,
     );
     may_i(&cfg)
@@ -34,7 +34,7 @@ fn check_failing_assertion_exits_nonzero() {
 
 #[test]
 fn check_undefined_predicate_exits_two() {
-    let cfg = write_config(r#"(rule "echo" (when undefined-pred (effect :allow "test")))"#);
+    let cfg = write_config(r#"(rule "echo" (when undefined-pred (allow "test")))"#);
     may_i(&cfg)
         .arg("check")
         .assert()
@@ -45,7 +45,7 @@ fn check_undefined_predicate_exits_two() {
 #[test]
 fn check_verbose_shows_passing_checks() {
     let cfg = write_config(
-        r#"(rule "echo" (effect :allow "echo is safe")
+        r#"(rule "echo" (allow "echo is safe")
   (check :allow "echo hello"))"#,
     );
     may_i(&cfg)
@@ -58,7 +58,7 @@ fn check_verbose_shows_passing_checks() {
 #[test]
 fn check_json_produces_valid_json() {
     let cfg = write_config(
-        r#"(rule "echo" (effect :allow "echo is safe")
+        r#"(rule "echo" (allow "echo is safe")
   (check :allow "echo hello"))"#,
     );
     let output = may_i(&cfg).args(["check", "--json"]).output().expect("run");

@@ -140,22 +140,22 @@ mod tests {
 
     #[test]
     fn complexity_effect() {
-        // (effect :allow "reason") -> 1 + max(1, 1) = 2
-        assert_eq!(c("(effect :allow \"reason\")"), 2);
+        // (allow "reason") -> 1 + max(1, 1) = 2
+        assert_eq!(c("(allow \"reason\")"), 2);
     }
 
     #[test]
     fn complexity_when() {
-        // (when pred (effect :allow)) -> 1 + max(C(pred), C(effect))
+        // (when pred (allow)) -> 1 + max(C(pred), C(effect))
         // = 1 + max(1, 2) = 3
-        assert_eq!(c("(when pred (effect :allow \"r\"))"), 3);
+        assert_eq!(c("(when pred (allow \"r\"))"), 3);
     }
 
     #[test]
     fn complexity_if() {
-        // (if pred (effect :allow "r") (effect :deny "r"))
+        // (if pred (allow "r") (deny "r"))
         // = 1 + max(1, 2, 2) = 3
-        assert_eq!(c("(if pred (effect :allow \"r\") (effect :deny \"r\"))"), 3);
+        assert_eq!(c("(if pred (allow \"r\") (deny \"r\"))"), 3);
     }
 
     #[test]
@@ -277,7 +277,7 @@ mod tests {
 
     #[test]
     fn migration_preserves_inline_comment() {
-        let input = "(rule (command cargo) ;; flags-only, e.g. 'cargo --list'\n  (effect :allow))";
+        let input = "(rule (command cargo) ;; flags-only, e.g. 'cargo --list'\n  (allow))";
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let result = super::super::migrate(nodes.into_iter().next().unwrap());
         let serialized = result.serialize();

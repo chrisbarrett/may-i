@@ -203,14 +203,20 @@ fn trace_to_layout(
                 command: _,
                 style,
                 parameter_tokens,
+                tail,
             } => {
                 let params_text = if parameter_tokens.is_empty() {
                     String::new()
                 } else {
                     format!(" parameters ({})", parameter_tokens.join(" "))
                 };
-                let label = format!("{} {style}{params_text}", "parser:".dimmed());
-                let label_visible = "parser: ".len() + style.len() + params_text.len();
+                let tail_text = tail
+                    .as_ref()
+                    .map(|t| format!(" tail {t}"))
+                    .unwrap_or_default();
+                let label = format!("{} {style}{params_text}{tail_text}", "parser:".dimmed());
+                let label_visible =
+                    "parser: ".len() + style.len() + params_text.len() + tail_text.len();
                 let mut row = ColRow::new(label, label_visible, "");
                 row.left_align = ColAlign::Right;
                 current_rows.push(row);

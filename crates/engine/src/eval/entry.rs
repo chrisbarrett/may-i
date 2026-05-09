@@ -1,6 +1,6 @@
 #[cfg(test)]
 use may_i_core::ast::Style;
-use may_i_core::ast::{EffectResult, ParameterTreatment, PunPolicy, ResolvedParser, Rule};
+use may_i_core::ast::{EffectResult, ParameterTreatment, PunPolicy, ResolvedParser, Rule, Tail};
 use may_i_core::{ContextFacts, Decision};
 
 use crate::fold::{EvalFold, PureFold};
@@ -64,7 +64,7 @@ pub(crate) fn evaluate_at_depth<F: EvalFold>(
     }
     let expanded = tokenise(args, &parser);
     fold.record_parser(command, &parser);
-    // Parser-level `(parameter X (may-i *))` recursion. Run before
+    // Parser-level `(parameter X (authorise))` recursion. Run before
     // rule evaluation so `:via NAME` facts are in scope; the
     // recursion result also acts as a fallback decision when no rule
     // matches.
@@ -317,6 +317,118 @@ pub fn parser_positional_args<'a>(args: &'a [String], parser: &ResolvedParser) -
     out
 }
 
+/// Tokenised outer/tail slices for a parser that declares `(tail …)`.
+///
+/// `outer` is the slice subject to the parser's normal flag/parameter
+/// matchers. `tail` is the residual slice exposed only via
+/// `(tail (authorise))`. When the parser does not declare a tail (or the
+/// boundary token is absent for `AfterToken`), `tail` is `None` and
+/// `outer` covers the whole argv.
+#[derive(Debug)]
+pub(super) struct ArgvSplit<'a> {
+    pub outer: &'a [String],
+    pub tail: Option<&'a [String]>,
+}
+
+/// Compute the outer/tail boundary for `args` under `parser`. The split
+/// is purely positional — the input is the already-tokenised stream, so
+/// callers should normally pass the result of [`tokenise`].
+pub(super) fn split_outer_tail<'a>(args: &'a [String], parser: &ResolvedParser) -> ArgvSplit<'a> {
+    let Some(tail_kind) = parser.tail.as_ref() else {
+        return ArgvSplit {
+            outer: args,
+            tail: None,
+        };
+    };
+    match tail_kind {
+        Tail::AfterFlags => {
+            let split_at = first_positional_index(args, parser);
+            ArgvSplit {
+                outer: &args[..split_at],
+                tail: Some(&args[split_at..]),
+            }
+        }
+        Tail::AfterToken(boundary) => {
+            match args.iter().position(|a| a == boundary) {
+                Some(idx) => ArgvSplit {
+                    outer: &args[..idx],
+                    // The boundary token is consumed — neither slice
+                    // includes it.
+                    tail: Some(&args[idx + 1..]),
+                },
+                None => ArgvSplit {
+                    outer: args,
+                    tail: None,
+                },
+            }
+        }
+    }
+}
+
+/// Return the index of the first token in `args` that the parser would
+/// treat as a positional under its style/parameter declarations.
+/// Mirrors the flag/parameter consumption logic in
+/// [`parser_positional_args`].
+fn first_positional_index(args: &[String], parser: &ResolvedParser) -> usize {
+    let style = &parser.style;
+    let long_prefix = style.long_prefix();
+    let short_prefix = style.short_prefix();
+    let separators = style.separators();
+    let gnu_long_consumes_next =
+        long_prefix == "--" && short_prefix == "-" && separators.iter().any(|s| s == "=");
+
+    let mut i = 0;
+    while i < args.len() {
+        let arg = &args[i];
+        if arg == "--" {
+            // The literal `--` itself becomes the first positional under
+            // AfterFlags semantics; the tail starts here.
+            return i;
+        }
+        let starts_long = !long_prefix.is_empty() && arg.starts_with(long_prefix);
+        let starts_short =
+            !short_prefix.is_empty() && arg.starts_with(short_prefix) && !starts_long;
+        if starts_long || starts_short {
+            let prefix = if starts_long {
+                long_prefix
+            } else {
+                short_prefix
+            };
+            let name_with_value = &arg[prefix.len()..];
+            let inline_handled = separators
+                .iter()
+                .filter(|s| s.as_str() != " ")
+                .any(|s| name_with_value.contains(s.as_str()));
+            if inline_handled {
+                i += 1;
+                continue;
+            }
+            let is_declared_param = parser.parameter_token_matches(arg);
+            let consumes_next = is_declared_param || (starts_long && gnu_long_consumes_next);
+            if consumes_next && separators.iter().any(|s| s.as_str() == " ") && i + 1 < args.len() {
+                i += 2;
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+        // No flag prefix. Under styles with empty prefixes (key-value),
+        // `key=value` tokens are flag-equivalent and consumed.
+        let is_kv = separators.iter().filter(|s| !s.trim().is_empty()).any(|s| {
+            arg.find(s.as_str())
+                .map(|j| j > 0 && j < arg.len() - 1)
+                .unwrap_or(false)
+        });
+        if long_prefix.is_empty() && short_prefix.is_empty() && is_kv {
+            i += 1;
+            continue;
+        }
+        // First positional — outer ends here.
+        return i;
+    }
+    args.len()
+}
+
 /// Evaluator for rules with unified effect model.
 pub struct Evaluator<'a> {
     rules: &'a [Rule],
@@ -494,6 +606,7 @@ mod tokenisation_properties {
             style,
             flags: vec![],
             parameters: vec![],
+            tail: None,
         }
     }
 
@@ -542,6 +655,7 @@ mod tokenisation_properties {
             parser.parameters.push(ParameterDecl {
                 names: vec![name.clone()],
                 treatment: PT::None,
+                capture: may_i_core::ast::Capture::Single,
             });
             let bare = vec![name.clone()];
             prop_assert!(check_pun_error(&bare, &parser).is_err());
@@ -601,5 +715,109 @@ mod tokenisation_properties {
             }
         }
         result
+    }
+
+    fn arg_strs(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn parser_with_tail(tail: Option<Tail>) -> ResolvedParser {
+        let mut p = parser_with_style(Style::default_gnu());
+        p.tail = tail;
+        p
+    }
+
+    #[test]
+    fn split_outer_tail_no_decl_returns_whole_argv() {
+        let args = arg_strs(&["-r", "foo", "bar"]);
+        let parser = parser_with_tail(None);
+        let split = split_outer_tail(&args, &parser);
+        assert_eq!(split.outer, args.as_slice());
+        assert!(split.tail.is_none());
+    }
+
+    #[test]
+    fn split_outer_tail_after_flags_basic() {
+        // sudo-style: outer = flags only; tail starts at first positional.
+        let args = arg_strs(&["-u", "root", "rm", "-rf", "/tmp/x"]);
+        let mut parser = parser_with_tail(Some(Tail::AfterFlags));
+        parser.parameters.push(may_i_core::ast::ParameterDecl {
+            names: vec!["u".into()],
+            treatment: ParameterTreatment::None,
+            capture: may_i_core::ast::Capture::Single,
+        });
+        let split = split_outer_tail(&args, &parser);
+        assert_eq!(split.outer, &["-u".to_string(), "root".to_string()]);
+        assert_eq!(
+            split.tail.unwrap(),
+            &["rm".to_string(), "-rf".to_string(), "/tmp/x".to_string()]
+        );
+    }
+
+    #[test]
+    fn split_outer_tail_after_flags_no_positionals() {
+        let args = arg_strs(&["-r", "-f"]);
+        let parser = parser_with_tail(Some(Tail::AfterFlags));
+        let split = split_outer_tail(&args, &parser);
+        assert_eq!(split.outer, args.as_slice());
+        assert_eq!(split.tail.unwrap(), &[] as &[String]);
+    }
+
+    #[test]
+    fn split_outer_tail_after_token_present() {
+        let args = arg_strs(&["exec", "node", "--", "build", "--prod"]);
+        let parser = parser_with_tail(Some(Tail::AfterToken("--".into())));
+        let split = split_outer_tail(&args, &parser);
+        assert_eq!(split.outer, &["exec".to_string(), "node".to_string()]);
+        assert_eq!(
+            split.tail.unwrap(),
+            &["build".to_string(), "--prod".to_string()]
+        );
+    }
+
+    #[test]
+    fn split_outer_tail_after_token_absent() {
+        let args = arg_strs(&["exec", "node"]);
+        let parser = parser_with_tail(Some(Tail::AfterToken("--".into())));
+        let split = split_outer_tail(&args, &parser);
+        assert_eq!(split.outer, args.as_slice());
+        assert!(split.tail.is_none());
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: 256, max_shrink_iters: 50, .. ProptestConfig::default() })]
+
+        // 7.5 — outer ⊕ boundary ⊕ tail = original argv (modulo dropped
+        // boundary token where applicable).
+        #[test]
+        fn outer_tail_partition_preserves_argv(args in argv()) {
+            let after_flags = parser_with_tail(Some(Tail::AfterFlags));
+            let split = split_outer_tail(&args, &after_flags);
+            let recombined: Vec<String> = split
+                .outer
+                .iter()
+                .chain(split.tail.unwrap_or(&[]).iter())
+                .cloned()
+                .collect();
+            prop_assert_eq!(recombined, args.clone());
+        }
+
+        #[test]
+        fn outer_tail_after_token_drops_only_boundary(args in argv()) {
+            let after_token = parser_with_tail(Some(Tail::AfterToken("--".into())));
+            let split = split_outer_tail(&args, &after_token);
+            match split.tail {
+                Some(tail) => {
+                    let mut combined: Vec<String> =
+                        split.outer.iter().cloned().collect();
+                    combined.push("--".to_string());
+                    combined.extend(tail.iter().cloned());
+                    prop_assert_eq!(combined, args.clone());
+                }
+                None => {
+                    prop_assert!(!args.iter().any(|a| a == "--"));
+                }
+            }
+        }
     }
 }

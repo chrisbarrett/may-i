@@ -8,11 +8,12 @@ pub(crate) fn and_trailing_effect_to_when(node: &CstNode) -> Option<Box<CstNode>
         return None;
     }
 
-    // Find the first low-complexity effect at any position
-    let effect_idx = children[1..]
-        .iter()
-        .position(|c| c.is_tagged("effect") && complexity(c) <= 3)?
-        + 1; // adjust for skip of tag
+    // Find the first low-complexity terminal effect at any position. Both
+    // legacy `(effect …)` and the new bare decision verbs are eligible.
+    let effect_idx = children[1..].iter().position(|c| {
+        (c.is_tagged("effect") || c.is_tagged("allow") || c.is_tagged("ask") || c.is_tagged("deny"))
+            && complexity(c) <= 3
+    })? + 1; // adjust for skip of tag
 
     let effect = &children[effect_idx];
 
@@ -55,53 +56,47 @@ pub(crate) fn and_trailing_effect_to_when(node: &CstNode) -> Option<Box<CstNode>
 mod tests {
     #[test]
     fn test_and_trailing_effect_to_when() {
-        let input = r#"(and (anywhere "-r") (anywhere "/") (effect :deny "bad"))"#;
+        let input = r#"(and (anywhere "-r") (anywhere "/") (deny "bad"))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let result = super::super::migrate(nodes.into_iter().next().unwrap());
         // (anywhere "-r") collapses to the structured (flag "r") form en
         // route through the migration pipeline.
         assert_eq!(
             result.serialize(),
-            r#"(when (and (flag "r") (anywhere "/")) (effect :deny "bad"))"#,
+            r#"(when (and (flag "r") (anywhere "/")) (deny "bad"))"#,
         );
     }
 
     #[test]
     fn test_and_trailing_effect_single_pred_to_when() {
-        let input = r#"(and (anywhere "-r") (effect :allow "ok"))"#;
+        let input = r#"(and (anywhere "-r") (allow "ok"))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let result = super::super::migrate(nodes.into_iter().next().unwrap());
-        assert_eq!(
-            result.serialize(),
-            r#"(when (flag "r") (effect :allow "ok"))"#,
-        );
+        assert_eq!(result.serialize(), r#"(when (flag "r") (allow "ok"))"#,);
     }
 
     #[test]
     fn test_and_leading_effect_to_when() {
-        let input = r#"(and (effect :allow) (positional "fmt"))"#;
+        let input = r#"(and (allow) (positional "fmt"))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let result = super::super::migrate(nodes.into_iter().next().unwrap());
-        assert_eq!(
-            result.serialize(),
-            r#"(when (positional "fmt") (effect :allow))"#,
-        );
+        assert_eq!(result.serialize(), r#"(when (positional "fmt") (allow))"#,);
     }
 
     #[test]
     fn test_and_middle_effect_to_when() {
-        let input = r#"(and (anywhere "-f") (effect :allow) (positional "x"))"#;
+        let input = r#"(and (anywhere "-f") (allow) (positional "x"))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let result = super::super::migrate(nodes.into_iter().next().unwrap());
         assert_eq!(
             result.serialize(),
-            r#"(when (and (flag "f") (positional "x")) (effect :allow))"#,
+            r#"(when (and (flag "f") (positional "x")) (allow))"#,
         );
     }
 
     #[test]
     fn test_and_trailing_complex_effect_unchanged() {
-        let input = r#"(and pred (effect :allow (or (and a b) c)))"#;
+        let input = r#"(and pred (allow (or (and a b) c)))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let result = super::super::migrate(nodes.into_iter().next().unwrap());
         assert!(

@@ -1,33 +1,29 @@
-// Parser for `(define-arg-style NAME (PLIST))` and the inner style PLIST.
+// Parser for `(define-arg-style NAME (overrides …) (long-prefix …) …)`.
 //
-// Kept separate from the predicate-binding `(define …)` form for now (see
-// design discussion in proposal.md). The PLIST grammar is:
+// The body is a uniform list of attribute forms:
 //
-//   :long-prefix STRING
-//   :short-prefix STRING
-//   :separators (STRING …)
-//   :combined-shorts BOOL
-//   :first-token-bundle BOOL
-//   :pun (:allow | :error)
-//   :overrides NAME
+//   (overrides NAME)
+//   (long-prefix STRING)
+//   (short-prefix STRING)
+//   (separators STRING …)        — variadic
+//   (combined-shorts BOOL)
+//   (first-token-bundle BOOL)
+//   (pun :allow|:error)
 
 use may_i_core::ast::{Provenance, PunPolicy, StyleSpec};
 use may_i_sexpr::{RawError, Sexpr};
 
-/// Parse a top-level `(define-arg-style NAME (PLIST))` form into a
-/// `StyleSpec`. Caller assigns `Provenance` if needed (defaults to
-/// `PrimaryConfig`).
+/// Parse a top-level `(define-arg-style NAME ATTR…)` form into a `StyleSpec`.
 pub fn parse_style_definition(sexpr: &Sexpr) -> Result<StyleSpec, RawError> {
     let list = sexpr
         .as_list()
         .ok_or_else(|| RawError::new("define-arg-style must be a list", sexpr.span()))?;
 
-    if list.len() != 3 {
-        return Err(RawError::new(
-            "define-arg-style requires a name and a property-list body",
-            sexpr.span(),
-        )
-        .with_help("(define-arg-style NAME (:long-prefix \"--\" …))"));
+    if list.len() < 2 {
+        return Err(
+            RawError::new("define-arg-style requires a name", sexpr.span())
+                .with_help("(define-arg-style NAME (long-prefix \"--\") …)"),
+        );
     }
 
     let name = list[1]
@@ -35,25 +31,8 @@ pub fn parse_style_definition(sexpr: &Sexpr) -> Result<StyleSpec, RawError> {
         .ok_or_else(|| RawError::new("define-arg-style name must be an atom", list[1].span()))?
         .to_string();
 
-    let plist = list[2].as_list().ok_or_else(|| {
-        RawError::new(
-            "define-arg-style body must be a property-list",
-            list[2].span(),
-        )
-    })?;
-
-    parse_style_plist(&name, plist, sexpr.span())
-}
-
-/// Parse a PLIST body into a `StyleSpec`. `name` and `span` come from the
-/// outer form. Pure: no provenance assigned.
-fn parse_style_plist(
-    name: &str,
-    plist: &[Sexpr],
-    outer_span: may_i_core::Span,
-) -> Result<StyleSpec, RawError> {
     let mut spec = StyleSpec {
-        name: name.to_string(),
+        name: name.clone(),
         overrides: None,
         long_prefix: None,
         short_prefix: None,
@@ -61,114 +40,184 @@ fn parse_style_plist(
         combined_shorts: None,
         first_token_bundle: None,
         pun: None,
-        span: outer_span,
+        span: sexpr.span(),
         provenance: Provenance::PrimaryConfig,
     };
 
-    let mut i = 0;
-    while i < plist.len() {
-        let key_atom = plist[i].as_atom().ok_or_else(|| {
+    let mut seen: std::collections::HashSet<&'static str> = std::collections::HashSet::new();
+
+    for attr in &list[2..] {
+        let attr_list = attr.as_list().ok_or_else(|| {
+            RawError::new("define-arg-style body items must be lists", attr.span())
+        })?;
+        if attr_list.is_empty() {
+            return Err(RawError::new(
+                "empty define-arg-style attribute",
+                attr.span(),
+            ));
+        }
+        let tag = attr_list[0].as_atom().ok_or_else(|| {
             RawError::new(
-                "style PLIST keys must be keywords like :long-prefix",
-                plist[i].span(),
+                "define-arg-style attribute tag must be an atom",
+                attr_list[0].span(),
             )
         })?;
-        if !key_atom.starts_with(':') {
-            return Err(RawError::new(
-                format!("style PLIST key must be a keyword, got `{key_atom}`"),
-                plist[i].span(),
-            ));
-        }
-        if i + 1 >= plist.len() {
-            return Err(RawError::new(
-                format!("missing value for style PLIST key `{key_atom}`"),
-                plist[i].span(),
-            ));
-        }
-        let value = &plist[i + 1];
 
-        match key_atom {
-            ":long-prefix" => spec.long_prefix = Some(read_string(value, key_atom)?),
-            ":short-prefix" => spec.short_prefix = Some(read_string(value, key_atom)?),
-            ":separators" => spec.separators = Some(read_string_list(value, key_atom)?),
-            ":combined-shorts" => spec.combined_shorts = Some(read_bool(value, key_atom)?),
-            ":first-token-bundle" => spec.first_token_bundle = Some(read_bool(value, key_atom)?),
-            ":pun" => spec.pun = Some(read_pun(value)?),
-            ":overrides" => spec.overrides = Some(read_atom(value, key_atom)?),
+        let attr_name: &'static str = match tag {
+            "overrides" => "overrides",
+            "long-prefix" => "long-prefix",
+            "short-prefix" => "short-prefix",
+            "separators" => "separators",
+            "combined-shorts" => "combined-shorts",
+            "first-token-bundle" => "first-token-bundle",
+            "pun" => "pun",
             other => {
                 return Err(RawError::new(
-                    format!("unknown style PLIST key: {other}"),
-                    plist[i].span(),
+                    format!("unknown define-arg-style attribute: {other}"),
+                    attr.span(),
                 )
                 .with_help(
-                    "valid keys: :long-prefix :short-prefix :separators \
-                     :combined-shorts :first-token-bundle :pun :overrides",
+                    "valid attributes: (overrides NAME) (long-prefix STRING) \
+                     (short-prefix STRING) (separators STRING …) \
+                     (combined-shorts BOOL) (first-token-bundle BOOL) (pun :allow|:error)",
                 ));
             }
+        };
+
+        if !seen.insert(attr_name) {
+            eprintln!(
+                "warning: duplicate (define-arg-style {name}) attribute `{attr_name}` — last declaration wins"
+            );
         }
 
-        i += 2;
+        match attr_name {
+            "overrides" => {
+                spec.overrides = Some(read_single_atom(attr_list, attr.span(), "overrides")?);
+            }
+            "long-prefix" => {
+                spec.long_prefix = Some(read_single_string(attr_list, attr.span(), "long-prefix")?);
+            }
+            "short-prefix" => {
+                spec.short_prefix =
+                    Some(read_single_string(attr_list, attr.span(), "short-prefix")?);
+            }
+            "separators" => {
+                spec.separators =
+                    Some(read_variadic_strings(attr_list, attr.span(), "separators")?);
+            }
+            "combined-shorts" => {
+                spec.combined_shorts =
+                    Some(read_single_bool(attr_list, attr.span(), "combined-shorts")?);
+            }
+            "first-token-bundle" => {
+                spec.first_token_bundle = Some(read_single_bool(
+                    attr_list,
+                    attr.span(),
+                    "first-token-bundle",
+                )?);
+            }
+            "pun" => {
+                spec.pun = Some(read_pun_attr(attr_list, attr.span())?);
+            }
+            _ => unreachable!(),
+        }
     }
 
     Ok(spec)
 }
 
-fn read_string(sexpr: &Sexpr, key: &str) -> Result<String, RawError> {
-    sexpr
-        .as_atom_or_str()
-        .map(str::to_string)
-        .ok_or_else(|| RawError::new(format!("{key} value must be a string"), sexpr.span()))
-}
-
-fn read_atom(sexpr: &Sexpr, key: &str) -> Result<String, RawError> {
-    sexpr
+fn read_single_atom(
+    list: &[Sexpr],
+    span: may_i_core::Span,
+    name: &str,
+) -> Result<String, RawError> {
+    if list.len() != 2 {
+        return Err(RawError::new(
+            format!("({name} …) takes exactly one atom"),
+            span,
+        ));
+    }
+    list[1]
         .as_atom()
         .map(str::to_string)
-        .ok_or_else(|| RawError::new(format!("{key} value must be an atom"), sexpr.span()))
+        .ok_or_else(|| RawError::new(format!("({name} …) value must be an atom"), list[1].span()))
 }
 
-fn read_string_list(sexpr: &Sexpr, key: &str) -> Result<Vec<String>, RawError> {
-    let list = sexpr.as_list().ok_or_else(|| {
-        RawError::new(
-            format!("{key} value must be a list of strings"),
-            sexpr.span(),
-        )
-    })?;
-    let mut out = Vec::with_capacity(list.len());
-    for item in list {
+fn read_single_string(
+    list: &[Sexpr],
+    span: may_i_core::Span,
+    name: &str,
+) -> Result<String, RawError> {
+    if list.len() != 2 {
+        return Err(RawError::new(
+            format!("({name} …) takes exactly one string"),
+            span,
+        ));
+    }
+    list[1]
+        .as_atom_or_str()
+        .map(str::to_string)
+        .ok_or_else(|| RawError::new(format!("({name} …) value must be a string"), list[1].span()))
+}
+
+fn read_variadic_strings(
+    list: &[Sexpr],
+    span: may_i_core::Span,
+    name: &str,
+) -> Result<Vec<String>, RawError> {
+    if list.len() < 2 {
+        return Err(RawError::new(
+            format!("({name} …) requires at least one value"),
+            span,
+        ));
+    }
+    let mut out = Vec::with_capacity(list.len() - 1);
+    for item in &list[1..] {
         let s = item.as_atom_or_str().ok_or_else(|| {
-            RawError::new(format!("{key} list elements must be strings"), item.span())
+            RawError::new(format!("({name} …) values must be strings"), item.span())
         })?;
         out.push(s.to_string());
     }
     Ok(out)
 }
 
-fn read_bool(sexpr: &Sexpr, key: &str) -> Result<bool, RawError> {
-    let atom = sexpr
-        .as_atom()
-        .ok_or_else(|| RawError::new(format!("{key} value must be `t` or `nil`"), sexpr.span()))?;
+fn read_single_bool(list: &[Sexpr], span: may_i_core::Span, name: &str) -> Result<bool, RawError> {
+    if list.len() != 2 {
+        return Err(RawError::new(
+            format!("({name} …) takes exactly one boolean (`t` or `nil`)"),
+            span,
+        ));
+    }
+    let atom = list[1].as_atom().ok_or_else(|| {
+        RawError::new(
+            format!("({name} …) value must be `t` or `nil`"),
+            list[1].span(),
+        )
+    })?;
     match atom {
         "t" | "true" => Ok(true),
         "nil" | "false" => Ok(false),
         other => Err(RawError::new(
-            format!("{key} value must be `t` or `nil`, got `{other}`"),
-            sexpr.span(),
+            format!("({name} …) value must be `t` or `nil`, got `{other}`"),
+            list[1].span(),
         )),
     }
 }
 
-fn read_pun(sexpr: &Sexpr) -> Result<PunPolicy, RawError> {
-    let atom = sexpr.as_atom().ok_or_else(|| {
-        RawError::new(
-            ":pun value must be a keyword (:allow or :error)",
-            sexpr.span(),
-        )
-    })?;
+fn read_pun_attr(list: &[Sexpr], span: may_i_core::Span) -> Result<PunPolicy, RawError> {
+    if list.len() != 2 {
+        return Err(RawError::new(
+            "(pun …) takes exactly one keyword (:allow or :error)",
+            span,
+        ));
+    }
+    let atom = list[1]
+        .as_atom()
+        .ok_or_else(|| RawError::new("(pun …) value must be a keyword", list[1].span()))?;
     PunPolicy::from_keyword(atom).ok_or_else(|| {
         RawError::new(
-            format!(":pun value must be :allow or :error, got `{atom}`"),
-            sexpr.span(),
+            format!("(pun …) value must be :allow or :error, got `{atom}`"),
+            list[1].span(),
         )
     })
 }
@@ -189,11 +238,11 @@ mod tests {
     fn parses_full_gnu_style() {
         let form = first_form(
             r#"(define-arg-style gnu
-                 (:long-prefix "--"
-                  :short-prefix "-"
-                  :separators (" " "=")
-                  :combined-shorts t
-                  :pun :allow))"#,
+                 (long-prefix "--")
+                 (short-prefix "-")
+                 (separators " " "=")
+                 (combined-shorts t)
+                 (pun :allow))"#,
         );
         let spec = parse_style_definition(&form).unwrap();
         assert_eq!(spec.name, "gnu");
@@ -211,7 +260,7 @@ mod tests {
     #[test]
     fn parses_overrides() {
         let form = first_form(
-            r#"(define-arg-style legacy-bundle (:overrides gnu :first-token-bundle t))"#,
+            r#"(define-arg-style legacy-bundle (overrides gnu) (first-token-bundle t))"#,
         );
         let spec = parse_style_definition(&form).unwrap();
         assert_eq!(spec.overrides.as_deref(), Some("gnu"));
@@ -219,29 +268,22 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unknown_key() {
-        let form = first_form(r#"(define-arg-style bad (:wibble "x"))"#);
+    fn rejects_unknown_attribute() {
+        let form = first_form(r#"(define-arg-style bad (wibble "x"))"#);
         let err = parse_style_definition(&form).unwrap_err();
-        assert!(format!("{err}").contains(":wibble"), "{err}");
+        assert!(format!("{err}").contains("wibble"), "{err}");
     }
 
     #[test]
     fn rejects_missing_value() {
-        let form = first_form(r#"(define-arg-style x (:long-prefix))"#);
+        let form = first_form(r#"(define-arg-style x (long-prefix))"#);
         let err = parse_style_definition(&form).unwrap_err();
-        assert!(format!("{err}").contains("missing value"), "{err}");
-    }
-
-    #[test]
-    fn rejects_non_keyword_key() {
-        let form = first_form(r#"(define-arg-style x (long-prefix "--"))"#);
-        let err = parse_style_definition(&form).unwrap_err();
-        assert!(format!("{err}").contains("must be a keyword"), "{err}");
+        assert!(format!("{err}").contains("long-prefix"), "{err}");
     }
 
     #[test]
     fn rejects_bad_pun() {
-        let form = first_form(r#"(define-arg-style x (:pun :wat))"#);
+        let form = first_form(r#"(define-arg-style x (pun :wat))"#);
         let err = parse_style_definition(&form).unwrap_err();
         assert!(format!("{err}").contains(":allow"), "{err}");
     }
@@ -249,8 +291,7 @@ mod tests {
     #[test]
     fn registry_resolves_simple_style() {
         let form = first_form(
-            r#"(define-arg-style mine
-                 (:long-prefix "--" :short-prefix "-" :pun :error))"#,
+            r#"(define-arg-style mine (long-prefix "--") (short-prefix "-") (pun :error))"#,
         );
         let mut reg = StyleRegistry::new();
         reg.push(parse_style_definition(&form).unwrap());
@@ -264,13 +305,13 @@ mod tests {
         let mut reg = StyleRegistry::new();
         reg.push(
             parse_style_definition(&first_form(
-                r#"(define-arg-style gnu (:separators (" " "=")))"#,
+                r#"(define-arg-style gnu (separators " " "="))"#,
             ))
             .unwrap(),
         );
         reg.push(
             parse_style_definition(&first_form(
-                r#"(define-arg-style java (:overrides gnu :separators (" " "=" ":")))"#,
+                r#"(define-arg-style java (overrides gnu) (separators " " "=" ":"))"#,
             ))
             .unwrap(),
         );
@@ -283,7 +324,7 @@ mod tests {
         let mut reg = StyleRegistry::new();
         reg.push(
             parse_style_definition(&first_form(
-                r#"(define-arg-style derived (:overrides nope))"#,
+                r#"(define-arg-style derived (overrides nope))"#,
             ))
             .unwrap(),
         );
@@ -295,10 +336,10 @@ mod tests {
     fn registry_cycle_errors() {
         let mut reg = StyleRegistry::new();
         reg.push(
-            parse_style_definition(&first_form(r#"(define-arg-style a (:overrides b))"#)).unwrap(),
+            parse_style_definition(&first_form(r#"(define-arg-style a (overrides b))"#)).unwrap(),
         );
         reg.push(
-            parse_style_definition(&first_form(r#"(define-arg-style b (:overrides a))"#)).unwrap(),
+            parse_style_definition(&first_form(r#"(define-arg-style b (overrides a))"#)).unwrap(),
         );
         let err = reg.resolve("a").unwrap_err();
         assert!(format!("{err}").contains("cycle"), "{err}");
@@ -308,16 +349,12 @@ mod tests {
     fn registry_last_wins_on_duplicate() {
         let mut reg = StyleRegistry::new();
         reg.push(
-            parse_style_definition(&first_form(
-                r#"(define-arg-style mine (:long-prefix "--"))"#,
-            ))
-            .unwrap(),
+            parse_style_definition(&first_form(r#"(define-arg-style mine (long-prefix "--"))"#))
+                .unwrap(),
         );
         reg.push(
-            parse_style_definition(&first_form(
-                r#"(define-arg-style mine (:long-prefix "++"))"#,
-            ))
-            .unwrap(),
+            parse_style_definition(&first_form(r#"(define-arg-style mine (long-prefix "++"))"#))
+                .unwrap(),
         );
         let style = reg.resolve("mine").unwrap();
         assert_eq!(style.long_prefix(), "++");

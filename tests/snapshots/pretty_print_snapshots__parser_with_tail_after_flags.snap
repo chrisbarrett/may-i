@@ -1,0 +1,8 @@
+---
+source: tests/pretty_print_snapshots.rs
+expression: out
+---
+── input (width 80) ──
+(parser "sudo" (style gnu) (tail (after :flags)))
+── output ──
+(parser "sudo" (style gnu) (tail (after :flags)))

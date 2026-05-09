@@ -6,6 +6,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
+use may_i_core::Decision;
 use may_i_core::ast::{Config, Effect, Predicate, Rule};
 use may_i_core::doc::DocF;
 use may_i_core::pattern::{ArgPattern, CommandPattern, Expr, MatchMode, PositionalArg, Quantifier};
@@ -178,10 +179,17 @@ pub fn canonical_rule(rule: &Rule) -> String {
 /// Produce a canonical s-expression for an effect.
 fn canonical_effect(effect: &Effect) -> String {
     match effect {
-        Effect::Terminal { decision, reason } => match reason {
-            Some(r) => format!("(effect {} \"{}\")", decision.keyword(), r),
-            None => format!("(effect {})", decision.keyword()),
-        },
+        Effect::Terminal { decision, reason } => {
+            let verb = match decision {
+                Decision::Allow => "allow",
+                Decision::Ask => "ask",
+                Decision::Deny => "deny",
+            };
+            match reason {
+                Some(r) => format!("({verb} \"{r}\")"),
+                None => format!("({verb})"),
+            }
+        }
         Effect::CommandPattern(pat) => canonical_command_pattern(pat),
         Effect::ArgPattern(pat) => canonical_arg_pattern(pat),
         Effect::And { effects } => {
@@ -227,9 +235,34 @@ fn canonical_effect(effect: &Effect) -> String {
             }
             format!("({})", parts.join(" "))
         }
-        Effect::MayI { pattern } => format!("(may-i {})", canonical_arg_pattern(pattern)),
+        Effect::MayI { pattern } => {
+            // The bare `(authorise)` form (the common case after migration)
+            // canonicalises as `(authorise)` — the new surface verb. Any
+            // non-trivial pattern keeps the legacy `(may-i …)` rendering
+            // until those forms also retire.
+            if is_wildcard_positional(pattern) {
+                "(authorise)".to_string()
+            } else {
+                format!("(may-i {})", canonical_arg_pattern(pattern))
+            }
+        }
         _ => "<unknown>".to_string(),
     }
+}
+
+/// True if `pattern` is `(positional *)` — the canonical wildcard
+/// continuation that `(authorise)` resolves to internally.
+fn is_wildcard_positional(pattern: &ArgPattern) -> bool {
+    matches!(
+        pattern,
+        ArgPattern::Ordered {
+            mode: MatchMode::Positional,
+            patterns,
+            continuation: None,
+        } if patterns.len() == 1
+            && patterns[0].quantifier == Quantifier::One
+            && matches!(patterns[0].pattern, Expr::Wildcard)
+    )
 }
 
 fn canonical_command_pattern(pat: &CommandPattern) -> String {
@@ -301,6 +334,7 @@ fn canonical_arg_pattern(pat: &ArgPattern) -> String {
             canonical_flag_names(names),
             canonical_parameter_form(form)
         ),
+        ArgPattern::Tail => "(tail (authorise))".to_string(),
         _ => "<unknown>".to_string(),
     }
 }
@@ -308,7 +342,7 @@ fn canonical_arg_pattern(pat: &ArgPattern) -> String {
 fn canonical_parameter_form(form: &may_i_core::pattern::ParameterForm) -> String {
     match form {
         may_i_core::pattern::ParameterForm::Match(expr) => canonical_expr(expr),
-        may_i_core::pattern::ParameterForm::MayI => "(may-i *)".to_string(),
+        may_i_core::pattern::ParameterForm::MayI => "(authorise)".to_string(),
     }
 }
 
@@ -806,10 +840,7 @@ mod tests {
         let programs = hashes.programs();
         let meta = &programs["git"];
         assert_eq!(meta.canonical_rules.len(), 1);
-        assert_eq!(
-            meta.canonical_rules[0],
-            r#"(rule "git" (effect :allow "safe"))"#
-        );
+        assert_eq!(meta.canonical_rules[0], r#"(rule "git" (allow "safe"))"#);
     }
 
     // --- canonical_rule ---

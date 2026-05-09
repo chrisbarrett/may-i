@@ -15,6 +15,10 @@ pub enum Provenance {
     PrimaryConfig,
     /// From a file included via `(load ...)`.
     Loaded { path: PathBuf },
+    /// Shipped with the binary (e.g. wrapper-tool parser declarations).
+    /// Implicitly trusted; user declarations of the same name shadow
+    /// without a duplicate warning.
+    Prelude,
 }
 
 impl Provenance {
@@ -23,11 +27,17 @@ impl Provenance {
         matches!(self, Provenance::Loaded { .. })
     }
 
+    /// Returns true if this entry came from the binary's built-in
+    /// prelude rather than a user-authored config.
+    pub fn is_prelude(&self) -> bool {
+        matches!(self, Provenance::Prelude)
+    }
+
     /// Returns the source file path if this is a `Loaded` variant.
     pub fn path(&self) -> Option<&std::path::Path> {
         match self {
             Provenance::Loaded { path } => Some(path),
-            Provenance::PrimaryConfig => None,
+            Provenance::PrimaryConfig | Provenance::Prelude => None,
         }
     }
 }
@@ -97,7 +107,7 @@ impl EffectResult {
 pub enum Effect {
     // Terminal decisions
     /// A terminal decision (allow, ask, or deny) with optional reason.
-    /// Syntax: `(effect :allow)`, `(effect :ask "reason")`, etc.
+    /// Syntax: `(allow)`, `(ask "reason")`, etc.
     Terminal {
         decision: Decision,
         reason: Option<String>,
@@ -676,16 +686,53 @@ pub enum ParameterTreatment {
     MayI,
 }
 
+/// Capture-shape of a parameter declaration. The default is single-token
+/// (the parameter consumes one trailing token); `ManyTill` consumes
+/// multiple tokens until a terminator pattern matches, used to model
+/// `find -exec … ;` and friends.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum Capture {
+    /// Single-token capture (the historical and default behaviour).
+    Single,
+    /// Multi-token capture: consume tokens after the parameter occurrence
+    /// until a token matches `terminator`. The terminator is consumed and
+    /// discarded; the captured value is the tokens before it joined with
+    /// single spaces.
+    ManyTill {
+        /// Single-token expression matched against each candidate
+        /// terminator.
+        terminator: crate::pattern::Expr<Effect>,
+    },
+}
+
 /// One parameter declaration in a `(parser …)` body. `names` lists the
 /// short/long spellings (e.g. `["n", "namespace"]`). For a single
 /// spelling, the vector has one entry.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone)]
 pub struct ParameterDecl {
     pub names: Vec<String>,
     pub treatment: ParameterTreatment,
+    /// How the parameter consumes tokens at tokenisation time. Defaults
+    /// to single-token capture; `ManyTill` supports `find -exec … ;`.
+    pub capture: Capture,
 }
 
-/// Parsed `(parser PROGRAM :style STYLE BODY…)` declaration. The style is
+/// Wrapper-tail boundary spec declared via `(tail (after VALUE))` in a
+/// parser body. Drives the tokeniser's outer/tail split for wrapper tools
+/// like sudo/xargs/env (boundary = end of outer flags) and mise (boundary
+/// = explicit `--` token).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Tail {
+    /// `(tail (after :flags))` — outer slice ends after the last flag or
+    /// parameter is consumed; tail begins at the first non-flag token.
+    AfterFlags,
+    /// `(tail (after "--"))` — outer slice ends before the literal token;
+    /// the boundary token itself is consumed.
+    AfterToken(String),
+}
+
+/// Parsed `(parser PROGRAM (style STYLE) BODY…)` declaration. The style is
 /// referenced by name; resolution against the `StyleRegistry` happens at
 /// `Config::parser_for` time.
 #[derive(Debug, Clone)]
@@ -696,6 +743,9 @@ pub struct Parser {
     /// spelling list.
     pub flags: Vec<Vec<String>>,
     pub parameters: Vec<ParameterDecl>,
+    /// Optional `(tail (after VALUE))` declaration. `None` for parsers
+    /// without a wrapper-boundary; the tokeniser does not split argv.
+    pub tail: Option<Tail>,
     pub span: Span,
     pub provenance: Provenance,
 }
@@ -708,6 +758,7 @@ pub struct ResolvedParser {
     pub style: Style,
     pub flags: Vec<Vec<String>>,
     pub parameters: Vec<ParameterDecl>,
+    pub tail: Option<Tail>,
 }
 
 impl ResolvedParser {
@@ -719,6 +770,7 @@ impl ResolvedParser {
             style: Style::default_gnu(),
             flags: Vec::new(),
             parameters: Vec::new(),
+            tail: None,
         }
     }
 
@@ -760,6 +812,17 @@ impl ResolvedParser {
         self.parameters
             .iter()
             .find(|decl| decl.names.iter().any(|n| self.token_for_name(n) == tok))
+    }
+
+    /// Find the `ParameterDecl` whose token-form is in `tokens`. Used
+    /// when the caller has already computed the token list and wants to
+    /// look the matching declaration up cheaply.
+    pub fn parameter_decl_for_token_in(&self, tokens: &[String]) -> Option<&ParameterDecl> {
+        self.parameters.iter().find(|decl| {
+            decl.names
+                .iter()
+                .any(|n| tokens.iter().any(|t| t == &self.token_for_name(n)))
+        })
     }
 }
 
@@ -817,6 +880,7 @@ impl Config {
             style,
             flags: parser.flags.clone(),
             parameters: parser.parameters.clone(),
+            tail: parser.tail.clone(),
         }
     }
 
@@ -837,6 +901,7 @@ impl Config {
                 parser.parameters.push(ParameterDecl {
                     names: vec![name],
                     treatment: ParameterTreatment::None,
+                    capture: Capture::Single,
                 });
             }
         }
@@ -931,7 +996,12 @@ impl ToDoc for Effect {
     fn to_doc(&self) -> Doc {
         match self {
             Effect::Terminal { decision, reason } => {
-                let mut cs = vec![Doc::atom("effect"), Doc::atom(decision.keyword())];
+                let verb = match decision {
+                    Decision::Allow => "allow",
+                    Decision::Ask => "ask",
+                    Decision::Deny => "deny",
+                };
+                let mut cs = vec![Doc::atom(verb)];
                 if let Some(r) = reason {
                     cs.push(Doc::atom(format!("\"{r}\"")));
                 }
@@ -1315,7 +1385,7 @@ mod tests {
             reason: None,
         }
         .to_doc();
-        assert_eq!(doc_text(&doc), "(effect :allow)");
+        assert_eq!(doc_text(&doc), "(allow)");
     }
 
     #[test]
@@ -1325,7 +1395,7 @@ mod tests {
             reason: Some("safe command".into()),
         }
         .to_doc();
-        assert_eq!(doc_text(&doc), "(effect :allow \"safe command\")");
+        assert_eq!(doc_text(&doc), "(allow \"safe command\")");
     }
 
     #[test]
@@ -1335,7 +1405,7 @@ mod tests {
             reason: None,
         }
         .to_doc();
-        assert_eq!(doc_text(&doc), "(effect :ask)");
+        assert_eq!(doc_text(&doc), "(ask)");
     }
 
     #[test]
@@ -1345,7 +1415,7 @@ mod tests {
             reason: Some("confirm".into()),
         }
         .to_doc();
-        assert_eq!(doc_text(&doc), "(effect :ask \"confirm\")");
+        assert_eq!(doc_text(&doc), "(ask \"confirm\")");
     }
 
     #[test]
@@ -1355,7 +1425,7 @@ mod tests {
             reason: None,
         }
         .to_doc();
-        assert_eq!(doc_text(&doc), "(effect :deny)");
+        assert_eq!(doc_text(&doc), "(deny)");
     }
 
     #[test]
@@ -1365,7 +1435,7 @@ mod tests {
             reason: Some("blocked".into()),
         }
         .to_doc();
-        assert_eq!(doc_text(&doc), "(effect :deny \"blocked\")");
+        assert_eq!(doc_text(&doc), "(deny \"blocked\")");
     }
 
     #[test]

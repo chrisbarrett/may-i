@@ -294,6 +294,12 @@ pub enum ArgPattern {
         names: Vec<String>,
         form: ParameterForm,
     },
+
+    /// Recurse on the wrapper-tail slice. Syntax: `(tail (authorise))`.
+    /// The tail comes from the parser's `(tail (after …))` declaration if
+    /// present, else from residual positionals after preceding
+    /// `(positional …)` matches.
+    Tail,
 }
 
 /// How a `(parameter X FORM)` pattern interprets the flag's value.

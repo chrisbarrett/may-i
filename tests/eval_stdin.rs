@@ -7,7 +7,7 @@ use predicates::prelude::*;
 
 const TEST_CONFIG: &str = r#"
 (rule "echo"
-      (effect :allow "echo is safe"))
+      (allow "echo is safe"))
 "#;
 
 #[test]
@@ -70,7 +70,7 @@ fn eval_fact_flag_is_used_in_evaluation() {
     let cfg = write_config(
         r#"
 (define is-ssh (fact? :via/ssh))
-(rule "echo" (when is-ssh (effect :deny "no echo over ssh")))
+(rule "echo" (when is-ssh (deny "no echo over ssh")))
 "#,
     );
     let output = may_i(&cfg)
@@ -92,7 +92,7 @@ fn eval_without_matching_fact_falls_through() {
     let cfg = write_config(
         r#"
 (define is-ssh (fact? :via/ssh))
-(rule "echo" (when is-ssh (effect :deny "no echo over ssh")))
+(rule "echo" (when is-ssh (deny "no echo over ssh")))
 "#,
     );
     let output = may_i(&cfg)

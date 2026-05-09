@@ -54,7 +54,7 @@ mod tests {
 
     #[test]
     fn test_rule_inline_args_no_args() {
-        let input = "(rule git (effect :allow))";
+        let input = "(rule git (allow))";
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let node = nodes.into_iter().next().unwrap();
         let result = rule_inline_args(&node);
@@ -63,7 +63,7 @@ mod tests {
 
     #[test]
     fn test_rule_inline_args_with_cond() {
-        let input = "(rule git (args (cond (x :allow))) (effect :allow))";
+        let input = "(rule git (args (cond (x :allow))) (allow))";
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let node = nodes.into_iter().next().unwrap();
         let result = rule_inline_args(&node);

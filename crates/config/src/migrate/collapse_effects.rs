@@ -55,7 +55,7 @@ mod tests {
 
     #[test]
     fn test_rule_collapse_effects_wraps_multiple() {
-        let input = r#"(rule "git" (positional "push") (effect :ask))"#;
+        let input = r#"(rule "git" (positional "push") (ask))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let node = nodes.into_iter().next().unwrap();
         let result = rule_collapse_effects(&node).unwrap();
@@ -69,7 +69,7 @@ mod tests {
 
     #[test]
     fn test_rule_collapse_effects_single_not_modified() {
-        let input = r#"(rule "git" (effect :allow))"#;
+        let input = r#"(rule "git" (allow))"#;
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let node = nodes.into_iter().next().unwrap();
         let result = rule_collapse_effects(&node);

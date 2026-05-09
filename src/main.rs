@@ -1,10 +1,12 @@
 // CLI interface — clap derive with TTY detection
 
 use std::io::IsTerminal;
+use std::process::ExitCode;
 
 use clap::{CommandFactory, Parser, Subcommand};
 
 mod cmd_claude_code_hook;
+mod cmd_fmt;
 mod cmd_help;
 mod cmd_migrate;
 mod cmd_parse;
@@ -72,6 +74,10 @@ enum Command {
         /// Skip confirmation prompt (non-TTY requires this flag)
         #[arg(long)]
         yes: bool,
+        /// Show planned rewrites without modifying any file. Walks the
+        /// `(load …)` graph and reports per-file diffs.
+        #[arg(long)]
+        dry_run: bool,
     },
     /// View or approve trust for loaded config programs
     Trust {
@@ -83,27 +89,39 @@ enum Command {
     },
     /// Show detailed DSL syntax reference
     Reference,
+    /// Format config files in canonical form
+    Fmt {
+        /// Files to format (use `-` for stdin). Defaults to walking the
+        /// `(load …)` graph from the primary config when omitted.
+        files: Vec<String>,
+        /// Check if files are formatted; exit 0 (clean), 1 (would change), 2 (error)
+        #[arg(long)]
+        check: bool,
+    },
 }
 
-fn main() {
+fn main() -> ExitCode {
     miette::set_hook(Box::new(|_| {
         Box::new(miette::MietteHandlerOpts::new().build())
     }))
     .ok();
 
-    if let Err(e) = run() {
-        if e.downcast_ref::<may_i::cmd_check::CheckFailure>().is_some() {
-            std::process::exit(1);
+    match run() {
+        Ok(code) => code,
+        Err(e) => {
+            if e.downcast_ref::<may_i::cmd_check::CheckFailure>().is_some() {
+                return ExitCode::from(1);
+            }
+            eprintln!("{e:?}");
+            // Exit code 2 signals a blocking error to Claude Code hooks.
+            // stderr is fed back to Claude so it can adjust its plan.
+            ExitCode::from(2)
         }
-        eprintln!("{e:?}");
-        // Exit code 2 signals a blocking error to Claude Code hooks.
-        // stderr is fed back to Claude so it can adjust its plan.
-        std::process::exit(2);
     }
 }
 
 /// Main entry point for the CLI.
-fn run() -> miette::Result<()> {
+fn run() -> miette::Result<ExitCode> {
     let cli = Cli::parse();
 
     match cli.command {
@@ -131,13 +149,18 @@ fn run() -> miette::Result<()> {
             may_i::cmd_check::cmd_check(cli.json, verbose, cli.config.as_deref())?
         }
         Some(Command::Parse { command, file }) => cmd_parse::cmd_parse(command, file, cli.json)?,
-        Some(Command::Migrate { output, yes }) => {
-            cmd_migrate::cmd_migrate(cli.config.as_deref(), output.as_deref(), yes)?
-        }
+        Some(Command::Migrate {
+            output,
+            yes,
+            dry_run,
+        }) => cmd_migrate::cmd_migrate(cli.config.as_deref(), output.as_deref(), yes, dry_run)?,
         Some(Command::Trust { program, all }) => {
             may_i::cmd_trust::cmd_trust(program.as_deref(), all, cli.json, cli.config.as_deref())?
         }
         Some(Command::Reference) => cmd_help::cmd_help()?,
+        Some(Command::Fmt { files, check }) => {
+            return cmd_fmt::cmd_fmt(cli.config.as_deref(), files, check);
+        }
         None => {
             if std::io::stdin().is_terminal() {
                 Cli::command()
@@ -150,7 +173,7 @@ fn run() -> miette::Result<()> {
         }
     }
 
-    Ok(())
+    Ok(ExitCode::SUCCESS)
 }
 
 /// Resolve the eval command from either argv or stdin.

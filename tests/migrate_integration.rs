@@ -13,11 +13,11 @@ fn migrate_v1_config_produces_v2_output() {
         .assert()
         .success()
         .stdout(predicate::str::contains("(rule \"echo\""))
-        .stdout(predicate::str::contains(":allow"));
+        .stdout(predicate::str::contains("(allow"));
 }
 
 #[test]
-fn migrate_v2_config_outputs_unchanged() {
+fn migrate_v2_config_outputs_canonical() {
     let input = r#"(rule "echo" (effect :allow "echo is safe"))"#;
     let cfg = write_config(input);
     let output = may_i(&cfg)
@@ -28,15 +28,17 @@ fn migrate_v2_config_outputs_unchanged() {
     assert!(output.status.success());
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    // The v2 config should not be structurally changed by migration.
-    // Check that no diff/change markers appear and the key elements survive.
     assert!(
         stdout.contains(r#"(rule "echo""#),
         "rule command should be unchanged: {stdout}"
     );
     assert!(
-        stdout.contains(r#"(effect :allow "echo is safe")"#),
-        "effect should be unchanged: {stdout}"
+        stdout.contains(r#"(allow "echo is safe")"#),
+        "effect should be rewritten to bare decision verb: {stdout}"
+    );
+    assert!(
+        !stdout.contains(":allow"),
+        "legacy :allow keyword should be gone: {stdout}"
     );
     assert!(
         !stdout.contains("(command"),

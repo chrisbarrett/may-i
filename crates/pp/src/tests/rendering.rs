@@ -548,7 +548,7 @@ fn broken_zero_inline_uses_drop_indent() {
 
 #[test]
 fn two_line_multiline_last_child_not_inlined() {
-    // (and (positional "fmt") (when build-mode (effect :allow)))
+    // (and (positional "fmt") (when build-mode (allow)))
     // The (when ...) is 2 lines and should NOT inline after (positional "fmt")
     let doc = l(vec![
         a("and"),
@@ -812,6 +812,23 @@ fn cond_atom_clause() {
 }
 
 #[test]
+fn cond_clauses_indent_at_plus_one() {
+    // (cond ((p) (allow)) (else (deny))) renders with each clause at
+    // column `cond paren + 1`, matching Emacs / Common-Lisp convention.
+    // Body parts within a clause are at clause column + 1.
+    let doc = l(vec![
+        a("cond"),
+        l(vec![l(vec![a("p")]), l(vec![a("allow")])]),
+        l(vec![a("else"), l(vec![a("deny")])]),
+    ]);
+    let result = pp(&doc, 40);
+    assert_eq!(
+        result, "(cond\n ((p)\n  (allow))\n (else\n  (deny)))",
+        "expected clauses at col 1 and body parts at col 2: {result:?}"
+    );
+}
+
+#[test]
 fn body_indent_multiline_first_child() {
     // when/if/unless use body-indent; if the predicate wraps it
     // gets extra indent (indent+4) to distinguish from body.
@@ -834,7 +851,7 @@ fn body_indent_two_children() {
 
 #[test]
 fn if_keeps_multiline_condition_inline() {
-    // (if (or "a" "b") (effect :allow "yes") (effect :deny "no"))
+    // (if (or "a" "b") (allow "yes") (deny "no"))
     // The condition is multiline but should stay on the if line.
     // With (indent 2): condition and then-branch are special args.
     let cond = l(vec![

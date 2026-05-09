@@ -477,6 +477,9 @@ pub enum TraceEntry {
         command: String,
         style: String,
         parameter_tokens: Vec<String>,
+        /// Wrapper-tail boundary spec when the parser declares a tail.
+        /// `None` for parsers that consume the whole argv.
+        tail: Option<String>,
     },
 }
 
@@ -930,10 +933,15 @@ impl EvalFold for TracingFold {
     }
 
     fn record_parser(&mut self, command: &str, parser: &may_i_core::ast::ResolvedParser) {
+        let tail = parser.tail.as_ref().map(|t| match t {
+            may_i_core::ast::Tail::AfterFlags => "(after :flags)".to_string(),
+            may_i_core::ast::Tail::AfterToken(s) => format!("(after {s:?})"),
+        });
         self.traces.push(TraceEntry::Parser {
             command: command.to_string(),
             style: parser.style.name().to_string(),
             parameter_tokens: parser.parameter_tokens(),
+            tail,
         });
     }
 

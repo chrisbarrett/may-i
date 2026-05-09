@@ -20,8 +20,8 @@ fn write_file(dir: &std::path::Path, name: &str, content: &str) -> std::path::Pa
 fn multi_file_eval_matches_single_file() {
     // Single-file config
     let single = write_config(
-        r#"(rule "echo" (effect :allow "echo is safe"))
-(rule "git" (and (positional "status") (effect :allow "git status ok")))
+        r#"(rule "echo" (allow "echo is safe"))
+(rule "git" (and (positional "status") (allow "git status ok")))
 (check :allow "echo hello" :allow "git status")"#,
     );
 
@@ -30,12 +30,12 @@ fn multi_file_eval_matches_single_file() {
     write_file(
         dir.path(),
         "rules/echo.lisp",
-        r#"(rule "echo" (effect :allow "echo is safe"))"#,
+        r#"(rule "echo" (allow "echo is safe"))"#,
     );
     write_file(
         dir.path(),
         "rules/git.lisp",
-        r#"(rule "git" (and (positional "status") (effect :allow "git status ok")))"#,
+        r#"(rule "git" (and (positional "status") (allow "git status ok")))"#,
     );
     let root = write_file(
         dir.path(),
@@ -81,12 +81,12 @@ fn load_glob_integration() {
     write_file(
         dir.path(),
         "rules/01-echo.lisp",
-        r#"(rule "echo" (effect :allow "echo"))"#,
+        r#"(rule "echo" (allow "echo"))"#,
     );
     write_file(
         dir.path(),
         "rules/02-git.lisp",
-        r#"(rule "git" (effect :allow "git"))"#,
+        r#"(rule "git" (allow "git"))"#,
     );
     let root = write_file(
         dir.path(),

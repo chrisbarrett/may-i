@@ -1,0 +1,9 @@
+---
+source: tests/pretty_print_snapshots.rs
+expression: out
+---
+── input (width 80) ──
+(rule "rm" (and (positional (* (regex "^/tmp/"))) (allow)))
+── output ──
+(rule "rm"
+  (and (positional (* (regex "^/tmp/"))) (allow)))

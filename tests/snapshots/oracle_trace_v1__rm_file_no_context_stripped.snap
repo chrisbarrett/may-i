@@ -7,40 +7,40 @@ Trace
 
   parser: gnu │
 
-                                            command │ rm foo
-  24: (rule (command "rm")                          │
-        (context (and (or (flag "r")                │
-                          (flag                     │
-                           "recursive"))            │
-                      …))                           │
-        (effect                                     │ → :deny "Recursive deletion from root"
-         :deny "Recursive deletion from root"))     │
-                                                    │
-  29: (rule (command "rm")                          │
-        (args                                       │
-         (when (and                                 │
-                (build-mode                         │ build-mode → no
-                 (or                                │
-                  (has                              │ no
-                   [:claude-code/permission-mode    │
-                    "acceptEdits"])                 │
-                  (has [:opencode/agent             │ no
-                        "build"])))                 │
-                …)                                  │
-           <if-effect>)))                           │
-                                                    │
-  37: (rule (command "rm")                          │
-        (context                                    │
-         (build-mode                                │ build-mode → no
-          (or                                       │
-           (has                                     │ no
-            [:claude-code/permission-mode           │
-             "acceptEdits"])                        │
-           (has                                     │ no
-            [:opencode/agent "build"]))))           │
-        (effect                                     │ → :allow "Non-recursive delete is allowed"
-         :allow "Non-recursive delete is allowed")) │
-                                   No matching rule │ → :ask (default)
+                                         command │ rm foo
+  24: (rule (command "rm")                       │
+        (context (and (or (flag "r")             │
+                          (flag                  │
+                           "recursive"))         │
+                      …))                        │
+        (deny                                    │ → :deny "Recursive deletion from root"
+         "Recursive deletion from root"))        │
+                                                 │
+  29: (rule (command "rm")                       │
+        (args                                    │
+         (when (and                              │
+                (build-mode                      │ build-mode → no
+                 (or                             │
+                  (has                           │ no
+                   [:claude-code/permission-mode │
+                    "acceptEdits"])              │
+                  (has [:opencode/agent          │ no
+                        "build"])))              │
+                …)                               │
+           <if-effect>)))                        │
+                                                 │
+  37: (rule (command "rm")                       │
+        (context                                 │
+         (build-mode                             │ build-mode → no
+          (or                                    │
+           (has                                  │ no
+            [:claude-code/permission-mode        │
+             "acceptEdits"])                     │
+           (has                                  │ no
+            [:opencode/agent "build"]))))        │
+        (allow                                   │ → :allow "Non-recursive delete is allowed"
+         "Non-recursive delete is allowed"))     │
+                                No matching rule │ → :ask (default)
 
 Result
 

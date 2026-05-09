@@ -33,7 +33,7 @@ pub fn load(path: &Path) -> miette::Result<LoadResult> {
         .into_diagnostic()
         .wrap_err_with(|| format!("Failed to canonicalize {}", path.display()))?;
     let mut seen = HashSet::new();
-    seen.insert(canonical);
+    seen.insert(canonical.clone());
 
     let base_dir = path
         .parent()
@@ -57,7 +57,11 @@ pub fn load(path: &Path) -> miette::Result<LoadResult> {
             }
             Err(config_err) => {
                 // Config parsing failed — try migration before giving up.
-                match try_migrate_and_parse(&content, &config_path, base_dir, &mut seen) {
+                // Use a fresh `seen` so re-expansion of `(load …)` on the
+                // migrated forms is not blocked by the failed attempt above.
+                let mut retry_seen = HashSet::new();
+                retry_seen.insert(canonical.clone());
+                match try_migrate_and_parse(&content, &config_path, base_dir, &mut retry_seen) {
                     Some(result) => return Ok(result),
                     None => {
                         return Err(
@@ -187,6 +191,75 @@ fn load_file_sexprs(path: &Path) -> miette::Result<Vec<Sexpr>> {
         path.display()
     );
     Ok(sexprs)
+}
+
+/// Walk the `(load …)` graph rooted at `start`, returning every reachable
+/// file path in load order (root first). Globs are expanded; cycles are
+/// dedupped via canonical paths.
+///
+/// The walker skips files that fail to read or parse — those will surface
+/// as errors when the migration tool tries to process them.
+pub fn walk_load_graph(start: &Path) -> miette::Result<Vec<PathBuf>> {
+    let canonical = start
+        .canonicalize()
+        .into_diagnostic()
+        .wrap_err_with(|| format!("Failed to canonicalize {}", start.display()))?;
+    let mut seen = HashSet::new();
+    seen.insert(canonical.clone());
+    let mut result: Vec<PathBuf> = vec![canonical];
+    walk_into(start, &mut seen, &mut result)?;
+    Ok(result)
+}
+
+fn walk_into(
+    file: &Path,
+    seen: &mut HashSet<PathBuf>,
+    result: &mut Vec<PathBuf>,
+) -> miette::Result<()> {
+    let Ok(content) = std::fs::read_to_string(file) else {
+        return Ok(());
+    };
+    let (forms, _errors) = may_i_sexpr::parse(&content);
+    let base_dir = file
+        .parent()
+        .ok_or_else(|| miette::miette!("cannot determine parent dir of {}", file.display()))?;
+    for form in &forms {
+        let Some(list) = form.as_list() else {
+            continue;
+        };
+        if list.is_empty() || list[0].as_atom() != Some("load") {
+            continue;
+        }
+        let pattern_str = parse_load_arg(list)?;
+        let resolved = if Path::new(pattern_str).is_absolute() {
+            pattern_str.to_string()
+        } else {
+            base_dir.join(pattern_str).display().to_string()
+        };
+        let matches: Vec<PathBuf> = if is_glob_pattern(&resolved) {
+            let mut m: Vec<PathBuf> = glob::glob(&resolved)
+                .into_diagnostic()
+                .wrap_err_with(|| format!("invalid glob pattern: {resolved}"))?
+                .filter_map(|e| e.ok())
+                .collect();
+            m.sort();
+            m
+        } else {
+            let p = PathBuf::from(&resolved);
+            if p.exists() { vec![p] } else { vec![] }
+        };
+        for path in matches {
+            let canonical = match path.canonicalize() {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            if seen.insert(canonical.clone()) {
+                result.push(canonical.clone());
+                walk_into(&path, seen, result)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Returns true if the pattern contains glob metacharacters.
@@ -408,7 +481,7 @@ mod tests {
         let mut temp_file = tempfile::NamedTempFile::new().unwrap();
         writeln!(
             temp_file,
-            r#"(rule "git" (and (positional "status") (effect :allow)))"#
+            r#"(rule "git" (and (positional "status") (allow)))"#
         )
         .unwrap();
         let result = load(temp_file.path());
@@ -552,11 +625,7 @@ mod tests {
     #[test]
     fn load_single_file_splices_forms() {
         let dir = tempfile::tempdir().unwrap();
-        write_file(
-            dir.path(),
-            "rules.lisp",
-            r#"(rule "echo" (effect :allow "safe"))"#,
-        );
+        write_file(dir.path(), "rules.lisp", r#"(rule "echo" (allow "safe"))"#);
         let root = write_file(
             dir.path(),
             "config.lisp",
@@ -574,12 +643,12 @@ mod tests {
         write_file(
             dir.path(),
             "rules/02-git.lisp",
-            r#"(rule "git" (effect :allow "git"))"#,
+            r#"(rule "git" (allow "git"))"#,
         );
         write_file(
             dir.path(),
             "rules/01-echo.lisp",
-            r#"(rule "echo" (effect :allow "echo"))"#,
+            r#"(rule "echo" (allow "echo"))"#,
         );
         let root = write_file(dir.path(), "config.lisp", r#"(load "rules/*.lisp")"#);
         let result = load(&root).unwrap();
@@ -621,12 +690,12 @@ mod tests {
         write_file(
             dir.path(),
             "rules/sub/extra.lisp",
-            r#"(rule "cat" (effect :allow "cat"))"#,
+            r#"(rule "cat" (allow "cat"))"#,
         );
         write_file(
             dir.path(),
             "rules/main.lisp",
-            r#"(rule "echo" (effect :allow "echo"))
+            r#"(rule "echo" (allow "echo"))
 (load "sub/extra.lisp")"#,
         );
         let root = write_file(dir.path(), "config.lisp", r#"(load "rules/main.lisp")"#);
@@ -718,7 +787,7 @@ mod tests {
     #[test]
     fn root_config_rules_get_primary_config_provenance() {
         let dir = tempfile::tempdir().unwrap();
-        let root = write_file(dir.path(), "config.lisp", r#"(rule "git" (effect :allow))"#);
+        let root = write_file(dir.path(), "config.lisp", r#"(rule "git" (allow))"#);
         let result = load(&root).unwrap();
         assert_eq!(result.config.rules.len(), 1);
         assert_eq!(result.config.rules[0].provenance, Provenance::PrimaryConfig);
@@ -743,11 +812,11 @@ mod tests {
     #[test]
     fn loaded_file_rules_get_loaded_provenance() {
         let dir = tempfile::tempdir().unwrap();
-        write_file(dir.path(), "rules.lisp", r#"(rule "echo" (effect :allow))"#);
+        write_file(dir.path(), "rules.lisp", r#"(rule "echo" (allow))"#);
         let root = write_file(
             dir.path(),
             "config.lisp",
-            r#"(rule "git" (effect :allow))
+            r#"(rule "git" (allow))
 (load "rules.lisp")"#,
         );
         let result = load(&root).unwrap();
@@ -789,11 +858,11 @@ mod tests {
     #[test]
     fn recursively_loaded_rules_get_loaded_provenance() {
         let dir = tempfile::tempdir().unwrap();
-        write_file(dir.path(), "inner.lisp", r#"(rule "cat" (effect :allow))"#);
+        write_file(dir.path(), "inner.lisp", r#"(rule "cat" (allow))"#);
         write_file(
             dir.path(),
             "outer.lisp",
-            r#"(rule "echo" (effect :allow))
+            r#"(rule "echo" (allow))
 (load "inner.lisp")"#,
         );
         let root = write_file(dir.path(), "config.lisp", r#"(load "outer.lisp")"#);
@@ -812,7 +881,7 @@ mod tests {
     #[test]
     fn loaded_rule_records_source_file_path() {
         let dir = tempfile::tempdir().unwrap();
-        write_file(dir.path(), "rules.lisp", r#"(rule "echo" (effect :allow))"#);
+        write_file(dir.path(), "rules.lisp", r#"(rule "echo" (allow))"#);
         let root = write_file(dir.path(), "config.lisp", r#"(load "rules.lisp")"#);
         let result = load(&root).unwrap();
         let path = result.config.rules[0]
@@ -844,11 +913,11 @@ mod tests {
     #[test]
     fn recursively_loaded_rules_record_their_own_file_path() {
         let dir = tempfile::tempdir().unwrap();
-        write_file(dir.path(), "inner.lisp", r#"(rule "cat" (effect :allow))"#);
+        write_file(dir.path(), "inner.lisp", r#"(rule "cat" (allow))"#);
         write_file(
             dir.path(),
             "outer.lisp",
-            r#"(rule "echo" (effect :allow))
+            r#"(rule "echo" (allow))
 (load "inner.lisp")"#,
         );
         let root = write_file(dir.path(), "config.lisp", r#"(load "outer.lisp")"#);

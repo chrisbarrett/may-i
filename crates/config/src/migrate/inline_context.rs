@@ -84,7 +84,7 @@ mod tests {
 
     #[test]
     fn test_rule_inline_context_no_context() {
-        let input = "(rule git (effect :allow))";
+        let input = "(rule git (allow))";
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let node = nodes.into_iter().next().unwrap();
         let result = rule_inline_context(&node);
@@ -93,7 +93,7 @@ mod tests {
 
     #[test]
     fn test_rule_inline_context_wrong_size() {
-        let input = "(rule git (context) (effect :allow))";
+        let input = "(rule git (context) (allow))";
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let node = nodes.into_iter().next().unwrap();
         let result = rule_inline_context(&node);
