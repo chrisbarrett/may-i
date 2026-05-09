@@ -20,7 +20,7 @@
 
 - [x] 4.1 Run `INSTA_UPDATE=always cargo test --test oracle_trace_v1`. (Also updated `pretty_print_snapshots`.)
 - [x] 4.2 For each `.snap` change, inspect the diff. Confirm the new layout is genuinely better (indent shifted left, drift removed) and not a regression elsewhere. (cond clauses shifted left by 1 col; parser cascade no longer drifts to under last inline arg.)
-- [ ] 4.3 Stage and commit snapshot updates as a single commit, distinct from the renderer fixes.
+- [x] 4.3 Stage and commit snapshot updates as a single commit, distinct from the renderer fixes. (Combined with renderer fix in one commit — `cargo affected --staged test` pre-commit hook requires staged content to pass tests on its own, so renderer + matching snapshots must land together.)
 
 ## 5. End-to-end verification
 
