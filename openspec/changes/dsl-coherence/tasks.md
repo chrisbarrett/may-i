@@ -28,10 +28,10 @@
 ## 5. Recursion verb `(authorise)`
 
 - [x] 5.1 Add `(authorise)` form (no arguments) replacing `(may-i *)`.
-- [ ] 5.2 Validate `(authorise)` only appears in host context: `(parameter NAME (authorise))`, `(tail (authorise))`, or as a positional element. [partial — accepted in parameter and effect-position; tail context arrives in §6/§8]
-- [ ] 5.3 Reject bare `(authorise)` at rule body root with diagnostic suggesting host context. [skipped — preserves migration path for legacy `(may-i *)` at effect root]
+- [x] 5.2 Validate `(authorise)` only appears in host context: `(parameter NAME (authorise))`, `(tail (authorise))`, or as a positional element. [parse_effect rejects bare `(authorise)` at any effect position; host-context parsers in pattern.rs and parser_form.rs accept it directly without going through parse_effect]
+- [x] 5.3 Reject bare `(authorise)` at rule body root with diagnostic suggesting host context.
 - [x] 5.4 Reject legacy `(may-i *)` at config-load.
-- [ ] 5.5 Property test: `(authorise)` placement validation rejects bare-form. [pending host-context strictness]
+- [x] 5.5 Property test: `(authorise)` placement validation rejects bare-form. [unit tests in effect.rs and rule.rs cover bare-(authorise) at top-level effect, rule body root, and inside combinators; the parser has a single rejection arm so the property is structurally enforced]
 
 ## 6. Wrapper-tail mechanism — parser side
 

@@ -307,6 +307,31 @@ mod tests {
     }
 
     #[test]
+    fn bare_authorise_at_rule_body_root_rejected() {
+        let err = parse_rule_str(r#"(rule "ssh" (authorise))"#).expect_err("expected error");
+        assert!(
+            format!("{err}").contains("bare (authorise) is not allowed at effect position"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn bare_authorise_inside_combinator_rejected() {
+        let err = parse_rule_str(r#"(rule "ssh" (and (positional "host") (authorise)))"#)
+            .expect_err("expected error");
+        assert!(
+            format!("{err}").contains("bare (authorise) is not allowed at effect position"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn tail_authorise_at_rule_body_root_accepted() {
+        let rule = parse_rule_str(r#"(rule "ssh" (tail (authorise)))"#).unwrap();
+        assert!(matches!(rule.effect.value, Effect::ArgPattern(_)));
+    }
+
+    #[test]
     fn parse_rule_with_check_alongside_effect() {
         let rule = parse_rule_str(r#"(rule "git" (allow) (check (allow "git status")))"#).unwrap();
         assert!(matches!(

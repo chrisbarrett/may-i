@@ -30,7 +30,9 @@ pub(crate) fn positional_dotted_tail(node: &CstNode) -> Option<Box<CstNode>> {
         && dot_idx + 1 == children.len() - 1
     {
         let cont_node = &children[dot_idx + 1];
-        let cont_is_authorise = is_authorise_form(cont_node) || is_may_i_star(cont_node);
+        let cont_is_authorise = is_authorise_form(cont_node)
+            || is_may_i_star(cont_node)
+            || is_tail_authorise_form(cont_node);
         if cont_is_authorise {
             let positional_children: Vec<Box<CstNode>> = children[..dot_idx].to_vec();
             let positional_form = Box::new(CstNode::list(
@@ -94,6 +96,17 @@ fn is_authorise_form(node: &CstNode) -> bool {
     if let ShapeF::List(items) = &node.shape
         && items.len() == 1
         && items[0].as_atom() == Some("authorise")
+    {
+        return true;
+    }
+    false
+}
+
+fn is_tail_authorise_form(node: &CstNode) -> bool {
+    if let ShapeF::List(items) = &node.shape
+        && items.len() == 2
+        && items[0].as_atom() == Some("tail")
+        && is_authorise_form(&items[1])
     {
         return true;
     }

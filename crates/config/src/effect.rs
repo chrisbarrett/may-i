@@ -60,7 +60,17 @@ pub fn parse_effect(sexpr: &Sexpr) -> Result<Spanned<Effect>, RawError> {
             )
             .with_help("run `may-i migrate` to convert legacy syntax"));
         }
-        "authorise" => parse_authorise(&list[1..], sexpr.span())?,
+        "authorise" => {
+            return Err(RawError::new(
+                "bare (authorise) is not allowed at effect position",
+                list[0].span(),
+            )
+            .with_help(
+                "(authorise) only appears inside a host context that supplies an operand: \
+                 (parameter NAME (authorise)), (tail (authorise)), or as a positional element. \
+                 To recurse on the rule's argv, use (tail (authorise)).",
+            ));
+        }
         "cond" => parse_cond(&list[1..], sexpr.span())?,
         "when" => parse_when(&list[1..], sexpr.span())?,
         "unless" => parse_unless(&list[1..], sexpr.span())?,
@@ -140,24 +150,6 @@ fn parse_decision_verb(
         )
     };
     Ok(Effect::Terminal { decision, reason })
-}
-
-/// Parse `(authorise)` — the recursion verb. Inside a host context
-/// (`(parameter NAME (authorise))`, `(tail (authorise))`, or as a
-/// positional element) the host supplies the operand; at effect-position
-/// root it falls back to "consume all unconsumed argv".
-fn parse_authorise(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawError> {
-    if !args.is_empty() {
-        return Err(RawError::new("(authorise) takes no arguments", span));
-    }
-    use may_i_core::pattern::Expr;
-    use may_i_core::pattern::{ArgPattern, MatchMode, PositionalArg};
-    let pattern = ArgPattern::Ordered {
-        mode: MatchMode::Positional,
-        patterns: vec![PositionalArg::one(Expr::Wildcard)],
-        continuation: None,
-    };
-    Ok(Effect::MayI { pattern })
 }
 
 /// Parse a cond expression (renamed from case).
@@ -397,15 +389,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_authorise_effect() {
-        let effect = parse_effect_str(r#"(authorise)"#).unwrap();
-        match effect {
-            Effect::MayI { .. } => {}
-            _ => panic!("expected MayI"),
-        }
-    }
-
-    #[test]
     fn legacy_may_i_form_rejected() {
         let err = parse_effect_str(r#"(may-i (positional *))"#).expect_err("expected error");
         assert!(format!("{err}").contains("(may-i …) is retired"));
@@ -418,25 +401,12 @@ mod tests {
     }
 
     #[test]
-    fn parse_authorise_pattern_shape() {
-        let effect = parse_effect_str(r#"(authorise)"#).unwrap();
-        match effect {
-            Effect::MayI { pattern } => {
-                // Verify it produces the same pattern as (may-i (positional *))
-                match pattern {
-                    ArgPattern::Ordered {
-                        mode: MatchMode::Positional,
-                        patterns,
-                        continuation,
-                    } => {
-                        assert_eq!(patterns.len(), 1);
-                        assert!(continuation.is_none());
-                    }
-                    _ => panic!("expected Positional pattern, got {:?}", pattern),
-                }
-            }
-            _ => panic!("expected MayI effect, got {:?}", effect),
-        }
+    fn bare_authorise_at_effect_position_rejected() {
+        let err = parse_effect_str(r#"(authorise)"#).expect_err("expected error");
+        assert!(
+            format!("{err}").contains("bare (authorise) is not allowed at effect position"),
+            "{err}"
+        );
     }
 
     #[test]

@@ -336,7 +336,7 @@ fn parse_parameter_form_body(sexpr: &Sexpr) -> Result<ParameterForm, RawError> {
     if let Some(list) = sexpr.as_list()
         && let Some(tag) = list.first().and_then(|f| f.as_atom())
     {
-        // `(authorise)` — canonical recursion verb. Bare, no arguments.
+        // `(authorise)` — recursion verb in parameter-body host context.
         if tag == "authorise" {
             if list.len() != 1 {
                 return Err(RawError::new(
@@ -346,16 +346,12 @@ fn parse_parameter_form_body(sexpr: &Sexpr) -> Result<ParameterForm, RawError> {
             }
             return Ok(ParameterForm::MayI);
         }
-        // Legacy `(may-i …)` form. Inner pattern is ignored; recursion
-        // always treats the whole flag value as the command line.
         if tag == "may-i" {
-            if list.len() != 2 {
-                return Err(RawError::new(
-                    "may-i in parameter form must have exactly one inner pattern",
-                    sexpr.span(),
-                ));
-            }
-            return Ok(ParameterForm::MayI);
+            return Err(RawError::new(
+                "(may-i …) is retired; use (authorise) inside the parameter body",
+                sexpr.span(),
+            )
+            .with_help("run `may-i migrate` to convert legacy syntax"));
         }
     }
     let expr = parse_expr(sexpr)?;

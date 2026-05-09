@@ -136,7 +136,17 @@ fn rewrite_positional_dot_to_parameter(node: &CstNode) -> Option<Box<CstNode>> {
         ann: children[1].ann.clone(),
         shape: Shape::String(name),
     });
-    let cont_clone = Box::new(strip_whitespace_trivia(cont));
+    // The parameter body is a host context for `(authorise)`. If the
+    // dotted continuation is `(tail (authorise))` (produced upstream
+    // by may_i_to_authorise), unwrap it back to bare `(authorise)`.
+    let cont_clone = if is_tail_authorise(cont) {
+        Box::new(CstNode::list(
+            vec![Box::new(CstNode::atom("authorise", TriviaAnn::default()))],
+            TriviaAnn::default(),
+        ))
+    } else {
+        Box::new(strip_whitespace_trivia(cont))
+    };
 
     Some(Box::new(CstNode::list(
         vec![parameter_tag, name_node, cont_clone],
@@ -146,6 +156,19 @@ fn rewrite_positional_dot_to_parameter(node: &CstNode) -> Option<Box<CstNode>> {
             span: node.ann.span,
         },
     )))
+}
+
+fn is_tail_authorise(node: &CstNode) -> bool {
+    let Some(items) = node.as_list() else {
+        return false;
+    };
+    if items.len() != 2 || items[0].as_atom() != Some("tail") {
+        return false;
+    }
+    let Some(inner) = items[1].as_list() else {
+        return false;
+    };
+    inner.len() == 1 && inner[0].as_atom() == Some("authorise")
 }
 
 /// Partition children into ("-prefixed flag names without the dash", "other
