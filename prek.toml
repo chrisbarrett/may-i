@@ -67,4 +67,13 @@ hooks = [
     pass_filenames = false,
     stages = ["pre-push"],
   },
+  {
+    id = "nix-build",
+    name = "nix build",
+    entry = "nix build .#default --no-link",
+    language = "system",
+    pass_filenames = false,
+    always_run = true,
+    stages = ["pre-push"],
+  },
 ]
