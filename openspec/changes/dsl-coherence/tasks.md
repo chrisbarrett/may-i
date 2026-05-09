@@ -145,7 +145,7 @@ Decision-verb and `(authorise)` canonicalisation: rule trust hashes now render a
 
 ## 20. Tests — fixtures and regressions
 
-- [ ] 20.1 Rewrite all integration test fixtures to new syntax. [partial — all green; legacy `(effect :decision)` and `(may-i *)` still parse for source-level back-compat, so existing fixtures don't strictly need rewriting]
+- [x] 20.1 Rewrite all integration test fixtures to new syntax. [strict-load now rejects legacy at parse, so every live fixture uses canonical syntax. Remaining legacy strings are migration-input fixtures inside `migrate_*` modules and the V1 oracle fixture, which the auto-migration path handles transparently.]
 - [x] 20.2 Update `**/proptest-regressions/` files where canonical form changed; preserve existing seeds.
 - [x] 20.3 Verify all existing scenarios from per-command-arg-style change still pass under new syntax.
 - [x] 20.4 Add integration test reproducing the sudo silent-bypass and asserting it now blocks. [tests/wrapper_tail_scoping.rs::sudo_rm_rf_recurses_through_tail_authorise]
