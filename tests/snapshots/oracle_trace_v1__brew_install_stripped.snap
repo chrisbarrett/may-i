@@ -7,14 +7,14 @@ Trace
 
   parser: gnu │
 
-                                                command │ brew install foo
-  74: (rule (command "brew")                            │
-        (args                                           │
-         (cond                                          │
-           ((positional "install")                      │ "install" = "install" → yes
-            (effect                                     │ → :deny "Package installation not allowed"
-             :deny "Package installation not allowed")) │
-           …)))                                         │
+                                               command │ brew install foo
+  74: (rule (command "brew")                           │
+        (args                                          │
+         (cond                                         │
+          ((positional "install")                      │ "install" = "install" → yes
+           (effect                                     │ → :deny "Package installation not allowed"
+            :deny "Package installation not allowed")) │
+          …)))                                         │
 
 Result
 

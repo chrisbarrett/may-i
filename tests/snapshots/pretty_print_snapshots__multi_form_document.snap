@@ -34,12 +34,12 @@ expression: out
 
 (rule "rm"
   (cond
-    ((positional "/")
-     (deny "root"))
-    ((flag "r")
-     (ask "recursive"))
-    (else
-     (allow))))
+   ((positional "/")
+    (deny "root"))
+   ((flag "r")
+    (ask "recursive"))
+   (else
+    (allow))))
 
 
 (check (allow "ls -la") (deny "rm -rf /"))

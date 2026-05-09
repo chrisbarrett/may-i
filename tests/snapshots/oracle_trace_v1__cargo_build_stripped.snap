@@ -17,14 +17,14 @@ Trace
                   (or "watch" "run" "r")) │
                  (? "--")                 │
                  (cond                    │
-                   ((or "install"         │
-                        "uninstall")      │
-                    (deny))               │
-                   ((or "build"           │
-                        "b"               │
-                        …                 │
-                        "clippy")         │
-                    (allow)))             │ → :allow
+                  ((or "install"          │
+                       "uninstall")       │
+                   (deny))                │
+                  ((or "build"            │
+                       "b"                │
+                       …                  │
+                       "clippy")          │
+                   (allow)))              │ → :allow
                  (effect :allow)))))      │
 
 Result

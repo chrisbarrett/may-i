@@ -7,4 +7,4 @@ expression: out
   (flag ["0" "r"]) (tail (after :flags)))
 ── output ──
 (parser "xargs" (style gnu) (parameter ["n" "I" "L" "P" "d"])
-                            (flag ["0" "r"]) (tail (after :flags)))
+        (flag ["0" "r"]) (tail (after :flags)))

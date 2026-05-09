@@ -16,11 +16,11 @@ expression: out
 ── output ──
 (rule (or "terraform" "tofu")
   (cond
-    ((or (exact) (positional "version"))
-     (allow "Program introspection"))
+   ((or (exact) (positional "version"))
+    (allow "Program introspection"))
 
-    ((positional (or "fmt" "init" "plan" "test" "validate"))
-     (allow "Safe operation"))
+   ((positional (or "fmt" "init" "plan" "test" "validate"))
+    (allow "Safe operation"))
 
-    ((positional (or "apply" "destroy"))
-     (ask "Infra change requires confirmation"))))
+   ((positional (or "apply" "destroy"))
+    (ask "Infra change requires confirmation"))))

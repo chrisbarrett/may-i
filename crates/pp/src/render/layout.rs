@@ -55,11 +55,12 @@ pub(super) fn render_trivia_guided_delim<A: Clone + TriviaSource>(
     //   - Default forms: column after the opening paren (+1), updated
     //     to align under the first inline child
     let has_indent_spec = children[0].as_atom().and_then(indent_spec).is_some();
-    let mut cascade_col = if has_indent_spec {
+    let initial_cascade = if has_indent_spec {
         indent + 2
     } else {
         indent + 1
     };
+    let mut cascade_col = initial_cascade;
 
     let mut col = indent + 1 + head_width;
     let mut prev_was_keyword = false;
@@ -108,11 +109,12 @@ pub(super) fn render_trivia_guided_delim<A: Clone + TriviaSource>(
                 size_buf.replay(out);
                 let child_start = col + 1;
                 col += 1 + child_width;
-                // Update cascade to track the last inline arg on the
-                // head line (before any break).  After the first break,
-                // cascade stays fixed to prevent staircase drift.
-                // Indent-spec forms keep their fixed body indent.
-                if !has_broken && !has_indent_spec {
+                // Fix cascade at the first inline arg's start column,
+                // then leave it alone. Subsequent inline args do not
+                // shift the cascade — drift right would compound in
+                // nested forms. Indent-spec forms keep the fixed body
+                // indent untouched.
+                if !has_indent_spec && cascade_col == initial_cascade {
                     cascade_col = child_start;
                 }
             }
@@ -347,7 +349,7 @@ pub(super) fn render_cond<A: Clone + TriviaSource>(
 ) {
     out.emit_delim('(', dimmed);
     render(&children[0], indent + 1, width, dimmed, out);
-    let body_indent = indent + 2;
+    let body_indent = indent + 1;
 
     for (i, clause) in children[1..].iter().enumerate() {
         let is_last = i == children.len() - 2;
