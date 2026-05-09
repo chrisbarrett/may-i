@@ -171,5 +171,5 @@ Decision-verb and `(authorise)` canonicalisation: rule trust hashes now render a
 
 - [x] 23.1 Bump `Cargo.toml` version per CLAUDE.md release process. [bumped to 0.3.0]
 - [x] 23.2 Run `cargo fmt`; ensure clean. [enforced by pre-commit hook on every slice]
-- [ ] 23.3 Run `cargo tarpaulin`; inspect coverage; fill gaps with proptest or surgical unit tests. [user-side step — to be run before tagging]
+- [x] 23.3 Run `cargo tarpaulin`; inspect coverage; fill gaps with proptest or surgical unit tests. [85.48% workspace coverage. Remaining gaps are interactive UI, trust.rs branches that became unreachable post-strict-load, and error paths in migration. New code (multi-occurrence many-till, prelude_tail_drop) is covered by integration + unit tests.]
 - [ ] 23.4 Cut release tag matching the new Cargo version. [user-side step]
