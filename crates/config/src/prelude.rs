@@ -154,13 +154,13 @@ mod tests {
     }
 
     #[test]
-    fn parsers_include_mise_with_after_token_tail() {
+    fn third_party_wrappers_excluded_from_prelude() {
+        // Tools that don't ship with a regular Linux distribution
+        // (mise, terragrunt, etc.) belong in user config, not the
+        // prelude.
         let parsers = prelude_parsers();
-        let mise = parsers
-            .iter()
-            .find(|p| p.program == "mise")
-            .expect("mise parser in prelude");
-        assert_eq!(mise.tail, Some(Tail::AfterToken("--".into())));
+        assert!(parsers.iter().all(|p| p.program != "mise"));
+        assert!(parsers.iter().all(|p| p.program != "terragrunt"));
     }
 
     #[test]

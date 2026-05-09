@@ -162,14 +162,30 @@ Decision-verb and `(authorise)` canonicalisation: rule trust hashes now render a
 
 ## 22. Migrate user's config and verify
 
-- [ ] 22.1 Run `may-i migrate --dry-run` on `~/.config/may-i/config.lisp`; review output. [user-side step — to be performed against the installed binary, not from this session]
-- [ ] 22.2 Apply migration; verify trust hashes carried over. [user-side step]
-- [ ] 22.3 Run `may-i check` cases; verify all pass. [user-side step]
-- [ ] 22.4 Spot-check trace output for a wrapper command (e.g. `may-i eval 'sudo ls'`); confirm outer/tail rendering. [user-side step]
+> Blocked on home-manager pin bump from may-i 0.2.1 → 0.3.0. Sequence:
+> merge dsl-coherence to main, cut a `v0.3.0-pre1` tag, bump the
+> home-manager pin, then run §22.x against the installed binary. Until
+> then the on-PATH binary can't parse v2 syntax and the bash-hook will
+> reject every command if user config contains v2 forms.
+>
+> Dry-run on user config was sanity-checked this session against
+> `target/release/may-i` (worktree build): one regression surfaced
+> (terragrunt rule loses `:deny` because no parser declared `(tail
+> (after "--"))` for it) and was traced to mise being the only
+> after-token wrapper in the prelude. mise has since been moved out of
+> the prelude (§13 scope changed: prelude ships only tools that come
+> with a regular Linux distro). User config will need
+> `(parser "mise" …)` and `(parser "terragrunt" …)` declarations added
+> in the same edit that runs the v2 migration.
+
+- [ ] 22.1 Run `may-i migrate --dry-run` on `~/.config/may-i/config.lisp`; review output. [user-side, post-pre1]
+- [ ] 22.2 Apply migration; verify trust hashes carried over. [user-side, post-pre1]
+- [ ] 22.3 Run `may-i check` cases; verify all pass. [user-side, post-pre1]
+- [ ] 22.4 Spot-check trace output for a wrapper command (e.g. `may-i eval 'sudo ls'`); confirm outer/tail rendering. [user-side, post-pre1]
 
 ## 23. Release
 
 - [x] 23.1 Bump `Cargo.toml` version per CLAUDE.md release process. [bumped to 0.3.0]
 - [x] 23.2 Run `cargo fmt`; ensure clean. [enforced by pre-commit hook on every slice]
 - [x] 23.3 Run `cargo tarpaulin`; inspect coverage; fill gaps with proptest or surgical unit tests. [85.48% workspace coverage. Remaining gaps are interactive UI, trust.rs branches that became unreachable post-strict-load, and error paths in migration. New code (multi-occurrence many-till, prelude_tail_drop) is covered by integration + unit tests.]
-- [ ] 23.4 Cut release tag matching the new Cargo version. [user-side step]
+- [ ] 23.4 Cut release tag matching the new Cargo version. Will ship as `v0.3.0-pre1` first to enable the home-manager pin bump that unblocks §22; final `v0.3.0` after §22 verification passes.

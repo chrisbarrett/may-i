@@ -34,9 +34,9 @@
 ;;
 ;; Each declares a `(tail (after …))` boundary so the engine's
 ;; outer/tail split runs without the user having to redeclare the
-;; wrapper shape. Common AfterFlags wrappers first, then ones with
-;; their own parameter declarations, then explicit-token (`--`)
-;; wrappers, then `find` with `(many-till …)` capture for `-exec`.
+;; wrapper shape. Scope: tools that ship with a regular Linux
+;; distribution. Third-party wrappers (e.g. mise, terragrunt) belong
+;; in the user's own config.
 
 (parser "sudo"    (style gnu) (tail (after :flags)))
 (parser "env"     (style gnu) (tail (after :flags)))
@@ -61,8 +61,6 @@
   (style gnu)
   (parameter ["n" "interval"])
   (tail (after :flags)))
-
-(parser "mise" (style gnu) (tail (after "--")))
 
 (parser "find"
   (style single-dash-long)

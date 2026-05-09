@@ -137,11 +137,13 @@ fn prelude_xargs_parser_with_parameter() {
     assert_eq!(decision, Decision::Deny);
 }
 
-// Prelude `mise` parser uses `(after "--")` rather than `:flags`; the
-// boundary token is consumed.
+// User-declared parser with `(after "--")` rather than `:flags`; the
+// boundary token is consumed. mise is no longer shipped in the prelude
+// (third-party tool), so the user must declare it themselves.
 #[test]
-fn prelude_mise_parser_after_double_dash() {
+fn user_declared_after_double_dash_parser() {
     let cfg = r#"
+(parser "mise" (style gnu) (tail (after "--")))
 (rule "mise" (tail (authorise)))
 (rule "rm" (and (anywhere "-r") (deny "recursive rm denied")))
 (rule "rm" (allow))

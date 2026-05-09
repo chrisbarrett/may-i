@@ -39,7 +39,6 @@ mod or_when_to_if;
 mod parser_style_form;
 mod positional_dotted_tail;
 mod predicate_pushdown;
-mod prelude_tail_drop;
 mod rename_has_to_fact;
 mod simplify_command;
 mod wrapper_to_rule;
@@ -111,7 +110,6 @@ pub fn migration_rules() -> Vec<RewriteFn> {
         Box::new(define_arg_style_form::define_arg_style_to_form),
         Box::new(check_form::check_to_form),
         Box::new(may_i_to_authorise::may_i_to_authorise),
-        Box::new(prelude_tail_drop::prelude_tail_drop),
         // Stage 2 — normalisation (must run after stage 1 is stable)
         Box::new(collapse_effects::rule_collapse_effects),
         Box::new(flatten_combinators::flatten_combinators),

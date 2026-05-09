@@ -274,8 +274,7 @@ fn recanonicalise_rule_form(form: &str) -> Option<String> {
 /// these rules' behaviour even though the rule text is unchanged.
 fn warn_about_wrapper_rules(config: &may_i_core::ast::Config) {
     const WRAPPERS: &[&str] = &[
-        "sudo", "xargs", "env", "timeout", "nice", "time", "watch", "su", "ionice", "chrt", "mise",
-        "find",
+        "sudo", "xargs", "env", "timeout", "nice", "time", "watch", "su", "ionice", "chrt", "find",
     ];
     let mut affected: Vec<&str> = Vec::new();
     for rule in &config.rules {
