@@ -812,6 +812,23 @@ fn cond_atom_clause() {
 }
 
 #[test]
+fn cond_clauses_indent_at_plus_one() {
+    // (cond ((p) (allow)) (else (deny))) renders with each clause at
+    // column `cond paren + 1`, matching Emacs / Common-Lisp convention.
+    // Body parts within a clause are at clause column + 1.
+    let doc = l(vec![
+        a("cond"),
+        l(vec![l(vec![a("p")]), l(vec![a("allow")])]),
+        l(vec![a("else"), l(vec![a("deny")])]),
+    ]);
+    let result = pp(&doc, 40);
+    assert_eq!(
+        result, "(cond\n ((p)\n  (allow))\n (else\n  (deny)))",
+        "expected clauses at col 1 and body parts at col 2: {result:?}"
+    );
+}
+
+#[test]
 fn body_indent_multiline_first_child() {
     // when/if/unless use body-indent; if the predicate wraps it
     // gets extra indent (indent+4) to distinguish from body.

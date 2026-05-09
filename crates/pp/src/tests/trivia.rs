@@ -143,6 +143,96 @@ fn trivia_blank_line_between_leading_comment_groups() {
 }
 
 #[test]
+fn cascade_does_not_drift_with_multiple_inline_args() {
+    // (foo a b c d) where d is forced to a new line by leading-trivia
+    // newline. Cascade column must remain at the start of `a` (col 5),
+    // not drift to the start of `c`.
+    let d_break = trivia_atom(
+        "d",
+        trivia_ann(vec![CoreTrivia::Whitespace("\n".to_string())], vec![]),
+    );
+    let doc = trivia_list(
+        vec![
+            trivia_atom("foo", None),
+            trivia_atom("a", None),
+            trivia_atom("b", None),
+            trivia_atom("c", None),
+            d_break,
+        ],
+        None,
+    );
+    let result = pp_trivia(&doc, 80);
+    assert_eq!(
+        result, "(foo a b c\n     d)",
+        "wrapped d should align under a, not drift to under c: {result:?}"
+    );
+}
+
+#[test]
+fn cascade_does_not_drift_in_nested_form() {
+    // Outer (bar INNER z) where z forces a break, and INNER is
+    // (foo X aaaa bbbb cccc) with cccc forced to break. The wrapped
+    // atom in the inner form must align under inner's first arg (X),
+    // not drift to under bbbb.
+    let cccc_break = trivia_atom(
+        "cccc",
+        trivia_ann(vec![CoreTrivia::Whitespace("\n".to_string())], vec![]),
+    );
+    let inner = trivia_list(
+        vec![
+            trivia_atom("foo", None),
+            trivia_atom("X", None),
+            trivia_atom("aaaa", None),
+            trivia_atom("bbbb", None),
+            cccc_break,
+        ],
+        None,
+    );
+    let z_break = trivia_atom(
+        "z",
+        trivia_ann(vec![CoreTrivia::Whitespace("\n".to_string())], vec![]),
+    );
+    let outer = trivia_list(vec![trivia_atom("bar", None), inner, z_break], None);
+    let result = pp_trivia(&outer, 80);
+    let lines: Vec<&str> = result.lines().collect();
+    let cccc_line = lines
+        .iter()
+        .find(|l| l.trim_start().starts_with("cccc"))
+        .expect(&format!("cccc must be on its own line: {result:?}"));
+    let cccc_col = cccc_line.len() - cccc_line.trim_start().len();
+    let head_line = lines[0];
+    let x_col = head_line
+        .find(" X ")
+        .map(|i| i + 1)
+        .expect("expected ' X ' in head line");
+    assert_eq!(
+        cccc_col, x_col,
+        "cccc should align under inner's first arg X: {result:?}"
+    );
+}
+
+#[test]
+fn cascade_under_paren_plus_one_when_first_arg_breaks() {
+    // Source has a newline immediately after the head atom, placing
+    // the first arg on its own line. Cascade column must equal
+    // paren_col + 1, not the start of a phantom first-arg column.
+    let a_break = trivia_atom(
+        "a",
+        trivia_ann(vec![CoreTrivia::Whitespace("\n".to_string())], vec![]),
+    );
+    let b_break = trivia_atom(
+        "b",
+        trivia_ann(vec![CoreTrivia::Whitespace("\n".to_string())], vec![]),
+    );
+    let doc = trivia_list(vec![trivia_atom("foo", None), a_break, b_break], None);
+    let result = pp_trivia(&doc, 80);
+    assert_eq!(
+        result, "(foo\n a\n b)",
+        "first arg and subsequent args at paren + 1: {result:?}"
+    );
+}
+
+#[test]
 fn trivia_cascade_after_forced_break() {
     // After a forced break, subsequent children should also break
     let child_with_break = trivia_atom(

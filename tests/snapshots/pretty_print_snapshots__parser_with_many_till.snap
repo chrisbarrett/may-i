@@ -9,6 +9,6 @@ expression: out
   (parameter ["name" "type" "size"]))
 ── output ──
 (parser "find" (style single-dash-long)
-               (parameter "exec" (many-till (or ";" "+")))
-               (parameter "execdir" (many-till (or ";" "+")))
-               (parameter ["name" "type" "size"]))
+        (parameter "exec" (many-till (or ";" "+")))
+        (parameter "execdir" (many-till (or ";" "+")))
+        (parameter ["name" "type" "size"]))

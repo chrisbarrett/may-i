@@ -10,9 +10,9 @@ expression: out
 ── output ──
 (rule "rm"
   (cond
-    ((positional "/")
-     (deny "filesystem root"))
-    ((flag ["r" "recursive"])
-     (ask "recursive"))
-    (else
-     (allow))))
+   ((positional "/")
+    (deny "filesystem root"))
+   ((flag ["r" "recursive"])
+    (ask "recursive"))
+   (else
+    (allow))))
