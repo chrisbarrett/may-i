@@ -19,6 +19,7 @@ Two adjacent annotation bugs make the same failures harder to read:
 - Render terminal effects through `Effect::to_doc` so the trace shows `(ask "reason")`, `(allow "reason")`, `(deny "reason")` to match source syntax. The right-column decision annotation is unaffected.
 - For `(tail (authorise))`, set the right-column annotation to `tail = "<whitespace-joined tail tokens>"` — e.g. `tail = "true"` for `direnv exec true`, `tail = "echo hi there"` for a multi-token tail. The full-argv `∈ { … }` form is replaced.
 - For `(parameter NAME (authorise))`, emit an arg-match annotation carrying the captured value, rendered as `value = "<captured>"`. The inner trace still appears beneath, surfaced by the existing recursion plumbing.
+- **BREAKING (internal only)** — Delete the orphaned `Effect::Authorise` variant and its support scaffolding. No production parser path constructs it (both `(may-i …)` and bare `(authorise)` at effect position are explicit parse errors); the recursion machinery for `(parameter X (authorise))` and `(tail (authorise))` lives in the parameter and tail evaluators directly. Removing the variant kills the `effect_authorise` / `effect_authorise_no_match` fold methods, the `Ann::MayI` annotation, the dead eval branch in `crates/engine/src/eval/effects.rs:213-248`, and proptest-only constructions in `arbitrary_impls.rs` and `test_generators/`.
 
 ## Capabilities
 
@@ -31,9 +32,12 @@ Two adjacent annotation bugs make the same failures harder to read:
 ## Impact
 
 - Affected code:
-  - `src/annotation.rs`: `arg_pattern_to_doc` (Tail arm + exhaustive match), `effect_terminal` (route via `Effect::to_doc`).
-  - `crates/engine/src/eval/effects.rs`: `evaluate_tail_authorise_fold` (pass tail slice + whitespace-joined string in `ArgMatchDetail`); `evaluate_parameter_fold`'s `ParameterForm::MayI` branch (emit arg-match before recursion with captured value).
-  - `src/output/render_rule.rs`: render the new annotation shapes for tail and parameter-authorise.
+  - `src/annotation.rs`: `arg_pattern_to_doc` (Tail arm + exhaustive match), `effect_terminal` (route via `Effect::to_doc`); deletion of `Ann::MayI` and the `effect_authorise` impls.
+  - `crates/engine/src/eval/effects.rs`: `evaluate_tail_authorise_fold` (pass tail slice + whitespace-joined string in `ArgMatchDetail`); `evaluate_parameter_fold`'s `ParameterForm::Authorise` branch (emit arg-match before recursion with captured value); deletion of the `Effect::Authorise` eval branch (lines 213-248).
+  - `crates/engine/src/fold.rs`: deletion of `effect_authorise` and `effect_authorise_no_match` methods.
+  - `crates/core/src/ast.rs`: deletion of the `Effect::Authorise` variant and its constructor/test.
+  - `crates/core/src/arbitrary_impls.rs`, `crates/engine/src/test_generators/`: deletion of generators and tests that construct the dead variant.
+  - `src/output/render_rule.rs`, `src/output/json.rs`: render the new annotation shapes for tail and parameter-authorise; deletion of `Ann::MayI` rendering.
 - Affected output: text-mode `may-i check` failure traces and any other surface that consumes `TracingFold` output (currently only `cmd_check`).
 - Snapshot tests under `crates/engine/src/test_generators/`, `src/snapshots/`, and `tests/check_integration.rs` will need updating.
 - No API, config-syntax, or wire-format changes. JSON trace output gains the captured-value field for parameter-authorise but otherwise unchanged.

@@ -60,3 +60,24 @@
 ## 10. Coverage
 
 - [ ] 10.1 Run `cargo tarpaulin` and inspect `lcov.info` for the new arms in `src/annotation.rs`, `crates/engine/src/eval/effects.rs`, and `src/output/render_rule.rs`. Add targeted tests for any uncovered branches (e.g. tail with empty slice, parameter-authorise with missing value).
+
+## 11. Remediation: delete orphaned `Effect::Authorise` variant
+
+Discovered while renaming `MayI` → `Authorise`: the `Effect::Authorise` variant is **never constructed by the config parser**. Both `(may-i …)` and bare `(authorise)` at effect position are explicit parse errors (`crates/config/src/effect.rs:46-73`). The host-context recursion machinery for `(parameter X (authorise))` and `(tail (authorise))` lives in `evaluate_parameter_fold` and `evaluate_tail_authorise_fold` and reaches recursion via `recurse_into_inner_command` directly, not via `Effect::Authorise`. The variant survives as fuzzing-only code reachable only through proptest generators and `arbitrary_impls`.
+
+This should be deleted. Doing so also kills the now-redundant `effect_authorise` / `effect_authorise_no_match` fold methods and the `Ann::MayI` annotation that exists only to render this unreachable variant.
+
+- [ ] 11.1 Confirm `Effect::Authorise` has no production constructor: grep the workspace for `Effect::Authorise` and verify all hits are under `crates/core/src/arbitrary_impls.rs`, `crates/engine/src/test_generators/`, `crates/engine/src/eval/tests/`, or marked `#[cfg(test)]`. If any production constructor exists, stop and re-scope.
+- [ ] 11.2 Delete the `Effect::Authorise` variant from `crates/core/src/ast.rs:172`.
+- [ ] 11.3 Delete the `Effect::authorise()` test-only constructor and its `effect_authorise_creates_correctly` and `effect_to_doc_authorise` tests from `crates/core/src/ast.rs`.
+- [ ] 11.4 Delete the `Effect::Authorise` arm from `Effect`'s `Display` and `ToDoc` impls in `crates/core/src/ast.rs`.
+- [ ] 11.5 Delete the `Effect::Authorise` eval arm in `crates/engine/src/eval/effects.rs:213-248` (the entire `match` arm including the `extract_inner_command`/recursion block — those code paths are duplicated by the parameter and tail evaluators). The `_ => unreachable!("unknown Effect variant")` fallthrough catches it; replace with explicit exhaustive coverage so a future variant fails to compile.
+- [ ] 11.6 Delete the `effect_authorise` and `effect_authorise_no_match` methods from `crates/engine/src/fold.rs` (both the trait declaration and the `PureFold` impl). Audit all `EvalFold` impls (`src/annotation.rs`, `crates/engine/src/eval/tests/properties.rs`) and remove their impls of these methods.
+- [ ] 11.7 Delete the `Ann::MayI` variant from `src/annotation.rs:40-50` and its rendering arm in `src/output/render_rule.rs` and `src/output/json.rs`. Confirm nothing else constructs it.
+- [ ] 11.8 Delete the `Effect::Authorise` arm in `crates/core/src/arbitrary_impls.rs:327` and adjust the surrounding `int_in_range` so the variant is dropped from random generation.
+- [ ] 11.9 Delete the `Effect::Authorise` strategy from `crates/engine/src/test_generators/mod.rs:131`.
+- [ ] 11.10 Delete the `contains_authorise` helper and the `prop_filter("no Authorise", …)` from `crates/engine/src/test_generators/fold_properties.rs` — once the variant is gone, the filter is vacuously true.
+- [ ] 11.11 Delete `Effect::Authorise`-constructing tests in `crates/engine/src/eval/tests/mod.rs:270-280` (continuation case) and the two tests at lines 829 and 894 (which test recursion through this dead variant — the production behaviour is covered by parameter/tail tests).
+- [ ] 11.12 Delete `effect_eval_tests.rs:374-383` (the `MayI recurses correctly with pattern match` proptest) and `integration_tests.rs:97-130` (the `Recursive MayI with context` integration test) — both test the dead variant.
+- [ ] 11.13 Run `cargo build --workspace --all-targets` and `cargo test --workspace`; confirm both green.
+- [ ] 11.14 Run `cargo tarpaulin`; confirm coverage of `crates/engine/src/eval/effects.rs` did not drop (expected: rises slightly — dead code removed).
