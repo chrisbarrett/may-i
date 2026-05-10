@@ -1,50 +1,49 @@
 ---
 source: tests/migrated_v1_trace.rs
-assertion_line: 110
 expression: normalised
 ---
 
 Trace
 
-                                                               command │ git checkout -- main.ts
-                                                                parser │ gnu
-                                                                 facts │ :opencode/agent "plan"
-  43: (rule (command "git")                                            │
-        (context (and                                                  │
-                  (positional "reset")                                 │ "checkout" = "reset" → no
-                  …))                                                  │
-        (ask "Dangerous git reset"))                                   │ → :ask "Dangerous git reset"
-                                                                       │
-  47: (rule (command "git")                                            │
-        (context (or                                                   │
-                  (positional "remote")                                │ "checkout" = "remote" → no
-                  (positional                                          │
-                   (or "clean" "gc"                                    │ "checkout" = "clean" → no
-                       "push"))))                                      │ "checkout" = "push" → no
-        (ask "Dangerous git operation"))                               │ → :ask "Dangerous git operation"
-                                                                       │
-  52: (rule (command "git")                                            │
-        (context                                                       │
-         (and                                                          │
-          (or                                                          │
-           (positional (or "switch"                                    │ "checkout" = "switch" → no
-                           "restore"                                   │ "checkout" = "restore" → no
-                           …                                           │
-                           "clone"))                                   │ "checkout" = "clone" → no
-           (positional "checkout" "--")                                │ "checkout" = "checkout" → yes
-           …)                                                          │
-          (plan-mode                                                   │ plan-mode → yes
-           (or                                                         │
-            (has                                                       │ no
-             [:claude-code/permission-mode                             │
-              "plan"])                                                 │
-            (has                                                       │ "plan" → yes
-             [:opencode/agent "plan"])))))                             │
-        (effect                                                        │ → :ask "git mutation requires approval in non-writing agents"
-         :ask "git mutation requires approval in non-writing agents")) │
-                                                                       │
-  60: (rule (command "git")                                            │
-        (effect :allow))                                               │ → :allow
+                                                          command │ git checkout -- main.ts
+                                                           parser │ gnu
+                                                            facts │ :opencode/agent "plan"
+  43: (rule (command "git")                                       │
+        (context (and                                             │
+                  (positional "reset")                            │ "checkout" = "reset" → no
+                  …))                                             │
+        (ask "Dangerous git reset"))                              │ → :ask "Dangerous git reset"
+                                                                  │
+  47: (rule (command "git")                                       │
+        (context (or                                              │
+                  (positional "remote")                           │ "checkout" = "remote" → no
+                  (positional                                     │
+                   (or "clean" "gc"                               │ "checkout" = "clean" → no
+                       "push"))))                                 │ "checkout" = "push" → no
+        (ask "Dangerous git operation"))                          │ → :ask "Dangerous git operation"
+                                                                  │
+  52: (rule (command "git")                                       │
+        (context                                                  │
+         (and                                                     │
+          (or                                                     │
+           (positional (or "switch"                               │ "checkout" = "switch" → no
+                           "restore"                              │ "checkout" = "restore" → no
+                           …                                      │
+                           "clone"))                              │ "checkout" = "clone" → no
+           (positional "checkout" "--")                           │ "checkout" = "checkout" → yes
+           …)                                                     │
+          (plan-mode                                              │ plan-mode → yes
+           (or                                                    │
+            (has                                                  │ no
+             [:claude-code/permission-mode                        │
+              "plan"])                                            │
+            (has                                                  │ "plan" → yes
+             [:opencode/agent "plan"])))))                        │
+        (ask                                                      │ → :ask "git mutation requires approval in non-writing agents"
+         "git mutation requires approval in non-writing agents")) │
+                                                                  │
+  60: (rule (command "git")                                       │
+        (allow))                                                  │ → :allow
 
 Result
 

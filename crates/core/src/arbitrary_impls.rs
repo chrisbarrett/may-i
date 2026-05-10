@@ -291,7 +291,7 @@ impl<'a> Arbitrary<'a> for Effect {
             };
         }
 
-        match u.int_in_range(0..=8)? {
+        match u.int_in_range(0..=7)? {
             0 => Ok(Effect::Terminal {
                 decision: Decision::arbitrary(u)?,
                 reason,
@@ -319,12 +319,11 @@ impl<'a> Arbitrary<'a> for Effect {
                 predicate: Spanned::arbitrary(u)?,
                 effect: Box::new(Spanned::arbitrary(u)?),
             }),
-            7 => Ok(Effect::If {
+            _ => Ok(Effect::If {
                 predicate: Spanned::arbitrary(u)?,
                 then_effect: Box::new(Spanned::arbitrary(u)?),
                 else_effect: Box::new(Spanned::arbitrary(u)?),
             }),
-            _ => Ok(Effect::Authorise),
         }
     }
 }

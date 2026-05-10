@@ -171,8 +171,13 @@ fn find_substitution_spans(input: &str) -> Vec<(usize, usize)> {
                 i = end + 1;
                 continue;
             }
-            i += 2;
-            continue;
+            // Unclosed `$(...)` — the lexer's `read_balanced_parens` tolerates
+            // EOF and produces a body spanning to end-of-input. Mirror that
+            // here so the parser-extracted source pairs with this span by
+            // index. Stop scanning because everything left is inside the
+            // unclosed body.
+            spans.push((inner_start, bytes.len()));
+            break;
         }
         if c == b'`' {
             let inner_start = i + 1;
@@ -202,8 +207,11 @@ fn find_substitution_spans(input: &str) -> Vec<(usize, usize)> {
                 i = end + 1;
                 continue;
             }
-            i += 2;
-            continue;
+            // Unclosed `<(...)` / `>(...)` — same EOF-tolerant fallback as
+            // `$(...)` above; pair this span with the lexer-produced source
+            // and stop so we don't re-scan into the unclosed body.
+            spans.push((inner_start, bytes.len()));
+            break;
         }
         i += 1;
     }

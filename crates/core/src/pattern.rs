@@ -263,7 +263,6 @@ pub enum MatchMode {
 
 /// Pattern for matching command arguments.
 #[derive(Debug, Clone)]
-#[non_exhaustive]
 pub enum ArgPattern {
     /// Match positional args by position (skip flags).
     /// Syntax: `(positional PATTERN ... [. EFFECT])` or `(exact PATTERN ... [. EFFECT])`

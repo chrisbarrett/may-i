@@ -28,6 +28,10 @@ pub struct ArgMatchDetail {
     pub matched: bool,
     /// Per-element match details for positional/exact patterns (bindings, regex, etc.).
     pub positional_elements: Vec<PositionalElementDetail>,
+    /// Captured value as a single whitespace-joined string, surfaced for
+    /// `(tail (authorise))` (the tail slice) and
+    /// `(parameter X (authorise))` (the captured parameter value).
+    pub captured_value: Option<String>,
 }
 
 impl ArgMatchDetail {
@@ -41,6 +45,7 @@ impl ArgMatchDetail {
             arg_set,
             matched,
             positional_elements,
+            captured_value: None,
         }
     }
 }
@@ -196,14 +201,6 @@ pub trait EvalFold {
     /// Called once per evaluation entry with the resolved parser
     /// (style + parameter declarations). Default: no-op.
     fn record_parser(&mut self, _command: &str, _parser: &may_i_core::ast::ResolvedParser) {}
-    fn effect_authorise(
-        &mut self,
-        inner_cmd: &str,
-        inner_args: &[String],
-        inner_result: EffectResult,
-        inner_out: Self::EffectOut,
-    ) -> Self::EffectOut;
-    fn effect_authorise_no_match(&mut self) -> Self::EffectOut;
 
     // -- Predicate algebra --
 
@@ -399,20 +396,6 @@ impl EvalFold for PureFold {
         continuation: EffectResult,
     ) -> EffectResult {
         continuation
-    }
-
-    fn effect_authorise(
-        &mut self,
-        _inner_cmd: &str,
-        _inner_args: &[String],
-        _inner_result: EffectResult,
-        inner_out: EffectResult,
-    ) -> EffectResult {
-        inner_out
-    }
-
-    fn effect_authorise_no_match(&mut self) -> EffectResult {
-        EffectResult::Nil
     }
 
     fn predicate_fact(

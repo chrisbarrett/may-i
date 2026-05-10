@@ -11,8 +11,7 @@ Trace
         (context (and                                             │
                   (positional "reset")                            │ "reset" = "reset" → yes
                   (flag "hard")))                                 │
-        (effect                                                   │ → :ask "Dangerous git reset"
-         :ask "Dangerous git reset"))                             │
+        (ask "Dangerous git reset"))                              │ → :ask "Dangerous git reset"
                                                                   │
   47: (rule (command "git")                                       │
         (context (or                                              │
@@ -37,7 +36,7 @@ Trace
          "git mutation requires approval in non-writing agents")) │
                                                                   │
   60: (rule (command "git")                                       │
-        (effect :allow))                                          │ → :allow
+        (allow))                                                  │ → :allow
 
 Result
 

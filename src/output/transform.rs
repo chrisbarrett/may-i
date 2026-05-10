@@ -168,6 +168,7 @@ pub(super) fn distribute_arg_annotations(doc: &Doc<Option<Ann>>) -> Doc<Option<A
         search_tokens,
         arg_set,
         matched,
+        ..
     }) = &doc.ann
         && let DocF::List(children) = &doc.node
     {
@@ -363,6 +364,7 @@ fn distribute_to_token_children(
                         search_tokens: vec![text.clone()],
                         arg_set: arg_set.to_vec(),
                         matched,
+                        captured_value: None,
                     }),
                     node: child.node.clone(),
                     layout: child.layout,
@@ -425,6 +427,7 @@ mod tests {
                 search_tokens: vec!["a".into(), "b".into(), "c".into()],
                 arg_set: vec!["a".into()],
                 matched: true,
+                captured_value: None,
             },
             vec![atom("anywhere"), atom("a"), atom("b"), atom("c")],
         );
@@ -443,6 +446,7 @@ mod tests {
                 search_tokens: vec!["a".into()],
                 arg_set: vec![],
                 matched: false,
+                captured_value: None,
             },
             vec![atom("anywhere"), atom("a"), atom("b")],
         );
@@ -495,6 +499,7 @@ mod tests {
                 search_tokens: vec!["tok".into()],
                 arg_set: vec![],
                 matched: true,
+                captured_value: None,
             }),
             node: DocF::List(vec![
                 atom("anywhere"),
@@ -539,6 +544,7 @@ mod tests {
                 search_tokens: vec!["\"t1\"".into(), "\"t2\"".into()],
                 arg_set: vec!["a".into(), "b".into()],
                 matched: true,
+                captured_value: None,
             },
             vec![atom("anywhere"), atom("\"t1\""), atom("\"t2\"")],
         );
@@ -573,6 +579,7 @@ mod tests {
                 search_tokens: vec!["\"t1\"".into(), "\"t2\"".into()],
                 arg_set: vec!["x".into()],
                 matched: false,
+                captured_value: None,
             }),
             node: DocF::List(vec![atom("not"), inner]),
             layout: LayoutHint::Auto,
@@ -644,6 +651,7 @@ mod tests {
                                 search_tokens: tokens.clone(),
                                 arg_set: args,
                                 matched,
+                                captured_value: None,
                             },
                             vec![atom("anywhere"), atom(&tokens[0])],
                         )
@@ -812,6 +820,7 @@ mod tests {
                 search_tokens: vec!["a".into(), "b".into()],
                 arg_set: vec!["a".into()],
                 matched: true,
+                captured_value: None,
             },
             vec![atom("anywhere"), atom("a"), atom("b")],
         );
@@ -841,6 +850,7 @@ mod tests {
                 search_tokens: vec!["\"t1\"".into()],
                 arg_set: vec!["a".into()],
                 matched: true,
+                captured_value: None,
             },
             vec![atom("anywhere"), atom("\"t1\"")],
         );
@@ -888,6 +898,7 @@ mod tests {
                 search_tokens: vec!["\"t1\"".into()],
                 arg_set: vec!["a".into()],
                 matched: true,
+                captured_value: None,
             },
             vec![atom("anywhere"), atom("\"t1\""), atom("\"t2\"")],
         );
@@ -912,6 +923,7 @@ mod tests {
                 search_tokens: vec!["\"t1\"".into()],
                 arg_set: vec!["a".into()],
                 matched: true,
+                captured_value: None,
             },
             vec![atom("anywhere"), atom("\"t1\""), inner_list],
         );
@@ -944,6 +956,7 @@ mod tests {
                 search_tokens: vec![],
                 arg_set: vec!["a".into()],
                 matched: true,
+                captured_value: None,
             },
             vec![atom("positional"), atom("\"a\"")],
         );

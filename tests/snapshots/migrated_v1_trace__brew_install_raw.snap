@@ -5,15 +5,15 @@ expression: normalised
 
 [1mTrace[0m
 
-                                               [2mcommand[0m [2m│[0m [1mbrew install foo[0m
-                                                [2mparser[0m [2m│[0m gnu
-  [2m74: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"brew"[0m[2m)[0m                           [2m│[0m
-        [2m([0m[34margs[0m                                          [2m│[0m
-         [2m([0m[34mcond[0m                                         [2m│[0m
-          [2m([0m[2m([0m[34mpositional[0m [32m"install"[0m[2m)[0m                      [2m│[0m [2m"install" = "install" [0m[2m→[0m [1;32myes[0m
-           [2m([0m[34meffect[0m                                     [2m│[0m [2m[0m[2m→[0m [1;31m:deny[0m [32m"Package installation not allowed"[0m
-            [94m:deny[0m [32m"Package installation not allowed"[0m[2m)[0m[2m)[0m [2m│[0m
-          [2m…[0m[2m)[0m[2m)[0m[2m)[0m                                         [2m│[0m
+                                         [2mcommand[0m [2m│[0m [1mbrew install foo[0m
+                                          [2mparser[0m [2m│[0m gnu
+  [2m74: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"brew"[0m[2m)[0m                     [2m│[0m
+        [2m([0m[34margs[0m                                    [2m│[0m
+         [2m([0m[34mcond[0m                                   [2m│[0m
+          [2m([0m[2m([0m[34mpositional[0m [32m"install"[0m[2m)[0m                [2m│[0m [2m"install" = "install" [0m[2m→[0m [1;32myes[0m
+           [2m([0mdeny                                 [2m│[0m [2m[0m[2m→[0m [1;31m:deny[0m [32m"Package installation not allowed"[0m
+            [32m"Package installation not allowed"[0m[2m)[0m[2m)[0m [2m│[0m
+          [2m…[0m[2m)[0m[2m)[0m[2m)[0m                                   [2m│[0m
 
 [1mResult[0m
 

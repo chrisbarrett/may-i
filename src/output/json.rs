@@ -102,12 +102,19 @@ fn ann_to_json(ann: &Ann) -> serde_json::Value {
             search_tokens,
             arg_set,
             matched,
-        } => serde_json::json!({
-            "type": "arg_match",
-            "search_tokens": search_tokens,
-            "arg_set": arg_set,
-            "matched": matched,
-        }),
+            captured_value,
+        } => {
+            let mut obj = serde_json::json!({
+                "type": "arg_match",
+                "search_tokens": search_tokens,
+                "arg_set": arg_set,
+                "matched": matched,
+            });
+            if let Some((_label, value)) = captured_value {
+                obj["captured_value"] = serde_json::json!(value);
+            }
+            obj
+        }
         Ann::FactQuery {
             query_source,
             matched,
@@ -143,16 +150,6 @@ fn ann_to_json(ann: &Ann) -> serde_json::Value {
         Ann::Combinator { result_is_nil } => serde_json::json!({
             "type": "combinator",
             "result_is_nil": result_is_nil,
-        }),
-        Ann::MayI {
-            inner_command,
-            decision,
-            reason,
-        } => serde_json::json!({
-            "type": "may_i",
-            "inner_command": inner_command,
-            "decision": decision.to_string(),
-            "reason": reason,
         }),
         Ann::PositionalMatch {
             actual_arg,
@@ -246,10 +243,36 @@ mod tests {
             search_tokens: vec!["t".into()],
             arg_set: vec!["a".into()],
             matched: false,
+            captured_value: None,
         });
         assert_eq!(json["type"], "arg_match");
         assert_eq!(json["matched"], false);
         assert_eq!(json["search_tokens"][0], "t");
+        assert!(json.get("captured_value").is_none());
+    }
+
+    #[test]
+    fn ann_to_json_arg_match_with_captured_value_tail() {
+        let json = ann_to_json(&Ann::ArgMatch {
+            search_tokens: vec![],
+            arg_set: vec!["exec".into(), "true".into()],
+            matched: true,
+            captured_value: Some(("tail", "true".into())),
+        });
+        assert_eq!(json["type"], "arg_match");
+        assert_eq!(json["captured_value"], "true");
+    }
+
+    #[test]
+    fn ann_to_json_arg_match_with_captured_value_parameter() {
+        let json = ann_to_json(&Ann::ArgMatch {
+            search_tokens: vec![],
+            arg_set: vec!["-c".into(), "echo hi".into()],
+            matched: true,
+            captured_value: Some(("value", "echo hi".into())),
+        });
+        assert_eq!(json["type"], "arg_match");
+        assert_eq!(json["captured_value"], "echo hi");
     }
 
     #[test]
@@ -304,17 +327,6 @@ mod tests {
         });
         assert_eq!(json["type"], "combinator");
         assert_eq!(json["result_is_nil"], true);
-    }
-
-    #[test]
-    fn ann_to_json_may_i() {
-        let json = ann_to_json(&Ann::MayI {
-            inner_command: "rm -rf".into(),
-            decision: Decision::Deny,
-            reason: Some("nope".into()),
-        });
-        assert_eq!(json["type"], "may_i");
-        assert_eq!(json["inner_command"], "rm -rf");
     }
 
     #[test]

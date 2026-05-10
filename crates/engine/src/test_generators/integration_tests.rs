@@ -94,46 +94,6 @@ fn multiple_fact_bindings() {
     assert_eq!(result2.decision, Decision::Ask);
 }
 
-// 5.2.3 Integration test: Recursive MayI with context
-#[test]
-fn recursive_may_i_with_context() {
-    let args: Vec<String> = vec!["inner-cmd".into(), "arg1".into()];
-    let facts = ContextFacts::default();
-
-    let config = Config {
-        rules: vec![
-            // Wrapper rule: matches "wrapper", recurses into inner command
-            Rule {
-                command_effect: spanned(Effect::CommandPattern(CommandPattern::Literal(
-                    "wrapper".into(),
-                ))),
-                effect: spanned(Effect::Authorise),
-                checks: vec![],
-                span: dummy_span(),
-                provenance: may_i_core::ast::Provenance::PrimaryConfig,
-            },
-            // Inner rule: matches "inner-cmd"
-            Rule {
-                command_effect: spanned(Effect::CommandPattern(CommandPattern::Literal(
-                    "inner-cmd".into(),
-                ))),
-                effect: spanned(Effect::Terminal {
-                    decision: Decision::Allow,
-                    reason: Some("inner allowed".into()),
-                }),
-                checks: vec![],
-                span: dummy_span(),
-                provenance: may_i_core::ast::Provenance::PrimaryConfig,
-            },
-        ],
-        ..Config::default()
-    };
-
-    let result = evaluate("wrapper", &args, &config, &facts).unwrap();
-    assert_eq!(result.decision, Decision::Allow);
-    assert_eq!(result.reason, Some("inner allowed".to_string()));
-}
-
 // 5.2.4 Integration test: Combined And/Or/Not in single rule
 #[test]
 fn combined_and_or_not_in_rule() {

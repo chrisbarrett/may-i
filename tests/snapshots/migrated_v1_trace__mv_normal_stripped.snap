@@ -11,7 +11,7 @@ Trace
         (args (if (or (flag "f")      │
                       (flag "force")) │
                   …                   │
-                (effect :allow))))    │ → :allow
+                (allow))))            │ → :allow
 
 Result
 

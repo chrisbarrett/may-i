@@ -688,19 +688,6 @@ fn cond_short_circuits_predicates_after_first_match() {
         ) -> EffectResult {
             cont
         }
-        fn effect_authorise(
-            &mut self,
-            _: &str,
-            _: &[String],
-            _: EffectResult,
-            out: EffectResult,
-        ) -> EffectResult {
-            out
-        }
-        fn effect_authorise_no_match(&mut self) -> EffectResult {
-            EffectResult::Nil
-        }
-
         fn predicate_fact(
             &mut self,
             _: &FactQuery,

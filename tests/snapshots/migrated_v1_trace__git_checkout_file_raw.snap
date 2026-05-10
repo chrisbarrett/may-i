@@ -42,7 +42,7 @@ expression: normalised
          [2m"git mutation requires approval in non-writing agents"[0m[2m)[0m[2m)[0m [2m│[0m
                                                                   [2m│[0m
   [2m60: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"git"[0m[2m)[0m                                       [2m│[0m
-        [2m([0m[34meffect[0m [94m:allow[0m[2m)[0m[2m)[0m                                          [2m│[0m [2m[0m[2m→[0m [1;32m:allow[0m
+        [2m([0mallow[2m)[0m[2m)[0m                                                  [2m│[0m [2m[0m[2m→[0m [1;32m:allow[0m
 
 [1mResult[0m
 

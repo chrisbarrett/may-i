@@ -126,8 +126,6 @@ pub fn any_effect(depth: u32) -> BoxedStrategy<Effect> {
                         then_effect: Box::new(then_eff),
                         else_effect: Box::new(else_eff),
                     }),
-                // Authorise recursive
-                Just(Effect::Authorise).boxed(),
             ]
         })
         .boxed()

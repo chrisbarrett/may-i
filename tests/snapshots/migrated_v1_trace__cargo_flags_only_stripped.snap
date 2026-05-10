@@ -5,12 +5,12 @@ expression: normalised
 
 Trace
 
-                          command │ cargo --list
-                           parser │ gnu
-  95: (rule (command "cargo")     │
-        (args (if (exact)         │
-                  (effect :allow) │ → :allow
-                …)))              │
+                      command │ cargo --list
+                       parser │ gnu
+  95: (rule (command "cargo") │
+        (args (if (exact)     │
+                  (allow)     │ → :allow
+                …)))          │
 
 Result
 

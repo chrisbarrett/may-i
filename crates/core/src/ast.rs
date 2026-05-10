@@ -103,7 +103,6 @@ impl EffectResult {
 
 /// Unified Effect type where all forms evaluate to Decision | Nil.
 #[derive(Debug, Clone)]
-#[non_exhaustive]
 pub enum Effect {
     // Terminal decisions
     /// A terminal decision (allow, ask, or deny) with optional reason.
@@ -164,13 +163,6 @@ pub enum Effect {
         branches: Vec<(Spanned<Predicate>, Spanned<Effect>)>,
         fallback: Option<Box<Spanned<Effect>>>,
     },
-
-    // Recursion
-    /// Re-authorise the surrounding host context's captured slice as a
-    /// command line. Returns the inner decision, or Nil if there is no
-    /// inner command to recurse on. Syntax: `(authorise)` inside a host
-    /// context (`(parameter NAME (authorise))`, `(tail (authorise))`).
-    Authorise,
 }
 
 impl Effect {
@@ -206,11 +198,6 @@ impl Effect {
     #[cfg(test)]
     pub(crate) fn arg_pattern(pattern: ArgPattern) -> Self {
         Effect::ArgPattern(pattern)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn authorise() -> Self {
-        Effect::Authorise
     }
 
     /// Check if this is a terminal effect (Allow, Ask, or Deny).
@@ -270,7 +257,6 @@ impl std::fmt::Display for Effect {
             Effect::Unless { .. } => write!(f, "<unless-effect>"),
             Effect::If { .. } => write!(f, "<if-effect>"),
             Effect::Cond { .. } => write!(f, "<cond-effect>"),
-            Effect::Authorise => write!(f, "<authorise-effect>"),
         }
     }
 }
@@ -1018,7 +1004,6 @@ impl ToDoc for Effect {
             Effect::Unless { .. } => Doc::atom("<unless-effect>"),
             Effect::If { .. } => Doc::atom("<if-effect>"),
             Effect::Cond { .. } => Doc::atom("<cond-effect>"),
-            Effect::Authorise => Doc::atom("(authorise)"),
         }
     }
 }
@@ -1127,12 +1112,6 @@ mod tests {
         assert!(
             matches!(effect, Effect::ArgPattern(p) if matches!(p, ArgPattern::Ordered { mode: MatchMode::Positional, .. }))
         );
-    }
-
-    #[test]
-    fn effect_authorise_creates_correctly() {
-        let effect = Effect::authorise();
-        assert!(matches!(effect, Effect::Authorise));
     }
 
     #[test]
@@ -1546,12 +1525,6 @@ mod tests {
         }
         .to_doc();
         assert_eq!(doc_text(&doc), "<cond-effect>");
-    }
-
-    #[test]
-    fn effect_to_doc_authorise() {
-        let doc = Effect::Authorise.to_doc();
-        assert_eq!(doc_text(&doc), "(authorise)");
     }
 
     fn doc_text(doc: &crate::doc::Doc) -> String {

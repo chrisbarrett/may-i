@@ -5,19 +5,19 @@ expression: normalised
 
 Trace
 
-                                              command │ curl -d data https://example.com
-                                               parser │ gnu
-  65: (rule (command "curl")                          │
-        (context (and (not (flag "d"))                │
-                      …                               │
-                      …                               │
-                      …))                             │
-        (allow                                        │ → :allow "GET request (no mutating flags)"
-         "GET request (no mutating flags)"))          │
-                                                      │
-  69: (rule (command "curl")                          │
-        (effect                                       │ → :ask "Network operation requires approval"
-         :ask "Network operation requires approval")) │
+                                         command │ curl -d data https://example.com
+                                          parser │ gnu
+  65: (rule (command "curl")                     │
+        (context (and (not (flag "d"))           │
+                      …                          │
+                      …                          │
+                      …))                        │
+        (allow                                   │ → :allow "GET request (no mutating flags)"
+         "GET request (no mutating flags)"))     │
+                                                 │
+  69: (rule (command "curl")                     │
+        (ask                                     │ → :ask "Network operation requires approval"
+         "Network operation requires approval")) │
 
 Result
 

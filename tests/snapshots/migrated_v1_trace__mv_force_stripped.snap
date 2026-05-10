@@ -5,15 +5,15 @@ expression: normalised
 
 Trace
 
-                                        command │ mv -f a b
-                                         parser │ gnu
-  83: (rule (command "mv")                      │
-        (args                                   │
-         (if (or (flag "f")                     │
-                 …)                             │
-             (effect                            │ → :ask "Force move is destructive"
-              :ask "Force move is destructive") │
-           …)))                                 │
+                                   command │ mv -f a b
+                                    parser │ gnu
+  83: (rule (command "mv")                 │
+        (args                              │
+         (if (or (flag "f")                │
+                 …)                        │
+             (ask                          │ → :ask "Force move is destructive"
+              "Force move is destructive") │
+           …)))                            │
 
 Result
 

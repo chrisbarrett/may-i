@@ -13,7 +13,7 @@ Trace
                 …)                     │
                ((positional            │
                  (or "list" "search")) │ "list" = "list" → yes
-                (effect :allow)))))    │ → :allow
+                (allow)))))            │ → :allow
 
 Result
 
