@@ -15,13 +15,7 @@ pub(crate) fn flatten_nested_if(node: &CstNode) -> Option<Box<CstNode>> {
     let else_tag = else_children[0].as_atom()?;
 
     let mut cond_children: Vec<Box<CstNode>> = Vec::new();
-    cond_children.push(Box::new(CstNode::atom(
-        "cond",
-        TriviaAnn {
-            leading: node.ann.leading.clone(),
-            ..Default::default()
-        },
-    )));
+    cond_children.push(Box::new(CstNode::atom("cond", TriviaAnn::default())));
 
     // First clause from the outer if
     cond_children.push(Box::new(CstNode::list(
@@ -95,7 +89,14 @@ pub(crate) fn flatten_nested_if(node: &CstNode) -> Option<Box<CstNode>> {
         _ => return None,
     }
 
-    Some(Box::new(CstNode::list(cond_children, Default::default())))
+    Some(Box::new(CstNode::list(
+        cond_children,
+        TriviaAnn {
+            leading: node.ann.leading.clone(),
+            trailing: node.ann.trailing.clone(),
+            ..Default::default()
+        },
+    )))
 }
 
 #[cfg(test)]

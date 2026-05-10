@@ -28,6 +28,7 @@ pub(super) fn render_annotated_rule(
         width,
         color: true,
         line_number: line,
+        preserve_user_breaks: false,
     };
     let rendered = pretty(&doc, 0, &fmt);
     let rendered_lines: Vec<&str> = rendered.lines().collect();

@@ -27,14 +27,10 @@ pub(crate) fn effect_to_decision_verb(node: &CstNode) -> Option<Box<CstNode>> {
             && let Some(verb) = decision_from_keyword(kw)
             && children.len() <= 3
         {
-            let verb_atom = Box::new(CstNode::atom(
-                verb,
-                TriviaAnn {
-                    leading: vec![],
-                    trailing: vec![],
-                    span: kw_node.ann.span,
-                },
-            ));
+            // Constructed atom — no source trivia or span. Position trivia
+            // for the wrapping `(allow|ask|deny ...)` list comes from the
+            // original `(effect ...)` node below.
+            let verb_atom = Box::new(CstNode::atom(verb, TriviaAnn::default()));
             let mut new_children: Vec<Box<CstNode>> = vec![verb_atom];
             if let Some(reason) = children.get(2) {
                 new_children.push(Box::new(CstNode {

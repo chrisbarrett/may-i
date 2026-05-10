@@ -50,19 +50,22 @@ pub(crate) fn and_trailing_effect_to_when(node: &CstNode) -> Option<Box<CstNode>
     };
 
     let when_children = vec![
-        Box::new(CstNode::atom(
-            "when",
-            TriviaAnn {
-                leading: node.ann.leading.clone(),
-                ..Default::default()
-            },
-        )),
+        Box::new(CstNode::atom("when", TriviaAnn::default())),
         pred,
         effect.clone(),
     ];
 
+    // Position-trivia (leading/trailing whitespace + comments) lives on the
+    // wrapping list, not on the head atom. Putting it on the atom produces
+    // `( when ...)` with a stray space inside the parens.
     Some(Box::new(CstNode {
-        ann: Default::default(),
+        ann: TriviaAnn {
+            leading: node.ann.leading.clone(),
+            trailing: node.ann.trailing.clone(),
+            // Span left at default (zero) — this is a constructed list, so
+            // pp will treat it as reflowable rather than source-preserved.
+            ..Default::default()
+        },
         shape: Shape::List(when_children),
     }))
 }

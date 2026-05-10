@@ -30,20 +30,21 @@ pub(crate) fn cond_single_clause_to_if(node: &CstNode) -> Option<Box<CstNode>> {
     let else_effect = &else_children[1];
 
     let if_children = vec![
-        Box::new(CstNode::atom(
-            "if",
-            TriviaAnn {
-                leading: node.ann.leading.clone(),
-                ..Default::default()
-            },
-        )),
+        Box::new(CstNode::atom("if", TriviaAnn::default())),
         pred.clone(),
         then_effect.clone(),
         else_effect.clone(),
     ];
 
+    // Position-trivia (leading/trailing) lives on the wrapping list, not on
+    // the head atom — putting it on the atom produces `( if ...)` with a
+    // stray space inside the parens.
     Some(Box::new(CstNode {
-        ann: Default::default(),
+        ann: TriviaAnn {
+            leading: node.ann.leading.clone(),
+            trailing: node.ann.trailing.clone(),
+            ..Default::default()
+        },
         shape: Shape::List(if_children),
     }))
 }
@@ -74,13 +75,7 @@ pub(crate) fn cond_absorb_else(node: &CstNode) -> Option<Box<CstNode>> {
 
     // Keep existing clauses (everything except the tag and the else)
     let mut result_children: Vec<Box<CstNode>> = Vec::new();
-    result_children.push(Box::new(CstNode::atom(
-        "cond",
-        TriviaAnn {
-            leading: node.ann.leading.clone(),
-            ..Default::default()
-        },
-    )));
+    result_children.push(Box::new(CstNode::atom("cond", TriviaAnn::default())));
     for clause in &children[1..children.len() - 1] {
         result_children.push(Box::new(strip_whitespace_trivia(clause)));
     }
@@ -145,7 +140,15 @@ pub(crate) fn cond_absorb_else(node: &CstNode) -> Option<Box<CstNode>> {
         _ => return None,
     }
 
-    Some(Box::new(CstNode::list(result_children, Default::default())))
+    // Position-trivia goes on the outer wrapping list.
+    Some(Box::new(CstNode::list(
+        result_children,
+        TriviaAnn {
+            leading: node.ann.leading.clone(),
+            trailing: node.ann.trailing.clone(),
+            ..Default::default()
+        },
+    )))
 }
 
 #[cfg(test)]

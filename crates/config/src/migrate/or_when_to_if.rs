@@ -35,19 +35,20 @@ pub(crate) fn or_leading_when_to_if(node: &CstNode) -> Option<Box<CstNode>> {
     };
 
     let if_children = vec![
-        Box::new(CstNode::atom(
-            "if",
-            TriviaAnn {
-                leading: node.ann.leading.clone(),
-                ..Default::default()
-            },
-        )),
+        Box::new(CstNode::atom("if", TriviaAnn::default())),
         Box::new(strip_whitespace_trivia(pred)),
         Box::new(strip_whitespace_trivia(then_branch)),
         else_branch,
     ];
 
-    Some(Box::new(CstNode::list(if_children, Default::default())))
+    Some(Box::new(CstNode::list(
+        if_children,
+        TriviaAnn {
+            leading: node.ann.leading.clone(),
+            trailing: node.ann.trailing.clone(),
+            ..Default::default()
+        },
+    )))
 }
 
 #[cfg(test)]

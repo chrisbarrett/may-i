@@ -32,19 +32,17 @@ pub(crate) fn predicate_pushdown(node: &CstNode) -> Option<Box<CstNode>> {
     let combined_pred = Box::new(CstNode::list(comb_children, Default::default()));
 
     let result_children = vec![
-        Box::new(CstNode::atom(
-            wrapper_tag,
-            TriviaAnn {
-                leading: node.ann.leading.clone(),
-                ..Default::default()
-            },
-        )),
+        Box::new(CstNode::atom(wrapper_tag, TriviaAnn::default())),
         combined_pred,
         Box::new(strip_whitespace_trivia(body)),
     ];
 
     Some(Box::new(CstNode {
-        ann: Default::default(),
+        ann: TriviaAnn {
+            leading: node.ann.leading.clone(),
+            trailing: node.ann.trailing.clone(),
+            ..Default::default()
+        },
         shape: Shape::List(result_children),
     }))
 }

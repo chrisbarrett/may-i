@@ -145,6 +145,24 @@ impl CstNode<TriviaAnn> {
         )
     }
 
+    /// Pretty-serialize while preserving user-written line breaks inside
+    /// fill-eligible forms (and/or/forbidden/anywhere/positional). Used by
+    /// `may-i migrate`: structural rewrites should not reflow hand-arranged
+    /// subtrees that the migration didn't change. Canonical reformatting
+    /// (`may-i fmt`) uses `pretty_serialize` instead.
+    pub fn pretty_serialize_preserve(&self, width: usize) -> String {
+        let doc = self.to_doc_with_trivia();
+        may_i_pp::pretty(
+            &doc,
+            0,
+            &may_i_pp::Format {
+                width,
+                preserve_user_breaks: true,
+                ..Default::default()
+            },
+        )
+    }
+
     /// Convert this CST node to a Doc for pretty-printing.
     /// Note: This discards trivia (whitespace/comments) since pretty-printing
     /// reformats the output entirely.

@@ -40,6 +40,7 @@ pub fn pretty_form(canonical: &str, width: usize, color: bool) -> String {
         width,
         color,
         line_number: None,
+        preserve_user_breaks: false,
     };
     may_i_pp::pretty(&doc, 0, &fmt)
 }

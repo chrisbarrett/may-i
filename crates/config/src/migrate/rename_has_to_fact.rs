@@ -10,14 +10,8 @@ pub(crate) fn rename_has_to_fact(node: &CstNode) -> Option<Box<CstNode>> {
         if let Some(tag) = list[0].as_atom()
             && tag == "has"
         {
-            let fact_tag = Box::new(CstNode::atom(
-                "fact?",
-                TriviaAnn {
-                    leading: list[0].ann.leading.clone(),
-                    trailing: list[0].ann.trailing.clone(),
-                    span: list[0].ann.span,
-                },
-            ));
+            // Atom is constructed; trivia/span belong on the wrapping list.
+            let fact_tag = Box::new(CstNode::atom("fact?", TriviaAnn::default()));
 
             let new_children = if list.len() == 3 {
                 // (has K V) → (fact? [K V])

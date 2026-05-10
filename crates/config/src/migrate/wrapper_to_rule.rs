@@ -18,14 +18,9 @@ pub(crate) fn wrapper_to_rule(node: &CstNode) -> Option<Box<CstNode>> {
     // Build rule children
     let mut new_children = Vec::new();
 
-    // "rule" tag
-    new_children.push(Box::new(CstNode::atom(
-        "rule",
-        TriviaAnn {
-            leading: node.ann.leading.clone(),
-            ..Default::default()
-        },
-    )));
+    // "rule" tag — position trivia goes on the wrapping list at the end,
+    // not on the head atom.
+    new_children.push(Box::new(CstNode::atom("rule", TriviaAnn::default())));
 
     // Command
     new_children.push(cmd.clone());

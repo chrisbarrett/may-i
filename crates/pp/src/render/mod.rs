@@ -8,11 +8,26 @@ use crate::output::PrettyOutput;
 mod layout;
 use layout::*;
 
+thread_local! {
+    /// Per-pp-call configuration. Read by the dispatch layer in
+    /// `render_node` to decide between fill and trivia-guided layouts.
+    /// Threading via thread-local keeps the public render API
+    /// signature-stable while the dispatch logic stays a tree of free
+    /// functions.
+    static PRESERVE_USER_BREAKS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub(crate) fn preserve_user_breaks_enabled() -> bool {
+    PRESERVE_USER_BREAKS.with(|f| f.get())
+}
+
 /// Pretty-print a Doc with the given format settings.
 pub fn pretty<A: Clone + TriviaSource>(doc: &Doc<A>, indent: usize, fmt: &crate::Format) -> String {
     let prefix_width = fmt.line_number.map_or(0, line_prefix_width);
     let mut sb = StringBuilder::new(fmt.color);
+    PRESERVE_USER_BREAKS.with(|f| f.set(fmt.preserve_user_breaks));
     pretty_into(doc, indent + prefix_width, fmt.width, &mut sb);
+    PRESERVE_USER_BREAKS.with(|f| f.set(false));
     let content = sb.into_string();
 
     match fmt.line_number {
@@ -148,12 +163,21 @@ fn render_node<A: Clone + TriviaSource>(
             let must_break = doc.layout == LayoutHint::AlwaysBreak
                 || children.iter().any(|c| c.layout == LayoutHint::AlwaysBreak);
 
+            let preserve_user_breaks = preserve_user_breaks_enabled();
+
             // Fill-eligible forms (and/or/forbidden/anywhere/positional with
             // all-atom args) take precedence over trivia-guided layout —
             // trivia-guided cascades to the column of the last inline atom,
             // which produces deep right-side indents for long atom lists.
             // Fill always aligns wrapped atoms under the first arg.
-            if !must_break && is_fill_eligible(children) {
+            //
+            // Exception: `preserve_user_breaks` mode (set by `may-i migrate`)
+            // suppresses fill when the user wrote explicit line breaks, so
+            // unchanged subtrees keep their hand-arranged formatting.
+            // Canonical `may-i fmt` leaves the flag off so atom lists pack
+            // tightly.
+            let suppress_fill = preserve_user_breaks && has_trivia_break;
+            if !must_break && is_fill_eligible(children) && !suppress_fill {
                 let mut buf = EventBuffer::new();
                 render_flat(children, dimmed, &mut buf);
                 if !buf.is_multiline() && buf.max_line_width(indent) <= width {
@@ -164,9 +188,9 @@ fn render_node<A: Clone + TriviaSource>(
                 return;
             }
 
-            // When trivia forces breaks (and the form isn't fill-eligible),
-            // use trivia-guided layout that preserves the author's per-child
-            // line break decisions.
+            // When trivia forces breaks (and the form isn't fill-eligible,
+            // or fill is suppressed), use trivia-guided layout that
+            // preserves the author's per-child line break decisions.
             if has_trivia_break {
                 render_trivia_guided_delim(children, indent, width, dimmed, '(', ')', out);
                 return;

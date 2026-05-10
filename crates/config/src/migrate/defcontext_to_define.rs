@@ -8,14 +8,11 @@ pub(crate) fn defcontext_to_define(node: &CstNode) -> Option<Box<CstNode>> {
     }
 
     // Build (define NAME BODY) preserving the original body unchanged.
+    // `rebuild_list` already carries the original node's leading/trailing
+    // trivia on the wrapping list — duplicating it on the head atom would
+    // produce `( define ...)` with stray internal whitespace.
     let new_children = vec![
-        Box::new(CstNode::atom(
-            "define",
-            TriviaAnn {
-                leading: node.ann.leading.clone(),
-                ..Default::default()
-            },
-        )),
+        Box::new(CstNode::atom("define", TriviaAnn::default())),
         children[1].clone(), // NAME
         children[2].clone(), // BODY
     ];

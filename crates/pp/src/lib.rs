@@ -133,6 +133,12 @@ pub struct Format {
     pub width: usize,
     pub color: bool,
     pub line_number: Option<usize>,
+    /// When true, fill-eligible forms (and/or/forbidden/anywhere/positional
+    /// with all-atom args) with user-written line breaks fall back to
+    /// trivia-guided rendering instead of repacking. Used by `may-i migrate`
+    /// to preserve hand-formatted subtrees; the canonical `may-i fmt`
+    /// leaves this off so atom lists pack tightly under the first arg.
+    pub preserve_user_breaks: bool,
 }
 
 impl Default for Format {
@@ -141,6 +147,7 @@ impl Default for Format {
             width: 72,
             color: false,
             line_number: None,
+            preserve_user_breaks: false,
         }
     }
 }
