@@ -5,9 +5,8 @@ expression: normalised
 
 Trace
 
-  parser: gnu │
-
                                          command │ rm foo
+                                          parser │ gnu
   24: (rule (command "rm")                       │
         (context (and (or (flag "r")             │
                           (flag                  │

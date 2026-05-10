@@ -5,9 +5,8 @@ expression: normalised
 
 Trace
 
-  parser: gnu │
-
                                command │ brew list
+                                parser │ gnu
   74: (rule (command "brew")           │
         (args (cond                    │
                ((positional "install") │ "list" = "install" → no

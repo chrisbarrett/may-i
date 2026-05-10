@@ -1,14 +1,12 @@
 ---
 source: tests/migrated_v1_trace.rs
-assertion_line: 124
 expression: normalised
 ---
 
 [1mTrace[0m
 
-  [2mparser:[0m gnu [2m│[0m
-
                                               [2mcommand[0m [2m│[0m [1mcurl https://example.com[0m
+                                               [2mparser[0m [2m│[0m gnu
   [2m65: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"curl"[0m[2m)[0m                          [2m│[0m
         [2m([0mcontext [2m([0mand [2m([0mnot [2m([0mflag [32m"d"[0m[2m)[0m[2m)[0m                [2m│[0m
                       [2m([0mnot [2m([0mflag [32m"data"[0m[2m)[0m[2m)[0m             [2m│[0m

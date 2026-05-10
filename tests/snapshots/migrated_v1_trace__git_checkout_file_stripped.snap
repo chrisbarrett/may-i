@@ -5,9 +5,8 @@ expression: normalised
 
 Trace
 
-  parser: gnu │
-
                                                           command │ git checkout -- main.ts
+                                                           parser │ gnu
   43: (rule (command "git")                                       │
         (context (and                                             │
                   (positional "reset")                            │ "checkout" = "reset" → no
