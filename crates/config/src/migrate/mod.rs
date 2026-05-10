@@ -41,6 +41,7 @@ mod positional_dotted_tail;
 mod predicate_pushdown;
 mod rename_has_to_fact;
 mod simplify_command;
+mod strip_redundant_boundary;
 mod wrapper_to_rule;
 
 #[cfg(test)]
@@ -133,6 +134,11 @@ pub fn migration_rules() -> Vec<RewriteFn> {
         // verbs. Runs after every rule that constructs or rewrites `(effect …)`
         // forms so the input shape is stable before this rewrite.
         Box::new(effect_to_decision_verb::effect_to_decision_verb),
+        // After all rule body shapes have settled, strip a redundant
+        // boundary-token literal (e.g. `"--"`) from a rule's positional
+        // prefix when the prelude declares `(tail (after "TOKEN"))` for
+        // that command. No-op for prelude-tail commands using `:after-flags`.
+        Box::new(strip_redundant_boundary::strip_redundant_boundary),
     ]
 }
 

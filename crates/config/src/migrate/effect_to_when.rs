@@ -1,6 +1,16 @@
 use super::helpers::{complexity, tagged_list};
 use may_i_sexpr::cst::{CstNode, Shape, TriviaAnn};
 
+/// `(tail (authorise))` — the rule-side recursion form. Effect-flavoured
+/// because `(authorise)` produces a Decision via recursion. Eligible for
+/// the and→when conversion.
+fn is_tail_authorise(node: &CstNode) -> bool {
+    let Some(items) = tagged_list("tail", node) else {
+        return false;
+    };
+    items.len() == 2 && items[1].is_tagged("authorise")
+}
+
 pub(crate) fn and_trailing_effect_to_when(node: &CstNode) -> Option<Box<CstNode>> {
     let children = tagged_list("and", node)?;
     // Need at least: and + one predicate + effect
@@ -8,10 +18,15 @@ pub(crate) fn and_trailing_effect_to_when(node: &CstNode) -> Option<Box<CstNode>
         return None;
     }
 
-    // Find the first low-complexity terminal effect at any position. Both
-    // legacy `(effect …)` and the new bare decision verbs are eligible.
+    // Find the first low-complexity terminal effect at any position. The
+    // legacy `(effect …)`, the bare decision verbs `(allow|ask|deny …)`,
+    // and `(tail (authorise))` (recursion is effect-flavoured) all qualify.
     let effect_idx = children[1..].iter().position(|c| {
-        (c.is_tagged("effect") || c.is_tagged("allow") || c.is_tagged("ask") || c.is_tagged("deny"))
+        (c.is_tagged("effect")
+            || c.is_tagged("allow")
+            || c.is_tagged("ask")
+            || c.is_tagged("deny")
+            || is_tail_authorise(c))
             && complexity(c) <= 3
     })? + 1; // adjust for skip of tag
 

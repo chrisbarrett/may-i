@@ -212,7 +212,7 @@ mod tests {
         let v1 = r#"(wrapper "timeout" (positional (regex "^[0-9]+$") :command+args))"#;
         assert_migrates_to(
             v1,
-            r#"(rule "timeout" (and (positional (regex "^[0-9]+$")) (tail (authorise))))"#,
+            r#"(rule "timeout" (when (positional (regex "^[0-9]+$")) (tail (authorise))))"#,
         );
     }
 
@@ -226,7 +226,7 @@ mod tests {
         // and dropping the boundary literal in the same edit.
         assert_migrates_to(
             v1,
-            r#"(rule "mise" (and (positional "exec" "--") (tail (authorise))))"#,
+            r#"(rule "mise" (when (positional "exec" "--") (tail (authorise))))"#,
         );
     }
 
@@ -235,7 +235,7 @@ mod tests {
         let v1 = r#"(wrapper "nix" (positional (or "shell" "develop")) (flag "--command" :command+args))"#;
         assert_migrates_to(
             v1,
-            r#"(rule "nix" (and (positional (or "shell" "develop") "--command") (tail (authorise))))"#,
+            r#"(rule "nix" (when (positional (or "shell" "develop") "--command") (tail (authorise))))"#,
         );
     }
 

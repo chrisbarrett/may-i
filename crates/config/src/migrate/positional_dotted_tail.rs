@@ -34,15 +34,6 @@ pub(crate) fn positional_dotted_tail(node: &CstNode) -> Option<Box<CstNode>> {
             || is_may_i_star(cont_node)
             || is_tail_authorise_form(cont_node);
         if cont_is_authorise {
-            let positional_children: Vec<Box<CstNode>> = children[..dot_idx].to_vec();
-            let positional_form = Box::new(CstNode::list(
-                positional_children,
-                TriviaAnn {
-                    leading: node.ann.leading.clone(),
-                    trailing: vec![],
-                    span: node.ann.span,
-                },
-            ));
             let tail_form = Box::new(CstNode::list(
                 vec![
                     Box::new(CstNode::atom("tail", TriviaAnn::default())),
@@ -56,17 +47,41 @@ pub(crate) fn positional_dotted_tail(node: &CstNode) -> Option<Box<CstNode>> {
                     )),
                 ],
                 TriviaAnn {
-                    leading: vec![Trivia::Whitespace(" ".to_string())],
+                    leading: node.ann.leading.clone(),
                     trailing: node.ann.trailing.clone(),
                     span: node.ann.span,
                 },
             ));
-            // Compose into `(and POSITIONAL TAIL)`.
+            // No prefix items → emit just `(tail (authorise))`. The empty
+            // `(positional)` form is trivially truthy and adds noise.
+            if dot_idx == 1 {
+                return Some(tail_form);
+            }
+            let positional_children: Vec<Box<CstNode>> = children[..dot_idx].to_vec();
+            let positional_form = Box::new(CstNode::list(
+                positional_children,
+                TriviaAnn {
+                    leading: node.ann.leading.clone(),
+                    trailing: vec![],
+                    span: node.ann.span,
+                },
+            ));
+            let tail_form_with_lead = Box::new(CstNode {
+                ann: TriviaAnn {
+                    leading: vec![Trivia::Whitespace(" ".to_string())],
+                    trailing: tail_form.ann.trailing.clone(),
+                    span: tail_form.ann.span,
+                },
+                shape: tail_form.shape.clone(),
+            });
+            // Compose into `(and POSITIONAL TAIL)`. A later `effect_to_when`
+            // pass converts this to `(when POSITIONAL TAIL)` since
+            // `(tail (authorise))` is a terminal effect.
             let and_form = Box::new(CstNode::list(
                 vec![
                     Box::new(CstNode::atom("and", TriviaAnn::default())),
                     positional_form,
-                    tail_form,
+                    tail_form_with_lead,
                 ],
                 TriviaAnn {
                     leading: node.ann.leading.clone(),
@@ -163,5 +178,19 @@ mod tests {
         let out = migrate_first(r#"(rule "ssh" (positional [:host *] . (authorise)))"#);
         assert!(out.contains("(and"), "{out}");
         assert!(out.contains("(tail (authorise))"), "{out}");
+    }
+
+    #[test]
+    fn empty_positional_collapses_to_tail() {
+        // No items between `positional` and `.` — the wrapping `(positional)`
+        // is trivially truthy, so emit just `(tail (authorise))`.
+        let out = migrate_first(r#"(positional . (authorise))"#);
+        assert_eq!(out, "(tail (authorise))");
+    }
+
+    #[test]
+    fn empty_positional_inside_rule_collapses() {
+        let out = migrate_first(r#"(rule "env" (positional . (authorise)))"#);
+        assert_eq!(out, r#"(rule "env" (tail (authorise)))"#);
     }
 }

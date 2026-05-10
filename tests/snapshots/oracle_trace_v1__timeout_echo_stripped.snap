@@ -1,5 +1,6 @@
 ---
 source: tests/oracle_trace_v1.rs
+assertion_line: 110
 expression: normalised
 ---
 
@@ -7,12 +8,12 @@ Trace
 
   parser: gnu tail (after :flags) │
 
-                                 command │ timeout 30 echo hello
-  110: (rule (command "timeout")         │
-         (args (and (positional          │
-                     (regex "^[0-9]+$")) │
-                    …)))                 │
-                        No matching rule │ → :ask (default)
+                                  command │ timeout 30 echo hello
+  110: (rule (command "timeout")          │
+         (args (when (positional          │
+                      (regex "^[0-9]+$")) │
+                 <arg-pattern>)))         │
+                         No matching rule │ → :ask (default)
 
 Result
 

@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 
 use colored::Colorize;
 use may_i_config::migrate::{migrate_forms, validate_migration};
-use may_i_pp::detect_column_width;
 use may_i_sexpr::parse_cst;
 use similar::{ChangeTag, TextDiff};
 
@@ -100,10 +99,13 @@ pub(crate) fn cmd_migrate(
         }
 
         let migrated_forms = migrate_forms(original_forms.clone());
-        let column_width = detect_column_width(&source);
+        // Migration is a structural rewrite, not a reformatter. Use raw
+        // serialize() so unchanged subtrees retain their source trivia
+        // (line breaks, indentation, comments) bit-for-bit. Cosmetic
+        // reflowing belongs to `may-i fmt`, not `may-i migrate`.
         let output_text = migrated_forms
             .iter()
-            .map(|f| f.pretty_serialize(column_width))
+            .map(|f| f.serialize())
             .collect::<Vec<_>>()
             .join("");
 
