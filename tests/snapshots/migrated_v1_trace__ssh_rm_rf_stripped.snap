@@ -7,15 +7,16 @@ Trace
 
   No matching rule │ → :ask (default)
 
-                                             command │ ssh prod "rm -rf /"
-                                              parser │ gnu
-  107: (rule (command "ssh")                         │
-         (args                                       │
-          (when (positional                          │
-                 [:ssh/host *])                      │
-            (<unknown-arg-pattern>                   │ (authorise) ∈ {"prod", "rm -rf /"} → yes
-             (effect                                 │ → :ask "No rule for command `prod`"
-              :ask "No rule for command `prod`"))))) │
+                                        command │ ssh prod "rm -rf /"
+                                         parser │ gnu
+  107: (rule (command "ssh")                    │
+         (args                                  │
+          (when (positional                     │
+                 [:ssh/host *])                 │
+            (tail                               │ tail = "prod rm -rf /"
+             (authorise)                        │
+             (ask                               │ → :ask "No rule for command `prod`"
+              "No rule for command `prod`"))))) │
 
 Result
 

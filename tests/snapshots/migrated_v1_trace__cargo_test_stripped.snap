@@ -24,7 +24,7 @@ Trace
                        …                  │
                        "clippy")          │
                    (allow)))              │ → :allow
-                 (effect :allow)))))      │
+                 (allow)))))              │
 
 Result
 

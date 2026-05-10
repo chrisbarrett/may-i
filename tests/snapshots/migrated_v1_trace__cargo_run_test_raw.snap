@@ -24,7 +24,7 @@ expression: normalised
                        [2m…[0m                  [2m│[0m
                        [32m"clippy"[0m[2m)[0m          [2m│[0m
                    [2m([0mallow[2m)[0m[2m)[0m[2m)[0m              [2m│[0m [2m[0m[2m→[0m [1;32m:allow[0m
-                 [2m([0m[34meffect[0m [94m:allow[0m[2m)[0m[2m)[0m[2m)[0m[2m)[0m[2m)[0m      [2m│[0m
+                 [2m([0mallow[2m)[0m[2m)[0m[2m)[0m[2m)[0m[2m)[0m              [2m│[0m
 
 [1mResult[0m
 

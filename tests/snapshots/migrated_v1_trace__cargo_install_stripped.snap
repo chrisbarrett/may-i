@@ -24,7 +24,7 @@ Trace
                        …                  │
                        "clippy")          │
                    (allow)))              │
-                 (effect :deny)))))       │
+                 (deny)))))               │
 
 Result
 

@@ -350,33 +350,6 @@ proptest! {
         prop_assert_eq!(result.decision(), Some(Decision::Allow), "First matching branch should win");
     }
 
-    // 4.2.14 Property: MayI recurses correctly with pattern match
-    #[test]
-    fn may_i_recurses_with_pattern(
-        inner_cmd in "[a-zA-Z][a-zA-Z0-9]{0,9}",
-    ) {
-        let args: Vec<String> = vec![inner_cmd.clone()];
-        let facts = ContextFacts::default();
-        let ctx = make_ctx("wrapper", &args, &facts);
-
-        // Create a rule that matches the inner command
-        let inner_rule = Rule {
-            command_effect: spanned(Effect::CommandPattern(
-                CommandPattern::Literal(inner_cmd),
-            )),
-            effect: spanned(Effect::Terminal { decision: Decision::Allow, reason: Some("inner-allowed".into()) }),
-            checks: vec![],
-            span: dummy_span(),
-            provenance: may_i_core::ast::Provenance::PrimaryConfig,
-        };
-        let rules = [inner_rule];
-
-        let authorise = Effect::Authorise;
-        let result = eval::evaluate_effect(&authorise, &ctx, &rules).unwrap();
-        // Authorise extracts inner command and evaluates it
-        prop_assert!(result.is_decision(), "Authorise should produce a decision");
-    }
-
     // 4.2.15 Property: Recursion limit is respected
     #[test]
     fn recursion_limit_respected(

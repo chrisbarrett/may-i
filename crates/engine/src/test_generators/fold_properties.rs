@@ -13,7 +13,7 @@ proptest! {
     // produces the same result as the convenience evaluate_effect wrapper.
     #[test]
     fn pure_fold_is_identity(
-        effect in any_effect(2).prop_filter("no Authorise", |e| !contains_authorise(e)),
+        effect in any_effect(2),
         data in any_eval_context_data(),
     ) {
         let (cmd, args, facts) = data;
@@ -329,32 +329,5 @@ proptest! {
         prop_assert_eq!(result.decision, Decision::Ask);
         prop_assert_eq!(result.reason, Some("fallback".into()),
             "Should skip first rule and match second");
-    }
-}
-
-fn contains_authorise(effect: &Effect) -> bool {
-    match effect {
-        Effect::Authorise => true,
-        Effect::And { effects } | Effect::Or { effects } => {
-            effects.iter().any(|e| contains_authorise(&e.value))
-        }
-        Effect::Not { effect } => contains_authorise(&effect.value),
-        Effect::When { effect, .. } | Effect::Unless { effect, .. } => {
-            contains_authorise(&effect.value)
-        }
-        Effect::If {
-            then_effect,
-            else_effect,
-            ..
-        } => contains_authorise(&then_effect.value) || contains_authorise(&else_effect.value),
-        Effect::Cond {
-            branches, fallback, ..
-        } => {
-            branches.iter().any(|(_, e)| contains_authorise(&e.value))
-                || fallback
-                    .as_ref()
-                    .is_some_and(|f| contains_authorise(&f.value))
-        }
-        _ => false,
     }
 }

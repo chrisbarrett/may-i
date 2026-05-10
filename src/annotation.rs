@@ -27,6 +27,10 @@ pub enum Ann {
         search_tokens: Vec<String>,
         arg_set: Vec<String>,
         matched: bool,
+        /// Captured value with its display label, set for
+        /// `(tail (authorise))` (label `"tail"`) and
+        /// `(parameter X (authorise))` (label `"value"`).
+        captured_value: Option<(&'static str, String)>,
     },
     /// Fact query result with evidence.
     FactQuery {
@@ -37,12 +41,6 @@ pub enum Ann {
     },
     /// Effect decision.
     EffectDecision {
-        decision: Decision,
-        reason: Option<String>,
-    },
-    /// Recursive evaluation (may-i) with inner command and result.
-    MayI {
-        inner_command: String,
         decision: Decision,
         reason: Option<String>,
     },
@@ -245,6 +243,19 @@ fn positional_arg_to_doc(p: &may_i_core::pattern::PositionalArg) -> Doc<()> {
     }
 }
 
+/// Display label for an `ArgMatch` carrying a captured value. The renderer
+/// formats the right column as `<label> = "<value>"`.
+fn captured_value_label(pattern: &ArgPattern) -> Option<&'static str> {
+    match pattern {
+        ArgPattern::Tail => Some("tail"),
+        ArgPattern::Parameter {
+            form: may_i_core::pattern::ParameterForm::Authorise,
+            ..
+        } => Some("value"),
+        _ => None,
+    }
+}
+
 fn arg_pattern_to_doc(pattern: &ArgPattern) -> Doc<()> {
     match pattern {
         ArgPattern::Ordered {
@@ -284,12 +295,15 @@ fn arg_pattern_to_doc(pattern: &ArgPattern) -> Doc<()> {
             let form_doc = match form {
                 may_i_core::pattern::ParameterForm::Match(expr) => expr.to_doc(),
                 may_i_core::pattern::ParameterForm::Authorise => {
-                    Doc::list(vec![Doc::atom("may-i"), Doc::atom("*")])
+                    Doc::list(vec![Doc::atom("authorise")])
                 }
             };
             Doc::list(vec![Doc::atom("parameter"), names_doc, form_doc])
         }
-        _ => Doc::atom("<unknown-arg-pattern>"),
+        ArgPattern::Tail => Doc::list(vec![
+            Doc::atom("tail"),
+            Doc::list(vec![Doc::atom("authorise")]),
+        ]),
     }
 }
 
@@ -581,28 +595,23 @@ impl EvalFold for TracingFold {
         out.0
     }
 
-    fn effect_terminal(&mut self, _effect: &Effect, result: EffectResult) -> Self::EffectOut {
-        let keyword = match &result {
-            EffectResult::Decision(Decision::Allow, _) => ":allow",
-            EffectResult::Decision(Decision::Ask, _) => ":ask",
-            EffectResult::Decision(Decision::Deny, _) => ":deny",
-            EffectResult::Nil => ":nil",
+    fn effect_terminal(&mut self, effect: &Effect, result: EffectResult) -> Self::EffectOut {
+        let display_effect = match &result {
+            EffectResult::Decision(decision, reason) => Effect::Terminal {
+                decision: *decision,
+                reason: reason.clone(),
+            },
+            EffectResult::Nil => effect.clone(),
         };
-
-        let mut children = vec![plain_atom("effect"), plain_atom(keyword)];
-        if let EffectResult::Decision(_, Some(reason)) = &result {
-            children.push(plain_atom(format!("\"{}\"", reason)));
-        }
-
-        let ann = match &result {
+        let mut doc = unannotated_to_ann(display_effect.to_doc());
+        doc.ann = match &result {
             EffectResult::Decision(decision, reason) => Some(Ann::EffectDecision {
                 decision: *decision,
                 reason: reason.clone(),
             }),
             EffectResult::Nil => None,
         };
-
-        (result, ann_list(children, ann))
+        (result, doc)
     }
 
     fn effect_nil(&mut self, _effect: &Effect) -> Self::EffectOut {
@@ -676,10 +685,15 @@ impl EvalFold for TracingFold {
     ) -> Self::EffectOut {
         let doc = unannotated_to_ann(arg_pattern_to_doc(pattern));
         let doc = annotate_positional_elements(doc, &detail.positional_elements);
+        let captured_value = detail
+            .captured_value
+            .as_ref()
+            .and_then(|v| captured_value_label(pattern).map(|label| (label, v.clone())));
         let ann = Some(Ann::ArgMatch {
             search_tokens: detail.search_tokens.clone(),
             arg_set: detail.arg_set.clone(),
             matched,
+            captured_value: captured_value.clone(),
         });
         // For forbidden patterns (rendered as (not (anywhere ...))),
         // also annotate the inner (anywhere ...) node so truncation logic
@@ -692,6 +706,7 @@ impl EvalFold for TracingFold {
                         search_tokens: detail.search_tokens.clone(),
                         arg_set: detail.arg_set.clone(),
                         matched: !matched,
+                        captured_value: None,
                     });
                     children[1] = Doc {
                         ann: inner_ann,
@@ -886,11 +901,16 @@ impl EvalFold for TracingFold {
         let result = continuation.0.clone();
         let doc = unannotated_to_ann(arg_pattern_to_doc(pattern));
         let doc = annotate_positional_elements(doc, &detail.positional_elements);
+        let captured_value = detail
+            .captured_value
+            .as_ref()
+            .and_then(|v| captured_value_label(pattern).map(|label| (label, v.clone())));
         let ann_doc = Doc {
             ann: Some(Ann::ArgMatch {
                 search_tokens: detail.search_tokens,
                 arg_set: detail.arg_set,
                 matched: detail.matched,
+                captured_value: captured_value.clone(),
             }),
             ..doc
         };
@@ -941,6 +961,7 @@ impl EvalFold for TracingFold {
                 search_tokens: vec![],
                 arg_set: vec![],
                 matched: detail.matched,
+                captured_value,
             }),
             node: DocF::List(children),
             layout: LayoutHint::AlwaysBreak,
@@ -993,43 +1014,6 @@ impl EvalFold for TracingFold {
         });
     }
 
-    fn effect_authorise(
-        &mut self,
-        inner_cmd: &str,
-        inner_args: &[String],
-        inner_result: EffectResult,
-        _inner_out: Self::EffectOut,
-    ) -> Self::EffectOut {
-        let cmd_str = if inner_args.is_empty() {
-            inner_cmd.to_string()
-        } else {
-            format!("{} {}", inner_cmd, inner_args.join(" "))
-        };
-
-        // Extract inner traces that were added during recursive evaluation.
-        if let Some(start) = self.recursive_trace_starts.pop() {
-            let inner_traces: Vec<TraceEntry> = self.traces.drain(start..).collect();
-            self.pending_inner_traces
-                .push((cmd_str.clone(), inner_traces));
-        }
-
-        let (decision, reason) = match &inner_result {
-            EffectResult::Decision(d, r) => (*d, r.clone()),
-            EffectResult::Nil => (Decision::Ask, None),
-        };
-        let docs = vec![plain_atom("authorise")];
-        let ann = Some(Ann::MayI {
-            inner_command: cmd_str,
-            decision,
-            reason,
-        });
-        (inner_result, ann_list(docs, ann))
-    }
-
-    fn effect_authorise_no_match(&mut self) -> Self::EffectOut {
-        (EffectResult::Nil, plain_atom("(authorise)"))
-    }
-
     fn predicate_fact(
         &mut self,
         query: &FactQuery,
@@ -1059,6 +1043,7 @@ impl EvalFold for TracingFold {
         let doc = unannotated_to_ann(arg_pattern_to_doc(pattern));
         let ann_doc = Doc {
             ann: Some(Ann::ArgMatch {
+                captured_value: None,
                 search_tokens: vec![],
                 arg_set: args.to_vec(),
                 matched: result == PredicateResult::Match,
@@ -1757,6 +1742,102 @@ mod tests {
             Some("…"),
             "should not have trailing ellipsis when all evaluated"
         );
+    }
+
+    fn render_doc<A: Clone + may_i_core::trivia::TriviaSource>(doc: &Doc<A>) -> String {
+        let fmt = may_i_pp::Format {
+            width: 200,
+            color: false,
+            line_number: None,
+            preserve_user_breaks: false,
+        };
+        may_i_pp::pretty(doc, 0, &fmt)
+    }
+
+    #[test]
+    fn arg_pattern_tail_renders_as_authorise() {
+        let doc = arg_pattern_to_doc(&ArgPattern::Tail);
+        let text = render_doc(&doc);
+        assert!(
+            text.contains("(tail (authorise))"),
+            "expected `(tail (authorise))` in {text:?}"
+        );
+        assert!(
+            !text.contains("<unknown-arg-pattern>"),
+            "should not render placeholder; got {text:?}"
+        );
+    }
+
+    #[test]
+    fn parameter_authorise_renders_as_authorise() {
+        let pat = ArgPattern::Parameter {
+            names: vec!["c".to_string()],
+            form: may_i_core::pattern::ParameterForm::Authorise,
+        };
+        let doc = arg_pattern_to_doc(&pat);
+        let text = render_doc(&doc);
+        assert!(
+            text.contains("(parameter \"c\" (authorise))"),
+            "expected `(parameter \"c\" (authorise))` in {text:?}"
+        );
+        assert!(
+            !text.contains("(may-i *)"),
+            "should not render `(may-i *)`; got {text:?}"
+        );
+    }
+
+    fn render_terminal_effect(decision: Decision, reason: Option<&str>) -> String {
+        let mut fold = TracingFold::new();
+        let effect = Effect::Terminal {
+            decision,
+            reason: reason.map(String::from),
+        };
+        let result = EffectResult::Decision(decision, reason.map(String::from));
+        let (_res, doc) = fold.effect_terminal(&effect, result);
+        render_doc(&doc)
+    }
+
+    #[test]
+    fn effect_terminal_allow_with_reason_renders_canonically() {
+        let text = render_terminal_effect(Decision::Allow, Some("safe"));
+        assert!(
+            text.contains("(allow \"safe\")"),
+            "expected `(allow \"safe\")` in {text:?}"
+        );
+        assert!(
+            !text.contains("(effect :allow"),
+            "should not render legacy `(effect :allow …)`; got {text:?}"
+        );
+    }
+
+    #[test]
+    fn effect_terminal_allow_no_reason_renders_canonically() {
+        let text = render_terminal_effect(Decision::Allow, None);
+        assert!(text.contains("(allow)"), "expected `(allow)` in {text:?}");
+        assert!(
+            !text.contains("(effect :allow"),
+            "should not render legacy `(effect :allow …)`; got {text:?}"
+        );
+    }
+
+    #[test]
+    fn effect_terminal_ask_renders_canonically() {
+        let with = render_terminal_effect(Decision::Ask, Some("why"));
+        assert!(with.contains("(ask \"why\")"));
+        assert!(!with.contains("(effect :ask"));
+        let bare = render_terminal_effect(Decision::Ask, None);
+        assert!(bare.contains("(ask)"));
+        assert!(!bare.contains("(effect :ask"));
+    }
+
+    #[test]
+    fn effect_terminal_deny_renders_canonically() {
+        let with = render_terminal_effect(Decision::Deny, Some("blocked in prod"));
+        assert!(with.contains("(deny \"blocked in prod\")"));
+        assert!(!with.contains("(effect :deny"));
+        let bare = render_terminal_effect(Decision::Deny, None);
+        assert!(bare.contains("(deny)"));
+        assert!(!bare.contains("(effect :deny"));
     }
 
     #[test]

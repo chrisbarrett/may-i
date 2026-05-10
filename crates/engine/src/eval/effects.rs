@@ -209,44 +209,6 @@ pub(crate) fn evaluate_effect_fold<F: EvalFold>(
 
             fold.effect_cond(fold_branches, fb, result)
         }
-
-        // Recursion
-        Effect::Authorise => match extract_inner_command(ctx.args) {
-            Some((inner_cmd, inner_args)) => {
-                let mut inner_facts = ctx.facts.clone();
-                inner_facts.insert_scalar(Keyword::new(":via").unwrap(), ctx.command);
-                let inner_parser = match ctx.config {
-                    Some(cfg) => cfg.parser_for_with_rules(&inner_cmd),
-                    None => may_i_core::ast::ResolvedParser::synthetic_gnu(&inner_cmd),
-                };
-                fold.record_parser(&inner_cmd, &inner_parser);
-                let expanded_inner = super::entry::tokenise(&inner_args, &inner_parser);
-                let evaluator = Evaluator::new(rules);
-                let inner_ctx = EvalContext {
-                    command: &inner_cmd,
-                    args: &expanded_inner,
-                    facts: &inner_facts,
-                    bindings: ctx.bindings.clone(),
-                    recursion_depth: ctx.recursion_depth + 1,
-                    recursion_limit: ctx.recursion_limit,
-                    parser: inner_parser,
-                    config: ctx.config,
-                };
-                fold.begin_recursive_eval();
-                let eval_result = evaluator.evaluate(fold, &inner_ctx)?;
-                let inner_result = EffectResult::Decision(eval_result.decision, eval_result.reason);
-                let inner_out = fold.effect_terminal(
-                    &Effect::Terminal {
-                        decision: Decision::Allow,
-                        reason: None,
-                    },
-                    inner_result.clone(),
-                );
-                fold.effect_authorise(&inner_cmd, &inner_args, inner_result, inner_out)
-            }
-            None => fold.effect_authorise_no_match(),
-        },
-        _ => unreachable!("unknown Effect variant"),
     })
 }
 
@@ -329,6 +291,7 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                 arg_set: ctx.args.to_vec(),
                 matched,
                 positional_elements: vec![],
+                captured_value: None,
             };
             fold.effect_arg_match(pattern, ctx.args, matched, detail)
         }
@@ -348,6 +311,7 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                 arg_set: ctx.args.to_vec(),
                 matched: !found_forbidden,
                 positional_elements: vec![],
+                captured_value: None,
             };
             fold.effect_arg_match(pattern, ctx.args, !found_forbidden, detail)
         }
@@ -360,6 +324,7 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                 arg_set: ctx.args.to_vec(),
                 matched,
                 positional_elements: vec![],
+                captured_value: None,
             };
             fold.effect_arg_match(pattern, ctx.args, matched, detail)
         }
@@ -367,7 +332,6 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
             evaluate_parameter_fold(fold, pattern, names, form, ctx, rules)?
         }
         ArgPattern::Tail => evaluate_tail_authorise_fold(fold, pattern, ctx, rules)?,
-        _ => unreachable!("unknown ArgPattern variant"),
     })
 }
 
@@ -391,15 +355,17 @@ fn evaluate_tail_authorise_fold<F: EvalFold>(
         None if ctx.parser.tail.is_none() => ctx.args,
         None => {
             let detail = ArgMatchDetail {
-                search_tokens: vec!["(authorise)".to_string()],
+                search_tokens: vec![],
                 arg_set: ctx.args.to_vec(),
                 matched: false,
                 positional_elements: vec![],
+                captured_value: None,
             };
             return Ok(fold.effect_arg_match(pattern, ctx.args, false, detail));
         }
     };
     let owned: Vec<String> = tail_slice.to_vec();
+    let tail_value = owned.join(" ");
     Ok(match extract_inner_command(&owned) {
         Some((inner_cmd, inner_args)) => {
             let mut inner_facts = ctx.facts.clone();
@@ -424,10 +390,11 @@ fn evaluate_tail_authorise_fold<F: EvalFold>(
             fold.begin_recursive_eval();
             let eval_result = evaluator.evaluate(fold, &inner_ctx)?;
             let detail = ArgMatchDetail {
-                search_tokens: vec!["(authorise)".to_string()],
+                search_tokens: vec![],
                 arg_set: ctx.args.to_vec(),
                 matched: true,
                 positional_elements: vec![],
+                captured_value: Some(tail_value.clone()),
             };
             // Surface the recursive decision via effect_arg_continuation
             // so the trace renders the inner evaluation as a child.
@@ -442,10 +409,11 @@ fn evaluate_tail_authorise_fold<F: EvalFold>(
         }
         None => {
             let detail = ArgMatchDetail {
-                search_tokens: vec!["(authorise)".to_string()],
+                search_tokens: vec![],
                 arg_set: ctx.args.to_vec(),
                 matched: false,
                 positional_elements: vec![],
+                captured_value: Some(tail_value),
             };
             fold.effect_arg_match(pattern, ctx.args, false, detail)
         }
@@ -658,13 +626,14 @@ fn evaluate_parameter_fold<F: EvalFold>(
         // (parameter X (authorise)) single-token capture — recurse with the
         // value parsed as a command line.
         let _ = search_tokens;
-        return recurse_into_inner_command(fold, &value, ctx, rules);
+        return recurse_into_inner_command(fold, pattern, &value, ctx, rules);
     }
     let detail = ArgMatchDetail {
         search_tokens,
         arg_set: ctx.args.to_vec(),
         matched,
         positional_elements: vec![],
+        captured_value: None,
     };
     Ok(fold.effect_arg_match(pattern, ctx.args, matched, detail))
 }
@@ -672,11 +641,13 @@ fn evaluate_parameter_fold<F: EvalFold>(
 /// Recurse into a captured command-line value (single occurrence).
 ///
 /// Joins the value into a parsed `(command, args)` tuple, runs it through
-/// the evaluator under a fresh context with `:via` set, and emits an
-/// `effect_authorise` so the trace shows the recursion. Used by both the
-/// single-token capture path and the per-occurrence many-till path.
+/// the evaluator under a fresh context with `:via` set, and surfaces the
+/// inner decision via `effect_arg_continuation` so the parameter pattern
+/// remains visible in the rule body and the captured value lands as a
+/// right-column annotation.
 fn recurse_into_inner_command<F: EvalFold>(
     fold: &mut F,
+    pattern: &ArgPattern,
     value: &str,
     ctx: &EvalContext,
     rules: &[Rule],
@@ -702,17 +673,24 @@ fn recurse_into_inner_command<F: EvalFold>(
         parser: inner_parser,
         config: ctx.config,
     };
+    let _ = inner_args;
     fold.begin_recursive_eval();
     let eval_result = evaluator.evaluate(fold, &inner_ctx)?;
-    let inner_result = EffectResult::Decision(eval_result.decision, eval_result.reason);
-    let inner_out = fold.effect_terminal(
+    let detail = ArgMatchDetail {
+        search_tokens: vec![],
+        arg_set: ctx.args.to_vec(),
+        matched: true,
+        positional_elements: vec![],
+        captured_value: Some(value.to_string()),
+    };
+    let inner_terminal = fold.effect_terminal(
         &Effect::Terminal {
-            decision: Decision::Allow,
-            reason: None,
+            decision: eval_result.decision,
+            reason: eval_result.reason.clone(),
         },
-        inner_result.clone(),
+        EffectResult::Decision(eval_result.decision, eval_result.reason),
     );
-    Ok(fold.effect_authorise(&inner_cmd, &inner_args, inner_result, inner_out))
+    Ok(fold.effect_arg_continuation(pattern, ctx.args, detail, inner_terminal))
 }
 
 /// Evaluate `(parameter NAME (authorise))` against a many-till capture
@@ -737,18 +715,19 @@ fn evaluate_multi_occurrence_authorise<F: EvalFold>(
             arg_set: ctx.args.to_vec(),
             matched: false,
             positional_elements: vec![],
+            captured_value: None,
         };
         return Ok(fold.effect_arg_match(pattern, ctx.args, false, detail));
     }
     if values.len() == 1 {
-        return recurse_into_inner_command(fold, &values[0], ctx, rules);
+        return recurse_into_inner_command(fold, pattern, &values[0], ctx, rules);
     }
 
     let mut winner_idx = 0;
     let mut winner_decision: Option<Decision> = None;
     for (i, value) in values.iter().enumerate() {
         let mut pure = PureFold;
-        let result = recurse_into_inner_command(&mut pure, value, ctx, rules)?;
+        let result = recurse_into_inner_command(&mut pure, pattern, value, ctx, rules)?;
         if let EffectResult::Decision(decision, _) = result {
             let stricter = match winner_decision {
                 None => true,
@@ -760,7 +739,7 @@ fn evaluate_multi_occurrence_authorise<F: EvalFold>(
             }
         }
     }
-    recurse_into_inner_command(fold, &values[winner_idx], ctx, rules)
+    recurse_into_inner_command(fold, pattern, &values[winner_idx], ctx, rules)
 }
 
 /// Walk the entire arg slice collecting every many-till occurrence's

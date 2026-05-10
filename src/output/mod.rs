@@ -548,6 +548,7 @@ mod tests {
                 pre_migration_doc: None,
                 facts: vec![],
                 inner_command: None,
+                combine_role: None,
             },
         ]
     }
@@ -649,6 +650,7 @@ mod tests {
                 pre_migration_doc: None,
                 facts: vec![],
                 inner_command: None,
+                combine_role: None,
             },
         ];
         let out = render_trace(&entries, "nix run nixpkgs#hello");
@@ -669,5 +671,66 @@ mod tests {
                 "found legacy 'parser:' banner row: {line}"
             );
         }
+    }
+
+    fn evaluate_trace(config_text: &str, command: &str) -> String {
+        use crate::annotation::TracingFold;
+        use may_i_core::ContextFacts;
+        let config = may_i_config::parse_config(config_text).expect("parse config");
+        let facts = ContextFacts::default();
+        let mut fold = TracingFold::new();
+        may_i_engine::eval::evaluate_command_with_fold(command, &config, &facts, &mut fold)
+            .expect("evaluate");
+        render_trace(&fold.traces, command)
+    }
+
+    #[test]
+    fn tail_authorise_annotates_with_tail_slice_single_token() {
+        let cfg = r#"
+(parser "direnv" (style gnu) (tail (after "exec")))
+(rule "direnv" (tail (authorise)))
+"#;
+        let out = evaluate_trace(cfg, "direnv exec true");
+        assert!(
+            out.contains("tail = \"true\""),
+            "expected `tail = \"true\"` in trace output:\n{out}"
+        );
+    }
+
+    #[test]
+    fn tail_authorise_annotates_with_tail_slice_multi_token() {
+        let cfg = r#"
+(parser "direnv" (style gnu) (tail (after "exec")))
+(rule "direnv" (tail (authorise)))
+"#;
+        let out = evaluate_trace(cfg, "direnv exec echo hi there");
+        assert!(
+            out.contains("tail = \"echo hi there\""),
+            "expected `tail = \"echo hi there\"` in trace output:\n{out}"
+        );
+    }
+
+    #[test]
+    fn parameter_authorise_annotates_with_captured_value_single() {
+        let cfg = r#"
+(rule "bash" (parameter "c" (authorise)))
+"#;
+        let out = evaluate_trace(cfg, "bash -c \"echo hi\"");
+        assert!(
+            out.contains("value = \"echo hi\""),
+            "expected `value = \"echo hi\"` in trace output:\n{out}"
+        );
+    }
+
+    #[test]
+    fn parameter_authorise_annotates_with_captured_value_multi() {
+        let cfg = r#"
+(rule "bash" (parameter "c" (authorise)))
+"#;
+        let out = evaluate_trace(cfg, "bash -c \"echo hi there\"");
+        assert!(
+            out.contains("value = \"echo hi there\""),
+            "expected `value = \"echo hi there\"` in trace output:\n{out}"
+        );
     }
 }

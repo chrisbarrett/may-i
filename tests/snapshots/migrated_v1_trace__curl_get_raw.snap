@@ -5,20 +5,20 @@ expression: normalised
 
 [1mTrace[0m
 
-                                              [2mcommand[0m [2m│[0m [1mcurl https://example.com[0m
-                                               [2mparser[0m [2m│[0m gnu
-  [2m65: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"curl"[0m[2m)[0m                          [2m│[0m
-        [2m([0mcontext [2m([0mand [2m([0mnot [2m([0mflag [32m"d"[0m[2m)[0m[2m)[0m                [2m│[0m
-                      [2m([0mnot [2m([0mflag [32m"data"[0m[2m)[0m[2m)[0m             [2m│[0m
-                      [2m([0mnot [2m([0mflag [32m"X"[0m[2m)[0m[2m)[0m                [2m│[0m
-                      [2m([0mnot [2m([0mflag                      [2m│[0m
-                            [32m"request"[0m[2m)[0m[2m)[0m[2m)[0m[2m)[0m             [2m│[0m
-        [2m([0m[34meffect[0m                                       [2m│[0m [2m[0m[2m→[0m [1;32m:allow[0m [32m"GET request (no mutating flags)"[0m
-         [94m:allow[0m [32m"GET request (no mutating flags)"[0m[2m)[0m[2m)[0m   [2m│[0m
-                                                      [2m│[0m
-  [2m69: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"curl"[0m[2m)[0m                          [2m│[0m
-        [2m([0m[34meffect[0m                                       [2m│[0m [2m[0m[2m→[0m [1;33m:ask[0m [32m"Network operation requires approval"[0m
-         [94m:ask[0m [32m"Network operation requires approval"[0m[2m)[0m[2m)[0m [2m│[0m
+                                         [2mcommand[0m [2m│[0m [1mcurl https://example.com[0m
+                                          [2mparser[0m [2m│[0m gnu
+  [2m65: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"curl"[0m[2m)[0m                     [2m│[0m
+        [2m([0mcontext [2m([0mand [2m([0mnot [2m([0mflag [32m"d"[0m[2m)[0m[2m)[0m           [2m│[0m
+                      [2m([0mnot [2m([0mflag [32m"data"[0m[2m)[0m[2m)[0m        [2m│[0m
+                      [2m([0mnot [2m([0mflag [32m"X"[0m[2m)[0m[2m)[0m           [2m│[0m
+                      [2m([0mnot [2m([0mflag                 [2m│[0m
+                            [32m"request"[0m[2m)[0m[2m)[0m[2m)[0m[2m)[0m        [2m│[0m
+        [2m([0mallow                                   [2m│[0m [2m[0m[2m→[0m [1;32m:allow[0m [32m"GET request (no mutating flags)"[0m
+         [32m"GET request (no mutating flags)"[0m[2m)[0m[2m)[0m     [2m│[0m
+                                                 [2m│[0m
+  [2m69: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"curl"[0m[2m)[0m                     [2m│[0m
+        [2m([0mask                                     [2m│[0m [2m[0m[2m→[0m [1;33m:ask[0m [32m"Network operation requires approval"[0m
+         [32m"Network operation requires approval"[0m[2m)[0m[2m)[0m [2m│[0m
 
 [1mResult[0m
 

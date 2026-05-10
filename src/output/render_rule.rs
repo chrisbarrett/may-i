@@ -52,7 +52,7 @@ pub(super) fn render_annotated_rule(
 /// Map a line's collected annotations to right-column text.
 ///
 /// When multiple annotations exist on one line, the highest-priority one wins.
-/// Priority (high to low): EffectDecision, MayI, BindMatch, RegexMatch,
+/// Priority (high to low): EffectDecision, BindMatch, RegexMatch,
 /// FactQuery, CommandMatch (miss only), ArgMatch (per-token), PositionalMatch.
 fn format_line_annotation(anns: &[Option<Ann>]) -> String {
     use super::annotate::{quote_arg_set, render_observed_value, verdict};
@@ -63,21 +63,6 @@ fn format_line_annotation(anns: &[Option<Ann>]) -> String {
             return match reason {
                 Some(r) => format!("→ {keyword} \"{r}\""),
                 None => format!("→ {keyword}"),
-            };
-        }
-    }
-
-    for ann in anns {
-        if let Some(Ann::MayI {
-            inner_command,
-            decision,
-            reason,
-        }) = ann
-        {
-            let keyword = format!(":{decision}");
-            return match reason {
-                Some(r) => format!("`{inner_command}` → {keyword} \"{r}\""),
-                None => format!("`{inner_command}` → {keyword}"),
             };
         }
     }
@@ -134,9 +119,20 @@ fn format_line_annotation(anns: &[Option<Ann>]) -> String {
 
     for ann in anns {
         if let Some(Ann::ArgMatch {
+            captured_value: Some((label, value)),
+            ..
+        }) = ann
+        {
+            return format!("{label} = \"{value}\"");
+        }
+    }
+
+    for ann in anns {
+        if let Some(Ann::ArgMatch {
             search_tokens,
             arg_set,
             matched,
+            ..
         }) = ann
             && !search_tokens.is_empty()
         {
@@ -224,19 +220,6 @@ mod tests {
     }
 
     #[test]
-    fn format_line_annotation_may_i() {
-        let anns = vec![Some(Ann::MayI {
-            inner_command: "rm -rf /".into(),
-            decision: may_i_core::Decision::Deny,
-            reason: Some("dangerous".into()),
-        })];
-        assert_eq!(
-            format_line_annotation(&anns),
-            "`rm -rf /` → :deny \"dangerous\""
-        );
-    }
-
-    #[test]
     fn format_line_annotation_bind_match() {
         let anns = vec![Some(Ann::BindMatch {
             key: ":host".into(),
@@ -287,6 +270,7 @@ mod tests {
             search_tokens: vec!["\"rm\"".into()],
             arg_set: vec!["rm".into(), "ls".into()],
             matched: true,
+            captured_value: None,
         })];
         assert_eq!(
             format_line_annotation(&anns),
@@ -311,6 +295,7 @@ mod tests {
                 search_tokens: vec!["\"x\"".into()],
                 arg_set: vec!["x".into()],
                 matched: true,
+                captured_value: None,
             }),
             Some(Ann::EffectDecision {
                 decision: may_i_core::Decision::Allow,
@@ -421,16 +406,7 @@ mod tests {
                     search_tokens: tokens,
                     arg_set: args,
                     matched: m,
-                }),
-            (
-                "[a-z ]{1,10}",
-                prop::bool::ANY,
-                proptest::option::of("[a-z]{1,5}"),
-            )
-                .prop_map(|(m, d, r)| Ann::MayI {
-                    inner_command: m,
-                    decision: if d { Decision::Allow } else { Decision::Deny },
-                    reason: r,
+                    captured_value: None
                 }),
             (
                 "[a-z]{1,5}",
