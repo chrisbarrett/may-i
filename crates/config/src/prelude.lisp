@@ -35,8 +35,11 @@
 ;; Each declares a `(tail (after …))` boundary so the engine's
 ;; outer/tail split runs without the user having to redeclare the
 ;; wrapper shape. Scope: tools that ship with a regular Linux
-;; distribution. Third-party wrappers (e.g. mise, terragrunt) belong
-;; in the user's own config.
+;; distribution, plus widely-used wrappers whose argv semantics are
+;; silent-bypass footguns (a missing or mis-spelled boundary token
+;; would otherwise leak inner commands past wrapper rules). Other
+;; third-party wrappers (e.g. mise, terragrunt) belong in the user's
+;; own config.
 
 (parser "sudo"    (style gnu) (tail (after :flags)))
 (parser "env"     (style gnu) (tail (after :flags)))
@@ -61,6 +64,10 @@
   (style gnu)
   (parameter ["n" "interval"])
   (tail (after :flags)))
+
+(parser "nix"
+  (style gnu)
+  (tail (after ["--command" "-c"])))
 
 (parser "find"
   (style single-dash-long)

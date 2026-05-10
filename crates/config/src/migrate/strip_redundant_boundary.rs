@@ -16,11 +16,11 @@ pub(crate) fn strip_redundant_boundary(node: &CstNode) -> Option<Box<CstNode>> {
         return None;
     }
     let prog = list.get(1).and_then(|c| c.as_str())?;
-    let token = prelude_tail_token(prog)?;
+    let tokens = prelude_tail_tokens(prog)?;
 
     let body_changed = list[2..]
         .iter()
-        .any(|child| body_contains_redundant_boundary(child, &token));
+        .any(|child| body_contains_redundant_boundary(child, &tokens));
     if !body_changed {
         return None;
     }
@@ -29,7 +29,7 @@ pub(crate) fn strip_redundant_boundary(node: &CstNode) -> Option<Box<CstNode>> {
     new_children.push(list[0].clone());
     new_children.push(list[1].clone());
     for child in &list[2..] {
-        new_children.push(strip_in_node(child, &token));
+        new_children.push(strip_in_node(child, &tokens));
     }
 
     Some(Box::new(CstNode {
@@ -38,19 +38,19 @@ pub(crate) fn strip_redundant_boundary(node: &CstNode) -> Option<Box<CstNode>> {
     }))
 }
 
-/// Return the boundary token if the prelude declares
-/// `(tail (after "TOKEN"))` for `prog`. None for `:after-flags` or no
+/// Return the boundary token set if the prelude declares
+/// `(tail (after STR…))` for `prog`. None for `:after-flags` or no
 /// declaration.
-fn prelude_tail_token(prog: &str) -> Option<String> {
+fn prelude_tail_tokens(prog: &str) -> Option<Vec<String>> {
     let parsers = prelude_parsers();
     let parser = parsers.into_iter().find(|p| p.program == prog)?;
     match parser.tail {
-        Some(Tail::AfterToken(tok)) => Some(tok),
+        Some(Tail::AfterToken(toks)) => Some(toks),
         _ => None,
     }
 }
 
-fn body_contains_redundant_boundary(node: &CstNode, token: &str) -> bool {
+fn body_contains_redundant_boundary(node: &CstNode, tokens: &[String]) -> bool {
     let Some(list) = node.as_list() else {
         return false;
     };
@@ -58,15 +58,15 @@ fn body_contains_redundant_boundary(node: &CstNode, token: &str) -> bool {
         && list
             .iter()
             .skip(1)
-            .any(|c| c.as_str().is_some_and(|s| s == token))
+            .any(|c| c.as_str().is_some_and(|s| tokens.iter().any(|t| t == s)))
     {
         return true;
     }
     list.iter()
-        .any(|c| body_contains_redundant_boundary(c, token))
+        .any(|c| body_contains_redundant_boundary(c, tokens))
 }
 
-fn strip_in_node(node: &CstNode, token: &str) -> Box<CstNode> {
+fn strip_in_node(node: &CstNode, tokens: &[String]) -> Box<CstNode> {
     let Some(list) = node.as_list() else {
         return Box::new(node.clone());
     };
@@ -74,7 +74,12 @@ fn strip_in_node(node: &CstNode, token: &str) -> Box<CstNode> {
         let kept: Vec<Box<CstNode>> = list
             .iter()
             .enumerate()
-            .filter(|(i, c)| *i == 0 || c.as_str().map(|s| s != token).unwrap_or(true))
+            .filter(|(i, c)| {
+                *i == 0
+                    || c.as_str()
+                        .map(|s| !tokens.iter().any(|t| t == s))
+                        .unwrap_or(true)
+            })
             .map(|(_, c)| c.clone())
             .collect();
         return Box::new(CstNode {
@@ -82,7 +87,7 @@ fn strip_in_node(node: &CstNode, token: &str) -> Box<CstNode> {
             shape: ShapeF::List(kept),
         });
     }
-    let recursed: Vec<Box<CstNode>> = list.iter().map(|c| strip_in_node(c, token)).collect();
+    let recursed: Vec<Box<CstNode>> = list.iter().map(|c| strip_in_node(c, tokens)).collect();
     Box::new(CstNode {
         ann: node.ann.clone(),
         shape: ShapeF::List(recursed),
@@ -116,5 +121,25 @@ mod tests {
         // tokens in positional prefix are not boundary-redundant.
         let input = r#"(rule "sudo" (when (positional "literal") (tail (authorise))))"#;
         assert_eq!(migrate_first(input), input);
+    }
+
+    #[test]
+    fn strips_nix_command_literal_via_multi_token_prelude() {
+        // The prelude declares `(parser "nix" (style gnu) (tail (after
+        // ["--command" "-c"])))`. A migrated rule containing the literal
+        // `"--command"` in its positional prefix has it stripped.
+        let input = r#"(rule "nix" (when (positional (or "shell" "develop") "--command") (tail (authorise))))"#;
+        let expected =
+            r#"(rule "nix" (when (positional (or "shell" "develop")) (tail (authorise))))"#;
+        assert_eq!(migrate_first(input), expected);
+    }
+
+    #[test]
+    fn strips_nix_short_alias_literal_via_multi_token_prelude() {
+        let input =
+            r#"(rule "nix" (when (positional (or "shell" "develop") "-c") (tail (authorise))))"#;
+        let expected =
+            r#"(rule "nix" (when (positional (or "shell" "develop")) (tail (authorise))))"#;
+        assert_eq!(migrate_first(input), expected);
     }
 }

@@ -225,6 +225,50 @@ fn find_multi_exec_all_allow() {
     assert_eq!(decision, Decision::Allow);
 }
 
+// Multi-token tail boundary (`(after [STR…])`): nix accepts both
+// `--command` and `-c`; either spelling routes the inner command into
+// `(tail (authorise))`.
+#[test]
+fn nix_command_long_form_recurses_to_inner() {
+    let cfg = r#"
+(parser "nix" (style gnu) (tail (after ["--command" "-c"])))
+(rule "nix" (when (positional (or "shell" "develop")) (tail (authorise))))
+(rule "mkfs" (deny "no formatting"))
+(rule "nix" (allow))
+"#;
+    let decision = eval(
+        cfg,
+        "nix",
+        &["shell", "pkg", "--command", "mkfs", "/dev/sda"],
+    );
+    assert_eq!(decision, Decision::Deny);
+}
+
+#[test]
+fn nix_command_short_alias_recurses_to_inner() {
+    let cfg = r#"
+(parser "nix" (style gnu) (tail (after ["--command" "-c"])))
+(rule "nix" (when (positional (or "shell" "develop")) (tail (authorise))))
+(rule "mkfs" (deny "no formatting"))
+(rule "nix" (allow))
+"#;
+    let decision = eval(cfg, "nix", &["shell", "pkg", "-c", "mkfs", "/dev/sda"]);
+    assert_eq!(decision, Decision::Deny);
+}
+
+// Boundary token absent: the tail-recursing rule must not match; the
+// fallthrough rule decides.
+#[test]
+fn nix_without_boundary_falls_through() {
+    let cfg = r#"
+(parser "nix" (style gnu) (tail (after ["--command" "-c"])))
+(rule "nix" (when (positional (or "shell" "develop")) (tail (authorise))))
+(rule "nix" (allow))
+"#;
+    let decision = eval(cfg, "nix", &["shell", "pkg"]);
+    assert_eq!(decision, Decision::Allow);
+}
+
 // Mixed allow + ask → ask wins (strictest non-deny).
 #[test]
 fn find_multi_exec_mixed_allow_ask() {

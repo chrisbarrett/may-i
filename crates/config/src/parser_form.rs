@@ -155,7 +155,8 @@ pub fn parse_parser_form(sexpr: &Sexpr) -> Result<Parser, RawError> {
 ///
 /// Recognised shapes:
 /// - `(tail (after :flags))` — wrapper-style boundary at end of outer flags
-/// - `(tail (after "TOK"))` — explicit token boundary (e.g. `--`)
+/// - `(tail (after "TOK"))` — explicit single-token boundary (e.g. `--`)
+/// - `(tail (after [STR…]))` — alias-set of literal boundary tokens
 fn parse_tail_decl(args: &[Sexpr], span: may_i_core::Span) -> Result<Tail, RawError> {
     if args.len() != 1 {
         return Err(
@@ -180,7 +181,27 @@ fn parse_tail_decl(args: &[Sexpr], span: may_i_core::Span) -> Result<Tail, RawEr
     }
     let value = &after_list[1];
     if let Some(s) = value.as_str() {
-        return Ok(Tail::AfterToken(s.to_string()));
+        return Ok(Tail::AfterToken(vec![s.to_string()]));
+    }
+    if value.is_vector() {
+        let items = value.as_list().expect("vector backs a list view");
+        if items.is_empty() {
+            return Err(RawError::new(
+                "(after [STR…]) requires at least one boundary token",
+                value.span(),
+            ));
+        }
+        let mut tokens = Vec::with_capacity(items.len());
+        for item in items {
+            let s = item.as_str().ok_or_else(|| {
+                RawError::new(
+                    "(after [STR…]) elements must be string literals",
+                    item.span(),
+                )
+            })?;
+            tokens.push(s.to_string());
+        }
+        return Ok(Tail::AfterToken(tokens));
     }
     if let Some(atom) = value.as_atom() {
         match atom {
@@ -196,7 +217,7 @@ fn parse_tail_decl(args: &[Sexpr], span: may_i_core::Span) -> Result<Tail, RawEr
         }
     }
     Err(RawError::new(
-        "(after VALUE) value must be `:flags` or a string literal token",
+        "(after VALUE) value must be `:flags`, a string literal, or a vector of string literals",
         value.span(),
     ))
 }
@@ -431,7 +452,44 @@ mod tests {
             r#"(parser "mise" (style gnu) (tail (after "--")))"#,
         ))
         .unwrap();
-        assert_eq!(p.tail, Some(Tail::AfterToken("--".to_string())));
+        assert_eq!(p.tail, Some(Tail::AfterToken(vec!["--".to_string()])));
+    }
+
+    #[test]
+    fn parses_tail_after_token_vector() {
+        let p = parse_parser_form(&first_form(
+            r#"(parser "nix" (style gnu) (tail (after ["--command" "-c"])))"#,
+        ))
+        .unwrap();
+        assert_eq!(
+            p.tail,
+            Some(Tail::AfterToken(vec![
+                "--command".to_string(),
+                "-c".to_string(),
+            ]))
+        );
+    }
+
+    #[test]
+    fn rejects_tail_after_empty_vector() {
+        let err = parse_parser_form(&first_form(r#"(parser "x" (style gnu) (tail (after [])))"#))
+            .unwrap_err();
+        assert!(
+            format!("{err}").contains("at least one"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_tail_after_vector_with_non_string() {
+        let err = parse_parser_form(&first_form(
+            r#"(parser "x" (style gnu) (tail (after ["--" :flags])))"#,
+        ))
+        .unwrap_err();
+        assert!(
+            format!("{err}").contains("string literals"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

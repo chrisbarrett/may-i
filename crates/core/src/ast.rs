@@ -727,9 +727,10 @@ pub enum Tail {
     /// `(tail (after :flags))` — outer slice ends after the last flag or
     /// parameter is consumed; tail begins at the first non-flag token.
     AfterFlags,
-    /// `(tail (after "--"))` — outer slice ends before the literal token;
-    /// the boundary token itself is consumed.
-    AfterToken(String),
+    /// `(tail (after "TOK"))` or `(tail (after [STR…]))` — outer slice
+    /// ends before the first occurrence of any listed boundary token; the
+    /// matching token itself is consumed. The vector is non-empty.
+    AfterToken(Vec<String>),
 }
 
 /// Parsed `(parser PROGRAM (style STYLE) BODY…)` declaration. The style is

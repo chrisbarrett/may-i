@@ -349,11 +349,11 @@ pub(super) fn split_outer_tail<'a>(args: &'a [String], parser: &ResolvedParser) 
             }
         }
         Tail::AfterToken(boundary) => {
-            match args.iter().position(|a| a == boundary) {
+            match args.iter().position(|a| boundary.iter().any(|b| b == a)) {
                 Some(idx) => ArgvSplit {
                     outer: &args[..idx],
-                    // The boundary token is consumed — neither slice
-                    // includes it.
+                    // The matched boundary token is consumed — neither
+                    // slice includes it.
                     tail: Some(&args[idx + 1..]),
                 },
                 None => ArgvSplit {
@@ -766,7 +766,7 @@ mod tokenisation_properties {
     #[test]
     fn split_outer_tail_after_token_present() {
         let args = arg_strs(&["exec", "node", "--", "build", "--prod"]);
-        let parser = parser_with_tail(Some(Tail::AfterToken("--".into())));
+        let parser = parser_with_tail(Some(Tail::AfterToken(vec!["--".into()])));
         let split = split_outer_tail(&args, &parser);
         assert_eq!(split.outer, &["exec".to_string(), "node".to_string()]);
         assert_eq!(
@@ -778,7 +778,7 @@ mod tokenisation_properties {
     #[test]
     fn split_outer_tail_after_token_absent() {
         let args = arg_strs(&["exec", "node"]);
-        let parser = parser_with_tail(Some(Tail::AfterToken("--".into())));
+        let parser = parser_with_tail(Some(Tail::AfterToken(vec!["--".into()])));
         let split = split_outer_tail(&args, &parser);
         assert_eq!(split.outer, args.as_slice());
         assert!(split.tail.is_none());
@@ -804,7 +804,7 @@ mod tokenisation_properties {
 
         #[test]
         fn outer_tail_after_token_drops_only_boundary(args in argv()) {
-            let after_token = parser_with_tail(Some(Tail::AfterToken("--".into())));
+            let after_token = parser_with_tail(Some(Tail::AfterToken(vec!["--".into()])));
             let split = split_outer_tail(&args, &after_token);
             match split.tail {
                 Some(tail) => {

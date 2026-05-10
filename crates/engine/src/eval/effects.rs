@@ -381,10 +381,24 @@ fn evaluate_tail_authorise_fold<F: EvalFold>(
     rules: &[Rule],
 ) -> Result<F::EffectOut, EvalError> {
     let split = super::entry::split_outer_tail(ctx.args, &ctx.parser);
-    // When the parser declares no tail, fall back to the full argv — the
-    // recursion semantics for rule bodies that recurse without a
-    // wrapper-boundary spec.
-    let tail_slice: &[String] = split.tail.unwrap_or(ctx.args);
+    // When the parser declares a tail but the boundary is absent in
+    // argv, treat the matcher as a no-match. Falling back to the full
+    // argv would silently re-fire the rule on the same command. The
+    // fallback only applies when the parser declares no tail at all
+    // (the rule-level recursion idiom for non-wrapper tools).
+    let tail_slice: &[String] = match split.tail {
+        Some(slice) => slice,
+        None if ctx.parser.tail.is_none() => ctx.args,
+        None => {
+            let detail = ArgMatchDetail {
+                search_tokens: vec!["(authorise)".to_string()],
+                arg_set: ctx.args.to_vec(),
+                matched: false,
+                positional_elements: vec![],
+            };
+            return Ok(fold.effect_arg_match(pattern, ctx.args, false, detail));
+        }
+    };
     let owned: Vec<String> = tail_slice.to_vec();
     Ok(match extract_inner_command(&owned) {
         Some((inner_cmd, inner_args)) => {
@@ -879,6 +893,68 @@ pub(crate) fn extract_inner_command(args: &[String]) -> Option<(String, Vec<Stri
         let remaining = args[1..].to_vec();
         Some((cmd, remaining))
     })
+}
+
+#[cfg(test)]
+mod tail_authorise_fold_tests {
+    use super::*;
+    use may_i_core::ast::{ResolvedParser, Tail};
+
+    fn argv(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn parser_with_tail(command: &str, tail: Option<Tail>) -> ResolvedParser {
+        let mut p = ResolvedParser::synthetic_gnu(command);
+        p.tail = tail;
+        p
+    }
+
+    /// Evaluate `(tail (authorise))` directly so the test exercises the
+    /// boundary-absent branch without needing a full parse pipeline.
+    fn run(command: &str, args: &[String], parser: ResolvedParser) -> EffectResult {
+        let facts = may_i_core::ContextFacts::default();
+        let bindings = std::collections::HashMap::new();
+        let mut ctx = EvalContext::new(command, args, &facts, bindings);
+        ctx.parser = parser;
+        let pattern = ArgPattern::Tail;
+        let effect = Effect::ArgPattern(pattern);
+        let rules: Vec<Rule> = Vec::new();
+        evaluate_effect(&effect, &ctx, &rules).expect("effect evaluates")
+    }
+
+    #[test]
+    fn boundary_absent_with_tail_declared_returns_no_match() {
+        let args = argv(&["shell", "pkg"]);
+        let parser = parser_with_tail(
+            "nix",
+            Some(Tail::AfterToken(vec![
+                "--command".to_string(),
+                "-c".to_string(),
+            ])),
+        );
+        let result = run("nix", &args, parser);
+        assert!(
+            result.is_nil(),
+            "expected no-match (Nil) when boundary absent under declared tail; got {result:?}"
+        );
+    }
+
+    #[test]
+    fn no_tail_declared_falls_back_to_full_argv() {
+        // When the parser declares no tail, `(tail (authorise))` recurses
+        // on the full argv. Inner command is "rm" with no rules → Ask.
+        let args = argv(&["rm", "-rf", "/tmp/x"]);
+        let parser = parser_with_tail("sudo", None);
+        let result = run("sudo", &args, parser);
+        // The recursion is reachable: a non-Nil EffectResult means the
+        // matcher fired and produced a continuation/decision rather than
+        // returning no-match.
+        assert!(
+            !result.is_nil(),
+            "no-tail parser must still fall back to full-argv recursion; got {result:?}"
+        );
+    }
 }
 
 #[cfg(test)]

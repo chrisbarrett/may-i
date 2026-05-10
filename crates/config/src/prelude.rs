@@ -157,10 +157,56 @@ mod tests {
     fn third_party_wrappers_excluded_from_prelude() {
         // Tools that don't ship with a regular Linux distribution
         // (mise, terragrunt, etc.) belong in user config, not the
-        // prelude.
+        // prelude. Exception: wrappers whose argv semantics are
+        // silent-bypass footguns are added on a case-by-case basis
+        // (see `nix`).
         let parsers = prelude_parsers();
         assert!(parsers.iter().all(|p| p.program != "mise"));
         assert!(parsers.iter().all(|p| p.program != "terragrunt"));
+    }
+
+    #[test]
+    fn parsers_include_nix_with_multi_token_tail() {
+        let parsers = prelude_parsers();
+        let nix = parsers
+            .iter()
+            .find(|p| p.program == "nix")
+            .expect("nix parser in prelude");
+        assert_eq!(
+            nix.tail,
+            Some(Tail::AfterToken(vec![
+                "--command".to_string(),
+                "-c".to_string(),
+            ]))
+        );
+        assert_eq!(nix.style_name, "gnu");
+        assert!(nix.provenance.is_prelude());
+    }
+
+    #[test]
+    fn user_parser_shadows_prelude_nix() {
+        // Confirm a user `(parser "nix" …)` declaration wins over the
+        // prelude when resolved through the full config-loading path.
+        let cfg = crate::parse_config(r#"(parser "nix" (style gnu) (tail (after "--command")))"#)
+            .expect("config parses");
+        let resolved = cfg.parser_for("nix");
+        assert_eq!(
+            resolved.tail,
+            Some(Tail::AfterToken(vec!["--command".to_string()]))
+        );
+    }
+
+    #[test]
+    fn prelude_nix_resolved_when_no_user_declaration() {
+        let cfg = crate::parse_config("").expect("empty config parses");
+        let resolved = cfg.parser_for("nix");
+        assert_eq!(
+            resolved.tail,
+            Some(Tail::AfterToken(vec![
+                "--command".to_string(),
+                "-c".to_string(),
+            ]))
+        );
     }
 
     #[test]

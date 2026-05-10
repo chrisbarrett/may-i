@@ -47,6 +47,7 @@ pub fn canonicalise_node(node: Box<CstNode>) -> Box<CstNode> {
                 Some("check") => sort_check_body(recursed),
                 Some("flag") => sort_flag_or_parameter_vec(recursed, 1),
                 Some("parameter") => sort_flag_or_parameter_vec(recursed, 1),
+                Some("after") => collapse_singleton_after(recursed),
                 _ => recursed,
             };
             ShapeF::List(reordered)
@@ -191,6 +192,33 @@ fn sort_flag_or_parameter_vec(
     children
 }
 
+/// Collapse `(after [STR])` → `(after "STR")`. The single-element bracket
+/// form is semantically identical to the bare-string form; pretty-print
+/// the compact spelling so canonical output matches the prelude/REFERENCE
+/// idiom. Multi-element vectors and non-string vectors are left alone.
+fn collapse_singleton_after(mut children: Vec<Box<CstNode>>) -> Vec<Box<CstNode>> {
+    let Some(slot) = children.get_mut(1) else {
+        return children;
+    };
+    let ShapeF::Vector(items) = &slot.shape else {
+        return children;
+    };
+    if items.len() != 1 {
+        return children;
+    }
+    let only = &items[0];
+    let ShapeF::String(s) = &only.shape else {
+        return children;
+    };
+    let s = s.clone();
+    let ann = slot.ann.clone();
+    **slot = CstNode {
+        ann,
+        shape: ShapeF::String(s),
+    };
+    children
+}
+
 fn sort_string_vector(items: Vec<Box<CstNode>>) -> Vec<Box<CstNode>> {
     let all_strings = items.iter().all(|n| matches!(n.shape, ShapeF::String(_)));
     if !all_strings {
@@ -321,6 +349,36 @@ mod tests {
         assert!(
             out.contains(r#"(parameter ["interval" "n"])"#),
             "got: {out}"
+        );
+    }
+
+    #[test]
+    fn after_singleton_vector_collapses_to_string() {
+        let src = r#"(parser "x" (style gnu) (tail (after ["--"])))"#;
+        let (forms, errs) = parse_cst(src);
+        assert!(errs.is_empty(), "{errs:?}");
+        let canon = canonicalise_forms(forms);
+        let out = render(&canon);
+        assert!(
+            out.contains(r#"(after "--")"#),
+            "expected single-element bracket form to collapse to bare string; got: {out}"
+        );
+        assert!(
+            !out.contains(r#"(after [""#),
+            "single-element bracket form should not survive canonicalisation; got: {out}"
+        );
+    }
+
+    #[test]
+    fn after_multi_token_vector_preserved() {
+        let src = r#"(parser "nix" (style gnu) (tail (after ["--command" "-c"])))"#;
+        let (forms, errs) = parse_cst(src);
+        assert!(errs.is_empty(), "{errs:?}");
+        let canon = canonicalise_forms(forms);
+        let out = render(&canon);
+        assert!(
+            out.contains(r#"(after ["--command" "-c"])"#),
+            "multi-element bracket form must be preserved verbatim; got: {out}"
         );
     }
 
