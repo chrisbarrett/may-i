@@ -161,6 +161,7 @@ fn trace_to_layout(
                 pre_migration_doc: _,
                 facts,
                 inner_command,
+                combine_role: _,
             } => {
                 if inner_command.is_some() || pending_command.is_some() {
                     flush_rows(&mut current_rows, &mut children);
@@ -391,6 +392,7 @@ mod tests {
             pre_migration_doc: None,
             facts: vec![(":env".into(), "prod".into())],
             inner_command: None,
+            combine_role: None,
         }];
         let layout = trace_to_layout(&entries, "git push", 0, &term);
         let mut buf = Vec::new();
@@ -418,6 +420,7 @@ mod tests {
                 pre_migration_doc: None,
                 facts: vec![],
                 inner_command: None,
+                combine_role: None,
             },
             TraceEntry::Rule {
                 doc,
@@ -425,6 +428,7 @@ mod tests {
                 pre_migration_doc: None,
                 facts: vec![],
                 inner_command: Some("rm -rf".into()),
+                combine_role: None,
             },
         ];
         let layout = trace_to_layout(&entries, "sudo rm -rf", 0, &term);
@@ -450,6 +454,7 @@ mod tests {
             pre_migration_doc: None,
             facts: vec![],
             inner_command: None,
+            combine_role: None,
         };
         let entries = vec![make_rule("git"), make_rule("hg")];
         let layout = trace_to_layout(&entries, "ls", 0, &term);
@@ -474,6 +479,7 @@ mod tests {
             pre_migration_doc: None,
             facts: facts.clone(),
             inner_command: None,
+            combine_role: None,
         };
         let entries = vec![make_rule(), make_rule()];
         let layout = trace_to_layout(&entries, "cmd", 0, &term);

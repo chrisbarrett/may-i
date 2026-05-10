@@ -1,6 +1,6 @@
 use may_i_core::doc::{Doc, DocF};
 
-use crate::annotation::{Ann, TraceEntry};
+use crate::annotation::{Ann, CombineRole, TraceEntry};
 
 pub fn trace_to_json(entries: &[TraceEntry]) -> Vec<serde_json::Value> {
     entries
@@ -41,14 +41,24 @@ pub fn trace_to_json(entries: &[TraceEntry]) -> Vec<serde_json::Value> {
                 "parameter_tokens": parameter_tokens,
                 "tail": tail,
             }),
-            TraceEntry::Rule { doc, line, .. } => {
+            TraceEntry::Rule {
+                doc,
+                line,
+                combine_role,
+                ..
+            } => {
                 let mut annotations = Vec::new();
                 collect_json_annotations(doc, &mut annotations);
+                let role = combine_role.map(|r| match r {
+                    CombineRole::ReasonSource => "reason_source",
+                    CombineRole::TiedSibling => "tied_sibling",
+                });
                 serde_json::json!({
                     "type": "rule",
                     "line": line,
                     "structure": doc_to_json(doc),
                     "annotations": annotations,
+                    "combine_role": role,
                 })
             }
         })
@@ -216,6 +226,7 @@ mod tests {
             pre_migration_doc: None,
             facts: vec![],
             inner_command: None,
+            combine_role: None,
         }];
         let json = trace_to_json(&entries);
         assert_eq!(json[0]["type"], "rule");
@@ -424,6 +435,7 @@ mod tests {
             pre_migration_doc: None,
             facts: vec![],
             inner_command: None,
+            combine_role: None,
         }];
         let json = trace_to_json(&entries);
         assert_eq!(json.len(), 1);

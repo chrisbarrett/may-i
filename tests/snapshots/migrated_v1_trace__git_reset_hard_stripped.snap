@@ -1,5 +1,6 @@
 ---
 source: tests/migrated_v1_trace.rs
+assertion_line: 110
 expression: normalised
 ---
 
@@ -7,13 +8,38 @@ Trace
 
   parser: gnu │
 
-                               command │ git reset --hard
-  43: (rule (command "git")            │
-        (context (and                  │
-                  (positional "reset") │ "reset" = "reset" → yes
-                  (flag "hard")))      │
-        (effect                        │ → :ask "Dangerous git reset"
-         :ask "Dangerous git reset"))  │
+                                                          command │ git reset --hard
+  43: (rule (command "git")                                       │
+        (context (and                                             │
+                  (positional "reset")                            │ "reset" = "reset" → yes
+                  (flag "hard")))                                 │
+        (effect                                                   │ → :ask "Dangerous git reset"
+         :ask "Dangerous git reset"))                             │
+                                                                  │
+  47: (rule (command "git")                                       │
+        (context (or                                              │
+                  (positional "remote")                           │ "reset" = "remote" → no
+                  (positional                                     │
+                   (or "clean" "gc"                               │ "reset" = "clean" → no
+                       "push"))))                                 │ "reset" = "push" → no
+        (ask "Dangerous git operation"))                          │ → :ask "Dangerous git operation"
+                                                                  │
+  52: (rule (command "git")                                       │
+        (context                                                  │
+         (and (or                                                 │
+               (positional (or "switch"                           │ "reset" = "switch" → no
+                               "restore"                          │ "reset" = "restore" → no
+                               …                                  │
+                               "clone"))                          │ "reset" = "clone" → no
+               (positional "checkout"                             │ "reset" = "checkout" → no
+                           "--")                                  │ "reset" = "--" → no
+               (positional "worktree"))                           │ "reset" = "worktree" → no
+              …))                                                 │
+        (ask                                                      │ → :ask "git mutation requires approval in non-writing agents"
+         "git mutation requires approval in non-writing agents")) │
+                                                                  │
+  60: (rule (command "git")                                       │
+        (effect :allow))                                          │ → :allow
 
 Result
 

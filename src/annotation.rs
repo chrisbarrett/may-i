@@ -441,6 +441,17 @@ fn annotate_expr_match(doc: ADoc, detail: &may_i_engine::fold::ExprMatchDetail) 
     }
 }
 
+/// Role of a matched rule in the most-strict-wins combine for its scope.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CombineRole {
+    /// This rule contributed the surviving `reason` (earliest in source
+    /// order among rules tied at the strictest effect).
+    ReasonSource,
+    /// This rule matched at the strictest effect but its `reason` was
+    /// dropped in favour of an earlier tied sibling.
+    TiedSibling,
+}
+
 /// A single trace entry produced by the fold.
 #[derive(Clone)]
 pub enum TraceEntry {
@@ -460,6 +471,10 @@ pub enum TraceEntry {
         /// The command being evaluated, when this rule is inside a recursive
         /// `may-i` evaluation.
         inner_command: Option<String>,
+        /// Role of this rule in the most-strict-wins combine. `None` for
+        /// rules that did not contribute the strictest decision (or for
+        /// rule entries pushed before the combine completed).
+        combine_role: Option<CombineRole>,
     },
     /// An embedded command (substitution) was evaluated.
     EmbeddedCommand { source: String, decision: Decision },
@@ -493,6 +508,12 @@ pub(crate) struct TracingFold {
     /// appended after the outer rule's trace entry. Each entry is
     /// (inner_command, traces).
     pending_inner_traces: Vec<(String, Vec<TraceEntry>)>,
+    /// Stack of trace-entry indices per `Evaluator::evaluate` scope.
+    /// Each `rule_matched` pushes its trace index onto the top vec;
+    /// `rules_combined` consumes the top to mark `CombineRole`s. A new
+    /// vec is pushed on `begin_recursive_eval` (one per inner scope).
+    /// The bottom vec is the outer-evaluator scope and is never popped.
+    match_stack: Vec<Vec<usize>>,
 }
 
 impl Default for TracingFold {
@@ -509,6 +530,7 @@ impl TracingFold {
             pre_migration_forms: None,
             recursive_trace_starts: Vec::new(),
             pending_inner_traces: Vec::new(),
+            match_stack: vec![Vec::new()],
         }
     }
 
@@ -519,6 +541,7 @@ impl TracingFold {
             pre_migration_forms: lr.pre_migration_forms.clone(),
             recursive_trace_starts: Vec::new(),
             pending_inner_traces: Vec::new(),
+            match_stack: vec![Vec::new()],
         }
     }
 
@@ -928,6 +951,33 @@ impl EvalFold for TracingFold {
 
     fn begin_recursive_eval(&mut self) {
         self.recursive_trace_starts.push(self.traces.len());
+        self.match_stack.push(Vec::new());
+    }
+
+    fn rules_combined(&mut self, tied_rule_indices: &[usize], reason_source_index: Option<usize>) {
+        // The engine reports match-order positions: the Nth Decision
+        // produced by `rule_matched` corresponds to the Nth entry on
+        // the top of `match_stack`.
+        let top: Vec<usize> = self.match_stack.last().cloned().unwrap_or_default();
+        for &match_pos in tied_rule_indices {
+            let Some(&trace_idx) = top.get(match_pos) else {
+                continue;
+            };
+            let Some(TraceEntry::Rule { combine_role, .. }) = self.traces.get_mut(trace_idx) else {
+                continue;
+            };
+            *combine_role = if Some(match_pos) == reason_source_index {
+                Some(CombineRole::ReasonSource)
+            } else {
+                Some(CombineRole::TiedSibling)
+            };
+        }
+        if let Some(top) = self.match_stack.last_mut() {
+            top.clear();
+        }
+        if self.match_stack.len() > 1 {
+            self.match_stack.pop();
+        }
     }
 
     fn record_parser(&mut self, command: &str, parser: &may_i_core::ast::ResolvedParser) {
@@ -1090,13 +1140,18 @@ impl EvalFold for TracingFold {
 
         let docs = build_rule_doc_children(rule, command_out, effect_out);
         let doc = ann_list_break(docs, ann);
+        let trace_idx = self.traces.len();
         self.traces.push(TraceEntry::Rule {
             doc: doc.clone(),
             line,
             pre_migration_doc,
             facts: flatten_facts(facts),
             inner_command: None,
+            combine_role: None,
         });
+        if let Some(top) = self.match_stack.last_mut() {
+            top.push(trace_idx);
+        }
         // Append inner traces from recursive may-i evaluations after the
         // outer rule, so the trace reads in evaluation order.
         if let Some(inner) = self.pending_inner_traces.pop() {
@@ -1128,6 +1183,7 @@ impl EvalFold for TracingFold {
             pre_migration_doc,
             facts: flatten_facts(facts),
             inner_command: None,
+            combine_role: None,
         });
         if let Some(inner) = self.pending_inner_traces.pop() {
             self.append_inner_traces(inner);
@@ -1222,6 +1278,78 @@ mod tests {
         let mut fold = TracingFold::new();
         evaluate_with_fold(cmd, args, config, &facts, &mut fold).unwrap();
         fold.traces
+    }
+
+    fn terminal(decision: Decision, reason: &str) -> Effect {
+        Effect::Terminal {
+            decision,
+            reason: Some(reason.into()),
+        }
+    }
+
+    #[test]
+    fn tied_rules_at_strictest_marked_reason_source_and_sibling() {
+        let cfg = make_config(vec![
+            make_rule(
+                CommandPattern::Literal("rm".into()),
+                terminal(Decision::Deny, "primary"),
+            ),
+            make_rule(
+                CommandPattern::Literal("rm".into()),
+                terminal(Decision::Deny, "loaded"),
+            ),
+        ]);
+        let entries = eval_tracing(&cfg, "rm", &[]);
+        let rule_entries: Vec<(usize, Option<CombineRole>, &Doc<Option<Ann>>)> = entries
+            .iter()
+            .enumerate()
+            .filter_map(|(i, e)| {
+                if let TraceEntry::Rule {
+                    combine_role, doc, ..
+                } = e
+                {
+                    Some((i, *combine_role, doc))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(rule_entries.len(), 2, "both rules should appear in trace");
+        assert_eq!(rule_entries[0].1, Some(CombineRole::ReasonSource));
+        assert_eq!(rule_entries[1].1, Some(CombineRole::TiedSibling));
+    }
+
+    #[test]
+    fn sole_strictest_rule_has_no_tied_sibling_marker() {
+        // One Deny rule, several Allow rules — Deny wins alone, no sibling.
+        let cfg = make_config(vec![
+            make_rule(
+                CommandPattern::Literal("rm".into()),
+                terminal(Decision::Allow, "allow1"),
+            ),
+            make_rule(
+                CommandPattern::Literal("rm".into()),
+                terminal(Decision::Deny, "the deny"),
+            ),
+            make_rule(
+                CommandPattern::Literal("rm".into()),
+                terminal(Decision::Allow, "allow2"),
+            ),
+        ]);
+        let entries = eval_tracing(&cfg, "rm", &[]);
+        let roles: Vec<Option<CombineRole>> = entries
+            .iter()
+            .filter_map(|e| {
+                if let TraceEntry::Rule { combine_role, .. } = e {
+                    Some(*combine_role)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        // Only the Deny rule (position 1) is the reason source; the
+        // two Allow rules have no role assigned.
+        assert_eq!(roles, vec![None, Some(CombineRole::ReasonSource), None]);
     }
 
     proptest! {

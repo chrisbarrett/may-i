@@ -35,7 +35,14 @@ struct Cli {
     #[arg(long, global = true)]
     json: bool,
 
-    /// Path to config file (overrides $MAYI_CONFIG and default location)
+    /// Path to config file. Resolver precedence, highest to lowest:
+    /// `--config`, then `$MAYI_CONFIG`, then
+    /// `$XDG_CONFIG_HOME/may-i/config.lisp`, then
+    /// `~/.config/may-i/config.lisp`. After the primary config loads,
+    /// repo-local files are also discovered at the git/hg/jj root
+    /// (`.may-i.lisp`, `.may-i/*.lisp`, `.may-i.local.lisp`,
+    /// `.claude/may-i.lisp`, `.claude/may-i.local.lisp`) and merged as
+    /// Loaded rules — gated by `may-i trust` like any other loaded source.
     #[arg(long, global = true, value_name = "FILE")]
     config: Option<std::path::PathBuf>,
 

@@ -441,7 +441,11 @@ impl<'a> Evaluator<'a> {
     }
 
     /// Evaluate a command against all rules.
-    /// Returns the first matching rule's effect, or ask if none match.
+    ///
+    /// Combines every matching rule's effect under the `Decision` lattice
+    /// `Allow < Ask < Deny` and returns the maximum. Ties on the most-strict
+    /// effect resolve to the earliest matching rule's `reason`. If no rule
+    /// matches, returns `Ask`.
     pub fn evaluate<F: EvalFold>(
         &self,
         fold: &mut F,
@@ -457,22 +461,52 @@ impl<'a> Evaluator<'a> {
             ));
         }
 
+        let mut best: Option<EvalResult> = None;
+        // Indices into the match order — i.e., the Nth `rule_matched`
+        // call for this evaluator scope, which folds use to correlate
+        // tied rules with their per-scope trace entries.
+        let mut tied_match_indices: Vec<usize> = Vec::new();
+        let mut reason_source_match_index: Option<usize> = None;
+        let mut match_counter: usize = 0;
         let mut any_command_matched = false;
-        for rule in self.rules {
+        for rule in self.rules.iter() {
             let out = self.evaluate_rule(fold, rule, ctx)?;
             let result = F::effect_result(&out);
 
             match result {
                 EffectResult::Decision(decision, reason) => {
-                    return Ok(EvalResult::new(*decision, reason.clone()));
+                    let match_idx = match_counter;
+                    match_counter += 1;
+                    match &best {
+                        None => {
+                            best = Some(EvalResult::new(*decision, reason.clone()));
+                            reason_source_match_index = Some(match_idx);
+                            tied_match_indices.clear();
+                            tied_match_indices.push(match_idx);
+                        }
+                        Some(prev) if *decision > prev.decision => {
+                            best = Some(EvalResult::new(*decision, reason.clone()));
+                            reason_source_match_index = Some(match_idx);
+                            tied_match_indices.clear();
+                            tied_match_indices.push(match_idx);
+                        }
+                        Some(prev) if *decision == prev.decision => {
+                            tied_match_indices.push(match_idx);
+                        }
+                        _ => {}
+                    }
                 }
                 EffectResult::Nil => {
                     if rule.command_effect.value.matches_command(ctx.command) {
                         any_command_matched = true;
                     }
-                    continue;
                 }
             }
+        }
+
+        if let Some(result) = best {
+            fold.rules_combined(&tied_match_indices, reason_source_match_index);
+            return Ok(result);
         }
 
         let reason = if any_command_matched {

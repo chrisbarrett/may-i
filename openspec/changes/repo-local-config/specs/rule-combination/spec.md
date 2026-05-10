@@ -82,7 +82,9 @@ The engine SHALL include every rule that contributed the most-strict effect in t
 
 ### Requirement: Adding a rule cannot relax the decision
 
-The engine SHALL NOT produce a less-strict decision when a rule is added to a config than it did before. Formally, for any config `C`, command `cmd`, and additional rule `r`: `evaluate(C ++ [r], cmd).decision >= evaluate(C, cmd).decision` under the `Decision` lattice. This is the load-bearing security property: loaded rules — including those discovered via repo-local resolution — MUST NOT widen the policy established by the primary config.
+The engine SHALL NOT produce a less-strict decision when a rule is added to a config in which at least one rule already matches the command. Formally, for any config `C`, command `cmd`, and additional rule `r`, if `C` contains at least one rule whose command pattern matches `cmd`, then `evaluate(C ++ [r], cmd).decision >= evaluate(C, cmd).decision` under the `Decision` lattice. This is the load-bearing security property: loaded rules — including those discovered via repo-local resolution — MUST NOT widen the policy established by an existing matching primary rule.
+
+The no-match fallback (`Ask`) is excluded from this property: when no rule in `C` matches, appending the first matching rule replaces the fallback with that rule's decision, which may be `Allow`. Configs that wish to deny by default must encode that as an explicit catch-all rule.
 
 #### Scenario: Adding an Allow rule to an Allow result is a no-op
 - **GIVEN** a config that yields `Decision::Allow` for a command

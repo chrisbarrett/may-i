@@ -23,7 +23,10 @@ pub use command::parse_command_pattern;
 pub use config::{parse_config, parse_config_from_sexprs, parse_config_from_tagged_sexprs};
 pub use effect::parse_effect;
 pub use errors::ConfigError;
-pub use io::{LoadResult, load, load_and_resolve, resolve_path, walk_load_graph};
+pub use io::{
+    LoadResult, discover_repo_local_files, discover_repo_root, load, load_and_resolve,
+    load_and_resolve_with_cwd, resolve_path, walk_load_graph,
+};
 pub use parser_form::parse_parser_form;
 pub use pattern::{parse_arg_pattern, parse_positional_arg};
 pub use predicate::parse_predicate;

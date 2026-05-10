@@ -262,6 +262,21 @@ pub trait EvalFold {
     fn rule_skipped(&mut self, rule: &Rule) -> Self::EffectOut;
     fn default_ask(&mut self, reason: &str) -> Self::EffectOut;
 
+    /// Called once per `Evaluator::evaluate` after all rules have been
+    /// processed and the most-strict-wins combine has selected a winner.
+    ///
+    /// Indices are **match-order positions**: the Nth `rule_matched`
+    /// call for this evaluator scope corresponds to match index `N`.
+    /// `tied_match_indices` lists every match that contributed the
+    /// strictest `Decision`; `reason_source_match_index` identifies
+    /// the earliest-in-source-order tied match whose `reason` survived.
+    fn rules_combined(
+        &mut self,
+        _tied_match_indices: &[usize],
+        _reason_source_match_index: Option<usize>,
+    ) {
+    }
+
     /// Called when an embedded command (substitution) has been evaluated.
     /// Default implementation is a no-op.
     fn embedded_command(&mut self, _source: &str, _decision: Decision) {}
