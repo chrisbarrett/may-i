@@ -5,9 +5,8 @@ expression: normalised
 
 Trace
 
-  parser: gnu │
-
                                               command │ curl -d data https://example.com
+                                               parser │ gnu
   65: (rule (command "curl")                          │
         (context (and (not (flag "d"))                │
                       …                               │

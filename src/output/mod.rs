@@ -137,6 +137,12 @@ fn trace_to_layout(
 
     let mut current_rows: Vec<ColRow> = Vec::new();
     let mut last_shown_facts: Option<&Vec<(String, String)>> = None;
+    // Parser rows pending placement under their command row, keyed by the
+    // bare command name recorded with each `TraceEntry::Parser`. Inner
+    // evaluations also push parser entries; only those whose command name
+    // matches a subsequently-rendered command row are consumed.
+    let mut pending_parsers: std::collections::HashMap<String, ColRow> =
+        std::collections::HashMap::new();
 
     let flush_rows = |rows: &mut Vec<ColRow>, children: &mut Vec<Layout>| {
         if !rows.is_empty() {
@@ -173,10 +179,20 @@ fn trace_to_layout(
                     current_rows.push(ColRow::new(" ", 1, ""));
                 }
 
-                if let Some(cmd) = pending_command.take() {
+                let pushed_cmd: Option<&str> = if let Some(cmd) = pending_command.take() {
                     current_rows.extend(command_row(cmd, &geom));
-                } else if let Some(cmd) = inner_command {
+                    Some(cmd)
+                } else if let Some(cmd) = inner_command.as_deref() {
                     current_rows.extend(command_row(cmd, &geom));
+                    Some(cmd)
+                } else {
+                    None
+                };
+                if let Some(cmd) = pushed_cmd
+                    && let Some(first_token) = cmd.split_whitespace().next()
+                    && let Some(parser_row) = pending_parsers.remove(first_token)
+                {
+                    current_rows.push(parser_row);
                 }
                 if !facts.is_empty() && last_shown_facts.as_ref() != Some(&facts) {
                     current_rows.extend(facts_rows(facts));
@@ -201,26 +217,23 @@ fn trace_to_layout(
                 current_rows.push(row);
             }
             TraceEntry::Parser {
-                command: _,
+                command,
                 style,
                 parameter_tokens,
                 tail,
             } => {
-                let params_text = if parameter_tokens.is_empty() {
-                    String::new()
-                } else {
-                    format!(" parameters ({})", parameter_tokens.join(" "))
-                };
-                let tail_text = tail
-                    .as_ref()
-                    .map(|t| format!(" tail {t}"))
-                    .unwrap_or_default();
-                let label = format!("{} {style}{params_text}{tail_text}", "parser:".dimmed());
-                let label_visible =
-                    "parser: ".len() + style.len() + params_text.len() + tail_text.len();
-                let mut row = ColRow::new(label, label_visible, "");
+                let mut value = style.clone();
+                if !parameter_tokens.is_empty() {
+                    value.push_str(&format!("  parameters ({})", parameter_tokens.join(" ")));
+                }
+                if let Some(t) = tail {
+                    value.push_str(&format!("  tail {t}"));
+                }
+                let label = "parser";
+                let mut row = ColRow::new(label.dimmed().to_string(), label.len(), value);
                 row.left_align = ColAlign::Right;
-                current_rows.push(row);
+                pending_parsers.insert(command.clone(), row);
+                continue;
             }
             TraceEntry::ParseDiagnostics { diagnostics } => {
                 for diag in diagnostics {
@@ -503,6 +516,158 @@ mod tests {
             let mut buf = Vec::new();
             write_layout(&mut buf, &layout, &term);
             assert!(!buf.is_empty());
+        }
+    }
+
+    fn render_trace(entries: &[TraceEntry], command: &str) -> String {
+        let term = Terminal::new(120);
+        let layout = trace_to_layout(entries, command, 0, &term);
+        let mut buf = Vec::new();
+        write_layout(&mut buf, &layout, &term);
+        strip_ansi(&String::from_utf8(buf).unwrap())
+    }
+
+    fn parser_then_rule(parameter_tokens: Vec<String>, tail: Option<String>) -> Vec<TraceEntry> {
+        let doc = list_ann(
+            Ann::RuleMatch {
+                matched: true,
+                line: Some(1),
+            },
+            vec![atom("rule"), atom("cmd")],
+        );
+        vec![
+            TraceEntry::Parser {
+                command: "cmd".into(),
+                style: "gnu".into(),
+                parameter_tokens,
+                tail,
+            },
+            TraceEntry::Rule {
+                doc,
+                line: Some(1),
+                pre_migration_doc: None,
+                facts: vec![],
+                inner_command: None,
+            },
+        ]
+    }
+
+    fn find_row_with(stripped: &str, label: &str) -> Option<(usize, String)> {
+        stripped.lines().enumerate().find_map(|(i, l)| {
+            // A kv row contains "<label> │"; ensure label is its own token.
+            let trimmed = l.trim_start();
+            trimmed.split_once('│').and_then(|(left, _)| {
+                if left.trim_end().split_whitespace().last() == Some(label) {
+                    Some((i, l.to_string()))
+                } else {
+                    None
+                }
+            })
+        })
+    }
+
+    #[test]
+    fn parser_row_renders_directly_under_command_no_blank_line() {
+        let entries = parser_then_rule(vec![], None);
+        let out = render_trace(&entries, "cmd");
+        let (cmd_idx, _) = find_row_with(&out, "command").expect("command row missing");
+        let (parser_idx, parser_line) = find_row_with(&out, "parser").expect("parser row missing");
+        assert_eq!(
+            parser_idx,
+            cmd_idx + 1,
+            "parser must immediately follow command\n--- output ---\n{out}\n---"
+        );
+        assert!(
+            parser_line
+                .split_once('│')
+                .is_some_and(|(_, r)| r.trim() == "gnu"),
+            "parser right column wrong: {parser_line}"
+        );
+    }
+
+    #[test]
+    fn parser_row_with_parameters() {
+        let entries = parser_then_rule(vec!["-X".into(), "--request".into()], None);
+        let out = render_trace(&entries, "cmd");
+        assert!(
+            out.contains("gnu  parameters (-X --request)"),
+            "right column missing parameters segment:\n{out}"
+        );
+    }
+
+    #[test]
+    fn parser_row_with_tail() {
+        let entries = parser_then_rule(vec![], Some("(after :flags)".into()));
+        let out = render_trace(&entries, "cmd");
+        assert!(
+            out.contains("gnu  tail (after :flags)"),
+            "right column missing tail segment:\n{out}"
+        );
+    }
+
+    #[test]
+    fn parser_row_with_parameters_and_tail() {
+        let entries = parser_then_rule(vec!["-c".into()], Some(r#"(after "--")"#.into()));
+        let out = render_trace(&entries, "cmd");
+        assert!(
+            out.contains(r#"gnu  parameters (-c)  tail (after "--")"#),
+            "right column missing combined segments:\n{out}"
+        );
+    }
+
+    #[test]
+    fn inner_parser_entry_does_not_displace_outer_parser_row() {
+        // When a rule's effect recurses and the inner evaluation also
+        // records a parser, the outer command's parser must still be the
+        // one rendered under the outer command row.
+        let doc = list_ann(
+            Ann::RuleMatch {
+                matched: true,
+                line: Some(1),
+            },
+            vec![atom("rule"), atom("nix")],
+        );
+        let entries = vec![
+            TraceEntry::Parser {
+                command: "nix".into(),
+                style: "gnu".into(),
+                parameter_tokens: vec![],
+                tail: Some("(after :flags)".into()),
+            },
+            TraceEntry::Parser {
+                command: "run".into(),
+                style: "gnu".into(),
+                parameter_tokens: vec![],
+                tail: None,
+            },
+            TraceEntry::DefaultAsk {
+                reason: "no rule".into(),
+            },
+            TraceEntry::Rule {
+                doc,
+                line: Some(1),
+                pre_migration_doc: None,
+                facts: vec![],
+                inner_command: None,
+            },
+        ];
+        let out = render_trace(&entries, "nix run nixpkgs#hello");
+        let (_, parser_line) = find_row_with(&out, "parser").expect("parser row missing");
+        assert!(
+            parser_line.contains("gnu  tail (after :flags)"),
+            "expected outer (nix) parser to be rendered, got: {parser_line}\nfull:\n{out}"
+        );
+    }
+
+    #[test]
+    fn no_full_width_parser_banner() {
+        let entries = parser_then_rule(vec![], None);
+        let out = render_trace(&entries, "cmd");
+        for line in out.lines() {
+            assert!(
+                !line.trim_start().starts_with("parser:"),
+                "found legacy 'parser:' banner row: {line}"
+            );
         }
     }
 }

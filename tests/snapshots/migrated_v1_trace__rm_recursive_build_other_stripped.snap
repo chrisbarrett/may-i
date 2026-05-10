@@ -6,9 +6,8 @@ expression: normalised
 
 Trace
 
-  parser: gnu │
-
                                                            command │ rm -r /other/path
+                                                            parser │ gnu
                                                              facts │ :opencode/agent "build"
   24: (rule (command "rm")                                         │
         (context (and (or (flag "r")                               │

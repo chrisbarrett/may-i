@@ -5,9 +5,8 @@ expression: normalised
 
 Trace
 
-  parser: gnu │
-
                                                command │ brew install foo
+                                                parser │ gnu
   74: (rule (command "brew")                           │
         (args                                          │
          (cond                                         │

@@ -1,14 +1,12 @@
 ---
 source: tests/migrated_v1_trace.rs
-assertion_line: 110
 expression: normalised
 ---
 
 Trace
 
-  parser: gnu │
-
                                               command │ curl https://example.com
+                                               parser │ gnu
   65: (rule (command "curl")                          │
         (context (and (not (flag "d"))                │
                       (not (flag "data"))             │

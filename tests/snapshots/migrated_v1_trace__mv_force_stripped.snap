@@ -5,9 +5,8 @@ expression: normalised
 
 Trace
 
-  parser: gnu │
-
                                         command │ mv -f a b
+                                         parser │ gnu
   83: (rule (command "mv")                      │
         (args                                   │
          (if (or (flag "f")                     │

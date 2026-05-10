@@ -5,9 +5,8 @@ expression: normalised
 
 Trace
 
-  parser: gnu │
-
                                                           command │ git status
+                                                           parser │ gnu
   43: (rule (command "git")                                       │
         (context (and                                             │
                   (positional "reset")                            │ "status" = "reset" → no
