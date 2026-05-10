@@ -490,6 +490,36 @@ mod tests {
 
     use proptest::prelude::*;
 
+    /// Regression: an unclosed `>(` / `<(` / `$(` substitution must produce
+    /// nested (not overlapping) segment spans. Previously
+    /// `find_substitution_spans` skipped the unclosed opener and re-scanned
+    /// inside the body, so the parser-extracted source paired with the wrong
+    /// (smaller) span and the recursion produced segments extending past the
+    /// outer span.
+    #[test]
+    fn unclosed_process_substitution_segments_nest() {
+        let config = config_with_rules(vec![allow_rule("echo"), deny_rule("rm")]);
+        let input = "\"\">(<(\"\")";
+        let result = evaluate_command(input, &config, &empty_facts()).unwrap();
+        for s in &result.segment_decisions {
+            assert!(
+                s.end <= input.len(),
+                "segment {s:?} extends past input length {}",
+                input.len()
+            );
+        }
+        let mut top = top_level(&result.segment_decisions);
+        top.sort_by_key(|s| s.start);
+        for pair in top.windows(2) {
+            assert!(
+                pair[0].end <= pair[1].start,
+                "top-level segments overlap: {:?} and {:?}",
+                pair[0],
+                pair[1]
+            );
+        }
+    }
+
     fn arb_input() -> impl Strategy<Value = String> {
         // Limit to a sane shell-ish alphabet so the parser hits real shapes
         // (compound commands, embeddings, quotes) without spending all its
