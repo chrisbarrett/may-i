@@ -1,0 +1,28 @@
+---
+source: tests/migrated_v1_trace.rs
+assertion_line: 110
+expression: normalised
+---
+
+Trace
+
+       parser: gnu │
+       parser: gnu │
+  No matching rule │ → :ask (default)
+
+                                             command │ ssh prod "rm -rf /"
+  107: (rule (command "ssh")                         │
+         (args                                       │
+          (when (positional                          │
+                 [:ssh/host *])                      │
+            (<unknown-arg-pattern>                   │ (authorise) ∈ {"prod", "rm -rf /"} → yes
+             (effect                                 │ → :ask "No rule for command `prod`"
+              :ask "No rule for command `prod`"))))) │
+
+Result
+
+  ssh prod "rm -rf /"
+
+  → :ask "No rule for command `prod`"
+
+  config: <config-path>

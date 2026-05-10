@@ -1,0 +1,21 @@
+---
+source: tests/migrated_v1_trace.rs
+expression: normalised
+---
+
+Trace
+
+  parser: gnu │
+
+                             command │ cat foo
+  90: (rule (command (or "cat" …))   │
+        (effect                      │ → :allow "Read-only access"
+         :allow "Read-only access")) │
+
+Result
+
+  cat foo
+
+  → :allow "Read-only access"
+
+  config: <config-path>

@@ -1,0 +1,23 @@
+---
+source: tests/migrated_v1_trace.rs
+expression: normalised
+---
+
+Trace
+
+  parser: gnu │
+
+                              command │ mv a b
+  83: (rule (command "mv")            │
+        (args (if (or (flag "f")      │
+                      (flag "force")) │
+                  …                   │
+                (effect :allow))))    │ → :allow
+
+Result
+
+  mv a b
+
+  → :allow
+
+  config: <config-path>

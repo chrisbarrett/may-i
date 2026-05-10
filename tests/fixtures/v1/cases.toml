@@ -1,8 +1,7 @@
-# Oracle snapshot test cases for V1 config format.
+# Trace-render snapshot test cases for the v1 config fixture.
 #
 # Each [[case]] entry defines a command to evaluate and its snapshot name.
-# The oracle snapshots in tests/snapshots/oracle_v1/ were generated from the
-# `may-i` binary (previous release) with COLUMNS=80 and CLICOLOR_FORCE=1.
+# Snapshots are rendered with COLUMNS=80 and CLICOLOR_FORCE=1.
 
 [[case]]
 name = "rm_rf_root"

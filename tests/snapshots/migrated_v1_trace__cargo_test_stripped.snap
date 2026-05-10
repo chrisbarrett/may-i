@@ -1,0 +1,36 @@
+---
+source: tests/migrated_v1_trace.rs
+expression: normalised
+---
+
+Trace
+
+  parser: gnu │
+
+                                  command │ cargo test
+  95: (rule (command "cargo")             │
+        (args (if (exact)                 │
+                  …                       │
+                (positional               │
+                 (? "affected")           │
+                 (?                       │
+                  (or "watch" "run" "r")) │
+                 (? "--")                 │
+                 (cond                    │
+                  ((or "install"          │
+                       "uninstall")       │
+                   (deny))                │
+                  ((or "build"            │
+                       "b"                │
+                       …                  │
+                       "clippy")          │
+                   (allow)))              │ → :allow
+                 (effect :allow)))))      │
+
+Result
+
+  cargo test
+
+  → :allow
+
+  config: <config-path>

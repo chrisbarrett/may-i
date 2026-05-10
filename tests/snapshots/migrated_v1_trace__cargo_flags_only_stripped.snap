@@ -1,0 +1,22 @@
+---
+source: tests/migrated_v1_trace.rs
+expression: normalised
+---
+
+Trace
+
+  parser: gnu │
+
+                          command │ cargo --list
+  95: (rule (command "cargo")     │
+        (args (if (exact)         │
+                  (effect :allow) │ → :allow
+                …)))              │
+
+Result
+
+  cargo --list
+
+  → :allow
+
+  config: <config-path>

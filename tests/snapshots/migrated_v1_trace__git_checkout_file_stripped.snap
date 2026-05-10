@@ -1,0 +1,54 @@
+---
+source: tests/migrated_v1_trace.rs
+expression: normalised
+---
+
+Trace
+
+  parser: gnu │
+
+                                                          command │ git checkout -- main.ts
+  43: (rule (command "git")                                       │
+        (context (and                                             │
+                  (positional "reset")                            │ "checkout" = "reset" → no
+                  …))                                             │
+        (ask "Dangerous git reset"))                              │ → :ask "Dangerous git reset"
+                                                                  │
+  47: (rule (command "git")                                       │
+        (context (or                                              │
+                  (positional "remote")                           │ "checkout" = "remote" → no
+                  (positional                                     │
+                   (or "clean" "gc"                               │ "checkout" = "clean" → no
+                       "push"))))                                 │ "checkout" = "push" → no
+        (ask "Dangerous git operation"))                          │ → :ask "Dangerous git operation"
+                                                                  │
+  52: (rule (command "git")                                       │
+        (context                                                  │
+         (and                                                     │
+          (or                                                     │
+           (positional (or "switch"                               │ "checkout" = "switch" → no
+                           "restore"                              │ "checkout" = "restore" → no
+                           …                                      │
+                           "clone"))                              │ "checkout" = "clone" → no
+           (positional "checkout" "--")                           │ "checkout" = "checkout" → yes
+           …)                                                     │
+          (plan-mode                                              │ plan-mode → no
+           (or                                                    │
+            (has                                                  │ no
+             [:claude-code/permission-mode                        │
+              "plan"])                                            │
+            (has                                                  │ no
+             [:opencode/agent "plan"])))))                        │
+        (ask                                                      │ → :ask "git mutation requires approval in non-writing agents"
+         "git mutation requires approval in non-writing agents")) │
+                                                                  │
+  60: (rule (command "git")                                       │
+        (effect :allow))                                          │ → :allow
+
+Result
+
+  git checkout -- main.ts
+
+  → :allow
+
+  config: <config-path>

@@ -1,0 +1,25 @@
+---
+source: tests/migrated_v1_trace.rs
+expression: normalised
+---
+
+Trace
+
+  parser: gnu │
+
+                                        command │ mv -f a b
+  83: (rule (command "mv")                      │
+        (args                                   │
+         (if (or (flag "f")                     │
+                 …)                             │
+             (effect                            │ → :ask "Force move is destructive"
+              :ask "Force move is destructive") │
+           …)))                                 │
+
+Result
+
+  mv -f a b
+
+  → :ask "Force move is destructive"
+
+  config: <config-path>

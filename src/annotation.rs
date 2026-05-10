@@ -146,7 +146,6 @@ fn dim(mut doc: ADoc) -> ADoc {
 /// Build the children of a rule doc: (rule (command ...) [(context ...)] (args ...) [(effect ...)])
 ///
 /// Separates arg predicates from terminal effects and context predicates.
-/// The oracle shows these as siblings: (rule (command ...) (context ...) (args ...) (effect ...))
 fn build_rule_doc_children(
     rule: &Rule,
     command_out: (EffectResult, ADoc),
@@ -272,7 +271,6 @@ fn arg_pattern_to_doc(pattern: &ArgPattern) -> Doc<()> {
             Doc::list(cs)
         }
         ArgPattern::Forbidden(exprs) => {
-            // Render as (not (anywhere ...)) to match oracle output.
             let mut inner = vec![Doc::atom("anywhere")];
             inner.extend(exprs.iter().map(|e| e.to_doc()));
             Doc::list(vec![Doc::atom("not"), Doc::list(inner)])

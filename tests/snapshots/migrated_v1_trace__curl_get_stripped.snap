@@ -1,0 +1,26 @@
+---
+source: tests/migrated_v1_trace.rs
+expression: normalised
+---
+
+Trace
+
+  parser: gnu │
+
+                                            command │ curl https://example.com
+  65: (rule (command "curl")                        │
+        (context (and (not (flag "d"))              │
+                      (not (flag "data"))           │
+                      (not (flag "X"))              │
+                      (not (flag                    │
+                            "request"))))           │
+        (effect                                     │ → :allow "GET request (no mutating flags)"
+         :allow "GET request (no mutating flags)")) │
+
+Result
+
+  curl https://example.com
+
+  → :allow "GET request (no mutating flags)"
+
+  config: <config-path>

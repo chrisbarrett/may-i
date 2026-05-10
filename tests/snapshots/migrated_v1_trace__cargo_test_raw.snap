@@ -1,0 +1,36 @@
+---
+source: tests/migrated_v1_trace.rs
+expression: normalised
+---
+
+[1mTrace[0m
+
+  [2mparser:[0m gnu [2m│[0m
+
+                                  [2mcommand[0m [2m│[0m [1mcargo test[0m
+  [2m95: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"cargo"[0m[2m)[0m             [2m│[0m
+        [2m([0m[34margs[0m [2m([0m[34mif[0m [2m([0m[34mexact[0m[2m)[0m                 [2m│[0m
+                  [2m…[0m                       [2m│[0m
+                [2m([0m[34mpositional[0m               [2m│[0m
+                 [2m([0m? [32m"affected"[0m[2m)[0m           [2m│[0m
+                 [2m([0m?                       [2m│[0m
+                  [2m([0mor [32m"watch"[0m [32m"run"[0m [32m"r"[0m[2m)[0m[2m)[0m [2m│[0m
+                 [2m([0m? [32m"--"[0m[2m)[0m                 [2m│[0m
+                 [2m([0m[34mcond[0m                    [2m│[0m
+                  [2m([0m[2m([0mor [32m"install"[0m          [2m│[0m
+                       [32m"uninstall"[0m[2m)[0m       [2m│[0m
+                   [2m([0mdeny[2m)[0m[2m)[0m                [2m│[0m
+                  [2m([0m[2m([0mor [32m"build"[0m            [2m│[0m
+                       [32m"b"[0m                [2m│[0m
+                       [2m…[0m                  [2m│[0m
+                       [32m"clippy"[0m[2m)[0m          [2m│[0m
+                   [2m([0mallow[2m)[0m[2m)[0m[2m)[0m              [2m│[0m [2m[0m[2m→[0m [1;32m:allow[0m
+                 [2m([0m[34meffect[0m [94m:allow[0m[2m)[0m[2m)[0m[2m)[0m[2m)[0m[2m)[0m      [2m│[0m
+
+[1mResult[0m
+
+  [4;32mcargo test[0m
+
+  [2m→[0m [1;32m:allow[0m
+
+  config: <config-path>

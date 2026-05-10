@@ -1,0 +1,25 @@
+---
+source: tests/migrated_v1_trace.rs
+expression: normalised
+---
+
+Trace
+
+  parser: gnu │
+
+                                               command │ brew install foo
+  74: (rule (command "brew")                           │
+        (args                                          │
+         (cond                                         │
+          ((positional "install")                      │ "install" = "install" → yes
+           (effect                                     │ → :deny "Package installation not allowed"
+            :deny "Package installation not allowed")) │
+          …)))                                         │
+
+Result
+
+  brew install foo
+
+  → :deny "Package installation not allowed"
+
+  config: <config-path>

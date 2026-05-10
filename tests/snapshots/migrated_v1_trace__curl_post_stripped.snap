@@ -1,0 +1,29 @@
+---
+source: tests/migrated_v1_trace.rs
+expression: normalised
+---
+
+Trace
+
+  parser: gnu │
+
+                                              command │ curl -d data https://example.com
+  65: (rule (command "curl")                          │
+        (context (and (not (flag "d"))                │
+                      …                               │
+                      …                               │
+                      …))                             │
+        (allow                                        │ → :allow "GET request (no mutating flags)"
+         "GET request (no mutating flags)"))          │
+                                                      │
+  69: (rule (command "curl")                          │
+        (effect                                       │ → :ask "Network operation requires approval"
+         :ask "Network operation requires approval")) │
+
+Result
+
+  curl -d data https://example.com
+
+  → :ask "Network operation requires approval"
+
+  config: <config-path>

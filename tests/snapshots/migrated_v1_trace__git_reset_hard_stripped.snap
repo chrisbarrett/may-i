@@ -1,0 +1,24 @@
+---
+source: tests/migrated_v1_trace.rs
+expression: normalised
+---
+
+Trace
+
+  parser: gnu │
+
+                               command │ git reset --hard
+  43: (rule (command "git")            │
+        (context (and                  │
+                  (positional "reset") │ "reset" = "reset" → yes
+                  (flag "hard")))      │
+        (effect                        │ → :ask "Dangerous git reset"
+         :ask "Dangerous git reset"))  │
+
+Result
+
+  git reset --hard
+
+  → :ask "Dangerous git reset"
+
+  config: <config-path>

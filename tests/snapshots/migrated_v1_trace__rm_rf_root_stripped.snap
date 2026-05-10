@@ -1,0 +1,24 @@
+---
+source: tests/migrated_v1_trace.rs
+expression: normalised
+---
+
+Trace
+
+  parser: gnu │
+
+                                        command │ rm -rf /
+  24: (rule (command "rm")                      │
+        (context (and (or (flag "r")            │
+                          …)                    │
+                      (anywhere "/")))          │
+        (effect                                 │ → :deny "Recursive deletion from root"
+         :deny "Recursive deletion from root")) │
+
+Result
+
+  rm -rf /
+
+  → :deny "Recursive deletion from root"
+
+  config: <config-path>

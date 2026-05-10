@@ -1,0 +1,25 @@
+---
+source: tests/migrated_v1_trace.rs
+expression: normalised
+---
+
+Trace
+
+  parser: gnu │
+
+                               command │ brew list
+  74: (rule (command "brew")           │
+        (args (cond                    │
+               ((positional "install") │ "list" = "install" → no
+                …)                     │
+               ((positional            │
+                 (or "list" "search")) │ "list" = "list" → yes
+                (effect :allow)))))    │ → :allow
+
+Result
+
+  brew list
+
+  → :allow
+
+  config: <config-path>

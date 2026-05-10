@@ -1,6 +1,6 @@
-;;; Reduced V1 config fixture for oracle snapshot tests.
+;;; Reduced v1 config fixture for trace-render snapshot tests.
 ;;;
-;;; Covers the key V1 syntax patterns:
+;;; Covers the key v1 syntax patterns:
 ;;;   - (command ...) wrapper
 ;;;   - (args ...) wrapper with (effect ...) as sibling
 ;;;   - (or ...) command patterns
