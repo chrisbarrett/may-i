@@ -558,7 +558,7 @@ mod tests {
             // A kv row contains "<label> │"; ensure label is its own token.
             let trimmed = l.trim_start();
             trimmed.split_once('│').and_then(|(left, _)| {
-                if left.trim_end().split_whitespace().last() == Some(label) {
+                if left.split_whitespace().last() == Some(label) {
                     Some((i, l.to_string()))
                 } else {
                     None
