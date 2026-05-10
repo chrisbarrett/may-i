@@ -39,7 +39,7 @@ pub fn cmd_eval(
                 return Ok(());
             }
             GateOutcome::Proceed { config, .. } => {
-                loaded.config = config;
+                loaded.config = *config;
             }
         }
 
@@ -88,7 +88,7 @@ pub fn cmd_eval(
         let config = std::mem::take(&mut loaded.config);
         match trust_gate::evaluate(config, command, GateMode::Text) {
             GateOutcome::Proceed { config, advisory } => {
-                loaded.config = config;
+                loaded.config = *config;
                 if let Some(layout) = advisory {
                     output::write_layout(&mut std::io::stderr(), &layout, &term);
                 }

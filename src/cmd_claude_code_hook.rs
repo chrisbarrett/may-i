@@ -42,7 +42,7 @@ pub(crate) fn cmd_claude_code_hook(config_path: Option<&std::path::Path>) -> mie
             return Ok(());
         }
         GateOutcome::Proceed { config, .. } => {
-            loaded.config = config;
+            loaded.config = *config;
         }
     }
 

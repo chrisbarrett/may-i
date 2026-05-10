@@ -5,7 +5,6 @@
 
 mod common;
 
-use common::may_i;
 use predicates::prelude::*;
 use tempfile::TempDir;
 

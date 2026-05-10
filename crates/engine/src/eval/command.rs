@@ -145,7 +145,7 @@ fn evaluate_command_inner<F: EvalFold>(
 mod tests {
     use super::*;
     use may_i_core::Span;
-    use may_i_core::ast::{Config, Effect, SecurityConfig, Spanned};
+    use may_i_core::ast::{Config, Effect, Spanned};
     use may_i_core::pattern::CommandPattern;
 
     fn spanned<T>(value: T) -> Spanned<T> {
@@ -460,7 +460,7 @@ mod tests {
             result
                 .segment_decisions
                 .iter()
-                .any(|other| !std::ptr::eq(*&other, deny)
+                .any(|other| !std::ptr::eq(other, deny)
                     && other.start <= deny.start
                     && other.end >= deny.end
                     && (other.start < deny.start || other.end > deny.end)),
@@ -502,7 +502,7 @@ mod tests {
             .iter()
             .filter(|s| {
                 !decisions.iter().any(|other| {
-                    !std::ptr::eq(*&other, *s)
+                    !std::ptr::eq(other, *s)
                         && other.start <= s.start
                         && other.end >= s.end
                         && (other.start < s.start || other.end > s.end)

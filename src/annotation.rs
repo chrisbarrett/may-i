@@ -1511,10 +1511,10 @@ mod tests {
 
     fn extract_cond_doc(entries: &[TraceEntry]) -> &ADoc {
         for entry in entries {
-            if let TraceEntry::Rule { doc, .. } = entry {
-                if let Some(cond_doc) = find_doc_by_head(doc, "cond") {
-                    return cond_doc;
-                }
+            if let TraceEntry::Rule { doc, .. } = entry
+                && let Some(cond_doc) = find_doc_by_head(doc, "cond")
+            {
+                return cond_doc;
             }
         }
         panic!("no cond doc found in trace entries");

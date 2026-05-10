@@ -808,8 +808,7 @@ mod tokenisation_properties {
             let split = split_outer_tail(&args, &after_token);
             match split.tail {
                 Some(tail) => {
-                    let mut combined: Vec<String> =
-                        split.outer.iter().cloned().collect();
+                    let mut combined: Vec<String> = split.outer.to_vec();
                     combined.push("--".to_string());
                     combined.extend(tail.iter().cloned());
                     prop_assert_eq!(combined, args.clone());

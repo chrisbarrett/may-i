@@ -84,9 +84,10 @@ fn fmt_readonly_file_skipped_with_warning() {
         .stderr(predicate::str::contains("not writable"));
 
     // Restore permissions so tempfile cleanup works on macOS.
-    let mut perms = std::fs::metadata(ro.path()).unwrap().permissions();
-    perms.set_readonly(false);
-    std::fs::set_permissions(ro.path(), perms).unwrap();
+    // Use PermissionsExt explicitly: set_readonly(false) is world-writable,
+    // which clippy correctly flags. We want the original 0o644 mode back.
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(ro.path(), std::fs::Permissions::from_mode(0o644)).unwrap();
 
     drop(result);
 

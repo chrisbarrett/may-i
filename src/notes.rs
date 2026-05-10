@@ -52,7 +52,7 @@ pub fn migration_note(
 mod tests {
     use super::*;
     use may_i_config::LoadResult;
-    use may_i_core::ast::{Config, SecurityConfig};
+    use may_i_core::ast::Config;
     use std::path::PathBuf;
 
     fn loaded_with_pre_migration() -> LoadResult {

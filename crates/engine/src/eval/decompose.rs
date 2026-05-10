@@ -367,7 +367,7 @@ mod tests {
     #[test]
     fn decompose_dynamic_command_name() {
         let units = decompose_input("$EDITOR file.txt");
-        assert!(units.len() >= 1);
+        assert!(!units.is_empty());
         assert!(
             matches!(&units[0], EvalUnit::DynamicCommand { reason, .. } if reason.contains("$EDITOR"))
         );

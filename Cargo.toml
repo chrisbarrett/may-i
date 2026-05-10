@@ -5,6 +5,14 @@ exclude = ["fuzz"]
 [workspace.lints.rust]
 unreachable_pub = "warn"
 
+[workspace.lints.clippy]
+# CstNode is recursive via ShapeF<Box<CstNode>>, so Vec<Box<CstNode>>
+# is the natural carrier shape — items flow into ShapeF without re-boxing.
+vec_box = "allow"
+# Test fixtures and proptest strategies use tuple types that triple-nest
+# generic types; factoring into named aliases adds noise without clarity.
+type_complexity = "allow"
+
 [lints]
 workspace = true
 

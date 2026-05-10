@@ -365,27 +365,6 @@ impl ArgPattern {
     pub(crate) fn forbidden(exprs: Vec<Expr<Effect>>) -> Self {
         ArgPattern::Forbidden(exprs)
     }
-
-    #[cfg(test)]
-    pub(crate) fn flag(names: Vec<String>) -> Self {
-        ArgPattern::Flag { names }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn parameter_match(names: Vec<String>, form: Expr<Effect>) -> Self {
-        ArgPattern::Parameter {
-            names,
-            form: ParameterForm::Match(form),
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn parameter_may_i(names: Vec<String>) -> Self {
-        ArgPattern::Parameter {
-            names,
-            form: ParameterForm::MayI,
-        }
-    }
 }
 
 /// Classify a flag name as short (single character) or long (multi character).

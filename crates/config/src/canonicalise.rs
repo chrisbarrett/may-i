@@ -27,6 +27,11 @@ pub fn canonicalise_forms(forms: Vec<Box<CstNode>>) -> Vec<Box<CstNode>> {
 }
 
 /// Apply canonical ordering recursively to a single CST node.
+///
+/// Takes `Box<CstNode>` because callers iterate over `Vec<Box<CstNode>>`
+/// from `ShapeF<Box<CstNode>>`'s children — accepting `Box` directly avoids
+/// an unbox/rebox at every call site.
+#[allow(clippy::boxed_local)]
 pub fn canonicalise_node(node: Box<CstNode>) -> Box<CstNode> {
     let CstNode { ann, shape } = *node;
     let new_shape = match shape {
@@ -499,7 +504,7 @@ mod tests {
         ) {
             // Deterministic shuffle from the seed.
             let mut rng = seed;
-            fn shuffle<T>(v: &mut Vec<T>, rng: &mut u64) {
+            fn shuffle<T>(v: &mut [T], rng: &mut u64) {
                 for i in (1..v.len()).rev() {
                     *rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
                     let j = (*rng as usize) % (i + 1);

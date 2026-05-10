@@ -23,7 +23,7 @@ hooks = [
   {
     id = "cargo-clippy-affected",
     name = "cargo clippy (affected)",
-    entry = "cargo affected --verbose --staged clippy --fix --allow-dirty -- -D warnings",
+    entry = "cargo affected --verbose --staged clippy -- -D warnings",
     language = "system",
     types = ["rust"],
     pass_filenames = false,
@@ -52,7 +52,7 @@ hooks = [
   {
     id = "cargo-clippy-full",
     name = "cargo clippy (full)",
-    entry = "cargo clippy --workspace --fix --allow-dirty -- -D warnings",
+    entry = "cargo clippy --workspace --all-targets -- -D warnings",
     language = "system",
     types = ["rust"],
     pass_filenames = false,

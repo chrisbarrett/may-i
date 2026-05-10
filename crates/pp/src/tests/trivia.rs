@@ -198,7 +198,7 @@ fn cascade_does_not_drift_in_nested_form() {
     let cccc_line = lines
         .iter()
         .find(|l| l.trim_start().starts_with("cccc"))
-        .expect(&format!("cccc must be on its own line: {result:?}"));
+        .unwrap_or_else(|| panic!("cccc must be on its own line: {result:?}"));
     let cccc_col = cccc_line.len() - cccc_line.trim_start().len();
     let head_line = lines[0];
     let x_col = head_line

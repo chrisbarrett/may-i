@@ -28,12 +28,16 @@ pub enum GateMode {
 }
 
 /// Outcome of a Trust evaluation.
+///
+/// `Proceed` carries a full `Config` (the trust-filtered rule set) and an
+/// optional `Layout` for the advisory. Boxed because the variants are
+/// asymmetric in size; clippy's `large_enum_variant` lint flags the gap.
 pub enum GateOutcome {
     /// Continue with evaluation. The carried `config` has untrusted Loaded
     /// rules removed; the optional `advisory` is a pre-built warning layout
     /// for the caller to render where appropriate (text mode only).
     Proceed {
-        config: Config,
+        config: Box<Config>,
         advisory: Option<Layout>,
     },
     /// Block: the gate has decided that the command must not run.
@@ -62,7 +66,10 @@ fn evaluate_text(mut config: Config) -> GateOutcome {
     if let Some(store) = load_store() {
         trust_advisory::filter_trusted_rules(&mut config, &store);
     }
-    GateOutcome::Proceed { config, advisory }
+    GateOutcome::Proceed {
+        config: Box::new(config),
+        advisory,
+    }
 }
 
 fn evaluate_json(mut config: Config, command: &str) -> GateOutcome {
@@ -73,7 +80,7 @@ fn evaluate_json(mut config: Config, command: &str) -> GateOutcome {
         trust_advisory::filter_trusted_rules(&mut config, &store);
     }
     GateOutcome::Proceed {
-        config,
+        config: Box::new(config),
         advisory: None,
     }
 }
@@ -86,7 +93,7 @@ fn evaluate_hook(mut config: Config, command: &str) -> GateOutcome {
         trust_advisory::filter_trusted_rules(&mut config, &store);
     }
     GateOutcome::Proceed {
-        config,
+        config: Box::new(config),
         advisory: None,
     }
 }
@@ -219,7 +226,7 @@ mod tests {
 
     use std::path::PathBuf;
 
-    use may_i_core::ast::{Config, Effect, Provenance, Rule, SecurityConfig, Spanned};
+    use may_i_core::ast::{Config, Effect, Provenance, Rule, Spanned};
     use may_i_core::pattern::CommandPattern;
     use may_i_core::span::Span;
     use may_i_engine::trust::{canonical_rule, hash_rule};
