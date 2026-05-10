@@ -309,8 +309,8 @@ pub enum ParameterForm {
     /// Supports literals, regex, wildcard, fact-bind, and `and`/`or`/`not`/`cond`.
     Match(Expr<Effect>),
     /// Treat the flag value as a command line and recurse via the evaluator,
-    /// the same way `(may-i …)` does over its arg slice.
-    MayI,
+    /// the same way `(authorise)` does over its host context.
+    Authorise,
 }
 
 impl ArgPattern {

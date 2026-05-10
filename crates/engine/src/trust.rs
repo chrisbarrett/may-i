@@ -235,34 +235,9 @@ fn canonical_effect(effect: &Effect) -> String {
             }
             format!("({})", parts.join(" "))
         }
-        Effect::MayI { pattern } => {
-            // The bare `(authorise)` form (the common case after migration)
-            // canonicalises as `(authorise)` — the new surface verb. Any
-            // non-trivial pattern keeps the legacy `(may-i …)` rendering
-            // until those forms also retire.
-            if is_wildcard_positional(pattern) {
-                "(authorise)".to_string()
-            } else {
-                format!("(may-i {})", canonical_arg_pattern(pattern))
-            }
-        }
+        Effect::Authorise => "(authorise)".to_string(),
         _ => "<unknown>".to_string(),
     }
-}
-
-/// True if `pattern` is `(positional *)` — the canonical wildcard
-/// continuation that `(authorise)` resolves to internally.
-fn is_wildcard_positional(pattern: &ArgPattern) -> bool {
-    matches!(
-        pattern,
-        ArgPattern::Ordered {
-            mode: MatchMode::Positional,
-            patterns,
-            continuation: None,
-        } if patterns.len() == 1
-            && patterns[0].quantifier == Quantifier::One
-            && matches!(patterns[0].pattern, Expr::Wildcard)
-    )
 }
 
 fn canonical_command_pattern(pat: &CommandPattern) -> String {
@@ -342,7 +317,7 @@ fn canonical_arg_pattern(pat: &ArgPattern) -> String {
 fn canonical_parameter_form(form: &may_i_core::pattern::ParameterForm) -> String {
     match form {
         may_i_core::pattern::ParameterForm::Match(expr) => canonical_expr(expr),
-        may_i_core::pattern::ParameterForm::MayI => "(authorise)".to_string(),
+        may_i_core::pattern::ParameterForm::Authorise => "(authorise)".to_string(),
     }
 }
 

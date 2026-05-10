@@ -13,7 +13,7 @@ proptest! {
     // produces the same result as the convenience evaluate_effect wrapper.
     #[test]
     fn pure_fold_is_identity(
-        effect in any_effect(2).prop_filter("no MayI", |e| !contains_may_i(e)),
+        effect in any_effect(2).prop_filter("no Authorise", |e| !contains_authorise(e)),
         data in any_eval_context_data(),
     ) {
         let (cmd, args, facts) = data;
@@ -332,26 +332,28 @@ proptest! {
     }
 }
 
-fn contains_may_i(effect: &Effect) -> bool {
+fn contains_authorise(effect: &Effect) -> bool {
     match effect {
-        Effect::MayI { .. } => true,
+        Effect::Authorise => true,
         Effect::And { effects } | Effect::Or { effects } => {
-            effects.iter().any(|e| contains_may_i(&e.value))
+            effects.iter().any(|e| contains_authorise(&e.value))
         }
-        Effect::Not { effect } => contains_may_i(&effect.value),
+        Effect::Not { effect } => contains_authorise(&effect.value),
         Effect::When { effect, .. } | Effect::Unless { effect, .. } => {
-            contains_may_i(&effect.value)
+            contains_authorise(&effect.value)
         }
         Effect::If {
             then_effect,
             else_effect,
             ..
-        } => contains_may_i(&then_effect.value) || contains_may_i(&else_effect.value),
+        } => contains_authorise(&then_effect.value) || contains_authorise(&else_effect.value),
         Effect::Cond {
             branches, fallback, ..
         } => {
-            branches.iter().any(|(_, e)| contains_may_i(&e.value))
-                || fallback.as_ref().is_some_and(|f| contains_may_i(&f.value))
+            branches.iter().any(|(_, e)| contains_authorise(&e.value))
+                || fallback
+                    .as_ref()
+                    .is_some_and(|f| contains_authorise(&f.value))
         }
         _ => false,
     }

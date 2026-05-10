@@ -324,9 +324,7 @@ impl<'a> Arbitrary<'a> for Effect {
                 then_effect: Box::new(Spanned::arbitrary(u)?),
                 else_effect: Box::new(Spanned::arbitrary(u)?),
             }),
-            _ => Ok(Effect::MayI {
-                pattern: ArgPattern::arbitrary(u)?,
-            }),
+            _ => Ok(Effect::Authorise),
         }
     }
 }

@@ -126,9 +126,8 @@ pub fn any_effect(depth: u32) -> BoxedStrategy<Effect> {
                         then_effect: Box::new(then_eff),
                         else_effect: Box::new(else_eff),
                     }),
-                // MayI recursive
-                any_arg_pattern(depth.saturating_sub(1))
-                    .prop_map(|pattern| Effect::MayI { pattern }),
+                // Authorise recursive
+                Just(Effect::Authorise).boxed(),
             ]
         })
         .boxed()

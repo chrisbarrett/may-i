@@ -267,17 +267,7 @@ fn positional_with_fact_binding_binds_for_continuation() {
             pattern: bind_expr,
             recursive: false,
         }],
-        continuation: Some(Box::new(Effect::MayI {
-            pattern: ArgPattern::Ordered {
-                mode: MatchMode::Positional,
-                patterns: vec![PositionalArg {
-                    quantifier: Quantifier::One,
-                    pattern: Expr::Wildcard,
-                    recursive: false,
-                }],
-                continuation: None,
-            },
-        })),
+        continuation: Some(Box::new(Effect::Authorise)),
     };
 
     // Test that the pattern structure is correct
@@ -832,17 +822,11 @@ fn match_expr_with_binding_or_all_fail() {
 #[test]
 fn may_i_pushes_via_fact() {
     use may_i_core::ast::{Predicate, Rule, Spanned};
-    use may_i_core::pattern::{ArgPattern, CommandPattern};
+    use may_i_core::pattern::CommandPattern;
     use may_i_core::span::Span;
 
     let s = Span::new(0, 1);
-    let may_i_effect = Effect::MayI {
-        pattern: ArgPattern::Ordered {
-            mode: MatchMode::Positional,
-            patterns: vec![],
-            continuation: None,
-        },
-    };
+    let may_i_effect = Effect::Authorise;
 
     // Rule for "rm": (when (fact? [:via "sudo"]) :deny)
     let inner_rule = Rule::new(
@@ -897,17 +881,11 @@ fn may_i_pushes_via_fact() {
 #[test]
 fn may_i_nested_wrappers_accumulate_via() {
     use may_i_core::ast::{Predicate, Rule, Spanned};
-    use may_i_core::pattern::{ArgPattern, CommandPattern};
+    use may_i_core::pattern::CommandPattern;
     use may_i_core::span::Span;
 
     let s = Span::new(0, 1);
-    let may_i_effect = Effect::MayI {
-        pattern: ArgPattern::Ordered {
-            mode: MatchMode::Positional,
-            patterns: vec![],
-            continuation: None,
-        },
-    };
+    let may_i_effect = Effect::Authorise;
 
     // Rule for "rm": (when (and (fact? [:via "sudo"]) (fact? [:via "ssh"])) :deny)
     let inner_rule = Rule::new(

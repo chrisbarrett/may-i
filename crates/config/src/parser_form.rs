@@ -267,7 +267,7 @@ fn parse_names(args: &[Sexpr], tag: &str, span: may_i_core::Span) -> Result<Vec<
 /// declaration. The body is exactly one form, and its head determines
 /// whether it sets the value treatment or the capture-shape:
 ///
-/// - `(authorise)` — value treatment is [`ParameterTreatment::MayI`].
+/// - `(authorise)` — value treatment is [`ParameterTreatment::Authorise`].
 /// - `(many-till PAT)` — capture-shape is multi-token until PAT matches.
 fn parse_parameter_body(sexpr: &Sexpr) -> Result<(ParameterTreatment, Capture), RawError> {
     let list = sexpr.as_list().ok_or_else(|| {
@@ -290,7 +290,7 @@ fn parse_parameter_body(sexpr: &Sexpr) -> Result<(ParameterTreatment, Capture), 
                     sexpr.span(),
                 ));
             }
-            Ok((ParameterTreatment::MayI, Capture::Single))
+            Ok((ParameterTreatment::Authorise, Capture::Single))
         }
         "may-i" => Err(RawError::new(
             "(may-i …) is retired; use (authorise) inside the parameter body",
@@ -391,7 +391,7 @@ mod tests {
             r#"(parser "bash" (style gnu) (parameter "c" (authorise)))"#,
         ))
         .unwrap();
-        assert_eq!(p.parameters[0].treatment, ParameterTreatment::MayI);
+        assert_eq!(p.parameters[0].treatment, ParameterTreatment::Authorise);
     }
 
     #[test]

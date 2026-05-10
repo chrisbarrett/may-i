@@ -211,7 +211,7 @@ pub(crate) fn evaluate_effect_fold<F: EvalFold>(
         }
 
         // Recursion
-        Effect::MayI { pattern } => match extract_inner_command(ctx.args) {
+        Effect::Authorise => match extract_inner_command(ctx.args) {
             Some((inner_cmd, inner_args)) => {
                 let mut inner_facts = ctx.facts.clone();
                 inner_facts.insert_scalar(Keyword::new(":via").unwrap(), ctx.command);
@@ -242,9 +242,9 @@ pub(crate) fn evaluate_effect_fold<F: EvalFold>(
                     },
                     inner_result.clone(),
                 );
-                fold.effect_may_i(pattern, &inner_cmd, &inner_args, inner_result, inner_out)
+                fold.effect_authorise(&inner_cmd, &inner_args, inner_result, inner_out)
             }
-            None => fold.effect_may_i_no_match(pattern),
+            None => fold.effect_authorise_no_match(),
         },
         _ => unreachable!("unknown Effect variant"),
     })
@@ -636,7 +636,7 @@ fn evaluate_parameter_fold<F: EvalFold>(
             may_i_core::ast::Capture::ManyTill { terminator } => Some(terminator.clone()),
             _ => None,
         });
-    if matches!(form, ParameterForm::MayI)
+    if matches!(form, ParameterForm::Authorise)
         && let Some(terminator) = many_till
     {
         let values = find_many_till_values_with_parser(outer_args, names, &ctx.parser, &terminator);
@@ -653,7 +653,7 @@ fn evaluate_parameter_fold<F: EvalFold>(
     let value = find_parameter_value_with_parser(outer_args, names, &ctx.parser);
     let matched = value.is_some() && parameter_form_matches(form, value.as_deref().unwrap_or(""));
     if let Some(value) = value
-        && let ParameterForm::MayI = form
+        && let ParameterForm::Authorise = form
     {
         // (parameter X (authorise)) single-token capture — recurse with the
         // value parsed as a command line.
@@ -673,7 +673,7 @@ fn evaluate_parameter_fold<F: EvalFold>(
 ///
 /// Joins the value into a parsed `(command, args)` tuple, runs it through
 /// the evaluator under a fresh context with `:via` set, and emits an
-/// `effect_may_i` so the trace shows the recursion. Used by both the
+/// `effect_authorise` so the trace shows the recursion. Used by both the
 /// single-token capture path and the per-occurrence many-till path.
 fn recurse_into_inner_command<F: EvalFold>(
     fold: &mut F,
@@ -712,13 +712,7 @@ fn recurse_into_inner_command<F: EvalFold>(
         },
         inner_result.clone(),
     );
-    Ok(fold.effect_may_i(
-        &may_i_core::pattern::ArgPattern::positional(vec![]),
-        &inner_cmd,
-        &inner_args,
-        inner_result,
-        inner_out,
-    ))
+    Ok(fold.effect_authorise(&inner_cmd, &inner_args, inner_result, inner_out))
 }
 
 /// Evaluate `(parameter NAME (authorise))` against a many-till capture
@@ -846,7 +840,7 @@ fn find_many_till_values_with_parser(
 fn parameter_form_matches(form: &ParameterForm, value: &str) -> bool {
     match form {
         ParameterForm::Match(expr) => expr.is_match(value),
-        ParameterForm::MayI => false, // handled in caller
+        ParameterForm::Authorise => false, // handled in caller
     }
 }
 

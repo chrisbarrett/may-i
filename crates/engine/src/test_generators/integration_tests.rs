@@ -107,13 +107,7 @@ fn recursive_may_i_with_context() {
                 command_effect: spanned(Effect::CommandPattern(CommandPattern::Literal(
                     "wrapper".into(),
                 ))),
-                effect: spanned(Effect::MayI {
-                    pattern: may_i_core::pattern::ArgPattern::Ordered {
-                        mode: MatchMode::Positional,
-                        patterns: vec![],
-                        continuation: None,
-                    },
-                }),
+                effect: spanned(Effect::Authorise),
                 checks: vec![],
                 span: dummy_span(),
                 provenance: may_i_core::ast::Provenance::PrimaryConfig,

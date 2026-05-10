@@ -71,7 +71,7 @@ pub(crate) fn evaluate_at_depth<F: EvalFold>(
     let mut parser_recursion: Option<EvalResult> = None;
     let mut recursion_facts = facts.clone();
     for decl in &parser.parameters {
-        if decl.treatment != ParameterTreatment::MayI {
+        if decl.treatment != ParameterTreatment::Authorise {
             continue;
         }
         let Some(value) =
