@@ -157,7 +157,12 @@ pub(super) fn render_broken_delim<A: Clone + TriviaSource>(
     let mut n_inline = 0;
 
     let remaining_count = children.len() - 1;
+    let mut skip_next = false;
     for (i, child) in children[1..].iter().enumerate() {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
         let mut buf = EventBuffer::new();
         render(child, col + 1, width, dimmed, &mut buf);
         // Don't inline a multiline child if there are more children
@@ -193,6 +198,7 @@ pub(super) fn render_broken_delim<A: Clone + TriviaSource>(
             if !vbuf.is_multiline() && col + 1 + vw <= width {
                 n_inline += 1;
                 col += 1 + vw;
+                skip_next = true;
             }
         }
     }

@@ -344,7 +344,7 @@ fn parse_parameter_form_body(sexpr: &Sexpr) -> Result<ParameterForm, RawError> {
                     sexpr.span(),
                 ));
             }
-            return Ok(ParameterForm::MayI);
+            return Ok(ParameterForm::Authorise);
         }
         if tag == "may-i" {
             return Err(RawError::new(
@@ -613,7 +613,7 @@ mod tests {
         match pattern {
             ArgPattern::Parameter { names, form } => {
                 assert_eq!(names, vec!["c".to_string()]);
-                assert!(matches!(form, ParameterForm::MayI));
+                assert!(matches!(form, ParameterForm::Authorise));
             }
             _ => panic!("expected Parameter"),
         }

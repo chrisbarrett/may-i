@@ -283,7 +283,7 @@ fn arg_pattern_to_doc(pattern: &ArgPattern) -> Doc<()> {
             let names_doc = flag_names_to_doc(names);
             let form_doc = match form {
                 may_i_core::pattern::ParameterForm::Match(expr) => expr.to_doc(),
-                may_i_core::pattern::ParameterForm::MayI => {
+                may_i_core::pattern::ParameterForm::Authorise => {
                     Doc::list(vec![Doc::atom("may-i"), Doc::atom("*")])
                 }
             };
@@ -943,9 +943,8 @@ impl EvalFold for TracingFold {
         });
     }
 
-    fn effect_may_i(
+    fn effect_authorise(
         &mut self,
-        pattern: &ArgPattern,
         inner_cmd: &str,
         inner_args: &[String],
         inner_result: EffectResult,
@@ -968,8 +967,7 @@ impl EvalFold for TracingFold {
             EffectResult::Decision(d, r) => (*d, r.clone()),
             EffectResult::Nil => (Decision::Ask, None),
         };
-        let doc = unannotated_to_ann(arg_pattern_to_doc(pattern));
-        let docs = vec![plain_atom("may-i"), doc];
+        let docs = vec![plain_atom("authorise")];
         let ann = Some(Ann::MayI {
             inner_command: cmd_str,
             decision,
@@ -978,10 +976,8 @@ impl EvalFold for TracingFold {
         (inner_result, ann_list(docs, ann))
     }
 
-    fn effect_may_i_no_match(&mut self, pattern: &ArgPattern) -> Self::EffectOut {
-        let doc = unannotated_to_ann(arg_pattern_to_doc(pattern));
-        let docs = vec![plain_atom("may-i"), dim(doc)];
-        (EffectResult::Nil, ann_list(docs, None))
+    fn effect_authorise_no_match(&mut self) -> Self::EffectOut {
+        (EffectResult::Nil, plain_atom("(authorise)"))
     }
 
     fn predicate_fact(

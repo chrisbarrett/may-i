@@ -233,9 +233,12 @@ mod tests {
     #[test]
     fn wrapper_nix_shell_develop() {
         let v1 = r#"(wrapper "nix" (positional (or "shell" "develop")) (flag "--command" :command+args))"#;
+        // The prelude declares `(parser "nix" (style gnu) (tail (after
+        // ["--command" "-c"])))`, so `strip_redundant_boundary` removes
+        // the literal `"--command"` from the migrated positional pattern.
         assert_migrates_to(
             v1,
-            r#"(rule "nix" (when (positional (or "shell" "develop") "--command") (tail (authorise))))"#,
+            r#"(rule "nix" (when (positional (or "shell" "develop")) (tail (authorise))))"#,
         );
     }
 

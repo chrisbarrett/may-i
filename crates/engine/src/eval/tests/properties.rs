@@ -688,9 +688,8 @@ fn cond_short_circuits_predicates_after_first_match() {
         ) -> EffectResult {
             cont
         }
-        fn effect_may_i(
+        fn effect_authorise(
             &mut self,
-            _: &ArgPattern,
             _: &str,
             _: &[String],
             _: EffectResult,
@@ -698,7 +697,7 @@ fn cond_short_circuits_predicates_after_first_match() {
         ) -> EffectResult {
             out
         }
-        fn effect_may_i_no_match(&mut self, _: &ArgPattern) -> EffectResult {
+        fn effect_authorise_no_match(&mut self) -> EffectResult {
             EffectResult::Nil
         }
 

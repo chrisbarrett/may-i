@@ -166,10 +166,11 @@ pub enum Effect {
     },
 
     // Recursion
-    /// Recursively evaluate inner command pattern.
-    /// Returns inner decision if pattern matches, Nil otherwise.
-    /// Syntax: `(may-i PATTERN)`
-    MayI { pattern: ArgPattern },
+    /// Re-authorise the surrounding host context's captured slice as a
+    /// command line. Returns the inner decision, or Nil if there is no
+    /// inner command to recurse on. Syntax: `(authorise)` inside a host
+    /// context (`(parameter NAME (authorise))`, `(tail (authorise))`).
+    Authorise,
 }
 
 impl Effect {
@@ -208,8 +209,8 @@ impl Effect {
     }
 
     #[cfg(test)]
-    pub(crate) fn may_i(pattern: ArgPattern) -> Self {
-        Effect::MayI { pattern }
+    pub(crate) fn authorise() -> Self {
+        Effect::Authorise
     }
 
     /// Check if this is a terminal effect (Allow, Ask, or Deny).
@@ -269,7 +270,7 @@ impl std::fmt::Display for Effect {
             Effect::Unless { .. } => write!(f, "<unless-effect>"),
             Effect::If { .. } => write!(f, "<if-effect>"),
             Effect::Cond { .. } => write!(f, "<cond-effect>"),
-            Effect::MayI { .. } => write!(f, "<may-i-effect>"),
+            Effect::Authorise => write!(f, "<authorise-effect>"),
         }
     }
 }
@@ -680,10 +681,10 @@ impl StyleRegistry {
 pub enum ParameterTreatment {
     /// Register as value-bearing only — no extra processing of the value.
     None,
-    /// Re-authorise the captured value as a command line via `(may-i)`.
+    /// Re-authorise the captured value as a command line via `(authorise)`.
     /// The recursion result becomes a fact `:via NAME`; it does not
     /// short-circuit the outer rule.
-    MayI,
+    Authorise,
 }
 
 /// Capture-shape of a parameter declaration. The default is single-token
@@ -727,9 +728,10 @@ pub enum Tail {
     /// `(tail (after :flags))` — outer slice ends after the last flag or
     /// parameter is consumed; tail begins at the first non-flag token.
     AfterFlags,
-    /// `(tail (after "--"))` — outer slice ends before the literal token;
-    /// the boundary token itself is consumed.
-    AfterToken(String),
+    /// `(tail (after "TOK"))` or `(tail (after [STR…]))` — outer slice
+    /// ends before the first occurrence of any listed boundary token; the
+    /// matching token itself is consumed. The vector is non-empty.
+    AfterToken(Vec<String>),
 }
 
 /// Parsed `(parser PROGRAM (style STYLE) BODY…)` declaration. The style is
@@ -1016,7 +1018,7 @@ impl ToDoc for Effect {
             Effect::Unless { .. } => Doc::atom("<unless-effect>"),
             Effect::If { .. } => Doc::atom("<if-effect>"),
             Effect::Cond { .. } => Doc::atom("<cond-effect>"),
-            Effect::MayI { .. } => Doc::atom("<may-i-effect>"),
+            Effect::Authorise => Doc::atom("(authorise)"),
         }
     }
 }
@@ -1128,10 +1130,9 @@ mod tests {
     }
 
     #[test]
-    fn effect_may_i_creates_correctly() {
-        let pattern = ArgPattern::positional(vec![]);
-        let effect = Effect::may_i(pattern.clone());
-        assert!(matches!(effect, Effect::MayI { .. }));
+    fn effect_authorise_creates_correctly() {
+        let effect = Effect::authorise();
+        assert!(matches!(effect, Effect::Authorise));
     }
 
     #[test]
@@ -1548,12 +1549,9 @@ mod tests {
     }
 
     #[test]
-    fn effect_to_doc_may_i_placeholder() {
-        let doc = Effect::MayI {
-            pattern: ArgPattern::positional(vec![]),
-        }
-        .to_doc();
-        assert_eq!(doc_text(&doc), "<may-i-effect>");
+    fn effect_to_doc_authorise() {
+        let doc = Effect::Authorise.to_doc();
+        assert_eq!(doc_text(&doc), "(authorise)");
     }
 
     fn doc_text(doc: &crate::doc::Doc) -> String {

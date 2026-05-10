@@ -262,7 +262,16 @@ side and recurse on the tail in the rule.
 `(tail (after :flags))` says "outer slice ends after the last
 flag/parameter is consumed; everything after that is the tail." Use
 `(tail (after "TOK"))` for wrappers whose inner command starts after a
-literal token.
+literal token, or `(tail (after [STR…]))` when the boundary has multiple
+spellings. The prelude's `nix` parser uses the alias-set form because
+`nix shell` and `nix develop` accept both `--command` and `-c`:
+
+```lisp
+(parser "nix" (style gnu) (tail (after ["--command" "-c"])))
+```
+
+The engine splits at the first occurrence of *any* listed token; the
+matched token is consumed.
 
 When the parser declares a tail, all argv matchers in the rule body
 (`(flag …)`, `(parameter …)`, `(positional …)`, `(anywhere …)`,
@@ -270,6 +279,14 @@ When the parser declares a tail, all argv matchers in the rule body
 only via `(tail (authorise))`. This is what closes the silent-bypass
 class: outer matchers can't accidentally claim a flag that belongs to
 the inner command.
+
+When the parser declares a tail but the boundary token is absent in the
+argv being evaluated, `(tail (authorise))` returns no-match — the rule
+does not fire, and evaluation continues with subsequent rules. This
+prevents a missing or mis-spelled boundary from silently re-running the
+rule on the full argv. The fall-back-to-full-argv behaviour applies
+only when the parser declares no `(tail …)` at all (the rule-level
+recursion idiom for non-wrapper tools).
 
 #### Worked example: `mise exec -- rm -rf /tmp/foo`
 
@@ -316,9 +333,13 @@ recurse with `rm /tmp/foo` instead of `rm -rf /tmp/foo`. The parser
 declaration is what makes the rule's promise hold.
 
 The prelude ships tail-declaring parsers for `sudo`, `env`, `timeout`,
-`time`, `su`, `ionice`, `chrt`, `xargs`, `nice`, `watch`, and `find`
-(scope: tools that ship with a regular Linux distribution). For
-anything else, write the parser yourself, like the mise example above.
+`time`, `su`, `ionice`, `chrt`, `xargs`, `nice`, `watch`, `find`, and
+`nix`. Scope: tools that ship with a regular Linux distribution, plus
+widely-used wrappers whose argv semantics are silent-bypass footguns —
+that is, where a missing or mis-spelled boundary token would let inner
+commands slip past wrapper rules. (`nix` qualifies on the second
+ground.) For anything else, write the parser yourself, like the mise
+example above.
 
 ### Parameter recursion: `(parameter NAME (authorise))`
 

@@ -196,15 +196,14 @@ pub trait EvalFold {
     /// Called once per evaluation entry with the resolved parser
     /// (style + parameter declarations). Default: no-op.
     fn record_parser(&mut self, _command: &str, _parser: &may_i_core::ast::ResolvedParser) {}
-    fn effect_may_i(
+    fn effect_authorise(
         &mut self,
-        pattern: &ArgPattern,
         inner_cmd: &str,
         inner_args: &[String],
         inner_result: EffectResult,
         inner_out: Self::EffectOut,
     ) -> Self::EffectOut;
-    fn effect_may_i_no_match(&mut self, pattern: &ArgPattern) -> Self::EffectOut;
+    fn effect_authorise_no_match(&mut self) -> Self::EffectOut;
 
     // -- Predicate algebra --
 
@@ -387,9 +386,8 @@ impl EvalFold for PureFold {
         continuation
     }
 
-    fn effect_may_i(
+    fn effect_authorise(
         &mut self,
-        _pattern: &ArgPattern,
         _inner_cmd: &str,
         _inner_args: &[String],
         _inner_result: EffectResult,
@@ -398,7 +396,7 @@ impl EvalFold for PureFold {
         inner_out
     }
 
-    fn effect_may_i_no_match(&mut self, _pattern: &ArgPattern) -> EffectResult {
+    fn effect_authorise_no_match(&mut self) -> EffectResult {
         EffectResult::Nil
     }
 

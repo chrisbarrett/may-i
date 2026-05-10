@@ -371,15 +371,10 @@ proptest! {
         };
         let rules = [inner_rule];
 
-        let may_i = Effect::MayI {
-            pattern: may_i_core::pattern::ArgPattern::Ordered { mode: MatchMode::Positional,
-                patterns: vec![],
-                continuation: None,
-            },
-        };
-        let result = eval::evaluate_effect(&may_i, &ctx, &rules).unwrap();
-        // MayI extracts inner command and evaluates it
-        prop_assert!(result.is_decision(), "MayI should produce a decision");
+        let authorise = Effect::Authorise;
+        let result = eval::evaluate_effect(&authorise, &ctx, &rules).unwrap();
+        // Authorise extracts inner command and evaluates it
+        prop_assert!(result.is_decision(), "Authorise should produce a decision");
     }
 
     // 4.2.15 Property: Recursion limit is respected

@@ -199,7 +199,7 @@ pub(super) fn evaluate_arg_pattern_predicate(
                             PredicateResult::NoMatch
                         }
                     }
-                    may_i_core::pattern::ParameterForm::MayI => PredicateResult::NoMatch,
+                    may_i_core::pattern::ParameterForm::Authorise => PredicateResult::NoMatch,
                 },
                 None => PredicateResult::NoMatch,
             }
