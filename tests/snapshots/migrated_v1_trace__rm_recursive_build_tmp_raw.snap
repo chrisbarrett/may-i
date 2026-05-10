@@ -1,5 +1,6 @@
 ---
 source: tests/migrated_v1_trace.rs
+assertion_line: 124
 expression: normalised
 ---
 
@@ -33,6 +34,18 @@ expression: normalised
                [2m([0m[34meffect[0m                                  [2m│[0m [2m[0m[2m→[0m [1;32m:allow[0m [32m"Deleting tmp files is allowed"[0m
                 [94m:allow[0m [32m"Deleting tmp files is allowed"[0m[2m)[0m [2m│[0m
              [2m…[0m[2m)[0m[2m)[0m[2m)[0m[2m)[0m                                      [2m│[0m
+                                                        [2m│[0m
+  [2m37: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"rm"[0m[2m)[0m                              [2m│[0m
+        [2m([0mcontext                                        [2m│[0m
+         [2m([0mbuild-mode                                    [2m│[0m [2mbuild-mode [0m[2m→[0m [1;32myes[0m
+          [2m([0mor                                           [2m│[0m
+           [2m([0mhas                                         [2m│[0m [33mno[0m
+            [2m[[0m[94m:claude-code/permission-mode[0m               [2m│[0m
+             [32m"acceptEdits"[0m[2m][0m[2m)[0m                            [2m│[0m
+           [2m([0mhas                                         [2m│[0m [2m"build" [0m[2m→[0m [1;32myes[0m
+            [2m[[0m[94m:opencode/agent[0m [32m"build"[0m[2m][0m[2m)[0m[2m)[0m[2m)[0m[2m)[0m               [2m│[0m
+        [2m([0m[34meffect[0m                                         [2m│[0m [2m[0m[2m→[0m [1;32m:allow[0m [32m"Non-recursive delete is allowed"[0m
+         [94m:allow[0m [32m"Non-recursive delete is allowed"[0m[2m)[0m[2m)[0m     [2m│[0m
 
 [1mResult[0m
 

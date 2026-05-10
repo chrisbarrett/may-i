@@ -370,14 +370,200 @@ fn expand_loads(
 /// Load and resolve a config file: resolve path, parse, and validate named predicates.
 ///
 /// This is the standard config loading pipeline shared by eval, check, and hook commands.
+/// After loading the primary config, repo-local discovery (per the
+/// `repo-local-config` capability) attempts to find additional `Loaded`
+/// rules from project-scoped files and splices them in.
 pub fn load_and_resolve(override_path: Option<&Path>) -> miette::Result<LoadResult> {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    load_and_resolve_with_cwd(override_path, &cwd)
+}
+
+/// Like [`load_and_resolve`] but uses an explicit `cwd` for repo-local
+/// discovery instead of `std::env::current_dir()`. Test entry point.
+pub fn load_and_resolve_with_cwd(
+    override_path: Option<&Path>,
+    cwd: &Path,
+) -> miette::Result<LoadResult> {
     let config_file = resolve_path(override_path)?;
     let mut result = load(&config_file)?;
+    splice_repo_local(&mut result, cwd)?;
     let resolved_rules =
         crate::resolve::validate_and_resolve(&result.config.rules, &result.config.defines)
             .map_err(|errs| miette::miette!("Predicate resolution failed: {}", errs[0].message))?;
     result.config.rules = resolved_rules;
     Ok(result)
+}
+
+/// Run repo-local discovery from `cwd` and splice any discovered files
+/// into the loaded config as `Loaded` rules.
+///
+/// Files already present (transitively) in the primary load tree are
+/// skipped via canonical-path dedup so a discovered file that the
+/// primary already loaded is not double-counted.
+fn splice_repo_local(result: &mut LoadResult, cwd: &Path) -> miette::Result<()> {
+    let Some(repo_root) = discover_repo_root(cwd) else {
+        return Ok(());
+    };
+    let files = discover_repo_local_files(&repo_root);
+    if files.is_empty() {
+        return Ok(());
+    }
+
+    let mut seen: HashSet<PathBuf> = HashSet::new();
+    if let Ok(p) = result.config_path.canonicalize() {
+        seen.insert(p);
+    }
+    for rule in &result.config.rules {
+        if let Some(p) = rule.provenance.path() {
+            seen.insert(p.to_path_buf());
+        }
+    }
+    for define in &result.config.defines {
+        if let Some(p) = define.provenance.path() {
+            seen.insert(p.to_path_buf());
+        }
+    }
+
+    for file in files {
+        let canonical = match file.canonicalize() {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+        if !seen.insert(canonical.clone()) {
+            continue;
+        }
+
+        let sexprs = load_file_sexprs(&canonical)?;
+        let parent = canonical.parent().ok_or_else(|| {
+            miette::miette!("cannot determine parent dir of {}", canonical.display())
+        })?;
+        let expanded = expand_loads(
+            sexprs,
+            parent,
+            &mut seen,
+            Provenance::Loaded {
+                path: canonical.clone(),
+            },
+        )?;
+        let extra = crate::parse_config_from_tagged_sexprs(&expanded).map_err(|e| {
+            miette::miette!(
+                "failed to parse repo-local file {}: {}",
+                canonical.display(),
+                e.message,
+            )
+        })?;
+        merge_config(&mut result.config, extra);
+    }
+    Ok(())
+}
+
+/// Append every rule, define, security entry, parser, and style spec
+/// from `extra` into `target`. Rules and defines preserve source order.
+fn merge_config(target: &mut may_i_core::ast::Config, extra: may_i_core::ast::Config) {
+    target.rules.extend(extra.rules);
+    target.defines.extend(extra.defines);
+    target.checks.extend(extra.checks);
+    for spec in extra.style_specs {
+        if !crate::prelude::prelude_style_specs()
+            .iter()
+            .any(|p| p.name == spec.name)
+        {
+            target.style_specs.push(spec);
+        }
+    }
+    for parser in extra.parsers {
+        if !crate::prelude::prelude_parsers()
+            .iter()
+            .any(|p| p.program == parser.program)
+        {
+            target.parsers.push(parser);
+        }
+    }
+    for var in extra.security.safe_env_vars {
+        target.security.safe_env_vars.insert(var);
+    }
+    if extra.security.has_loaded_env_vars {
+        target.security.has_loaded_env_vars = true;
+    }
+}
+
+/// Discover the repository root containing `cwd`, if any.
+///
+/// Tries `git rev-parse --show-toplevel` first (handles linked
+/// worktrees correctly). On failure walks ancestors of `cwd` looking
+/// for a `.git`, `.hg`, or `.jj` marker.
+pub fn discover_repo_root(cwd: &Path) -> Option<PathBuf> {
+    if let Some(root) = git_show_toplevel(cwd) {
+        return Some(root);
+    }
+    marker_walk(cwd)
+}
+
+fn git_show_toplevel(cwd: &Path) -> Option<PathBuf> {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(cwd)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8(output.stdout).ok()?;
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let path = PathBuf::from(trimmed);
+    path.is_dir().then_some(path)
+}
+
+fn marker_walk(cwd: &Path) -> Option<PathBuf> {
+    let mut current = cwd
+        .canonicalize()
+        .ok()
+        .or_else(|| Some(cwd.to_path_buf()))?;
+    loop {
+        for marker in [".git", ".hg", ".jj"] {
+            if current.join(marker).exists() {
+                return Some(current);
+            }
+        }
+        if !current.pop() {
+            return None;
+        }
+    }
+}
+
+/// List the project-scoped config files at `repo_root` that exist on
+/// disk, in the documented discovery order. Missing files are skipped.
+pub fn discover_repo_local_files(repo_root: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let direct = repo_root.join(".may-i.lisp");
+    if direct.is_file() {
+        out.push(direct);
+    }
+    let dir = repo_root.join(".may-i");
+    if dir.is_dir() {
+        let pattern = dir.join("**/*.lisp").display().to_string();
+        if let Ok(matches) = glob::glob(&pattern) {
+            let mut paths: Vec<PathBuf> = matches.filter_map(Result::ok).collect();
+            paths.sort();
+            out.extend(paths);
+        }
+    }
+    let local = repo_root.join(".may-i.local.lisp");
+    if local.is_file() {
+        out.push(local);
+    }
+    let claude = repo_root.join(".claude/may-i.lisp");
+    if claude.is_file() {
+        out.push(claude);
+    }
+    let claude_local = repo_root.join(".claude/may-i.local.lisp");
+    if claude_local.is_file() {
+        out.push(claude_local);
+    }
+    out
 }
 
 /// Resolve the config file path.
@@ -937,5 +1123,284 @@ mod tests {
             inner_path, expected_inner,
             "rule from inner.lisp should point to inner.lisp"
         );
+    }
+
+    // --- Repo-local discovery tests ---
+
+    fn init_git(path: &Path) {
+        std::fs::create_dir_all(path.join(".git")).unwrap();
+    }
+
+    #[test]
+    fn discover_repo_root_finds_marker_via_walk() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        init_git(&root);
+        let nested = root.join("a/b/c");
+        std::fs::create_dir_all(&nested).unwrap();
+        // Use marker walk by passing a deep cwd; git may also find it but
+        // either resolves to the same path.
+        let found = discover_repo_root(&nested).unwrap();
+        let canonical_found = found.canonicalize().unwrap();
+        assert_eq!(canonical_found, root);
+    }
+
+    #[test]
+    fn discover_repo_root_outside_repo_returns_none() {
+        let dir = tempfile::tempdir().unwrap();
+        // No marker, no git toplevel.
+        let found = discover_repo_root(dir.path());
+        // Could be None or, if running inside a repo, Some(somewhere
+        // ancestor). On a CI without a parent .git this is None. Allow
+        // both: just assert it does not pick the dir itself.
+        if let Some(p) = found {
+            assert_ne!(
+                p.canonicalize().unwrap(),
+                dir.path().canonicalize().unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn discover_repo_local_files_returns_documented_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        write_file(root, ".may-i.lisp", "");
+        write_file(root, ".may-i/cargo.lisp", "");
+        write_file(root, ".may-i/git.lisp", "");
+        write_file(root, ".may-i.local.lisp", "");
+        write_file(root, ".claude/may-i.lisp", "");
+        write_file(root, ".claude/may-i.local.lisp", "");
+        let files = discover_repo_local_files(root);
+        let names: Vec<String> = files
+            .iter()
+            .map(|p| p.strip_prefix(root).unwrap().display().to_string())
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                ".may-i.lisp",
+                ".may-i/cargo.lisp",
+                ".may-i/git.lisp",
+                ".may-i.local.lisp",
+                ".claude/may-i.lisp",
+                ".claude/may-i.local.lisp",
+            ]
+        );
+    }
+
+    #[test]
+    fn discover_repo_local_files_skips_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        write_file(root, ".may-i.lisp", "");
+        let files = discover_repo_local_files(root);
+        assert_eq!(files.len(), 1);
+    }
+
+    #[test]
+    fn load_and_resolve_with_cwd_splices_repo_local_rules() {
+        let dir = tempfile::tempdir().unwrap();
+        let primary_dir = tempfile::tempdir().unwrap();
+        let primary = write_file(
+            primary_dir.path(),
+            "primary.lisp",
+            r#"(rule "echo" (allow))"#,
+        );
+        init_git(dir.path());
+        write_file(
+            dir.path(),
+            ".may-i.lisp",
+            r#"(rule "git" (allow "from repo-local"))"#,
+        );
+
+        let result = load_and_resolve_with_cwd(Some(&primary), dir.path()).unwrap();
+        // primary echo rule + repo-local git rule
+        assert_eq!(result.config.rules.len(), 2);
+        let primary_rule = &result.config.rules[0];
+        let local_rule = &result.config.rules[1];
+        assert_eq!(
+            primary_rule.provenance,
+            Provenance::PrimaryConfig,
+            "first rule comes from primary"
+        );
+        assert!(
+            local_rule.provenance.is_loaded(),
+            "second rule comes from repo-local discovery as Loaded"
+        );
+        let expected_path = dir.path().join(".may-i.lisp").canonicalize().unwrap();
+        assert_eq!(local_rule.provenance.path().unwrap(), expected_path);
+    }
+
+    #[test]
+    fn load_and_resolve_with_cwd_no_repo_is_silent() {
+        let primary_dir = tempfile::tempdir().unwrap();
+        let primary = write_file(
+            primary_dir.path(),
+            "primary.lisp",
+            r#"(rule "echo" (allow))"#,
+        );
+        // cwd has no marker — discover_repo_root should return None (or
+        // at most an unrelated ancestor that has no .may-i files).
+        let outside = tempfile::tempdir().unwrap();
+        let result = load_and_resolve_with_cwd(Some(&primary), outside.path()).unwrap();
+        // At least the primary rule loads. Repo-local files at the
+        // discovered root (if any) are unrelated to this test's primary.
+        assert!(!result.config.rules.is_empty());
+        assert_eq!(result.config.rules[0].provenance, Provenance::PrimaryConfig);
+    }
+
+    #[test]
+    fn repo_local_glob_files_load_in_lexical_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let primary_dir = tempfile::tempdir().unwrap();
+        let primary = write_file(
+            primary_dir.path(),
+            "primary.lisp",
+            r#"(rule "echo" (allow))"#,
+        );
+        init_git(dir.path());
+        write_file(dir.path(), ".may-i/02-git.lisp", r#"(rule "git" (allow))"#);
+        write_file(
+            dir.path(),
+            ".may-i/01-cargo.lisp",
+            r#"(rule "cargo" (allow))"#,
+        );
+
+        let result = load_and_resolve_with_cwd(Some(&primary), dir.path()).unwrap();
+        // primary echo + cargo (01) + git (02)
+        assert_eq!(result.config.rules.len(), 3);
+        assert!(
+            result.config.rules[1]
+                .command_effect
+                .value
+                .matches_command("cargo")
+        );
+        assert!(
+            result.config.rules[2]
+                .command_effect
+                .value
+                .matches_command("git")
+        );
+    }
+
+    #[test]
+    fn repo_local_already_loaded_is_not_double_loaded() {
+        let dir = tempfile::tempdir().unwrap();
+        init_git(dir.path());
+        let local = write_file(
+            dir.path(),
+            ".may-i.lisp",
+            r#"(rule "git" (allow "shared"))"#,
+        );
+        // Primary explicitly loads the repo-local file.
+        let primary = write_file(
+            dir.path(),
+            "primary.lisp",
+            &format!(r#"(load {:?})"#, local.display().to_string()),
+        );
+
+        let result = load_and_resolve_with_cwd(Some(&primary), dir.path()).unwrap();
+        // Without dedup we'd see 2 rules. With dedup, 1.
+        assert_eq!(
+            result.config.rules.len(),
+            1,
+            "discovered file already loaded by primary should be deduplicated"
+        );
+    }
+
+    #[test]
+    fn repo_local_rule_hash_matches_load_directive_hash() {
+        // Same rule file reached either way must produce the same
+        // trust hash, so approvals carry across.
+        let dir = tempfile::tempdir().unwrap();
+        init_git(dir.path());
+        let local = write_file(dir.path(), ".may-i.lisp", r#"(rule "echo" (allow))"#);
+        let primary_load_dir = tempfile::tempdir().unwrap();
+        let primary_load = write_file(
+            primary_load_dir.path(),
+            "primary.lisp",
+            &format!(r#"(load {:?})"#, local.display().to_string()),
+        );
+        // Path 1: reach via explicit `(load …)` from a primary outside
+        // the repo (so discovery contributes nothing).
+        let outside = tempfile::tempdir().unwrap();
+        let via_load = load_and_resolve_with_cwd(Some(&primary_load), outside.path()).unwrap();
+        // Path 2: reach via repo-local discovery, primary outside repo.
+        let neutral_primary_dir = tempfile::tempdir().unwrap();
+        let neutral_primary = write_file(
+            neutral_primary_dir.path(),
+            "primary.lisp",
+            r#"(rule "noop" (allow))"#,
+        );
+        // Re-create the dir + .git + .may-i.lisp to avoid filesystem
+        // collisions with the first arm.
+        let dir2 = tempfile::tempdir().unwrap();
+        init_git(dir2.path());
+        write_file(dir2.path(), ".may-i.lisp", r#"(rule "echo" (allow))"#);
+        let via_discovery = load_and_resolve_with_cwd(Some(&neutral_primary), dir2.path()).unwrap();
+
+        let hashes_load = may_i_engine::trust::compute_trust_hashes(&via_load.config);
+        let hashes_disc = may_i_engine::trust::compute_trust_hashes(&via_discovery.config);
+        let echo_load: Vec<&may_i_engine::trust::RuleMeta> = hashes_load
+            .rules
+            .iter()
+            .filter(|m| m.program == "echo")
+            .collect();
+        let echo_disc: Vec<&may_i_engine::trust::RuleMeta> = hashes_disc
+            .rules
+            .iter()
+            .filter(|m| m.program == "echo")
+            .collect();
+        assert_eq!(echo_load.len(), 1);
+        assert_eq!(echo_disc.len(), 1);
+        assert_eq!(echo_load[0].hash, echo_disc[0].hash);
+    }
+
+    #[test]
+    fn repo_local_rule_surfaces_with_source_path_in_trust() {
+        let dir = tempfile::tempdir().unwrap();
+        init_git(dir.path());
+        write_file(dir.path(), ".may-i.lisp", r#"(rule "git" (allow))"#);
+        let primary_dir = tempfile::tempdir().unwrap();
+        let primary = write_file(
+            primary_dir.path(),
+            "primary.lisp",
+            r#"(rule "noop" (allow))"#,
+        );
+        let result = load_and_resolve_with_cwd(Some(&primary), dir.path()).unwrap();
+        let hashes = may_i_engine::trust::compute_trust_hashes(&result.config);
+        let git = hashes
+            .rules
+            .iter()
+            .find(|m| m.program == "git")
+            .expect("git rule should be present");
+        let expected_path = dir.path().join(".may-i.lisp").canonicalize().unwrap();
+        assert_eq!(git.source_file.as_deref(), Some(expected_path.as_path()));
+    }
+
+    #[test]
+    fn repo_local_load_widening_is_neutralised_by_combine() {
+        // Engine-level guarantee: a permissive repo-local rule cannot
+        // widen a primary `:deny` for the same command, because the
+        // most-strict-wins combine selects `:deny`.
+        use may_i_core::ContextFacts;
+        let dir = tempfile::tempdir().unwrap();
+        let primary_dir = tempfile::tempdir().unwrap();
+        let primary = write_file(
+            primary_dir.path(),
+            "primary.lisp",
+            r#"(rule "rm" (deny "primary deny"))"#,
+        );
+        init_git(dir.path());
+        write_file(
+            dir.path(),
+            ".may-i.lisp",
+            r#"(rule "rm" (allow "loaded allow"))"#,
+        );
+        let result = load_and_resolve_with_cwd(Some(&primary), dir.path()).unwrap();
+        let facts = ContextFacts::default();
+        let r = may_i_engine::evaluate("rm", &[], &result.config, &facts).unwrap();
+        assert_eq!(r.decision, may_i_core::Decision::Deny);
     }
 }

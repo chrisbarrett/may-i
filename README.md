@@ -198,3 +198,39 @@ Options: `--output <FILE>` (write to file instead of stdout), `--yes` (skip conf
 
 - `--json` — Output as JSON (works with `eval` and `check`)
 - `--config <FILE>` — Use a specific config file (overrides `$MAYI_CONFIG`)
+
+### Repo-local config
+
+After loading the primary config, `may-i` discovers project-scoped
+config files at the current repository or worktree root. Discovery
+uses `git rev-parse --show-toplevel` (worktree-aware) and falls back
+to walking ancestors for `.git`, `.hg`, or `.jj` markers.
+
+The following files are merged in order (later files break `reason`
+ties, since `Decision` selection is order-independent):
+
+1. `.may-i.lisp`
+2. `.may-i/**/*.lisp` (sorted lexically)
+3. `.may-i.local.lisp`
+4. `.claude/may-i.lisp`
+5. `.claude/may-i.local.lisp`
+
+Rules discovered this way carry `Loaded` provenance and are subject
+to the same trust gate as `(load …)`-included files — they are inert
+until approved via `may-i trust`. Add `.may-i.local.lisp` to your
+project's `.gitignore` if you use it for per-user rules.
+
+### Rule combination
+
+`may-i` evaluates **every** matching rule for a command and combines
+the results under the lattice `:allow < :ask < :deny` — the
+strictest match wins. The rule list's order does not affect the
+decision; it only breaks ties on the `reason` string (earliest match
+at the strictest effect supplies the reason).
+
+This means a loaded `:allow` rule **cannot widen** a primary `:deny`
+for the same command, even after trust approval, because the lattice
+combine always selects `:deny`. Configs that previously relied on
+"narrow `:allow` before broad `:deny`" to whitelist exceptions must
+now express the exception inside a single rule's effect tree, e.g.
+`(if narrow-pred (allow …) (deny …))`.

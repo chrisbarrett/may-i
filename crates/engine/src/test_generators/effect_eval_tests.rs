@@ -405,9 +405,10 @@ proptest! {
         prop_assert_eq!(r1.reason, r2.reason);
     }
 
-    // 4.3.4 Property: First matching rule wins
+    // 4.3.4 Property: Most-strict rule wins under Allow < Ask < Deny.
+    // Reason ties to the earliest matching rule at the strictest effect.
     #[test]
-    fn first_matching_rule_wins(
+    fn most_strict_rule_wins(
         cmd_name in "[a-zA-Z][a-zA-Z0-9]{0,9}",
     ) {
         let args: Vec<String> = vec![];
@@ -436,8 +437,94 @@ proptest! {
             ..Config::default()
         };
         let result = evaluate(&cmd_name, &args, &config, &facts).unwrap();
-        prop_assert_eq!(result.decision, Decision::Allow);
-        prop_assert_eq!(result.reason, Some("first".to_string()));
+        prop_assert_eq!(result.decision, Decision::Deny);
+        prop_assert_eq!(result.reason, Some("second".to_string()));
+    }
+
+    // Reversing the rule list does not change `Decision`. The chosen
+    // `reason` may shift between same-decision tie-breakers.
+    #[test]
+    fn rule_order_does_not_affect_decision(
+        cmd_name in "[a-zA-Z][a-zA-Z0-9]{0,9}",
+        decisions in prop::collection::vec(any_decision(), 1..6),
+    ) {
+        let args: Vec<String> = vec![];
+        let facts = ContextFacts::default();
+        let mk_rules = |ds: &[Decision]| {
+            ds.iter()
+                .enumerate()
+                .map(|(i, d)| Rule {
+                    command_effect: spanned(Effect::CommandPattern(
+                        CommandPattern::Literal(cmd_name.clone()),
+                    )),
+                    effect: spanned(Effect::Terminal {
+                        decision: *d,
+                        reason: Some(format!("r{i}")),
+                    }),
+                    checks: vec![],
+                    span: dummy_span(),
+                    provenance: may_i_core::ast::Provenance::PrimaryConfig,
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let original = mk_rules(&decisions);
+        let mut reversed_ds = decisions.clone();
+        reversed_ds.reverse();
+        let reversed = mk_rules(&reversed_ds);
+
+        let r1 = evaluate(
+            &cmd_name,
+            &args,
+            &Config { rules: original, ..Config::default() },
+            &facts,
+        ).unwrap();
+        let r2 = evaluate(
+            &cmd_name,
+            &args,
+            &Config { rules: reversed, ..Config::default() },
+            &facts,
+        ).unwrap();
+        prop_assert_eq!(r1.decision, r2.decision);
+    }
+
+    // Adding any rule to a config that already has at least one matching
+    // rule can only keep or increase strictness. (When no base rule
+    // matches the command the no-match-default `Ask` falls back to the
+    // appended rule's decision, which is intentional.)
+    #[test]
+    fn appending_rule_is_monotonic(
+        cmd_name in "[a-zA-Z][a-zA-Z0-9]{0,9}",
+        existing in prop::collection::vec(any_decision(), 1..5),
+        new_decision in any_decision(),
+    ) {
+        let args: Vec<String> = vec![];
+        let facts = ContextFacts::default();
+        let mk_rule = |d: Decision, label: &str| Rule {
+            command_effect: spanned(Effect::CommandPattern(
+                CommandPattern::Literal(cmd_name.clone()),
+            )),
+            effect: spanned(Effect::Terminal {
+                decision: d,
+                reason: Some(label.into()),
+            }),
+            checks: vec![],
+            span: dummy_span(),
+            provenance: may_i_core::ast::Provenance::PrimaryConfig,
+        };
+        let base: Vec<_> = existing.iter().enumerate()
+            .map(|(i, d)| mk_rule(*d, &format!("r{i}"))).collect();
+        let mut extended = base.clone();
+        extended.push(mk_rule(new_decision, "appended"));
+
+        let r_base = evaluate(&cmd_name, &args, &Config { rules: base, ..Config::default() }, &facts).unwrap();
+        let r_ext = evaluate(&cmd_name, &args, &Config { rules: extended, ..Config::default() }, &facts).unwrap();
+        prop_assert!(
+            r_ext.decision >= r_base.decision,
+            "appending a rule relaxed decision: base={:?}, extended={:?}",
+            r_base.decision,
+            r_ext.decision,
+        );
     }
 
     // 4.3.5 Property: Facts are correctly bound and available
@@ -529,5 +616,105 @@ proptest! {
         };
         let result = evaluate(&cmd_name, &args, &config, &facts).unwrap();
         prop_assert_eq!(result.decision, Decision::Allow);
+    }
+}
+
+#[cfg(test)]
+mod combine_lattice_tests {
+    use super::super::{dummy_span, spanned};
+    use super::*;
+
+    fn rule_for(cmd: &str, decision: Decision, reason: &str) -> Rule {
+        Rule {
+            command_effect: spanned(Effect::CommandPattern(CommandPattern::Literal(cmd.into()))),
+            effect: spanned(Effect::Terminal {
+                decision,
+                reason: Some(reason.into()),
+            }),
+            checks: vec![],
+            span: dummy_span(),
+            provenance: may_i_core::ast::Provenance::PrimaryConfig,
+        }
+    }
+
+    fn eval_rules(cmd: &str, rules: Vec<Rule>) -> (Decision, Option<String>) {
+        let facts = ContextFacts::default();
+        let config = Config {
+            rules,
+            ..Config::default()
+        };
+        let r = evaluate(cmd, &[], &config, &facts).unwrap();
+        (r.decision, r.reason)
+    }
+
+    #[test]
+    fn allow_plus_deny_yields_deny() {
+        let (d, _) = eval_rules(
+            "rm",
+            vec![
+                rule_for("rm", Decision::Allow, "a"),
+                rule_for("rm", Decision::Deny, "danger"),
+            ],
+        );
+        assert_eq!(d, Decision::Deny);
+    }
+
+    #[test]
+    fn allow_plus_ask_yields_ask() {
+        let (d, _) = eval_rules(
+            "git",
+            vec![
+                rule_for("git", Decision::Allow, "a"),
+                rule_for("git", Decision::Ask, "confirm"),
+            ],
+        );
+        assert_eq!(d, Decision::Ask);
+    }
+
+    #[test]
+    fn ask_plus_deny_yields_deny() {
+        let (d, _) = eval_rules(
+            "rm",
+            vec![
+                rule_for("rm", Decision::Ask, "confirm"),
+                rule_for("rm", Decision::Deny, "danger"),
+            ],
+        );
+        assert_eq!(d, Decision::Deny);
+    }
+
+    #[test]
+    fn duplicate_decisions_collapse_to_earliest_reason() {
+        let (d, reason) = eval_rules(
+            "echo",
+            vec![
+                rule_for("echo", Decision::Allow, "first"),
+                rule_for("echo", Decision::Allow, "second"),
+                rule_for("echo", Decision::Allow, "third"),
+            ],
+        );
+        assert_eq!(d, Decision::Allow);
+        assert_eq!(reason, Some("first".to_string()));
+    }
+
+    #[test]
+    fn no_rule_match_returns_ask() {
+        let (d, _) = eval_rules("nothing", vec![rule_for("other", Decision::Allow, "a")]);
+        assert_eq!(d, Decision::Ask);
+    }
+
+    #[test]
+    fn reason_breaks_tie_at_strictest_to_earliest() {
+        // Two Deny rules in different orders; reason follows the
+        // earliest matching rule at the strictest effect.
+        let (_, r1) = eval_rules(
+            "rm",
+            vec![
+                rule_for("rm", Decision::Allow, "broad"),
+                rule_for("rm", Decision::Deny, "primary"),
+                rule_for("rm", Decision::Deny, "loaded"),
+            ],
+        );
+        assert_eq!(r1, Some("primary".to_string()));
     }
 }

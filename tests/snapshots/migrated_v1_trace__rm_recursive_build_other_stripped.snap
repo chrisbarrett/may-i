@@ -1,5 +1,6 @@
 ---
 source: tests/migrated_v1_trace.rs
+assertion_line: 110
 expression: normalised
 ---
 
@@ -33,6 +34,18 @@ Trace
                …                                                   │
              (effect                                               │ → :ask "Recursive deletion requires confirmation"
               :ask "Recursive deletion requires confirmation"))))) │
+                                                                   │
+  37: (rule (command "rm")                                         │
+        (context                                                   │
+         (build-mode                                               │ build-mode → yes
+          (or                                                      │
+           (has                                                    │ no
+            [:claude-code/permission-mode                          │
+             "acceptEdits"])                                       │
+           (has                                                    │ "build" → yes
+            [:opencode/agent "build"]))))                          │
+        (effect                                                    │ → :allow "Non-recursive delete is allowed"
+         :allow "Non-recursive delete is allowed"))                │
 
 Result
 
