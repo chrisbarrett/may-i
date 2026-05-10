@@ -262,7 +262,7 @@ side and recurse on the tail in the rule.
 `(tail (after :flags))` says "outer slice ends after the last
 flag/parameter is consumed; everything after that is the tail." Use
 `(tail (after "TOK"))` for wrappers whose inner command starts after a
-literal token (e.g. `mise exec -- CMD`).
+literal token.
 
 When the parser declares a tail, all argv matchers in the rule body
 (`(flag …)`, `(parameter …)`, `(positional …)`, `(anywhere …)`,
@@ -271,15 +271,54 @@ only via `(tail (authorise))`. This is what closes the silent-bypass
 class: outer matchers can't accidentally claim a flag that belongs to
 the inner command.
 
-The prelude ships tail-declaring parsers for `sudo`, `env`, `timeout`,
-`time`, `su`, `ionice`, `chrt`, `xargs`, `nice`, `watch`, and `find`
-(scope: tools that ship with a regular Linux distribution). Third-party
-wrappers like `mise` and `terragrunt` belong in your own config:
+#### Worked example: `mise exec -- rm -rf /tmp/foo`
+
+`mise` (and similar third-party tool runners) isn't in the prelude, so
+it makes a good case study of parser + rule working together. Mise
+forwards the inner command after a literal `--`:
 
 ```lisp
+;; Step 1: tell the tokeniser where the boundary is. Outer parsing
+;; honours GNU style up to `--`; tokens after `--` are the tail,
+;; verbatim, with no flag interpretation.
 (parser "mise" (style gnu) (tail (after "--")))
-(rule "mise" (when (positional "exec") (tail (authorise))))
+
+;; Step 2: rule body. The (positional "exec") matches against the
+;; OUTER slice — mise's own positional args before `--`. (tail
+;; (authorise)) recurses on the tail as a fresh command.
+(rule "mise"
+  (when (positional "exec") (tail (authorise))))
 ```
+
+What this looks like at each stage for `mise exec -- rm -rf /tmp/foo`:
+
+```
+argv after tokeniser-split:
+  outer = [mise, exec]            ← parsed under GNU style
+  tail  = [rm, -rf, /tmp/foo]     ← verbatim
+
+rule body evaluation:
+  (positional "exec")             ← matches outer slice → ok
+  (tail (authorise))              ← joins tail, parses as command,
+                                    recurses into the rule for `rm`
+
+inner evaluation receives:
+  command = rm
+  argv    = [-rf, /tmp/foo]
+  facts   = {:via "mise"}         ← so rules can branch on (fact? :via "mise")
+```
+
+Without the parser declaration, `(positional "exec")` would also match
+on `mise exec` (because mise has no other args to confuse it), but the
+silent-bypass class reasserts itself: the outer GNU tokeniser would
+swallow `-rf` as if it were a mise flag, and `(tail (authorise))` would
+recurse with `rm /tmp/foo` instead of `rm -rf /tmp/foo`. The parser
+declaration is what makes the rule's promise hold.
+
+The prelude ships tail-declaring parsers for `sudo`, `env`, `timeout`,
+`time`, `su`, `ionice`, `chrt`, `xargs`, `nice`, `watch`, and `find`
+(scope: tools that ship with a regular Linux distribution). For
+anything else, write the parser yourself, like the mise example above.
 
 ### Parameter recursion: `(parameter NAME (authorise))`
 
