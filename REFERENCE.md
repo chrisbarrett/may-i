@@ -17,91 +17,39 @@ command requires overall approval to proceed.
 The most restrictive rule in the command determines the overall need for
 approval.
 
-## Configuration language
+## The DSL at a glance
 
 Configuration for `may-i` is written in an S-expression language. The entrypoint
 is `~/.config/may-i/config.lisp` by default.
 
-### `(rule PROG PAT)`
+| Top-level form              | Purpose                                           |
+| :-------------------------- | :------------------------------------------------ |
+| `(rule PROG BODY)`          | Decide allow/ask/deny for a program.              |
+| `(define NAME EXPR)`        | Bind a reusable predicate.                        |
+| `(parser PROG …)`           | Per-program tokenisation rules.                   |
+| `(define-arg-style NAME …)` | Custom flag-syntax style.                         |
+| `(load "PATH")`             | Include another config file.                      |
+| `(safe-env-vars NAMES…)`    | Allow specific env vars in shell expansion.       |
+| `(check …)`                 | Test cases for `may-i check`.                     |
 
-Define automatic allow/ask/deny rules for programs. Rules can inspect arguments
-and runtime facts to determine how to proceed.
+A minimal config:
 
 ```lisp
 (rule "ls" (allow))
 
-;; Checking for dangerous flags:
-(rule "rm"
-  (if (flag ["r" "recursive"])
-      (ask "Recursive deletion")
-    (allow)))
-
-;; More complex branching:
 (rule "rm"
   (cond
-    ((positional "/")
-     (deny "Attempt to delete filesystem root"))
+    ((positional "/")            (deny "Filesystem root"))
+    ((flag ["r" "recursive"])    (ask  "Recursive deletion"))
+    (else                        (allow))))
 
-    ((flag ["r" "recursive"])
-     (ask "Recursive deletion"))
+(rule "sudo" (tail (authorise)))     ; recurse into the wrapped command
 
-    (else
-     (allow))))
+(check
+  (allow "ls -la")
+  (ask   "rm -rf /tmp/foo")
+  (deny  "rm -rf /"))
 ```
-
-### `(check …)`
-
-Define runnable tests for your rules to make sure given commands have the
-expected outcome. Worth doing for complex rules with lots of branching.
-
-```lisp
-(check (allow "ls -la")
-       (ask "rm -rf /tmp/foo")
-       (deny "rm -rf /"))
-```
-
-Run with `may-i check`.
-
-### `(define NAME PAT)`
-
-Define a convenient name for repeated patterns that you can re-use in your
-rules.
-
-```lisp
-(define prod-host
-  (fact? [:ssh/host (regex "^prod-")]))
-```
-
-### `(load "FILE")`
-
-Include another config file (path or glob); useful if config gets too long.
-
-```lisp
-(load "rules/git.lisp")
-(load "rules/*.lisp")
-```
-
-Paths are relative to the current file.
-
-### `(parser PROG FORMS…)`
-
-Declare how to parse flags, options and positional args for programs that don't
-use the default GNU style.
-
-```lisp
-(parser "find" (style single-dash-long))
-```
-
-Most commonly needed for programs using the single-dashed `-long` convention.
-
-### `(define-arg-style …)`
-
-Define a custom flag and option-passing convention for use in parsers.
-
-### `(safe-env-vars NAMES…)`
-
-Declare environment variables that may be safely read. By default, only
-variables whose values are recovered via static analysis are allowed.
 
 ## How rules work
 
@@ -134,7 +82,7 @@ running the command.
 > Order matters: put deny rules before allow rules so dangerous cases fire
 > before a permissive catch-all.
 
-## Deciding whether to prompt for permission
+## Decision verbs
 
 A rule's answer is spelled `(VERB)` or `(VERB REASON)`, where `VERB` is
 one of:
@@ -283,42 +231,60 @@ Conditionals branch on a predicate (an arg pattern, `(fact? …)`, a named
 
 ## Recursing into wrapped commands
 
-Some commands are wrappers — `sudo`, `ssh`, `bash -c`, `xargs` — and the real
-risk is in the inner command. `(authorise)` evaluates that inner command line
-against your rules, with the wrapper recorded as `:via`. The verb is bare
-(no arguments); the host context tells the engine which span to recurse on.
+Wrapper commands like `sudo`, `bash -c`, `xargs`, and `find -exec`
+carry an inner command line whose risk profile is what really matters.
+`(authorise)` evaluates that inner command against your full ruleset,
+records the wrapper in `:via`, and propagates the recursed decision.
 
-### Tail-recursion via `(tail (authorise))`
+`(authorise)` is a leaf form — it takes no arguments. The host context
+(a parameter, a tail slice, a positional element) supplies the string
+the recursion runs on. There are three host contexts:
 
-For wrappers whose inner command sits after the wrapper's outer flags
-(sudo, env, timeout, xargs, etc.), declare the boundary on the parser
+- `(tail (authorise))` — recurse on the tail slice of argv (sudo, env, …).
+- `(parameter NAME (authorise))` — recurse on a parameter's value (bash -c).
+- `(positional X (authorise) Y)` — recurse on a single positional element.
+
+A bare `(authorise)` outside a host context is a config-load error.
+
+### Tail recursion: `(tail (authorise))`
+
+For wrappers whose inner command sits after the wrapper's flags — sudo,
+env, timeout, nice, watch, etc. — declare the boundary on the parser
 side and recurse on the tail in the rule.
 
 ```lisp
 ;; Prelude already ships this declaration; shown for illustration:
 (parser "sudo" (style gnu) (tail (after :flags)))
 
-(rule "sudo"
-  (tail (authorise)))
+(rule "sudo" (tail (authorise)))
 ```
 
-`(tail (after :flags))` says "outer slice ends after the last flag/parameter
-is consumed; everything after that is the tail". Use `(tail (after "TOK"))`
-for wrappers like `mise` whose inner command starts after a literal `--`.
+`(tail (after :flags))` says "outer slice ends after the last
+flag/parameter is consumed; everything after that is the tail." Use
+`(tail (after "TOK"))` for wrappers whose inner command starts after a
+literal token (e.g. `mise exec -- CMD`).
 
 When the parser declares a tail, all argv matchers in the rule body
 (`(flag …)`, `(parameter …)`, `(positional …)`, `(anywhere …)`,
-`(forbidden …)`) scope to the outer slice — the tail is exclusively
-addressable via `(tail (authorise))`.
+`(forbidden …)`) scope to the **outer** slice. The tail is addressable
+only via `(tail (authorise))`. This is what closes the silent-bypass
+class: outer matchers can't accidentally claim a flag that belongs to
+the inner command.
 
-The prelude ships parser declarations for `sudo`, `env`, `timeout`,
-`time`, `su`, `ionice`, `chrt`, `xargs`, `nice`, `watch`, `mise`, and
-`find`, so most wrappers Just Work once you add the recursion rule.
+The prelude ships tail-declaring parsers for `sudo`, `env`, `timeout`,
+`time`, `su`, `ionice`, `chrt`, `xargs`, `nice`, `watch`, and `find`
+(scope: tools that ship with a regular Linux distribution). Third-party
+wrappers like `mise` and `terragrunt` belong in your own config:
 
-### Capturing multi-token values: `find -exec … ;`
+```lisp
+(parser "mise" (style gnu) (tail (after "--")))
+(rule "mise" (when (positional "exec") (tail (authorise))))
+```
 
-`(parameter NAME (authorise))` recurses on a value-bearing flag whose
-value is itself a command line — most usefully `bash -c`:
+### Parameter recursion: `(parameter NAME (authorise))`
+
+When a value-bearing flag's value is itself a command line — `bash -c`
+is the canonical example — recurse on the captured value:
 
 ```lisp
 (parser "bash" (style gnu) (parameter "c" (authorise)))
@@ -327,10 +293,16 @@ value is itself a command line — most usefully `bash -c`:
 (rule "echo" (allow))
 ```
 
-For `find -exec rm … \;` the inner command spans multiple argv tokens
-terminated by `;` or `+`. Declare the parameter with a `(many-till PAT)`
-capture-shape on the parser side; the rule then sees the joined tokens as
-a single command line.
+The form appears at parser level (it tells the tokeniser the parameter
+is value-bearing AND the value is recursable). It also works at rule
+level when you want the recursion to depend on rule conditions.
+
+### Multi-token capture: `find -exec`
+
+`find -exec rm {} \;` and `find -exec rm {} +` carry a multi-token
+inner command terminated by `;` or `+`. Declare the parameter with a
+`(many-till PAT)` capture-shape on the parser side; the rule then sees
+the joined tokens as a single command line.
 
 ```lisp
 ;; Prelude already ships this declaration; shown for illustration:
@@ -344,16 +316,35 @@ a single command line.
 ;; `find . -exec rm -rf / \;` now routes to the rule for `rm`.
 ```
 
-Inside the recursion, `(fact? [:via "sudo"])` lets a downstream rule know
-it's running through `sudo`. Combine with bound facts to write rules
-like "no recursive `rm` over `ssh`".
+Multiple `-exec` clauses each fire the rule body independently; the
+strictest decision wins.
+
+### The `:via` fact
+
+Recursion sets `:via` on the inner evaluation's facts, accumulating
+through nested wrappers:
+
+```lisp
+;; Tighten rm rules under sudo:
+(rule "rm"
+  (when (and (fact? [:via "sudo"]) (flag ["r" "recursive"]))
+    (deny "No recursive rm over sudo")))
+
+;; Or for nested wrappers like sudo ssh host rm …, :via is the set
+;; {sudo, ssh}, so test membership of either.
+```
+
+`:via` is a set, not a single value — `sudo ssh host rm` accumulates
+both `sudo` and `ssh` into `:via`. `(fact? [:via "ssh"])` matches set
+membership.
 
 > [!NOTE]
-> **Stdin blindspot for `xargs` and `parallel`.** When `xargs` reads
+> **Stdin blindspot for `xargs` and `parallel`.** When these tools read
 > commands from stdin (the common case), `may-i` cannot statically see
-> the inner argv. Tail recursion authorises the literal arguments on the
-> command line; rules that need to tighten further should branch on
-> `(fact? [:via "xargs"])` and refuse without confirmation.
+> the inner argv — only the literal command-line arguments. Tail
+> recursion authorises what's visible; rules that need to tighten
+> further should branch on `(fact? [:via "xargs"])` and refuse without
+> confirmation.
 
 ## Facts
 
@@ -421,14 +412,25 @@ command line; `may-i check` runs them all and reports failures.
        (deny  "rm -rf /"))
 ```
 
-To assert behaviour under specific facts, wrap entries in `(with-facts …)`:
+To assert behaviour under specific facts, wrap entries in `(with-facts …)`.
+The fact vector is `[[:key VALUE?] [:key VALUE?] …]`; the body is one or
+more decision-tagged check entries.
 
 ```lisp
 (check
   (with-facts [[:env "prod"]]
-    :deny "kubectl get pods")
+    (deny "kubectl get pods"))
   (with-facts [[:env "dev"]]
-    :allow "kubectl get pods"))
+    (allow "kubectl get pods")))
+```
+
+`(with-facts …)` forms can nest — inner facts merge with outer:
+
+```lisp
+(check
+  (with-facts [[:client/opencode]]
+    (with-facts [[:via/ssh]]
+      (allow "git push"))))
 ```
 
 Run them:
@@ -550,9 +552,161 @@ Cycles in `(overrides …)` and unknown attribute names are config-load errors.
 > The trace output (`may-i eval`) shows the resolved style and parameter list
 > per evaluation, so you can confirm a `(parser …)` is doing what you expect.
 
-## Formatting configs with `may-i fmt`
+## CLI commands
 
-`may-i fmt` rewrites configs to canonical form. Use it from editors,
+`may-i` ships a handful of subcommands. Most users only run `eval`
+(via the harness) and `check`; the rest are tooling.
+
+| Command           | Purpose                                                        |
+| :---------------- | :------------------------------------------------------------- |
+| `may-i eval`      | Evaluate a shell command against your rules.                   |
+| `may-i check`     | Run all `(check …)` cases and validate config syntax.          |
+| `may-i fmt`       | Reformat configs to canonical layout.                          |
+| `may-i migrate`   | Rewrite legacy syntax to canonical form.                       |
+| `may-i trust`     | Approve loaded rules so they take effect.                      |
+| `may-i parse`     | Print the shell parser's AST for a command.                    |
+| `may-i reference` | Render this document.                                          |
+
+All commands accept `--config FILE` (overriding `$MAYI_CONFIG`) and
+`--json` for machine-readable output.
+
+### `may-i eval`
+
+Evaluate a shell command and report the decision.
+
+```sh
+may-i eval 'rm -rf /tmp/foo'                    # → :ask "Recursive deletion"
+may-i eval --fact :ci 'kubectl get pods'         # set a presence fact
+may-i eval --fact :env=prod 'kubectl get pods'   # set a value fact
+may-i eval --json 'sudo rm /etc/passwd'          # JSON output
+```
+
+The default text mode prints a trace of how the decision was reached —
+which rule matched, which patterns fired, how recursion routed through
+wrappers. JSON mode emits a structured record suitable for harness
+integration.
+
+### `may-i check`
+
+Validate config syntax and run every `(check …)` case in the loaded
+config (and its `(load …)`'d files). Returns non-zero if any check
+fails or the config is malformed.
+
+```sh
+may-i check                # report failures
+may-i check --verbose      # also print passing cases
+```
+
+Run this after every rule edit. Hooks and CI should run it on every
+config commit.
+
+### `may-i fmt`
+
+Reformat configs to canonical form. Use it from editors, pre-commit
+hooks, or CI. It is the analog of `cargo fmt` for `.lisp`
+config files.
+
+```sh
+may-i fmt PATH [PATH…]   # format files in place
+may-i fmt                # walk (load …) graph from primary config
+cat foo.lisp | may-i fmt # stdin → stdout filter
+may-i fmt -              # explicit stdin
+may-i fmt --check …      # exit 0 (clean) / 1 (would change) / 2 (error); no writes
+```
+
+What `fmt` does:
+
+- Pretty-prints whitespace using the column width detected from source.
+- Sorts declaration-order-insensitive bodies into a deterministic order:
+    - **Parser body**: `(style …)` first, then `(flag …)` declarations
+      alphabetised by name, then `(parameter …)` declarations
+      alphabetised by name, then `(tail …)` last.
+    - **`define-arg-style` body**: attribute forms alphabetised by head
+      atom (`combined-shorts` < `long-prefix` < … < `separators`).
+    - **`(check …)` body**: cases alphabetised by command string.
+    - **Rule bodies**: order **preserved** — rule body forms evaluate
+      short-circuit, so order is semantic.
+- Sorts the name vector in `(flag VEC)` and `(parameter VEC …)`
+  declarations: `(flag ["r" "0"])` becomes `(flag ["0" "r"])`. Vectors
+  in any other position (separators, prefixes, rule bodies) are
+  order-significant and are left untouched.
+
+What `fmt` does **not** do:
+
+- It never silently rewrites legacy syntax. If the input contains
+  forms the canonical loader rejects (e.g. `(effect :allow)`,
+  `(may-i *)`), `fmt` formats the input as-is and emits a stderr
+  warning suggesting `may-i migrate`. Migration is the explicit
+  user-invoked path.
+- It does not change rule order or rule body order — both are semantic.
+
+**Comments travel with their owning form.** A comment placed between
+two body declarations is owned by the form that follows it; sorting
+moves comment + form as a unit. A "section header" comment between
+two flags will migrate with whichever flag now sits below it under
+the canonical sort order.
+
+Exit codes (also via `--check`):
+
+- `0` — every input matches its canonical form.
+- `1` — at least one input would change (`--check` only).
+- `2` — parse error, IO error, or other blocking failure.
+
+### `may-i migrate`
+
+Rewrite legacy syntax (v1 wrapper forms, `(effect :decision)`,
+`(may-i *)`, dotted-tail continuations, PLIST bodies, etc.) into
+canonical form. Walks the `(load …)` graph and rewrites every reachable
+file in place.
+
+```sh
+may-i migrate              # interactive — preview diff, prompt to apply
+may-i migrate --dry-run    # show diff, write nothing
+may-i migrate --yes        # apply without prompting
+may-i migrate -o OUT IN    # single-file mode: read IN, write OUT
+```
+
+Migration emits two warning advisories where relevant:
+
+- Read-only files in the load graph are skipped with a clear notice.
+- The wrapper-boundary semantic fix may change behaviour for rules
+  over `sudo`/`xargs`/etc. — migrate emits a warning naming the
+  affected commands and recommends re-running `may-i check`.
+
+Trust hashes for syntactic-only rewrites auto-update under the same
+approval; users see a notice but don't re-approve.
+
+### `may-i trust`
+
+Loaded rules from `(load …)`'d files are inert until approved. Inspect
+or grant trust:
+
+```sh
+may-i trust                  # list pending approvals
+may-i trust PROGRAM          # approve rules covering PROGRAM
+may-i trust --all            # approve everything pending
+```
+
+Approvals are keyed by canonical-form hash, so reformatting (or
+running `may-i fmt`) keeps a rule trusted but reordering or editing it
+requires re-approval.
+
+### `may-i parse`
+
+Print the shell parser's AST for a command — useful for debugging why
+a rule did or didn't match. No config evaluation.
+
+```sh
+may-i parse 'find . -name "*.bak" -delete'
+may-i parse --file shellscript.sh
+```
+
+### `may-i reference`
+
+Render this document with terminal pagination. The same content as
+`REFERENCE.md` in the repo.
+
+
 pre-commit hooks, or CI. It is the analog of `cargo fmt` for `.lisp`
 config files.
 
