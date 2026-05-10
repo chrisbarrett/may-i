@@ -142,3 +142,54 @@ proptest! {
             "narrow ({}) has fewer lines than wide ({}):\nnarrow:\n{}\nwide:\n{}", w1, w2, narrow, wide);
     }
 }
+
+// ── Width-monotonicity regression (CI on macos-15-intel found this) ──
+//
+// render_broken used to inline children up to `col + 1 + child_width <=
+// width` without reserving room for the closing delimiter. When the last
+// child fit exactly at width, the resulting line was 1 column too wide,
+// which kicked the layout to broken_conservative and produced *more* lines
+// than the narrower-width broken layout. The fix reserves 1 column for
+// `)` when considering the last remaining child.
+#[test]
+fn render_broken_reserves_close_delim_for_last_child() {
+    let doc = Doc::list(vec![
+        Doc::atom("__aa_"),
+        Doc::atom("__aa_d"),
+        Doc::list(vec![
+            Doc::atom("nrxepn"),
+            Doc::atom("uj_mdt_hin"),
+            Doc::atom("__gaocqq__d"),
+        ]),
+        Doc::list(vec![
+            Doc::atom("n"),
+            Doc::atom("__ir___"),
+            Doc::atom("k"),
+            Doc::atom("n_t__"),
+        ]),
+    ]);
+    let narrow = pretty(
+        &doc,
+        0,
+        &Format {
+            width: 51,
+            ..Default::default()
+        },
+    );
+    let wide = pretty(
+        &doc,
+        0,
+        &Format {
+            width: 65,
+            ..Default::default()
+        },
+    );
+    assert!(
+        narrow.lines().count() >= wide.lines().count(),
+        "narrow ({}) had fewer lines than wide ({}):\nnarrow:\n{}\nwide:\n{}",
+        narrow.lines().count(),
+        wide.lines().count(),
+        narrow,
+        wide
+    );
+}

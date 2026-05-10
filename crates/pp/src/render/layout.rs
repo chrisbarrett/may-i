@@ -170,7 +170,14 @@ pub(super) fn render_broken_delim<A: Clone + TriviaSource>(
             break;
         }
         let child_width = buf.first_line_width();
-        if col + 1 + child_width > width {
+        // When this is the last remaining child, reserve room for the
+        // closing delimiter — otherwise an exact-fit inlining produces
+        // a line one column too wide, which is rejected and forces a
+        // fallback to broken_conservative. That fallback can produce
+        // *more* lines than the narrower-width broken layout, breaking
+        // monotonicity (narrow ≥ wide in line count).
+        let close_reserve = if i + 1 == remaining_count { 1 } else { 0 };
+        if col + 1 + child_width + close_reserve > width {
             break;
         }
         n_inline += 1;
