@@ -51,36 +51,45 @@ A minimal config:
   (deny  "rm -rf /"))
 ```
 
-## How rules work
+## How rules resolve
 
-When `may-i` evaluates a shell command, it searches for `rule` definitions
-you've written with a matching program name. It then tests the shell command
-against each matching rule until it hits an explicit decision verb
-(`(allow …)`, `(ask …)`, `(deny …)`), which determines whether the command
-is allowed, blocked, or triggers a permission prompt.
+When `may-i` evaluates a shell command, it picks the *applicable set* of
+rules — every `(rule …)` declaration whose program name matches — and
+evaluates each one. Rule order in the file does not matter.
 
-> [!IMPORTANT]
-> A future iteration will make rule evaluation order-independent, such that the
-> most restrictive decision always wins.
+Every rule that produces an answer contributes; the strictest answer wins,
+under the ordering **deny > ask > allow**. If two or more rules tie at the
+strictest level, their distinct reasons are sorted alphabetically and joined
+with `"; "` so the result is the same no matter how you arranged the rules.
 
-`may-i` contains a full shell language parser, and it will run you rules over
+`may-i` contains a full shell language parser, and it will run your rules over
 every command it finds. This means control flow structures, subshells and other
 shell constructs are understood and scanned for nested commands.
 
 A rule body either:
 
 - **Allows, asks, or denies** — via `(allow)`, `(ask "…")`, or
-  `(deny "…")`. That's the rule's answer.
+  `(deny "…")`. That's the rule's answer, and it joins the strictest-wins
+  vote for the command.
 - **Doesn't match the current command** — for example, an argv pattern that
-  doesn't fire, or a conditional whose predicate is false. Evaluation moves on
-  to the next rule.
+  doesn't fire, or a conditional whose predicate is false. The rule produces
+  no answer and drops out of the vote.
 
 If no rule answers, the default is `:ask` — `may-i` asks you to confirm before
 running the command.
 
 > [!TIP]
-> Order matters: put deny rules before allow rules so dangerous cases fire
-> before a permissive catch-all.
+> A defensive `(deny …)` rule can sit anywhere in the file (or in a
+> separate `(load …)`-ed file) — its decision will still dominate any
+> `(allow …)` that matches the same command.
+
+### Composing rules from multiple sources
+
+Because rule evaluation is order-independent, splitting rules across
+`(load …)` files — or pulling in a shared ruleset from elsewhere — is safe:
+adding a `(load …)` line cannot change the meaning of any rule already in
+the file. The strictest decision still wins regardless of which file each
+rule came from.
 
 ## Decision verbs
 
@@ -887,6 +896,10 @@ If you're an agent reading this:
   unresolved `(define …)` references, and regressions in `(check …)` cases.
 - **Treat the user's rules as authoritative.** On `:ask` or `:deny`, surface the
   reason verbatim and let the user decide.
+- **Rule order in the file does not matter.** Every rule whose command
+  matches runs, and the strictest decision wins (`deny > ask > allow`).
+  Place new rules wherever they read clearly — a defensive `(deny …)` does
+  not need to come first.
 - **Reach for `(flag …)` and `(parameter …)` first** when matching options. The
   parser-level forms classify tokens correctly across argv shapes, including
   combined short flags like `-rf`.

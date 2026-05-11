@@ -657,7 +657,7 @@ mod combine_lattice_tests {
     }
 
     #[test]
-    fn duplicate_decisions_collapse_to_earliest_reason() {
+    fn duplicate_decisions_aggregate_distinct_reasons_sorted() {
         let (d, reason) = eval_rules(
             "echo",
             vec![
@@ -667,7 +667,7 @@ mod combine_lattice_tests {
             ],
         );
         assert_eq!(d, Decision::Allow);
-        assert_eq!(reason, Some("first".to_string()));
+        assert_eq!(reason, Some("first; second; third".to_string()));
     }
 
     #[test]
@@ -711,10 +711,11 @@ mod combine_lattice_tests {
     }
 
     #[test]
-    fn reason_breaks_tie_at_strictest_to_earliest() {
-        // Two Deny rules in different orders; reason follows the
-        // earliest matching rule at the strictest effect.
-        let (_, r1) = eval_rules(
+    fn tied_strictest_reasons_aggregate_sorted_and_order_free() {
+        // Two Deny rules at the strictest level — distinct reasons are
+        // sorted lexically and joined with `"; "`. Reversing source
+        // order produces the same aggregate (order independence).
+        let (_, forward) = eval_rules(
             "rm",
             vec![
                 rule_for("rm", Decision::Allow, "broad"),
@@ -722,6 +723,16 @@ mod combine_lattice_tests {
                 rule_for("rm", Decision::Deny, "loaded"),
             ],
         );
-        assert_eq!(r1, Some("primary".to_string()));
+        assert_eq!(forward, Some("loaded; primary".to_string()));
+
+        let (_, reversed) = eval_rules(
+            "rm",
+            vec![
+                rule_for("rm", Decision::Deny, "loaded"),
+                rule_for("rm", Decision::Deny, "primary"),
+                rule_for("rm", Decision::Allow, "broad"),
+            ],
+        );
+        assert_eq!(reversed, Some("loaded; primary".to_string()));
     }
 }

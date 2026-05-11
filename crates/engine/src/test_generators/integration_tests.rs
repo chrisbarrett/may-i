@@ -1,6 +1,25 @@
 use super::*;
 use crate::eval::evaluate;
 
+fn make_rule(command: &str, body: Effect) -> Rule {
+    Rule {
+        command_effect: spanned(Effect::CommandPattern(CommandPattern::Literal(
+            command.into(),
+        ))),
+        effect: spanned(body),
+        checks: vec![],
+        span: dummy_span(),
+        provenance: may_i_core::ast::Provenance::PrimaryConfig,
+    }
+}
+
+fn terminal(decision: Decision, reason: Option<&str>) -> Effect {
+    Effect::Terminal {
+        decision,
+        reason: reason.map(String::from),
+    }
+}
+
 // 5.2.1 Integration test: Complex nested conditionals
 #[test]
 fn complex_nested_conditionals() {
@@ -141,4 +160,117 @@ fn combined_and_or_not_in_rule() {
     // And returns last = Allow("and-second")
     assert_eq!(result.decision, Decision::Allow);
     assert_eq!(result.reason, Some("and-second".to_string()));
+}
+
+// ── Order independence (order-independent-rules change) ─────────────
+
+#[test]
+fn order_independence_allow_and_deny_coexist_deny_wins() {
+    // Spec: All applicable rules run; strictest non-Nil decision wins.
+    let allow_rule = make_rule("rm", terminal(Decision::Allow, None));
+    let deny_rule = make_rule("rm", terminal(Decision::Deny, Some("dangerous")));
+
+    let facts = ContextFacts::default();
+    let args: Vec<String> = vec![];
+
+    // Allow before deny.
+    let config = Config {
+        rules: vec![allow_rule.clone(), deny_rule.clone()],
+        ..Config::default()
+    };
+    let result = evaluate("rm", &args, &config, &facts).unwrap();
+    assert_eq!(result.decision, Decision::Deny);
+    assert_eq!(result.reason, Some("dangerous".to_string()));
+
+    // Deny before allow.
+    let config = Config {
+        rules: vec![deny_rule, allow_rule],
+        ..Config::default()
+    };
+    let result = evaluate("rm", &args, &config, &facts).unwrap();
+    assert_eq!(result.decision, Decision::Deny);
+    assert_eq!(result.reason, Some("dangerous".to_string()));
+}
+
+#[test]
+fn order_independence_tied_deny_reasons_sorted_joined() {
+    // Spec: Distinct reasons SHALL be sorted lexically and joined with `"; "`.
+    // Same input in either source order yields the same aggregate.
+    let r_b = make_rule("rm", terminal(Decision::Deny, Some("B")));
+    let r_a = make_rule("rm", terminal(Decision::Deny, Some("A")));
+
+    let facts = ContextFacts::default();
+    let args: Vec<String> = vec![];
+
+    let config = Config {
+        rules: vec![r_b.clone(), r_a.clone()],
+        ..Config::default()
+    };
+    let result_ba = evaluate("rm", &args, &config, &facts).unwrap();
+
+    let config = Config {
+        rules: vec![r_a, r_b],
+        ..Config::default()
+    };
+    let result_ab = evaluate("rm", &args, &config, &facts).unwrap();
+
+    assert_eq!(result_ba.decision, Decision::Deny);
+    assert_eq!(result_ab.decision, Decision::Deny);
+    assert_eq!(result_ba.reason, Some("A; B".to_string()));
+    assert_eq!(result_ab.reason, Some("A; B".to_string()));
+}
+
+#[test]
+fn order_independence_identical_deny_reasons_deduplicated() {
+    let r1 = make_rule("rm", terminal(Decision::Deny, Some("no rm")));
+    let r2 = make_rule("rm", terminal(Decision::Deny, Some("no rm")));
+
+    let config = Config {
+        rules: vec![r1, r2],
+        ..Config::default()
+    };
+    let facts = ContextFacts::default();
+    let args: Vec<String> = vec![];
+    let result = evaluate("rm", &args, &config, &facts).unwrap();
+    assert_eq!(result.decision, Decision::Deny);
+    assert_eq!(result.reason, Some("no rm".to_string()));
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig { cases: 64, max_shrink_iters: 32, .. Default::default() })]
+
+    // Property: shuffling rules in a config produces the same decision
+    // and the same aggregate reason. Order independence invariant.
+    #[test]
+    fn order_independence_shuffle_preserves_decision_and_reason(
+        decisions in proptest::collection::vec(
+            proptest::sample::select(vec![Decision::Allow, Decision::Ask, Decision::Deny]),
+            1..6,
+        ),
+        reasons in proptest::collection::vec("[a-z]{1,3}", 1..6),
+        perm_seed in 0u64..1_000,
+    ) {
+        let n = decisions.len().min(reasons.len());
+        let rules: Vec<Rule> = (0..n)
+            .map(|i| make_rule("x", terminal(decisions[i], Some(&reasons[i]))))
+            .collect();
+
+        let config_a = Config { rules: rules.clone(), ..Config::default() };
+        let facts = ContextFacts::default();
+        let args: Vec<String> = vec![];
+        let result_a = evaluate("x", &args, &config_a, &facts).unwrap();
+
+        // Deterministic shuffle keyed on perm_seed.
+        let mut shuffled: Vec<Rule> = rules.clone();
+        let len = shuffled.len();
+        for i in (1..len).rev() {
+            let j = ((perm_seed.wrapping_mul(2862933555777941757).wrapping_add(i as u64 * 3037000493)) as usize) % (i + 1);
+            shuffled.swap(i, j);
+        }
+        let config_b = Config { rules: shuffled, ..Config::default() };
+        let result_b = evaluate("x", &args, &config_b, &facts).unwrap();
+
+        proptest::prop_assert_eq!(result_a.decision, result_b.decision);
+        proptest::prop_assert_eq!(result_a.reason, result_b.reason);
+    }
 }

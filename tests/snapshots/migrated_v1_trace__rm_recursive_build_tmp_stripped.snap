@@ -49,6 +49,6 @@ Result
 
   rm -r /tmp/foo
 
-  → :allow "Deleting tmp files is allowed"
+  → :allow "Deleting tmp files is allowed; Non-recursive delete is allowed"
 
   config: <config-path>

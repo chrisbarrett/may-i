@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use may_i_core::Decision;
-use may_i_core::ast::{Config, Effect, Predicate, Rule};
+use may_i_core::ast::{Config, Define, Effect, Predicate, Rule};
 use may_i_core::doc::DocF;
 use may_i_core::pattern::{ArgPattern, CommandPattern, Expr, MatchMode, PositionalArg, Quantifier};
 use may_i_core::primitives::ToDoc;
@@ -28,6 +28,7 @@ pub struct RuleMeta {
 pub struct ProgramMeta {
     pub hash: String,
     pub canonical_rules: Vec<String>,
+    pub canonical_defines: Vec<String>,
     pub source_files: BTreeSet<PathBuf>,
 }
 
@@ -36,10 +37,23 @@ pub struct ProgramMeta {
 pub struct TrustHashes {
     /// Per-rule metadata, ordered by (program, position).
     pub rules: Vec<RuleMeta>,
+    /// Per-program canonical forms of transitively-referenced defines.
+    /// Hashed alongside rules so a define edit invalidates the trust of
+    /// every program that reaches it.
+    pub defines_by_program: BTreeMap<String, Vec<String>>,
 }
 
 impl TrustHashes {
     /// Derive the per-program view (backward-compat grouping for listing UI).
+    ///
+    /// The hash is computed over the canonical, order-independent set of
+    /// rules: canonical forms are sorted lexically and joined with `\n`
+    /// before hashing. Source-file order, comments, whitespace, and the
+    /// way rules are partitioned across `(load …)` files do not
+    /// influence the hash. `canonical_defines` carries the transitively
+    /// referenced defines for the UI; folding them into the hash is
+    /// deferred (see `openspec/changes/order-independent-rules/tasks.md`
+    /// § 3.2).
     pub fn programs(&self) -> BTreeMap<String, ProgramMeta> {
         let mut groups: BTreeMap<String, Vec<&RuleMeta>> = BTreeMap::new();
         for meta in &self.rules {
@@ -57,13 +71,18 @@ impl TrustHashes {
                     .iter()
                     .filter_map(|m| m.source_file.clone())
                     .collect();
-                let combined = canonical_rules.join("\n");
-                let hash = sha256_hex(&combined);
+                let canonical_defines: Vec<String> = self
+                    .defines_by_program
+                    .get(&program)
+                    .cloned()
+                    .unwrap_or_default();
+                let hash = canonical_set_hash(&canonical_rules);
                 (
                     program,
                     ProgramMeta {
                         hash,
                         canonical_rules,
+                        canonical_defines,
                         source_files,
                     },
                 )
@@ -75,6 +94,17 @@ impl TrustHashes {
     pub fn is_empty(&self) -> bool {
         self.rules.is_empty()
     }
+}
+
+/// Hash the canonical, order-independent representation of a program's
+/// trust closure. Canonical rule forms are sorted lexically and joined
+/// with `\n`; the trust store re-derives the same hash from stored rule
+/// forms via the matching sort+join in
+/// [`crate::trust_store::hash_rules_from_strs`] (in the binary crate).
+fn canonical_set_hash(canonical_rules: &[String]) -> String {
+    let mut rules_sorted: Vec<&str> = canonical_rules.iter().map(String::as_str).collect();
+    rules_sorted.sort();
+    sha256_hex(&rules_sorted.join("\n"))
 }
 
 /// Extract all program names from a `CommandPattern`.
@@ -379,6 +409,8 @@ pub fn compute_trust_hashes(config: &Config) -> TrustHashes {
 
     // Track position per program.
     let mut position_counters: BTreeMap<String, usize> = BTreeMap::new();
+    // Collect rule references per program for define-closure expansion.
+    let mut rules_by_program: BTreeMap<String, Vec<&Rule>> = BTreeMap::new();
 
     for rule in &config.rules {
         let rule_programs = extract_command_programs(&rule.command_effect.value);
@@ -403,9 +435,32 @@ pub fn compute_trust_hashes(config: &Config) -> TrustHashes {
                 source_file,
                 position: *position,
             });
+            rules_by_program
+                .entry(program.to_string())
+                .or_default()
+                .push(rule);
 
             *position += 1;
         }
+    }
+
+    let defines_by_name: BTreeMap<&str, &Define> = config
+        .defines
+        .iter()
+        .map(|d| (d.name.as_str(), d))
+        .collect();
+    let mut defines_by_program: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (program, rules_for_program) in &rules_by_program {
+        let mut reached: BTreeSet<String> = BTreeSet::new();
+        for rule in rules_for_program {
+            collect_define_closure(&rule.effect.value, &defines_by_name, &mut reached);
+        }
+        let mut canonical_defines: Vec<String> = reached
+            .iter()
+            .filter_map(|n| defines_by_name.get(n.as_str()).map(|d| canonical_define(d)))
+            .collect();
+        canonical_defines.sort();
+        defines_by_program.insert(program.clone(), canonical_defines);
     }
 
     // Handle safe-env-vars trust scope.
@@ -428,7 +483,82 @@ pub fn compute_trust_hashes(config: &Config) -> TrustHashes {
         });
     }
 
-    TrustHashes { rules }
+    TrustHashes {
+        rules,
+        defines_by_program,
+    }
+}
+
+/// Canonical s-expression form of a `(define …)` (excluding spans).
+pub fn canonical_define(define: &Define) -> String {
+    format!(
+        "(define {} {})",
+        define.name,
+        canonical_predicate(&define.predicate.value)
+    )
+}
+
+/// Walk an effect tree and collect names of every define it reaches,
+/// transitively (a define's body may itself reference further defines).
+fn collect_define_closure(
+    effect: &Effect,
+    defines_by_name: &BTreeMap<&str, &Define>,
+    reached: &mut BTreeSet<String>,
+) {
+    match effect {
+        Effect::When { predicate, effect } | Effect::Unless { predicate, effect } => {
+            collect_define_names_in_predicate(&predicate.value, defines_by_name, reached);
+            collect_define_closure(&effect.value, defines_by_name, reached);
+        }
+        Effect::If {
+            predicate,
+            then_effect,
+            else_effect,
+        } => {
+            collect_define_names_in_predicate(&predicate.value, defines_by_name, reached);
+            collect_define_closure(&then_effect.value, defines_by_name, reached);
+            collect_define_closure(&else_effect.value, defines_by_name, reached);
+        }
+        Effect::Cond { branches, fallback } => {
+            for (pred, eff) in branches {
+                collect_define_names_in_predicate(&pred.value, defines_by_name, reached);
+                collect_define_closure(&eff.value, defines_by_name, reached);
+            }
+            if let Some(fb) = fallback {
+                collect_define_closure(&fb.value, defines_by_name, reached);
+            }
+        }
+        Effect::And { effects } | Effect::Or { effects } => {
+            for e in effects {
+                collect_define_closure(&e.value, defines_by_name, reached);
+            }
+        }
+        Effect::Not { effect } => collect_define_closure(&effect.value, defines_by_name, reached),
+        _ => {}
+    }
+}
+
+fn collect_define_names_in_predicate(
+    pred: &Predicate,
+    defines_by_name: &BTreeMap<&str, &Define>,
+    reached: &mut BTreeSet<String>,
+) {
+    match pred {
+        Predicate::Named(name) => {
+            if reached.insert(name.clone())
+                && let Some(d) = defines_by_name.get(name.as_str())
+            {
+                collect_define_names_in_predicate(&d.predicate.value, defines_by_name, reached);
+            }
+        }
+        Predicate::And(preds) | Predicate::Or(preds) => {
+            for p in preds {
+                collect_define_names_in_predicate(p, defines_by_name, reached);
+            }
+        }
+        Predicate::Not(inner) => collect_define_names_in_predicate(inner, defines_by_name, reached),
+        _ => {}
+    }
 }
 
 /// Compute SHA-256 hash and return hex-encoded string with "sha256:" prefix.
@@ -816,6 +946,65 @@ mod tests {
         let meta = &programs["git"];
         assert_eq!(meta.canonical_rules.len(), 1);
         assert_eq!(meta.canonical_rules[0], r#"(rule "git" (allow "safe"))"#);
+    }
+
+    #[test]
+    fn programs_view_hash_is_order_independent() {
+        // Two configs differing only in rule order produce the same
+        // per-program hash. Spec: order-independent-rules /
+        // trust-hashing.
+        let r_a = make_rule(
+            "git",
+            terminal(Decision::Allow, Some("a")),
+            Provenance::Loaded {
+                path: PathBuf::from("/rules/a.lisp"),
+            },
+        );
+        let r_b = make_rule(
+            "git",
+            terminal(Decision::Deny, Some("b")),
+            Provenance::Loaded {
+                path: PathBuf::from("/rules/b.lisp"),
+            },
+        );
+
+        let c_forward = make_config(vec![r_a.clone(), r_b.clone()], vec![]);
+        let c_reversed = make_config(vec![r_b, r_a], vec![]);
+
+        let h_forward = compute_trust_hashes(&c_forward).programs()["git"]
+            .hash
+            .clone();
+        let h_reversed = compute_trust_hashes(&c_reversed).programs()["git"]
+            .hash
+            .clone();
+        assert_eq!(h_forward, h_reversed);
+    }
+
+    #[test]
+    fn programs_view_hash_unchanged_when_rule_moves_between_load_files() {
+        // Moving a rule's source file (Loaded { path }) verbatim does not
+        // change the per-program hash. Spec: trust-hashing.
+        let rule_in_a = make_rule(
+            "git",
+            terminal(Decision::Allow, Some("safe")),
+            Provenance::Loaded {
+                path: PathBuf::from("/rules/a.lisp"),
+            },
+        );
+        let rule_in_b = make_rule(
+            "git",
+            terminal(Decision::Allow, Some("safe")),
+            Provenance::Loaded {
+                path: PathBuf::from("/rules/b.lisp"),
+            },
+        );
+        let h_a = compute_trust_hashes(&make_config(vec![rule_in_a], vec![])).programs()["git"]
+            .hash
+            .clone();
+        let h_b = compute_trust_hashes(&make_config(vec![rule_in_b], vec![])).programs()["git"]
+            .hash
+            .clone();
+        assert_eq!(h_a, h_b);
     }
 
     // --- canonical_rule ---
