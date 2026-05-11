@@ -1107,6 +1107,29 @@ impl EvalFold for TracingFold {
         (resolved.0, ann_list(docs, ann))
     }
 
+    fn predicate_bound(
+        &mut self,
+        binding: &may_i_core::ast::BindingName,
+        result: PredicateResult,
+    ) -> Self::PredicateOut {
+        let docs = vec![plain_atom("bound?"), plain_atom(binding.to_string())];
+        (result, ann_list(docs, None))
+    }
+
+    fn predicate_matches(
+        &mut self,
+        binding: &may_i_core::ast::BindingName,
+        _pattern: &may_i_core::pattern::Expr<may_i_core::ast::Effect>,
+        result: PredicateResult,
+    ) -> Self::PredicateOut {
+        let docs = vec![
+            plain_atom("matches?"),
+            plain_atom(binding.to_string()),
+            plain_atom("<expr>"),
+        ];
+        (result, ann_list(docs, None))
+    }
+
     fn rule_matched(
         &mut self,
         rule: &Rule,

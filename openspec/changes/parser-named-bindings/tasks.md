@@ -20,27 +20,27 @@
 
 ## 3. Config parser: parser-body forms
 
-- [ ] 3.1 In `crates/config/src/parser_form.rs`, recognise `(flags MODE)` body item with the three mode shapes. Enforce exactly-once declaration.
-- [ ] 3.2 Recognise `(rest #var)` body item. Enforce at-most-one declaration. Reject `(rest)` with no binding and `(rest "foo")` with a non-binding argument.
-- [ ] 3.3 Recognise `(positional [#var] PAT [QUANT])` body item. Parse the optional binding slot, the required pattern, and the optional quantifier.
-- [ ] 3.4 Extend `(parameter NAME …)` parsing to accept an optional trailing `#var` slot after the existing body forms.
-- [ ] 3.5 Extend `(parameter NAME (many-till PAT) [#var])` to accept the trailing binding.
-- [ ] 3.6 Reject the legacy `(tail (after …))` form at load time with an error suggesting `may-i migrate`.
-- [ ] 3.7 Reject `(parameter NAME (authorise))` legacy form with a migration suggestion.
-- [ ] 3.8 Reject any `(parser …)` body that omits `(flags …)`.
-- [ ] 3.9 Update canonicalisation (`crates/config/src/canonicalise.rs`) to alphabetise body items in the new schema: `(style)`, `(flags)`, `(flag)`, `(parameter)`, `(positional)`, `(rest)`.
-- [ ] 3.10 Update parser-properties proptest harness with new-form generators.
-- [ ] 3.11 **Property checkpoint — canonicalisation algebra.** Stability: `parse → canonicalise → parse` yields equal ASTs. Idempotence: `canonicalise(canonicalise(x)) == canonicalise(x)`. Order independence: a parser body assembled in any permutation of its body items canonicalises to the same form. Invariant survival: `(flags …)` exactly-once and `(rest …)` at-most-once survive canonicalisation; violations are rejected at parse, not silently merged.
+- [x] 3.1 In `crates/config/src/parser_form.rs`, recognise `(flags MODE)` body item with the three mode shapes. Enforce exactly-once declaration.
+- [x] 3.2 Recognise `(rest #var)` body item. Enforce at-most-one declaration. Reject `(rest)` with no binding and `(rest "foo")` with a non-binding argument.
+- [x] 3.3 Recognise `(positional [#var] PAT [QUANT])` body item. Parse the optional binding slot, the required pattern, and the optional quantifier.
+- [x] 3.4 Extend `(parameter NAME …)` parsing to accept an optional trailing `#var` slot after the existing body forms.
+- [x] 3.5 Extend `(parameter NAME (many-till PAT) [#var])` to accept the trailing binding.
+- [ ] 3.6 Reject the legacy `(tail (after …))` form at load time with an error suggesting `may-i migrate`. _(Deferred — enabled after sections 8 (migration) and 10 (prelude) rewrite legacy users; prelude.lisp still uses `(tail …)` today.)_
+- [ ] 3.7 Reject `(parameter NAME (authorise))` legacy form with a migration suggestion. _(Deferred — same dependency as 3.6.)_
+- [ ] 3.8 Reject any `(parser …)` body that omits `(flags …)`. _(Deferred — enabled once every user-facing parser declaration (prelude + starter_config + examples) carries `(flags …)`.)_
+- [x] 3.9 Update canonicalisation (`crates/config/src/canonicalise.rs`) to alphabetise body items in the new schema: `(style)`, `(flags)`, `(flag)`, `(parameter)`, `(positional)`, `(rest)`.
+- [x] 3.10 Update parser-properties proptest harness with new-form generators.
+- [x] 3.11 **Property checkpoint — canonicalisation algebra.** Stability: `parse → canonicalise → parse` yields equal ASTs. Idempotence: `canonicalise(canonicalise(x)) == canonicalise(x)`. Order independence: a parser body assembled in any permutation of its body items canonicalises to the same form. Invariant survival: `(flags …)` exactly-once and `(rest …)` at-most-once survive canonicalisation; violations are rejected at parse, not silently merged.
 
 ## 4. Config parser: rule-body forms
 
-- [ ] 4.1 Recognise `(authorise #var)` rule-body form; reject `(authorise)` with no argument.
-- [ ] 4.2 Add `(bound? #var)` predicate to the predicate parser.
-- [ ] 4.3 Add `(matches? #var PAT)` matcher to the rule-body parser.
-- [ ] 4.4 Extend `(with-facts [[:k VAL]] BODY)` to accept `#var` references alongside literal values in the binding vector.
-- [ ] 4.5 Reject legacy rule-body `(tail …)` form with a migration suggestion.
-- [ ] 4.6 Reject legacy `(parameter NAME (authorise))` and `(parameter NAME (many-till PAT) (authorise))` rule-body forms with migration suggestions.
-- [ ] 4.7 Reject any `#var` reference in rule body that the resolved parser does not declare; emit error naming the missing binding.
+- [x] 4.1 Recognise `(authorise #var)` rule-body form; reject `(authorise)` with no argument.
+- [x] 4.2 Add `(bound? #var)` predicate to the predicate parser.
+- [x] 4.3 Add `(matches? #var PAT)` matcher to the rule-body parser.
+- [ ] 4.4 Extend `(with-facts [[:k VAL]] BODY)` to accept `#var` references alongside literal values in the binding vector. _(Deferred — requires (a) introducing rule-body `(with-facts …)` as a new Effect variant and (b) threading parser bindings through `ContextFacts`. Lands alongside section 6 engine work.)_
+- [ ] 4.5 Reject legacy rule-body `(tail …)` form with a migration suggestion. _(Deferred — coupled with 3.6 / 3.8 strict enforcement.)_
+- [ ] 4.6 Reject legacy `(parameter NAME (authorise))` and `(parameter NAME (many-till PAT) (authorise))` rule-body forms with migration suggestions. _(Deferred — coupled with 3.6 / 3.8 strict enforcement.)_
+- [ ] 4.7 Reject any `#var` reference in rule body that the resolved parser does not declare; emit error naming the missing binding. _(Deferred — requires Config-level validation that resolves the parser referenced by each rule's command pattern. Lands after section 6 engine wiring exposes the binding namespace.)_
 
 ## 5. Engine: binding environment
 

@@ -209,6 +209,13 @@ pub(crate) fn evaluate_effect_fold<F: EvalFold>(
 
             fold.effect_cond(fold_branches, fb, result)
         }
+
+        // `(authorise #var)` — engine evaluation lands in section 6 of
+        // the parser-named-bindings change. Until the binding
+        // environment is threaded through `EvalContext`, treat the verb
+        // as no-match so the AST is exercisable without misleading
+        // decisions.
+        Effect::Authorise { binding: _ } => fold.effect_nil(effect),
     })
 }
 

@@ -163,6 +163,13 @@ pub enum Effect {
         branches: Vec<(Spanned<Predicate>, Spanned<Effect>)>,
         fallback: Option<Box<Spanned<Effect>>>,
     },
+
+    /// Recurse on the value of `binding`, accumulating `:via PROG` in
+    /// inner facts. Lifts the bound value into a command line (single
+    /// token → tokenise; token list → join then tokenise) and
+    /// re-evaluates against the active rule set.
+    /// Syntax: `(authorise #var)`
+    Authorise { binding: BindingName },
 }
 
 impl Effect {
@@ -257,6 +264,7 @@ impl std::fmt::Display for Effect {
             Effect::Unless { .. } => write!(f, "<unless-effect>"),
             Effect::If { .. } => write!(f, "<if-effect>"),
             Effect::Cond { .. } => write!(f, "<cond-effect>"),
+            Effect::Authorise { binding } => write!(f, "(authorise {binding})"),
         }
     }
 }
@@ -290,6 +298,20 @@ pub enum Predicate {
     /// Inverts a sub-predicate.
     /// Syntax: `(not PREDICATE)`
     Not(Box<Predicate>),
+
+    /// True iff the named parser-binding resolves to a value (not
+    /// `Unbound`) in the active binding environment.
+    /// Syntax: `(bound? #var)`
+    Bound { binding: BindingName },
+
+    /// True iff the named parser-binding resolves and its value
+    /// matches `pattern` (Token values matched directly; Tokens values
+    /// coerced via space-join).
+    /// Syntax: `(matches? #var PAT)`
+    Matches {
+        binding: BindingName,
+        pattern: crate::pattern::Expr<Effect>,
+    },
 }
 
 impl Predicate {
@@ -355,6 +377,14 @@ impl ToDoc for Predicate {
                 Doc::broken_list(cs)
             }
             Predicate::Not(pred) => Doc::list(vec![Doc::atom("not"), pred.to_doc()]),
+            Predicate::Bound { binding } => {
+                Doc::list(vec![Doc::atom("bound?"), Doc::atom(binding.to_string())])
+            }
+            Predicate::Matches { binding, .. } => Doc::list(vec![
+                Doc::atom("matches?"),
+                Doc::atom(binding.to_string()),
+                Doc::atom("<expr>"),
+            ]),
         }
     }
 }
@@ -1159,6 +1189,9 @@ impl ToDoc for Effect {
             Effect::Unless { .. } => Doc::atom("<unless-effect>"),
             Effect::If { .. } => Doc::atom("<if-effect>"),
             Effect::Cond { .. } => Doc::atom("<cond-effect>"),
+            Effect::Authorise { binding } => {
+                Doc::list(vec![Doc::atom("authorise"), Doc::atom(binding.to_string())])
+            }
         }
     }
 }

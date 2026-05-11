@@ -97,6 +97,16 @@ pub(crate) fn evaluate_predicate_fold<F: EvalFold>(
                 Err(EvalError::UnresolvedPredicate { name: name.clone() })
             }
         }
+        // `(bound? #var)` / `(matches? #var PAT)` — the parser-binding
+        // environment is threaded through `EvalContext` in section 5 of
+        // the parser-named-bindings change; until then the verb always
+        // resolves to NoMatch, surfaced through the trace.
+        Predicate::Bound { binding } => Ok(fold.predicate_bound(binding, PredicateResult::NoMatch)),
+        Predicate::Matches { binding, pattern } => {
+            Ok(fold.predicate_matches(binding, pattern, PredicateResult::NoMatch))
+        }
+        // `Predicate` is `#[non_exhaustive]`; future variants must be
+        // added here explicitly.
         _ => unreachable!("unknown Predicate variant"),
     }
 }

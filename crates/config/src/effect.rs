@@ -3,7 +3,7 @@
 
 use crate::is_reserved_keyword;
 use may_i_core::Decision;
-use may_i_core::ast::{Effect, Spanned};
+use may_i_core::ast::{BindingName, Effect, Spanned};
 use may_i_sexpr::{RawError, Sexpr};
 
 /// Parse an effect from an s-expression list.
@@ -61,15 +61,29 @@ pub fn parse_effect(sexpr: &Sexpr) -> Result<Spanned<Effect>, RawError> {
             .with_help("run `may-i migrate` to convert legacy syntax"));
         }
         "authorise" => {
-            return Err(RawError::new(
-                "bare (authorise) is not allowed at effect position",
-                list[0].span(),
-            )
-            .with_help(
-                "(authorise) only appears inside a host context that supplies an operand: \
-                 (parameter NAME (authorise)), (tail (authorise)), or as a positional element. \
-                 To recurse on the rule's argv, use (tail (authorise)).",
-            ));
+            // `(authorise #var)` — the parser-named-bindings rule-body
+            // form. Exactly one argument, which must be a binding atom
+            // referring to a parser-declared name.
+            if list.len() != 2 {
+                return Err(RawError::new(
+                    "(authorise) requires exactly one binding reference",
+                    list[0].span(),
+                )
+                .with_help(
+                    "(authorise #cmd) — `#cmd` must be declared by the parser via (rest …), \
+                     (parameter NAME #cmd), or (positional #cmd …)",
+                ));
+            }
+            let raw = list[1].as_binding().ok_or_else(|| {
+                RawError::new(
+                    "(authorise …) takes a binding reference (e.g. #cmd)",
+                    list[1].span(),
+                )
+            })?;
+            let binding = BindingName::parse(raw).map_err(|e| {
+                RawError::new(format!("invalid binding reference: {e}"), list[1].span())
+            })?;
+            Effect::Authorise { binding }
         }
         "cond" => parse_cond(&list[1..], sexpr.span())?,
         "when" => parse_when(&list[1..], sexpr.span())?,
@@ -340,6 +354,29 @@ mod tests {
         parse_effect(&forms[0]).map(|s| s.value)
     }
 
+    // ── parser-named-bindings: (authorise #var) at rule body ────────
+
+    #[test]
+    fn parse_authorise_with_binding() {
+        let effect = parse_effect_str("(authorise #cmd)").unwrap();
+        match effect {
+            Effect::Authorise { binding } => assert_eq!(binding.as_str(), "cmd"),
+            other => panic!("expected Effect::Authorise, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_bare_authorise_without_binding() {
+        let err = parse_effect_str("(authorise)").unwrap_err();
+        assert!(format!("{err}").contains("binding reference"));
+    }
+
+    #[test]
+    fn rejects_authorise_with_non_binding() {
+        let err = parse_effect_str("(authorise \"cmd\")").unwrap_err();
+        assert!(format!("{err}").contains("binding reference"));
+    }
+
     #[test]
     fn parse_allow_effect() {
         let effect = parse_effect_str(r#"(allow)"#).unwrap();
@@ -403,10 +440,9 @@ mod tests {
     #[test]
     fn bare_authorise_at_effect_position_rejected() {
         let err = parse_effect_str(r#"(authorise)"#).expect_err("expected error");
-        assert!(
-            format!("{err}").contains("bare (authorise) is not allowed at effect position"),
-            "{err}"
-        );
+        // parser-named-bindings: bare (authorise) is rejected because
+        // the verb now requires a #var binding reference.
+        assert!(format!("{err}").contains("binding reference"), "{err}");
     }
 
     #[test]

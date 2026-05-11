@@ -733,6 +733,21 @@ fn cond_short_circuits_predicates_after_first_match() {
         ) -> PredicateResult {
             result
         }
+        fn predicate_bound(
+            &mut self,
+            _: &may_i_core::ast::BindingName,
+            result: PredicateResult,
+        ) -> PredicateResult {
+            result
+        }
+        fn predicate_matches(
+            &mut self,
+            _: &may_i_core::ast::BindingName,
+            _: &may_i_core::pattern::Expr<Effect>,
+            result: PredicateResult,
+        ) -> PredicateResult {
+            result
+        }
 
         fn rule_matched(
             &mut self,
