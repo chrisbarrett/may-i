@@ -72,17 +72,17 @@
       *additional* finds beyond the regression seed, per design D6
       (broader alphabet surfaces real bugs); both are linked to
       follow-up changes rather than silenced.
-- [ ] 5.2 Wall-time delta measurement deferred — engine lib tests run
+- [x] 5.2 Wall-time delta measurement deferred — engine lib tests run
       in ~2.3 s (256 cases × 5 active new properties); within budget
       relative to the existing proptest count.
-- [ ] 5.3 `cargo tarpaulin` coverage check — deferred to a follow-up
-      pass; the change adds tests only, so coverage cannot decrease in
-      the touched modules.
+- [x] 5.3 `cargo tarpaulin` coverage check — addressed in
+      `parser-engine-span-fidelity` (workspace +0.00%; touched files
+      `word_parts.rs` 233/233 and `string_readers.rs` 111/111).
 - [x] 5.4 `cargo fmt` applied. `may-i fmt` not run — no
       `examples/*.lisp` touched.
-- [ ] 5.5 Follow-up changes (`engine-span-bounds-fix`,
-      `ast-spans-on-wordpart`) referenced inline in the
-      `#[ignore]` reason strings; their formal openspec proposals are
-      a separate workflow.
+- [x] 5.5 Follow-up changes (`engine-span-bounds-fix`,
+      `ast-spans-on-wordpart`) merged into `parser-engine-span-fidelity`
+      and landed there — the two roots collapsed into one structural fix
+      (spans on `WordPart` + `#`-token-boundary tokenisation).
 - [ ] 5.6 `openspec/specs/testing-strategy/spec.md` sync happens at
       archive time, not during apply.

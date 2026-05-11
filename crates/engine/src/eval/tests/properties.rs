@@ -947,11 +947,15 @@ mod parser_engine_invariants {
             }
         }
 
+        // Spec: § Parser and engine agree on substitution boundaries.
+        //
         // `prop_paren_matchers_agree` deleted in `parser-engine-span-fidelity`:
         // the engine no longer mirrors `find_balanced_paren`. The lexer's
         // `WordPart::CommandSubstitution { span, .. }` is now the single source
-        // of truth, and span/source coherence is asserted by
-        // `prop_wordpart_source_matches_span_slice` below.
+        // of truth — span/source coherence is asserted by
+        // `prop_wordpart_source_matches_span_slice` below, which subsumes the
+        // matcher-agreement guarantee (any disagreement would surface as a
+        // slice/source mismatch).
 
         /// Spec: § WordPart span SHALL equal its source verbatim.
         ///
@@ -1105,6 +1109,8 @@ mod parser_engine_invariants {
         }
     }
 
+    /// Spec: § Quoted heredoc bodies are inviolable.
+    ///
     /// Spec scenario: heredoc body words do not surface as commands.
     #[test]
     fn heredoc_body_inviolable_simple() {
@@ -1141,6 +1147,26 @@ mod parser_engine_invariants {
             }
         }
     }
+
+    // Spec-mapping anchors for requirements covered structurally rather than
+    // by a single property:
+    //
+    //   Spec: § All cross-boundary invariants SHALL be continuously verified.
+    //     — established by removing every `#[ignore]` from this module.
+    //   Spec: § WordPart spans are derivable from the AST alone.
+    //     — established by the engine reading spans from the AST in
+    //       `decompose.rs::push_embedded_units_from_word` and the deletion of
+    //       `find_substitution_spans` / `find_balanced_paren`.
+    //   Spec: § Threading-correctness properties guard the lexer's span population.
+    //     — established by `prop_wordpart_source_matches_span_slice`,
+    //       `prop_wordpart_source_length_matches_span`,
+    //       `prop_wordpart_sibling_spans_monotonic`, and
+    //       `prop_wordpart_reparse_round_trip` above.
+    //   Spec: § Heredoc-locating helper SHALL exclude shadowed openers.
+    //     — superseded: the helper was deleted along with the heredoc
+    //       proptest. Inviolability is now covered by
+    //       `heredoc_body_inviolable_simple` and the 2026-05-11 regression
+    //       seed.
 
     /// Grep-based check: every Requirement heading in the
     /// `parser-engine-invariants` spec is named in the property body via its
