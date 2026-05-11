@@ -677,6 +677,40 @@ mod combine_lattice_tests {
     }
 
     #[test]
+    fn command_matches_but_effect_nil_reports_pattern_mismatch() {
+        // Rule's command pattern matches but its effect short-circuits
+        // to Nil (predicate false). The combine fold should fall
+        // through to the default Ask with the "rules exist but did not
+        // match" reason — distinguishing this case from "no rule for
+        // command" in the trace.
+        let key = may_i_core::Keyword::new(":absent-fact").unwrap();
+        let pred = Predicate::Fact(may_i_core::FactQuery::Presence { key });
+        let inner = Effect::Terminal {
+            decision: Decision::Deny,
+            reason: Some("guarded".into()),
+        };
+        let rule = Rule {
+            command_effect: spanned(Effect::CommandPattern(CommandPattern::Literal(
+                "echo".into(),
+            ))),
+            effect: spanned(Effect::When {
+                predicate: spanned(pred),
+                effect: Box::new(spanned(inner)),
+            }),
+            checks: vec![],
+            span: dummy_span(),
+            provenance: may_i_core::ast::Provenance::PrimaryConfig,
+        };
+        let (d, reason) = eval_rules("echo", vec![rule]);
+        assert_eq!(d, Decision::Ask);
+        let reason = reason.expect("Ask should carry a reason");
+        assert!(
+            reason.contains("Rules for `echo` exist"),
+            "unexpected reason: {reason}"
+        );
+    }
+
+    #[test]
     fn reason_breaks_tie_at_strictest_to_earliest() {
         // Two Deny rules in different orders; reason follows the
         // earliest matching rule at the strictest effect.
