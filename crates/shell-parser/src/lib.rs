@@ -41,6 +41,25 @@ pub fn parse_simple_command(input: &str) -> Option<(String, Vec<String>)> {
     }
 }
 
+/// Run the lexer's `$()` body matcher starting just after a `$(` opener at
+/// the given byte offset. Returns the byte offset of the matched closing
+/// `)`, or `None` if EOF was reached without one.
+///
+/// Exposed for cross-crate property tests that compare this matcher to the
+/// engine's `find_balanced_paren`. Not part of the stable API.
+#[doc(hidden)]
+pub fn debug_lexer_paren_close(input: &str, body_start: usize) -> Option<usize> {
+    let mut lex = lexer::Lexer::new(input);
+    while lex.byte_pos < body_start {
+        lex.advance()?;
+    }
+    if lex.byte_pos != body_start {
+        return None;
+    }
+    let (_body, found) = lex.debug_read_balanced_parens();
+    if found { Some(lex.byte_pos - 1) } else { None }
+}
+
 /// Extract all simple commands from an AST by recursing through `children()`.
 pub fn extract_simple_commands(cmd: &Command) -> Vec<&SimpleCommand> {
     let mut result = Vec::new();

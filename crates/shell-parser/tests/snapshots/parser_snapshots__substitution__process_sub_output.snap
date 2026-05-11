@@ -1,5 +1,5 @@
 ---
-source: tests/parser_snapshots.rs
+source: crates/shell-parser/tests/parser_snapshots.rs
 expression: "parse(\"tee >(grep foo) >(grep bar)\")"
 ---
 Simple(
@@ -18,6 +18,10 @@ Simple(
                     ProcessSubstitution {
                         direction: Output,
                         command: "grep foo",
+                        span: Span {
+                            start: 6,
+                            end: 14,
+                        },
                     },
                 ],
             },
@@ -26,6 +30,10 @@ Simple(
                     ProcessSubstitution {
                         direction: Output,
                         command: "grep bar",
+                        span: Span {
+                            start: 18,
+                            end: 26,
+                        },
                     },
                 ],
             },

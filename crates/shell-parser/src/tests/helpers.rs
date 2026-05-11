@@ -104,7 +104,7 @@ fn cat_with_file_arg_stays_dynamic() {
                 sc.words[1]
                     .parts
                     .iter()
-                    .any(|p| matches!(p, WordPart::CommandSubstitution(_)))
+                    .any(|p| matches!(p, WordPart::CommandSubstitution { source: _, .. }))
             );
         }
         _ => panic!("Expected simple command"),
@@ -134,7 +134,7 @@ fn cat_herestring_dynamic_stays() {
                 sc.words[1]
                     .parts
                     .iter()
-                    .any(|p| matches!(p, WordPart::CommandSubstitution(_)))
+                    .any(|p| matches!(p, WordPart::CommandSubstitution { source: _, .. }))
             );
         }
         _ => panic!("Expected simple command"),
@@ -150,7 +150,7 @@ fn non_cat_command_sub_stays_dynamic() {
                 sc.words[1]
                     .parts
                     .iter()
-                    .any(|p| matches!(p, WordPart::CommandSubstitution(_)))
+                    .any(|p| matches!(p, WordPart::CommandSubstitution { source: _, .. }))
             );
         }
         _ => panic!("Expected simple command"),
@@ -167,7 +167,7 @@ fn cat_with_output_redirect_stays_dynamic() {
                 sc.words[1]
                     .parts
                     .iter()
-                    .any(|p| matches!(p, WordPart::CommandSubstitution(_)))
+                    .any(|p| matches!(p, WordPart::CommandSubstitution { source: _, .. }))
             );
         }
         _ => panic!("Expected simple command"),
@@ -184,7 +184,7 @@ fn bare_cat_stays_dynamic() {
                 sc.words[1]
                     .parts
                     .iter()
-                    .any(|p| matches!(p, WordPart::CommandSubstitution(_)))
+                    .any(|p| matches!(p, WordPart::CommandSubstitution { source: _, .. }))
             );
         }
         _ => panic!("Expected simple command"),
@@ -230,7 +230,7 @@ fn cat_no_input_stays_dynamic() {
                 sc.words[1]
                     .parts
                     .iter()
-                    .any(|p| matches!(p, WordPart::CommandSubstitution(_)))
+                    .any(|p| matches!(p, WordPart::CommandSubstitution { source: _, .. }))
             );
         }
         _ => panic!("Expected simple command"),

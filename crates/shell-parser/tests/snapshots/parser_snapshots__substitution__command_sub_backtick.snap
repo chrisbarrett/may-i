@@ -1,5 +1,5 @@
 ---
-source: tests/parser_snapshots.rs
+source: crates/shell-parser/tests/parser_snapshots.rs
 expression: "parse(\"echo `whoami`\")"
 ---
 Simple(
@@ -15,9 +15,13 @@ Simple(
             },
             Word {
                 parts: [
-                    Backtick(
-                        "whoami",
-                    ),
+                    Backtick {
+                        source: "whoami",
+                        span: Span {
+                            start: 6,
+                            end: 12,
+                        },
+                    },
                 ],
             },
         ],

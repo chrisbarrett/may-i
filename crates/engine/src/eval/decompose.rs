@@ -50,19 +50,13 @@ pub fn decompose(cmd: &Command, input: &str) -> Vec<EvalUnit> {
     units
 }
 
-fn decompose_simple_command(sc: &SimpleCommand, input: &str, units: &mut Vec<EvalUnit>) {
+fn decompose_simple_command(sc: &SimpleCommand, _input: &str, units: &mut Vec<EvalUnit>) {
     let sc_span = (sc.span.start, sc.span.end);
 
     // Check for assignment-only commands (no words)
     if sc.words.is_empty() {
         for assignment in &sc.assignments {
-            let sources: Vec<String> = assignment
-                .value
-                .extract_embedded_commands()
-                .into_iter()
-                .map(str::to_string)
-                .collect();
-            push_embedded_units(input, sc_span, &sources, units);
+            push_embedded_units_from_word(&assignment.value, units);
         }
         return;
     }
@@ -87,200 +81,23 @@ fn decompose_simple_command(sc: &SimpleCommand, input: &str, units: &mut Vec<Eva
         });
     }
 
-    let sources: Vec<String> = sc
-        .words
-        .iter()
-        .flat_map(|w| {
-            w.extract_embedded_commands()
-                .into_iter()
-                .map(str::to_string)
-        })
-        .collect();
-    push_embedded_units(input, sc_span, &sources, units);
+    for word in &sc.words {
+        push_embedded_units_from_word(word, units);
+    }
 }
 
-fn push_embedded_units(input: &str, sc_span: Span, sources: &[String], units: &mut Vec<EvalUnit>) {
-    if sources.is_empty() {
-        return;
-    }
-    let scope = &input[sc_span.0..sc_span.1];
-    let spans = find_substitution_spans(scope);
-    // Pair each parsed embedded source with the next scanner-found span. The
-    // scanner walks the simple command's source slice top-to-bottom, the
-    // parser collects embeds in the same word-by-word order, so positions and
-    // sources line up by index.
-    for (idx, source) in sources.iter().enumerate() {
-        let span = spans
-            .get(idx)
-            .map(|(s, e)| (sc_span.0 + s, sc_span.0 + e))
-            .unwrap_or(sc_span);
+/// Emit one `EvalUnit::EmbeddedCommand` per substitution in `word`, reading
+/// each substitution's source-byte span directly from the AST. The parser's
+/// `WordPart` already carries the inner-span the engine needs, so no flat
+/// re-scan over the input is required.
+fn push_embedded_units_from_word(word: &may_i_shell_parser::Word, units: &mut Vec<EvalUnit>) {
+    for (source, ast_span) in word.extract_embedded_with_spans() {
         units.push(EvalUnit::EmbeddedCommand {
-            source: source.clone(),
-            span,
+            source: source.to_string(),
+            span: (ast_span.start, ast_span.end),
         });
     }
 }
-
-/// Scan `input` for top-level command-substitution-like markers — `$(…)`,
-/// backtick `…`, `<(…)`, `>(…)` — and return the inner content's byte range
-/// (relative to `input`) for each. Skips over single-quoted regions and
-/// backslash escapes, recurses through double-quoted regions to catch
-/// embedded `$(…)` / backticks. Nested substitutions inside an outer
-/// substitution are not reported here — they are picked up by the engine's
-/// recursive evaluation step.
-fn find_substitution_spans(input: &str) -> Vec<(usize, usize)> {
-    let bytes = input.as_bytes();
-    let mut spans = Vec::new();
-    let mut i = 0;
-    let mut in_double_quote = false;
-    while i < bytes.len() {
-        let c = bytes[i];
-        if c == b'\\' && i + 1 < bytes.len() {
-            i += 2;
-            continue;
-        }
-        if !in_double_quote && c == b'\'' {
-            i += 1;
-            while i < bytes.len() && bytes[i] != b'\'' {
-                i += 1;
-            }
-            if i < bytes.len() {
-                i += 1;
-            }
-            continue;
-        }
-        if c == b'"' {
-            in_double_quote = !in_double_quote;
-            i += 1;
-            continue;
-        }
-        if c == b'$' && i + 1 < bytes.len() && bytes[i + 1] == b'(' {
-            // Skip arithmetic `$((…))` — not a command substitution.
-            if i + 2 < bytes.len() && bytes[i + 2] == b'(' {
-                let inner_start = i + 3;
-                if let Some(end) = find_arith_close(bytes, inner_start) {
-                    i = end + 2; // consume the trailing `))`
-                    continue;
-                }
-                i += 3;
-                continue;
-            }
-            let inner_start = i + 2;
-            if let Some(end) = find_balanced_paren(bytes, inner_start) {
-                spans.push((inner_start, end));
-                i = end + 1;
-                continue;
-            }
-            // Unclosed `$(...)` — the lexer's `read_balanced_parens` tolerates
-            // EOF and produces a body spanning to end-of-input. Mirror that
-            // here so the parser-extracted source pairs with this span by
-            // index. Stop scanning because everything left is inside the
-            // unclosed body.
-            spans.push((inner_start, bytes.len()));
-            break;
-        }
-        if c == b'`' {
-            let inner_start = i + 1;
-            let mut j = inner_start;
-            while j < bytes.len() {
-                if bytes[j] == b'\\' && j + 1 < bytes.len() {
-                    j += 2;
-                    continue;
-                }
-                if bytes[j] == b'`' {
-                    break;
-                }
-                j += 1;
-            }
-            spans.push((inner_start, j));
-            i = j + 1;
-            continue;
-        }
-        if !in_double_quote
-            && (c == b'<' || c == b'>')
-            && i + 1 < bytes.len()
-            && bytes[i + 1] == b'('
-        {
-            let inner_start = i + 2;
-            if let Some(end) = find_balanced_paren(bytes, inner_start) {
-                spans.push((inner_start, end));
-                i = end + 1;
-                continue;
-            }
-            // Unclosed `<(...)` / `>(...)` — same EOF-tolerant fallback as
-            // `$(...)` above; pair this span with the lexer-produced source
-            // and stop so we don't re-scan into the unclosed body.
-            spans.push((inner_start, bytes.len()));
-            break;
-        }
-        i += 1;
-    }
-    spans
-}
-
-/// Find the position of the closing `)` matching an opening `(` — `start`
-/// points at the byte immediately after the opener. Returns the byte offset
-/// of the closing `)`. Skips quoted regions and backslash escapes.
-fn find_balanced_paren(bytes: &[u8], start: usize) -> Option<usize> {
-    let mut depth: i32 = 1;
-    let mut i = start;
-    let mut in_double_quote = false;
-    while i < bytes.len() {
-        let c = bytes[i];
-        if c == b'\\' && i + 1 < bytes.len() {
-            i += 2;
-            continue;
-        }
-        if !in_double_quote && c == b'\'' {
-            i += 1;
-            while i < bytes.len() && bytes[i] != b'\'' {
-                i += 1;
-            }
-            if i < bytes.len() {
-                i += 1;
-            }
-            continue;
-        }
-        if c == b'"' {
-            in_double_quote = !in_double_quote;
-            i += 1;
-            continue;
-        }
-        if !in_double_quote {
-            if c == b'(' {
-                depth += 1;
-            } else if c == b')' {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(i);
-                }
-            }
-        }
-        i += 1;
-    }
-    None
-}
-
-/// Locate the `))` terminator for `$((expr))`. Returns the position of the
-/// first `)` of the pair.
-fn find_arith_close(bytes: &[u8], start: usize) -> Option<usize> {
-    let mut depth: i32 = 1;
-    let mut i = start;
-    while i < bytes.len() {
-        let c = bytes[i];
-        if c == b'(' {
-            depth += 1;
-        } else if c == b')' {
-            depth -= 1;
-            if depth == 0 && i + 1 < bytes.len() && bytes[i + 1] == b')' {
-                return Some(i);
-            }
-        }
-        i += 1;
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

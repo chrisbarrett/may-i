@@ -1,5 +1,5 @@
 ---
-source: tests/parser_snapshots.rs
+source: crates/shell-parser/tests/parser_snapshots.rs
 expression: "parse(\"for f in $(ls *.txt); do cat $f; done\")"
 ---
 For {
@@ -7,9 +7,13 @@ For {
     words: [
         Word {
             parts: [
-                CommandSubstitution(
-                    "ls *.txt",
-                ),
+                CommandSubstitution {
+                    source: "ls *.txt",
+                    span: Span {
+                        start: 11,
+                        end: 19,
+                    },
+                },
             ],
         },
     ],

@@ -1,5 +1,5 @@
 ---
-source: tests/parser_snapshots.rs
+source: crates/shell-parser/tests/parser_snapshots.rs
 expression: "parse(\"echo $((1 + 2))\")"
 ---
 Simple(
@@ -15,9 +15,13 @@ Simple(
             },
             Word {
                 parts: [
-                    Arithmetic(
-                        "1 + 2",
-                    ),
+                    Arithmetic {
+                        source: "1 + 2",
+                        span: Span {
+                            start: 8,
+                            end: 13,
+                        },
+                    },
                 ],
             },
         ],

@@ -521,10 +521,7 @@ mod tests {
     }
 
     fn arb_input() -> impl Strategy<Value = String> {
-        // Limit to a sane shell-ish alphabet so the parser hits real shapes
-        // (compound commands, embeddings, quotes) without spending all its
-        // time on unparseable noise.
-        proptest::string::string_regex(r#"[a-z0-9 ;|&"'$()<>/\-]{0,30}"#).unwrap()
+        crate::eval::tests::arb_shell_chars()
     }
 
     fn top_level(decisions: &[crate::SegmentDecision]) -> Vec<&crate::SegmentDecision> {

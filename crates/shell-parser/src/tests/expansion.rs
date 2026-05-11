@@ -60,11 +60,9 @@ fn test_double_quotes_with_command_sub() {
     match &cmd {
         Command::Simple(sc) => match &sc.words[1].parts[0] {
             WordPart::DoubleQuoted(parts) => {
-                assert!(
-                    parts
-                        .iter()
-                        .any(|p| matches!(p, WordPart::CommandSubstitution(s) if s == "date"))
-                );
+                assert!(parts.iter().any(
+                    |p| matches!(p, WordPart::CommandSubstitution { source: s, .. } if s == "date")
+                ));
             }
             _ => panic!("Expected double quoted"),
         },
@@ -81,7 +79,7 @@ fn test_double_quotes_with_backtick() {
                 assert!(
                     parts
                         .iter()
-                        .any(|p| matches!(p, WordPart::Backtick(s) if s == "date"))
+                        .any(|p| matches!(p, WordPart::Backtick { source: s, .. } if s == "date"))
                 );
             }
             _ => panic!("Expected double quoted"),
@@ -206,12 +204,9 @@ fn test_command_substitution() {
     let cmd = parse("echo $(whoami)").into_command();
     match &cmd {
         Command::Simple(sc) => {
-            assert!(
-                sc.words[1]
-                    .parts
-                    .iter()
-                    .any(|p| matches!(p, WordPart::CommandSubstitution(s) if s == "whoami"))
-            );
+            assert!(sc.words[1].parts.iter().any(
+                |p| matches!(p, WordPart::CommandSubstitution { source: s, .. } if s == "whoami")
+            ));
         }
         _ => panic!("Expected simple command"),
     }
@@ -226,7 +221,7 @@ fn test_backtick_substitution() {
                 sc.words[1]
                     .parts
                     .iter()
-                    .any(|p| matches!(p, WordPart::Backtick(s) if s == "whoami"))
+                    .any(|p| matches!(p, WordPart::Backtick { source: s, .. } if s == "whoami"))
             );
         }
         _ => panic!("Expected simple command"),
@@ -238,7 +233,7 @@ fn test_nested_command_substitution() {
     let cmd = parse("echo $(echo $(whoami))").into_command();
     match &cmd {
         Command::Simple(sc) => match &sc.words[1].parts[0] {
-            WordPart::CommandSubstitution(s) => assert_eq!(s, "echo $(whoami)"),
+            WordPart::CommandSubstitution { source: s, .. } => assert_eq!(s, "echo $(whoami)"),
             _ => panic!("Expected command substitution"),
         },
         _ => panic!("Expected simple command"),
@@ -256,7 +251,7 @@ fn compound_command_sub_stays_dynamic() {
                 sc.words[1]
                     .parts
                     .iter()
-                    .any(|p| matches!(p, WordPart::CommandSubstitution(_)))
+                    .any(|p| matches!(p, WordPart::CommandSubstitution { source: _, .. }))
             );
         }
         _ => panic!("Expected simple command"),
@@ -274,7 +269,7 @@ fn test_arithmetic_expansion() {
                 sc.words[1]
                     .parts
                     .iter()
-                    .any(|p| matches!(p, WordPart::Arithmetic(s) if s == "1 + 2"))
+                    .any(|p| matches!(p, WordPart::Arithmetic { source: s, .. } if s == "1 + 2"))
             );
         }
         _ => panic!("Expected simple command"),
@@ -290,7 +285,9 @@ fn test_process_substitution_input() {
         Command::Simple(sc) => {
             assert_eq!(sc.words.len(), 3); // diff, <(sort a), <(sort b)
             match &sc.words[1].parts[0] {
-                WordPart::ProcessSubstitution { direction, command } => {
+                WordPart::ProcessSubstitution {
+                    direction, command, ..
+                } => {
                     assert_eq!(*direction, ProcessDirection::Input);
                     assert_eq!(command, "sort a");
                 }
@@ -306,7 +303,9 @@ fn test_process_substitution_output() {
     let cmd = parse("tee >(grep error)").into_command();
     match &cmd {
         Command::Simple(sc) => match &sc.words[1].parts[0] {
-            WordPart::ProcessSubstitution { direction, command } => {
+            WordPart::ProcessSubstitution {
+                direction, command, ..
+            } => {
                 assert_eq!(*direction, ProcessDirection::Output);
                 assert_eq!(command, "grep error");
             }
@@ -404,7 +403,7 @@ fn unclosed_arithmetic_at_eof() {
                 sc.words[1]
                     .parts
                     .iter()
-                    .any(|p| matches!(p, WordPart::Arithmetic(_)))
+                    .any(|p| matches!(p, WordPart::Arithmetic { source: _, .. }))
             );
         }
         _ => panic!("Expected simple command"),
@@ -420,7 +419,7 @@ fn unclosed_command_sub_at_eof() {
                 sc.words[1]
                     .parts
                     .iter()
-                    .any(|p| matches!(p, WordPart::CommandSubstitution(_)))
+                    .any(|p| matches!(p, WordPart::CommandSubstitution { source: _, .. }))
             );
         }
         _ => panic!("Expected simple command"),

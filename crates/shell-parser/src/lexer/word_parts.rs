@@ -51,7 +51,9 @@ impl Lexer {
                 Some('`') => {
                     let open_pos = self.byte_pos;
                     self.advance();
+                    let body_start = self.byte_pos;
                     let s = self.read_until_char('`');
+                    let body_end = self.byte_pos;
                     if self.peek().is_none() {
                         self.diagnostics.push(ParseDiagnostic {
                             span: Span {
@@ -63,7 +65,13 @@ impl Lexer {
                         });
                     }
                     self.advance(); // skip closing backtick
-                    parts.push(WordPart::Backtick(s));
+                    parts.push(WordPart::Backtick {
+                        source: s,
+                        span: Span {
+                            start: body_start,
+                            end: body_end,
+                        },
+                    });
                 }
                 Some('{') => {
                     // Check for brace expansion: {a,b,c}
@@ -176,9 +184,17 @@ impl Lexer {
                         literal.clear();
                     }
                     self.advance();
+                    let body_start = self.byte_pos;
                     let s = self.read_until_char('`');
+                    let body_end = self.byte_pos;
                     self.advance();
-                    parts.push(WordPart::Backtick(s));
+                    parts.push(WordPart::Backtick {
+                        source: s,
+                        span: Span {
+                            start: body_start,
+                            end: body_end,
+                        },
+                    });
                 }
                 Some('\\') => {
                     self.advance();
@@ -204,7 +220,13 @@ impl Lexer {
                 if self.peek() == Some('(') {
                     // Arithmetic $((expr))
                     self.advance(); // skip second (
+                    let body_start = self.byte_pos;
                     let (expr, found) = self.read_until_double_paren_checked();
+                    let body_end = if found {
+                        self.byte_pos - 2
+                    } else {
+                        self.byte_pos
+                    };
                     if !found {
                         self.diagnostics.push(ParseDiagnostic {
                             span: Span {
@@ -215,10 +237,22 @@ impl Lexer {
                             severity: Severity::Error,
                         });
                     }
-                    Some(WordPart::Arithmetic(expr))
+                    Some(WordPart::Arithmetic {
+                        source: expr,
+                        span: Span {
+                            start: body_start,
+                            end: body_end,
+                        },
+                    })
                 } else {
                     // Command substitution $(cmd)
+                    let body_start = self.byte_pos;
                     let (cmd, found) = self.read_balanced_parens_checked();
+                    let body_end = if found {
+                        self.byte_pos - 1
+                    } else {
+                        self.byte_pos
+                    };
                     if !found {
                         self.diagnostics.push(ParseDiagnostic {
                             span: Span {
@@ -235,7 +269,13 @@ impl Lexer {
                     if let Some(body) = crate::ast::try_fold_static_cat(&cmd) {
                         Some(WordPart::Literal(body))
                     } else {
-                        Some(WordPart::CommandSubstitution(cmd))
+                        Some(WordPart::CommandSubstitution {
+                            source: cmd,
+                            span: Span {
+                                start: body_start,
+                                end: body_end,
+                            },
+                        })
                     }
                 }
             }
