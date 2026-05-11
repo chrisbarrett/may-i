@@ -1,4 +1,10 @@
-## MODIFIED Requirements
+# unified-renderer Specification
+
+## Purpose
+
+Contributor-only. Visible-character-width arithmetic in the layout renderer for `NoteHeading` and `ColRow` labels, so column alignment is correct in the presence of multi-byte Unicode or ANSI escape codes.
+
+## Requirements
 
 ### Requirement: Heading and label widths use visible character width
 The layout renderer SHALL compute visible character width (not byte length) for NoteHeading text and ColRow label text. This ensures correct column alignment when headings or labels contain multi-byte Unicode characters or ANSI escape codes.

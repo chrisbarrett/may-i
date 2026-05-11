@@ -1,4 +1,10 @@
-## ADDED Requirements
+# span-coalescing Specification
+
+## Purpose
+
+How `may-i eval --json` emits the `spans` array: consecutive `ignore`-permission spans are coalesced into a single span (whitespace and operator text combined), while `allow`/`ask`/`deny` spans remain distinct so command boundaries are preserved.
+
+## Requirements
 
 ### Requirement: Adjacent ignore spans SHALL be coalesced
 When the eval command generates the spans array for JSON output, consecutive spans with `"ignore"` permission SHALL be merged into a single span containing the concatenated text.
