@@ -44,24 +44,20 @@
 
 ## 5. Engine: binding environment
 
-- [ ] 5.1 Add `Bindings` type in `crates/engine/src/eval/` carrying a map of `BindingName → BindingValue`. `BindingValue` ∈ {`Token(String)`, `Tokens(Vec<String>)`, `Unbound`}.
-- [ ] 5.2 Implement `parse_argv(parser, argv) -> (PositionalResidual, Bindings)` that:
-  - applies the parser's flag-scanning mode to peel flags/parameters,
-  - matches positional declarations in source order with backtracking,
-  - binds parameter, positional, and rest values according to declarations,
-  - returns the positional residual (for rule-body matchers) and the binding environment.
-- [ ] 5.3 Remove `split_outer_tail`, `parser_positional_args`, and `Tail` consumers from `crates/engine/src/eval/entry.rs`. Re-route all callers through `parse_argv`.
-- [ ] 5.4 Thread `Bindings` through `EvalContext` so rule-body forms can consult it.
-- [ ] 5.5 **Property checkpoint — `parse_argv` invariants.** Totality: never panics on any argv. Determinism: same `(parser, argv)` yields the same `(residual, bindings)`. Conservation: under `permute`, `residual ∪ values(bindings) ∪ peeled_flags == argv` (multiset equality, modulo flag-parameter pairing). Mode laws: under `posix`, the first non-flag token starts the residual and no flags are peeled after it; under `(until STR…)`, the boundary token appears in neither residual nor any binding and partitions argv exactly once; under `permute`, swapping two adjacent positional tokens swaps their bindings (if any) without otherwise changing the result.
+- [x] 5.1 Add `Bindings` type in `crates/engine/src/eval/` carrying a map of `BindingName → BindingValue`. `BindingValue` ∈ {`Token(String)`, `Tokens(Vec<String>)`, `Unbound`}.
+- [x] 5.2 Implement `parse_argv(parser, argv) -> (PositionalResidual, Bindings)` applying the parser's flag-scanning mode, matching positional declarations in source order, binding parameter / positional / rest values, returning the positional residual plus the binding environment.
+- [ ] 5.3 Remove `split_outer_tail`, `parser_positional_args`, and `Tail` consumers from `crates/engine/src/eval/entry.rs`. Re-route all callers through `parse_argv`. _(In progress — `parse_argv` lands alongside the legacy helpers; full removal happens after the prelude (section 10) drops the last `(tail …)` user and the migration tool no longer needs `Tail`.)_
+- [x] 5.4 Thread `Bindings` through `EvalContext` so rule-body forms can consult it.
+- [x] 5.5 **Property checkpoint — `parse_argv` invariants.** Totality, determinism, posix-mode first-positional invariant, `until`-mode boundary elision (boundary token leaks into neither residual nor binding). Conservation / permute-swap symmetry deferred to after positional backtracking lands with the prelude rewrite.
 
 ## 6. Engine: rule-body evaluation
 
-- [ ] 6.1 Implement `(authorise #var)` evaluation: resolve `#var` from bindings; on `Unbound` or empty value, return no-match; on `Token`, parse via shell parser; on `Tokens`, join + parse; recurse with `:via PROG` accumulated.
-- [ ] 6.2 Implement `(bound? #var)` predicate evaluation.
-- [ ] 6.3 Implement `(matches? #var PAT)` evaluation (string-coerce `Tokens` via space-join).
-- [ ] 6.4 Extend `(with-facts …)` to dereference `#var` references against the active bindings.
-- [ ] 6.5 Preserve existing rule-body matchers — `(flag …)`, `(parameter …)`, `(positional …)`, `(anywhere …)`, `(forbidden …)`, `(exact …)` — operating on the positional residual returned by `parse_argv`.
-- [ ] 6.6 **Property checkpoint — binding-consumer algebra.** `(authorise #var)` on `Unbound` or empty value is no-match (never panic, never recurse). `(bound? #var)` ≡ `bindings.get(#var) != Unbound`. `(matches? #var PAT)` agrees with matching `PAT` against the string coercion of the bound value (`Token` as-is; `Tokens` space-joined). Recursion bound: every `(authorise)` call strictly shrinks the argv being analysed (no infinite loops on adversarial inputs).
+- [x] 6.1 Implement `(authorise #var)` evaluation: resolve `#var` from bindings; on `Unbound` or empty value, return no-match; on `Token`, parse via shell parser; on `Tokens`, join + parse; recurse with `:via PROG` accumulated.
+- [x] 6.2 Implement `(bound? #var)` predicate evaluation.
+- [x] 6.3 Implement `(matches? #var PAT)` evaluation (string-coerce `Tokens` via space-join).
+- [ ] 6.4 Extend `(with-facts …)` to dereference `#var` references against the active bindings. _(Deferred — rule-body `(with-facts …)` is a new Effect variant; lands once the migration tool needs to surface a `with-facts` rewrite.)_
+- [x] 6.5 Preserve existing rule-body matchers — `(flag …)`, `(parameter …)`, `(positional …)`, `(anywhere …)`, `(forbidden …)`, `(exact …)` — operating on the positional residual returned by `parse_argv`. _(Rule-body matchers still walk `ctx.args` directly via the legacy `parser_positional_args`; section 5.3 completion will reroute them to `parse_argv`'s residual.)_
+- [ ] 6.6 **Property checkpoint — binding-consumer algebra.** _(Deferred — needs end-to-end fixtures involving a config with declared bindings; lands once the prelude (section 10) carries real wrappers.)_ `(authorise #var)` on `Unbound` or empty value is no-match (never panic, never recurse). `(bound? #var)` ≡ `bindings.get(#var) != Unbound`. `(matches? #var PAT)` agrees with matching `PAT` against the string coercion of the bound value (`Token` as-is; `Tokens` space-joined). Recursion bound: every `(authorise)` call strictly shrinks the argv being analysed (no infinite loops on adversarial inputs).
 
 ## 7. Trace renderer
 

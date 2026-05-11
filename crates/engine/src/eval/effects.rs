@@ -210,13 +210,77 @@ pub(crate) fn evaluate_effect_fold<F: EvalFold>(
             fold.effect_cond(fold_branches, fb, result)
         }
 
-        // `(authorise #var)` — engine evaluation lands in section 6 of
-        // the parser-named-bindings change. Until the binding
-        // environment is threaded through `EvalContext`, treat the verb
-        // as no-match so the AST is exercisable without misleading
-        // decisions.
-        Effect::Authorise { binding: _ } => fold.effect_nil(effect),
+        // `(authorise #var)` — resolve `#var` against the active
+        // parser-binding environment, lift its value into a command
+        // line, and recurse. Unbound or empty values are no-match,
+        // matching the boundary-absent semantics that the legacy
+        // `(tail …)` form encoded.
+        Effect::Authorise { binding } => {
+            let value = ctx.parser_bindings.get(binding);
+            let Some(joined) = value.as_joined() else {
+                return Ok(fold.effect_nil(effect));
+            };
+            if joined.is_empty() {
+                return Ok(fold.effect_nil(effect));
+            }
+            recurse_into_bound_command(fold, effect, &joined, ctx, rules)?
+        }
     })
+}
+
+/// Recursion path for `(authorise #var)`. Mirrors
+/// `recurse_into_inner_command` but emits the inner decision via
+/// `effect_terminal` instead of `effect_arg_continuation` — the verb
+/// has no surrounding `ArgPattern` to wrap.
+fn recurse_into_bound_command<F: EvalFold>(
+    fold: &mut F,
+    effect: &Effect,
+    value: &str,
+    ctx: &EvalContext,
+    rules: &[Rule],
+) -> Result<F::EffectOut, EvalError> {
+    let (inner_cmd, inner_args) = may_i_shell_parser::parse_simple_command(value)
+        .unwrap_or_else(|| (value.to_string(), Vec::new()));
+    if ctx.recursion_depth + 1 >= ctx.recursion_limit {
+        return Ok(fold.effect_terminal(
+            effect,
+            EffectResult::Decision(
+                Decision::Ask,
+                Some(format!(
+                    "recursion depth limit ({}) exceeded",
+                    ctx.recursion_limit
+                )),
+            ),
+        ));
+    }
+    let evaluator = Evaluator::new(rules);
+    let mut inner_facts = ctx.facts.clone();
+    inner_facts.insert_scalar(Keyword::new(":via").unwrap(), ctx.command);
+    let inner_parser = match ctx.config {
+        Some(cfg) => cfg.parser_for_with_rules(&inner_cmd),
+        None => may_i_core::ast::ResolvedParser::synthetic_gnu(&inner_cmd),
+    };
+    fold.record_parser(&inner_cmd, &inner_parser);
+    let expanded_inner = super::entry::tokenise(&inner_args, &inner_parser);
+    let (_residual, inner_parser_bindings) =
+        super::bindings::parse_argv(&inner_parser, &expanded_inner);
+    let inner_ctx = EvalContext {
+        command: &inner_cmd,
+        args: &expanded_inner,
+        facts: &inner_facts,
+        bindings: ctx.bindings.clone(),
+        recursion_depth: ctx.recursion_depth + 1,
+        recursion_limit: ctx.recursion_limit,
+        parser: inner_parser,
+        parser_bindings: inner_parser_bindings,
+        config: ctx.config,
+    };
+    fold.begin_recursive_eval();
+    let eval_result = evaluator.evaluate(fold, &inner_ctx)?;
+    Ok(fold.effect_terminal(
+        effect,
+        EffectResult::Decision(eval_result.decision, eval_result.reason),
+    ))
 }
 
 /// Evaluate an arg pattern as an effect with a fold.
@@ -384,6 +448,8 @@ fn evaluate_tail_authorise_fold<F: EvalFold>(
             fold.record_parser(&inner_cmd, &inner_parser);
             let expanded_inner = super::entry::tokenise(&inner_args, &inner_parser);
             let evaluator = Evaluator::new(rules);
+            let (_residual, inner_parser_bindings) =
+                super::bindings::parse_argv(&inner_parser, &expanded_inner);
             let inner_ctx = EvalContext {
                 command: &inner_cmd,
                 args: &expanded_inner,
@@ -392,6 +458,7 @@ fn evaluate_tail_authorise_fold<F: EvalFold>(
                 recursion_depth: ctx.recursion_depth + 1,
                 recursion_limit: ctx.recursion_limit,
                 parser: inner_parser,
+                parser_bindings: inner_parser_bindings,
                 config: ctx.config,
             };
             fold.begin_recursive_eval();
@@ -670,6 +737,8 @@ fn recurse_into_inner_command<F: EvalFold>(
     };
     fold.record_parser(&inner_cmd, &inner_parser);
     let expanded_inner = super::entry::tokenise(&inner_args, &inner_parser);
+    let (_residual, inner_parser_bindings) =
+        super::bindings::parse_argv(&inner_parser, &expanded_inner);
     let inner_ctx = EvalContext {
         command: &inner_cmd,
         args: &expanded_inner,
@@ -678,6 +747,7 @@ fn recurse_into_inner_command<F: EvalFold>(
         recursion_depth: ctx.recursion_depth + 1,
         recursion_limit: ctx.recursion_limit,
         parser: inner_parser,
+        parser_bindings: inner_parser_bindings,
         config: ctx.config,
     };
     let _ = inner_args;
@@ -840,6 +910,7 @@ fn evaluate_effect_with_owned_args_fold<F: EvalFold>(
     bound_facts: ContextFacts,
 ) -> Result<F::EffectOut, EvalError> {
     let merged_facts = ctx.facts.merge(&bound_facts);
+    let (_residual, inner_parser_bindings) = super::bindings::parse_argv(&ctx.parser, &owned_args);
     let inner_ctx = EvalContext {
         command: ctx.command,
         args: &owned_args,
@@ -848,6 +919,7 @@ fn evaluate_effect_with_owned_args_fold<F: EvalFold>(
         recursion_depth: ctx.recursion_depth,
         recursion_limit: ctx.recursion_limit,
         parser: ctx.parser.clone(),
+        parser_bindings: inner_parser_bindings,
         config: ctx.config,
     };
     evaluate_effect_fold(fold, effect, &inner_ctx, rules)
