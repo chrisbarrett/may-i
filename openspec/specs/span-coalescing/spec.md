@@ -2,7 +2,7 @@
 
 ## Purpose
 
-How `may-i eval --json` emits the `spans` array: consecutive `ignore`-permission spans are coalesced into a single span (whitespace and operator text combined), while `allow`/`ask`/`deny` spans remain distinct so command boundaries are preserved.
+Contributor-only. How `may-i eval --json` emits the `spans` array: consecutive `ignore`-permission spans are coalesced into a single span (whitespace and operator text combined), while `allow`/`ask`/`deny` spans remain distinct so command boundaries are preserved.
 
 ## Requirements
 

@@ -1,6 +1,11 @@
+# Trust-Advisory-Boxes Specification
+
 ## Purpose
 
 Defines how `may-i` surfaces trust-related advisories to end users: when to render an Advisory warning box, what it contains, and which output surfaces are excluded (hook mode, JSON, help/reference).
+
+Trust-relevant: yes — see `trust-gate`, `trust-store`.
+
 ## Requirements
 ### Requirement: Untrusted rules render as Advisory warning box
 

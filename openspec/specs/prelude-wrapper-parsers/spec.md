@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The set of parsers shipped in the prelude for common wrapper tools (sudo, xargs, env, timeout, ssh, mise, nix, find, bash, …) and their parser-side declarations: flag-scanning mode, parameter/positional slots, and the `(rest #cmd)` binding for the recursive payload. Closes silent-bypass wrappers — e.g. `timeout 30 cmd` now binds `30` to `#duration` and recurses on `cmd` rather than the prior `30 cmd`.
+Contributor-only. The set of parsers shipped in the prelude for common wrapper tools (sudo, xargs, env, timeout, ssh, mise, nix, find, bash, …) and their parser-side declarations: flag-scanning mode, parameter/positional slots, and the `(rest #cmd)` binding for the recursive payload. Closes silent-bypass wrappers — e.g. `timeout 30 cmd` now binds `30` to `#duration` and recurses on `cmd` rather than the prior `30 cmd`.
 
 ## Requirements
 ### Requirement: Prelude ships parsers for common wrapper tools

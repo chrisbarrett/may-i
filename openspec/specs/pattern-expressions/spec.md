@@ -1,3 +1,5 @@
+# Pattern-Expressions Specification
+
 ## Purpose
 
 Defines the pattern-expression sublanguage used in rule bodies: flag/parameter/positional matchers, the `--` flag-stop convention, parser-declared tail scoping, negation, and roundtrip serialisation.

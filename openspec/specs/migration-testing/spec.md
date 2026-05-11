@@ -1,3 +1,12 @@
+# Migration-Testing Specification
+
+## Purpose
+
+Contributor-only. Property-test generators and coverage obligations for the
+migration pipeline: compound v1 generators exercising multiple rewrite rules
+at once, wrapper generators, and the round-trip invariants migration must
+satisfy.
+
 ## Requirements
 
 ### Requirement: Property test generators for compound v1 forms

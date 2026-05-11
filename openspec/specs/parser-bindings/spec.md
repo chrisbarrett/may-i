@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The `#var` sigil for parser-bound names: declared in parser bodies (`(rest …)`, `(positional …)`, `(parameter …)`), referenced in rule bodies (`(authorise …)`, `(bound? …)`, `(matches? …)`, `(with-facts …)`). Also documents the `(flags MODE)` declaration (`posix` | `permute` | `(until …)`) that scopes outer flag scanning. Replaces the prior `(tail …)` form's invisible side-channel with explicit, named bindings.
+Contributor-only. The `#var` sigil for parser-bound names: declared in parser bodies (`(rest …)`, `(positional …)`, `(parameter …)`), referenced in rule bodies (`(authorise …)`, `(bound? …)`, `(matches? …)`, `(with-facts …)`). Also documents the `(flags MODE)` declaration (`posix` | `permute` | `(until …)`) that scopes outer flag scanning. Replaces the prior `(tail …)` form's invisible side-channel with explicit, named bindings.
 ## Requirements
 ### Requirement: `#var` sigil denotes a parser-bound name
 

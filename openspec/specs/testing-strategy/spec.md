@@ -1,3 +1,11 @@
+# Testing-Strategy Specification
+
+## Purpose
+
+Contributor-only. Project-wide testing strategy: property-tests-first, the
+classes of invariant those properties must cover, and when targeted unit
+tests are an acceptable fallback for hard-to-hit branches.
+
 ## Requirements
 
 ### Requirement: Prefer property tests

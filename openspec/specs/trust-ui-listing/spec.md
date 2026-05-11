@@ -1,3 +1,13 @@
+# Trust-UI-Listing Specification
+
+## Purpose
+
+Layout of the `may-i trust` listing: two-column grouping by source file when
+all loaded programs are trusted, and alternative layouts when partial trust
+state applies.
+
+Trust-relevant: yes — see `trust-command`, `trust-store`.
+
 ## Requirements
 
 ### Requirement: Trust listing groups by file when all trusted

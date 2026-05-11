@@ -1,3 +1,9 @@
+# Code-Quality Specification
+
+## Purpose
+
+Contributor-only. Code-quality invariants enforced by review and tooling: bans on bare `unwrap()` in production paths, bounded rewrite convergence, and no unused Cargo dependencies.
+
 ## Requirements
 
 ### Requirement: No bare unwrap in production code paths
