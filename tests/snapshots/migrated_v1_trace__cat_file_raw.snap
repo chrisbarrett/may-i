@@ -6,7 +6,7 @@ expression: normalised
 [1mTrace[0m
 
                             [2mcommand[0m [2m│[0m [1mcat foo[0m
-                             [2mparser[0m [2m│[0m gnu
+                             [2mparser[0m [2m│[0m gnu  flags permute
   [2m90: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [2m([0mor [32m"cat"[0m [2m…[0m[2m)[0m[2m)[0m  [2m│[0m
         [2m([0mallow [32m"Read-only access"[0m[2m)[0m[2m)[0m [2m│[0m [2m[0m[2m→[0m [1;32m:allow[0m [32m"Read-only access"[0m
 

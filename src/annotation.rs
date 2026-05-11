@@ -504,9 +504,11 @@ pub enum TraceEntry {
         command: String,
         style: String,
         parameter_tokens: Vec<String>,
-        /// Wrapper-tail boundary spec when the parser declares a tail.
-        /// `None` for parsers that consume the whole argv.
-        tail: Option<String>,
+        /// Rendered `(flags MODE)` for the parser:
+        /// `"posix"`, `"permute"`, or `"until <tok>…"`.
+        flags: String,
+        /// Bound `(rest #var)` name when the parser declares one.
+        rest_binding: Option<String>,
     },
 }
 
@@ -1002,15 +1004,25 @@ impl EvalFold for TracingFold {
     }
 
     fn record_parser(&mut self, command: &str, parser: &may_i_core::ast::ResolvedParser) {
-        let tail = parser.tail.as_ref().map(|t| match t {
-            may_i_core::ast::Tail::AfterFlags => "(after :flags)".to_string(),
-            may_i_core::ast::Tail::AfterToken(s) => format!("(after {s:?})"),
-        });
+        let flags = match &parser.flags_mode {
+            may_i_core::ast::FlagsMode::Posix => "posix".to_string(),
+            may_i_core::ast::FlagsMode::Permute => "permute".to_string(),
+            may_i_core::ast::FlagsMode::Until(toks) => {
+                let inner = toks
+                    .iter()
+                    .map(|t| format!("\"{t}\""))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                format!("until {inner}")
+            }
+        };
+        let rest_binding = parser.rest.as_ref().map(|b| b.to_string());
         self.traces.push(TraceEntry::Parser {
             command: command.to_string(),
             style: parser.style.name().to_string(),
             parameter_tokens: parser.parameter_tokens(),
-            tail,
+            flags,
+            rest_binding,
         });
     }
 

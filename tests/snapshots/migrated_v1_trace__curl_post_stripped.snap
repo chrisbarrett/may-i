@@ -6,7 +6,7 @@ expression: normalised
 Trace
 
                                          command │ curl -d data https://example.com
-                                          parser │ gnu
+                                          parser │ gnu  flags permute
   65: (rule (command "curl")                     │
         (context (and (not (flag "d"))           │
                       …                          │

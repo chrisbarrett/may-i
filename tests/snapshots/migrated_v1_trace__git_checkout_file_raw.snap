@@ -6,7 +6,7 @@ expression: normalised
 [1mTrace[0m
 
                                                           [2mcommand[0m [2m│[0m [1mgit checkout -- main.ts[0m
-                                                           [2mparser[0m [2m│[0m gnu
+                                                           [2mparser[0m [2m│[0m gnu  flags permute
   [2m43: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"git"[0m[2m)[0m                                       [2m│[0m
         [2m([0mcontext [2m([0mand                                             [2m│[0m
                   [2m([0m[34mpositional[0m [32m"reset"[0m[2m)[0m                            [2m│[0m [2m"checkout" = "reset" [0m[2m→[0m [33mno[0m

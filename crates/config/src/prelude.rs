@@ -63,7 +63,7 @@ pub fn prelude_parsers() -> Vec<Parser> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use may_i_core::ast::{PunPolicy, StyleRegistry, Tail};
+    use may_i_core::ast::{FlagsMode, PunPolicy, StyleRegistry};
 
     fn registry_from_prelude() -> StyleRegistry {
         let mut reg = StyleRegistry::new();
@@ -142,13 +142,14 @@ mod tests {
     }
 
     #[test]
-    fn parsers_include_sudo_with_after_flags_tail() {
+    fn parsers_include_sudo_with_posix_flags_mode() {
         let parsers = prelude_parsers();
         let sudo = parsers
             .iter()
             .find(|p| p.program == "sudo")
             .expect("sudo parser in prelude");
-        assert_eq!(sudo.tail, Some(Tail::AfterFlags));
+        assert_eq!(sudo.flags_mode, FlagsMode::Posix);
+        assert_eq!(sudo.rest.as_ref().map(|b| b.as_str()), Some("cmd"));
         assert_eq!(sudo.style_name, "gnu");
         assert!(sudo.provenance.is_prelude());
     }
@@ -156,43 +157,41 @@ mod tests {
     #[test]
     fn third_party_wrappers_excluded_from_prelude() {
         // Tools that don't ship with a regular Linux distribution
-        // (mise, terragrunt, etc.) belong in user config, not the
-        // prelude. Exception: wrappers whose argv semantics are
-        // silent-bypass footguns are added on a case-by-case basis
-        // (see `nix`).
+        // belong in user config unless their argv semantics are
+        // silent-bypass footguns — mise / nix-shell / direnv / ssh
+        // are exceptions because mis-parsing them leaks inner
+        // commands past wrapper rules. terragrunt is still
+        // user-territory.
         let parsers = prelude_parsers();
-        assert!(parsers.iter().all(|p| p.program != "mise"));
         assert!(parsers.iter().all(|p| p.program != "terragrunt"));
     }
 
     #[test]
-    fn parsers_include_nix_with_multi_token_tail() {
+    fn parsers_include_nix_with_until_flags_mode() {
         let parsers = prelude_parsers();
         let nix = parsers
             .iter()
             .find(|p| p.program == "nix")
             .expect("nix parser in prelude");
         assert_eq!(
-            nix.tail,
-            Some(Tail::AfterToken(vec![
-                "--command".to_string(),
-                "-c".to_string(),
-            ]))
+            nix.flags_mode,
+            FlagsMode::Until(vec!["--command".to_string(), "-c".to_string()])
         );
+        assert_eq!(nix.rest.as_ref().map(|b| b.as_str()), Some("cmd"));
         assert_eq!(nix.style_name, "gnu");
         assert!(nix.provenance.is_prelude());
     }
 
     #[test]
     fn user_parser_shadows_prelude_nix() {
-        // Confirm a user `(parser "nix" …)` declaration wins over the
-        // prelude when resolved through the full config-loading path.
-        let cfg = crate::parse_config(r#"(parser "nix" (style gnu) (tail (after "--command")))"#)
-            .expect("config parses");
+        let cfg = crate::parse_config(
+            r#"(parser "nix" (style gnu) (flags (until "--command")) (rest #cmd))"#,
+        )
+        .expect("config parses");
         let resolved = cfg.parser_for("nix");
         assert_eq!(
-            resolved.tail,
-            Some(Tail::AfterToken(vec!["--command".to_string()]))
+            resolved.flags_mode,
+            FlagsMode::Until(vec!["--command".to_string()])
         );
     }
 
@@ -201,12 +200,54 @@ mod tests {
         let cfg = crate::parse_config("").expect("empty config parses");
         let resolved = cfg.parser_for("nix");
         assert_eq!(
-            resolved.tail,
-            Some(Tail::AfterToken(vec![
-                "--command".to_string(),
-                "-c".to_string(),
-            ]))
+            resolved.flags_mode,
+            FlagsMode::Until(vec!["--command".to_string(), "-c".to_string()])
         );
+    }
+
+    #[test]
+    fn parsers_include_timeout_with_duration_positional() {
+        let parsers = prelude_parsers();
+        let timeout = parsers
+            .iter()
+            .find(|p| p.program == "timeout")
+            .expect("timeout parser in prelude");
+        assert_eq!(timeout.flags_mode, FlagsMode::Posix);
+        assert_eq!(timeout.positionals.len(), 1);
+        assert_eq!(
+            timeout.positionals[0].binding.as_ref().map(|b| b.as_str()),
+            Some("duration")
+        );
+        assert_eq!(timeout.rest.as_ref().map(|b| b.as_str()), Some("cmd"));
+    }
+
+    #[test]
+    fn parsers_include_ssh_with_host_positional() {
+        let parsers = prelude_parsers();
+        let ssh = parsers
+            .iter()
+            .find(|p| p.program == "ssh")
+            .expect("ssh parser in prelude");
+        assert_eq!(
+            ssh.positionals[0].binding.as_ref().map(|b| b.as_str()),
+            Some("host")
+        );
+    }
+
+    #[test]
+    fn parsers_include_bash_with_c_binding() {
+        let parsers = prelude_parsers();
+        let bash = parsers
+            .iter()
+            .find(|p| p.program == "bash")
+            .expect("bash parser in prelude");
+        assert_eq!(bash.flags_mode, FlagsMode::Permute);
+        let c = bash
+            .parameters
+            .iter()
+            .find(|p| p.names.iter().any(|n| n == "c"))
+            .expect("c parameter");
+        assert_eq!(c.binding.as_ref().map(|b| b.as_str()), Some("cmd"));
     }
 
     #[test]

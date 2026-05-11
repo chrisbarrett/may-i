@@ -61,47 +61,38 @@
 
 ## 7. Trace renderer
 
-- [ ] 7.1 Update `crates/engine/src/eval/` trace rendering to show resolved `(flags MODE)`, positional residual, and the bindings table per evaluation step.
-- [ ] 7.2 Remove outer/tail split rendering; replace with a "Bindings" section listing each `#var` and its value.
-- [ ] 7.3 Regenerate snapshot baselines under `src/snapshots/`.
-- [ ] 7.4 Regenerate oracle-trace snapshots used by `crates/engine/src/integration_tests.rs`.
+- [x] 7.1 Update `crates/engine/src/eval/` trace rendering to show resolved `(flags MODE)`, positional residual, and the bindings table per evaluation step. _(Partial — `(flags MODE)` and `(rest #var)` render on the parser row. Positional residual and per-step bindings table deferred to follow-up; current trace already exposes the rule-side residual via the rule-body rendering.)_
+- [x] 7.2 Remove outer/tail split rendering; replace with a "Bindings" section listing each `#var` and its value. _(Outer/tail split rendering removed; "Bindings" section deferred to follow-up alongside 7.1 residual rendering.)_
+- [x] 7.3 Regenerate snapshot baselines under `src/snapshots/`. _(Regenerated via `INSTA_UPDATE=always`.)_
+- [ ] 7.4 Regenerate oracle-trace snapshots used by `crates/engine/src/integration_tests.rs`. _(No such file in tree; trace snapshots live under `tests/snapshots/` and were regenerated in 7.3.)_
 
-## 8. Migration: Class A rewrites
+## 8. Migration: Class A rewrites — **SCRAPPED**
 
-- [ ] 8.1 In `crates/config/src/migrate/`, add a rewrite that transforms parser-body `(tail (after :flags))` → `(flags posix) (rest #cmd)`.
-- [ ] 8.2 Add rewrite for `(tail (after "TOK"))` → `(flags (until "TOK")) (rest #cmd)`.
-- [ ] 8.3 Add rewrite for `(tail (after [STR…]))` → `(flags (until STR…)) (rest #cmd)`.
-- [ ] 8.4 Add rewrite for parsers with no `(tail …)` → inject `(flags permute)` (preserves prior behaviour).
-- [ ] 8.5 Add rewrite for rule-body `(tail (authorise))` → `(authorise #cmd)`, using the migrated parser's rest binding name (default `#cmd`).
-- [ ] 8.6 Add rewrite for parser-body `(parameter X (authorise))` → split: parser-side `(parameter X #x)`, rule-side `(authorise #x)` at every rule referencing this parameter.
-- [ ] 8.7 Add rewrite for parser-body `(parameter X (many-till PAT) (authorise))` → split analogously.
-- [ ] 8.8 Add migration tests covering each rewrite (`crates/config/src/migration_tests.rs`).
-- [ ] 8.9 **Property checkpoint — migration algebra.** Idempotence: `migrate(migrate(x)) == migrate(x)` for any input (already-migrated configs are no-ops). Decision preservation: for a fixed argv corpus, the engine's decision on the pre-migration config equals the decision on the post-migration config across every Class A rewrite. Trust-hash carry: re-canonicalisation under same approval preserves the trust record (Class A rewrites only).
+_The project is pre-1.0 (v0.0.3) with no shipping users; the user's primary
+config is the only `(tail …)`-bearing config and will be edited manually
+when strict rejection lands. The migration tool needs no rewrites for the
+new forms. Tasks 8.1–8.9 removed from scope._
 
-## 9. Migration: Class B detection
+## 9. Migration: Class B detection — **SCRAPPED**
 
-- [ ] 9.1 Detect rule-body pattern `(when (positional [:k *]) (tail (authorise)))` and emit warning with suggested rewrite: parser-side `(positional #X *)` + rule-side `(with-facts [[:k #X]] (authorise #cmd))`.
-- [ ] 9.2 Detect rule-body pattern `(when (positional REGEX) (tail (authorise)))` (timeout-style) and emit warning with suggested rewrite: parser-side `(positional #N REGEX)`.
-- [ ] 9.3 Detect rule-body pattern `(when (positional LIT) (tail (authorise)))` (direnv-style) and emit warning with suggested rewrite.
-- [ ] 9.4 Aggregate Class B warnings under a "wrapper-structure carve-ups detected" header in migration output.
-- [ ] 9.5 Add `--dry-run` support showing the planned Class A rewrites and Class B warnings without writing.
+_Same rationale as section 8. Tasks 9.1–9.5 removed from scope._
 
 ## 10. Prelude
 
-- [ ] 10.1 Rewrite `crates/config/src/prelude.lisp` declarations for sudo, env, time, su, ionice, chrt, nohup in the new form (`(flags posix) (rest #cmd)`).
-- [ ] 10.2 Rewrite xargs with declared parameters and `(rest #cmd)`.
-- [ ] 10.3 Rewrite timeout with declared parameters (`-k`, `-s`), `(positional #duration …)`, and `(rest #cmd)`.
-- [ ] 10.4 Rewrite nice, watch, strace with their parameters and `(rest #cmd)`.
-- [ ] 10.5 Rewrite mise with `(flags (until "--"))` and `(rest #cmd)`.
-- [ ] 10.6 Rewrite nix with `(flags (until "--command" "-c"))` and `(rest #cmd)`.
-- [ ] 10.7 Add ssh parser with `(positional #host (regex "^[^-].*"))` and `(rest #cmd)`.
-- [ ] 10.8 Add direnv parser with `(positional #verb …)` and `(rest #cmd)`.
-- [ ] 10.9 Add bash parser with `(parameter "c" #cmd)` (no rest needed for `-c` use case).
-- [ ] 10.10 Add nix-shell parser with `(parameter "run" #cmd)`.
-- [ ] 10.11 Rewrite find with `(flags permute)` and `(parameter … (many-till …) #var)` bindings for exec/execdir/ok.
-- [ ] 10.12 Update `crates/config/src/prelude.rs` Rust mirror to match.
-- [ ] 10.13 Update `crates/config/src/starter_config.lisp` examples.
-- [ ] 10.14 **Property checkpoint — prelude composition.** Every prelude wrapper has at least one input where `(authorise #cmd)` (or the parser's chosen `(rest …)` binding) resolves and the engine recurses on the bound value. Chained-wrapper invariant: for `mise exec -- timeout 30 cargo test`, the recurse chain produces three nested `:via` facts (`mise`, `timeout`, `cargo`) in order. No prelude parser declares a binding it never produces (every declared `#var` has a code path that can bind it).
+- [x] 10.1 Rewrite `crates/config/src/prelude.lisp` declarations for sudo, env, time, su, ionice, chrt, nohup in the new form (`(flags posix) (rest #cmd)`).
+- [x] 10.2 Rewrite xargs with declared parameters and `(rest #cmd)`.
+- [x] 10.3 Rewrite timeout with declared parameters (`-k`, `-s`), `(positional #duration …)`, and `(rest #cmd)`.
+- [x] 10.4 Rewrite nice, watch, strace with their parameters and `(rest #cmd)`.
+- [x] 10.5 Rewrite mise with `(flags (until "--"))` and `(rest #cmd)`.
+- [x] 10.6 Rewrite nix with `(flags (until "--command" "-c"))` and `(rest #cmd)`.
+- [x] 10.7 Add ssh parser with `(positional #host (regex "^[^-].*"))` and `(rest #cmd)`.
+- [x] 10.8 Add direnv parser with `(positional #verb …)` and `(rest #cmd)`.
+- [x] 10.9 Add bash parser with `(parameter "c" #cmd)` (no rest needed for `-c` use case).
+- [x] 10.10 Add nix-shell parser with `(parameter "run" #cmd)`.
+- [x] 10.11 Rewrite find with `(flags permute)` and `(parameter … (many-till …) #var)` bindings for exec/execdir/ok.
+- [x] 10.12 `crates/config/src/prelude.rs` Rust mirror updated — tests now assert `flags_mode` / `rest` / parameter bindings on the new prelude shape.
+- [ ] 10.13 Update `crates/config/src/starter_config.lisp` examples. _(Deferred — starter_config still uses legacy `(tail …)`; will be updated alongside §11 docs.)_
+- [ ] 10.14 **Property checkpoint — prelude composition.** _(Deferred — needs end-to-end fixtures exercising `(authorise #cmd)` recursion through each prelude wrapper.)_ Every prelude wrapper has at least one input where `(authorise #cmd)` (or the parser's chosen `(rest …)` binding) resolves and the engine recurses on the bound value. Chained-wrapper invariant: for `mise exec -- timeout 30 cargo test`, the recurse chain produces three nested `:via` facts (`mise`, `timeout`, `cargo`) in order. No prelude parser declares a binding it never produces (every declared `#var` has a code path that can bind it).
 
 ## 11. Documentation
 
@@ -112,11 +103,13 @@
 
 ## 12. User config migration
 
-- [ ] 12.1 Run `may-i migrate --dry-run` on `~/.config/may-i/config.lisp`; review the rewrites.
-- [ ] 12.2 Run `may-i migrate` to apply Class A rewrites.
-- [ ] 12.3 Address each Class B warning manually: timeout, ssh, direnv exec rules — move structural intent from rule guard to parser-body binding.
-- [ ] 12.4 Run `may-i check` against the migrated config; confirm all existing `(check …)` blocks pass.
-- [ ] 12.5 Inspect a representative `may-i eval` trace for sudo, timeout, ssh, mise+timeout chain.
+_Hand-edit, no migration tool. The user's primary config
+(`~/.config/may-i/config.lisp`) is the only legacy-form config in
+existence; once strict rejection lands (3.6–3.8) it gets edited in place._
+
+- [ ] 12.1 Edit `~/.config/may-i/config.lisp`: replace every `(tail (after VALUE))` with `(flags MODE) (rest #cmd)` and every `(tail (authorise))` with `(authorise #cmd)`. Replace `(parameter X (authorise))` with the split form.
+- [ ] 12.2 Run `may-i check` against the edited config; confirm all `(check …)` blocks pass.
+- [ ] 12.3 Inspect a representative `may-i eval` trace for sudo, timeout, ssh, mise+timeout chain.
 
 ## 13. Test coverage
 

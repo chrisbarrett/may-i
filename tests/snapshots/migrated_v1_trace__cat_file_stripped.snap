@@ -6,7 +6,7 @@ expression: normalised
 Trace
 
                             command │ cat foo
-                             parser │ gnu
+                             parser │ gnu  flags permute
   90: (rule (command (or "cat" …))  │
         (allow "Read-only access")) │ → :allow "Read-only access"
 

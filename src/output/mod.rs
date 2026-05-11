@@ -220,14 +220,16 @@ fn trace_to_layout(
                 command,
                 style,
                 parameter_tokens,
-                tail,
+                flags,
+                rest_binding,
             } => {
                 let mut value = style.clone();
+                value.push_str(&format!("  flags {flags}"));
                 if !parameter_tokens.is_empty() {
                     value.push_str(&format!("  parameters ({})", parameter_tokens.join(" ")));
                 }
-                if let Some(t) = tail {
-                    value.push_str(&format!("  tail {t}"));
+                if let Some(b) = rest_binding {
+                    value.push_str(&format!("  rest {b}"));
                 }
                 let label = "parser";
                 let mut row = ColRow::new(label.dimmed().to_string(), label.len(), value);
@@ -527,7 +529,11 @@ mod tests {
         strip_ansi(&String::from_utf8(buf).unwrap())
     }
 
-    fn parser_then_rule(parameter_tokens: Vec<String>, tail: Option<String>) -> Vec<TraceEntry> {
+    fn parser_then_rule(
+        parameter_tokens: Vec<String>,
+        flags: &str,
+        rest_binding: Option<&str>,
+    ) -> Vec<TraceEntry> {
         let doc = list_ann(
             Ann::RuleMatch {
                 matched: true,
@@ -540,7 +546,8 @@ mod tests {
                 command: "cmd".into(),
                 style: "gnu".into(),
                 parameter_tokens,
-                tail,
+                flags: flags.to_string(),
+                rest_binding: rest_binding.map(str::to_string),
             },
             TraceEntry::Rule {
                 doc,
@@ -569,7 +576,7 @@ mod tests {
 
     #[test]
     fn parser_row_renders_directly_under_command_no_blank_line() {
-        let entries = parser_then_rule(vec![], None);
+        let entries = parser_then_rule(vec![], "permute", None);
         let out = render_trace(&entries, "cmd");
         let (cmd_idx, _) = find_row_with(&out, "command").expect("command row missing");
         let (parser_idx, parser_line) = find_row_with(&out, "parser").expect("parser row missing");
@@ -581,37 +588,37 @@ mod tests {
         assert!(
             parser_line
                 .split_once('│')
-                .is_some_and(|(_, r)| r.trim() == "gnu"),
+                .is_some_and(|(_, r)| r.trim() == "gnu  flags permute"),
             "parser right column wrong: {parser_line}"
         );
     }
 
     #[test]
     fn parser_row_with_parameters() {
-        let entries = parser_then_rule(vec!["-X".into(), "--request".into()], None);
+        let entries = parser_then_rule(vec!["-X".into(), "--request".into()], "permute", None);
         let out = render_trace(&entries, "cmd");
         assert!(
-            out.contains("gnu  parameters (-X --request)"),
+            out.contains("gnu  flags permute  parameters (-X --request)"),
             "right column missing parameters segment:\n{out}"
         );
     }
 
     #[test]
-    fn parser_row_with_tail() {
-        let entries = parser_then_rule(vec![], Some("(after :flags)".into()));
+    fn parser_row_with_posix_flags_and_rest() {
+        let entries = parser_then_rule(vec![], "posix", Some("#cmd"));
         let out = render_trace(&entries, "cmd");
         assert!(
-            out.contains("gnu  tail (after :flags)"),
-            "right column missing tail segment:\n{out}"
+            out.contains("gnu  flags posix  rest #cmd"),
+            "right column missing flags/rest segments:\n{out}"
         );
     }
 
     #[test]
-    fn parser_row_with_parameters_and_tail() {
-        let entries = parser_then_rule(vec!["-c".into()], Some(r#"(after "--")"#.into()));
+    fn parser_row_with_parameters_and_rest() {
+        let entries = parser_then_rule(vec!["-c".into()], r#"until "--""#, Some("#cmd"));
         let out = render_trace(&entries, "cmd");
         assert!(
-            out.contains(r#"gnu  parameters (-c)  tail (after "--")"#),
+            out.contains(r#"gnu  flags until "--"  parameters (-c)  rest #cmd"#),
             "right column missing combined segments:\n{out}"
         );
     }
@@ -633,13 +640,15 @@ mod tests {
                 command: "nix".into(),
                 style: "gnu".into(),
                 parameter_tokens: vec![],
-                tail: Some("(after :flags)".into()),
+                flags: r#"until "--command" "-c""#.to_string(),
+                rest_binding: Some("#cmd".to_string()),
             },
             TraceEntry::Parser {
                 command: "run".into(),
                 style: "gnu".into(),
                 parameter_tokens: vec![],
-                tail: None,
+                flags: "permute".to_string(),
+                rest_binding: None,
             },
             TraceEntry::DefaultAsk {
                 reason: "no rule".into(),
@@ -656,14 +665,14 @@ mod tests {
         let out = render_trace(&entries, "nix run nixpkgs#hello");
         let (_, parser_line) = find_row_with(&out, "parser").expect("parser row missing");
         assert!(
-            parser_line.contains("gnu  tail (after :flags)"),
+            parser_line.contains(r#"gnu  flags until "--command" "-c"  rest #cmd"#),
             "expected outer (nix) parser to be rendered, got: {parser_line}\nfull:\n{out}"
         );
     }
 
     #[test]
     fn no_full_width_parser_banner() {
-        let entries = parser_then_rule(vec![], None);
+        let entries = parser_then_rule(vec![], "permute", None);
         let out = render_trace(&entries, "cmd");
         for line in out.lines() {
             assert!(

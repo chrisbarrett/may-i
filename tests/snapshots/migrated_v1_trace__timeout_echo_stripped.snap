@@ -6,7 +6,7 @@ expression: normalised
 Trace
 
                                   command │ timeout 30 echo hello
-                                   parser │ gnu  tail (after :flags)
+                                   parser │ gnu  flags posix  parameters (-k -s)  rest #cmd
   110: (rule (command "timeout")          │
          (args (when (positional          │
                       (regex "^[0-9]+$")) │

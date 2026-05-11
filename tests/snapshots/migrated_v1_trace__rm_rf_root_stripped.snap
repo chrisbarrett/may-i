@@ -7,7 +7,7 @@ expression: normalised
 Trace
 
                                          command │ rm -rf /
-                                          parser │ gnu
+                                          parser │ gnu  flags permute
   24: (rule (command "rm")                       │
         (context (and (or (flag "r")             │
                           …)                     │

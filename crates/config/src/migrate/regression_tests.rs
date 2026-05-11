@@ -219,14 +219,13 @@ mod tests {
     #[test]
     fn wrapper_mise_exec() {
         let v1 = r#"(wrapper "mise" (positional "exec") (flag "--" :command+args))"#;
-        // mise no longer ships in the prelude. Migration emits the
-        // dotted-tail collapse but does not strip the literal `"--"`;
-        // the user is responsible for declaring the parser themselves
-        // (typically `(parser "mise" (style gnu) (tail (after "--")))`)
-        // and dropping the boundary literal in the same edit.
+        // mise now ships in the prelude with `(flags (until "--"))`;
+        // strip_redundant_boundary removes the literal `"--"` from
+        // the rule's positional prefix since the parser would never
+        // surface it.
         assert_migrates_to(
             v1,
-            r#"(rule "mise" (when (positional "exec" "--") (tail (authorise))))"#,
+            r#"(rule "mise" (when (positional "exec") (tail (authorise))))"#,
         );
     }
 
