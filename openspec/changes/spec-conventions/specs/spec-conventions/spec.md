@@ -24,6 +24,8 @@ Delta-style headings — `## ADDED Requirements`, `## MODIFIED Requirements`, `#
 
 Every spec under `openspec/specs/` SHALL fit into one of the following buckets. The bucket SHALL be implicit in the spec's name and Purpose; an explicit field is not required. A spec that does not fit any bucket SHALL justify a new bucket in its Purpose paragraph before merge.
 
+The first four buckets correspond to the four-layer model documented in `CONTEXT.md` (Rules, Facts, Parsing, Trust) and SHALL be treated as the spine of the spec set. The remaining buckets cover cross-cutting and contributor-only concerns.
+
 Buckets:
 
 - **Rules-and-Evaluation** — how rules combine, how decisions reach a verdict, the security lattice
