@@ -48,17 +48,19 @@
       (deny "No kubectl in production")
     (allow)))
 
-;; SSH wrapper — capture host as fact, evaluate inner command recursively.
-;; The tail (everything after the host) is recursed into as an inner command.
+;; SSH wrapper — the prelude declares `(positional #host (regex …))`
+;; and `(rest #cmd)`. Branch on the host binding, then recurse on the
+;; bound inner command.
 (rule "ssh"
-  (and (positional [:ssh/host *])
-       (tail (authorise))))
+  (cond ((matches? #host (regex "^prod-"))
+         (ask "Production host — confirm before running"))
+        (else (authorise #cmd))))
 
 (rule "rm"
   (cond
     ((and (flag ["r" "recursive"])
-          (fact? [:ssh/host (regex "^prod-")]))
-     (deny "Recursive delete on production hosts"))
+          (fact? [:via "ssh"]))
+     (deny "Recursive delete over ssh"))
     ((flag ["r" "recursive"])
      (ask "Confirm recursive deletion"))
     (else

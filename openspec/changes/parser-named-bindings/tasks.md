@@ -91,15 +91,15 @@ _Same rationale as section 8. Tasks 9.1–9.5 removed from scope._
 - [x] 10.10 Add nix-shell parser with `(parameter "run" #cmd)`.
 - [x] 10.11 Rewrite find with `(flags permute)` and `(parameter … (many-till …) #var)` bindings for exec/execdir/ok.
 - [x] 10.12 `crates/config/src/prelude.rs` Rust mirror updated — tests now assert `flags_mode` / `rest` / parameter bindings on the new prelude shape.
-- [ ] 10.13 Update `crates/config/src/starter_config.lisp` examples. _(Deferred — starter_config still uses legacy `(tail …)`; will be updated alongside §11 docs.)_
+- [x] 10.13 Update `crates/config/src/starter_config.lisp` examples — ssh rule rewritten in terms of `(matches? #host …)` + `(authorise #cmd)`; rm rule branches on `(fact? [:via "ssh"])` rather than the now-unset `:ssh/host` fact.
 - [ ] 10.14 **Property checkpoint — prelude composition.** _(Deferred — needs end-to-end fixtures exercising `(authorise #cmd)` recursion through each prelude wrapper.)_ Every prelude wrapper has at least one input where `(authorise #cmd)` (or the parser's chosen `(rest …)` binding) resolves and the engine recurses on the bound value. Chained-wrapper invariant: for `mise exec -- timeout 30 cargo test`, the recurse chain produces three nested `:via` facts (`mise`, `timeout`, `cargo`) in order. No prelude parser declares a binding it never produces (every declared `#var` has a code path that can bind it).
 
 ## 11. Documentation
 
-- [ ] 11.1 Update REFERENCE.md: remove `(tail …)` sections; add `#var`, `(flags MODE)`, `(rest …)`, `(positional in parser body)`, `(parameter NAME #var)`, `(authorise #var)`, `(bound? …)`, `(matches? …)` sections.
-- [ ] 11.2 Update CONTEXT.md vocab table: remove `Tail` entry, add `Binding` entry; update the `Pattern` entry's mention of `(positional)` to distinguish rule-side matcher from parser-side declaration.
-- [ ] 11.3 Update `examples/` configs to use the new form.
-- [ ] 11.4 Update AGENTS.md and CLAUDE.md if either references `(tail …)`.
+- [x] 11.1 REFERENCE.md updated — "Recursing into wrapped commands" rewritten in terms of `(flags MODE)`, `(rest #var)`, `(authorise #var)`, `(parameter NAME #var)`, `(positional #var PAT)`, plus new subsections for `(bound? #var)` / `(matches? #var PAT)`. Worked mise example rewired. Fmt canonical-order docs updated.
+- [x] 11.2 CONTEXT.md vocab table updated — `Tail` entry replaced with `Binding`; `Authorise` entry now reflects the binding-reference signature; `Parser` entry mentions `(flags MODE)` and `#var` bindings.
+- [x] 11.3 `examples/ssh-sudo-prod-demo.lisp` updated to use `(authorise #cmd)` / `(matches? #host …)`.
+- [x] 11.4 AGENTS.md / CLAUDE.md don't reference `(tail …)`; nothing to update.
 
 ## 12. User config migration
 
