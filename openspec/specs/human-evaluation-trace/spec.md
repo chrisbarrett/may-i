@@ -1,3 +1,5 @@
+# Human-Evaluation-Trace Specification
+
 ## Purpose
 
 Defines how the human-readable evaluation trace renders to the terminal: which signals are surfaced, how multi-line queries are annotated, and what the JSON counterpart preserves for machine consumers.

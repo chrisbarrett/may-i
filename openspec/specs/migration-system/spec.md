@@ -1,3 +1,5 @@
+# Migration-System Specification
+
 ## Purpose
 
 Defines the DSL migration pipeline: sexpr-level rewrite passes that transform older configuration syntax into the current canonical form before AST parsing, with comment/trivia preservation, transitive `(load …)` walking, and Class A/B classification controlling trust hash behaviour.

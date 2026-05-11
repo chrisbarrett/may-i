@@ -1,4 +1,15 @@
-## ADDED Requirements
+# Trust-Hashing Specification
+
+## Purpose
+
+Defines how `may-i` computes per-program trust hashes over the resolved rule
+closure: which rules and defines participate, the canonical order-independent
+serialisation, exclusion of non-semantic content, the `safe-env-vars` scope,
+and the Class A / Class B migration interaction with stored hashes.
+
+Trust-relevant: yes — see `trust-store`, `trust-command`, `trust-provenance`.
+
+## Requirements
 
 ### Requirement: Trust hash is computed per program name
 

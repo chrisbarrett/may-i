@@ -1,3 +1,12 @@
+# Trace-System Specification
+
+## Purpose
+
+The trace-system internals: how `TracingFold` implements `EvalFold` to
+produce annotated `Doc` trees alongside evaluation results, and the `Ann`
+payloads downstream renderers consume to lay out the human and JSON trace
+surfaces.
+
 ## Requirements
 
 ### Requirement: TracingFold produces annotated Doc trees alongside results

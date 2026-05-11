@@ -1,6 +1,8 @@
+# Parser-Engine-Invariants Specification
+
 ## Purpose
 
-Cross-crate invariants between the `may-i-shell-parser` AST and the
+Contributor-only. Cross-crate invariants between the `may-i-shell-parser` AST and the
 `may-i-engine`'s source-byte bookkeeping. Owns the contract that emitted
 spans lie within input bounds, embedded sources match span slices, quoted
 regions and heredoc bodies are inviolable, recursive evaluation stays within

@@ -1,3 +1,5 @@
+# Pretty-Printing Specification
+
 ## Purpose
 
 Defines the canonical pretty-printing rules for `may-i` configuration files: indentation, special-form layout, comment placement, declaration ordering, and round-trip stability under `may-i fmt`.

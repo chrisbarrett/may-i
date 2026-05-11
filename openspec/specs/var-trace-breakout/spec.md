@@ -2,7 +2,7 @@
 
 ## Purpose
 
-How named-pattern (`(define …)`) references appear in evaluation traces: the define name shows at the point of use, with a nested breakout section showing the expanded body and its own annotations — including when the reference does not match.
+Contributor-only. How named-pattern (`(define …)`) references appear in evaluation traces: the define name shows at the point of use, with a nested breakout section showing the expanded body and its own annotations — including when the reference does not match.
 
 ## Requirements
 

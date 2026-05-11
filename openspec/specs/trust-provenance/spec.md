@@ -1,3 +1,13 @@
+# Trust-Provenance Specification
+
+## Purpose
+
+How `Provenance` records the originating file path for each loaded form,
+enabling per-file grouping in the trust UI and accurate trust-scope
+assignment when computing per-program hashes.
+
+Trust-relevant: yes — see `trust-store`, `trust-gate`.
+
 ## Requirements
 
 ### Requirement: Provenance carries source file path

@@ -1,3 +1,12 @@
+# Fact-System Specification
+
+## Purpose
+
+The fact pattern surface used by predicates: where the `FactPattern` enum
+(Literal, Wildcard, Regex, And, Or, Not) lives in the codebase, how it
+composes inside predicate expressions, and the matching semantics seen by
+`(fact? …)` queries against context-fact evidence.
+
 ## Requirements
 
 ### Requirement: FactPattern enum available in predicates module

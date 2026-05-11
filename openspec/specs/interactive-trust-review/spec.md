@@ -1,3 +1,13 @@
+# Interactive-Trust-Review Specification
+
+## Purpose
+
+The interactive review flow for `may-i trust`: how pending rules are
+presented one-per-screen with a cleared terminal, and the action keys that
+drive approve / ignore / skip decisions.
+
+Trust-relevant: yes — see `trust-command`, `trust-hashing`.
+
 ## Requirements
 
 ### Requirement: Screen-cleared per-rule review flow

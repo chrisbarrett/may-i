@@ -1,3 +1,13 @@
+# Trust-Block-Context Specification
+
+## Purpose
+
+How `may-i eval` and adjacent CLI surfaces behave when loaded rules are
+untrusted: non-JSON TTY mode renders an advisory box and proceeds with
+evaluation (untrusted rules default to `:ask`) rather than blocking outright.
+
+Trust-relevant: yes — see `trust-gate`, `trust-store`.
+
 ## Requirements
 
 ### Requirement: Eval TTY mode shows advisory box instead of blocking
