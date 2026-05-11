@@ -21,8 +21,8 @@
 
 ## 4. Land
 
-- [ ] 4.1 Open the change as a PR; reviewer is the maintainer
-- [ ] 4.2 On merge, write the live Purpose section before running `openspec archive` — auto-archive will otherwise insert `TBD - created by archiving change spec-conventions. Update Purpose after archive.`, which violates this spec's own requirement 6. Use the following Purpose text:
+- [ ] 4.1 Merge the worktree branch into main locally
+- [ ] 4.2 Before running `openspec archive`, write the live Purpose section — auto-archive will otherwise insert `TBD - created by archiving change spec-conventions. Update Purpose after archive.`, which violates this spec's own requirement 6. Use the following Purpose text:
 
   ```
   # spec-conventions Specification
