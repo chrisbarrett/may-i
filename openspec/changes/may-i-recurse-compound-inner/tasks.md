@@ -1,71 +1,110 @@
 ## 1. Audit current code
 
-- [ ] 1.1 Confirm `extract_inner_command` is only called from `Effect::MayI`. If
-      other callers exist, document and decide per-caller.
-- [ ] 1.2 Re-read `effect_may_i` / `effect_may_i_no_match` fold-trait shape
-      and decide trace strategy (decision §5 of design.md).
+- [ ] 1.1 Confirm `extract_inner_command` is only called from
+      `evaluate_tail_authorise_fold`. If other callers exist, document and
+      decide per-caller.
+- [ ] 1.2 Confirm the three `(authorise …)` recursion sites in
+      `crates/engine/src/eval/effects.rs` (`recurse_into_bound_command`,
+      `recurse_into_inner_command`, `evaluate_tail_authorise_fold`) all use
+      `parse_simple_command` / `extract_inner_command` today.
+- [ ] 1.3 Re-read the fold-trait surface (`fold.rs`) and confirm each site's
+      outer fold call (`effect_terminal` vs `effect_arg_continuation`)
+      survives unchanged after the inner per-unit events arrive from the
+      shared evaluator.
 
 ## 2. Failing tests first
 
-- [ ] 2.1 Write integration test: `(rule "wrapper" (positional . (may-i *)))`,
-      input `wrapper "echo hi && rm -rf /"` with `rm` denied → `:deny`.
-- [ ] 2.2 Write test: same rule, input `wrapper "if true; then rm /; fi"`,
-      `rm` denied → `:deny`.
-- [ ] 2.3 Write test: simple inner (`wrapper "echo hi"`) still works (regression
-      guard for the equivalence claim in design risks).
-- [ ] 2.4 Write test: dynamic inner (`wrapper "$X"`) → `:ask` with reason
-      mentioning "dynamic".
-- [ ] 2.5 Write test: depth limit is hit if wrappers nest too deeply
-      (`sudo "sudo \"sudo \\\"…\\\"\""` style).
-- [ ] 2.6 Write test: `:via` fact is set to the outermost wrapper at the inner
-      eval (and is consistent across compound inner units).
+- [ ] 2.1 Integration test: `(parser "bash" (parameter "c" #cmd))` +
+      `(rule "bash" (authorise #cmd))` + `(rule "rm" (deny))`,
+      input `bash -c "echo hi && rm -rf /"` → `:deny`.
+- [ ] 2.2 Integration test: `(parser "sudo" (rest #cmd))` +
+      `(rule "sudo" (authorise #cmd))` + `(rule "rm" (deny))`,
+      input `sudo sh -c "if true; then rm /; fi"` → `:deny`.
+      (Exercises `Effect::Authorise` via `(rest …)`.)
+- [ ] 2.3 Integration test: `(parser "find" (parameter "exec" (many-till …) #args))`
+      + `(rule "find" (authorise #args))`, input
+      `find . -exec sh -c "echo a && rm /tmp/x" \;` with `rm` denied →
+      `:deny`. (Exercises `(parameter NAME (many-till …) #var)` capture
+      → shared evaluator on a compound.)
+- [ ] 2.4 Regression test: simple inner still works
+      (`bash -c "echo hi"` with `echo` allowed → `:allow`).
+- [ ] 2.5 Dynamic inner test: `bash -c "$X arg"` → `:ask` with a reason
+      mentioning dynamic command name resolution.
+- [ ] 2.6 Depth limit test: nested wrappers
+      (`sudo sh -c "sudo sh -c \"sudo …\""`) hit the depth limit; reason
+      mentions the limit.
+- [ ] 2.7 `:via` propagation test: per-unit inner evaluations of a
+      compound all see `:via` set to the outermost wrapper.
 
 ## 3. Refactor recursive evaluator
 
-- [ ] 3.1 Extract the per-unit aggregation logic in `evaluate_command_inner`
-      into a shared private function (or expose as crate-internal).
-- [ ] 3.2 Add an optional `via: Option<&str>` parameter that injects the
-      `:via` fact into the inner facts table.
-- [ ] 3.3 Update existing top-level callers of `evaluate_command` /
-      `evaluate_command_with_fold` — signatures stay unchanged externally.
+- [ ] 3.1 Extract `evaluate_command_inner`'s body into a crate-internal
+      helper. Signature gains `via: Option<&str>`. Public
+      `evaluate_command_with_fold` becomes a thin wrapper that passes
+      `via = None`.
+- [ ] 3.2 Inside the helper, if `via` is `Some(name)`, insert
+      `:via name` into the facts before evaluating units.
+- [ ] 3.3 Confirm `outer_offset` semantics still work end-to-end (segment
+      decisions reported in outermost coordinates).
 
-## 4. Rewire `Effect::MayI`
+## 4. Rewire the three `(authorise …)` sites
 
-- [ ] 4.1 In `Effect::MayI` branch, join `ctx.args` into a single string.
-- [ ] 4.2 If joined string is empty, call `effect_may_i_no_match` and return
-      (preserves current behaviour).
-- [ ] 4.3 Otherwise, call the shared evaluator with `depth+1`, the wrapper
-      command name as `via`, and the same fold.
-- [ ] 4.4 Wrap the call with `effect_may_i` start/end fold events so trace
-      output continues to bracket the recursion. Adapt `effect_may_i`
-      signature to receive aggregate result (decision §5).
-- [ ] 4.5 Delete `extract_inner_command` once no callers remain.
+- [ ] 4.1 `Effect::Authorise` (`recurse_into_bound_command`): replace the
+      `parse_simple_command` block with a call to the shared evaluator.
+      Pass `via = Some(ctx.command)`, `depth = ctx.recursion_depth + 1`,
+      `outer_offset = 0`. Preserve the existing empty-value short-circuit
+      and the outer `effect_terminal` fold wrapper.
+- [ ] 4.2 `ParameterForm::Authorise` (`recurse_into_inner_command`):
+      same rewrite. Preserve the outer `effect_arg_continuation` fold
+      wrapper. The `:via` facts merge stays — only the parse/recurse
+      core changes.
+- [ ] 4.3 `ArgPattern::Tail` (`evaluate_tail_authorise_fold`): same
+      rewrite. Preserve the existing tail-empty / boundary-absent
+      branches before calling the shared evaluator.
+- [ ] 4.4 Delete `extract_inner_command` once no callers remain.
+- [ ] 4.5 Drop the per-site `parse_simple_command` imports / calls from
+      the recursion path. `parse_simple_command` itself stays — other
+      consumers (display, migration) may still use it.
 
 ## 5. Fold trace adjustments
 
-- [ ] 5.1 Update `effect_may_i` (and any subclass-style implementors) to take
-      the aggregate `EffectResult` rather than `(inner_cmd, inner_args)`.
-- [ ] 5.2 Update trace rendering so the inner per-unit events appear under
-      the wrapper node visually (indent / group).
-- [ ] 5.3 Update snapshot tests that show `(may-i ...)` trace.
+- [ ] 5.1 Verify per-unit inner events emitted by the shared evaluator
+      surface under each site's outer fold wrapper (no orphaned events,
+      no double-counting).
+- [ ] 5.2 Update snapshot tests that show `(authorise …)` trace output
+      for compound inputs.
 
 ## 6. Specs
 
-- [ ] 6.1 Add requirement(s) to
-      `openspec/specs/shell-command-security-model/spec.md` covering compound
-      inner evaluation, worst-case aggregation, and `:via` propagation.
+- [ ] 6.1 MODIFY `openspec/specs/parser-bindings/spec.md` —
+      `(authorise #var) recurses on a bound name`: replace
+      "parsed by the shell command parser into an inner command and
+      inner argv" with "parsed by the shell command parser as a full
+      command line, decomposed into evaluation units, and each unit
+      evaluated against the active rule set, returning the strictest
+      decision". Add a scenario for compound inner.
+- [ ] 6.2 MODIFY `openspec/specs/parameter-many-till/spec.md` —
+      the `(authorise #var)` usage clause: clarify that the joined
+      tokens are parsed as a full shell command (compound forms
+      supported), not as a single simple command.
+- [ ] 6.3 Verify no `(may-i …)` references leak into the modified specs
+      (use only current vocabulary: `(authorise #var)`, `(deny)`,
+      `#var` bindings).
 
 ## 7. Property tests
 
-- [ ] 7.1 Property: for any compound shell command `c`, `(may-i ...)`
-      recursing on `c` produces the same decision as `evaluate_command` would
-      on `c` (modulo the `:via` fact and depth offset).
+- [ ] 7.1 Property: for any compound shell command `c` accepted by
+      `parse`, evaluating `bash -c c` (with a parser declaring
+      `(parameter "c" #cmd)` + `(authorise #cmd)`) produces the same
+      strictest decision as evaluating `c` directly at the top level,
+      modulo the `:via "bash"` fact and the +1 depth.
 - [ ] 7.2 Add to `crates/engine/src/test_generators/`.
 
 ## 8. Coverage and cleanup
 
 - [ ] 8.1 `cargo fmt`.
-- [ ] 8.2 `cargo tarpaulin`; inspect `lcov.info` for new uncovered branches.
-- [ ] 8.3 Update `CHANGELOG.md` if present (none currently — skip).
-- [ ] 8.4 Run user oracle: `may-i eval 'bash -c "echo hi && rm -rf /"'` with
-      a config that denies `rm` — verify `:deny` is reported.
+- [ ] 8.2 `cargo tarpaulin`; inspect `lcov.info` for new uncovered
+      branches in the rewired sites.
+- [ ] 8.3 Run user oracle:
+      `may-i eval 'bash -c "echo hi && rm -rf /"'` with a config that
+      denies `rm` — verify `:deny` is reported.

@@ -1,44 +1,64 @@
 ## Why
 
-`(may-i ...)` recursion is the rule-grammar mechanism for evaluating
-command-runner builtins (`sudo`, `bash -c`, `eval`, `xargs`, `nix shell
---command`, etc.). It re-parses the inner argument as a command and runs the
-rule engine over it.
+The `(authorise #var)` form is the rule-grammar mechanism for re-evaluating an
+inner command captured by a parser binding. It re-parses the bound value as a
+command and runs the rule engine over it. This is how wrappers like `sudo`,
+`bash -c`, `xargs`, and `find -exec` are policed against the rules for the
+program they actually invoke.
 
-Today the recursion path uses `parse_simple_command`, which returns `None` for
-any compound command. The current fallback then treats the literal compound
-string as a single command name, so no rule will match it. A user who runs
+Today every recursion site uses `parse_simple_command` (or
+`extract_inner_command`, which wraps it). That parser returns `None` for any
+compound command and the call sites fall back to "first arg as command, rest
+as args". So a user who runs
 
 ```
 bash -c "echo hi && rm -rf /"
 ```
 
-with a `(may-i *)` rule for `bash` gets `:ask` with an unhelpful reason —
-neither `echo` nor `rm` is evaluated. The check that the user expected the rule
-to perform never happens.
+with a `(parser "bash" (parameter "c" #cmd))` + `(rule "bash" (authorise #cmd))`
+gets `:ask` (or worse, `:allow`) — neither `echo` nor `rm` is evaluated. The
+check the user expected the rule to perform never happens.
 
-This is the same recursive evaluation that `evaluate_command_inner` already does
-correctly at the top level: parse, decompose into `EvalUnit`s, evaluate each,
-aggregate worst-case. `(may-i ...)` should reuse that machinery.
+This is the same recursive evaluation that the top-level `evaluate_command_inner`
+already does correctly: parse, decompose into `EvalUnit`s, evaluate each,
+aggregate strictest. The `(authorise …)` recursion should reuse that machinery.
+
+The bug is duplicated across **three** recursion sites in
+`crates/engine/src/eval/effects.rs`:
+
+1. `recurse_into_inner_command` — `(parameter NAME (authorise))` single-token
+   capture (≈L723).
+2. `recurse_into_bound_command` — `Effect::Authorise { binding }`, the surface
+   `(authorise #var)` form (≈L235).
+3. `evaluate_tail_authorise_fold` — `ArgPattern::Tail`, the
+   `(tail (authorise))` form (≈L412), which uses `extract_inner_command`.
+
+All three should funnel through one shared recursive evaluator.
 
 ## What Changes
 
-- **`Effect::MayI` evaluates compound inner commands.** When the args passed to
-  `(may-i ...)` form a compound shell expression (pipelines, `&&`/`||`,
-  sequences, `if`/`for`/`case`, command substitutions), the inner string is
-  re-parsed as a full shell command, decomposed into `EvalUnit`s, and each unit
-  evaluated against the rules. The recursion returns the worst-case
-  (most-restrictive) decision.
-- **`extract_inner_command` is retired or restricted.** The ad-hoc
-  `parse_simple_command` + first-arg fallback is removed in favour of the
-  shared `evaluate_command_inner` flow.
-- **Recursion depth is preserved across the new path.** The existing
-  `recursion_depth` / `recursion_limit` fields continue to bound nesting.
-- **The `:via` fact is preserved.** The wrapper command name continues to be
-  injected so rules like `(fact? [:via "sudo"])` keep working.
-- **Trace output reflects multiple inner units.** When `(may-i ...)` recurses
-  into a compound, the trace shows each contained simple command's evaluation
-  rather than a single opaque entry.
+- **`(authorise …)` recursion evaluates compound inner commands.** When the
+  bound value forms a compound shell expression (pipelines, `&&`/`||`,
+  sequences, `if`/`for`/`case`, command substitutions), the value is re-parsed
+  as a full shell command, decomposed into `EvalUnit`s, and each unit
+  evaluated against the rules. The recursion returns the strictest
+  (most-restrictive) decision, matching the top-level evaluator's
+  strictest-wins semantics.
+- **A single shared recursive evaluator backs all three sites.** The body of
+  `evaluate_command_inner` is extracted into a helper that takes an
+  optional `via` and an initial depth. `Effect::Authorise`,
+  `ParameterForm::Authorise`, and `ArgPattern::Tail` all call it.
+- **`extract_inner_command` and direct `parse_simple_command` calls are
+  retired from the recursion path.** Removed once no callers remain.
+- **Recursion depth is preserved across the new path.** Each `(authorise …)`
+  recursion counts as one step toward `recursion_limit`; multiple inner
+  units within a single recursion SHALL NOT each consume a level.
+- **The `:via` fact is preserved.** Each recursion site continues to push
+  the wrapper command name onto the `:via` set before evaluating the
+  inner.
+- **Trace output reflects multiple inner units.** When `(authorise …)`
+  recurses into a compound, the trace shows each contained simple
+  command's evaluation rather than a single opaque entry.
 
 ## Capabilities
 
@@ -48,22 +68,33 @@ aggregate worst-case. `(may-i ...)` should reuse that machinery.
 
 ### Modified Capabilities
 
-- `shell-command-security-model`: extended so the recursive evaluation
-  contract covers compound inner commands inside `(may-i ...)`.
+- `parser-bindings`: the `(authorise #var)` requirement is extended so the
+  recursion contract covers compound inner commands (`bash -c "a && b"`,
+  `sudo sh -c "if …; fi"`, etc.).
+- `parameter-many-till`: the `(authorise #var)` rule-body usage clause is
+  clarified to require full shell parsing of the joined capture.
 
 ## Impact
 
-- `crates/engine/src/eval/effects.rs` — `Effect::MayI` branch (≈L215) and
-  `extract_inner_command` (≈L363). Replace with a call into the existing
-  decompose + per-unit evaluate flow.
-- `crates/engine/src/eval/command.rs` — `evaluate_command_inner` becomes (or
-  exposes) the shared recursive evaluator; signature may grow a `:via` fact
-  parameter and an initial depth.
-- `crates/engine/src/fold.rs` — `effect_may_i` may need to accept multiple
-  inner outcomes (or a single aggregated outcome) so traces remain coherent.
-- `crates/engine/src/eval/tests/mod.rs` — existing MayI tests continue to pass;
-  new tests cover compound inner.
-- `tests/` (integration) — add scenarios for `bash -c "a && b"`, `eval "if …
-  fi"`, denied inner inside compound.
-- `openspec/specs/shell-command-security-model/spec.md` — new requirement(s)
-  added by this change.
+- `crates/engine/src/eval/command.rs` — `evaluate_command_inner` is the
+  shared recursive evaluator. Either expose it crate-internal with a
+  `via: Option<&str>` parameter, or extract a new helper that both
+  `evaluate_command_with_fold` and the three `(authorise …)` sites call.
+- `crates/engine/src/eval/effects.rs` —
+  - `recurse_into_inner_command` (≈L723): replace `parse_simple_command`
+    fallback with the shared evaluator.
+  - `recurse_into_bound_command` (≈L235): same.
+  - `evaluate_tail_authorise_fold` (≈L412): same; `extract_inner_command`
+    becomes unused.
+  - `extract_inner_command` (≈L934): delete once no callers remain.
+- `crates/engine/src/fold.rs` — fold-trait surface may need a small tweak
+  so per-unit inner trace events surface under the wrapper node rather
+  than appearing flat.
+- `crates/engine/src/eval/tests/mod.rs` — existing `(authorise …)` tests
+  continue to pass; new tests cover compound inner.
+- `tests/` (integration) — add scenarios for `bash -c "a && b"`,
+  `sudo sh -c "if …; fi"`, denied inner inside compound, dynamic inner.
+- `openspec/specs/parser-bindings/spec.md` — MODIFY the
+  `(authorise #var)` requirement.
+- `openspec/specs/parameter-many-till/spec.md` — MODIFY the
+  `(authorise #var)` usage clause for `(many-till …)` captures.

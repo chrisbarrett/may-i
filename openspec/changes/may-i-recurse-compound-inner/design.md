@@ -1,122 +1,151 @@
 ## Context
 
-The engine has two near-parallel pieces of code that both "evaluate a string as
-a shell command":
+The engine has multiple near-parallel pieces of code that all "evaluate a
+string as a shell command":
 
-1. **`evaluate_command_inner`** (`crates/engine/src/eval/command.rs`) — top-level
-   entry point used by `cmd_eval`, `cmd_claude_code_hook`, etc. Parses, calls
-   `decompose`, evaluates each `EvalUnit`, aggregates worst-case, applies
-   parse-error floor. Handles compound input correctly.
+1. **`evaluate_command_inner`** (`crates/engine/src/eval/command.rs`) —
+   top-level entry point used by `cmd_eval`, `cmd_claude_code_hook`, etc.
+   Parses, calls `decompose`, evaluates each `EvalUnit`, aggregates
+   strictest, applies parse-error floor. Handles compound input correctly.
 
-2. **`Effect::MayI`** (`crates/engine/src/eval/effects.rs:215`) — the
-   recursive evaluator inside the rule engine. Calls `extract_inner_command`,
-   which uses `parse_simple_command` and falls back to "first arg as command,
-   rest as args". Does **not** decompose. Compound inner commands fall through
-   to the broken fallback.
+2. **`recurse_into_bound_command`** (`crates/engine/src/eval/effects.rs`
+   ≈L235) — the recursion path for `Effect::Authorise { binding }`, the
+   surface `(authorise #var)`. Calls `parse_simple_command`, falls back to
+   "value as command, no args". Does **not** decompose. Compound inner
+   commands fall through to the broken fallback.
 
-The asymmetry is the bug. The fix is to collapse the second path into the first
+3. **`recurse_into_inner_command`** (`crates/engine/src/eval/effects.rs`
+   ≈L723) — the recursion path for `(parameter NAME (authorise))`
+   single-token captures. Same `parse_simple_command` + fallback. Same bug.
+
+4. **`evaluate_tail_authorise_fold`** (`crates/engine/src/eval/effects.rs`
+   ≈L412) — the recursion path for `ArgPattern::Tail` /
+   `(tail (authorise))`. Uses `extract_inner_command` (which wraps
+   `parse_simple_command`). Same bug.
+
+The asymmetry is the bug. Three recursion sites with the same shortcoming;
+each duplicates parse-and-recurse logic that already exists, correctly, at
+the top level. The fix is to collapse all three onto the top-level path
 (or share a helper).
 
 ## Goals / Non-Goals
 
 **Goals:**
-- `(may-i ...)` correctly evaluates any shell command the top-level evaluator
-  can evaluate.
-- Worst-case aggregation extends across inner units (one denied unit denies the
-  whole `(may-i ...)`).
+- Every `(authorise …)` recursion correctly evaluates any shell command the
+  top-level evaluator can evaluate.
+- Strictest-wins aggregation extends across inner units (one denied unit
+  denies the whole `(authorise …)`).
 - Recursion depth and `:via` fact propagation survive the refactor.
-- Trace output for `(may-i ...)` over a compound input shows the per-unit
-  evaluation, not a single opaque rollup.
+- Trace output for `(authorise …)` over a compound input shows the
+  per-unit evaluation, not a single opaque rollup.
+- All three recursion sites converge on one helper. No new place where
+  compound inner is silently mis-handled.
 
 **Non-Goals:**
-- Changing the rule grammar (no new forms).
-- Recursing into runtime-dynamic strings (`eval "$X"` — the inner is unknown,
-  stays `:ask`).
-- Recursing into arg values that aren't intended as commands (no
-  rule-driven argument-shape inference here; the existing
-  `(positional ... . (may-i *))` form still controls when recursion happens).
-- Solving the broken `(positional "-c" . (may-i *))` rule shape (separate
-  problem — `-c` is stripped by `positional_args`). Tracked separately.
+- Changing the rule grammar (no new surface forms).
+- Recursing into runtime-dynamic strings (`eval "$X"` — the inner is
+  unknown, stays `:ask`).
+- Recursing into arg values that aren't intended as commands (the
+  parser-binding declarations still control when recursion happens).
+- Reworking the `via-fact-builtin` spec to current vocabulary — handled by
+  a separate hygiene change.
 
 ## Decisions
 
-### 1. Shared recursive evaluator, called from both paths
+### 1. Shared recursive evaluator, called from all four paths
 
 Extract the body of `evaluate_command_inner` into a function that takes:
 - `input: &str`
 - `config`, `facts`, `fold`
 - `depth: usize`, `limit: usize`
+- `outer_offset: usize`
+- `via: Option<&str>` (NEW — wrapper command name to push onto `:via`)
 
-Both top-level evaluation and `Effect::MayI` call it. The existing
-`evaluate_command_inner` becomes a thin wrapper that starts with `depth=0`.
+The top-level entry point (`evaluate_command_with_fold`) calls it with
+`via = None`. Each of the three `(authorise …)` sites calls it with
+`via = Some(ctx.command)` and `depth = ctx.recursion_depth + 1`.
 
-`Effect::MayI` joins its `args` into a single string and calls the shared
-function with `depth+1` and a facts table extended with `:via`.
+**Alternative**: Keep paths separate and duplicate decompose logic into
+each site. Rejected — three places that must stay in sync, and the bug
+this change fixes is precisely the cost of that duplication.
 
-**Alternative**: Keep the two paths separate and duplicate the decompose
-logic into `Effect::MayI`. Rejected — creates two places that must stay in sync.
+### 2. `:via` push happens inside the shared evaluator
 
-### 2. `:via` fact is injected at the recursion boundary
-
-The current `Effect::MayI` injects `:via` on the inner context before
-calling `Evaluator::evaluate`. The shared evaluator must preserve this: the
-recursion accepts an optional `via` argument that the caller (`Effect::MayI`)
-sets to the wrapper command name. Top-level callers pass `None`.
+Today each recursion site calls `inner_facts.insert_scalar(:via, …)`
+before invoking the inner evaluator. After this change, the shared
+evaluator accepts `via: Option<&str>` and performs the insert itself
+when present. This keeps the contract in one place and means future
+recursion sites can't forget it.
 
 ### 3. Depth limit is per-recursion-call, not per-unit
 
 `evaluate_command_inner` already increments depth when recursing into
-`EmbeddedCommand` substitutions. The MayI recursion should likewise count as
-one depth step regardless of how many `EvalUnit`s the inner command
-produces — otherwise a wrapper with a long pipeline would trigger the limit
-spuriously.
+`EvalUnit::EmbeddedCommand` substitutions. Each `(authorise …)`
+recursion likewise counts as one depth step regardless of how many
+`EvalUnit`s the inner command produces — otherwise a wrapper around a
+long pipeline would trigger the limit spuriously.
 
-### 4. Worst-case aggregation matches existing behaviour
+### 4. Strictest-wins aggregation matches existing top-level behaviour
 
-`Decision` already has an ordering (`Allow < Ask < Deny`). The shared evaluator
-takes the max across units. This is unchanged.
+`Decision` has an ordering (`Allow < Ask < Deny`). The shared evaluator
+takes the max across units. This is unchanged from the current
+top-level path. The `order-independent-rules` change already wired
+strictest-wins at the per-program layer; this change extends it
+through the recursion boundary by composition (no new aggregation
+semantics).
 
-### 5. Fold trace shape
+### 5. Trace shape
 
-`effect_may_i` currently receives a single `(inner_cmd, inner_args, result)`
-triple. With compound inner, there is no single `inner_cmd`. Two options:
+The three recursion sites currently surface the inner decision via
+either `effect_terminal` (in `recurse_into_bound_command`) or
+`effect_arg_continuation` (in the other two). The shared evaluator
+emits per-unit fold events for each inner `EvalUnit` it visits, so the
+trace already gets per-unit detail "for free". Each site continues to
+wrap that with its own outer fold event (terminal or arg-continuation)
+so the existing trace shape is preserved.
 
-- **(a)** Pass the original argument string and the aggregate result. The fold
-  surfaces "may-i recursion → :decision" as one node, with per-unit detail
-  available via the inner fold events that fire during the recursive call.
-- **(b)** Pass a `Vec<(EvalUnit, EffectResult)>` so the fold can render each
-  inner unit explicitly.
+If trace verbosity becomes a concern, indent/group the inner events
+under the wrapper node — display concern, not engine concern.
 
-Lean toward **(a)** for the first cut — fold events from the recursive
-`evaluate_command_inner` already produce per-unit trace lines. The MayI
-wrapper just needs to bracket them.
+### 6. Empty-value short-circuit
 
-### 6. Empty-args case
+`(authorise #var)` is already specified to be a no-match when the
+binding is unbound or empty (`parser-bindings` spec). The shared
+evaluator's "empty command" handling produces `:ask`, which is wrong
+for this contract. Each site keeps its existing empty-value guard and
+short-circuits before calling the shared evaluator.
 
-If `(may-i ...)` is reached with no args (e.g. `sudo` alone), current code
-returns `effect_may_i_no_match`. Preserve this — the shared evaluator's
-"empty command" handling produces `:ask`, but the MayI branch should still
-short-circuit before calling it to keep the fold trace clean.
+### 7. `extract_inner_command` removal
+
+Once the tail path uses the shared evaluator, `extract_inner_command`
+has no callers. Delete it. `parse_simple_command` itself remains — it's
+still useful elsewhere (e.g., display, migration) — but it's removed
+from the recursion path.
 
 ## Risks / Trade-offs
 
-- **Trace verbosity grows.** A `(may-i)` over `bash -c "if … fi"` will now
-  emit per-inner-unit trace lines. Users will see more output. Mitigation:
-  fold rendering should indent or group inner units under the wrapper.
+- **Trace verbosity grows.** `(authorise #cmd)` over `bash -c "if … fi"`
+  will now emit per-inner-unit trace lines. Users will see more output.
+  Mitigation: rendering can indent or group inner units under the wrapper.
 - **Performance.** Recursing through full parse + decompose for every
-  `(may-i)` is more work than `parse_simple_command`. Negligible in practice
-  — these inputs are short. No benchmark needed unless a regression appears.
-- **Subtle behaviour change for non-compound inner.** Today, a simple inner
-  like `sudo echo hi` works via `parse_simple_command`. Under the new path,
-  the same input flows through full `parse` + `decompose`, which produces the
-  same `EvalUnit::SimpleCommand`. Equivalent end result. Verify via existing
-  tests.
+  `(authorise …)` is more work than `parse_simple_command`. Negligible —
+  these inputs are short. No benchmark needed unless a regression appears.
+- **Subtle behaviour change for non-compound inner.** Today, a simple
+  inner like `echo hi` works via `parse_simple_command`. Under the new
+  path, the same input flows through full `parse` + `decompose`, which
+  produces a single `EvalUnit::SimpleCommand`. Equivalent end result.
+  Verify via existing tests.
+- **Three sites, one helper — but each site keeps its own outer fold
+  event.** Mechanical risk that one site forgets to bracket the
+  recursion. Mitigated by integration tests covering each site's trace
+  shape.
 
 ## Open Questions
 
 - Should `bash -c "$X"` (dynamic inner) be `:ask` or surface a more
   informative reason? The decompose path already classifies this as
-  `EvalUnit::DynamicCommand` — the existing reason ("dynamic command name: …")
-  flows through naturally. Probably good as-is.
-- Does `extract_inner_command` have any callers outside `Effect::MayI`?
-  Check `pub(crate)` references. If yes, those need updating too.
+  `EvalUnit::DynamicCommand` — the existing reason ("dynamic command
+  name: …") flows through naturally. Probably good as-is.
+- The `via-fact-builtin` live spec still uses retired vocabulary
+  (`(may-i *)`, `(effect :deny)`). Out of scope here; tracked by a
+  separate spec-hygiene change.
