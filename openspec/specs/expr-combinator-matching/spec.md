@@ -1,7 +1,13 @@
-## MODIFIED Requirements
+# expr-combinator-matching Specification
+
+## Purpose
+
+Contributor-only. Short-circuit semantics for `Expr::Or` in the evaluator: the first matching alternative wins, later alternatives are not evaluated, and only the first match's bound facts surface — so `(or [:a *] [:b *])` cannot leak both bindings into context.
+
+## Requirements
 
 ### Requirement: Expr::Or matches if any sub-expression matches
-`Expr::Or` SHALL return true if any sub-expression matches the value. The evaluation SHALL short-circuit on the first matching sub-expression. Only bound facts from the first matching sub-expression SHALL be included in the result. Later alternatives SHALL NOT be evaluated once a match is found. (CHANGED: added explicit short-circuit requirement and clarified that only first-match facts are returned, not merged facts from all matching alternatives)
+`Expr::Or` SHALL return true if any sub-expression matches the value. The evaluation SHALL short-circuit on the first matching sub-expression. Only bound facts from the first matching sub-expression SHALL be included in the result. Later alternatives SHALL NOT be evaluated once a match is found.
 
 #### Scenario: First sub-expression matches
 - **WHEN** matching `Expr::Or([Literal("prod"), Literal("staging")])` against `"prod"`

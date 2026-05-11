@@ -1,4 +1,10 @@
-## ADDED Requirements
+# v2-expr-fact-binding Specification
+
+## Purpose
+
+Contributor-only. Parser-time validity rules for fact-binding (`[:k *]`) inside argv-shaped patterns: accepted in `positional`, `exact`, `anywhere`; rejected in `forbidden` with a clear error (binding a fact from a negative match has no defensible semantics).
+
+## Requirements
 
 ### Requirement: Bind is valid in positional, exact, and anywhere but not forbidden
 `Expr::Bind` SHALL be accepted by the parser inside `positional`, `exact`, and `anywhere` patterns. The parser SHALL reject `Expr::Bind` inside `forbidden` patterns with a clear error.

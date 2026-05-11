@@ -1,3 +1,11 @@
+# partial-pattern-matching Specification
+
+## Purpose
+
+Quantifier semantics for positional pattern matching: `?` Optional (zero or one), `+` OneOrMore, `*` ZeroOrMore. Defines what happens when fewer args are present than the patterns demand, when an Optional pattern is satisfied by absence, and what counts as a valid OneOrMore/ZeroOrMore match.
+
+## Requirements
+
 ### Requirement: Fewer args than required patterns returns no match
 When the number of available positional args is less than the number of patterns (accounting for quantifiers), positional matching SHALL return false.
 
@@ -50,8 +58,3 @@ A `Quantifier::ZeroOrMore` (*) pattern SHALL match zero or more remaining args f
 - **WHEN** matching positional pattern `**` against args `["a" "b" "c"]`
 - **THEN** it SHALL return matched=true
 
-## REMOVED Requirements
-
-### Requirement: At patterns match by position
-**Reason**: The `At` matcher is redundant — `positional` with wildcards covers the same cases
-**Migration**: Replace `(= N PATTERN)` with `(positional)` using wildcards to skip positions
