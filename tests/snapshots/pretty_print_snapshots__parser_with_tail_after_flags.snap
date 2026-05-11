@@ -3,6 +3,6 @@ source: tests/pretty_print_snapshots.rs
 expression: out
 ---
 ── input (width 80) ──
-(parser "sudo" (style gnu) (tail (after :flags)))
+(parser "sudo" (style gnu) (flags posix) (rest #cmd))
 ── output ──
-(parser "sudo" (style gnu) (tail (after :flags)))
+(parser "sudo" (style gnu) (flags posix) (rest #cmd))

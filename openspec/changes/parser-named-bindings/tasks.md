@@ -15,7 +15,7 @@
 - [x] 2.3 Add `PositionalDecl { binding: Option<BindingName>, pattern: Expr, quantifier: Quantifier }`.
 - [x] 2.4 Extend `ParameterDecl` with `binding: Option<BindingName>`; preserve existing `treatment` and `capture` fields during the migration but mark `ParameterTreatment::Authorise` as deprecated/removed at the end.
 - [x] 2.5 Add `Parser::flags_mode: FlagsMode`, `Parser::positionals: Vec<PositionalDecl>`, `Parser::rest: Option<BindingName>` (legacy `tail` field retained transitionally — fully replaced when `parse_argv` lands in section 5).
-- [ ] 2.6 Remove `Tail` enum from public exports; keep it temporarily internal as the migration tool may need to read old-form configs. _(Deferred to end of section 5 — engine entry.rs still reads `Tail`.)_
+- [x] 2.6 Remove `Tail` enum from public exports — deleted entirely. The legacy `parser.tail` field is gone from both `Parser` and `ResolvedParser`.
 - [x] 2.7 **Encapsulation checkpoint.** `BindingName` has a private field and smart constructor enforcing: non-empty, no embedded `#`, no whitespace. Reject `BindingName::new("")`, `BindingName::new("#foo")`, `BindingName::new("foo bar")`. Property: a `BindingName` value round-trips through `Display` and `from_str` losslessly.
 
 ## 3. Config parser: parser-body forms
@@ -25,9 +25,9 @@
 - [x] 3.3 Recognise `(positional [#var] PAT [QUANT])` body item. Parse the optional binding slot, the required pattern, and the optional quantifier.
 - [x] 3.4 Extend `(parameter NAME …)` parsing to accept an optional trailing `#var` slot after the existing body forms.
 - [x] 3.5 Extend `(parameter NAME (many-till PAT) [#var])` to accept the trailing binding.
-- [ ] 3.6 Reject the legacy `(tail (after …))` form at load time with an error suggesting `may-i migrate`. _(Deferred — enabled after sections 8 (migration) and 10 (prelude) rewrite legacy users; prelude.lisp still uses `(tail …)` today.)_
-- [ ] 3.7 Reject `(parameter NAME (authorise))` legacy form with a migration suggestion. _(Deferred — same dependency as 3.6.)_
-- [ ] 3.8 Reject any `(parser …)` body that omits `(flags …)`. _(Deferred — enabled once every user-facing parser declaration (prelude + starter_config + examples) carries `(flags …)`.)_
+- [x] 3.6 Reject the legacy `(tail (after …))` form at load time with an error pointing at the new `(flags MODE) (rest #cmd)` shape.
+- [ ] 3.7 Reject `(parameter NAME (authorise))` legacy form with a migration suggestion. _(Soft-rejected: the rule body still parses `(parameter X (authorise))` for migration ergonomics; the parser-side form is unreachable since the AST has no `ParameterTreatment::Authorise` consumer left. Will tighten when starter_config and examples are updated in §11.)_
+- [ ] 3.8 Reject any `(parser …)` body that omits `(flags …)`. _(Deferred — defaults to `(flags permute)` when omitted, matching the historical behaviour for parsers without a wrapper-boundary. Hard rejection requires migrating every example + starter config, follow-up.)_
 - [x] 3.9 Update canonicalisation (`crates/config/src/canonicalise.rs`) to alphabetise body items in the new schema: `(style)`, `(flags)`, `(flag)`, `(parameter)`, `(positional)`, `(rest)`.
 - [x] 3.10 Update parser-properties proptest harness with new-form generators.
 - [x] 3.11 **Property checkpoint — canonicalisation algebra.** Stability: `parse → canonicalise → parse` yields equal ASTs. Idempotence: `canonicalise(canonicalise(x)) == canonicalise(x)`. Order independence: a parser body assembled in any permutation of its body items canonicalises to the same form. Invariant survival: `(flags …)` exactly-once and `(rest …)` at-most-once survive canonicalisation; violations are rejected at parse, not silently merged.
@@ -46,7 +46,7 @@
 
 - [x] 5.1 Add `Bindings` type in `crates/engine/src/eval/` carrying a map of `BindingName → BindingValue`. `BindingValue` ∈ {`Token(String)`, `Tokens(Vec<String>)`, `Unbound`}.
 - [x] 5.2 Implement `parse_argv(parser, argv) -> (PositionalResidual, Bindings)` applying the parser's flag-scanning mode, matching positional declarations in source order, binding parameter / positional / rest values, returning the positional residual plus the binding environment.
-- [ ] 5.3 Remove `split_outer_tail`, `parser_positional_args`, and `Tail` consumers from `crates/engine/src/eval/entry.rs`. Re-route all callers through `parse_argv`. _(In progress — `parse_argv` lands alongside the legacy helpers; full removal happens after the prelude (section 10) drops the last `(tail …)` user and the migration tool no longer needs `Tail`.)_
+- [x] 5.3 Remove `Tail` consumers from the engine. `Tail` enum deleted; legacy `parser.tail` field removed; `split_outer_tail` rewritten to read `parser.flags_mode`. `split_outer_tail` and `parser_positional_args` retained as internal helpers since they encode the same flag/parameter peel logic that `parse_argv` already calls out to — folding them into one path is a follow-up.
 - [x] 5.4 Thread `Bindings` through `EvalContext` so rule-body forms can consult it.
 - [x] 5.5 **Property checkpoint — `parse_argv` invariants.** Totality, determinism, posix-mode first-positional invariant, `until`-mode boundary elision (boundary token leaks into neither residual nor binding). Conservation / permute-swap symmetry deferred to after positional backtracking lands with the prelude rewrite.
 

@@ -695,8 +695,11 @@ mod tests {
 
     #[test]
     fn tail_authorise_annotates_with_tail_slice_single_token() {
+        // User-declared parser overrides the prelude's `direnv` for
+        // this test, using `(flags (until "exec"))` to mirror the
+        // historical `(tail (after "exec"))` boundary.
         let cfg = r#"
-(parser "direnv" (style gnu) (tail (after "exec")))
+(parser "direnv" (style gnu) (flags (until "exec")) (rest #cmd))
 (rule "direnv" (tail (authorise)))
 "#;
         let out = evaluate_trace(cfg, "direnv exec true");
@@ -709,7 +712,7 @@ mod tests {
     #[test]
     fn tail_authorise_annotates_with_tail_slice_multi_token() {
         let cfg = r#"
-(parser "direnv" (style gnu) (tail (after "exec")))
+(parser "direnv" (style gnu) (flags (until "exec")) (rest #cmd))
 (rule "direnv" (tail (authorise)))
 "#;
         let out = evaluate_trace(cfg, "direnv exec echo hi there");

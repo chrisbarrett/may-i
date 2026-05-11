@@ -6,7 +6,7 @@
 ;;; `ssh` we declare the parser explicitly to capture the host as a fact
 ;;; before recursing.
 
-(parser "ssh" (style gnu) (tail (after :flags)))
+(parser "ssh" (style gnu) (flags posix) (rest #cmd))
 
 (rule "sudo"
   (tail (authorise)))

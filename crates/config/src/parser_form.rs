@@ -13,7 +13,7 @@
 
 use may_i_core::ast::{
     BindingName, Capture, FlagsMode, ParameterDecl, ParameterTreatment, Parser, PositionalDecl,
-    Provenance, Tail,
+    Provenance,
 };
 use may_i_core::pattern::Quantifier;
 use may_i_sexpr::{RawError, Sexpr};
@@ -43,7 +43,6 @@ pub fn parse_parser_form(sexpr: &Sexpr) -> Result<Parser, RawError> {
     let mut positionals: Vec<PositionalDecl> = Vec::new();
     let mut declared_flags_mode: Option<FlagsMode> = None;
     let mut rest_binding: Option<BindingName> = None;
-    let mut tail: Option<Tail> = None;
     let mut declared_names: std::collections::HashMap<String, &'static str> =
         std::collections::HashMap::new();
     let mut declared_bindings: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -166,13 +165,15 @@ pub fn parse_parser_form(sexpr: &Sexpr) -> Result<Parser, RawError> {
                 )?);
             }
             "tail" => {
-                if tail.is_some() {
-                    return Err(RawError::new(
-                        "parser body declares (tail …) more than once",
-                        item.span(),
-                    ));
-                }
-                tail = Some(parse_tail_decl(&item_list[1..], item.span())?);
+                return Err(RawError::new(
+                    "legacy `(tail …)` parser-body form is retired",
+                    item.span(),
+                )
+                .with_help(
+                    "rewrite as `(flags MODE) (rest #cmd)` — \
+                     `(tail (after :flags))` → `(flags posix) (rest #cmd)`, \
+                     `(tail (after \"TOK\"))` → `(flags (until \"TOK\")) (rest #cmd)`",
+                ));
             }
             other => {
                 return Err(RawError::new(
@@ -194,11 +195,10 @@ pub fn parse_parser_form(sexpr: &Sexpr) -> Result<Parser, RawError> {
         .with_help("(parser \"git\" (style gnu) …)")
     })?;
 
-    // The new-form `(flags …)` declaration wins. For configs still
-    // carrying the legacy `(tail …)` declaration only, derive a
-    // coherent `FlagsMode` so the engine and the new fields stay in
-    // sync during the migration window.
-    let flags_mode = declared_flags_mode.unwrap_or_else(|| derive_flags_mode_from_tail(&tail));
+    // `(flags MODE)` is the source of truth. Parsers without an
+    // explicit declaration default to permute (the historic behaviour
+    // for parsers without a wrapper-boundary).
+    let flags_mode = declared_flags_mode.unwrap_or(FlagsMode::Permute);
     Ok(Parser {
         program,
         style_name,
@@ -207,7 +207,6 @@ pub fn parse_parser_form(sexpr: &Sexpr) -> Result<Parser, RawError> {
         positionals,
         flags_mode,
         rest: rest_binding,
-        tail,
         span: sexpr.span(),
         provenance: Provenance::PrimaryConfig,
     })
@@ -363,89 +362,6 @@ fn parse_quantifier(sexpr: &Sexpr) -> Result<Quantifier, RawError> {
                 .with_help("quantifiers: one, ?, *, +"),
         ),
     }
-}
-
-/// Transitional bridge: derive a `FlagsMode` from the legacy `(tail …)`
-/// declaration so the new fields are populated coherently while the
-/// engine still consults `tail`. Removed once `parse_argv` lands.
-fn derive_flags_mode_from_tail(tail: &Option<may_i_core::ast::Tail>) -> may_i_core::ast::FlagsMode {
-    use may_i_core::ast::{FlagsMode, Tail};
-    match tail {
-        None => FlagsMode::Permute,
-        Some(Tail::AfterFlags) => FlagsMode::Posix,
-        Some(Tail::AfterToken(toks)) => FlagsMode::Until(toks.clone()),
-    }
-}
-
-/// Parse the body of a `(tail …)` declaration in a parser body.
-///
-/// Recognised shapes:
-/// - `(tail (after :flags))` — wrapper-style boundary at end of outer flags
-/// - `(tail (after "TOK"))` — explicit single-token boundary (e.g. `--`)
-/// - `(tail (after [STR…]))` — alias-set of literal boundary tokens
-fn parse_tail_decl(args: &[Sexpr], span: may_i_core::Span) -> Result<Tail, RawError> {
-    if args.len() != 1 {
-        return Err(
-            RawError::new("(tail …) takes exactly one (after VALUE) form", span)
-                .with_help("(tail (after :flags)) or (tail (after \"--\"))"),
-        );
-    }
-    let after_list = args[0]
-        .as_list()
-        .ok_or_else(|| RawError::new("(tail …) body must be (after VALUE)", args[0].span()))?;
-    if after_list.first().and_then(Sexpr::as_atom) != Some("after") {
-        return Err(RawError::new(
-            "(tail …) body must start with `after`",
-            args[0].span(),
-        ));
-    }
-    if after_list.len() != 2 {
-        return Err(RawError::new(
-            "(after …) takes exactly one VALUE",
-            args[0].span(),
-        ));
-    }
-    let value = &after_list[1];
-    if let Some(s) = value.as_str() {
-        return Ok(Tail::AfterToken(vec![s.to_string()]));
-    }
-    if value.is_vector() {
-        let items = value.as_list().expect("vector backs a list view");
-        if items.is_empty() {
-            return Err(RawError::new(
-                "(after [STR…]) requires at least one boundary token",
-                value.span(),
-            ));
-        }
-        let mut tokens = Vec::with_capacity(items.len());
-        for item in items {
-            let s = item.as_str().ok_or_else(|| {
-                RawError::new(
-                    "(after [STR…]) elements must be string literals",
-                    item.span(),
-                )
-            })?;
-            tokens.push(s.to_string());
-        }
-        return Ok(Tail::AfterToken(tokens));
-    }
-    if let Some(atom) = value.as_atom() {
-        match atom {
-            ":flags" => return Ok(Tail::AfterFlags),
-            other if other.starts_with(':') => {
-                return Err(RawError::new(
-                    format!("unrecognised tail keyword: {other}"),
-                    value.span(),
-                )
-                .with_help("only `:flags` is recognised"));
-            }
-            _ => {}
-        }
-    }
-    Err(RawError::new(
-        "(after VALUE) value must be `:flags`, a string literal, or a vector of string literals",
-        value.span(),
-    ))
 }
 
 /// Parse a single NAME — either a string atom or a `[short long]` vector.
@@ -664,83 +580,17 @@ mod tests {
     }
 
     #[test]
-    fn parses_tail_after_flags() {
-        let p = parse_parser_form(&first_form(
+    fn rejects_legacy_tail_form_with_migration_hint() {
+        // The legacy `(tail (after …))` form is retired; the parser
+        // rejects it at load time with a hint pointing at the new
+        // `(flags MODE) (rest #cmd)` shape.
+        let err = parse_parser_form(&first_form(
             r#"(parser "sudo" (style gnu) (tail (after :flags)))"#,
         ))
-        .unwrap();
-        assert_eq!(p.tail, Some(Tail::AfterFlags));
-    }
-
-    #[test]
-    fn parses_tail_after_token() {
-        let p = parse_parser_form(&first_form(
-            r#"(parser "mise" (style gnu) (tail (after "--")))"#,
-        ))
-        .unwrap();
-        assert_eq!(p.tail, Some(Tail::AfterToken(vec!["--".to_string()])));
-    }
-
-    #[test]
-    fn parses_tail_after_token_vector() {
-        let p = parse_parser_form(&first_form(
-            r#"(parser "nix" (style gnu) (tail (after ["--command" "-c"])))"#,
-        ))
-        .unwrap();
-        assert_eq!(
-            p.tail,
-            Some(Tail::AfterToken(vec![
-                "--command".to_string(),
-                "-c".to_string(),
-            ]))
-        );
-    }
-
-    #[test]
-    fn rejects_tail_after_empty_vector() {
-        let err = parse_parser_form(&first_form(r#"(parser "x" (style gnu) (tail (after [])))"#))
-            .unwrap_err();
-        assert!(
-            format!("{err}").contains("at least one"),
-            "unexpected error: {err}"
-        );
-    }
-
-    #[test]
-    fn rejects_tail_after_vector_with_non_string() {
-        let err = parse_parser_form(&first_form(
-            r#"(parser "x" (style gnu) (tail (after ["--" :flags])))"#,
-        ))
         .unwrap_err();
-        assert!(
-            format!("{err}").contains("string literals"),
-            "unexpected error: {err}"
-        );
-    }
-
-    #[test]
-    fn rejects_duplicate_tail() {
-        let err = parse_parser_form(&first_form(
-            r#"(parser "x" (style gnu) (tail (after :flags)) (tail (after "--")))"#,
-        ))
-        .unwrap_err();
-        assert!(format!("{err}").contains("more than once"));
-    }
-
-    #[test]
-    fn rejects_unknown_tail_keyword() {
-        let err = parse_parser_form(&first_form(
-            r#"(parser "x" (style gnu) (tail (after :wibble)))"#,
-        ))
-        .unwrap_err();
-        assert!(format!("{err}").contains(":wibble"));
-    }
-
-    #[test]
-    fn rejects_tail_without_after() {
-        let err = parse_parser_form(&first_form(r#"(parser "x" (style gnu) (tail :flags))"#))
-            .unwrap_err();
-        assert!(format!("{err}").contains("(after VALUE)"));
+        let msg = format!("{err}");
+        assert!(msg.contains("legacy"), "{msg}");
+        assert!(msg.contains("retired"), "{msg}");
     }
 
     // ── parser-named-bindings: new-form body items ──────────────────
@@ -937,18 +787,6 @@ mod tests {
         ))
         .unwrap_err();
         assert!(format!("{err}").contains("declared more than once"));
-    }
-
-    #[test]
-    fn flags_mode_wins_over_legacy_tail_derivation() {
-        // Both new and legacy declared — the explicit (flags …) wins.
-        let p = parse_parser_form(&first_form(
-            r#"(parser "x" (style gnu) (flags permute) (tail (after :flags)))"#,
-        ))
-        .unwrap();
-        assert_eq!(p.flags_mode, FlagsMode::Permute);
-        // Legacy tail still preserved on the AST for the engine bridge.
-        assert_eq!(p.tail, Some(Tail::AfterFlags));
     }
 
     #[test]

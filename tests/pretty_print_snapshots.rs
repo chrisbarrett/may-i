@@ -260,13 +260,13 @@ fn parser_with_flag_and_parameter() {
 
 #[test]
 fn parser_with_tail_after_flags() {
-    let out = render(r#"(parser "sudo" (style gnu) (tail (after :flags)))"#);
+    let out = render(r#"(parser "sudo" (style gnu) (flags posix) (rest #cmd))"#);
     insta::assert_snapshot!(out);
 }
 
 #[test]
 fn parser_with_tail_after_token() {
-    let out = render(r#"(parser "mise" (style gnu) (tail (after "--")))"#);
+    let out = render(r#"(parser "mise" (style gnu) (flags (until "--")) (rest #cmd))"#);
     insta::assert_snapshot!(out);
 }
 
@@ -285,7 +285,7 @@ fn parser_with_many_till() {
 fn parser_xargs_with_flags_and_parameters() {
     let out = render(
         r#"(parser "xargs" (style gnu) (parameter ["n" "I" "L" "P" "d"])
-  (flag ["0" "r"]) (tail (after :flags)))"#,
+  (flag ["0" "r"]) (flags posix) (rest #cmd))"#,
     );
     insta::assert_snapshot!(out);
 }

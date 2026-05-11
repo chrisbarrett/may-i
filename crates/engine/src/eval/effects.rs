@@ -416,14 +416,15 @@ fn evaluate_tail_authorise_fold<F: EvalFold>(
     rules: &[Rule],
 ) -> Result<F::EffectOut, EvalError> {
     let split = super::entry::split_outer_tail(ctx.args, &ctx.parser);
-    // When the parser declares a tail but the boundary is absent in
-    // argv, treat the matcher as a no-match. Falling back to the full
-    // argv would silently re-fire the rule on the same command. The
-    // fallback only applies when the parser declares no tail at all
-    // (the rule-level recursion idiom for non-wrapper tools).
+    // When the parser declares a tail-bearing flags_mode but the
+    // boundary is absent in argv, treat the matcher as a no-match —
+    // falling back to the full argv would silently re-fire the rule
+    // on the same command. The fallback only applies under
+    // FlagsMode::Permute (no boundary, no recurse target).
+    let permissive_fallback = matches!(ctx.parser.flags_mode, may_i_core::ast::FlagsMode::Permute);
     let tail_slice: &[String] = match split.tail {
         Some(slice) => slice,
-        None if ctx.parser.tail.is_none() => ctx.args,
+        None if permissive_fallback => ctx.args,
         None => {
             let detail = ArgMatchDetail {
                 search_tokens: vec![],
@@ -950,15 +951,15 @@ pub(crate) fn extract_inner_command(args: &[String]) -> Option<(String, Vec<Stri
 #[cfg(test)]
 mod tail_authorise_fold_tests {
     use super::*;
-    use may_i_core::ast::{ResolvedParser, Tail};
+    use may_i_core::ast::{FlagsMode, ResolvedParser};
 
     fn argv(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|s| s.to_string()).collect()
     }
 
-    fn parser_with_tail(command: &str, tail: Option<Tail>) -> ResolvedParser {
+    fn parser_with_flags_mode(command: &str, mode: FlagsMode) -> ResolvedParser {
         let mut p = ResolvedParser::synthetic_gnu(command);
-        p.tail = tail;
+        p.flags_mode = mode;
         p
     }
 
@@ -976,35 +977,29 @@ mod tail_authorise_fold_tests {
     }
 
     #[test]
-    fn boundary_absent_with_tail_declared_returns_no_match() {
+    fn boundary_absent_with_until_mode_returns_no_match() {
         let args = argv(&["shell", "pkg"]);
-        let parser = parser_with_tail(
+        let parser = parser_with_flags_mode(
             "nix",
-            Some(Tail::AfterToken(vec![
-                "--command".to_string(),
-                "-c".to_string(),
-            ])),
+            FlagsMode::Until(vec!["--command".to_string(), "-c".to_string()]),
         );
         let result = run("nix", &args, parser);
         assert!(
             result.is_nil(),
-            "expected no-match (Nil) when boundary absent under declared tail; got {result:?}"
+            "expected no-match (Nil) when boundary absent under (flags (until …)); got {result:?}"
         );
     }
 
     #[test]
-    fn no_tail_declared_falls_back_to_full_argv() {
-        // When the parser declares no tail, `(tail (authorise))` recurses
-        // on the full argv. Inner command is "rm" with no rules → Ask.
+    fn permute_mode_falls_back_to_full_argv() {
+        // Under `(flags permute)` the parser declares no boundary;
+        // `(tail (authorise))` recurses on the full argv.
         let args = argv(&["rm", "-rf", "/tmp/x"]);
-        let parser = parser_with_tail("sudo", None);
+        let parser = parser_with_flags_mode("sudo", FlagsMode::Permute);
         let result = run("sudo", &args, parser);
-        // The recursion is reachable: a non-Nil EffectResult means the
-        // matcher fired and produced a continuation/decision rather than
-        // returning no-match.
         assert!(
             !result.is_nil(),
-            "no-tail parser must still fall back to full-argv recursion; got {result:?}"
+            "permute parser must fall back to full-argv recursion; got {result:?}"
         );
     }
 }

@@ -18,13 +18,13 @@ fn eval(config_text: &str, command: &str, argv: &[&str]) -> Decision {
         .decision
 }
 
-// 9.3: a sudo-style wrapper with `(tail (after :flags))` exposes only
+// 9.3: a sudo-style wrapper with `(flags posix) (rest #cmd)` exposes only
 // outer flags to `(anywhere …)`. The inner `rm` token lives in the tail
 // and is invisible to the wrapper's matchers.
 #[test]
 fn anywhere_does_not_see_tail_tokens() {
     let cfg = r#"
-(parser "sudo" (style gnu) (tail (after :flags)))
+(parser "sudo" (style gnu) (flags posix) (rest #cmd))
 (rule "sudo" (and (anywhere "rm") (deny "no rm via sudo")))
 (rule "sudo" (allow))
 "#;
@@ -41,7 +41,7 @@ fn anywhere_does_not_see_tail_tokens() {
 #[test]
 fn forbidden_does_not_see_tail_tokens() {
     let cfg = r#"
-(parser "sudo" (style gnu) (tail (after :flags)))
+(parser "sudo" (style gnu) (flags posix) (rest #cmd))
 (rule "sudo" (and (forbidden "rm") (allow)))
 "#;
     let decision = eval(cfg, "sudo", &["-u", "root", "rm", "/tmp/x"]);
@@ -57,7 +57,7 @@ fn forbidden_does_not_see_tail_tokens() {
 #[test]
 fn flag_matcher_scoped_to_outer() {
     let cfg = r#"
-(parser "sudo" (style gnu) (tail (after :flags)))
+(parser "sudo" (style gnu) (flags posix) (rest #cmd))
 (rule "sudo" (and (flag "r") (deny "no -r in sudo flags")))
 (rule "sudo" (allow))
 "#;
@@ -72,7 +72,7 @@ fn flag_matcher_scoped_to_outer() {
 #[test]
 fn positional_matcher_scoped_to_outer() {
     let cfg = r#"
-(parser "sudo" (style gnu) (tail (after :flags)))
+(parser "sudo" (style gnu) (flags posix) (rest #cmd))
 (rule "sudo" (and (positional "rm") (deny "no rm")))
 (rule "sudo" (allow))
 "#;
@@ -84,7 +84,7 @@ fn positional_matcher_scoped_to_outer() {
 #[test]
 fn outer_flags_remain_visible() {
     let cfg = r#"
-(parser "sudo" (style gnu) (tail (after :flags)))
+(parser "sudo" (style gnu) (flags posix) (rest #cmd))
 (rule "sudo" (and (flag "u") (deny "no -u")))
 (rule "sudo" (allow))
 "#;
@@ -96,7 +96,7 @@ fn outer_flags_remain_visible() {
 #[test]
 fn sudo_rm_rf_recurses_through_tail_authorise() {
     let cfg = r#"
-(parser "sudo" (style gnu) (tail (after :flags)))
+(parser "sudo" (style gnu) (flags posix) (rest #cmd))
 (rule "sudo" (tail (authorise)))
 (rule "rm" (and (anywhere "-r") (deny "recursive rm denied")))
 (rule "rm" (allow))
@@ -143,7 +143,7 @@ fn prelude_xargs_parser_with_parameter() {
 #[test]
 fn user_declared_after_double_dash_parser() {
     let cfg = r#"
-(parser "mise" (style gnu) (tail (after "--")))
+(parser "mise" (style gnu) (flags (until "--")) (rest #cmd))
 (rule "mise" (tail (authorise)))
 (rule "rm" (and (anywhere "-r") (deny "recursive rm denied")))
 (rule "rm" (allow))
@@ -231,7 +231,7 @@ fn find_multi_exec_all_allow() {
 #[test]
 fn nix_command_long_form_recurses_to_inner() {
     let cfg = r#"
-(parser "nix" (style gnu) (tail (after ["--command" "-c"])))
+(parser "nix" (style gnu) (flags (until "--command" "-c")) (rest #cmd))
 (rule "nix" (when (positional (or "shell" "develop")) (tail (authorise))))
 (rule "mkfs" (deny "no formatting"))
 (rule "nix" (allow))
@@ -247,7 +247,7 @@ fn nix_command_long_form_recurses_to_inner() {
 #[test]
 fn nix_command_short_alias_recurses_to_inner() {
     let cfg = r#"
-(parser "nix" (style gnu) (tail (after ["--command" "-c"])))
+(parser "nix" (style gnu) (flags (until "--command" "-c")) (rest #cmd))
 (rule "nix" (when (positional (or "shell" "develop")) (tail (authorise))))
 (rule "mkfs" (deny "no formatting"))
 (rule "nix" (allow))
@@ -261,7 +261,7 @@ fn nix_command_short_alias_recurses_to_inner() {
 #[test]
 fn nix_without_boundary_falls_through() {
     let cfg = r#"
-(parser "nix" (style gnu) (tail (after ["--command" "-c"])))
+(parser "nix" (style gnu) (flags (until "--command" "-c")) (rest #cmd))
 (rule "nix" (when (positional (or "shell" "develop")) (tail (authorise))))
 (rule "nix" (allow))
 "#;

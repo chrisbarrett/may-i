@@ -12,10 +12,11 @@ fn read_file(f: &NamedTempFile) -> String {
 
 #[test]
 fn fmt_single_file_rewrites_in_place() {
-    // Parser body order is canonicalised: style first, flag block, parameter
-    // block, tail last. Source has them out of order.
+    // Parser body order is canonicalised:
+    //   style → flags → flag → parameter → positional → rest
+    // The source declares them out of order; fmt reorders.
     let cfg = write_config(
-        r#"(parser "git" (parameter "C") (flag "v") (style gnu) (tail (after :flags)))
+        r#"(parser "git" (parameter "C") (rest #cmd) (flag "v") (style gnu) (flags posix))
 "#,
     );
     may_i(&cfg)
@@ -25,11 +26,15 @@ fn fmt_single_file_rewrites_in_place() {
 
     let out = read_file(&cfg);
     let style_pos = out.find("(style gnu)").expect(&out);
+    let flags_pos = out.find("(flags posix)").expect(&out);
     let flag_pos = out.find(r#"(flag "v")"#).expect(&out);
     let param_pos = out.find(r#"(parameter "C")"#).expect(&out);
-    let tail_pos = out.find("(tail").expect(&out);
+    let rest_pos = out.find("(rest #cmd)").expect(&out);
     assert!(
-        style_pos < flag_pos && flag_pos < param_pos && param_pos < tail_pos,
+        style_pos < flags_pos
+            && flags_pos < flag_pos
+            && flag_pos < param_pos
+            && param_pos < rest_pos,
         "unexpected order: {out}"
     );
 }

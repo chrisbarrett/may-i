@@ -7,7 +7,7 @@
 //! parser, it returns the positional residual that rule-body matchers
 //! walk and the binding environment that rule-body verbs consult.
 
-use may_i_core::ast::{BindingName, FlagsMode, ResolvedParser, Tail};
+use may_i_core::ast::{BindingName, FlagsMode, ResolvedParser};
 
 /// Value of a parser-bound name.
 ///
@@ -497,11 +497,6 @@ fn positional_args_owned(args: &[String], parser: &ResolvedParser) -> Vec<String
     }
     out
 }
-
-/// Suppress unused-import warnings until the migration tool retires
-/// `Tail` (task 2.6).
-#[allow(dead_code)]
-fn _tail_marker(_: Option<Tail>) {}
 
 #[cfg(test)]
 mod tests {

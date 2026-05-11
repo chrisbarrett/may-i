@@ -863,29 +863,9 @@ pub struct ParameterDecl {
     pub binding: Option<BindingName>,
 }
 
-/// Wrapper-tail boundary spec declared via `(tail (after VALUE))` in a
-/// parser body. Drives the tokeniser's outer/tail split for wrapper tools
-/// like sudo/xargs/env (boundary = end of outer flags) and mise (boundary
-/// = explicit `--` token).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Tail {
-    /// `(tail (after :flags))` — outer slice ends after the last flag or
-    /// parameter is consumed; tail begins at the first non-flag token.
-    AfterFlags,
-    /// `(tail (after "TOK"))` or `(tail (after [STR…]))` — outer slice
-    /// ends before the first occurrence of any listed boundary token; the
-    /// matching token itself is consumed. The vector is non-empty.
-    AfterToken(Vec<String>),
-}
-
 /// Parsed `(parser PROGRAM (style STYLE) BODY…)` declaration. The style is
 /// referenced by name; resolution against the `StyleRegistry` happens at
 /// `Config::parser_for` time.
-///
-/// Note: during the parser-named-bindings migration this struct carries
-/// both the legacy `tail` field and the new `flags_mode` / `positionals`
-/// / `rest` fields. The legacy field is removed once the engine's
-/// `parse_argv` (section 5 of the change) supersedes `split_outer_tail`.
 #[derive(Debug, Clone)]
 pub struct Parser {
     pub program: String,
@@ -899,16 +879,11 @@ pub struct Parser {
     /// against the residual outer slice.
     pub positionals: Vec<PositionalDecl>,
     /// Flag-scanning mode from `(flags MODE)`. Mandatory in the new
-    /// parser body; during migration this defaults to `Permute` for
-    /// parsers without a declared tail.
+    /// parser body.
     pub flags_mode: FlagsMode,
     /// Optional `(rest #var)` declaration. Binds the unconsumed tail
     /// of argv to a name.
     pub rest: Option<BindingName>,
-    /// Legacy `(tail (after VALUE))` declaration. Transitional: read
-    /// by the engine until `parse_argv` lands; written by the
-    /// migration tool to bridge old configs.
-    pub tail: Option<Tail>,
     pub span: Span,
     pub provenance: Provenance,
 }
@@ -924,7 +899,6 @@ pub struct ResolvedParser {
     pub positionals: Vec<PositionalDecl>,
     pub flags_mode: FlagsMode,
     pub rest: Option<BindingName>,
-    pub tail: Option<Tail>,
 }
 
 impl ResolvedParser {
@@ -939,7 +913,6 @@ impl ResolvedParser {
             positionals: Vec::new(),
             flags_mode: FlagsMode::Permute,
             rest: None,
-            tail: None,
         }
     }
 
@@ -1052,7 +1025,6 @@ impl Config {
             positionals: parser.positionals.clone(),
             flags_mode: parser.flags_mode.clone(),
             rest: parser.rest.clone(),
-            tail: parser.tail.clone(),
         }
     }
 
