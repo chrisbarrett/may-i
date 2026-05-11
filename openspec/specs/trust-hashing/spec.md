@@ -17,21 +17,40 @@ program.
   `Loaded` defines
 - **THEN** no trust hash is computed for `"docker"`
 
-### Requirement: Hash covers the full ordered closure
+### Requirement: Hash covers the canonical rule and define set
 
 The trust hash for a program SHALL include all rules whose command effect
-mentions that program, in config order, with defines fully resolved. Both
-`PrimaryConfig` and `Loaded` rules are included.
+mentions that program and all defines referenced (directly or transitively)
+by those rules. Both `PrimaryConfig` and `Loaded` rules are included.
 
-#### Scenario: Reordering rules changes the hash
+The hash SHALL be computed over a canonical, *order-independent*
+serialisation: each rule and each define is rendered into its canonical
+s-expression form, the resulting strings are sorted lexically within each
+group (rules and defines), and the two sorted groups are concatenated with
+a separator. Source-file order, comments, whitespace, and the way rules
+are partitioned across `(load …)` files SHALL NOT influence the hash.
 
-- **WHEN** a `Loaded` rule for `"git"` is moved before a `PrimaryConfig` rule
-- **THEN** the trust hash for `"git"` changes
+#### Scenario: Reordering rules does not change the hash
+
+- **WHEN** two rules for `"git"` are swapped in source order
+- **THEN** the trust hash for `"git"` SHALL be unchanged
+
+#### Scenario: Moving a rule between loaded files does not change the hash
+
+- **GIVEN** rule R for `"git"` lives in `rules/a.lisp`
+- **WHEN** R is moved verbatim into `rules/b.lisp`
+- **THEN** the trust hash for `"git"` SHALL be unchanged
+
+#### Scenario: Changing a rule's content changes the hash
+
+- **WHEN** a rule's body is edited (e.g. its decision changes from
+  `:allow` to `:deny`)
+- **THEN** the trust hash for the affected program SHALL change
 
 #### Scenario: Changing a referenced define changes the hash
 
 - **WHEN** a `Loaded` define referenced by a `"git"` rule is modified
-- **THEN** the trust hash for `"git"` changes
+- **THEN** the trust hash for `"git"` SHALL change
 
 ### Requirement: Programs referencing Loaded defines need trust
 
