@@ -507,6 +507,68 @@ fn test_comment_only() {
     }
 }
 
+#[test]
+fn hash_mid_word_is_literal() {
+    // POSIX 2.3: `#` starts a comment only at a token boundary. Mid-word it
+    // is a literal character.
+    let cmd = parse("a#cat").into_command();
+    match &cmd {
+        Command::Simple(sc) => {
+            assert_eq!(sc.command_name(), Some("a#cat"));
+            assert!(sc.args().is_empty());
+        }
+        _ => panic!("Expected simple command, got {cmd:?}"),
+    }
+}
+
+#[test]
+fn hash_after_whitespace_is_comment() {
+    let cmd = parse("echo hi # not a word").into_command();
+    match &cmd {
+        Command::Simple(sc) => {
+            assert_eq!(sc.command_name(), Some("echo"));
+            assert_eq!(sc.args().len(), 1);
+            assert_eq!(sc.args()[0].to_str(), "hi");
+        }
+        _ => panic!("Expected simple command, got {cmd:?}"),
+    }
+}
+
+#[test]
+fn hash_inside_single_quotes_is_literal() {
+    let cmd = parse("echo 'a # not comment'").into_command();
+    match &cmd {
+        Command::Simple(sc) => {
+            assert_eq!(sc.command_name(), Some("echo"));
+            assert_eq!(sc.args().len(), 1);
+            assert_eq!(sc.args()[0].to_str(), "a # not comment");
+        }
+        _ => panic!("Expected simple command, got {cmd:?}"),
+    }
+}
+
+#[test]
+fn hash_mid_word_with_heredoc() {
+    // Regression: `a#cat <<'A'\nbody\nA` must parse as one SimpleCommand
+    // with command name `a#cat` and a heredoc redirect; the body bytes must
+    // never be re-parsed as commands.
+    let pr = parse("a#cat <<'A'\nbody\nA");
+    let cmd = pr.into_command();
+    match &cmd {
+        Command::Simple(sc) => {
+            assert_eq!(sc.command_name(), Some("a#cat"));
+            assert_eq!(sc.redirections.len(), 1);
+            match &sc.redirections[0].target {
+                RedirectionTarget::Heredoc(body) => {
+                    assert_eq!(body, "body\n");
+                }
+                other => panic!("Expected heredoc target, got {other:?}"),
+            }
+        }
+        other => panic!("Expected single SimpleCommand, got {other:?}"),
+    }
+}
+
 // --- extract_simple_commands ---
 
 #[test]

@@ -5,11 +5,10 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 #
-# Two seeds below correspond to properties currently `#[ignore]`-gated
-# behind follow-up changes:
-#   - prop_spans_within_input_bounds          → follow-up: engine-span-bounds-fix
-#   - prop_embedded_source_matches_span_slice → follow-up: ast-spans-on-wordpart
-# Once the follow-ups land and the properties are un-ignored, these
-# seeds will be re-run on every test invocation.
+# The seeds below previously surfaced bugs gated behind follow-up changes;
+# all are now fixed by parser-engine-span-fidelity (WordPart spans + `#`
+# token-boundary tokenisation).
 cc f75fcefbf62adf9b97e350e5827a10119a98d222c280b3d2758673922f4266cc # shrinks to input = "`\\``\\<fZF\\\\||'#cq\" =6u=o\"<`8-ncat <<A\n =ZH#\"-d\\$H01M\\`;/O5<|H\\GK $pJ 7r1'H`(=-'pvp\nA\n-# l  `&"
 cc a98dc8f5e9f4c2f5fc9e3a0669e75bf2a0b4419262f6f5ea1381b571ec7f0ec5 # shrinks to input = "\"$( "
+cc eca956f4fc1e328861dbbc2b522dadd8e82713765b0a847ae8242d4cb8cac463 # shrinks to input = "#W\"2W\\R$P/;e|zCL$|9 Cibc6'6cat <<'A'\n&X1\\#5|-'5 B<S-8\"S-\"|  (|DY'&\\$|-\"$m\\ |)&I|=|r\\|\nA\nk \\> ; C</n\\I\\>U</)  \\-I\"H/z-"
+cc 665d17473bbfd97b522a0a63f5e6df1411442e3490b1d5b48cbccbd08e870b17 # shrinks to input = "a#cat <<'A'\nS<B&;$x|qb0#-8w\nA\n -h=;---t'&/Y"

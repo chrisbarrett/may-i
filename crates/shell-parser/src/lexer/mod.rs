@@ -202,11 +202,21 @@ impl Lexer {
             };
             self.advance(); // skip < or >
             self.advance(); // skip (
-            let cmd = self.read_balanced_parens();
+            let body_start = self.byte_pos;
+            let (cmd, found) = self.read_balanced_parens_checked();
+            let body_end = if found {
+                self.byte_pos - 1
+            } else {
+                self.byte_pos
+            };
             let word = Word {
                 parts: vec![WordPart::ProcessSubstitution {
                     direction,
                     command: cmd,
+                    span: crate::diagnostic::Span {
+                        start: body_start,
+                        end: body_end,
+                    },
                 }],
             };
             return Some(Token::Word(word));
@@ -470,9 +480,13 @@ impl Lexer {
 }
 
 pub(super) fn is_metachar(ch: char) -> bool {
+    // `#` is intentionally absent: POSIX 2.3 only treats `#` as a
+    // comment-start at a token boundary, and `skip_whitespace` already
+    // consumes `# … \n` between tokens. Inside a word, `#` is literal
+    // (e.g. `a#cat`, `colour#ff00ff`).
     matches!(
         ch,
-        ' ' | '\t' | '\n' | '|' | '&' | ';' | '(' | ')' | '<' | '>' | '#'
+        ' ' | '\t' | '\n' | '|' | '&' | ';' | '(' | ')' | '<' | '>'
     )
 }
 

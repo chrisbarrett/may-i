@@ -1,5 +1,5 @@
 ---
-source: tests/parser_snapshots.rs
+source: crates/shell-parser/tests/parser_snapshots.rs
 expression: "parse(\"diff <(sort a) <(sort b)\")"
 ---
 Simple(
@@ -18,6 +18,10 @@ Simple(
                     ProcessSubstitution {
                         direction: Input,
                         command: "sort a",
+                        span: Span {
+                            start: 7,
+                            end: 13,
+                        },
                     },
                 ],
             },
@@ -26,6 +30,10 @@ Simple(
                     ProcessSubstitution {
                         direction: Input,
                         command: "sort b",
+                        span: Span {
+                            start: 17,
+                            end: 23,
+                        },
                     },
                 ],
             },

@@ -15,14 +15,6 @@ pub(crate) fn arb_shell_chars() -> impl Strategy<Value = String> {
     proptest::string::string_regex(r#"[a-zA-Z0-9 ;|&"'$()<>/\\\-`#=]{0,80}"#).unwrap()
 }
 
-/// Narrower alphabet without quoting or escapes — the engine's
-/// `find_balanced_paren` skips quoted regions and `\X` escapes while the
-/// lexer's `read_balanced_parens_checked` counts depth only, so the two
-/// matchers only have to agree when those skipping rules are inert.
-pub(crate) fn arb_unquoted_shell_chars() -> impl Strategy<Value = String> {
-    proptest::string::string_regex(r#"[a-zA-Z0-9 ;|&$()<>/\-#=]{0,80}"#).unwrap()
-}
-
 pub(crate) fn arb_with_heredoc() -> impl Strategy<Value = String> {
     let delim = "[A-Z]{1,6}";
     (

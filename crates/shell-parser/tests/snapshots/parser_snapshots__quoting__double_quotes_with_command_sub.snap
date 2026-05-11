@@ -1,5 +1,5 @@
 ---
-source: tests/parser_snapshots.rs
+source: crates/shell-parser/tests/parser_snapshots.rs
 expression: "parse(\"echo \\\"today is $(date)\\\"\")"
 ---
 Simple(
@@ -20,9 +20,13 @@ Simple(
                             Literal(
                                 "today is ",
                             ),
-                            CommandSubstitution(
-                                "date",
-                            ),
+                            CommandSubstitution {
+                                source: "date",
+                                span: Span {
+                                    start: 17,
+                                    end: 21,
+                                },
+                            },
                         ],
                     ),
                 ],

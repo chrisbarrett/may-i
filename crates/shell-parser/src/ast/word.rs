@@ -19,12 +19,12 @@ fn is_dynamic_in(parts: &[WordPart]) -> bool {
 /// Opaque parts are safe (trusted) and do NOT count as dynamic.
 fn has_dynamic_in(parts: &[WordPart]) -> bool {
     parts.iter().any(|part| match part {
-        WordPart::CommandSubstitution(_)
-        | WordPart::Backtick(_)
+        WordPart::CommandSubstitution { .. }
+        | WordPart::Backtick { .. }
         | WordPart::Parameter(_)
         | WordPart::ParameterExpansion(_)
         | WordPart::ParameterExpansionOp { .. }
-        | WordPart::Arithmetic(_)
+        | WordPart::Arithmetic { .. }
         | WordPart::ProcessSubstitution { .. } => true,
         WordPart::DoubleQuoted(inner) => has_dynamic_in(inner),
         WordPart::Opaque(_) => false,
@@ -37,9 +37,29 @@ fn has_dynamic_in(parts: &[WordPart]) -> bool {
 fn collect_embedded_commands<'a>(parts: &'a [WordPart], out: &mut Vec<&'a str>) {
     for part in parts {
         match part {
-            WordPart::CommandSubstitution(s) | WordPart::Backtick(s) => out.push(s),
+            WordPart::CommandSubstitution { source, .. } | WordPart::Backtick { source, .. } => {
+                out.push(source)
+            }
             WordPart::ProcessSubstitution { command, .. } => out.push(command),
             WordPart::DoubleQuoted(inner) => collect_embedded_commands(inner, out),
+            _ => {}
+        }
+    }
+}
+
+/// Like `collect_embedded_commands` but also returns each substitution's
+/// source-byte span. Used by the engine's `decompose` pass to emit
+/// `EvalUnit::EmbeddedCommand` units without re-scanning the input.
+fn collect_embedded_with_spans<'a>(
+    parts: &'a [WordPart],
+    out: &mut Vec<(&'a str, crate::diagnostic::Span)>,
+) {
+    for part in parts {
+        match part {
+            WordPart::CommandSubstitution { source, span }
+            | WordPart::Backtick { source, span } => out.push((source, *span)),
+            WordPart::ProcessSubstitution { command, span, .. } => out.push((command, *span)),
+            WordPart::DoubleQuoted(inner) => collect_embedded_with_spans(inner, out),
             _ => {}
         }
     }
@@ -51,16 +71,18 @@ fn collect_dynamic_from(parts: &[WordPart], out: &mut Vec<String>) {
         match part {
             WordPart::Parameter(name) => out.push(format!("${name}")),
             WordPart::ParameterExpansion(name) => out.push(format!("${{{name}}}")),
-            WordPart::CommandSubstitution(cmd) => {
-                out.push(format!("$({})", abbreviate(cmd)));
+            WordPart::CommandSubstitution { source, .. } => {
+                out.push(format!("$({})", abbreviate(source)));
             }
-            WordPart::Backtick(cmd) => {
-                out.push(format!("`{}`", abbreviate(cmd)));
+            WordPart::Backtick { source, .. } => {
+                out.push(format!("`{}`", abbreviate(source)));
             }
-            WordPart::Arithmetic(expr) => {
-                out.push(format!("$(({}))", abbreviate(expr)));
+            WordPart::Arithmetic { source, .. } => {
+                out.push(format!("$(({}))", abbreviate(source)));
             }
-            WordPart::ProcessSubstitution { direction, command } => {
+            WordPart::ProcessSubstitution {
+                direction, command, ..
+            } => {
                 let sigil = match direction {
                     ProcessDirection::Input => '<',
                     ProcessDirection::Output => '>',
@@ -88,10 +110,10 @@ fn parts_to_str(parts: &[WordPart], out: &mut String) {
             | WordPart::AnsiCQuoted(s)
             | WordPart::Parameter(s)
             | WordPart::ParameterExpansion(s)
-            | WordPart::CommandSubstitution(s)
-            | WordPart::Backtick(s)
-            | WordPart::Arithmetic(s)
             | WordPart::Glob(s) => out.push_str(s),
+            WordPart::CommandSubstitution { source, .. }
+            | WordPart::Backtick { source, .. }
+            | WordPart::Arithmetic { source, .. } => out.push_str(source),
             WordPart::ParameterExpansionOp { name, op } => {
                 out.push_str(&format_param_op(name, op));
             }
@@ -141,6 +163,14 @@ impl Word {
     pub fn extract_embedded_commands(&self) -> Vec<&str> {
         let mut out = Vec::new();
         collect_embedded_commands(&self.parts, &mut out);
+        out
+    }
+
+    /// Like `extract_embedded_commands` but returns each substitution paired
+    /// with its source-byte `Span` (inner-span semantics: excludes sigils).
+    pub fn extract_embedded_with_spans(&self) -> Vec<(&str, crate::diagnostic::Span)> {
+        let mut out = Vec::new();
+        collect_embedded_with_spans(&self.parts, &mut out);
         out
     }
 

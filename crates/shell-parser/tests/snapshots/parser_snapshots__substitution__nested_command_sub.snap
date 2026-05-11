@@ -1,5 +1,5 @@
 ---
-source: tests/parser_snapshots.rs
+source: crates/shell-parser/tests/parser_snapshots.rs
 expression: "parse(\"echo $(echo $(whoami))\")"
 ---
 Simple(
@@ -15,9 +15,13 @@ Simple(
             },
             Word {
                 parts: [
-                    CommandSubstitution(
-                        "echo $(whoami)",
-                    ),
+                    CommandSubstitution {
+                        source: "echo $(whoami)",
+                        span: Span {
+                            start: 7,
+                            end: 21,
+                        },
+                    },
                 ],
             },
         ],

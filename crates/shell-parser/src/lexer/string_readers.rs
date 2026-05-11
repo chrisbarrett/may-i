@@ -154,10 +154,6 @@ impl Lexer {
         }
     }
 
-    pub(super) fn read_balanced_parens(&mut self) -> String {
-        self.read_balanced_parens_checked().0
-    }
-
     /// Returns `(content, found_closing)`.
     pub(super) fn read_balanced_parens_checked(&mut self) -> (String, bool) {
         let mut s = String::new();

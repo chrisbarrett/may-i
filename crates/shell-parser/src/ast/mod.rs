@@ -125,14 +125,24 @@ pub enum WordPart {
         name: String,
         op: ParameterOperator,
     },
-    CommandSubstitution(String),
-    Backtick(String),
-    Arithmetic(String),
+    CommandSubstitution {
+        source: String,
+        span: Span,
+    },
+    Backtick {
+        source: String,
+        span: Span,
+    },
+    Arithmetic {
+        source: String,
+        span: Span,
+    },
     BraceExpansion(Vec<String>),
     Glob(String),
     ProcessSubstitution {
         direction: ProcessDirection,
         command: String,
+        span: Span,
     },
     /// A safe but opaque value: the variable is trusted but its runtime value
     /// is unknown. The string is a label for diagnostics (e.g. "$f").
