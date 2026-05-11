@@ -2,7 +2,7 @@
 
 ## Purpose
 
-TBD — established by the dsl-coherence change. This capability defines the form-list calling convention for DSL bodies (parser, define-arg-style, check) and the surface syntax for decisions and recursion verbs.
+The form-list calling convention for DSL bodies (`(parser …)`, `(define-arg-style …)`, `(check …)`) and the canonical surface syntax for decision verbs (`(allow …)`, `(ask …)`, `(deny …)`) and recursion (`(authorise)`). Legacy PLIST-style bodies and the `(effect …)` form are retired and rejected at config-load time.
 
 ## Requirements
 

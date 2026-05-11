@@ -1,8 +1,11 @@
 # eval-segment-decisions Specification
 
 ## Purpose
-TBD - created by archiving change engine-segment-decisions. Update Purpose after archive.
+
+Per-segment decisions on `EvalResult`: each evaluated unit of the input command carries its byte range in the original source plus the decision reached for that unit. The aggregate decision is still the strictest across units; the per-segment data is additive and lets CLI display colourise the input from the result alone without re-invoking the engine.
+
 ## Requirements
+
 ### Requirement: EvalResult exposes per-segment decisions
 `EvalResult` SHALL include a `segment_decisions` field that lists each
 evaluated unit of the input command with its byte range in the original

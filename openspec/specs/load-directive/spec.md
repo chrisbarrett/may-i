@@ -1,4 +1,10 @@
-## ADDED Requirements
+# load-directive Specification
+
+## Purpose
+
+The `(load "<path-or-glob>")` top-level form: parsing (one string argument), glob expansion (lexical order), path resolution (relative to the containing file), recursive load, circular-load detection, per-file legacy migration, and the `Provenance` tag carried by every rule and define so the trust subsystem can distinguish PrimaryConfig from Loaded. Trust-relevant: yes — see `trust-provenance` for how `Loaded` is treated, `trust-hashing` for what gets hashed.
+
+## Requirements
 
 ### Requirement: Load directive parses as a top-level form
 

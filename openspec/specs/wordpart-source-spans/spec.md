@@ -1,8 +1,11 @@
 # wordpart-source-spans Specification
 
 ## Purpose
-TBD - created by archiving change parser-engine-span-fidelity. Update Purpose after archive.
+
+Contributor-only. Dynamic `WordPart` variants (`CommandSubstitution`, `Backtick`, `Arithmetic`, `ProcessSubstitution`) carry both the extracted body string and a `Span` with inner-span semantics (sigils excluded). Span/source equality across sibling parts and monotonic span ordering let downstream consumers (trace, evaluator) re-locate every dynamic span in the original input without re-tokenising.
+
 ## Requirements
+
 ### Requirement: Dynamic WordPart variants SHALL carry source-byte spans
 
 The parser SHALL emit each dynamic `WordPart` (`CommandSubstitution`,
