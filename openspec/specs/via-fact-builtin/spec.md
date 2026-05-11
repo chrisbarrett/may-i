@@ -3,9 +3,7 @@
 ## Purpose
 
 How the automatic `:via` fact is populated during recursive evaluation: each `(authorise …)`-shaped recursion (`(authorise #var)`, `(parameter NAME (authorise))`, `(tail (authorise))`) pushes the wrapping command name onto the `:via` set, accumulating across nested wrappers. Set semantics mean order does not matter for membership tests. `:via` is the only automatic fact; named facts require an explicit parser-side `#var` binding paired with a rule-side `(with-facts [[:k #var]] …)` (or, for membership tests only, a direct `(fact? …)` predicate).
-
 ## Requirements
-
 ### Requirement: `(authorise …)` pushes wrapper command name onto :via set
 
 When `(authorise #var)` (or any other `(authorise …)`-shaped recursion entry — `(parameter NAME (authorise))` single-token capture, `(tail (authorise))`) triggers recursive evaluation, the evaluator SHALL automatically push the current command name onto the `:via` fact set before evaluating the inner command. The push SHALL apply to every evaluation unit produced by the recursion (one push per `(authorise …)` call, not per inner unit).
@@ -44,3 +42,4 @@ Only the `:via` key SHALL be automatically populated by an `(authorise …)` rec
 - **GIVEN** `(parser "ssh" (style gnu) (flags posix) (positional #host (regex "^[^-].*")) (rest #cmd))` and `(rule "ssh" (with-facts [[:ssh/host #host]] (authorise #cmd)))`
 - **WHEN** evaluating `ssh prod-1 ls`
 - **THEN** the inner evaluation SHALL have `:via` = `{"ssh"}` and `:ssh/host` = `{"prod-1"}`.
+
