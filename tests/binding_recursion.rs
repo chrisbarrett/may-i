@@ -174,3 +174,113 @@ fn chained_wrappers_set_nested_via_facts() {
     );
     assert_eq!(decision, Decision::Deny);
 }
+
+// ── Compound inner: recursion must decompose into EvalUnits ─────────
+
+#[test]
+fn authorise_recurses_into_and_compound_inner() {
+    let cfg = r#"
+(rule "bash" (authorise #cmd))
+(rule "echo" (allow))
+(rule "rm" (deny "no rm"))
+"#;
+    let decision = eval(cfg, "bash", &["-c", "echo hi && rm -rf /"]);
+    assert_eq!(decision, Decision::Deny);
+}
+
+#[test]
+fn authorise_recurses_into_pipe_compound_inner() {
+    let cfg = r#"
+(rule "bash" (authorise #cmd))
+(rule "echo" (allow))
+(rule "rm" (deny "no rm"))
+"#;
+    let decision = eval(cfg, "bash", &["-c", "echo hi | rm -rf /"]);
+    assert_eq!(decision, Decision::Deny);
+}
+
+#[test]
+fn authorise_recurses_into_if_then_fi_inner() {
+    let cfg = r#"
+(rule "bash" (authorise #cmd))
+(rule "rm" (deny "no rm"))
+"#;
+    let decision = eval(cfg, "bash", &["-c", "if true; then rm -rf /; fi"]);
+    assert_eq!(decision, Decision::Deny);
+}
+
+#[test]
+fn authorise_simple_inner_still_works() {
+    // Regression: a simple inner must continue to flow through the
+    // shared recursive evaluator and produce the same result.
+    let cfg = r#"
+(rule "bash" (authorise #cmd))
+(rule "echo" (allow))
+"#;
+    let decision = eval(cfg, "bash", &["-c", "echo hi"]);
+    assert_eq!(decision, Decision::Allow);
+}
+
+#[test]
+fn authorise_compound_via_propagates_to_every_unit() {
+    // Both inner units must see :via "bash" — exercises the per-unit
+    // fact accumulation.
+    let cfg = r#"
+(rule "bash" (authorise #cmd))
+(rule "echo"
+  (when (fact? [:via "bash"]) (allow "via bash")))
+(rule "ls"
+  (when (fact? [:via "bash"]) (allow "via bash")))
+"#;
+    let decision = eval(cfg, "bash", &["-c", "echo hi && ls /"]);
+    assert_eq!(decision, Decision::Allow);
+}
+
+#[test]
+fn authorise_dynamic_inner_command_asks() {
+    // The inner has a dynamic command name (`$X arg`). Decompose
+    // emits an `EvalUnit::DynamicCommand`, which the shared helper
+    // surfaces as Ask with a reason mentioning the dynamic name.
+    let cfg = r#"
+(rule "bash" (authorise #cmd))
+"#;
+    let config = parse_config(cfg).expect("parse config");
+    let facts = ContextFacts::default();
+    let result = evaluate("bash", &args(&["-c", "$X arg"]), &config, &facts).expect("evaluate");
+    assert_eq!(result.decision, Decision::Ask);
+    let reason = result.reason.unwrap_or_default();
+    assert!(
+        reason.contains("dynamic"),
+        "reason should mention dynamic command name; got {reason}"
+    );
+}
+
+#[test]
+fn authorise_compound_strictest_wins_across_units() {
+    // Two inner units, one Allow + one Deny — Deny wins (strictest).
+    let cfg = r#"
+(rule "bash" (authorise #cmd))
+(rule "echo" (allow))
+(rule "rm" (deny "no rm"))
+"#;
+    let decision = eval(cfg, "bash", &["-c", "rm /tmp/x ; echo done"]);
+    assert_eq!(decision, Decision::Deny);
+}
+
+#[test]
+fn authorise_through_rest_chains_into_parameter_compound() {
+    // `(rest #cmd)` path on sudo. The inner is `sh -c "echo a"` — sh
+    // has its own `(parameter "c" #cmd)` in the prelude, so this
+    // stacks two recursions, the inner one a compound. We avoid
+    // tokens that contain shell metacharacters inside the (rest)
+    // binding — `(rest)` joins tokens with single spaces and loses
+    // quote boundaries, so compound forms must enter via a parameter
+    // capture (preserved as one string) rather than via (rest).
+    let cfg = r#"
+(rule "sudo" (authorise #cmd))
+(rule "sh" (authorise #cmd))
+(rule "rm" (deny "no rm"))
+"#;
+    let decision = eval(cfg, "sudo", &["sh", "-c", "echo a && rm /tmp/x"]);
+    assert_eq!(decision, Decision::Deny);
+}

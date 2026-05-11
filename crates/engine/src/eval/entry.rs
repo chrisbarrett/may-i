@@ -79,17 +79,14 @@ pub(crate) fn evaluate_at_depth<F: EvalFold>(
         else {
             continue;
         };
-        let parsed = may_i_shell_parser::parse_simple_command(&value)
-            .unwrap_or_else(|| (value.clone(), Vec::new()));
-        let (inner_cmd, inner_args) = parsed;
         let inner_facts_seed = recursion_facts.clone();
-        let nested = evaluate_at_depth(
-            &inner_cmd,
-            &inner_args,
-            config,
+        let nested = super::command::evaluate_authorised_string(
+            &value,
+            Some(config),
             &inner_facts_seed,
             fold,
             depth + 1,
+            None,
         )?;
         if let Some(name) = decl.names.first()
             && let Ok(key) = may_i_core::Keyword::new(":via")

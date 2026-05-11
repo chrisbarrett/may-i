@@ -1,4 +1,4 @@
-use super::effects::{evaluate_effect, evaluate_effect_fold, extract_inner_command};
+use super::effects::{evaluate_effect, evaluate_effect_fold};
 use super::positional::{
     build_expr_match_detail, build_positional_element_details, match_expr_with_binding,
     match_positional_patterns,

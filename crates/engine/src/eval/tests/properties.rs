@@ -118,15 +118,6 @@ fn command_pattern_nested_or() {
 }
 
 #[test]
-fn extract_inner_command_fallback_for_non_simple() {
-    // A compound command (with &&) should hit the fallback branch
-    let args = vec!["echo".to_string(), "&&".to_string(), "ls".to_string()];
-    let result = extract_inner_command(&args);
-    // Should return Some — either parsed or fallback
-    assert!(result.is_some());
-}
-
-#[test]
 fn evaluate_fallback_reason_command_matched_but_args_failed() {
     use may_i_core::ast::{Config, Rule, Spanned};
     use may_i_core::pattern::{ArgPattern, CommandPattern, Expr, PositionalArg, Quantifier};

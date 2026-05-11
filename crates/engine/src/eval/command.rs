@@ -1,5 +1,5 @@
 use may_i_core::ast::Config;
-use may_i_core::{ContextFacts, Decision};
+use may_i_core::{ContextFacts, Decision, Keyword};
 use may_i_shell_parser as parser;
 
 use crate::fold::{EvalFold, PureFold};
@@ -7,7 +7,7 @@ use crate::{EvalError, EvalResult, SegmentDecision};
 
 use super::context::DEFAULT_RECURSION_LIMIT;
 use super::decompose::{EvalUnit, decompose};
-use super::entry::evaluate_with_fold;
+use super::entry::{evaluate_at_depth, evaluate_with_fold};
 
 /// Evaluate a command string against config and context.
 ///
@@ -139,6 +139,109 @@ fn evaluate_command_inner<F: EvalFold>(
     eval_result.parse_diagnostics = diagnostics;
     eval_result.segment_decisions = segment_decisions;
     Ok(eval_result)
+}
+
+/// Evaluate `input` as a full shell command line on behalf of an
+/// `(authorise …)`-shaped recursion site.
+///
+/// Parses `input` with the shell parser, decomposes the AST into
+/// evaluation units, and evaluates each unit against `config` and
+/// `facts`. The aggregate decision is the strictest across units
+/// (`Allow < Ask < Deny`).
+///
+/// `depth` is the recursion depth at which the inner units are
+/// evaluated (callers pass `ctx.recursion_depth + 1`). When `depth`
+/// already meets or exceeds `DEFAULT_RECURSION_LIMIT`, the helper
+/// returns `:ask` with a recursion-limit reason without parsing.
+///
+/// When `via_program` is `Some(name)`, the helper pushes `:via name`
+/// onto the facts seen by every inner unit. This is the contract that
+/// the `via-fact-builtin` spec defines: one push per `(authorise …)`
+/// call, not per inner unit. Top-level callers pass `None`.
+///
+/// `config` is `Option<&Config>` because some `(authorise …)` test
+/// fixtures construct an `EvalContext` directly without a `Config`.
+/// When `None`, a default `Config` is materialised internally — the
+/// inner units evaluate against an empty rule set (yielding `:ask`).
+pub(crate) fn evaluate_authorised_string<F: EvalFold>(
+    input: &str,
+    config: Option<&Config>,
+    facts: &ContextFacts,
+    fold: &mut F,
+    depth: usize,
+    via_program: Option<&str>,
+) -> Result<EvalResult, EvalError> {
+    if depth >= DEFAULT_RECURSION_LIMIT {
+        return Ok(EvalResult::new(
+            Decision::Ask,
+            Some(format!(
+                "recursion depth limit ({DEFAULT_RECURSION_LIMIT}) exceeded"
+            )),
+        ));
+    }
+
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Ok(EvalResult::new(
+            Decision::Ask,
+            Some("empty command".to_string()),
+        ));
+    }
+
+    let mut effective_facts = facts.clone();
+    if let Some(name) = via_program
+        && let Ok(key) = Keyword::new(":via")
+    {
+        effective_facts.insert_scalar(key, name);
+    }
+
+    let parse_result = parser::parse(input);
+    let has_parse_errors = parse_result.has_errors();
+    let units = decompose(&parse_result.command, input);
+
+    if units.is_empty() {
+        return Ok(EvalResult::new(
+            Decision::Ask,
+            Some("empty command".to_string()),
+        ));
+    }
+
+    let default_config = Config::default();
+    let effective_config = config.unwrap_or(&default_config);
+
+    let mut aggregate_decision = Decision::Allow;
+    let mut aggregate_reason: Option<String> = None;
+
+    for unit in &units {
+        let result = match unit {
+            EvalUnit::SimpleCommand { command, args, .. } => evaluate_at_depth(
+                command,
+                args,
+                effective_config,
+                &effective_facts,
+                fold,
+                depth,
+            )?,
+            EvalUnit::EmbeddedCommand { source, .. } => {
+                evaluate_authorised_string(source, config, &effective_facts, fold, depth + 1, None)?
+            }
+            EvalUnit::DynamicCommand { reason, .. } => {
+                EvalResult::new(Decision::Ask, Some(reason.clone()))
+            }
+        };
+
+        if result.decision >= aggregate_decision {
+            aggregate_decision = result.decision;
+            aggregate_reason = result.reason;
+        }
+    }
+
+    if has_parse_errors && aggregate_decision < Decision::Ask {
+        aggregate_decision = Decision::Ask;
+        aggregate_reason = Some("parse error: ambiguous command boundary".to_string());
+    }
+
+    Ok(EvalResult::new(aggregate_decision, aggregate_reason))
 }
 
 #[cfg(test)]
@@ -371,6 +474,66 @@ mod tests {
         assert!(result.reason.as_deref().unwrap().contains("depth"));
     }
 
+    #[test]
+    fn authorised_string_depth_limit_at_boundary() {
+        // `evaluate_authorised_string` MUST short-circuit when its
+        // `depth` argument already meets the limit — every
+        // `(authorise …)` recursion adds one step.
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        let mut fold = PureFold;
+        let result = evaluate_authorised_string(
+            "echo hi",
+            Some(&config),
+            &empty_facts(),
+            &mut fold,
+            DEFAULT_RECURSION_LIMIT,
+            Some("bash"),
+        )
+        .unwrap();
+        assert_eq!(result.decision, Decision::Ask);
+        assert!(result.reason.as_deref().unwrap().contains("depth"));
+    }
+
+    #[test]
+    fn authorised_string_pushes_via_for_every_unit() {
+        use may_i_core::ast::{FactQuery, Predicate, Provenance};
+        use may_i_core::predicates::FactPattern;
+        use may_i_core::span::Span;
+
+        // Rule: echo with (when (fact? [:via "bash"]) (deny "via"))
+        let echo_via_deny = may_i_core::ast::Rule {
+            command_effect: spanned(Effect::CommandPattern(CommandPattern::Literal(
+                "echo".into(),
+            ))),
+            effect: spanned(Effect::When {
+                predicate: spanned(Predicate::Fact(FactQuery::Value {
+                    key: may_i_core::Keyword::new(":via").unwrap(),
+                    pattern: FactPattern::Literal("bash".to_string()),
+                })),
+                effect: Box::new(spanned(Effect::Terminal {
+                    decision: Decision::Deny,
+                    reason: Some("via".to_string()),
+                })),
+            }),
+            checks: vec![],
+            span: Span::new(0, 0),
+            provenance: Provenance::PrimaryConfig,
+        };
+        let config = config_with_rules(vec![echo_via_deny]);
+        let mut fold = PureFold;
+        let result = evaluate_authorised_string(
+            "echo a && echo b",
+            Some(&config),
+            &empty_facts(),
+            &mut fold,
+            1,
+            Some("bash"),
+        )
+        .unwrap();
+        // Both inner echo units see :via "bash" — both deny — aggregate denies.
+        assert_eq!(result.decision, Decision::Deny);
+    }
+
     // -- segment_decisions: spec scenarios --
 
     #[test]
@@ -574,6 +737,29 @@ mod tests {
                 }
             }
             prop_assert_eq!(strictest, result.decision);
+        }
+
+        /// For any shell input, `evaluate_authorised_string` produces the
+        /// same decision as `evaluate_command` on the same input — modulo
+        /// the `:via` push, which the rules in this fixture don't react
+        /// to. The shared helper is the authorise-recursion path's
+        /// re-entry into the top-level pipeline; the two must agree on
+        /// the strictest-wins aggregation.
+        #[test]
+        fn prop_authorised_matches_top_level(input in arb_input()) {
+            let config = config_with_rules(vec![allow_rule("echo"), deny_rule("rm")]);
+            let top = evaluate_command(&input, &config, &empty_facts()).unwrap();
+            let mut fold = PureFold;
+            let auth = evaluate_authorised_string(
+                &input,
+                Some(&config),
+                &empty_facts(),
+                &mut fold,
+                1,
+                None,
+            )
+            .unwrap();
+            prop_assert_eq!(top.decision, auth.decision);
         }
     }
 }

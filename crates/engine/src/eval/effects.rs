@@ -1,13 +1,12 @@
 use may_i_core::ast::{Effect, EffectResult, Rule};
 use may_i_core::pattern::{ArgPattern, MatchMode, ParameterForm, flag_token_for_name};
-use may_i_core::{ContextFacts, Decision, Keyword};
+use may_i_core::{ContextFacts, Decision};
 
 use crate::EvalError;
 use crate::fold::PureFold;
 use crate::fold::{ArgMatchDetail, ChildResult, EvalFold};
 
 use super::context::{EvalContext, PredicateResult};
-use super::entry::Evaluator;
 use super::positional::{
     build_positional_element_details, match_positional_patterns, resolve_trailing_cond_effect,
 };
@@ -232,6 +231,12 @@ pub(crate) fn evaluate_effect_fold<F: EvalFold>(
 /// `recurse_into_inner_command` but emits the inner decision via
 /// `effect_terminal` instead of `effect_arg_continuation` — the verb
 /// has no surrounding `ArgPattern` to wrap.
+///
+/// The inner value is parsed as a full shell command line and
+/// decomposed into evaluation units by the shared
+/// `evaluate_authorised_string` helper, so compound forms
+/// (`&&`/`||`/`;`/`|`, `if`/`for`/`case`, substitutions) are policed
+/// per-unit with strictest-wins aggregation.
 fn recurse_into_bound_command<F: EvalFold>(
     fold: &mut F,
     effect: &Effect,
@@ -239,44 +244,16 @@ fn recurse_into_bound_command<F: EvalFold>(
     ctx: &EvalContext,
     rules: &[Rule],
 ) -> Result<F::EffectOut, EvalError> {
-    let (inner_cmd, inner_args) = may_i_shell_parser::parse_simple_command(value)
-        .unwrap_or_else(|| (value.to_string(), Vec::new()));
-    if ctx.recursion_depth + 1 >= ctx.recursion_limit {
-        return Ok(fold.effect_terminal(
-            effect,
-            EffectResult::Decision(
-                Decision::Ask,
-                Some(format!(
-                    "recursion depth limit ({}) exceeded",
-                    ctx.recursion_limit
-                )),
-            ),
-        ));
-    }
-    let evaluator = Evaluator::new(rules);
-    let mut inner_facts = ctx.facts.clone();
-    inner_facts.insert_scalar(Keyword::new(":via").unwrap(), ctx.command);
-    let inner_parser = match ctx.config {
-        Some(cfg) => cfg.parser_for_with_rules(&inner_cmd),
-        None => may_i_core::ast::ResolvedParser::synthetic_gnu(&inner_cmd),
-    };
-    fold.record_parser(&inner_cmd, &inner_parser);
-    let expanded_inner = super::entry::tokenise(&inner_args, &inner_parser);
-    let (_residual, inner_parser_bindings) =
-        super::bindings::parse_argv(&inner_parser, &expanded_inner);
-    let inner_ctx = EvalContext {
-        command: &inner_cmd,
-        args: &expanded_inner,
-        facts: &inner_facts,
-        bindings: ctx.bindings.clone(),
-        recursion_depth: ctx.recursion_depth + 1,
-        recursion_limit: ctx.recursion_limit,
-        parser: inner_parser,
-        parser_bindings: inner_parser_bindings,
-        config: ctx.config,
-    };
+    let _ = rules;
     fold.begin_recursive_eval();
-    let eval_result = evaluator.evaluate(fold, &inner_ctx)?;
+    let eval_result = super::command::evaluate_authorised_string(
+        value,
+        ctx.config,
+        ctx.facts,
+        fold,
+        ctx.recursion_depth + 1,
+        Some(ctx.command),
+    )?;
     Ok(fold.effect_terminal(
         effect,
         EffectResult::Decision(eval_result.decision, eval_result.reason),
@@ -408,7 +385,8 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
 
 /// Evaluate `(tail (authorise))`. Resolves the tail slice from the
 /// parser's `(tail (after …))` declaration and recurses on it as a
-/// command line via [`extract_inner_command`].
+/// full command line via the shared `evaluate_authorised_string`
+/// helper.
 fn evaluate_tail_authorise_fold<F: EvalFold>(
     fold: &mut F,
     pattern: &ArgPattern,
@@ -438,60 +416,41 @@ fn evaluate_tail_authorise_fold<F: EvalFold>(
     };
     let owned: Vec<String> = tail_slice.to_vec();
     let tail_value = owned.join(" ");
-    Ok(match extract_inner_command(&owned) {
-        Some((inner_cmd, inner_args)) => {
-            let mut inner_facts = ctx.facts.clone();
-            inner_facts.insert_scalar(Keyword::new(":via").unwrap(), ctx.command);
-            let inner_parser = match ctx.config {
-                Some(cfg) => cfg.parser_for_with_rules(&inner_cmd),
-                None => may_i_core::ast::ResolvedParser::synthetic_gnu(&inner_cmd),
-            };
-            fold.record_parser(&inner_cmd, &inner_parser);
-            let expanded_inner = super::entry::tokenise(&inner_args, &inner_parser);
-            let evaluator = Evaluator::new(rules);
-            let (_residual, inner_parser_bindings) =
-                super::bindings::parse_argv(&inner_parser, &expanded_inner);
-            let inner_ctx = EvalContext {
-                command: &inner_cmd,
-                args: &expanded_inner,
-                facts: &inner_facts,
-                bindings: ctx.bindings.clone(),
-                recursion_depth: ctx.recursion_depth + 1,
-                recursion_limit: ctx.recursion_limit,
-                parser: inner_parser,
-                parser_bindings: inner_parser_bindings,
-                config: ctx.config,
-            };
-            fold.begin_recursive_eval();
-            let eval_result = evaluator.evaluate(fold, &inner_ctx)?;
-            let detail = ArgMatchDetail {
-                search_tokens: vec![],
-                arg_set: ctx.args.to_vec(),
-                matched: true,
-                positional_elements: vec![],
-                captured_value: Some(tail_value.clone()),
-            };
-            // Surface the recursive decision via effect_arg_continuation
-            // so the trace renders the inner evaluation as a child.
-            let inner_terminal = fold.effect_terminal(
-                &Effect::Terminal {
-                    decision: eval_result.decision,
-                    reason: eval_result.reason.clone(),
-                },
-                EffectResult::Decision(eval_result.decision, eval_result.reason),
-            );
-            fold.effect_arg_continuation(pattern, ctx.args, detail, inner_terminal)
-        }
-        None => {
-            let detail = ArgMatchDetail {
-                search_tokens: vec![],
-                arg_set: ctx.args.to_vec(),
-                matched: false,
-                positional_elements: vec![],
-                captured_value: Some(tail_value),
-            };
-            fold.effect_arg_match(pattern, ctx.args, false, detail)
-        }
+    let _ = rules;
+    Ok(if owned.is_empty() {
+        let detail = ArgMatchDetail {
+            search_tokens: vec![],
+            arg_set: ctx.args.to_vec(),
+            matched: false,
+            positional_elements: vec![],
+            captured_value: Some(tail_value),
+        };
+        fold.effect_arg_match(pattern, ctx.args, false, detail)
+    } else {
+        fold.begin_recursive_eval();
+        let eval_result = super::command::evaluate_authorised_string(
+            &tail_value,
+            ctx.config,
+            ctx.facts,
+            fold,
+            ctx.recursion_depth + 1,
+            Some(ctx.command),
+        )?;
+        let detail = ArgMatchDetail {
+            search_tokens: vec![],
+            arg_set: ctx.args.to_vec(),
+            matched: true,
+            positional_elements: vec![],
+            captured_value: Some(tail_value.clone()),
+        };
+        let inner_terminal = fold.effect_terminal(
+            &Effect::Terminal {
+                decision: eval_result.decision,
+                reason: eval_result.reason.clone(),
+            },
+            EffectResult::Decision(eval_result.decision, eval_result.reason),
+        );
+        fold.effect_arg_continuation(pattern, ctx.args, detail, inner_terminal)
     })
 }
 
@@ -715,9 +674,10 @@ fn evaluate_parameter_fold<F: EvalFold>(
 
 /// Recurse into a captured command-line value (single occurrence).
 ///
-/// Joins the value into a parsed `(command, args)` tuple, runs it through
-/// the evaluator under a fresh context with `:via` set, and surfaces the
-/// inner decision via `effect_arg_continuation` so the parameter pattern
+/// Parses the value as a full shell command line via
+/// `evaluate_authorised_string`, so compound inner forms are handled
+/// uniformly with strictest-wins aggregation. Surfaces the inner
+/// decision via `effect_arg_continuation` so the parameter pattern
 /// remains visible in the rule body and the captured value lands as a
 /// right-column annotation.
 fn recurse_into_inner_command<F: EvalFold>(
@@ -727,33 +687,16 @@ fn recurse_into_inner_command<F: EvalFold>(
     ctx: &EvalContext,
     rules: &[Rule],
 ) -> Result<F::EffectOut, EvalError> {
-    let (inner_cmd, inner_args) = may_i_shell_parser::parse_simple_command(value)
-        .unwrap_or_else(|| (value.to_string(), Vec::new()));
-    let evaluator = Evaluator::new(rules);
-    let mut inner_facts = ctx.facts.clone();
-    inner_facts.insert_scalar(Keyword::new(":via").unwrap(), ctx.command);
-    let inner_parser = match ctx.config {
-        Some(cfg) => cfg.parser_for_with_rules(&inner_cmd),
-        None => may_i_core::ast::ResolvedParser::synthetic_gnu(&inner_cmd),
-    };
-    fold.record_parser(&inner_cmd, &inner_parser);
-    let expanded_inner = super::entry::tokenise(&inner_args, &inner_parser);
-    let (_residual, inner_parser_bindings) =
-        super::bindings::parse_argv(&inner_parser, &expanded_inner);
-    let inner_ctx = EvalContext {
-        command: &inner_cmd,
-        args: &expanded_inner,
-        facts: &inner_facts,
-        bindings: ctx.bindings.clone(),
-        recursion_depth: ctx.recursion_depth + 1,
-        recursion_limit: ctx.recursion_limit,
-        parser: inner_parser,
-        parser_bindings: inner_parser_bindings,
-        config: ctx.config,
-    };
-    let _ = inner_args;
+    let _ = rules;
     fold.begin_recursive_eval();
-    let eval_result = evaluator.evaluate(fold, &inner_ctx)?;
+    let eval_result = super::command::evaluate_authorised_string(
+        value,
+        ctx.config,
+        ctx.facts,
+        fold,
+        ctx.recursion_depth + 1,
+        Some(ctx.command),
+    )?;
     let detail = ArgMatchDetail {
         search_tokens: vec![],
         arg_set: ctx.args.to_vec(),
@@ -924,28 +867,6 @@ fn evaluate_effect_with_owned_args_fold<F: EvalFold>(
         config: ctx.config,
     };
     evaluate_effect_fold(fold, effect, &inner_ctx, rules)
-}
-
-/// Extract inner command from args for may-i recursion.
-///
-/// The remaining args may contain a quoted string like `"rm -rf /"` that
-/// represents a complete sub-command. We join all args into a single string
-/// and re-parse through the shell parser to correctly handle quoting.
-pub(crate) fn extract_inner_command(args: &[String]) -> Option<(String, Vec<String>)> {
-    if args.is_empty() {
-        return None;
-    }
-
-    // Join remaining args and re-parse as a shell command to handle cases
-    // like ssh host "rm -rf /" where the quoted string is a single arg
-    // containing a full command.
-    let joined = args.join(" ");
-    may_i_shell_parser::parse_simple_command(&joined).or_else(|| {
-        // Fallback: use first arg as command, rest as args
-        let cmd = args[0].clone();
-        let remaining = args[1..].to_vec();
-        Some((cmd, remaining))
-    })
 }
 
 #[cfg(test)]

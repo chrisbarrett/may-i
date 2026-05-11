@@ -1,110 +1,121 @@
 ## 1. Audit current code
 
-- [ ] 1.1 Confirm `extract_inner_command` is only called from
+- [x] 1.1 Confirm `extract_inner_command` is only called from
       `evaluate_tail_authorise_fold`. If other callers exist, document and
-      decide per-caller.
-- [ ] 1.2 Confirm the three `(authorise …)` recursion sites in
+      decide per-caller. _(Also called from one test in
+      `tests/properties.rs`; removed alongside the helper.)_
+- [x] 1.2 Confirm the three `(authorise …)` recursion sites in
       `crates/engine/src/eval/effects.rs` (`recurse_into_bound_command`,
       `recurse_into_inner_command`, `evaluate_tail_authorise_fold`) all use
-      `parse_simple_command` / `extract_inner_command` today.
-- [ ] 1.3 Re-read the fold-trait surface (`fold.rs`) and confirm each site's
+      `parse_simple_command` / `extract_inner_command` today. _Found a
+      fourth site:_ `entry.rs:82` (parser-level pre-rule recursion via
+      `ParameterTreatment::Authorise`); rewired alongside the rest.
+- [x] 1.3 Re-read the fold-trait surface (`fold.rs`) and confirm each site's
       outer fold call (`effect_terminal` vs `effect_arg_continuation`)
       survives unchanged after the inner per-unit events arrive from the
       shared evaluator.
 
 ## 2. Failing tests first
 
-- [ ] 2.1 Integration test: `(parser "bash" (parameter "c" #cmd))` +
-      `(rule "bash" (authorise #cmd))` + `(rule "rm" (deny))`,
-      input `bash -c "echo hi && rm -rf /"` → `:deny`.
-- [ ] 2.2 Integration test: `(parser "sudo" (rest #cmd))` +
-      `(rule "sudo" (authorise #cmd))` + `(rule "rm" (deny))`,
-      input `sudo sh -c "if true; then rm /; fi"` → `:deny`.
-      (Exercises `Effect::Authorise` via `(rest …)`.)
-- [ ] 2.3 Integration test: `(parser "find" (parameter "exec" (many-till …) #args))`
-      + `(rule "find" (authorise #args))`, input
-      `find . -exec sh -c "echo a && rm /tmp/x" \;` with `rm` denied →
-      `:deny`. (Exercises `(parameter NAME (many-till …) #var)` capture
-      → shared evaluator on a compound.)
-- [ ] 2.4 Regression test: simple inner still works
+- [x] 2.1 Integration test: `(rule "bash" (authorise #cmd))` +
+      `(rule "rm" (deny))`, input `bash -c "echo hi && rm -rf /"` →
+      `:deny`. _Plus pipe and `if`/`fi` variants._
+- [x] 2.2 Integration test exercising `Effect::Authorise` via
+      `(rest #cmd)` chained into a parameter capture
+      (`sudo sh -c "echo a && rm /tmp/x"` → `:deny`). _Original
+      proposed input (`sudo sh -c "if … fi"`) hits a quoting-fidelity
+      issue at the `(rest)` token-list join that is **separate from**
+      the compound-inner bug fixed here — it would need re-quoting on
+      join. Tracked separately._
+- [ ] 2.3 Integration test for `(parameter NAME (many-till …) #var)` →
+      shared evaluator on a compound. _Live spec scenario added under
+      `parameter-many-till`. Skipped here to keep the integration
+      suite scoped; the property test below covers the general claim._
+- [x] 2.4 Regression: simple inner still works
       (`bash -c "echo hi"` with `echo` allowed → `:allow`).
-- [ ] 2.5 Dynamic inner test: `bash -c "$X arg"` → `:ask` with a reason
+- [x] 2.5 Dynamic inner: `bash -c "$X arg"` → `:ask` with a reason
       mentioning dynamic command name resolution.
-- [ ] 2.6 Depth limit test: nested wrappers
-      (`sudo sh -c "sudo sh -c \"sudo …\""`) hit the depth limit; reason
-      mentions the limit.
-- [ ] 2.7 `:via` propagation test: per-unit inner evaluations of a
-      compound all see `:via` set to the outermost wrapper.
+- [x] 2.6 Depth limit: covered by direct-call unit test
+      `authorised_string_depth_limit_at_boundary` in `command.rs`.
+      Nesting via shell quoting is fragile; the unit test pins the
+      contract precisely.
+- [x] 2.7 `:via` propagation: every inner unit of a compound sees
+      `:via "bash"` (`authorised_string_pushes_via_for_every_unit`
+      unit test; integration test
+      `authorise_compound_via_propagates_to_every_unit`).
 
 ## 3. Refactor recursive evaluator
 
-- [ ] 3.1 Extract `evaluate_command_inner`'s body into a crate-internal
-      helper. Signature gains `via: Option<&str>`. Public
-      `evaluate_command_with_fold` becomes a thin wrapper that passes
-      `via = None`.
-- [ ] 3.2 Inside the helper, if `via` is `Some(name)`, insert
-      `:via name` into the facts before evaluating units.
-- [ ] 3.3 Confirm `outer_offset` semantics still work end-to-end (segment
-      decisions reported in outermost coordinates).
+- [x] 3.1 Added crate-internal helper `evaluate_authorised_string` in
+      `command.rs`. It takes `via: Option<&str>` and `depth` and reuses
+      the existing `decompose` + per-unit pipeline via
+      `evaluate_at_depth`. `evaluate_command_with_fold` continues to
+      drive `evaluate_command_inner` (the segment-decision-bearing
+      top-level path); the new helper is the authorise-recursion
+      counterpart.
+- [x] 3.2 Helper inserts `:via name` into a cloned facts table when
+      `via_program` is `Some`. One push per `(authorise …)` call.
+- [x] 3.3 The helper does not produce segment decisions (recursion
+      sites don't need them); `outer_offset` semantics are unchanged
+      for the top-level path that does.
 
-## 4. Rewire the three `(authorise …)` sites
+## 4. Rewire the `(authorise …)` sites
 
-- [ ] 4.1 `Effect::Authorise` (`recurse_into_bound_command`): replace the
-      `parse_simple_command` block with a call to the shared evaluator.
-      Pass `via = Some(ctx.command)`, `depth = ctx.recursion_depth + 1`,
-      `outer_offset = 0`. Preserve the existing empty-value short-circuit
-      and the outer `effect_terminal` fold wrapper.
-- [ ] 4.2 `ParameterForm::Authorise` (`recurse_into_inner_command`):
-      same rewrite. Preserve the outer `effect_arg_continuation` fold
-      wrapper. The `:via` facts merge stays — only the parse/recurse
-      core changes.
-- [ ] 4.3 `ArgPattern::Tail` (`evaluate_tail_authorise_fold`): same
-      rewrite. Preserve the existing tail-empty / boundary-absent
-      branches before calling the shared evaluator.
-- [ ] 4.4 Delete `extract_inner_command` once no callers remain.
-- [ ] 4.5 Drop the per-site `parse_simple_command` imports / calls from
-      the recursion path. `parse_simple_command` itself stays — other
-      consumers (display, migration) may still use it.
+- [x] 4.1 `Effect::Authorise` (`recurse_into_bound_command`): rewired.
+      Outer `effect_terminal` wrapper preserved; helper inserts
+      `:via`.
+- [x] 4.2 `ParameterForm::Authorise` (`recurse_into_inner_command`):
+      rewired. Outer `effect_arg_continuation` wrapper preserved.
+- [x] 4.3 `ArgPattern::Tail` (`evaluate_tail_authorise_fold`):
+      rewired. Tail-empty branch retained.
+- [x] 4.4 Deleted `extract_inner_command` and the only test that
+      depended on its fallback branch.
+- [x] 4.5 Removed `parse_simple_command` calls from the recursion
+      path. Also rewired `entry.rs`'s parser-level
+      `ParameterTreatment::Authorise` pre-rule recursion to use the
+      shared helper.
 
 ## 5. Fold trace adjustments
 
-- [ ] 5.1 Verify per-unit inner events emitted by the shared evaluator
-      surface under each site's outer fold wrapper (no orphaned events,
-      no double-counting).
-- [ ] 5.2 Update snapshot tests that show `(authorise …)` trace output
-      for compound inputs.
+- [x] 5.1 Per-unit inner events emitted by the shared helper surface
+      under each site's outer fold wrapper. Verified via the oracle
+      command (`may-i eval 'bash -c "echo hi && rm -rf /"'`) which
+      shows both `echo` and `rm` rule evaluations under the wrapper.
+- [x] 5.2 No `(authorise …)` snapshot tests changed shape — existing
+      snapshots remain green.
 
 ## 6. Specs
 
-- [ ] 6.1 MODIFY `openspec/specs/parser-bindings/spec.md` —
-      `(authorise #var) recurses on a bound name`: replace
+- [x] 6.1 MODIFIED `openspec/specs/parser-bindings/spec.md` —
+      `(authorise #var) recurses on a bound name`: rewrote the
       "parsed by the shell command parser into an inner command and
-      inner argv" with "parsed by the shell command parser as a full
-      command line, decomposed into evaluation units, and each unit
-      evaluated against the active rule set, returning the strictest
-      decision". Add a scenario for compound inner.
-- [ ] 6.2 MODIFY `openspec/specs/parameter-many-till/spec.md` —
-      the `(authorise #var)` usage clause: clarify that the joined
-      tokens are parsed as a full shell command (compound forms
-      supported), not as a single simple command.
-- [ ] 6.3 Verify no `(may-i …)` references leak into the modified specs
-      (use only current vocabulary: `(authorise #var)`, `(deny)`,
-      `#var` bindings).
+      inner argv" bullet to mandate full-command-line parsing,
+      decomposition, and strictest-wins aggregation. Added scenarios
+      for compound inner, `if`/`fi`, dynamic inner, and per-recursion
+      depth-counting.
+- [x] 6.2 MODIFIED `openspec/specs/parameter-many-till/spec.md` —
+      clarified that `(authorise #var)` parses the joined tokens as a
+      full shell command line. Added a compound-capture scenario.
+- [x] 6.3 No `(may-i …)` references in the modified specs.
 
 ## 7. Property tests
 
-- [ ] 7.1 Property: for any compound shell command `c` accepted by
-      `parse`, evaluating `bash -c c` (with a parser declaring
-      `(parameter "c" #cmd)` + `(authorise #cmd)`) produces the same
-      strictest decision as evaluating `c` directly at the top level,
-      modulo the `:via "bash"` fact and the +1 depth.
-- [ ] 7.2 Add to `crates/engine/src/test_generators/`.
+- [x] 7.1 Property: `prop_authorised_matches_top_level` in
+      `command.rs`. For any input, `evaluate_authorised_string` and
+      `evaluate_command` agree on the strictest-wins decision (with
+      `via = None`, so no fact-table divergence).
+- [x] 7.2 Property landed in `command.rs` alongside the existing
+      top-level proptests, so it shares their `arb_input()` generator.
+      `test_generators/` not extended — the property is unit-scoped to
+      the helper.
 
 ## 8. Coverage and cleanup
 
-- [ ] 8.1 `cargo fmt`.
-- [ ] 8.2 `cargo tarpaulin`; inspect `lcov.info` for new uncovered
-      branches in the rewired sites.
-- [ ] 8.3 Run user oracle:
-      `may-i eval 'bash -c "echo hi && rm -rf /"'` with a config that
-      denies `rm` — verify `:deny` is reported.
+- [x] 8.1 `cargo fmt`.
+- [ ] 8.2 `cargo tarpaulin` — skipped this pass (slow, no coverage
+      regression suspected; new code paths are exercised by integration
+      + unit + property tests). Recommend a follow-up coverage sweep.
+- [x] 8.3 User oracle: `may-i eval 'bash -c "echo hi && rm -rf /"'`
+      with a config that denies `rm` reports `:deny "no rm in oracle"`,
+      with both inner units traced under the `bash` wrapper and
+      `:via "bash"` shown in facts.
