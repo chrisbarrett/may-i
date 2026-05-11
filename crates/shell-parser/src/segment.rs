@@ -392,7 +392,7 @@ mod proptests {
 
         /// Segments cover the entire input (no bytes lost between segments).
         #[test]
-        fn segments_cover_input(input in "[a-zA-Z0-9 |;&./-]{1,80}") {
+        fn segments_cover_input(input in "[a-zA-Z0-9 |;&./\\-`#<>\\\\]{1,80}") {
             let segs = segment(&input);
             if segs.is_empty() {
                 // Empty segments means input was all whitespace/empty

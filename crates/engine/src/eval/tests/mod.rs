@@ -836,3 +836,8 @@ fn named_predicate_missing_returns_unresolved_error() {
 }
 
 mod properties;
+pub(crate) mod strategies;
+
+pub(crate) use strategies::{
+    arb_shell_chars, arb_unquoted_shell_chars, arb_with_heredoc, arb_with_single_quoted_region,
+};

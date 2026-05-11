@@ -60,6 +60,12 @@ impl Lexer {
         std::mem::take(&mut self.diagnostics)
     }
 
+    /// Test-only thin wrapper exposing the lexer's `$()` body matcher, used
+    /// to compare against the engine's `find_balanced_paren`.
+    pub(super) fn debug_read_balanced_parens(&mut self) -> (String, bool) {
+        self.read_balanced_parens_checked()
+    }
+
     pub(super) fn peek(&self) -> Option<char> {
         self.input.get(self.pos).copied()
     }

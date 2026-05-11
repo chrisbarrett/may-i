@@ -221,7 +221,7 @@ fn find_substitution_spans(input: &str) -> Vec<(usize, usize)> {
 /// Find the position of the closing `)` matching an opening `(` — `start`
 /// points at the byte immediately after the opener. Returns the byte offset
 /// of the closing `)`. Skips quoted regions and backslash escapes.
-fn find_balanced_paren(bytes: &[u8], start: usize) -> Option<usize> {
+pub(crate) fn find_balanced_paren(bytes: &[u8], start: usize) -> Option<usize> {
     let mut depth: i32 = 1;
     let mut i = start;
     let mut in_double_quote = false;
