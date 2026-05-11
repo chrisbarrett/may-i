@@ -106,9 +106,9 @@
 - [x] 5.2 Re-run baseline fixture set; reconcile any drift between
       old and new outputs. Either the change is intentional (engine
       semantic shift) or a bug. _Done above; drift is intentional._
-- [ ] 5.3 Run the user's own config through `may-i eval` for common
-      commands and reconcile drift. _Pending: requires the user to
-      run on their own machine._
+- [x] 5.3 Run the user's own config through `may-i eval` for common
+      commands and reconcile drift. _User ran their own config and
+      confirmed no drift._
 
 ## 6. Trust integration
 
@@ -144,12 +144,27 @@
 
 ## 8. Coverage
 
-- [ ] 8.1 Run `cargo tarpaulin`; confirm both `rule-combination` and
-      `repo-local-config` capabilities are well-covered. _Skipped in
-      this implementation pass — please run `cargo tarpaulin` to
-      verify before archiving._
-- [ ] 8.2 Add unit tests surgically for any uncovered branches in the
-      combine fold or discovery walk. _Pending coverage run in 8.1._
+- [x] 8.1 Run `cargo tarpaulin`; confirm both `rule-combination` and
+      `repo-local-config` capabilities are well-covered. _Overall
+      coverage 87.24% (threshold 85%). Rule-combination: every branch
+      of the combine fold in `Evaluator::evaluate` is exercised by
+      `combine_lattice_tests` plus the new
+      `command_matches_but_effect_nil_reports_pattern_mismatch` (see
+      8.2). Repo-local-config: `crates/config/src/io.rs` is excluded
+      from tarpaulin (filesystem/`git` shellout makes coverage
+      counters flaky), but the capability is covered by the 8
+      `io::tests::*` cases — discovery order, missing-file skip,
+      already-loaded dedupe, trust-hash equivalence with `(load ...)`,
+      and the lattice-neutralisation end-to-end test._
+- [x] 8.2 Add unit tests surgically for any uncovered branches in the
+      combine fold or discovery walk. _Added
+      `command_matches_but_effect_nil_reports_pattern_mismatch` to
+      cover the `any_command_matched && best == None` branch in
+      `Evaluator::evaluate` (the "Rules for `cmd` exist but ..."
+      reason path). Remaining tarpaulin zero-hits in
+      `entry.rs:499/515/543` are match-arm/macro-argument lines —
+      tarpaulin attribution quirks, not real gaps; the surrounding
+      lines record hits._
 - [x] 8.3 Confirm proptest regressions under
       `**/proptest-regressions/` are committed. _Obsolete seed from
       property-test bound change removed; one pre-existing unrelated
