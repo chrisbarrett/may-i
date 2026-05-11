@@ -210,19 +210,24 @@ pub(crate) fn evaluate_effect_fold<F: EvalFold>(
         }
 
         // `(authorise #var)` — resolve `#var` against the active
-        // parser-binding environment, lift its value into a command
-        // line, and recurse. Unbound or empty values are no-match,
-        // matching the boundary-absent semantics that the legacy
-        // `(tail …)` form encoded.
+        // parser-binding environment and recurse. Unbound or empty
+        // values are no-match, matching the boundary-absent semantics
+        // that the legacy `(tail …)` form encoded.
+        //
+        // Dispatch on the binding's kind: a single-string capture
+        // (e.g. `(parameter "c" #cmd)`) re-parses as a command line;
+        // a token-list capture (e.g. `(rest #cmd)`,
+        // `(positional #var *|+)`) preserves each token as one
+        // argument so the outer-shell-established boundaries reach
+        // the inner parser intact. Joining tokens with single spaces
+        // and re-parsing is the bypass closed by the
+        // `authorise-token-list-quoting` change.
         Effect::Authorise { binding } => {
             let value = ctx.parser_bindings.get(binding);
-            let Some(joined) = value.as_joined() else {
-                return Ok(fold.effect_nil(effect));
-            };
-            if joined.is_empty() {
+            if value.is_empty() {
                 return Ok(fold.effect_nil(effect));
             }
-            recurse_into_bound_command(fold, effect, &joined, ctx, rules)?
+            recurse_into_bound_command(fold, effect, &value, ctx, rules)?
         }
     })
 }
@@ -232,28 +237,45 @@ pub(crate) fn evaluate_effect_fold<F: EvalFold>(
 /// `effect_terminal` instead of `effect_arg_continuation` — the verb
 /// has no surrounding `ArgPattern` to wrap.
 ///
-/// The inner value is parsed as a full shell command line and
-/// decomposed into evaluation units by the shared
-/// `evaluate_authorised_string` helper, so compound forms
-/// (`&&`/`||`/`;`/`|`, `if`/`for`/`case`, substitutions) are policed
-/// per-unit with strictest-wins aggregation.
+/// String bindings route through `evaluate_authorised_string` (parse
+/// as a full command line, decompose, aggregate strictest-wins).
+/// Token-list bindings route through `evaluate_authorised_tokens`,
+/// which preserves each token as one inner-argv element so an
+/// outer-shell-quoted argument carrying shell metacharacters reaches
+/// the inner parser as one preserved string rather than as
+/// re-exposed structure at the wrapper's frame.
 fn recurse_into_bound_command<F: EvalFold>(
     fold: &mut F,
     effect: &Effect,
-    value: &str,
+    value: &super::bindings::BindingValue,
     ctx: &EvalContext,
     rules: &[Rule],
 ) -> Result<F::EffectOut, EvalError> {
     let _ = rules;
     fold.begin_recursive_eval();
-    let eval_result = super::command::evaluate_authorised_string(
-        value,
-        ctx.config,
-        ctx.facts,
-        fold,
-        ctx.recursion_depth + 1,
-        Some(ctx.command),
-    )?;
+    let eval_result = match value {
+        super::bindings::BindingValue::Token(s) => super::command::evaluate_authorised_string(
+            s,
+            ctx.config,
+            ctx.facts,
+            fold,
+            ctx.recursion_depth + 1,
+            Some(ctx.command),
+        )?,
+        super::bindings::BindingValue::Tokens(v) => super::command::evaluate_authorised_tokens(
+            v,
+            ctx.config,
+            ctx.facts,
+            fold,
+            ctx.recursion_depth + 1,
+            Some(ctx.command),
+        )?,
+        super::bindings::BindingValue::Unbound => {
+            // Caller checks `is_empty()` before dispatching; reaching
+            // this arm means the surrounding contract is broken.
+            unreachable!("recurse_into_bound_command invoked on Unbound binding")
+        }
+    };
     Ok(fold.effect_terminal(
         effect,
         EffectResult::Decision(eval_result.decision, eval_result.reason),
@@ -415,6 +437,9 @@ fn evaluate_tail_authorise_fold<F: EvalFold>(
         }
     };
     let owned: Vec<String> = tail_slice.to_vec();
+    // `captured_value` is a trace-surface display string; the
+    // recursion itself routes through `evaluate_authorised_tokens`
+    // so the tail's token boundaries reach the inner parser intact.
     let tail_value = owned.join(" ");
     let _ = rules;
     Ok(if owned.is_empty() {
@@ -428,8 +453,8 @@ fn evaluate_tail_authorise_fold<F: EvalFold>(
         fold.effect_arg_match(pattern, ctx.args, false, detail)
     } else {
         fold.begin_recursive_eval();
-        let eval_result = super::command::evaluate_authorised_string(
-            &tail_value,
+        let eval_result = super::command::evaluate_authorised_tokens(
+            &owned,
             ctx.config,
             ctx.facts,
             fold,

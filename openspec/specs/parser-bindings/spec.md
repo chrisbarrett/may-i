@@ -198,9 +198,11 @@ When the parameter appears multiple times in argv and is not declared `(many-til
 The rule-body form `(authorise #var)` SHALL recursively authorise the value bound to `#var` as a command line. The semantics SHALL be:
 
 - If `#var` is unbound or bound to an empty value (empty string, empty token list), `(authorise #var)` SHALL be a no-match (the surrounding combinator continues to other branches).
-- If `#var` is bound to a single string, the string SHALL be parsed by the shell command parser as a full command line — including compound forms (`&&`, `||`, `;`, `|`, `if`/`for`/`case`, command substitutions).
-- If `#var` is bound to a token list, the tokens SHALL be joined by single spaces and parsed as above.
-- The parsed command SHALL be decomposed into evaluation units, each unit evaluated against the active rule set, and the strictest decision (`Deny > Ask > Allow`) returned. This matches the top-level evaluator's compound-aggregation semantics.
+- If `#var` is bound to a **single string** (e.g. `(parameter "c" #cmd)` capturing one shell argument), the string SHALL be parsed by the shell command parser as a full command line — including compound forms (`&&`, `||`, `;`, `|`, `if`/`for`/`case`, command substitutions) — then decomposed into evaluation units and aggregated strictest-wins.
+- If `#var` is bound to a **token list** (e.g. `(rest #cmd)`, `(positional #var *)`, `(positional #var +)`), the recursion SHALL preserve each token's content as one argument: argv[0] SHALL be the inner command name and argv[1..] SHALL be the inner argv. The tokens SHALL NOT be joined with single spaces and re-parsed, because that join discards the boundary information the outer shell already established and exposes shell metacharacters inside a token (e.g. `&&`, `;`, `|`, parens, quotes) as if they were structure at the wrapper's frame.
+- For a token-list binding with exactly one element, the single element SHALL be treated as a single string and parsed as a full command line (there is only one outer-shell boundary, so no information is lost by re-parsing).
+- For a token-list binding with two or more elements, if `tokens[0]` contains shell metacharacters or is empty, the recursion SHALL return `:ask` with a reason naming the dynamic-or-malformed inner command name.
+- For a token-list binding with a well-formed `tokens[0]` (and at least two elements), the recursion SHALL evaluate the inner command directly without further parsing of `tokens[1..]`; each `tokens[i]` SHALL arrive at the inner parser as a single argument. The inner program's own parser then handles any further structure (e.g. `bash -c <string>` captures `<string>` via its own `(parameter "c" #cmd)`).
 - `:via PROG` (the current command name) SHALL accumulate into the inner facts for every unit produced by the recursion.
 - Each `(authorise …)` recursion SHALL count as one step toward the recursion-depth limit, regardless of how many evaluation units the inner command produces.
 - The result SHALL be the recursed decision.
@@ -220,22 +222,41 @@ The rule-body form `(authorise #var)` SHALL recursively authorise the value boun
 - **WHEN** evaluating `sudo rm -r /tmp/x`
 - **THEN** the inner evaluation's facts SHALL include `:via "sudo"`.
 
-#### Scenario: `(authorise #cmd)` recurses into a compound inner
+#### Scenario: `(authorise #cmd)` recurses into a compound inner via string capture
 
 - **GIVEN** `(parser "bash" (style gnu) (flags posix) (parameter "c" #cmd))`, `(rule "bash" (authorise #cmd))`, `(rule "echo" (allow))`, and `(rule "rm" (deny "no rm"))`
 - **WHEN** evaluating `bash -c "echo hi && rm -rf /"`
-- **THEN** the recursion SHALL evaluate `echo hi` and `rm -rf /` as separate units
+- **THEN** `#cmd` SHALL be bound to the single string `"echo hi && rm -rf /"`
+- **AND** the recursion SHALL evaluate `echo hi` and `rm -rf /` as separate units
 - **AND** each unit's inner facts SHALL include `:via "bash"`
 - **AND** the rule SHALL return `:deny "no rm"` (strictest wins across units).
 
-#### Scenario: `(authorise #cmd)` recurses into an `if`/`fi` block
+#### Scenario: `(rest #cmd)` token list preserves quoted argument shape
 
-- **GIVEN** `(parser "sudo" (style gnu) (flags posix) (rest #cmd))`, `(rule "sudo" (authorise #cmd))`, and `(rule "rm" (deny))`
+- **GIVEN** `(parser "sudo" (style gnu) (flags posix) (rest #cmd))`, `(rule "sudo" (authorise #cmd))`, `(rule "bash" (authorise #cmd))`, `(rule "echo" (allow))`, and `(rule "rm" (deny "no rm"))`
+- **WHEN** evaluating `sudo bash -c "echo a && rm -rf /tmp/x"`
+- **THEN** sudo's `#cmd` SHALL bind to the token list `[bash, -c, "echo a && rm -rf /tmp/x"]`
+- **AND** sudo's `(authorise #cmd)` SHALL recurse with inner command `bash` and inner argv `[-c, "echo a && rm -rf /tmp/x"]` (the third token preserved as a single string)
+- **AND** bash's `(parameter "c" #cmd)` SHALL bind to the single string `"echo a && rm -rf /tmp/x"`
+- **AND** bash's `(authorise #cmd)` SHALL decompose the string and reach the `rm` unit
+- **AND** the rule SHALL return `:deny "no rm"`.
+
+#### Scenario: `(authorise #cmd)` recurses into an `if`/`fi` block via token list
+
+- **GIVEN** `(parser "sudo" (style gnu) (flags posix) (rest #cmd))`, `(rule "sudo" (authorise #cmd))`, `(rule "sh" (authorise #cmd))`, and `(rule "rm" (deny))`
 - **WHEN** evaluating `sudo sh -c "if true; then rm /; fi"`
-- **THEN** the recursion SHALL reach the `rm` unit inside the `if`/`fi` body
+- **THEN** sudo's `#cmd` SHALL bind to the token list `[sh, -c, "if true; then rm /; fi"]`
+- **AND** the recursion SHALL reach the `rm` unit inside the `if`/`fi` body via sh's parameter capture
 - **AND** the rule SHALL return `:deny`.
 
-#### Scenario: Dynamic inner command name asks
+#### Scenario: Token-list `tokens[0]` containing shell metacharacters asks
+
+- **GIVEN** any parser whose `(rest #cmd)` or positional binding could capture an unresolved or malformed first token
+- **WHEN** `(authorise #cmd)` recurses with `tokens = ["$X", "arg"]`
+- **THEN** the decision SHALL be `:ask`
+- **AND** the reason SHALL mention that the inner command name is dynamic or malformed.
+
+#### Scenario: Dynamic inner command name asks (string binding)
 
 - **GIVEN** `(parser "bash" (style gnu) (flags posix) (parameter "c" #cmd))` and `(rule "bash" (authorise #cmd))`
 - **WHEN** evaluating `bash -c "$X arg"`

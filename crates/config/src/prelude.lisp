@@ -120,6 +120,14 @@
   (flags permute)
   (parameter "c" #cmd))
 
+;; sh -c "command …" — POSIX sh / dash. Same shape as bash -c; the
+;; captured `-c` argument is the recurse target. Used by wrappers
+;; that hand off to `/bin/sh -c …` (sudo, ssh, xargs, watchexec, …).
+(parser "sh"
+  (style gnu)
+  (flags permute)
+  (parameter "c" #cmd))
+
 ;; nix-shell --run "command …" — same shape as bash -c.
 (parser "nix-shell"
   (style gnu)
