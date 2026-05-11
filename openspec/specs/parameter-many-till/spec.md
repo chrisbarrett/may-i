@@ -2,25 +2,24 @@
 
 ## Purpose
 
-TBD — established by the dsl-coherence change. This capability defines multi-token parameter capture via `(many-till PAT)`, used for argv constructs whose value is a span of tokens terminated by a sentinel (e.g. `find -exec ... \;`).
+Multi-token parameter capture via `(parameter NAME (many-till PAT) [#var])`: tokens after `NAME` are consumed up to (but excluding) a terminator matching `PAT`. The captured token list is accessible from the rule body via the optional `#var` binding (used with `(authorise #var)`, `(matches? #var …)`, `(with-facts …)`). Multi-occurrence parameters fire the rule body once per occurrence; strictest decision wins.
 
 ## Requirements
-
 ### Requirement: `(many-till PAT)` declares multi-token parameter capture
 
-The parser-side parameter declaration `(parameter NAME (many-till PAT))` SHALL declare that `NAME` consumes tokens after its occurrence until a token matches `PAT`. The matched terminator token SHALL be consumed and discarded; it SHALL NOT appear in subsequent matchers' view of argv.
+The parser-side parameter declaration `(parameter NAME (many-till PAT) [#var])` SHALL declare that `NAME` consumes tokens after its occurrence until a token matches `PAT`. The matched terminator token SHALL be consumed and discarded; it SHALL NOT appear in subsequent matchers' view of argv.
 
 `PAT` SHALL be any single-token expression (`"literal"`, `(regex …)`, `(or …)`, `*`, etc.).
 
-The captured value SHALL be the multi-token sequence from immediately after `NAME` up to but not including the terminator token.
+The captured value SHALL be the multi-token sequence from immediately after `NAME` up to but not including the terminator token. When the optional `#var` slot is present, `#var` SHALL bind to this token list for rule-body reference via `(authorise #var)`, `(bound? #var)`, `(matches? #var PAT)`, or `(with-facts [[:k #var]] …)`.
 
 If end-of-argv is reached before any token matches `PAT`, tokenisation SHALL emit an error-severity diagnostic. By the existing engine invariant, the rule's decision SHALL floor to `:ask` (`:deny` stays `:deny`).
 
 #### Scenario: `(many-till …)` captures multi-token sequence
 
-- **GIVEN** `(parser "find" (style single-dash-long) (parameter "exec" (many-till (or ";" "+"))))`
+- **GIVEN** `(parser "find" (style single-dash-long) (flags permute) (parameter "exec" (many-till (or ";" "+")) #args))`
 - **WHEN** tokenising `find . -exec rm -rf / \;`
-- **THEN** the captured value for parameter `exec` SHALL be the token sequence `[rm, -rf, /]`.
+- **THEN** `#args` SHALL bind to the token list `[rm, -rf, /]`
 - **AND** the terminator `;` SHALL be consumed.
 
 #### Scenario: `(many-till …)` reaching end-of-argv emits diagnostic
@@ -36,30 +35,44 @@ If end-of-argv is reached before any token matches `PAT`, tokenisation SHALL emi
 - **WHEN** the config is loaded
 - **THEN** loading SHALL fail with an error indicating `(many-till …)` is parser-side only.
 
-### Requirement: Rules access `(many-till …)`-captured value as a joined string
+#### Scenario: `(many-till …)` without binding still consumes tokens
 
-Rule-side `(parameter NAME (authorise))` against a parameter declared with `(many-till …)` SHALL:
+- **GIVEN** `(parser "find" (style single-dash-long) (flags permute) (parameter "exec" (many-till (or ";" "+"))))`
+- **WHEN** tokenising `find . -exec rm -rf / \;`
+- **THEN** the tokens `[rm, -rf, /]` SHALL be consumed from the argv view
+- **AND** no `#var` SHALL be bound for these tokens.
 
-- Join the captured tokens with single spaces.
-- Parse the joined string via the shell command parser into an inner command and inner argv.
-- Re-evaluate the inner against the active rule set, with `:via PROG` accumulated into facts.
+### Requirement: Rules access `(many-till …)`-captured value via the bound `#var`
 
-Rule-side `(parameter NAME PATTERN)` against a `(many-till …)` parameter SHALL match the joined string against `PATTERN` (regex, literal, etc.) as a single token.
+Rule-side access to a `(many-till …)` capture SHALL go through the parser-declared `#var` binding using one of:
 
-#### Scenario: Rule authorises `(many-till …)` capture
+- `(authorise #var)` — join the captured tokens with single spaces, parse via the shell command parser, re-evaluate against the active rule set with `:via PROG` accumulated into facts.
+- `(matches? #var PAT)` — match the joined string against `PAT` as a single token.
+- `(with-facts [[:k #var]] …)` — promote the joined token list (as a single string) to a fact for the inner recurse.
 
-- **GIVEN** `(parser "find" (style single-dash-long) (parameter "exec" (many-till (or ";" "+"))))` and `(rule "find" (parameter "exec" (authorise)))` and `(rule "rm" (and (flag "r") (deny "no rm -r")))`
+The rule-body `(parameter NAME (authorise))` form is removed; users SHALL write the parser-side binding `(parameter NAME (many-till PAT) #var)` and the rule-side `(authorise #var)` instead.
+
+#### Scenario: Rule authorises `(many-till …)` capture via binding
+
+- **GIVEN** `(parser "find" (style single-dash-long) (flags permute) (parameter "exec" (many-till (or ";" "+")) #args))` and `(rule "find" (authorise #args))` and `(rule "rm" (and (flag "r") (deny "no rm -r")))`
 - **WHEN** evaluating `find . -exec rm -rf / \;`
 - **THEN** the rule for `find` SHALL recurse with inner command `rm` and argv `[-rf, /]`
 - **AND** the rule for `rm` SHALL match and the result SHALL be `:deny`.
 
+#### Scenario: Rule matches against `(many-till …)` capture
+
+- **GIVEN** `(parser "find" (style single-dash-long) (flags permute) (parameter "exec" (many-till (or ";" "+")) #args))` and `(rule "find" (when (matches? #args (regex "rm")) (ask "review exec")))`
+- **WHEN** evaluating `find . -exec rm /tmp/x \;`
+- **THEN** `(matches? #args (regex "rm"))` SHALL return true
+- **AND** the rule SHALL return `:ask`.
+
 ### Requirement: Multi-occurrence parameters fire rule body per occurrence
 
-When the argv contains more than one occurrence of a `(many-till …)`-declared parameter, the rule body matching that parameter SHALL be evaluated once per occurrence, in source order. The strictest decision across occurrences SHALL win, consistent with the existing decision combiner (`:allow < :ask < :deny`).
+When the argv contains more than one occurrence of a `(many-till …)`-declared parameter, the `#var` binding SHALL accumulate as a list of token-lists (one per occurrence). Rule-body forms operating on `#var` SHALL be evaluated once per occurrence, in source order. The strictest decision across occurrences SHALL win, consistent with the existing decision combiner (`:allow < :ask < :deny`).
 
 #### Scenario: Multiple `-exec` clauses each authorised
 
-- **GIVEN** the configuration above and `(rule "rm" (allow))` and `(rule "dd" (deny "no dd"))`
+- **GIVEN** `(parser "find" (style single-dash-long) (flags permute) (parameter "exec" (many-till (or ";" "+")) #args))` and `(rule "find" (authorise #args))` and `(rule "rm" (allow))` and `(rule "dd" (deny "no dd"))`
 - **WHEN** evaluating `find . -exec rm /tmp/a \; -exec dd if=/dev/zero \;`
 - **THEN** the first occurrence SHALL authorise `rm /tmp/a` and return `:allow`
 - **AND** the second occurrence SHALL authorise `dd if=/dev/zero` and return `:deny`
@@ -67,6 +80,7 @@ When the argv contains more than one occurrence of a `(many-till …)`-declared 
 
 #### Scenario: Single-occurrence parameter unchanged
 
-- **GIVEN** `(parser "bash" (style gnu) (parameter "c" (authorise)))`
+- **GIVEN** `(parser "bash" (style gnu) (flags posix) (parameter "c" #cmd))` and `(rule "bash" (authorise #cmd))`
 - **WHEN** evaluating `bash -c "echo hi"`
 - **THEN** the rule body SHALL fire once for the single `-c` occurrence (existing semantics).
+
