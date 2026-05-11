@@ -38,6 +38,15 @@ hooks = [
     pass_filenames = false,
     stages = ["pre-commit"],
   },
+  {
+    id = "openspec-validate",
+    name = "openspec validate",
+    entry = "openspec validate --all --strict --no-interactive",
+    language = "system",
+    files = "^openspec/",
+    pass_filenames = false,
+    stages = ["pre-commit"],
+  },
 
   # Pre-push hooks (full verification)
   {
