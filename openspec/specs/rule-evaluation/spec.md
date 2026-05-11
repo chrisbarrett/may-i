@@ -59,9 +59,9 @@ the *strictest* of the remaining decisions. Strictness is ordered
 
 ### Requirement: Order of rules in the config SHALL not affect the decision
 
-For any input, shuffling the rule list produced by config loading
-(across files, including `(load …)` order) MUST yield the same
-decision and the same aggregate reason as the original ordering.
+Shuffling the rule list MUST yield the same decision and the same
+aggregate reason as the original ordering, for any input (including
+across files and `(load …)` order).
 
 #### Scenario: Reordering deny and allow rules
 
@@ -81,10 +81,11 @@ decision and the same aggregate reason as the original ordering.
 
 ### Requirement: Tie-breaking among equally-strict decisions is order-free
 
-When two or more rules return the strictest decision (e.g. two `Deny`s),
-the engine SHALL produce a deterministic aggregate reason that does not
-depend on rule order. Distinct reasons SHALL be sorted lexically and
-joined with `"; "`. Identical reasons SHALL be deduplicated.
+The engine SHALL produce a deterministic aggregate reason when two or
+more rules return the strictest decision (e.g. two `Deny`s); the
+aggregate SHALL NOT depend on rule order. Distinct reasons SHALL be
+sorted lexically and joined with `"; "`. Identical reasons SHALL be
+deduplicated.
 
 #### Scenario: Two distinct deny reasons combine deterministically
 
@@ -125,11 +126,11 @@ the applicable set is empty, not on rule order.
 
 ### Requirement: Compound-command aggregation composes with per-program aggregation
 
-When the input is a compound shell command (`cmd1 && cmd2`, embedded
-substitution, etc.), the per-segment per-program aggregation SHALL run
-first, and the existing across-segment "strictest wins" aggregation SHALL
-combine the per-segment results unchanged. The two layers use the same
-strictness ordering.
+Per-segment per-program aggregation SHALL run first for compound shell
+commands (`cmd1 && cmd2`, embedded substitution, etc.), and the existing
+across-segment "strictest wins" aggregation SHALL combine the
+per-segment results unchanged. The two layers use the same strictness
+ordering.
 
 #### Scenario: Two segments with different decisions
 

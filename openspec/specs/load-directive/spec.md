@@ -124,8 +124,8 @@ the error.
 
 ### Requirement: File not found is an error
 
-If a `load` argument is a literal path (not a glob) and the file does not exist,
-the system SHALL report an error.
+The system SHALL report an error when a `load` argument is a literal path
+(not a glob) and the file does not exist.
 
 #### Scenario: Missing file
 
@@ -170,6 +170,16 @@ via `(load ...)`).
 
 Every `Define` in the parsed config SHALL carry a `Provenance` value, following
 the same rules as rule provenance.
+
+#### Scenario: Root config defines are PrimaryConfig
+
+- **WHEN** a define is declared in the root config file
+- **THEN** the define's provenance is `PrimaryConfig`
+
+#### Scenario: Loaded file defines are Loaded
+
+- **WHEN** a define is declared in a file included via `(load "defines.lisp")`
+- **THEN** the define's provenance is `Loaded`
 
 ### Requirement: CommandPattern::Regex is removed
 
