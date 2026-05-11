@@ -1,6 +1,6 @@
 #[cfg(test)]
 use may_i_core::ast::Style;
-use may_i_core::ast::{EffectResult, ParameterTreatment, PunPolicy, ResolvedParser, Rule, Tail};
+use may_i_core::ast::{EffectResult, ParameterTreatment, PunPolicy, ResolvedParser, Rule};
 use may_i_core::{ContextFacts, Decision};
 
 use crate::fold::{EvalFold, PureFold};
@@ -333,27 +333,36 @@ pub(super) struct ArgvSplit<'a> {
 /// Compute the outer/tail boundary for `args` under `parser`. The split
 /// is purely positional — the input is the already-tokenised stream, so
 /// callers should normally pass the result of [`tokenise`].
+///
+/// Reads `parser.flags_mode` as the source of truth; the legacy
+/// `parser.tail` field is no longer consulted (parser-named-bindings
+/// section 5: `flags_mode` supersedes it).
 pub(super) fn split_outer_tail<'a>(args: &'a [String], parser: &ResolvedParser) -> ArgvSplit<'a> {
-    let Some(tail_kind) = parser.tail.as_ref() else {
-        return ArgvSplit {
+    use may_i_core::ast::FlagsMode;
+    match &parser.flags_mode {
+        // `permute`: outer covers the whole argv; no recurse target
+        // unless the parser declares `(rest …)`. The legacy callers
+        // treat `tail = None` as "no boundary" and walk the whole
+        // argv, so preserve that shape here.
+        FlagsMode::Permute => ArgvSplit {
             outer: args,
             tail: None,
-        };
-    };
-    match tail_kind {
-        Tail::AfterFlags => {
+        },
+        // `posix`: outer ends at the first positional, matching the
+        // historic `(tail (after :flags))` boundary.
+        FlagsMode::Posix => {
             let split_at = first_positional_index(args, parser);
             ArgvSplit {
                 outer: &args[..split_at],
                 tail: Some(&args[split_at..]),
             }
         }
-        Tail::AfterToken(boundary) => {
+        // `until STR…`: outer ends before the first occurrence of any
+        // boundary token; the boundary token itself is consumed.
+        FlagsMode::Until(boundary) => {
             match args.iter().position(|a| boundary.iter().any(|b| b == a)) {
                 Some(idx) => ArgvSplit {
                     outer: &args[..idx],
-                    // The matched boundary token is consumed — neither
-                    // slice includes it.
                     tail: Some(&args[idx + 1..]),
                 },
                 None => ArgvSplit {
@@ -640,7 +649,9 @@ mod tokenisation_properties {
             style,
             flags: vec![],
             parameters: vec![],
-            tail: None,
+            positionals: vec![],
+            flags_mode: may_i_core::ast::FlagsMode::Permute,
+            rest: None,
         }
     }
 
@@ -690,6 +701,7 @@ mod tokenisation_properties {
                 names: vec![name.clone()],
                 treatment: PT::None,
                 capture: may_i_core::ast::Capture::Single,
+                binding: None,
             });
             let bare = vec![name.clone()];
             prop_assert!(check_pun_error(&bare, &parser).is_err());
@@ -755,16 +767,16 @@ mod tokenisation_properties {
         parts.iter().map(|s| s.to_string()).collect()
     }
 
-    fn parser_with_tail(tail: Option<Tail>) -> ResolvedParser {
+    fn parser_with_flags_mode(mode: may_i_core::ast::FlagsMode) -> ResolvedParser {
         let mut p = parser_with_style(Style::default_gnu());
-        p.tail = tail;
+        p.flags_mode = mode;
         p
     }
 
     #[test]
     fn split_outer_tail_no_decl_returns_whole_argv() {
         let args = arg_strs(&["-r", "foo", "bar"]);
-        let parser = parser_with_tail(None);
+        let parser = parser_with_flags_mode(may_i_core::ast::FlagsMode::Permute);
         let split = split_outer_tail(&args, &parser);
         assert_eq!(split.outer, args.as_slice());
         assert!(split.tail.is_none());
@@ -774,11 +786,12 @@ mod tokenisation_properties {
     fn split_outer_tail_after_flags_basic() {
         // sudo-style: outer = flags only; tail starts at first positional.
         let args = arg_strs(&["-u", "root", "rm", "-rf", "/tmp/x"]);
-        let mut parser = parser_with_tail(Some(Tail::AfterFlags));
+        let mut parser = parser_with_flags_mode(may_i_core::ast::FlagsMode::Posix);
         parser.parameters.push(may_i_core::ast::ParameterDecl {
             names: vec!["u".into()],
             treatment: ParameterTreatment::None,
             capture: may_i_core::ast::Capture::Single,
+            binding: None,
         });
         let split = split_outer_tail(&args, &parser);
         assert_eq!(split.outer, &["-u".to_string(), "root".to_string()]);
@@ -791,7 +804,7 @@ mod tokenisation_properties {
     #[test]
     fn split_outer_tail_after_flags_no_positionals() {
         let args = arg_strs(&["-r", "-f"]);
-        let parser = parser_with_tail(Some(Tail::AfterFlags));
+        let parser = parser_with_flags_mode(may_i_core::ast::FlagsMode::Posix);
         let split = split_outer_tail(&args, &parser);
         assert_eq!(split.outer, args.as_slice());
         assert_eq!(split.tail.unwrap(), &[] as &[String]);
@@ -800,7 +813,7 @@ mod tokenisation_properties {
     #[test]
     fn split_outer_tail_after_token_present() {
         let args = arg_strs(&["exec", "node", "--", "build", "--prod"]);
-        let parser = parser_with_tail(Some(Tail::AfterToken(vec!["--".into()])));
+        let parser = parser_with_flags_mode(may_i_core::ast::FlagsMode::Until(vec!["--".into()]));
         let split = split_outer_tail(&args, &parser);
         assert_eq!(split.outer, &["exec".to_string(), "node".to_string()]);
         assert_eq!(
@@ -812,7 +825,7 @@ mod tokenisation_properties {
     #[test]
     fn split_outer_tail_after_token_absent() {
         let args = arg_strs(&["exec", "node"]);
-        let parser = parser_with_tail(Some(Tail::AfterToken(vec!["--".into()])));
+        let parser = parser_with_flags_mode(may_i_core::ast::FlagsMode::Until(vec!["--".into()]));
         let split = split_outer_tail(&args, &parser);
         assert_eq!(split.outer, args.as_slice());
         assert!(split.tail.is_none());
@@ -825,7 +838,7 @@ mod tokenisation_properties {
         // boundary token where applicable).
         #[test]
         fn outer_tail_partition_preserves_argv(args in argv()) {
-            let after_flags = parser_with_tail(Some(Tail::AfterFlags));
+            let after_flags = parser_with_flags_mode(may_i_core::ast::FlagsMode::Posix);
             let split = split_outer_tail(&args, &after_flags);
             let recombined: Vec<String> = split
                 .outer
@@ -838,7 +851,7 @@ mod tokenisation_properties {
 
         #[test]
         fn outer_tail_after_token_drops_only_boundary(args in argv()) {
-            let after_token = parser_with_tail(Some(Tail::AfterToken(vec!["--".into()])));
+            let after_token = parser_with_flags_mode(may_i_core::ast::FlagsMode::Until(vec!["--".into()]));
             let split = split_outer_tail(&args, &after_token);
             match split.tail {
                 Some(tail) => {

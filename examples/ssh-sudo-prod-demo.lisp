@@ -1,22 +1,20 @@
 ;;; Demo config — production-host policy through ssh + sudo wrappers.
 ;;;
 ;;; Both `ssh` and `sudo` are wrappers: their inner command is the real
-;;; risk. The prelude already ships `(parser "sudo" (style gnu) (tail
-;;; (after :flags)))` so we only need to add the recursion rule. For
-;;; `ssh` we declare the parser explicitly to capture the host as a fact
-;;; before recursing.
+;;; risk. The prelude ships parsers for both — `sudo` as `(flags posix)
+;;; (rest #cmd)` and `ssh` as `(flags posix) (positional #host (regex
+;;; "^[^-].*")) (rest #cmd)` — so we only add the recursion rules.
 
-(parser "ssh" (style gnu) (tail (after :flags)))
+(rule "sudo" (authorise #cmd))
 
-(rule "sudo"
-  (tail (authorise)))
+;; ssh — branch on the bound #host and recurse on the inner command.
 (rule "ssh"
-  (and (positional [:ssh/host *])
-       (tail (authorise))))
+  (cond ((matches? #host (regex "(^|@).*prod.*"))
+         (deny "Production host — no direct recursion"))
+        (else (authorise #cmd))))
 
 (define immutable
-  (and (fact? :via/ssh)
-       (fact? [:ssh/host (regex "(^|@).*prod.*")])))
+  (fact? [:via "ssh"]))
 
 (rule "echo"
   (allow "Local echo is always fine"))

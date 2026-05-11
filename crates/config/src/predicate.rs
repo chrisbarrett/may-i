@@ -4,7 +4,7 @@
 // Task 2.5: Implement unified predicate parser that dispatches to fact or arg parsers
 
 use may_i_core::Keyword;
-use may_i_core::ast::Predicate;
+use may_i_core::ast::{BindingName, Predicate};
 use may_i_core::predicates::FactQuery;
 use may_i_sexpr::{RawError, Sexpr};
 
@@ -88,12 +88,43 @@ pub fn parse_predicate(sexpr: &Sexpr) -> Result<Predicate, RawError> {
             Ok(Predicate::Arg(arg_pattern))
         }
 
+        // Parser-named-bindings rule-body predicates.
+        "bound?" => {
+            if list.len() != 2 {
+                return Err(RawError::new(
+                    "(bound? #var) requires exactly one binding reference",
+                    sexpr.span(),
+                ));
+            }
+            let binding = parse_binding_ref(&list[1])?;
+            Ok(Predicate::Bound { binding })
+        }
+        "matches?" => {
+            if list.len() != 3 {
+                return Err(RawError::new(
+                    "(matches? #var PAT) requires a binding and a pattern",
+                    sexpr.span(),
+                ));
+            }
+            let binding = parse_binding_ref(&list[1])?;
+            let pattern = crate::pattern::parse_expr_for_capture(&list[2])?;
+            Ok(Predicate::Matches { binding, pattern })
+        }
+
         other => Err(
             RawError::new(format!("unknown predicate form: {other}"), list[0].span()).with_help(
-                "valid predicates: fact?, and, or, not, positional, exact, anywhere, forbidden, flag, parameter, =",
+                "valid predicates: fact?, and, or, not, bound?, matches?, positional, exact, anywhere, forbidden, flag, parameter, =",
             ),
         ),
     }
+}
+
+fn parse_binding_ref(sexpr: &Sexpr) -> Result<BindingName, RawError> {
+    let raw = sexpr
+        .as_binding()
+        .ok_or_else(|| RawError::new("expected a binding reference (e.g. #cmd)", sexpr.span()))?;
+    BindingName::parse(raw)
+        .map_err(|e| RawError::new(format!("invalid binding reference: {e}"), sexpr.span()))
 }
 
 /// Parse a fact query from an s-expression.
@@ -216,6 +247,10 @@ fn parse_fact_pattern(sexpr: &Sexpr) -> Result<FactPattern, RawError> {
             "fact patterns do not support nested vector syntax",
             *span,
         )),
+        Sexpr::Binding(_, span) => Err(RawError::new(
+            "fact patterns do not accept binding references",
+            *span,
+        )),
     }
 }
 
@@ -238,6 +273,44 @@ mod tests {
             ));
         }
         parse_predicate(&forms[0])
+    }
+
+    // ── parser-named-bindings: (bound? #var), (matches? #var PAT) ───
+
+    #[test]
+    fn parse_bound_predicate() {
+        let pred = parse_pred("(bound? #cmd)").unwrap();
+        match pred {
+            Predicate::Bound { binding } => assert_eq!(binding.as_str(), "cmd"),
+            other => panic!("expected Bound, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_bound_without_binding() {
+        let err = parse_pred("(bound?)").unwrap_err();
+        assert!(format!("{err}").contains("binding"));
+    }
+
+    #[test]
+    fn rejects_bound_with_string() {
+        let err = parse_pred(r#"(bound? "cmd")"#).unwrap_err();
+        assert!(format!("{err}").contains("binding reference"));
+    }
+
+    #[test]
+    fn parse_matches_predicate() {
+        let pred = parse_pred(r#"(matches? #cmd (regex "^echo"))"#).unwrap();
+        match pred {
+            Predicate::Matches { binding, .. } => assert_eq!(binding.as_str(), "cmd"),
+            other => panic!("expected Matches, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_matches_arity() {
+        let err = parse_pred("(matches? #cmd)").unwrap_err();
+        assert!(format!("{err}").contains("binding and a pattern"));
     }
 
     #[test]

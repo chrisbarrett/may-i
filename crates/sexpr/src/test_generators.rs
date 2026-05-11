@@ -41,6 +41,23 @@ pub fn any_atom_string() -> BoxedStrategy<String> {
     .boxed()
 }
 
+/// Binding atom strings: `#NAME` where NAME is a non-empty identifier.
+pub fn any_binding_string() -> BoxedStrategy<String> {
+    "#[a-z][a-z0-9_-]{0,12}".prop_map(String::from).boxed()
+}
+
+/// A binding atom CstNode.
+pub fn any_binding_node() -> BoxedStrategy<Box<CstNode>> {
+    any_binding_string()
+        .prop_map(|s| {
+            Box::new(CstNode {
+                ann: TriviaAnn::default(),
+                shape: ShapeF::Binding(s),
+            })
+        })
+        .boxed()
+}
+
 /// String literal content (no quotes — the Str shape adds them on serialize).
 ///
 /// Restricted to characters that are valid atom chars, so that roundtripping
@@ -59,9 +76,9 @@ pub fn any_str_node() -> BoxedStrategy<Box<CstNode>> {
     any_str_content().prop_map(cst_str).boxed()
 }
 
-/// A leaf CstNode (atom or string).
+/// A leaf CstNode (atom, binding, or string).
 pub fn any_leaf_node() -> BoxedStrategy<Box<CstNode>> {
-    prop_oneof![any_atom_node(), any_str_node(),].boxed()
+    prop_oneof![any_atom_node(), any_binding_node(), any_str_node(),].boxed()
 }
 
 // ── Trivia strategies ─────────────────────────────────────────────────
@@ -354,6 +371,7 @@ pub fn cst_nodes_structurally_equal(a: &CstNode, b: &CstNode) -> bool {
     match (&a.shape, &b.shape) {
         (ShapeF::Keyword(a_str), ShapeF::Keyword(b_str)) => a_str == b_str,
         (ShapeF::Symbol(a_str), ShapeF::Symbol(b_str)) => a_str == b_str,
+        (ShapeF::Binding(a_str), ShapeF::Binding(b_str)) => a_str == b_str,
         (ShapeF::String(a_str), ShapeF::String(b_str)) => a_str == b_str,
         (ShapeF::List(a_kids), ShapeF::List(b_kids))
         | (ShapeF::Vector(a_kids), ShapeF::Vector(b_kids)) => {

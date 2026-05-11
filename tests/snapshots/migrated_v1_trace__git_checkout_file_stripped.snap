@@ -6,7 +6,7 @@ expression: normalised
 Trace
 
                                                           command │ git checkout -- main.ts
-                                                           parser │ gnu
+                                                           parser │ gnu  flags permute
   43: (rule (command "git")                                       │
         (context (and                                             │
                   (positional "reset")                            │ "checkout" = "reset" → no

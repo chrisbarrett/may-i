@@ -6,7 +6,7 @@ expression: normalised
 Trace
 
                                          command │ rm -r /tmp/foo
-                                          parser │ gnu
+                                          parser │ gnu  flags permute
                                            facts │ :opencode/agent "build"
   24: (rule (command "rm")                       │
         (context (and (or (flag "r")             │

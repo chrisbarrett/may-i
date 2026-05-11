@@ -6,9 +6,11 @@
 //! declaration order render to identical output.
 //!
 //! Ordered bodies:
-//! - `(parser PROG …)`: `(style …)` first, `(flag …)` block alphabetised by
-//!   canonical name, `(parameter …)` block alphabetised by canonical name,
-//!   `(tail …)` last.
+//! - `(parser PROG …)`: `(style)` first, then `(flags)`, then `(flag …)`
+//!   block alphabetised by canonical name, then `(parameter …)` block
+//!   alphabetised by canonical name, then `(positional …)` in source
+//!   order (positional order is semantic), then `(rest)`. Legacy
+//!   `(tail …)` if present is emitted last during the migration window.
 //! - `(define-arg-style NAME …)`: attribute forms alphabetised by head atom.
 //! - `(check …)`: cases alphabetised by their first-string sort key.
 //!
@@ -56,7 +58,8 @@ pub fn canonicalise_node(node: Box<CstNode>) -> Box<CstNode> {
             let recursed: Vec<Box<CstNode>> = children.into_iter().map(canonicalise_node).collect();
             ShapeF::Vector(recursed)
         }
-        atom @ (ShapeF::Keyword(_) | ShapeF::Symbol(_) | ShapeF::String(_)) => atom,
+        atom
+        @ (ShapeF::Keyword(_) | ShapeF::Symbol(_) | ShapeF::Binding(_) | ShapeF::String(_)) => atom,
     };
     Box::new(CstNode {
         ann,
@@ -73,11 +76,20 @@ fn sort_parser_body(children: Vec<Box<CstNode>>) -> Vec<Box<CstNode>> {
     let program = iter.next().expect("parser program");
     let body: Vec<Box<CstNode>> = iter.collect();
 
+    // Bucket ordering (parser-named-bindings):
+    //   (style) (flags) (flag …) (parameter …) (positional …) (rest) (tail)
+    //
+    // `tail` stays at the end during the migration window — it is the
+    // legacy form and gets emitted by `may-i migrate` for old configs.
+    // Once removed (section 5), the `Tail` arm goes too.
     #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
     enum Bucket {
         Style,
+        Flags,
         Flag,
         Parameter,
+        Positional,
+        Rest,
         Tail,
         Other,
     }
@@ -89,8 +101,11 @@ fn sort_parser_body(children: Vec<Box<CstNode>>) -> Vec<Box<CstNode>> {
             .and_then(|c| c.as_atom())
         {
             Some("style") => Bucket::Style,
+            Some("flags") => Bucket::Flags,
             Some("flag") => Bucket::Flag,
             Some("parameter") => Bucket::Parameter,
+            Some("positional") => Bucket::Positional,
+            Some("rest") => Bucket::Rest,
             Some("tail") => Bucket::Tail,
             _ => Bucket::Other,
         }

@@ -19,9 +19,9 @@ pub fn is_interactive(json_mode: bool) -> bool {
 /// Convert a parsed s-expression into a `Doc` tree for pretty-printing.
 fn doc_from_sexpr(sexpr: &may_i_sexpr::Sexpr) -> Doc {
     match sexpr {
-        may_i_sexpr::Sexpr::Keyword(s, _) | may_i_sexpr::Sexpr::Symbol(s, _) => {
-            Doc::atom(s.clone())
-        }
+        may_i_sexpr::Sexpr::Keyword(s, _)
+        | may_i_sexpr::Sexpr::Symbol(s, _)
+        | may_i_sexpr::Sexpr::Binding(s, _) => Doc::atom(s.clone()),
         may_i_sexpr::Sexpr::String(s, _) => Doc::atom(may_i_sexpr::quote_string(s)),
         may_i_sexpr::Sexpr::List(items, _) | may_i_sexpr::Sexpr::Vector(items, _) => {
             Doc::list(items.iter().map(doc_from_sexpr).collect())

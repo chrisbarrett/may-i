@@ -6,7 +6,7 @@ expression: normalised
 [1mTrace[0m
 
                                          [2mcommand[0m [2m│[0m [1mrm foo[0m
-                                          [2mparser[0m [2m│[0m gnu
+                                          [2mparser[0m [2m│[0m gnu  flags permute
   [2m24: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"rm"[0m[2m)[0m                       [2m│[0m
         [2m([0mcontext [2m([0mand [2m([0mor [2m([0mflag [32m"r"[0m[2m)[0m             [2m│[0m
                           [2m([0mflag                  [2m│[0m

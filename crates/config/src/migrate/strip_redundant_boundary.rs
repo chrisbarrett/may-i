@@ -7,7 +7,7 @@
 // preemptively.
 
 use crate::prelude::prelude_parsers;
-use may_i_core::ast::Tail;
+use may_i_core::ast::FlagsMode;
 use may_i_sexpr::cst::{CstNode, ShapeF};
 
 pub(crate) fn strip_redundant_boundary(node: &CstNode) -> Option<Box<CstNode>> {
@@ -39,13 +39,13 @@ pub(crate) fn strip_redundant_boundary(node: &CstNode) -> Option<Box<CstNode>> {
 }
 
 /// Return the boundary token set if the prelude declares
-/// `(tail (after STR…))` for `prog`. None for `:after-flags` or no
-/// declaration.
+/// `(flags (until STR…))` for `prog`. None for `posix` / `permute` or
+/// no declaration.
 fn prelude_tail_tokens(prog: &str) -> Option<Vec<String>> {
     let parsers = prelude_parsers();
     let parser = parsers.into_iter().find(|p| p.program == prog)?;
-    match parser.tail {
-        Some(Tail::AfterToken(toks)) => Some(toks),
+    match parser.flags_mode {
+        FlagsMode::Until(toks) => Some(toks),
         _ => None,
     }
 }
@@ -108,11 +108,21 @@ mod tests {
     }
 
     #[test]
-    fn no_change_for_command_without_prelude_tail_token() {
-        // Prelude has no AfterToken parser at this revision; mise/terragrunt
-        // are user-side. Migration leaves their literal `--` alone.
-        let input = r#"(rule "mise" (when (positional "exec" "--") (tail (authorise))))"#;
+    fn no_change_for_command_without_prelude_until_mode() {
+        // terragrunt is user-side (no prelude parser); migration leaves
+        // any literal `--` alone.
+        let input = r#"(rule "terragrunt" (when (positional "run" "--") (tail (authorise))))"#;
         assert_eq!(migrate_first(input), input);
+    }
+
+    #[test]
+    fn strips_mise_double_dash_literal_via_prelude_until() {
+        // The prelude now declares `(parser "mise" … (flags (until
+        // "--")))`. A rule containing the literal `"--"` in its
+        // positional prefix has it stripped.
+        let input = r#"(rule "mise" (when (positional "exec" "--") (tail (authorise))))"#;
+        let expected = r#"(rule "mise" (when (positional "exec") (tail (authorise))))"#;
+        assert_eq!(migrate_first(input), expected);
     }
 
     #[test]

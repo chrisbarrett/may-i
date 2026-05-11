@@ -97,6 +97,28 @@ pub(crate) fn evaluate_predicate_fold<F: EvalFold>(
                 Err(EvalError::UnresolvedPredicate { name: name.clone() })
             }
         }
+        // `(bound? #var)` — `#var` resolves to a non-empty value.
+        Predicate::Bound { binding } => {
+            let result = if ctx.parser_bindings.is_bound(binding) {
+                PredicateResult::Match
+            } else {
+                PredicateResult::NoMatch
+            };
+            Ok(fold.predicate_bound(binding, result))
+        }
+        // `(matches? #var PAT)` — `#var` resolves, and its
+        // string-coerced value matches `PAT`. `Tokens` values are
+        // joined with single spaces (mirrors the recurse semantics).
+        Predicate::Matches { binding, pattern } => {
+            let value = ctx.parser_bindings.get(binding);
+            let result = match value.as_joined() {
+                Some(s) if pattern.is_match(&s) => PredicateResult::Match,
+                _ => PredicateResult::NoMatch,
+            };
+            Ok(fold.predicate_matches(binding, pattern, result))
+        }
+        // `Predicate` is `#[non_exhaustive]`; future variants must be
+        // added here explicitly.
         _ => unreachable!("unknown Predicate variant"),
     }
 }

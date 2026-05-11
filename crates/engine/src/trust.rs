@@ -235,6 +235,7 @@ fn canonical_effect(effect: &Effect) -> String {
             }
             format!("({})", parts.join(" "))
         }
+        Effect::Authorise { binding } => format!("(authorise {binding})"),
     }
 }
 
@@ -266,6 +267,8 @@ fn canonical_predicate(pred: &Predicate) -> String {
             format!("(or {})", inner.join(" "))
         }
         Predicate::Not(inner) => format!("(not {})", canonical_predicate(inner)),
+        Predicate::Bound { binding } => format!("(bound? {binding})"),
+        Predicate::Matches { binding, .. } => format!("(matches? {binding} <expr>)"),
         _ => "<unknown>".to_string(),
     }
 }

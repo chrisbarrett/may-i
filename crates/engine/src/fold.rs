@@ -238,6 +238,24 @@ pub trait EvalFold {
         result: PredicateResult,
     ) -> Self::PredicateOut;
 
+    /// `(bound? #var)` — engine threads the binding environment via
+    /// `EvalContext` in section 5; until then implementations record
+    /// the resolved result (always `NoMatch` in the stub period).
+    fn predicate_bound(
+        &mut self,
+        binding: &may_i_core::ast::BindingName,
+        result: PredicateResult,
+    ) -> Self::PredicateOut;
+
+    /// `(matches? #var PAT)` — analogous; pattern is preserved for
+    /// trace rendering.
+    fn predicate_matches(
+        &mut self,
+        binding: &may_i_core::ast::BindingName,
+        pattern: &may_i_core::pattern::Expr<Effect>,
+        result: PredicateResult,
+    ) -> Self::PredicateOut;
+
     // -- Rule-level --
 
     fn rule_matched(
@@ -444,6 +462,23 @@ impl EvalFold for PureFold {
         &mut self,
         _name: &str,
         _resolved: PredicateResult,
+        result: PredicateResult,
+    ) -> PredicateResult {
+        result
+    }
+
+    fn predicate_bound(
+        &mut self,
+        _binding: &may_i_core::ast::BindingName,
+        result: PredicateResult,
+    ) -> PredicateResult {
+        result
+    }
+
+    fn predicate_matches(
+        &mut self,
+        _binding: &may_i_core::ast::BindingName,
+        _pattern: &may_i_core::pattern::Expr<Effect>,
         result: PredicateResult,
     ) -> PredicateResult {
         result

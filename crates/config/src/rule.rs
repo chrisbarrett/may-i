@@ -309,20 +309,14 @@ mod tests {
     #[test]
     fn bare_authorise_at_rule_body_root_rejected() {
         let err = parse_rule_str(r#"(rule "ssh" (authorise))"#).expect_err("expected error");
-        assert!(
-            format!("{err}").contains("bare (authorise) is not allowed at effect position"),
-            "{err}"
-        );
+        assert!(format!("{err}").contains("binding reference"), "{err}");
     }
 
     #[test]
     fn bare_authorise_inside_combinator_rejected() {
         let err = parse_rule_str(r#"(rule "ssh" (and (positional "host") (authorise)))"#)
             .expect_err("expected error");
-        assert!(
-            format!("{err}").contains("bare (authorise) is not allowed at effect position"),
-            "{err}"
-        );
+        assert!(format!("{err}").contains("binding reference"), "{err}");
     }
 
     #[test]

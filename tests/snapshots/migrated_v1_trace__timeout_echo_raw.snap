@@ -6,7 +6,7 @@ expression: normalised
 [1mTrace[0m
 
                                   [2mcommand[0m [2m│[0m [1mtimeout 30 echo hello[0m
-                                   [2mparser[0m [2m│[0m gnu  tail (after :flags)
+                                   [2mparser[0m [2m│[0m gnu  flags posix  parameters (-k -s)  rest #cmd
   [2m110: [0m[2m([0m[34mrule[0m [2m([0m[34mcommand[0m [32m"timeout"[0m[2m)[0m          [2m│[0m
          [2m([0m[34margs[0m [2m([0m[34mwhen[0m [2m([0m[34mpositional[0m          [2m│[0m
                       [2m([0mregex [32m"^[0-9]+$"[0m[2m)[0m[2m)[0m [2m│[0m

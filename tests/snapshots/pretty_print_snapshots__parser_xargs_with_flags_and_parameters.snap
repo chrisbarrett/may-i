@@ -4,7 +4,7 @@ expression: out
 ---
 ── input (width 80) ──
 (parser "xargs" (style gnu) (parameter ["n" "I" "L" "P" "d"])
-  (flag ["0" "r"]) (tail (after :flags)))
+  (flag ["0" "r"]) (flags posix) (rest #cmd))
 ── output ──
 (parser "xargs" (style gnu) (parameter ["n" "I" "L" "P" "d"])
-        (flag ["0" "r"]) (tail (after :flags)))
+        (flag ["0" "r"]) (flags posix) (rest #cmd))

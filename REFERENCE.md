@@ -43,7 +43,7 @@ A minimal config:
     ((flag ["r" "recursive"])    (ask  "Recursive deletion"))
     (else                        (allow))))
 
-(rule "sudo" (tail (authorise)))     ; recurse into the wrapped command
+(rule "sudo" (authorise #cmd))       ; recurse into the wrapped command
 
 (check
   (allow "ls -la")
@@ -233,90 +233,116 @@ Conditionals branch on a predicate (an arg pattern, `(fact? …)`, a named
 
 Wrapper commands like `sudo`, `bash -c`, `xargs`, and `find -exec`
 carry an inner command line whose risk profile is what really matters.
-`(authorise)` evaluates that inner command against your full ruleset,
-records the wrapper in `:via`, and propagates the recursed decision.
+`(authorise #var)` evaluates that inner command against your full
+ruleset, records the wrapper in `:via`, and propagates the recursed
+decision.
 
-`(authorise)` is a leaf form — it takes no arguments. The host context
-(a parameter, a tail slice, a positional element) supplies the string
-the recursion runs on. There are three host contexts:
+`(authorise)` is no longer a leaf — it takes exactly one binding
+reference. The parser-side declaration names the recurse target with
+a `#var` sigil; the rule body consumes that name. The shape is:
 
-- `(tail (authorise))` — recurse on the tail slice of argv (sudo, env, …).
-- `(parameter NAME (authorise))` — recurse on a parameter's value (bash -c).
-- `(positional X (authorise) Y)` — recurse on a single positional element.
+```lisp
+(parser PROG (style …) (flags MODE) (rest #cmd) …)   ; parser binds
+(rule PROG (authorise #cmd))                          ; rule consumes
+```
 
-A bare `(authorise)` outside a host context is a config-load error.
+Binding names are written `#name` — a fourth sigil class alongside
+`:keyword`, bare-symbol, and `"string"`. The leading `#` is part of
+the surface syntax only; programs reference bindings by their bare
+name in error messages and traces.
 
-### Tail recursion: `(tail (authorise))`
+### Flag-scanning mode: `(flags MODE)`
 
-For wrappers whose inner command sits after the wrapper's flags — sudo,
-env, timeout, nice, watch, etc. — declare the boundary on the parser
-side and recurse on the tail in the rule.
+Every parser body declares its flag-scanning mode. Three modes:
+
+- `(flags posix)` — outer flags appear only before the first
+  positional; the first non-flag token stops outer scanning. Matches
+  `POSIXLY_CORRECT` semantics. Used by sudo, env, timeout, xargs,
+  nice, watch, su, ionice, chrt, nohup, strace.
+- `(flags permute)` — outer flags may appear anywhere; the outer
+  parser peels declared flags and parameters wherever they occur.
+  Matches GNU getopt's permuting default. Used by git, ls, cp, and
+  most non-wrapper tools. The default when `(flags …)` is omitted.
+- `(flags (until STR…))` — outer parser scans up to the first
+  occurrence of any listed boundary token; the boundary token is
+  consumed and dropped. Used by `mise --` and
+  `nix --command|-c`.
+
+### Tail recursion: `(rest #cmd)` + `(authorise #cmd)`
+
+For wrappers whose inner command sits after the wrapper's flags —
+sudo, env, timeout, nice, watch, etc. — declare the recurse target
+with `(rest #var)` on the parser side and `(authorise #var)` on the
+rule side:
 
 ```lisp
 ;; Prelude already ships this declaration; shown for illustration:
-(parser "sudo" (style gnu) (tail (after :flags)))
+(parser "sudo" (style gnu) (flags posix) (rest #cmd))
 
-(rule "sudo" (tail (authorise)))
+(rule "sudo" (authorise #cmd))
 ```
 
-`(tail (after :flags))` says "outer slice ends after the last
-flag/parameter is consumed; everything after that is the tail." Use
-`(tail (after "TOK"))` for wrappers whose inner command starts after a
-literal token, or `(tail (after [STR…]))` when the boundary has multiple
-spellings. The prelude's `nix` parser uses the alias-set form because
-`nix shell` and `nix develop` accept both `--command` and `-c`:
+`(flags posix)` says "outer slice ends after the last flag/parameter
+is consumed; everything after that is the rest." `(rest #cmd)` names
+that unconsumed tail so the rule body can recurse via
+`(authorise #cmd)`.
+
+For wrappers whose inner command starts after a literal token, use
+`(flags (until "TOK"))`; for multi-spelling boundaries, list every
+boundary token:
 
 ```lisp
-(parser "nix" (style gnu) (tail (after ["--command" "-c"])))
+;; The prelude's nix parser — both `--command` and `-c` qualify:
+(parser "nix"
+  (style gnu)
+  (flags (until "--command" "-c"))
+  (rest #cmd))
 ```
 
 The engine splits at the first occurrence of *any* listed token; the
 matched token is consumed.
 
-When the parser declares a tail, all argv matchers in the rule body
-(`(flag …)`, `(parameter …)`, `(positional …)`, `(anywhere …)`,
-`(forbidden …)`) scope to the **outer** slice. The tail is addressable
-only via `(tail (authorise))`. This is what closes the silent-bypass
-class: outer matchers can't accidentally claim a flag that belongs to
-the inner command.
+Rule-body argv matchers (`(flag …)`, `(parameter …)`, `(positional
+…)`, `(anywhere …)`, `(forbidden …)`) scope to the outer slice — they
+never see the rest binding's tokens. This is what closes the
+silent-bypass class: outer matchers can't accidentally claim a flag
+that belongs to the inner command.
 
-When the parser declares a tail but the boundary token is absent in the
-argv being evaluated, `(tail (authorise))` returns no-match — the rule
-does not fire, and evaluation continues with subsequent rules. This
-prevents a missing or mis-spelled boundary from silently re-running the
-rule on the full argv. The fall-back-to-full-argv behaviour applies
-only when the parser declares no `(tail …)` at all (the rule-level
-recursion idiom for non-wrapper tools).
+When the parser declares a binding but the parser produces no value
+for it — boundary token absent under `(flags (until …))`, parameter
+not present, positional unbound — `(authorise #var)` returns
+no-match. The rule does not fire, and evaluation continues with
+subsequent rules. This prevents a missing or mis-spelled boundary
+from silently re-running the rule on the full argv.
 
 #### Worked example: `mise exec -- rm -rf /tmp/foo`
 
-`mise` (and similar third-party tool runners) isn't in the prelude, so
-it makes a good case study of parser + rule working together. Mise
-forwards the inner command after a literal `--`:
+The prelude ships mise as `(flags (until "--")) (rest #cmd)`; a
+hand-written equivalent looks like:
 
 ```lisp
-;; Step 1: tell the tokeniser where the boundary is. Outer parsing
-;; honours GNU style up to `--`; tokens after `--` are the tail,
-;; verbatim, with no flag interpretation.
-(parser "mise" (style gnu) (tail (after "--")))
+;; Step 1: parser binds the recurse target. Outer parsing honours
+;; GNU style up to `--`; tokens after `--` bind to `#cmd`, verbatim,
+;; with no flag interpretation.
+(parser "mise" (style gnu) (flags (until "--")) (rest #cmd))
 
 ;; Step 2: rule body. The (positional "exec") matches against the
-;; OUTER slice — mise's own positional args before `--`. (tail
-;; (authorise)) recurses on the tail as a fresh command.
+;; outer slice — mise's own positional args before `--`. (authorise
+;; #cmd) recurses on the bound value as a fresh command.
 (rule "mise"
-  (when (positional "exec") (tail (authorise))))
+  (when (positional "exec") (authorise #cmd)))
 ```
 
 What this looks like at each stage for `mise exec -- rm -rf /tmp/foo`:
 
 ```
 argv after tokeniser-split:
-  outer = [mise, exec]            ← parsed under GNU style
-  tail  = [rm, -rf, /tmp/foo]     ← verbatim
+  outer  = [mise, exec]           ← parsed under GNU style
+  #cmd   = [rm, -rf, /tmp/foo]    ← verbatim, bound by (rest …)
 
 rule body evaluation:
   (positional "exec")             ← matches outer slice → ok
-  (tail (authorise))              ← joins tail, parses as command,
+  (authorise #cmd)                ← joins #cmd, parses as command,
                                     recurses into the rule for `rm`
 
 inner evaluation receives:
@@ -325,59 +351,94 @@ inner evaluation receives:
   facts   = {:via "mise"}         ← so rules can branch on (fact? :via "mise")
 ```
 
-Without the parser declaration, `(positional "exec")` would also match
-on `mise exec` (because mise has no other args to confuse it), but the
-silent-bypass class reasserts itself: the outer GNU tokeniser would
-swallow `-rf` as if it were a mise flag, and `(tail (authorise))` would
-recurse with `rm /tmp/foo` instead of `rm -rf /tmp/foo`. The parser
+Without the parser declaration, `(positional "exec")` would also
+match on `mise exec` (because mise has no other args to confuse it),
+but the silent-bypass class reasserts itself: the outer GNU tokeniser
+would swallow `-rf` as if it were a mise flag, and the recurse would
+walk `rm /tmp/foo` instead of `rm -rf /tmp/foo`. The parser
 declaration is what makes the rule's promise hold.
 
-The prelude ships tail-declaring parsers for `sudo`, `env`, `timeout`,
-`time`, `su`, `ionice`, `chrt`, `xargs`, `nice`, `watch`, `find`, and
-`nix`. Scope: tools that ship with a regular Linux distribution, plus
-widely-used wrappers whose argv semantics are silent-bypass footguns —
-that is, where a missing or mis-spelled boundary token would let inner
-commands slip past wrapper rules. (`nix` qualifies on the second
-ground.) For anything else, write the parser yourself, like the mise
-example above.
+The prelude ships parsers for sudo, env, time, su, ionice, chrt,
+nohup, xargs, timeout, nice, watch, strace, mise, nix, ssh, direnv,
+bash, nix-shell, and find. Scope: tools that ship with a regular
+Linux distribution, plus widely-used wrappers whose argv semantics
+are silent-bypass footguns. For anything else, write the parser
+yourself.
 
-### Parameter recursion: `(parameter NAME (authorise))`
+### Parameter recursion: `(parameter NAME #var)` + `(authorise #var)`
 
-When a value-bearing flag's value is itself a command line — `bash -c`
-is the canonical example — recurse on the captured value:
+When a value-bearing flag's value is itself a command line — `bash
+-c` is the canonical example — bind the captured value on the parser
+side and recurse from the rule:
 
 ```lisp
-(parser "bash" (style gnu) (parameter "c" (authorise)))
+;; Prelude already ships this; shown for illustration:
+(parser "bash" (style gnu) (flags permute) (parameter "c" #cmd))
 
+(rule "bash" (authorise #cmd))
 ;; Now `bash -c "echo hi"` recurses into the rule for echo.
-(rule "echo" (allow))
 ```
 
-The form appears at parser level (it tells the tokeniser the parameter
-is value-bearing AND the value is recursable). It also works at rule
-level when you want the recursion to depend on rule conditions.
+The `#cmd` binding is value-bearing: it carries the captured `-c`
+argument. Rule-side `(authorise #cmd)` lifts it into a command line
+and recurses.
 
 ### Multi-token capture: `find -exec`
 
 `find -exec rm {} \;` and `find -exec rm {} +` carry a multi-token
 inner command terminated by `;` or `+`. Declare the parameter with a
-`(many-till PAT)` capture-shape on the parser side; the rule then sees
-the joined tokens as a single command line.
+`(many-till PAT)` capture-shape and bind it to a `#var`; the
+captured token list joins with single spaces when recursing.
 
 ```lisp
 ;; Prelude already ships this declaration; shown for illustration:
 (parser "find"
   (style single-dash-long)
-  (parameter "exec"    (many-till (or ";" "+")))
-  (parameter "execdir" (many-till (or ";" "+")))
-  (parameter "ok"      (many-till (or ";" "+"))))
+  (flags permute)
+  (parameter "exec"    (many-till (or ";" "+")) #exec)
+  (parameter "execdir" (many-till (or ";" "+")) #execdir)
+  (parameter "ok"      (many-till (or ";" "+")) #ok))
 
-(rule "find" (parameter "exec" (authorise)))
+(rule "find" (authorise #exec))
 ;; `find . -exec rm -rf / \;` now routes to the rule for `rm`.
 ```
 
 Multiple `-exec` clauses each fire the rule body independently; the
 strictest decision wins.
+
+### Positional bindings
+
+Parsers can name positional slots so rules can match them by binding:
+
+```lisp
+;; Prelude ssh declaration — the host token is bound to #host so
+;; rules can branch on it via (matches? #host …).
+(parser "ssh"
+  (style gnu)
+  (flags posix)
+  (positional #host (regex "^[^-].*"))
+  (rest #cmd))
+
+(rule "ssh"
+  (when (matches? #host (regex "^prod-"))
+    (deny "no SSH to production")))
+```
+
+A positional declaration `(positional [#var] PAT [QUANT])` carries
+an optional `#var` binding, a required pattern, and an optional
+quantifier (`one` default; `?`, `*`, `+` available). Tokens matched
+by a declared positional stay positionally visible to rule-body
+`(positional …)` matchers and bind to `#var` for predicate use.
+
+### Rule-body predicates: `(bound? #var)` and `(matches? #var PAT)`
+
+`(bound? #var)` is true iff `#var` resolved to a non-empty value in
+the active parser environment. Useful for branching on optional
+positionals and parameters.
+
+`(matches? #var PAT)` matches `PAT` against the string coercion of
+`#var`'s value (single tokens as-is; multi-token captures
+space-joined). Lifts a bound value into the predicate algebra.
 
 ### The `:via` fact
 
@@ -401,10 +462,10 @@ membership.
 > [!NOTE]
 > **Stdin blindspot for `xargs` and `parallel`.** When these tools read
 > commands from stdin (the common case), `may-i` cannot statically see
-> the inner argv — only the literal command-line arguments. Tail
-> recursion authorises what's visible; rules that need to tighten
-> further should branch on `(fact? [:via "xargs"])` and refuse without
-> confirmation.
+> the inner argv — only the literal command-line arguments.
+> `(authorise #cmd)` authorises what's visible; rules that need to
+> tighten further should branch on `(fact? [:via "xargs"])` and refuse
+> without confirmation.
 
 ## Facts
 
@@ -678,9 +739,10 @@ What `fmt` does:
 
 - Pretty-prints whitespace using the column width detected from source.
 - Sorts declaration-order-insensitive bodies into a deterministic order:
-    - **Parser body**: `(style …)` first, then `(flag …)` declarations
-      alphabetised by name, then `(parameter …)` declarations
-      alphabetised by name, then `(tail …)` last.
+    - **Parser body**: `(style …)` first, then `(flags …)`, then
+      `(flag …)` declarations alphabetised by name, then `(parameter
+      …)` declarations alphabetised by name, then `(positional …)`
+      in source order, then `(rest …)` last.
     - **`define-arg-style` body**: attribute forms alphabetised by head
       atom (`combined-shorts` < `long-prefix` < … < `separators`).
     - **`(check …)` body**: cases alphabetised by command string.
@@ -782,9 +844,10 @@ What `fmt` does:
 
 - Pretty-prints whitespace using the column width detected from source.
 - Sorts declaration-order-insensitive bodies into a deterministic order:
-    - **Parser body**: `(style …)` first, then `(flag …)` declarations
-      alphabetised by name, then `(parameter …)` declarations
-      alphabetised by name, then `(tail …)` last.
+    - **Parser body**: `(style …)` first, then `(flags …)`, then
+      `(flag …)` declarations alphabetised by name, then `(parameter
+      …)` declarations alphabetised by name, then `(positional …)`
+      in source order, then `(rest …)` last.
     - **`define-arg-style` body**: attribute forms alphabetised by head
       atom (`combined-shorts` < `long-prefix` < … < `separators`).
     - **`(check …)` body**: cases alphabetised by command string.

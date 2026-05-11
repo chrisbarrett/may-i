@@ -500,11 +500,31 @@ pub fn discover_repo_root(cwd: &Path) -> Option<PathBuf> {
 }
 
 fn git_show_toplevel(cwd: &Path) -> Option<PathBuf> {
-    let output = std::process::Command::new("git")
-        .args(["rev-parse", "--show-toplevel"])
-        .current_dir(cwd)
-        .output()
-        .ok()?;
+    let mut cmd = std::process::Command::new("git");
+    cmd.args(["rev-parse", "--show-toplevel"]).current_dir(cwd);
+    // Scrub inherited git environment so the spawned `git` resolves
+    // the repo from `cwd`, not from whatever ambient git context the
+    // parent process was invoked under. Pre-commit hooks export
+    // `GIT_DIR`, `GIT_INDEX_FILE` and friends; those take precedence
+    // over `current_dir(...)` and would otherwise make the child
+    // ignore `cwd` and report the hosting repo's toplevel (or, with a
+    // linked-worktree `GIT_DIR`, just echo `cwd` back). Both break
+    // tempdir-based discovery callers and any production use from
+    // inside a hook.
+    for var in [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_COMMON_DIR",
+        "GIT_CEILING_DIRECTORIES",
+        "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+        "GIT_NAMESPACE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_PREFIX",
+    ] {
+        cmd.env_remove(var);
+    }
+    let output = cmd.output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -1179,6 +1199,55 @@ mod tests {
             found.canonicalize().unwrap(),
             inner.canonicalize().unwrap(),
             "discovery must stop at the inner repo, not walk up to the ancestor"
+        );
+    }
+
+    /// Lock for env-mutating tests. Modifying process env is global
+    /// state; any test that touches `GIT_DIR` / `GIT_WORK_TREE`
+    /// / similar must hold this lock to remain safe under
+    /// `cargo test`'s parallel execution.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn discover_repo_root_ignores_inherited_git_env() {
+        // Regression: a pre-commit hook sets GIT_DIR (and friends) in
+        // the environment. Without scrubbing, the child `git rev-parse
+        // --show-toplevel` would inherit those vars, ignore its
+        // `current_dir(...)`, and report nonsense for tempdir-based
+        // callers — breaking every test that init_git()s a tempdir.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        init_git(&root);
+        let nested = root.join("a/b/c");
+        std::fs::create_dir_all(&nested).unwrap();
+
+        let _guard = ENV_LOCK.lock().unwrap();
+        let prev_dir = std::env::var_os("GIT_DIR");
+        let prev_work = std::env::var_os("GIT_WORK_TREE");
+        // SAFETY: serialised via ENV_LOCK; mutation is reverted below.
+        unsafe {
+            std::env::set_var("GIT_DIR", "/nonexistent/.git");
+            std::env::set_var("GIT_WORK_TREE", "/nonexistent");
+        }
+        let found = discover_repo_root(&nested);
+        // SAFETY: see above.
+        unsafe {
+            match prev_dir {
+                Some(v) => std::env::set_var("GIT_DIR", v),
+                None => std::env::remove_var("GIT_DIR"),
+            }
+            match prev_work {
+                Some(v) => std::env::set_var("GIT_WORK_TREE", v),
+                None => std::env::remove_var("GIT_WORK_TREE"),
+            }
+        }
+        assert_eq!(
+            found
+                .expect("discovery must succeed")
+                .canonicalize()
+                .unwrap(),
+            root,
+            "inherited GIT_DIR must not override `current_dir(cwd)`"
         );
     }
 

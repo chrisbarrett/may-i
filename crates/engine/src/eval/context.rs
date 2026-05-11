@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use may_i_core::ContextFacts;
 use may_i_core::ast::{Config, Define, Predicate, ResolvedParser};
 
+use super::bindings::Bindings;
+
 /// Maximum recursion depth for (may-i ...) evaluation.
 pub(super) const DEFAULT_RECURSION_LIMIT: usize = 10;
 
@@ -31,6 +33,10 @@ pub struct EvalContext<'a> {
     /// Resolved parser (style + parameter declarations) for the current
     /// command. Drives both tokenisation and parser-level recursion.
     pub parser: ResolvedParser,
+    /// Parser-bound names produced by `parse_argv`. Consulted by the
+    /// rule-body verbs `(authorise #var)`, `(bound? #var)`, and
+    /// `(matches? #var PAT)`.
+    pub parser_bindings: Bindings,
     /// Full config — needed by `(may-i …)` recursion to resolve the
     /// inner command's parser.
     pub config: Option<&'a Config>,
@@ -55,6 +61,7 @@ impl<'a> EvalContext<'a> {
             recursion_depth: 0,
             recursion_limit: DEFAULT_RECURSION_LIMIT,
             parser,
+            parser_bindings: Bindings::new(),
             config: None,
         }
     }
@@ -69,6 +76,7 @@ impl<'a> EvalContext<'a> {
         parser: ResolvedParser,
         config: &'a Config,
     ) -> Self {
+        let (_residual, parser_bindings) = super::bindings::parse_argv(&parser, args);
         Self {
             command,
             args,
@@ -77,6 +85,7 @@ impl<'a> EvalContext<'a> {
             recursion_depth: 0,
             recursion_limit: DEFAULT_RECURSION_LIMIT,
             parser,
+            parser_bindings,
             config: Some(config),
         }
     }

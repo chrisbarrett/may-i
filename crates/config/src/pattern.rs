@@ -208,6 +208,10 @@ fn parse_expr(sexpr: &Sexpr) -> Result<Expr<Effect>, RawError> {
                 expr: Box::new(inner_expr),
             })
         }
+        Sexpr::Binding(_, span) => Err(RawError::new(
+            "binding reference is not a pattern; use (matches? #var PAT) at rule scope instead",
+            *span,
+        )),
     }
 }
 
