@@ -1,22 +1,29 @@
-## Requirements
+## Purpose
 
+Defines the canonical pretty-printing rules for `may-i` configuration files: indentation, special-form layout, comment placement, declaration ordering, and round-trip stability under `may-i fmt`.
+## Requirements
 ### Requirement: Indent Specification System
 
-The pretty-printer SHALL use an indent specification system modeled after Emacs
-Lisp's `(declare (indent N))` to control how form arguments are laid out. The
-spec is a static table mapping head atoms to an integer N representing the
-number of "special" arguments before the body.
+The pretty-printer SHALL use an indent specification system modeled
+after Emacs Lisp's `(declare (indent N))` to control how form arguments
+are laid out. The spec is a static table mapping head atoms to an
+integer N representing the number of "special" arguments before the
+body.
 
 **Interpretation of N:**
-- N = 0: All children after the head are body (indent +2 from opening paren)
-- N = 1: First arg is special (stays inline if fits), rest are body (+2)
-- N = 2: First two args are special (first inline, second at align column),
-  rest are body (+2)
+
+- N = 0: Reserved for forms with dedicated renderers (currently only
+  `cond`). The default body-indent of `+2` does not apply.
+- N = 1: First arg is special (stays inline if fits), rest are body
+  (`+2`)
+- N = 2: First two args are special (first inline, second at align
+  column), rest are body (`+2`)
 
 **Indent Spec Table:**
+
 | Form | N | Notes |
 |------|---|-------|
-| `cond` | 0 | Uses dedicated renderer (always breaks, see below) |
+| `cond` | 0 | Dedicated renderer; clause indent is `+1`, see Cond Form Layout |
 | `define` | 1 | Name is special, body follows |
 | `if` | 2 | Pred and then-branch are special, else is body |
 | `rule` | 1 | Command/pattern is special, body follows |
@@ -24,40 +31,74 @@ number of "special" arguments before the body.
 | `when` | 1 | Pred is special, body follows |
 | `with-facts` | 1 | Facts vector is special, body follows |
 
-Forms not in this table use default function-call alignment.
+Forms not in this table use default function-call alignment (see
+Cascade Discipline for Broken Layouts).
 
-`check` is intentionally absent: it takes keyword-value pairs in a plist-like
-calling convention and reads naturally with function-call alignment (args align
-under the first arg).
+`check` is intentionally absent: it takes keyword-value pairs in a
+plist-like calling convention and reads naturally with function-call
+alignment (args align under the first arg).
 
-The `doc_from_sexpr` function SHALL be public API, converting `may_i_sexpr::Sexpr` nodes into `Doc<()>` trees suitable for pretty-printing. This enables canonical form strings to be parsed and pretty-printed outside of test contexts.
+The `doc_from_sexpr` function SHALL be public API, converting
+`may_i_sexpr::Sexpr` nodes into `Doc<()>` trees suitable for
+pretty-printing. This enables canonical form strings to be parsed and
+pretty-printed outside of test contexts.
 
-#### Scenario: N=0 form (cond)
-- **WHEN** pretty-printing `(cond ((pred1) (effect :allow)) (else (effect :deny)))`
-- **THEN** the form always breaks with clauses at +2 and body parts on separate lines
+#### Scenario: N=0 form (cond) uses dedicated renderer
+
+- **WHEN** pretty-printing `(cond ((pred1) (allow)) (else (deny)))`
+- **THEN** the form always breaks with clauses at `+1` from the cond
+  paren and body parts on separate lines at clause `+1`
 
 #### Scenario: N=1 form (when)
-- **WHEN** pretty-printing `(when pred (effect :allow))` at narrow width
-- **THEN** pred stays on head line if it fits, body is at +2
+
+- **WHEN** pretty-printing `(when pred (allow))` at narrow width
+- **THEN** pred stays on head line if it fits, body is at `+2`
 
 #### Scenario: N=2 form (if)
+
 - **WHEN** pretty-printing `(if pred then else)`
-- **THEN** pred is special-1, then-branch is special-2, else-branch is body
+- **THEN** pred is special-1, then-branch is special-2, else-branch is
+  body
 
 #### Scenario: Canonical form string round-trips through pretty-printer
-- **WHEN** a canonical form string like `(rule "git" (when (fact? :env "prod") (effect :allow)))` is parsed with `may_i_sexpr::parse` and converted with `doc_from_sexpr`
-- **THEN** `may_i_pp::pretty` produces properly indented multi-line output respecting indent specs
+
+- **WHEN** a canonical form string like `(rule "git" (when (fact? :env "prod") (allow)))`
+  is parsed with `may_i_sexpr::parse` and converted with `doc_from_sexpr`
+- **THEN** `may_i_pp::pretty` produces properly indented multi-line
+  output respecting indent specs and cascade discipline
 
 ### Requirement: Cond Form Layout
 
-The `cond` form SHALL use a dedicated renderer that always breaks clauses onto
-separate lines with body parts on their own lines.
+The `cond` form SHALL use a dedicated renderer that always breaks clauses
+onto separate lines with body parts on their own lines.
 
 **Layout Rules:**
+
 1. `cond` always starts on its own line (never packed)
-2. Each clause is on its own line at indent +2
-3. Within each clause, the predicate and each body part are on separate lines
-4. Body parts within a clause are at indent +3
+2. Each clause is at indent `+1` from the opening paren of `cond`,
+   matching the column where the first clause would sit if it were on
+   the head line
+3. Within each clause, the predicate and each body part are on separate
+   lines
+4. Body parts within a clause are at the clause's indent `+1`
+
+The `+1` clause indent matches Emacs / Common-Lisp convention for forms
+without a defun-style body indent. It is distinct from the `+2`
+body-indent that applies to forms in the indent spec table — `cond` is
+listed in that table for keyword-coloring purposes only; its clause
+layout does not use the body-indent computation.
+
+#### Scenario: Cond clauses indent at +1
+
+- **WHEN** pretty-printing a `(cond …)` form whose enclosing parent
+  places `cond` at column `C`
+- **THEN** each clause's opening paren is at column `C + 1`
+
+#### Scenario: Cond clause body parts indent at clause +1
+
+- **WHEN** a cond clause `(PRED EFFECT)` is broken across lines
+- **THEN** `EFFECT` is at the clause's column + 1, aligning under
+  `PRED`
 
 ### Requirement: If Form Asymmetric Indentation
 
@@ -71,11 +112,13 @@ then-branch (consequence) from the else-branch (alternative).
    - Then-branch at indent +4 (aligns under pred's start column)
    - Else-branch at indent +2 (body indent)
 
+#### Scenario: If form breaks asymmetrically
+- **WHEN** an `(if pred then else)` form does not fit on one line
+- **THEN** the then-branch is rendered at indent +4 and the else-branch at indent +2
+
 ### Requirement: Fill Layout for All-Atom Forms
 
-Forms whose arguments are ALL atoms (strings, keywords, identifiers, regexes)
-SHALL use "fill layout" instead of standard broken layout: `and`, `or`,
-`forbidden`, `anywhere`, `positional`.
+The pretty-printer SHALL use "fill layout" (rather than the standard broken layout) for forms whose head is one of `and`, `or`, `forbidden`, `anywhere`, or `positional` and whose arguments are ALL atoms (strings, keywords, identifiers, regexes).
 
 **Fill Layout Algorithm:**
 1. Head atom on opening line
@@ -88,6 +131,10 @@ SHALL use "fill layout" instead of standard broken layout: `and`, `or`,
 - Head is one of: `and`, `or`, `forbidden`, `anywhere`, `positional`
 - All children after head are atoms (no nested lists)
 
+#### Scenario: All-atom positional uses fill layout
+- **WHEN** pretty-printing `(positional "a" "b" "c" "d")` at narrow width
+- **THEN** atoms flow across lines, wrapping at the first-arg column rather than one per line
+
 ### Requirement: Function-Call Alignment
 
 Forms not in the indent spec table SHALL use function-call alignment:
@@ -95,6 +142,10 @@ subsequent arguments align under the first argument.
 
 **Alignment Formula:**
 `align_col = paren_col + 1 + head_width + 1`
+
+#### Scenario: Default form aligns under first arg
+- **WHEN** pretty-printing a form `(foo a b c)` whose head is not in the indent spec table and which breaks across lines
+- **THEN** subsequent args align at column `paren_col + 1 + head_width + 1` (under the first arg)
 
 ### Requirement: Special Form Keyword Coloring
 
@@ -107,36 +158,64 @@ The pretty-printer SHALL syntax-color the head atoms of known forms in blue.
 - Pattern forms: `anywhere`, `exact`, `positional`
 - Control forms: `else`
 
+#### Scenario: Known head atom is colored
+- **WHEN** pretty-printing a form whose head atom is in the colored form list (e.g., `when`, `effect`, `positional`)
+- **THEN** the head atom is emitted with the blue colour annotation
+
 ### Requirement: Whitespace trivia preserves blank lines
 The pretty printer SHALL preserve blank lines from whitespace-only trivia when
 rendering child elements.
 
+#### Scenario: Blank line between children survives
+- **WHEN** the source CST contains a whitespace-only trivia entry with two newlines between two child forms
+- **THEN** the rendered output preserves the blank line between them
+
 ### Requirement: Preserved children use source trivia for rendering
-When `pretty_serialize` renders a list node, children that carry original source
-trivia (non-zero span) SHALL be rendered via the trivia-preserving path,
-emitting their original whitespace verbatim.
+When `pretty_serialize` renders a list node, children that carry original source trivia (non-zero span), the renderer SHALL use the trivia-preserving path and emit their original whitespace verbatim.
+
+#### Scenario: Source-spanned child renders via preservation path
+- **WHEN** a child node has a non-zero source span
+- **THEN** the renderer emits its leading and inter-element whitespace verbatim from source trivia
 
 ### Requirement: Constructed children use reflow rendering
-Children that were freshly constructed by rewrite rules (zero span / default
-trivia) SHALL be rendered via the whitespace-stripping path, applying the
-standard reflow and indentation logic.
+For children that were freshly constructed by rewrite rules (zero span / default trivia), the renderer SHALL use the whitespace-stripping path and apply the standard reflow and indentation logic.
+
+#### Scenario: Zero-span child renders via reflow path
+- **WHEN** a child node has a zero source span (constructed by a rewrite)
+- **THEN** the renderer ignores any source-derived whitespace and applies the standard reflow and indentation rules
 
 ### Requirement: Source trivia detection via span
 A node SHALL be considered to have source trivia if its annotation span is
 non-zero (i.e., `span.start != 0 || span.end != 0`).
+
+#### Scenario: Span discriminates source vs constructed
+- **WHEN** the renderer inspects a node's annotation span
+- **THEN** it classifies the node as source-trivia-bearing iff `span.start != 0 || span.end != 0`
 
 ### Requirement: Whole-line comment positioning
 The pretty-serializer SHALL emit whole-line comments at the current indentation
 level. A comment is whole-line when the `Trivia::Whitespace` entry immediately
 preceding it in the trivia vector contains a newline character.
 
+#### Scenario: Comment after newline-bearing whitespace is whole-line
+- **WHEN** a comment trivia is preceded by a `Trivia::Whitespace` containing a newline
+- **THEN** the comment is emitted on its own line at the current indentation level
+
 ### Requirement: Line-trailing comment preservation
 The pretty-serializer SHALL preserve the exact whitespace gap before a
 line-trailing comment.
 
+#### Scenario: Trailing-comment gap preserved verbatim
+- **WHEN** a line-trailing comment in the source is preceded by N spaces of whitespace
+- **THEN** the rendered output emits the same N-space gap before the comment
+
 ### Requirement: Special-form lookup table
 The classification of forms into special-form vs function-call SHALL be
 determined by a static `&[&str]` lookup table in the pretty-serializer.
+
+#### Scenario: Lookup table drives classification
+- **WHEN** the renderer classifies a head atom
+- **THEN** the decision is made by membership in a static `&[&str]` lookup table, not by dynamic computation
 
 ### Requirement: Canonical body-form ordering
 
@@ -301,18 +380,42 @@ Rule order in source SHALL be preserved in canonical form. Rule order is semanti
 - **WHEN** the canonical form is computed
 - **THEN** rules SHALL appear in source order A, B, C.
 
-## MODIFIED Requirements
+### Requirement: Cascade Discipline for Broken Layouts
 
-### Requirement: Migration rule `and_trailing_effect_to_when`
+The pretty-printer SHALL fix the cascade column at the start of the first
+inline argument once that column is established, and MUST NOT update it as
+further children attach inline. When a child must break to a new line, the
+break lands at this fixed cascade column. Drift to the right with each
+inline child is forbidden.
 
-The migration rule SHALL extract a trailing low-complexity `(effect ...)` from
-an `(and ...)` predicate, rewriting to a `(when ...)` form.
+**Cascade column rules:**
 
-**Trigger:** `(and e1 … en)` where `en` is `(effect ...)` with structural
-complexity ≤ 3.
+- For forms in the indent spec table: cascade column is `paren_col + 2` (body
+  indent), regardless of inline placement.
+- For default forms (function-call alignment) where the first argument is
+  placed inline on the head line: cascade column is the start column of the
+  *first* inline argument. This column is computed once and never updated.
+- For default forms where the first argument breaks to its own line (because
+  source trivia forces it): cascade column is `paren_col + 1`.
 
-**Complexity scoring:**
-- Atoms: 1
-- `(regex "r")`: 1 (special-cased as a leaf)
-- Any other `(tag e1 … en)`: `1 + max(complexity(e1), …, complexity(en))`
-- `[e1 … en]` (vector): `1 + max(complexity(e1), …, complexity(en))`
+#### Scenario: Multiple inline args before a break does not drift
+
+- **WHEN** rendering `(positional A B C D)` where `A`, `B`, `C` fit on the
+  head line but `D` does not
+- **THEN** `D` breaks at the start column of `A`, not the start column of
+  `C`
+
+#### Scenario: Deeply nested forms do not accumulate drift
+
+- **WHEN** rendering `(when (or (positional X (or "a" "b" "c" "d")) (positional Y)) (allow))`
+  at a width that forces inner `or`'s last atom to wrap
+- **THEN** the wrapped atom aligns under the inner `or`'s first argument,
+  not at a column that depends on how many siblings preceded it
+
+#### Scenario: Source trivia forces head-alone cascade
+
+- **WHEN** the source has a newline immediately after the head atom, placing
+  the first argument on its own line
+- **THEN** the cascade column is `paren_col + 1`, matching the column of
+  the (broken) first argument
+

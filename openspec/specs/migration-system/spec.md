@@ -1,3 +1,7 @@
+## Purpose
+
+Defines the DSL migration pipeline: sexpr-level rewrite passes that transform older configuration syntax into the current canonical form before AST parsing, with comment/trivia preservation, transitive `(load …)` walking, and Class A/B classification controlling trust hash behaviour.
+
 ## Requirements
 
 ### Requirement: Migration operates on sexprs before AST parsing
@@ -70,10 +74,18 @@ rewritten V2 AST structure.
 The line numbers shown in the trace SHALL correspond to the line in the original
 V1 source file, not to any migrated or rewritten representation.
 
+#### Scenario: Trace line numbers map to V1 source
+- **WHEN** a trace is rendered for a transparently migrated V1 config
+- **THEN** every line number references the corresponding line in the original V1 source file, not the rewritten V2 representation
+
 ### Requirement: Eval annotations overlay onto V1 structure
 
 Annotations in the right column SHALL be placed on the correct lines of the V1
 source display, even though they are produced by evaluating the V2 AST.
+
+#### Scenario: V2 evaluation annotations align with V1 lines
+- **WHEN** the trace evaluates a V2 AST derived from a V1 source
+- **THEN** annotations in the right column appear on the V1 source lines that produced the corresponding V2 AST nodes
 
 ### Requirement: Source recovery uses pre-migration CST
 
@@ -255,3 +267,27 @@ The required Class A rewrites SHALL be:
 - **GIVEN** `(check :allow "ls -la" :deny "rm -rf /")`
 - **WHEN** migration runs
 - **THEN** the output SHALL be `(check (allow "ls -la") (deny "rm -rf /"))`.
+
+### Requirement: Migration rule `and_trailing_effect_to_when`
+
+The migration rule SHALL extract a trailing low-complexity `(effect ...)` from
+an `(and ...)` predicate, rewriting to a `(when ...)` form.
+
+**Trigger:** `(and e1 … en)` where `en` is `(effect ...)` with structural
+complexity ≤ 3.
+
+**Complexity scoring:**
+- Atoms: 1
+- `(regex "r")`: 1 (special-cased as a leaf)
+- Any other `(tag e1 … en)`: `1 + max(complexity(e1), …, complexity(en))`
+- `[e1 … en]` (vector): `1 + max(complexity(e1), …, complexity(en))`
+
+#### Scenario: Low-complexity trailing effect rewrites to `when`
+- **GIVEN** `(and (positional "X") (effect :allow))` where the trailing `(effect …)` has structural complexity ≤ 3
+- **WHEN** the migration rule `and_trailing_effect_to_when` runs
+- **THEN** the form rewrites to `(when (positional "X") (effect :allow))`
+
+#### Scenario: High-complexity trailing effect is left alone
+- **GIVEN** `(and pred (effect …))` where the `(effect …)` has structural complexity > 3
+- **WHEN** the migration rule `and_trailing_effect_to_when` runs
+- **THEN** the form is left unchanged

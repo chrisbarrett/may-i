@@ -1,4 +1,8 @@
-## MODIFIED Requirements
+## Purpose
+
+Defines the pattern-expression sublanguage used in rule bodies: flag/parameter/positional matchers, the `--` flag-stop convention, parser-declared tail scoping, negation, and roundtrip serialisation.
+
+## Requirements
 
 ### Requirement: Expression serialization roundtrips through parser
 Expr values serialized to sexpr form SHALL parse back to structurally equivalent expressions.
