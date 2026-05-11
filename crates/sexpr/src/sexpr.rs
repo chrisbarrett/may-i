@@ -13,6 +13,9 @@ pub enum Sexpr {
     Keyword(String, Span),
     /// A bare symbol (e.g., `rule`, `git`, `fact?`).
     Symbol(String, Span),
+    /// A parser-binding atom starting with `#` (e.g., `#cmd`, `#host`).
+    /// The stored string includes the leading `#`.
+    Binding(String, Span),
     /// A string literal (e.g., `"~/.config"`).
     String(String, Span),
     List(Vec<Sexpr>, Span),
@@ -25,6 +28,7 @@ impl PartialEq for Sexpr {
         match (self, other) {
             (Sexpr::Keyword(a, _), Sexpr::Keyword(b, _)) => a == b,
             (Sexpr::Symbol(a, _), Sexpr::Symbol(b, _)) => a == b,
+            (Sexpr::Binding(a, _), Sexpr::Binding(b, _)) => a == b,
             (Sexpr::String(a, _), Sexpr::String(b, _)) => a == b,
             (Sexpr::List(a, _), Sexpr::List(b, _)) => a == b,
             (Sexpr::Vector(a, _), Sexpr::Vector(b, _)) => a == b,
@@ -35,10 +39,20 @@ impl PartialEq for Sexpr {
 
 impl Sexpr {
     /// Return the atom string (keyword or symbol), or `None` if this is a
-    /// list/vector/string.
+    /// list/vector/string/binding. Bindings are deliberately excluded so
+    /// callers expecting a plain atom don't silently accept `#var`.
     pub fn as_atom(&self) -> Option<&str> {
         match self {
             Sexpr::Keyword(s, _) | Sexpr::Symbol(s, _) => Some(s),
+            _ => None,
+        }
+    }
+
+    /// Return the binding name (including the leading `#`) for `Binding`
+    /// atoms; `None` otherwise.
+    pub fn as_binding(&self) -> Option<&str> {
+        match self {
+            Sexpr::Binding(s, _) => Some(s),
             _ => None,
         }
     }
@@ -53,6 +67,7 @@ impl Sexpr {
 
     /// Return the atom string for keywords, symbols, AND strings.
     /// This is a compatibility shim — prefer `as_atom()` or `as_str()`.
+    /// Bindings are excluded; use `as_binding()`.
     pub fn as_atom_or_str(&self) -> Option<&str> {
         match self {
             Sexpr::Keyword(s, _) | Sexpr::Symbol(s, _) | Sexpr::String(s, _) => Some(s),
@@ -77,6 +92,7 @@ impl Sexpr {
         match self {
             Sexpr::Keyword(_, s)
             | Sexpr::Symbol(_, s)
+            | Sexpr::Binding(_, s)
             | Sexpr::String(_, s)
             | Sexpr::List(_, s)
             | Sexpr::Vector(_, s) => *s,
@@ -87,7 +103,7 @@ impl Sexpr {
 impl std::fmt::Display for Sexpr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Sexpr::Keyword(s, _) | Sexpr::Symbol(s, _) => write!(f, "{s}"),
+            Sexpr::Keyword(s, _) | Sexpr::Symbol(s, _) | Sexpr::Binding(s, _) => write!(f, "{s}"),
             Sexpr::String(s, _) => write!(f, "{}", quote_string(s)),
             Sexpr::List(items, _) => {
                 write!(f, "(")?;

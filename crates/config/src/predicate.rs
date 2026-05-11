@@ -216,6 +216,10 @@ fn parse_fact_pattern(sexpr: &Sexpr) -> Result<FactPattern, RawError> {
             "fact patterns do not support nested vector syntax",
             *span,
         )),
+        Sexpr::Binding(_, span) => Err(RawError::new(
+            "fact patterns do not accept binding references",
+            *span,
+        )),
     }
 }
 

@@ -1,22 +1,22 @@
 ## 1. Reader: `#var` sigil
 
-- [ ] 1.1 Add `Atom::Binding(String)` (or equivalent) to the `Sexpr` atom enum in `crates/sexpr/`.
-- [ ] 1.2 Extend the lexer to recognise `#NAME` tokens where `NAME` matches the existing atom-name grammar.
-- [ ] 1.3 Reject `#` alone and `#` followed by non-name characters at lex time.
-- [ ] 1.4 Update `may_i_sexpr::Sexpr` accessor methods (`as_atom`, `as_binding`, `as_atom_or_str`) so existing callers don't accidentally accept bindings where they expect atoms.
-- [ ] 1.5 Add proptest generators for `#NAME` atoms; ensure roundtrip print/parse stable.
-- [ ] 1.6 Add unit tests: `#foo` parses, `#` errors, `#@bad` errors, `#foo` is not equal to `foo` or `:foo`.
-- [ ] 1.7 **Property checkpoint — sigil algebra.** Roundtrip: `parse(print(s)) == s` for every `Sexpr` (now including `Binding`). Distinctness: `#x`, `:x`, `x`, `"x"` form four disjoint equivalence classes under `PartialEq`. Lexer totality: every input string either parses or yields at least one `RawError` (no panics).
+- [x] 1.1 Add `Atom::Binding(String)` (or equivalent) to the `Sexpr` atom enum in `crates/sexpr/`.
+- [x] 1.2 Extend the lexer to recognise `#NAME` tokens where `NAME` matches the existing atom-name grammar.
+- [x] 1.3 Reject `#` alone and `#` followed by non-name characters at lex time.
+- [x] 1.4 Update `may_i_sexpr::Sexpr` accessor methods (`as_atom`, `as_binding`, `as_atom_or_str`) so existing callers don't accidentally accept bindings where they expect atoms.
+- [x] 1.5 Add proptest generators for `#NAME` atoms; ensure roundtrip print/parse stable.
+- [x] 1.6 Add unit tests: `#foo` parses, `#` errors, `#@bad` errors, `#foo` is not equal to `foo` or `:foo`.
+- [x] 1.7 **Property checkpoint — sigil algebra.** Roundtrip: `parse(print(s)) == s` for every `Sexpr` (now including `Binding`). Distinctness: `#x`, `:x`, `x`, `"x"` form four disjoint equivalence classes under `PartialEq`. Lexer totality: every input string either parses or yields at least one `RawError` (no panics).
 
 ## 2. AST: parser representation
 
-- [ ] 2.1 Add `FlagsMode { Posix, Permute, Until(Vec<String>) }` to `crates/core/src/ast.rs`.
-- [ ] 2.2 Add `BindingName(String)` newtype alongside.
-- [ ] 2.3 Add `PositionalDecl { binding: Option<BindingName>, pattern: Expr, quantifier: Quantifier }`.
-- [ ] 2.4 Extend `ParameterDecl` with `binding: Option<BindingName>`; preserve existing `treatment` and `capture` fields during the migration but mark `ParameterTreatment::Authorise` as deprecated/removed at the end.
-- [ ] 2.5 Replace `Parser::tail: Option<Tail>` with `Parser::flags_mode: FlagsMode`, `Parser::positionals: Vec<PositionalDecl>`, `Parser::rest: Option<BindingName>`.
-- [ ] 2.6 Remove `Tail` enum from public exports; keep it temporarily internal as the migration tool may need to read old-form configs.
-- [ ] 2.7 **Encapsulation checkpoint.** `BindingName` has a private field and smart constructor enforcing: non-empty, no embedded `#`, no whitespace. Reject `BindingName::new("")`, `BindingName::new("#foo")`, `BindingName::new("foo bar")`. Property: a `BindingName` value round-trips through `Display` and `from_str` losslessly.
+- [x] 2.1 Add `FlagsMode { Posix, Permute, Until(Vec<String>) }` to `crates/core/src/ast.rs`.
+- [x] 2.2 Add `BindingName(String)` newtype alongside.
+- [x] 2.3 Add `PositionalDecl { binding: Option<BindingName>, pattern: Expr, quantifier: Quantifier }`.
+- [x] 2.4 Extend `ParameterDecl` with `binding: Option<BindingName>`; preserve existing `treatment` and `capture` fields during the migration but mark `ParameterTreatment::Authorise` as deprecated/removed at the end.
+- [x] 2.5 Add `Parser::flags_mode: FlagsMode`, `Parser::positionals: Vec<PositionalDecl>`, `Parser::rest: Option<BindingName>` (legacy `tail` field retained transitionally — fully replaced when `parse_argv` lands in section 5).
+- [ ] 2.6 Remove `Tail` enum from public exports; keep it temporarily internal as the migration tool may need to read old-form configs. _(Deferred to end of section 5 — engine entry.rs still reads `Tail`.)_
+- [x] 2.7 **Encapsulation checkpoint.** `BindingName` has a private field and smart constructor enforcing: non-empty, no embedded `#`, no whitespace. Reject `BindingName::new("")`, `BindingName::new("#foo")`, `BindingName::new("foo bar")`. Property: a `BindingName` value round-trips through `Display` and `from_str` losslessly.
 
 ## 3. Config parser: parser-body forms
 

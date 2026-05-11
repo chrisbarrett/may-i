@@ -660,6 +660,129 @@ impl StyleRegistry {
     }
 }
 
+/// A parser-bound name (the bare identifier from a `#NAME` sigil — the
+/// stored form does NOT include the leading `#`). Constructed only via
+/// the smart constructor [`BindingName::parse`], which enforces the
+/// invariants:
+///
+/// - non-empty,
+/// - no embedded `#` (the sigil belongs to surface syntax, not the value),
+/// - no whitespace,
+/// - no `:` (binding names are not keyword paths),
+/// - starts with an ASCII letter or `_`, then ASCII alphanumeric / `_` / `-`.
+///
+/// `Display` re-prints the sigil so user-facing output reads naturally.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct BindingName(String);
+
+/// Error returned by [`BindingName::parse`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BindingNameError {
+    Empty,
+    LeadingSigilOnly,
+    InvalidChar(char),
+    InvalidStart(char),
+}
+
+impl std::fmt::Display for BindingNameError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BindingNameError::Empty => write!(f, "binding name is empty"),
+            BindingNameError::LeadingSigilOnly => {
+                write!(f, "binding name `#` has no name after the sigil")
+            }
+            BindingNameError::InvalidChar(c) => {
+                write!(f, "binding name contains invalid character {c:?}")
+            }
+            BindingNameError::InvalidStart(c) => {
+                write!(f, "binding name must start with letter or `_`, got {c:?}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for BindingNameError {}
+
+impl BindingName {
+    /// Parse a binding name from surface syntax. Accepts either
+    /// `"#cmd"` (with sigil) or `"cmd"` (bare); stores the bare form.
+    pub fn parse(input: impl AsRef<str>) -> Result<Self, BindingNameError> {
+        let raw = input.as_ref();
+        let bare = raw.strip_prefix('#').unwrap_or(raw);
+        if bare.is_empty() {
+            return Err(if raw == "#" {
+                BindingNameError::LeadingSigilOnly
+            } else {
+                BindingNameError::Empty
+            });
+        }
+        let mut chars = bare.chars();
+        let first = chars.next().expect("non-empty checked above");
+        if !(first.is_ascii_alphabetic() || first == '_') {
+            return Err(BindingNameError::InvalidStart(first));
+        }
+        for c in chars {
+            if !(c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+                return Err(BindingNameError::InvalidChar(c));
+            }
+        }
+        Ok(BindingName(bare.to_owned()))
+    }
+
+    /// Bare name (no leading `#`).
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Surface form (with leading `#`).
+    pub fn with_sigil(&self) -> String {
+        format!("#{}", self.0)
+    }
+}
+
+impl std::fmt::Display for BindingName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "#{}", self.0)
+    }
+}
+
+impl std::fmt::Debug for BindingName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "BindingName(#{})", self.0)
+    }
+}
+
+/// Flag-scanning mode declared by a parser body's `(flags MODE)` form.
+/// Replaces the implicit defaults that the engine previously inferred
+/// from the presence/shape of `(tail …)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FlagsMode {
+    /// `posix` — outer flags appear only before the first positional;
+    /// the first non-flag token stops outer scanning. Matches
+    /// `POSIXLY_CORRECT` semantics. Default for wrappers like sudo,
+    /// xargs, env, timeout.
+    Posix,
+    /// `permute` — outer flags may appear anywhere; the outer parser
+    /// peels declared flags and parameters wherever they occur. Matches
+    /// GNU getopt's permuting default.
+    Permute,
+    /// `(until STR…)` — outer parser scans up to the first occurrence
+    /// of any listed boundary token; the boundary token is consumed
+    /// and dropped. Used by `mise --` and `nix --command|-c`. The
+    /// vector is non-empty.
+    Until(Vec<String>),
+}
+
+/// A positional declaration in a parser body: `(positional [#var] PAT
+/// [QUANT])`. The optional binding promotes the matched arg(s) to
+/// `#var` for rule-body reference.
+#[derive(Debug, Clone)]
+pub struct PositionalDecl {
+    pub binding: Option<BindingName>,
+    pub pattern: crate::pattern::Expr<Effect>,
+    pub quantifier: crate::pattern::Quantifier,
+}
+
 /// Parser-level treatment of a parameter's *value*. Future expansion
 /// slot (e.g. type-checked values).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -703,6 +826,11 @@ pub struct ParameterDecl {
     /// How the parameter consumes tokens at tokenisation time. Defaults
     /// to single-token capture; `ManyTill` supports `find -exec … ;`.
     pub capture: Capture,
+    /// Optional `#var` binding for the captured value. When set, the
+    /// captured token (or token list for `ManyTill`) is exposed under
+    /// this name to rule bodies via `(authorise #var)` / `(matches?
+    /// #var …)` / `(bound? #var)`.
+    pub binding: Option<BindingName>,
 }
 
 /// Wrapper-tail boundary spec declared via `(tail (after VALUE))` in a
@@ -723,6 +851,11 @@ pub enum Tail {
 /// Parsed `(parser PROGRAM (style STYLE) BODY…)` declaration. The style is
 /// referenced by name; resolution against the `StyleRegistry` happens at
 /// `Config::parser_for` time.
+///
+/// Note: during the parser-named-bindings migration this struct carries
+/// both the legacy `tail` field and the new `flags_mode` / `positionals`
+/// / `rest` fields. The legacy field is removed once the engine's
+/// `parse_argv` (section 5 of the change) supersedes `split_outer_tail`.
 #[derive(Debug, Clone)]
 pub struct Parser {
     pub program: String,
@@ -731,8 +864,20 @@ pub struct Parser {
     /// spelling list.
     pub flags: Vec<Vec<String>>,
     pub parameters: Vec<ParameterDecl>,
-    /// Optional `(tail (after VALUE))` declaration. `None` for parsers
-    /// without a wrapper-boundary; the tokeniser does not split argv.
+    /// Declared positional slots in source order (parser-body
+    /// `(positional [#var] PAT [QUANT])`). Matched in declaration order
+    /// against the residual outer slice.
+    pub positionals: Vec<PositionalDecl>,
+    /// Flag-scanning mode from `(flags MODE)`. Mandatory in the new
+    /// parser body; during migration this defaults to `Permute` for
+    /// parsers without a declared tail.
+    pub flags_mode: FlagsMode,
+    /// Optional `(rest #var)` declaration. Binds the unconsumed tail
+    /// of argv to a name.
+    pub rest: Option<BindingName>,
+    /// Legacy `(tail (after VALUE))` declaration. Transitional: read
+    /// by the engine until `parse_argv` lands; written by the
+    /// migration tool to bridge old configs.
     pub tail: Option<Tail>,
     pub span: Span,
     pub provenance: Provenance,
@@ -746,6 +891,9 @@ pub struct ResolvedParser {
     pub style: Style,
     pub flags: Vec<Vec<String>>,
     pub parameters: Vec<ParameterDecl>,
+    pub positionals: Vec<PositionalDecl>,
+    pub flags_mode: FlagsMode,
+    pub rest: Option<BindingName>,
     pub tail: Option<Tail>,
 }
 
@@ -758,6 +906,9 @@ impl ResolvedParser {
             style: Style::default_gnu(),
             flags: Vec::new(),
             parameters: Vec::new(),
+            positionals: Vec::new(),
+            flags_mode: FlagsMode::Permute,
+            rest: None,
             tail: None,
         }
     }
@@ -868,6 +1019,9 @@ impl Config {
             style,
             flags: parser.flags.clone(),
             parameters: parser.parameters.clone(),
+            positionals: parser.positionals.clone(),
+            flags_mode: parser.flags_mode.clone(),
+            rest: parser.rest.clone(),
             tail: parser.tail.clone(),
         }
     }
@@ -890,6 +1044,7 @@ impl Config {
                     names: vec![name],
                     treatment: ParameterTreatment::None,
                     capture: Capture::Single,
+                    binding: None,
                 });
             }
         }
@@ -1013,6 +1168,92 @@ mod tests {
     use super::*;
     use crate::pattern::{ArgPattern, CommandPattern, MatchMode};
     use crate::span::Span;
+
+    // ── BindingName smart-constructor tests (task 2.7) ─────────────
+
+    #[test]
+    fn binding_name_parses_with_sigil() {
+        let bn = BindingName::parse("#cmd").expect("ok");
+        assert_eq!(bn.as_str(), "cmd");
+        assert_eq!(bn.with_sigil(), "#cmd");
+        assert_eq!(format!("{bn}"), "#cmd");
+    }
+
+    #[test]
+    fn binding_name_parses_bare() {
+        let bn = BindingName::parse("host").expect("ok");
+        assert_eq!(bn.as_str(), "host");
+        assert_eq!(bn.with_sigil(), "#host");
+    }
+
+    #[test]
+    fn binding_name_rejects_empty() {
+        assert_eq!(BindingName::parse("").unwrap_err(), BindingNameError::Empty);
+    }
+
+    #[test]
+    fn binding_name_rejects_lone_sigil() {
+        assert_eq!(
+            BindingName::parse("#").unwrap_err(),
+            BindingNameError::LeadingSigilOnly
+        );
+    }
+
+    #[test]
+    fn binding_name_rejects_internal_sigil() {
+        // Embedded `#` is invalid — the sigil belongs to surface syntax only.
+        assert!(matches!(
+            BindingName::parse("#foo#bar").unwrap_err(),
+            BindingNameError::InvalidChar('#')
+        ));
+    }
+
+    #[test]
+    fn binding_name_rejects_whitespace() {
+        assert!(matches!(
+            BindingName::parse("foo bar").unwrap_err(),
+            BindingNameError::InvalidChar(' ')
+        ));
+    }
+
+    #[test]
+    fn binding_name_rejects_colon() {
+        // Bindings are not keyword paths.
+        assert!(matches!(
+            BindingName::parse("foo:bar").unwrap_err(),
+            BindingNameError::InvalidChar(':')
+        ));
+    }
+
+    #[test]
+    fn binding_name_rejects_digit_start() {
+        assert!(matches!(
+            BindingName::parse("1foo").unwrap_err(),
+            BindingNameError::InvalidStart('1')
+        ));
+    }
+
+    proptest::proptest! {
+        /// Section 2.7 checkpoint: any `BindingName` survives a round-trip
+        /// through `Display → parse` losslessly.
+        #[test]
+        fn binding_name_display_roundtrip(name in "[a-zA-Z_][a-zA-Z0-9_-]{0,32}") {
+            let bn = BindingName::parse(&name).expect("generator produces valid names");
+            let printed = format!("{bn}");
+            let reparsed = BindingName::parse(&printed)
+                .expect("Display output must reparse");
+            proptest::prop_assert_eq!(bn.as_str(), reparsed.as_str());
+        }
+    }
+
+    #[test]
+    fn binding_name_roundtrip_via_display() {
+        let original = BindingName::parse("#some-name_42").unwrap();
+        let printed = format!("{original}");
+        let reparsed = BindingName::parse(&printed).unwrap();
+        assert_eq!(original.as_str(), reparsed.as_str());
+        assert_eq!(format!("{original}"), format!("{reparsed}"));
+    }
 
     #[test]
     fn spanned_new_creates_correctly() {

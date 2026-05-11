@@ -109,6 +109,7 @@ pub fn parse_parser_form(sexpr: &Sexpr) -> Result<Parser, RawError> {
                     names,
                     treatment,
                     capture,
+                    binding: None,
                 });
             }
             "tail" => {
@@ -140,15 +141,31 @@ pub fn parse_parser_form(sexpr: &Sexpr) -> Result<Parser, RawError> {
         .with_help("(parser \"git\" (style gnu) …)")
     })?;
 
+    let flags_mode = derive_flags_mode_from_tail(&tail);
     Ok(Parser {
         program,
         style_name,
         flags,
         parameters,
+        positionals: Vec::new(),
+        flags_mode,
+        rest: None,
         tail,
         span: sexpr.span(),
         provenance: Provenance::PrimaryConfig,
     })
+}
+
+/// Transitional bridge: derive a `FlagsMode` from the legacy `(tail …)`
+/// declaration so the new fields are populated coherently while the
+/// engine still consults `tail`. Removed once `parse_argv` lands.
+fn derive_flags_mode_from_tail(tail: &Option<may_i_core::ast::Tail>) -> may_i_core::ast::FlagsMode {
+    use may_i_core::ast::{FlagsMode, Tail};
+    match tail {
+        None => FlagsMode::Permute,
+        Some(Tail::AfterFlags) => FlagsMode::Posix,
+        Some(Tail::AfterToken(toks)) => FlagsMode::Until(toks.clone()),
+    }
 }
 
 /// Parse the body of a `(tail …)` declaration in a parser body.

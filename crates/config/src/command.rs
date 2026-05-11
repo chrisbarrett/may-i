@@ -59,6 +59,11 @@ pub fn parse_command_pattern(sexpr: &Sexpr) -> Result<CommandPattern, RawError> 
             "command pattern does not support vector syntax",
             *span,
         )),
+        Sexpr::Binding(_, span) => Err(RawError::new(
+            "command position does not accept a binding reference",
+            *span,
+        )
+        .with_help("use a literal command name, (or …), or (regex …)")),
     }
 }
 

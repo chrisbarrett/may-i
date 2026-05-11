@@ -56,7 +56,8 @@ pub fn canonicalise_node(node: Box<CstNode>) -> Box<CstNode> {
             let recursed: Vec<Box<CstNode>> = children.into_iter().map(canonicalise_node).collect();
             ShapeF::Vector(recursed)
         }
-        atom @ (ShapeF::Keyword(_) | ShapeF::Symbol(_) | ShapeF::String(_)) => atom,
+        atom
+        @ (ShapeF::Keyword(_) | ShapeF::Symbol(_) | ShapeF::Binding(_) | ShapeF::String(_)) => atom,
     };
     Box::new(CstNode {
         ann,

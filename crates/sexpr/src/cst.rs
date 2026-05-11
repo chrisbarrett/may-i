@@ -21,6 +21,9 @@ pub enum ShapeF<R> {
     Keyword(String),
     /// A bare symbol (e.g., `rule`, `git`, `fact?`).
     Symbol(String),
+    /// A parser-binding atom (e.g., `#cmd`, `#host`). Starts with `#`.
+    /// The stored string includes the leading `#`.
+    Binding(String),
     /// A string literal (e.g., `"~/.config"`). Always serialized with quotes.
     String(String),
     /// A list expression: `(children...)`
@@ -39,6 +42,7 @@ impl<R> ShapeF<R> {
         match self {
             ShapeF::Keyword(s) => ShapeF::Keyword(s),
             ShapeF::Symbol(s) => ShapeF::Symbol(s),
+            ShapeF::Binding(s) => ShapeF::Binding(s),
             ShapeF::String(s) => ShapeF::String(s),
             ShapeF::List(children) => ShapeF::List(children.into_iter().map(f).collect()),
             ShapeF::Vector(children) => ShapeF::Vector(children.into_iter().map(f).collect()),
@@ -49,6 +53,7 @@ impl<R> ShapeF<R> {
         match self {
             ShapeF::Keyword(s) => ShapeF::Keyword(s.clone()),
             ShapeF::Symbol(s) => ShapeF::Symbol(s.clone()),
+            ShapeF::Binding(s) => ShapeF::Binding(s.clone()),
             ShapeF::String(s) => ShapeF::String(s.clone()),
             ShapeF::List(children) => ShapeF::List(children.iter().map(f).collect()),
             ShapeF::Vector(children) => ShapeF::Vector(children.iter().map(f).collect()),
@@ -79,6 +84,7 @@ impl CstNode<TriviaAnn> {
         match &self.shape {
             ShapeF::Keyword(s) => Sexpr::Keyword(s.clone(), span),
             ShapeF::Symbol(s) => Sexpr::Symbol(s.clone(), span),
+            ShapeF::Binding(s) => Sexpr::Binding(s.clone(), span),
             ShapeF::String(s) => Sexpr::String(s.clone(), span),
             ShapeF::List(children) => {
                 let items: Vec<Sexpr> = children.iter().map(|c| c.to_sexpr()).collect();
@@ -91,11 +97,14 @@ impl CstNode<TriviaAnn> {
         }
     }
 
-    /// Create an atom node (keyword or symbol, classified by leading `:`).
+    /// Create an atom node, classifying by leading sigil: `:` → Keyword,
+    /// `#` → Binding, otherwise Symbol.
     pub fn atom(value: impl Into<String>, annotation: TriviaAnn) -> Self {
         let s = value.into();
         let shape = if s.starts_with(':') {
             ShapeF::Keyword(s)
+        } else if s.starts_with('#') {
+            ShapeF::Binding(s)
         } else {
             ShapeF::Symbol(s)
         };
@@ -184,7 +193,7 @@ impl CstNode<TriviaAnn> {
         };
 
         let node = match &self.shape {
-            ShapeF::Keyword(s) | ShapeF::Symbol(s) => DocF::Atom(s.clone()),
+            ShapeF::Keyword(s) | ShapeF::Symbol(s) | ShapeF::Binding(s) => DocF::Atom(s.clone()),
             ShapeF::String(s) => DocF::Atom(quote_string(s)),
             ShapeF::List(children) => {
                 DocF::List(children.iter().map(|c| c.to_doc_with_trivia()).collect())
@@ -218,7 +227,7 @@ impl CstNode<TriviaAnn> {
 
         // Write the shape
         match &self.shape {
-            ShapeF::Keyword(s) | ShapeF::Symbol(s) => {
+            ShapeF::Keyword(s) | ShapeF::Symbol(s) | ShapeF::Binding(s) => {
                 output.push_str(s);
             }
             ShapeF::String(s) => {
@@ -259,10 +268,21 @@ impl CstNode<TriviaAnn> {
 }
 
 impl<A> CstNode<A> {
-    /// Get the atom value if this is a keyword or symbol.
+    /// Get the atom value if this is a keyword or symbol. Returns `None` for
+    /// binding atoms (`#var`) so callers expecting plain atoms don't
+    /// accidentally accept a binding; use `as_binding` for that.
     pub fn as_atom(&self) -> Option<&str> {
         match &self.shape {
             ShapeF::Keyword(s) | ShapeF::Symbol(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    /// Get the binding name (including the leading `#`) if this is a binding
+    /// atom.
+    pub fn as_binding(&self) -> Option<&str> {
+        match &self.shape {
+            ShapeF::Binding(s) => Some(s),
             _ => None,
         }
     }
@@ -305,7 +325,7 @@ impl<A> CstNode<A> {
 
         // If no transformation at this node, try children
         match &self.shape {
-            ShapeF::Keyword(_) | ShapeF::Symbol(_) | ShapeF::String(_) => None,
+            ShapeF::Keyword(_) | ShapeF::Symbol(_) | ShapeF::Binding(_) | ShapeF::String(_) => None,
             ShapeF::List(children) => self.transform_children(children, f, ShapeF::List),
             ShapeF::Vector(children) => self.transform_children(children, f, ShapeF::Vector),
         }
@@ -457,6 +477,7 @@ impl<'a> Parser<'a> {
             '(' => self.parse_list(pos, ')'),
             '[' => self.parse_list(pos, ']'),
             '"' => self.parse_string(pos),
+            '#' => self.parse_binding(pos),
             _ if is_atom_char(ch) => self.parse_atom(pos),
             _ => {
                 self.errors.push(crate::span::RawError::new(
@@ -581,6 +602,51 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_binding(&mut self, start: usize) -> Option<CstNode> {
+        self.chars.next(); // consume leading '#'
+        let name_start = start + 1;
+        let mut s = String::from('#');
+        let mut end = name_start;
+
+        while let Some(&(pos, c)) = self.chars.peek() {
+            if is_atom_char(c) {
+                s.push(c);
+                end = pos + c.len_utf8();
+                self.chars.next();
+            } else {
+                break;
+            }
+        }
+
+        if s.len() == 1 {
+            // '#' with no name. Report an error and consume one char if it's
+            // a clearly-bad follower (e.g. '#@'); otherwise leave the next
+            // char for the outer parser to report.
+            let extent = self
+                .chars
+                .peek()
+                .filter(|(_, c)| !c.is_whitespace() && !matches!(c, '(' | ')' | '[' | ']' | '"'))
+                .map(|(pos, c)| pos + c.len_utf8())
+                .unwrap_or(end);
+            if extent > end {
+                self.chars.next();
+            }
+            self.errors.push(crate::span::RawError::new(
+                "expected binding name after `#`",
+                Span::new(start, extent.max(end)),
+            ));
+            return None;
+        }
+
+        Some(CstNode {
+            ann: TriviaAnn {
+                span: Span::new(start, end),
+                ..Default::default()
+            },
+            shape: ShapeF::Binding(s),
+        })
+    }
+
     fn parse_atom(&mut self, start: usize) -> Option<CstNode> {
         let mut s = String::new();
         let mut end = start;
@@ -686,6 +752,58 @@ mod tests {
         assert!(errors.is_empty());
         let output = nodes.iter().map(|n| n.serialize()).collect::<String>();
         assert_eq!(input, output);
+    }
+
+    // ── Binding-atom (#var) parser tests ───────────────────────────
+
+    #[test]
+    fn parse_binding_atom() {
+        let (nodes, errors) = parse("#cmd");
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].as_binding(), Some("#cmd"));
+        assert_eq!(nodes[0].as_atom(), None);
+    }
+
+    #[test]
+    fn parse_binding_inside_list() {
+        let (nodes, errors) = parse("(authorise #cmd)");
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let children = nodes[0].as_list().expect("list");
+        assert_eq!(children[1].as_binding(), Some("#cmd"));
+    }
+
+    #[test]
+    fn parse_binding_serialize_roundtrip() {
+        let (nodes, errors) = parse("(authorise #cmd)");
+        assert!(errors.is_empty());
+        assert_eq!(nodes[0].serialize(), "(authorise #cmd)");
+    }
+
+    #[test]
+    fn parse_lone_hash_errors() {
+        let (_, errors) = parse("#");
+        assert!(!errors.is_empty(), "lone `#` must produce a lex error");
+    }
+
+    #[test]
+    fn parse_hash_followed_by_non_name_errors() {
+        let (_, errors) = parse("#@bad");
+        assert!(!errors.is_empty(), "`#@…` must produce a lex error");
+    }
+
+    #[test]
+    fn binding_atom_distinct_from_symbol_and_keyword() {
+        let (nodes_a, _) = parse("#foo");
+        let (nodes_b, _) = parse("foo");
+        let (nodes_c, _) = parse(":foo");
+        // PartialEq on Sexpr ignores spans; the *kinds* must differ.
+        let a = nodes_a[0].to_sexpr();
+        let b = nodes_b[0].to_sexpr();
+        let c = nodes_c[0].to_sexpr();
+        assert_ne!(a, b);
+        assert_ne!(a, c);
+        assert_ne!(b, c);
     }
 
     #[test]
@@ -1479,6 +1597,7 @@ mod proptests {
         match (&a.shape, &b.shape) {
             (Shape::Keyword(a_str), Shape::Keyword(b_str)) => a_str == b_str,
             (Shape::Symbol(a_str), Shape::Symbol(b_str)) => a_str == b_str,
+            (Shape::Binding(a_str), Shape::Binding(b_str)) => a_str == b_str,
             (Shape::String(a_str), Shape::String(b_str)) => a_str == b_str,
             (Shape::List(a_children), Shape::List(b_children)) => {
                 a_children.len() == b_children.len()
@@ -1503,6 +1622,11 @@ mod proptests {
         prop::string::string_regex("[a-zA-Z0-9-_*/.^:+?=]+").unwrap()
     }
 
+    /// Strategy for generating binding atom strings (`#NAME`).
+    fn binding_string() -> impl Strategy<Value = String> {
+        prop::string::string_regex("#[a-zA-Z][a-zA-Z0-9-_]*").unwrap()
+    }
+
     /// Strategy for generating string literals (without quotes)
     fn string_content() -> impl Strategy<Value = String> {
         "[a-zA-Z0-9 ]*".prop_map(|s| s.replace('"', ""))
@@ -1512,6 +1636,7 @@ mod proptests {
     fn sexpr_shape(depth: u32) -> BoxedStrategy<String> {
         let leaf: BoxedStrategy<String> = prop_oneof!(
             atom_string(),
+            binding_string(),
             string_content().prop_map(|s| format!("\"{}\"", s)),
         )
         .boxed();
@@ -1560,6 +1685,52 @@ mod proptests {
                 prop_assert!(cst_nodes_equal(orig, rep),
                     "Roundtrip should preserve structure: original={:?}, reparsed={:?}", orig, rep);
             }
+        }
+
+        // ── Section 1.7 checkpoint: sigil algebra ──────────────────
+
+        /// Binding atoms roundtrip through parse → serialize.
+        #[test]
+        fn binding_roundtrip(input in binding_string()) {
+            let (nodes, errors) = parse(&input);
+            prop_assert!(errors.is_empty(), "binding atom should lex: {:?}", errors);
+            prop_assert_eq!(nodes.len(), 1);
+            prop_assert!(matches!(nodes[0].shape, Shape::Binding(_)));
+            let serialized = nodes[0].serialize();
+            prop_assert_eq!(&serialized, &input);
+        }
+
+        /// Sigil-disjointness: `#x`, `:x`, `x`, `"x"` form four disjoint
+        /// equivalence classes under `Sexpr` equality.
+        #[test]
+        fn sigil_classes_disjoint(name in "[a-z][a-z0-9_-]{0,8}") {
+            let symbol = format!("{name}");
+            let keyword = format!(":{name}");
+            let binding = format!("#{name}");
+            let string = format!("\"{name}\"");
+            let parse_one = |s: &str| {
+                let (nodes, errors) = parse(s);
+                assert!(errors.is_empty(), "parsing {s:?}: {errors:?}");
+                nodes.into_iter().next().unwrap().to_sexpr()
+            };
+            let s = parse_one(&symbol);
+            let k = parse_one(&keyword);
+            let b = parse_one(&binding);
+            let st = parse_one(&string);
+            prop_assert_ne!(&s, &k);
+            prop_assert_ne!(&s, &b);
+            prop_assert_ne!(&s, &st);
+            prop_assert_ne!(&k, &b);
+            prop_assert_ne!(&k, &st);
+            prop_assert_ne!(&b, &st);
+        }
+
+        /// Lexer totality: parsing never panics on arbitrary input.
+        /// Either the input lexes cleanly or yields at least one error.
+        #[test]
+        fn lexer_total(input in "[\\x20-\\x7e\\n]{0,40}") {
+            let (_nodes, _errors) = parse(&input);
+            // Reaching here without panic is the assertion.
         }
 
         #[test]
@@ -1751,7 +1922,7 @@ mod proptests {
 
         // Fold to count nodes
         let count: usize = node.fold(&mut |shape, _ann| match shape {
-            ShapeF::Keyword(_) | ShapeF::Symbol(_) | ShapeF::String(_) => 1,
+            ShapeF::Keyword(_) | ShapeF::Symbol(_) | ShapeF::Binding(_) | ShapeF::String(_) => 1,
             ShapeF::List(children) | ShapeF::Vector(children) => 1 + children.iter().sum::<usize>(),
         });
 
@@ -1768,7 +1939,9 @@ mod proptests {
 
         // Fold to collect all atom values
         let atoms: Vec<String> = node.fold(&mut |shape, _ann| match shape {
-            ShapeF::Keyword(s) | ShapeF::Symbol(s) | ShapeF::String(s) => vec![s.clone()],
+            ShapeF::Keyword(s) | ShapeF::Symbol(s) | ShapeF::Binding(s) | ShapeF::String(s) => {
+                vec![s.clone()]
+            }
             ShapeF::List(children) | ShapeF::Vector(children) => {
                 children.iter().flatten().cloned().collect()
             }
@@ -1787,7 +1960,7 @@ mod proptests {
 
         // Fold to collect all spans
         let spans: Vec<(usize, usize)> = node.fold(&mut |shape, ann| match shape {
-            ShapeF::Keyword(_) | ShapeF::Symbol(_) | ShapeF::String(_) => {
+            ShapeF::Keyword(_) | ShapeF::Symbol(_) | ShapeF::Binding(_) | ShapeF::String(_) => {
                 vec![(ann.span.start, ann.span.end)]
             }
             ShapeF::List(children) | ShapeF::Vector(children) => {
