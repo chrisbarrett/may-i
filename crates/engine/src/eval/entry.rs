@@ -451,10 +451,12 @@ impl<'a> Evaluator<'a> {
 
     /// Evaluate a command against all rules.
     ///
-    /// Combines every matching rule's effect under the `Decision` lattice
-    /// `Allow < Ask < Deny` and returns the maximum. Ties on the most-strict
-    /// effect resolve to the earliest matching rule's `reason`. If no rule
-    /// matches, returns `Ask`.
+    /// Runs every rule whose command pattern matches the input, collects
+    /// each non-Nil decision, and returns the strictest under the lattice
+    /// `Allow < Ask < Deny`. When two or more rules tie on the strictest
+    /// decision, distinct reasons are deduplicated, sorted lexically, and
+    /// joined with `"; "` so the result does not depend on rule order.
+    /// If no rule produces a decision, returns `Ask`.
     pub fn evaluate<F: EvalFold>(
         &self,
         fold: &mut F,
@@ -470,12 +472,10 @@ impl<'a> Evaluator<'a> {
             ));
         }
 
-        let mut best: Option<EvalResult> = None;
-        // Indices into the match order — i.e., the Nth `rule_matched`
-        // call for this evaluator scope, which folds use to correlate
-        // tied rules with their per-scope trace entries.
-        let mut tied_match_indices: Vec<usize> = Vec::new();
-        let mut reason_source_match_index: Option<usize> = None;
+        // (match_idx, decision, reason). Match indices count `rule_matched`
+        // calls in evaluation order so folds can correlate with their
+        // per-scope trace entries.
+        let mut matches: Vec<(usize, Decision, Option<String>)> = Vec::new();
         let mut match_counter: usize = 0;
         let mut any_command_matched = false;
         for rule in self.rules.iter() {
@@ -486,24 +486,7 @@ impl<'a> Evaluator<'a> {
                 EffectResult::Decision(decision, reason) => {
                     let match_idx = match_counter;
                     match_counter += 1;
-                    match &best {
-                        None => {
-                            best = Some(EvalResult::new(*decision, reason.clone()));
-                            reason_source_match_index = Some(match_idx);
-                            tied_match_indices.clear();
-                            tied_match_indices.push(match_idx);
-                        }
-                        Some(prev) if *decision > prev.decision => {
-                            best = Some(EvalResult::new(*decision, reason.clone()));
-                            reason_source_match_index = Some(match_idx);
-                            tied_match_indices.clear();
-                            tied_match_indices.push(match_idx);
-                        }
-                        Some(prev) if *decision == prev.decision => {
-                            tied_match_indices.push(match_idx);
-                        }
-                        _ => {}
-                    }
+                    matches.push((match_idx, *decision, reason.clone()));
                 }
                 EffectResult::Nil => {
                     if rule.command_effect.value.matches_command(ctx.command) {
@@ -513,9 +496,26 @@ impl<'a> Evaluator<'a> {
             }
         }
 
-        if let Some(result) = best {
+        if !matches.is_empty() {
+            let strictest = matches.iter().map(|(_, d, _)| *d).max().unwrap();
+            let tied: Vec<&(usize, Decision, Option<String>)> =
+                matches.iter().filter(|(_, d, _)| *d == strictest).collect();
+            let tied_match_indices: Vec<usize> = tied.iter().map(|(i, _, _)| *i).collect();
+            let mut distinct_reasons: Vec<&str> =
+                tied.iter().filter_map(|(_, _, r)| r.as_deref()).collect();
+            distinct_reasons.sort();
+            distinct_reasons.dedup();
+            let reason = if distinct_reasons.is_empty() {
+                None
+            } else {
+                Some(distinct_reasons.join("; "))
+            };
+            let reason_source_match_index = tied
+                .iter()
+                .find(|(_, _, r)| r.is_some())
+                .map(|(i, _, _)| *i);
             fold.rules_combined(&tied_match_indices, reason_source_match_index);
-            return Ok(result);
+            return Ok(EvalResult::new(strictest, reason));
         }
 
         let reason = if any_command_matched {

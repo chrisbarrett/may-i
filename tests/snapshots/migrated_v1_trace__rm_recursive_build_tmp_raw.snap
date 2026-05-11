@@ -49,6 +49,6 @@ expression: normalised
 
   [4;32mrm -r /tmp/foo[0m
 
-  [2m→[0m [1;32m:allow[0m [32m"Deleting tmp files is allowed"[0m
+  [2m→[0m [1;32m:allow[0m [32m"Deleting tmp files is allowed; Non-recursive delete is allowed"[0m
 
   config: <config-path>

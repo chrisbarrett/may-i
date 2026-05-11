@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 462ef188ca44d14e38188870582f3a692c916520b23e3047021164a629ada70f # shrinks to decisions = [Ask, Ask], reasons = ["a", "b"], perm_seed = 473

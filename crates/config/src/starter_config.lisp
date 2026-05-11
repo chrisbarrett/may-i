@@ -1,6 +1,7 @@
 ;;; may-i configuration
 ;;
-;; Rules are evaluated in order. First match wins.
+;; Every rule whose command matches runs; the strictest decision wins
+;; (deny > ask > allow). Order in the file doesn't matter.
 ;; Commands with no matching rule default to "ask". Edits take effect immediately.
 ;;
 ;; Validate your config with: may-i check
