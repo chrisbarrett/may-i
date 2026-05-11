@@ -1,4 +1,10 @@
-## ADDED Requirements
+# integration-test-coverage Specification
+
+## Purpose
+
+Contributor-only. Coverage floor for the CLI: every user-facing subcommand has at least one happy-path and one error-path integration test that drives the binary as a subprocess.
+
+## Requirements
 
 ### Requirement: All CLI subcommands have integration tests
 Every user-facing CLI subcommand SHALL have at least one happy-path and one error-path integration test that invokes the may-i binary as a subprocess.

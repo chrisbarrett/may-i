@@ -1,4 +1,10 @@
-## ADDED Requirements
+# test-infrastructure Specification
+
+## Purpose
+
+Contributor-only. Shared integration-test helpers (`tests/common/mod.rs`) and the thread-safe contract for tests that mutate process-global environment variables.
+
+## Requirements
 
 ### Requirement: Shared integration test helpers
 Integration test files SHALL share common helper functions via a `tests/common/mod.rs` module rather than duplicating them.

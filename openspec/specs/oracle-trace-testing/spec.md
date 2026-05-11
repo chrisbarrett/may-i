@@ -1,4 +1,10 @@
-## ADDED Requirements
+# oracle-trace-testing Specification
+
+## Purpose
+
+Contributor-only. Snapshot-based integration tests that load a frozen V1 fixture (via transparent migration), evaluate canonical cases through the full eval pipeline, and compare both ANSI-stripped and raw-coloured trace output byte-for-byte against checked-in oracle snapshots, with config-path normalisation and pinned 80-column geometry.
+
+## Requirements
 
 ### Requirement: Integration test loads V1 fixture and evaluates commands
 
