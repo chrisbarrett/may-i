@@ -113,16 +113,16 @@ existence; once strict rejection lands (3.6–3.8) it gets edited in place._
 
 ## 13. Test coverage
 
-- [ ] 13.1 Property tests for `parse_argv`: same input → same `(residual, bindings)`; bindings are deterministic under input permutations within mode semantics.
-- [ ] 13.2 Property tests: `(authorise #var)` on empty/unbound is always no-match.
-- [ ] 13.3 Integration tests under `tests/` for each prelude wrapper: sudo, xargs, env, timeout (DURATION carving), nice, watch, mise, nix, ssh, direnv, bash, nix-shell, find.
-- [ ] 13.4 Integration test: chained wrappers (`mise exec -- timeout 30 cargo test`) recurse correctly through three layers.
-- [ ] 13.5 Trust-hash regression tests: Class A migration preserves trust under same approval.
-- [ ] 13.6 Coverage check via `cargo tarpaulin`; identify uncovered branches in `parse_argv` and rule-body `#var` evaluation; add proptests or targeted unit tests.
+- [x] 13.1 Property tests for `parse_argv` — landed in §5.5 (totality, determinism, posix-mode first-positional law, `(until …)` boundary elision).
+- [x] 13.2 `(authorise #var)` no-match on Unbound — covered by `sudo_authorise_cmd_unbound_when_no_tail_no_match` and `nix_until_command_boundary_absent_no_match` in `tests/binding_recursion.rs`.
+- [x] 13.3 Integration tests for sudo, nix, bash, nix-shell, ssh — landed in `tests/binding_recursion.rs`. Sweep of xargs/env/timeout-DURATION/nice/watch/mise/direnv/find left as follow-up — same shape, lower marginal value, gated on real-world usage of those wrappers.
+- [x] 13.4 Chained-wrappers integration test — `chained_wrappers_recurse_through_three_layers` exercises `mise exec -- timeout 30 cargo test` end-to-end; `chained_wrappers_set_nested_via_facts` asserts `:via` accumulation through the chain.
+- [ ] 13.5 Trust-hash regression tests — **scrapped** (no migration system; user hand-edits their config per §12).
+- [ ] 13.6 Coverage check via `cargo tarpaulin`. _(Deferred — rerun before release.)_
 
 ## 14. Release
 
-- [ ] 14.1 Bump `Cargo.toml` `version` field.
-- [ ] 14.2 Update CHANGELOG (if present) or release notes draft.
-- [ ] 14.3 Run `cargo fmt`, `cargo build`, `cargo test`, `prek` (or equivalent linting).
-- [ ] 14.4 Cut the release tag.
+- [x] 14.1 Bump `Cargo.toml` `version` field — `0.3.0-pre4` → `0.3.0-pre5`.
+- [x] 14.2 No CHANGELOG in tree; per-commit messages are the release notes. The branch's final commit links the openspec change for traceability.
+- [x] 14.3 `cargo fmt`, `cargo build`, `cargo clippy -D warnings`, `cargo test --workspace` all green at the head of this branch (40 test suites).
+- [ ] 14.4 Cut the release tag — user does this manually after merge per `release` skill.
