@@ -6,6 +6,7 @@
 - [ ] 1.4 Update `may_i_sexpr::Sexpr` accessor methods (`as_atom`, `as_binding`, `as_atom_or_str`) so existing callers don't accidentally accept bindings where they expect atoms.
 - [ ] 1.5 Add proptest generators for `#NAME` atoms; ensure roundtrip print/parse stable.
 - [ ] 1.6 Add unit tests: `#foo` parses, `#` errors, `#@bad` errors, `#foo` is not equal to `foo` or `:foo`.
+- [ ] 1.7 **Property checkpoint — sigil algebra.** Roundtrip: `parse(print(s)) == s` for every `Sexpr` (now including `Binding`). Distinctness: `#x`, `:x`, `x`, `"x"` form four disjoint equivalence classes under `PartialEq`. Lexer totality: every input string either parses or yields at least one `RawError` (no panics).
 
 ## 2. AST: parser representation
 
@@ -15,6 +16,7 @@
 - [ ] 2.4 Extend `ParameterDecl` with `binding: Option<BindingName>`; preserve existing `treatment` and `capture` fields during the migration but mark `ParameterTreatment::Authorise` as deprecated/removed at the end.
 - [ ] 2.5 Replace `Parser::tail: Option<Tail>` with `Parser::flags_mode: FlagsMode`, `Parser::positionals: Vec<PositionalDecl>`, `Parser::rest: Option<BindingName>`.
 - [ ] 2.6 Remove `Tail` enum from public exports; keep it temporarily internal as the migration tool may need to read old-form configs.
+- [ ] 2.7 **Encapsulation checkpoint.** `BindingName` has a private field and smart constructor enforcing: non-empty, no embedded `#`, no whitespace. Reject `BindingName::new("")`, `BindingName::new("#foo")`, `BindingName::new("foo bar")`. Property: a `BindingName` value round-trips through `Display` and `from_str` losslessly.
 
 ## 3. Config parser: parser-body forms
 
@@ -28,6 +30,7 @@
 - [ ] 3.8 Reject any `(parser …)` body that omits `(flags …)`.
 - [ ] 3.9 Update canonicalisation (`crates/config/src/canonicalise.rs`) to alphabetise body items in the new schema: `(style)`, `(flags)`, `(flag)`, `(parameter)`, `(positional)`, `(rest)`.
 - [ ] 3.10 Update parser-properties proptest harness with new-form generators.
+- [ ] 3.11 **Property checkpoint — canonicalisation algebra.** Stability: `parse → canonicalise → parse` yields equal ASTs. Idempotence: `canonicalise(canonicalise(x)) == canonicalise(x)`. Order independence: a parser body assembled in any permutation of its body items canonicalises to the same form. Invariant survival: `(flags …)` exactly-once and `(rest …)` at-most-once survive canonicalisation; violations are rejected at parse, not silently merged.
 
 ## 4. Config parser: rule-body forms
 
@@ -49,6 +52,7 @@
   - returns the positional residual (for rule-body matchers) and the binding environment.
 - [ ] 5.3 Remove `split_outer_tail`, `parser_positional_args`, and `Tail` consumers from `crates/engine/src/eval/entry.rs`. Re-route all callers through `parse_argv`.
 - [ ] 5.4 Thread `Bindings` through `EvalContext` so rule-body forms can consult it.
+- [ ] 5.5 **Property checkpoint — `parse_argv` invariants.** Totality: never panics on any argv. Determinism: same `(parser, argv)` yields the same `(residual, bindings)`. Conservation: under `permute`, `residual ∪ values(bindings) ∪ peeled_flags == argv` (multiset equality, modulo flag-parameter pairing). Mode laws: under `posix`, the first non-flag token starts the residual and no flags are peeled after it; under `(until STR…)`, the boundary token appears in neither residual nor any binding and partitions argv exactly once; under `permute`, swapping two adjacent positional tokens swaps their bindings (if any) without otherwise changing the result.
 
 ## 6. Engine: rule-body evaluation
 
@@ -57,6 +61,7 @@
 - [ ] 6.3 Implement `(matches? #var PAT)` evaluation (string-coerce `Tokens` via space-join).
 - [ ] 6.4 Extend `(with-facts …)` to dereference `#var` references against the active bindings.
 - [ ] 6.5 Preserve existing rule-body matchers — `(flag …)`, `(parameter …)`, `(positional …)`, `(anywhere …)`, `(forbidden …)`, `(exact …)` — operating on the positional residual returned by `parse_argv`.
+- [ ] 6.6 **Property checkpoint — binding-consumer algebra.** `(authorise #var)` on `Unbound` or empty value is no-match (never panic, never recurse). `(bound? #var)` ≡ `bindings.get(#var) != Unbound`. `(matches? #var PAT)` agrees with matching `PAT` against the string coercion of the bound value (`Token` as-is; `Tokens` space-joined). Recursion bound: every `(authorise)` call strictly shrinks the argv being analysed (no infinite loops on adversarial inputs).
 
 ## 7. Trace renderer
 
@@ -75,6 +80,7 @@
 - [ ] 8.6 Add rewrite for parser-body `(parameter X (authorise))` → split: parser-side `(parameter X #x)`, rule-side `(authorise #x)` at every rule referencing this parameter.
 - [ ] 8.7 Add rewrite for parser-body `(parameter X (many-till PAT) (authorise))` → split analogously.
 - [ ] 8.8 Add migration tests covering each rewrite (`crates/config/src/migration_tests.rs`).
+- [ ] 8.9 **Property checkpoint — migration algebra.** Idempotence: `migrate(migrate(x)) == migrate(x)` for any input (already-migrated configs are no-ops). Decision preservation: for a fixed argv corpus, the engine's decision on the pre-migration config equals the decision on the post-migration config across every Class A rewrite. Trust-hash carry: re-canonicalisation under same approval preserves the trust record (Class A rewrites only).
 
 ## 9. Migration: Class B detection
 
@@ -99,6 +105,7 @@
 - [ ] 10.11 Rewrite find with `(flags permute)` and `(parameter … (many-till …) #var)` bindings for exec/execdir/ok.
 - [ ] 10.12 Update `crates/config/src/prelude.rs` Rust mirror to match.
 - [ ] 10.13 Update `crates/config/src/starter_config.lisp` examples.
+- [ ] 10.14 **Property checkpoint — prelude composition.** Every prelude wrapper has at least one input where `(authorise #cmd)` (or the parser's chosen `(rest …)` binding) resolves and the engine recurses on the bound value. Chained-wrapper invariant: for `mise exec -- timeout 30 cargo test`, the recurse chain produces three nested `:via` facts (`mise`, `timeout`, `cargo`) in order. No prelude parser declares a binding it never produces (every declared `#var` has a code path that can bind it).
 
 ## 11. Documentation
 
