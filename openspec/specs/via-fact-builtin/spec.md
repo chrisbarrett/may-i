@@ -1,4 +1,10 @@
-## ADDED Requirements
+# via-fact-builtin Specification
+
+## Purpose
+
+How the automatic `:via` fact is populated during wrapper recursion: each `(authorise)` recurse pushes the wrapping command name onto the `:via` set, accumulating across nested wrappers. Set semantics mean order does not matter for membership tests. `:via` is the only automatic fact; named facts require explicit `(positional [:k *] …)` binding in the pattern.
+
+## Requirements
 
 ### Requirement: may-i pushes command name onto :via set
 When `(may-i *)` triggers recursive evaluation, the evaluator SHALL automatically push the current command name onto the `:via` fact set before evaluating the inner command.

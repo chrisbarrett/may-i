@@ -1,4 +1,10 @@
-## MODIFIED Requirements
+# fact-predicates-in-args Specification
+
+## Purpose
+
+Contributor-only. The internal `BoolExpr` enum the evaluator uses for fact-based predicates inside arg matching, plus the polymorphic conditional-branch typing (`(when …)`, `(unless …)`, `(if …)` accept `ArgMatcher` | `Expr` | `BoolExpr`) and the `ContextFacts` threading rule. Backing representation for the user-facing `(fact? …)` form surfaced in `fact-system`.
+
+## Requirements
 
 ### Requirement: BoolExpr type for fact predicates
 The system SHALL support a `BoolExpr` type representing fact predicates with the following variants: (CHANGED: `Has` renamed to `Fact` to align with `fact?` syntax)
