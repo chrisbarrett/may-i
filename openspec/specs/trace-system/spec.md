@@ -103,6 +103,10 @@ the tested value, the argument set, and the match verdict.
 Terminal trace output SHALL colorise decision keywords: `:allow` in green,
 `:ask` in yellow, `:deny` in red.
 
+#### Scenario: Each decision keyword has its colour
+- **WHEN** a trace line renders `:allow`, `:ask`, or `:deny`
+- **THEN** the keyword SHALL be coloured green, yellow, or red respectively
+
 ### Requirement: Unevaluated branches are dimmed
 When short-circuiting skips child nodes, those nodes SHALL be rendered in dimmed
 style in the left column with no right-column annotation. When a `cond` branch
@@ -135,15 +139,25 @@ dimmed `…` atom rather than rendering each skipped branch individually.
 When a `(command (or ...))` list contains many alternatives, the renderer SHALL
 truncate after a reasonable number of items and show `…` for the rest.
 
+#### Scenario: 20-alternative or-list truncates
+- **WHEN** a `(command (or ...))` list contains 20 alternatives
+- **THEN** the renderer SHALL print a bounded prefix followed by `…`
+
 ### Requirement: Compound commands show per-segment traces
-When evaluating a compound command (e.g., `echo hello && rm -rf /`), each
-command segment SHALL be traced separately with a segment header showing the
-command text and its decision.
+The renderer SHALL trace each command segment of a compound command (e.g., `echo hello && rm -rf /`) separately, with a segment header showing the command text and its decision.
+
+#### Scenario: Two-segment compound trace
+- **WHEN** rendering a trace for `echo hello && rm -rf /`
+- **THEN** the output SHALL show one segment header per command with that segment's decision
 
 ### Requirement: Result section shows aggregate decision
 After the trace section, the renderer SHALL print a result section showing the
 full command (colorised per-segment by decision), an arrow with the aggregate
 decision keyword, and the config file path.
+
+#### Scenario: Result section follows trace
+- **WHEN** a trace finishes for any command
+- **THEN** a result section SHALL print the full command, the aggregate decision keyword with an arrow, and the config file path
 
 ### Requirement: JSON trace serialises Doc<Ann> tree
 When `--json` is passed to `may-i eval`, the output SHALL include a `trace`
@@ -151,29 +165,58 @@ array where each entry contains the rule's source line, a structured
 representation of the s-expression, and an array of annotations with type,
 decision, match details, and failure reasons.
 
+#### Scenario: JSON output contains trace entries
+- **WHEN** `may-i eval --json` runs on any command
+- **THEN** the output SHALL contain a `trace` array whose entries record source line, s-expression structure, and annotations
+
 ### Requirement: Check command runs all embedded checks
 `may-i check` SHALL evaluate all embedded `(check ...)` forms (both rule-level
 and top-level) and report pass/fail results.
 
+#### Scenario: Rule-level and top-level checks both run
+- **GIVEN** a config containing both a rule-level `(check …)` and a top-level `(check …)`
+- **WHEN** `may-i check` runs
+- **THEN** both checks SHALL be evaluated and their pass/fail results SHALL be reported
+
 ### Requirement: Check verbose mode shows passing checks
-When `may-i check -v` is run, the output SHALL list every check with its
-command and actual decision, not just failures.
+`may-i check -v` SHALL list every check with its command and actual decision,
+not just failures.
+
+#### Scenario: Verbose lists passing and failing checks
+- **WHEN** `may-i check -v` runs against a config with mixed passing and failing checks
+- **THEN** the output SHALL list every check with its command and actual decision
 
 ### Requirement: Check JSON mode outputs structured results
-When `may-i check --json` is run, the output SHALL be a JSON object with
-`passed` count, `failed` count, and a `results` array where each entry includes
-command, expected/actual decisions, pass/fail flag, context, location, reason,
-and trace.
+`may-i check --json` SHALL produce a JSON object with `passed` count, `failed`
+count, and a `results` array where each entry includes command,
+expected/actual decisions, pass/fail flag, context, location, reason, and
+trace.
+
+#### Scenario: JSON output is structured
+- **WHEN** `may-i check --json` runs
+- **THEN** the output SHALL contain `passed`, `failed`, and `results` fields with the entry shape specified above
 
 ### Requirement: Dimmed nodes produce no right-column annotations
-When a Doc node is dimmed (representing an unevaluated branch), the renderer
-SHALL NOT produce any right-column annotation for that node or its children.
+The renderer SHALL NOT produce any right-column annotation for a Doc node
+(or its children) that is dimmed because it represents an unevaluated branch.
+
+#### Scenario: Dimmed subtree has no right-column annotations
+- **WHEN** a Doc node is rendered dimmed
+- **THEN** neither the node nor any descendant SHALL produce a right-column annotation
 
 ### Requirement: Structural annotation placement via AnnotatedLineBuilder
 The renderer SHALL use `AnnotatedLineBuilder` to collect annotations
 structurally during pretty-printing, rather than string-matching rendered output
 with `find_line`.
 
+#### Scenario: AnnotatedLineBuilder is the placement path
+- **WHEN** the renderer attaches an annotation to a line
+- **THEN** it SHALL do so via `AnnotatedLineBuilder`, never by post-hoc `find_line` string matching
+
 ### Requirement: Multiple annotations per line use priority ordering
 When multiple annotations exist on a single rendered line, the renderer SHALL
 display only the highest-priority annotation.
+
+#### Scenario: Only highest-priority annotation renders
+- **WHEN** two annotations target the same rendered line
+- **THEN** only the higher-priority annotation SHALL be displayed

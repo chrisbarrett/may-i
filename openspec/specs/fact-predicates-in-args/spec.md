@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Contributor-only. The internal `BoolExpr` enum the evaluator uses for fact-based predicates inside arg matching, plus the polymorphic conditional-branch typing (`(when …)`, `(unless …)`, `(if …)` accept `ArgMatcher` | `Expr` | `BoolExpr`) and the `ContextFacts` threading rule. Backing representation for the user-facing `(fact? …)` form surfaced in `fact-system`.
+Contributor-only. The internal `BoolExpr` enum the evaluator uses for fact-based predicates inside arg matching, plus the polymorphic conditional-branch typing (`(when …)`, `(unless …)`, `(if …)` accept `ArgMatcher` | `Expr` | `BoolExpr`) and the `ContextFacts` threading rule. Backing representation for the user-facing `(fact? …)` form surfaced in `facts`.
 
 ## Requirements
 

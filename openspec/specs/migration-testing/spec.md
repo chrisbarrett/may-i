@@ -60,5 +60,13 @@ The rename_has_to_fact rewrite SHALL preserve semantics for all legal value patt
 ### Requirement: Mixed v1/v2 configs migrate correctly
 Files containing both v1 and v2 syntax SHALL only migrate the v1 forms, leaving v2 forms unchanged.
 
+#### Scenario: v2 forms pass through untouched
+- **WHEN** a config mixes a v1 `(wrapper …)` form with a v2 `(rule …)` form
+- **THEN** migration SHALL rewrite the v1 form and leave the v2 form byte-identical
+
 ### Requirement: Proptest generators cover compound v1 forms
 Property tests SHALL generate compound v1 configs and verify evaluation equivalence after migration.
+
+#### Scenario: Generated compound config round-trips
+- **WHEN** the proptest harness produces a compound v1 config and migrates it
+- **THEN** the migrated v2 config SHALL evaluate identically to the v1 original for every sampled input

@@ -13,9 +13,8 @@ Trust-relevant: yes — see `trust-store`, `trust-command`, `trust-provenance`.
 
 ### Requirement: Trust hash is computed per program name
 
-For each program that has any rule or define with `Loaded` provenance, the
-system SHALL compute a SHA-256 hash over the resolved rule closure for that
-program.
+The system SHALL compute a SHA-256 hash over the resolved rule closure
+for each program that has any rule or define with `Loaded` provenance.
 
 #### Scenario: Program with loaded rule gets a hash
 
@@ -65,9 +64,9 @@ are partitioned across `(load …)` files SHALL NOT influence the hash.
 
 ### Requirement: Programs referencing Loaded defines need trust
 
-If a program's rules reference any define with `Loaded` provenance (directly or
-transitively), that program SHALL require trust approval even if all its rules
-are `PrimaryConfig`.
+A program SHALL require trust approval if its rules reference any
+define with `Loaded` provenance (directly or transitively), even if all
+its rules are `PrimaryConfig`.
 
 #### Scenario: PrimaryConfig rule using Loaded define
 
