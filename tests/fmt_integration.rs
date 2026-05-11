@@ -2,8 +2,7 @@
 
 mod common;
 
-use assert_cmd::cargo::cargo_bin_cmd;
-use common::{may_i, write_config};
+use common::{may_i, may_i_cmd, write_config};
 use predicates::prelude::*;
 use tempfile::NamedTempFile;
 
@@ -45,7 +44,7 @@ fn fmt_multi_file_one_parse_error_exits_two() {
     let good_path = good.path().to_path_buf();
     let bad_path = bad.path().to_path_buf();
 
-    cargo_bin_cmd!("may-i")
+    may_i_cmd()
         .args([
             "fmt",
             &good_path.display().to_string(),
@@ -74,7 +73,7 @@ fn fmt_readonly_file_skipped_with_warning() {
     perms.set_readonly(true);
     std::fs::set_permissions(ro.path(), perms).unwrap();
 
-    let result = cargo_bin_cmd!("may-i")
+    let result = may_i_cmd()
         .args([
             "fmt",
             &ro.path().display().to_string(),
@@ -123,7 +122,7 @@ fn fmt_walk_load_graph_formats_primary_and_loaded() {
     )
     .unwrap();
 
-    cargo_bin_cmd!("may-i")
+    may_i_cmd()
         .env("MAYI_CONFIG", &primary_path)
         .args(["fmt"])
         .assert()
@@ -251,7 +250,7 @@ fn fmt_check_multifile_returns_highest_severity() {
 "#,
     );
     let bad = write_config("(unterm\n");
-    cargo_bin_cmd!("may-i")
+    may_i_cmd()
         .args([
             "fmt",
             "--check",

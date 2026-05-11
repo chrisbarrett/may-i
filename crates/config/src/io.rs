@@ -1127,8 +1127,22 @@ mod tests {
 
     // --- Repo-local discovery tests ---
 
+    /// Write a minimal but valid `.git/` so that `git rev-parse
+    /// --show-toplevel` cannot fall through to a parent repo.
+    ///
+    /// An empty `.git/` directory is implementation-defined input to git —
+    /// some versions accept it as a toplevel marker, some reject it and let
+    /// discovery walk into an ancestor. Writing `HEAD` and `config` gives
+    /// git the minimum it accepts as a valid repo without forking `git init`.
     fn init_git(path: &Path) {
-        std::fs::create_dir_all(path.join(".git")).unwrap();
+        let git_dir = path.join(".git");
+        std::fs::create_dir_all(&git_dir).unwrap();
+        std::fs::write(git_dir.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        std::fs::write(
+            git_dir.join("config"),
+            "[core]\n\trepositoryformatversion = 0\n",
+        )
+        .unwrap();
     }
 
     #[test]
@@ -1143,6 +1157,29 @@ mod tests {
         let found = discover_repo_root(&nested).unwrap();
         let canonical_found = found.canonicalize().unwrap();
         assert_eq!(canonical_found, root);
+    }
+
+    #[test]
+    fn discover_repo_root_returns_inner_when_ancestor_is_also_a_repo() {
+        // Simulate `$TMPDIR` itself being inside another git repo: outer is a
+        // valid repo, inner is a nested fixture also init'd as a repo.
+        // `discover_repo_root(inner)` MUST return inner, not outer, regardless
+        // of git version. Before fixing `init_git` to write HEAD + config,
+        // some git versions would reject the empty `.git/` in inner and walk
+        // up to outer.
+        let outer = tempfile::tempdir().unwrap();
+        let outer_root = outer.path().canonicalize().unwrap();
+        init_git(&outer_root);
+        let inner = outer_root.join("a/b");
+        std::fs::create_dir_all(&inner).unwrap();
+        init_git(&inner);
+
+        let found = discover_repo_root(&inner).unwrap();
+        assert_eq!(
+            found.canonicalize().unwrap(),
+            inner.canonicalize().unwrap(),
+            "discovery must stop at the inner repo, not walk up to the ancestor"
+        );
     }
 
     #[test]

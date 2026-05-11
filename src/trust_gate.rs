@@ -270,14 +270,13 @@ mod tests {
     fn with_empty_store<F: FnOnce() -> R, R>(f: F) -> R {
         let dir = tempfile::tempdir().unwrap();
         let prev = std::env::var_os("XDG_DATA_HOME");
-        // SAFETY: tests in this module are not parallel-safe with respect to
-        // env vars; cargo test runs them on multiple threads, so guard with a
-        // mutex.
         let _guard = ENV_LOCK.lock().unwrap();
+        // SAFETY: see ENV_LOCK contract above
         unsafe {
             std::env::set_var("XDG_DATA_HOME", dir.path());
         }
         let r = f();
+        // SAFETY: see ENV_LOCK contract above
         unsafe {
             match prev {
                 Some(v) => std::env::set_var("XDG_DATA_HOME", v),
@@ -303,10 +302,12 @@ mod tests {
 
         let prev = std::env::var_os("XDG_DATA_HOME");
         let _guard = ENV_LOCK.lock().unwrap();
+        // SAFETY: see ENV_LOCK contract above
         unsafe {
             std::env::set_var("XDG_DATA_HOME", dir.path());
         }
         let r = f();
+        // SAFETY: see ENV_LOCK contract above
         unsafe {
             match prev {
                 Some(v) => std::env::set_var("XDG_DATA_HOME", v),
@@ -316,6 +317,16 @@ mod tests {
         r
     }
 
+    /// Process-global lock for env-mutation tests in this binary.
+    ///
+    /// Any test that calls `unsafe { env::set_var(...) }` or
+    /// `env::remove_var(...)` MUST take this lock before mutating and hold
+    /// it until the variable is restored. Cargo runs tests in parallel by
+    /// default, so unguarded mutations race with each other and with reads
+    /// in other modules.
+    ///
+    /// If a future test in this binary needs to mutate env vars, share this
+    /// lock — do not introduce a parallel one.
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn render_text(layout: &Layout) -> String {

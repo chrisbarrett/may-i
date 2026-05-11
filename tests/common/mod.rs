@@ -35,8 +35,21 @@ pub fn parse_json(output: &std::process::Output) -> serde_json::Value {
 }
 
 /// Build an `assert_cmd::Command` for `may-i` with `MAYI_CONFIG` pre-set.
+///
+/// Sets the child's `current_dir` to `std::env::temp_dir()` so repo-local
+/// discovery does not walk into the workspace's `.git/`. Tests that need a
+/// specific cwd MUST override with `.current_dir(...)` and document why.
 pub fn may_i(config: &NamedTempFile) -> Command {
-    let mut cmd = cargo_bin_cmd!("may-i");
+    let mut cmd = may_i_cmd();
     cmd.env("MAYI_CONFIG", config.path());
+    cmd
+}
+
+/// Build an `assert_cmd::Command` for `may-i` with an isolated `current_dir`
+/// but no `MAYI_CONFIG`. Use for tests that pass `--config` explicitly or
+/// invoke subcommands that don't need a config.
+pub fn may_i_cmd() -> Command {
+    let mut cmd = cargo_bin_cmd!("may-i");
+    cmd.current_dir(std::env::temp_dir());
     cmd
 }

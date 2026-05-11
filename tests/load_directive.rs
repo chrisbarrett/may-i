@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{may_i, write_config};
+use common::{may_i, may_i_cmd, write_config};
 use predicates::prelude::*;
 use tempfile::TempDir;
 
@@ -51,7 +51,7 @@ fn multi_file_eval_matches_single_file() {
         .output()
         .unwrap();
 
-    let mut multi_cmd = assert_cmd::cargo::cargo_bin_cmd!("may-i");
+    let mut multi_cmd = may_i_cmd();
     multi_cmd.env("MAYI_CONFIG", &root);
     let multi_output = multi_cmd.args(["eval", "echo", "hello"]).output().unwrap();
 
@@ -65,7 +65,7 @@ fn multi_file_eval_matches_single_file() {
         .success()
         .stdout(predicate::str::contains("2 passed, 0 failed"));
 
-    let mut multi_check = assert_cmd::cargo::cargo_bin_cmd!("may-i");
+    let mut multi_check = may_i_cmd();
     multi_check.env("MAYI_CONFIG", &root);
     multi_check
         .arg("check")
@@ -95,7 +95,7 @@ fn load_glob_integration() {
 (check :allow "echo hello" :allow "git status")"#,
     );
 
-    let mut cmd = assert_cmd::cargo::cargo_bin_cmd!("may-i");
+    let mut cmd = may_i_cmd();
     cmd.env("MAYI_CONFIG", &root);
     cmd.arg("check")
         .assert()
@@ -109,7 +109,7 @@ fn load_missing_file_integration() {
     let dir = TempDir::new().unwrap();
     let root = write_file(dir.path(), "config.lisp", r#"(load "nonexistent.lisp")"#);
 
-    let mut cmd = assert_cmd::cargo::cargo_bin_cmd!("may-i");
+    let mut cmd = may_i_cmd();
     cmd.env("MAYI_CONFIG", &root);
     cmd.args(["eval", "echo"])
         .assert()

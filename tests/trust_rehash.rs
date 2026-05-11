@@ -5,7 +5,7 @@
 
 mod common;
 
-use assert_cmd::cargo::cargo_bin_cmd;
+use common::may_i_cmd;
 use std::io::Write;
 
 #[test]
@@ -21,7 +21,7 @@ fn class_a_rehash_preserves_approval() {
     write!(config, "(load \"{}\")", rules_path.display()).unwrap();
 
     // Approve all (TOFU all loaded rules).
-    let mut approve = cargo_bin_cmd!("may-i");
+    let mut approve = may_i_cmd();
     let approve_out = approve
         .env("MAYI_CONFIG", config.path())
         .env("XDG_DATA_HOME", trust_dir.path())
@@ -35,7 +35,7 @@ fn class_a_rehash_preserves_approval() {
     );
 
     // Migrate the loaded rules file (root has no inline rules).
-    let mut migrate = cargo_bin_cmd!("may-i");
+    let mut migrate = may_i_cmd();
     let migrate_out = migrate
         .env("MAYI_CONFIG", config.path())
         .env("XDG_DATA_HOME", trust_dir.path())
@@ -63,7 +63,7 @@ fn class_a_rehash_preserves_approval() {
 
     // After migration the approval should still cover the rule. Run an
     // eval and confirm we don't get a trust-blocked response.
-    let mut eval = cargo_bin_cmd!("may-i");
+    let mut eval = may_i_cmd();
     eval.env("MAYI_CONFIG", config.path())
         .env("XDG_DATA_HOME", trust_dir.path())
         .write_stdin(common::bash_payload("echo hi"));

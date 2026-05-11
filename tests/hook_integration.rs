@@ -2,13 +2,12 @@
 
 mod common;
 
-use assert_cmd::cargo::cargo_bin_cmd;
-use common::{bash_payload, may_i, parse_json, write_config};
+use common::{bash_payload, may_i, may_i_cmd, parse_json, write_config};
 use predicates::prelude::*;
 
 #[test]
 fn config_flag_nonexistent_path_produces_descriptive_error() {
-    let mut cmd = cargo_bin_cmd!("may-i");
+    let mut cmd = may_i_cmd();
     cmd.args(["--config", "/tmp/nonexistent-mayi-config-12345.lisp"]);
     cmd.write_stdin(bash_payload("echo hello"));
 
@@ -110,7 +109,7 @@ fn hook_json_flag_produces_valid_json() {
 
 #[test]
 fn hook_nonexistent_config_via_flag_exits_two() {
-    let mut cmd = cargo_bin_cmd!("may-i");
+    let mut cmd = may_i_cmd();
     cmd.args(["--config", "/nonexistent/path/config.lisp"])
         .write_stdin(bash_payload("echo hello"))
         .assert()
@@ -120,7 +119,7 @@ fn hook_nonexistent_config_via_flag_exits_two() {
 
 #[test]
 fn hook_nonexistent_mayi_config_env_exits_two() {
-    let mut cmd = cargo_bin_cmd!("may-i");
+    let mut cmd = may_i_cmd();
     cmd.env("MAYI_CONFIG", "/tmp/bogus.lisp")
         .write_stdin(bash_payload("echo hello"))
         .assert()

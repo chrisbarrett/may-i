@@ -2,8 +2,7 @@
 
 mod common;
 
-use assert_cmd::cargo::cargo_bin_cmd;
-use common::{bash_payload, may_i, parse_json, write_config};
+use common::{bash_payload, may_i, may_i_cmd, parse_json, write_config};
 
 // 5.1: echo hello && rm -rf / with echo allowed → :ask (verifies hook path fix)
 #[test]
@@ -156,7 +155,7 @@ fn json_and_pretty_agree_on_compound_commands() {
 
     // JSON mode
     let json_output = {
-        let mut cmd = cargo_bin_cmd!("may-i");
+        let mut cmd = may_i_cmd();
         cmd.env("MAYI_CONFIG", cfg.path());
         cmd.args(["eval", "--json", "echo hello && rm -rf /"]);
         cmd.output().expect("run json")
