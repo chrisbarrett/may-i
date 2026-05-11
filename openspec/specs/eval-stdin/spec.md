@@ -1,4 +1,10 @@
-## ADDED Requirements
+# eval-stdin Specification
+
+## Purpose
+
+How `may-i eval` accepts a command: from positional argv when stdin is a TTY, from stdin when piped. Covers ambiguity rejection (both sources provided) and missing-input rejection (neither source).
+
+## Requirements
 
 ### Requirement: Eval reads command from stdin when piped
 The `eval` subcommand SHALL read the shell command from stdin when stdin is not a terminal and no positional command argument is provided.

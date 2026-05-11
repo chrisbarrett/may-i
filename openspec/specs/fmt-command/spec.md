@@ -1,4 +1,10 @@
-## ADDED Requirements
+# fmt-command Specification
+
+## Purpose
+
+The `may-i fmt` CLI subcommand: in-place file formatting, load-graph walk when no positional arguments, stdin → stdout filter mode, `--check` exit-code-only mode for CI, and the legacy-syntax warning that defers semantic rewrites to `may-i migrate`.
+
+## Requirements
 
 ### Requirement: Format files in place by default
 

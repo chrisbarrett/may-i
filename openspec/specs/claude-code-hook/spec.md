@@ -1,4 +1,10 @@
-## ADDED Requirements
+# claude-code-hook Specification
+
+## Purpose
+
+The `may-i` hook-mode entry point invoked by the Claude Code harness: reads a JSON tool-use envelope from stdin, evaluates the bash command against the loaded config, and emits a JSON response or blocks via exit code 2. Non-bash tool calls silently no-op. See `CONTEXT.md` for hook-mode positioning within the invocation-modes table.
+
+## Requirements
 
 ### Requirement: Claude Code hook reads JSON from stdin and evaluates a command
 
