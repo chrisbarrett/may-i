@@ -3,7 +3,6 @@
 ## Purpose
 
 The `#var` sigil for parser-bound names: declared in parser bodies (`(rest …)`, `(positional …)`, `(parameter …)`), referenced in rule bodies (`(authorise …)`, `(bound? …)`, `(matches? …)`, `(with-facts …)`). Also documents the `(flags MODE)` declaration (`posix` | `permute` | `(until …)`) that scopes outer flag scanning. Replaces the prior `(tail …)` form's invisible side-channel with explicit, named bindings.
-
 ## Requirements
 ### Requirement: `#var` sigil denotes a parser-bound name
 
@@ -231,8 +230,8 @@ The rule-body form `(authorise #var)` SHALL recursively authorise the value boun
 
 #### Scenario: `(authorise #cmd)` recurses into an `if`/`fi` block
 
-- **GIVEN** `(parser "bash" (style gnu) (flags posix) (parameter "c" #cmd))`, `(rule "bash" (authorise #cmd))`, and `(rule "rm" (deny))`
-- **WHEN** evaluating `bash -c "if true; then rm -rf /; fi"`
+- **GIVEN** `(parser "sudo" (style gnu) (flags posix) (rest #cmd))`, `(rule "sudo" (authorise #cmd))`, and `(rule "rm" (deny))`
+- **WHEN** evaluating `sudo sh -c "if true; then rm /; fi"`
 - **THEN** the recursion SHALL reach the `rm` unit inside the `if`/`fi` body
 - **AND** the rule SHALL return `:deny`.
 

@@ -3,7 +3,6 @@
 ## Purpose
 
 Multi-token parameter capture via `(parameter NAME (many-till PAT) [#var])`: tokens after `NAME` are consumed up to (but excluding) a terminator matching `PAT`. The captured token list is accessible from the rule body via the optional `#var` binding (used with `(authorise #var)`, `(matches? #var …)`, `(with-facts …)`). Multi-occurrence parameters fire the rule body once per occurrence; strictest decision wins.
-
 ## Requirements
 ### Requirement: `(many-till PAT)` declares multi-token parameter capture
 

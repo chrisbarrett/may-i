@@ -1,28 +1,23 @@
 ## 1. Audit current spec
 
-- [ ] 1.1 Re-read `openspec/specs/via-fact-builtin/spec.md` and confirm
-      the only changes needed are vocabulary, not semantics.
-- [ ] 1.2 Cross-check against `parser-bindings`, `parameter-many-till`,
-      and `rule-evaluation` to make sure the refreshed examples are
-      consistent with how they use `(authorise …)` and decision verbs.
+- [x] 1.1 Re-read `openspec/specs/via-fact-builtin/spec.md` and
+      confirmed only vocabulary changes are needed; both requirements
+      remain semantically identical.
+- [x] 1.2 Cross-checked against `parser-bindings`, `parameter-many-till`,
+      and `rule-evaluation`; refreshed examples are consistent.
 
 ## 2. Refresh spec text
 
-- [ ] 2.1 MODIFY `openspec/specs/via-fact-builtin/spec.md`:
-      - Purpose: replace "wrapper recursion" / "each `(authorise)` recurse"
-        wording so it reads naturally with current forms.
-      - "`:via` push on recurse" requirement: rewrite scenarios to use
-        `(parser …  (rest #cmd))` + `(rule "sudo" (authorise #cmd))`
-        instead of `(rule "sudo" (positional . (may-i *)))`.
-      - "`:via` is the only automatic fact" requirement: rewrite the
-        bind-vs-automatic scenario to use parser-side
-        `(positional #host …)` binding rather than rule-side
-        `(positional [:ssh/host *] …)`.
-      - Replace `:effect (effect :decision)` with bare `(decision)`
-        verbs throughout.
+- [x] 2.1 MODIFIED `openspec/specs/via-fact-builtin/spec.md`:
+      Purpose rewritten in terms of `(authorise …)` recursion entries;
+      scenarios use `(parser …  (rest #cmd))` + `(rule "sudo" (authorise #cmd))`
+      shape; `:effect (effect :decision)` rewritten to bare decision
+      verbs; `(positional [:ssh/host *] …)` rewritten to parser-side
+      `(positional #host …)` + rule-side `(with-facts [[:ssh/host #host]] …)`.
 
 ## 3. Validate
 
-- [ ] 3.1 `openspec validate via-fact-builtin-vocabulary-refresh --strict`.
-- [ ] 3.2 `grep` confirms no `(may-i ` or `(effect :` left in the
-      refreshed spec.
+- [x] 3.1 `openspec validate via-fact-builtin-vocabulary-refresh --strict`.
+- [x] 3.2 `grep` confirms no `(may-i ` or `(effect :` left in the
+      refreshed spec (the surviving `[:ssh/host …]` token is the
+      legitimate `with-facts` fact-key syntax, not the old capture form).
