@@ -640,6 +640,9 @@ mod tokenisation_properties {
             style,
             flags: vec![],
             parameters: vec![],
+            positionals: vec![],
+            flags_mode: may_i_core::ast::FlagsMode::Permute,
+            rest: None,
             tail: None,
         }
     }
@@ -690,6 +693,7 @@ mod tokenisation_properties {
                 names: vec![name.clone()],
                 treatment: PT::None,
                 capture: may_i_core::ast::Capture::Single,
+                binding: None,
             });
             let bare = vec![name.clone()];
             prop_assert!(check_pun_error(&bare, &parser).is_err());
@@ -779,6 +783,7 @@ mod tokenisation_properties {
             names: vec!["u".into()],
             treatment: ParameterTreatment::None,
             capture: may_i_core::ast::Capture::Single,
+            binding: None,
         });
         let split = split_outer_tail(&args, &parser);
         assert_eq!(split.outer, &["-u".to_string(), "root".to_string()]);
