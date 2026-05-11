@@ -2,8 +2,7 @@
 
 mod common;
 
-use assert_cmd::cargo::cargo_bin_cmd;
-use common::{may_i, parse_json, write_config};
+use common::{may_i, may_i_cmd, parse_json, write_config};
 use predicates::prelude::*;
 
 #[test]
@@ -73,7 +72,7 @@ fn check_json_produces_valid_json() {
 
 #[test]
 fn check_config_not_found_exits_two() {
-    let mut cmd = cargo_bin_cmd!("may-i");
+    let mut cmd = may_i_cmd();
     cmd.args(["--config", "/nonexistent/path/config.lisp", "check"])
         .assert()
         .code(2)

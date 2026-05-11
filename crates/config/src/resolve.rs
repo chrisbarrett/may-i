@@ -135,15 +135,21 @@ pub(crate) fn detect_cycles(
 
     for define in defines {
         let refs = collect_named_refs(&define.predicate);
-        let ref_names: Vec<String> = refs.into_iter().map(|r| r.name).collect();
+        let mut ref_names: Vec<String> = refs.into_iter().map(|r| r.name).collect();
+        // Sort so DFS visits neighbours in a stable order.
+        ref_names.sort_unstable();
         adjacency.insert(define.name.clone(), ref_names);
     }
 
-    // DFS to detect cycles
+    // DFS to detect cycles. Iterate define names in sorted order so the
+    // starting node — and therefore the 'name -> neighbor' pair reported
+    // in any cycle error — is deterministic across runs.
     let mut visiting = HashSet::new();
     let mut visited = HashSet::new();
 
-    for name in define_map.names() {
+    let mut names: Vec<&String> = define_map.names().collect();
+    names.sort_unstable();
+    for name in names {
         if !visited.contains(name) {
             dfs_check_cycle(name, &adjacency, &mut visiting, &mut visited, define_map)?;
         }
@@ -383,6 +389,37 @@ mod tests {
         let result = detect_cycles(&defines, &define_map);
         assert!(result.is_err());
         assert!(result.unwrap_err().message.contains("cyclic"));
+    }
+
+    #[test]
+    fn cycle_error_message_is_deterministic_across_runs() {
+        // Two independent cycles: (a -> b -> a) and (c -> d -> c).
+        // Without a sorted iteration order over `define_map.names()`,
+        // `HashMap` ordering picks the starting node at random, so the
+        // 'name -> neighbor' pair in the error message varies per run.
+        // Sorting names + adjacency neighbours stabilises the message.
+        let defines = vec![
+            create_define("a", Predicate::Named("b".to_string())),
+            create_define("b", Predicate::Named("a".to_string())),
+            create_define("c", Predicate::Named("d".to_string())),
+            create_define("d", Predicate::Named("c".to_string())),
+        ];
+        let define_map = DefineMap::from_defines(&defines).unwrap();
+        let first = detect_cycles(&defines, &define_map)
+            .err()
+            .map(|e| e.message)
+            .expect("expected cyclic error");
+        for run in 0..50 {
+            let map = DefineMap::from_defines(&defines).unwrap();
+            let msg = detect_cycles(&defines, &map)
+                .err()
+                .map(|e| e.message)
+                .expect("expected cyclic error");
+            assert_eq!(
+                msg, first,
+                "cycle error message must be byte-identical across runs (run {run})"
+            );
+        }
     }
 
     #[test]

@@ -2,8 +2,7 @@
 
 mod common;
 
-use assert_cmd::cargo::cargo_bin_cmd;
-use common::{bash_payload, parse_json};
+use common::{bash_payload, may_i_cmd, parse_json};
 use std::io::Write;
 
 /// Create a config with a load directive pointing to a rules file.
@@ -35,7 +34,7 @@ fn eval_blocked_on_first_load() {
     let trust_dir = tempfile::tempdir().unwrap();
     let trust_path = trust_dir.path().join("trust.json");
 
-    let mut cmd = cargo_bin_cmd!("may-i");
+    let mut cmd = may_i_cmd();
     cmd.env("MAYI_CONFIG", config.path())
         .env("XDG_DATA_HOME", trust_dir.path())
         .write_stdin(bash_payload("echo hello"));
@@ -73,7 +72,7 @@ fn eval_succeeds_after_approval() {
     let trust_dir = tempfile::tempdir().unwrap();
 
     // First, approve trust via the trust subcommand
-    let mut approve = cargo_bin_cmd!("may-i");
+    let mut approve = may_i_cmd();
     approve
         .env("MAYI_CONFIG", config.path())
         .env("XDG_DATA_HOME", trust_dir.path())
@@ -87,7 +86,7 @@ fn eval_succeeds_after_approval() {
     );
 
     // Now evaluate — should proceed normally
-    let mut cmd = cargo_bin_cmd!("may-i");
+    let mut cmd = may_i_cmd();
     cmd.env("MAYI_CONFIG", config.path())
         .env("XDG_DATA_HOME", trust_dir.path())
         .write_stdin(bash_payload("echo hello"));
@@ -118,7 +117,7 @@ fn eval_blocked_on_change() {
     let trust_dir = tempfile::tempdir().unwrap();
 
     // Approve initial version
-    let mut approve = cargo_bin_cmd!("may-i");
+    let mut approve = may_i_cmd();
     approve
         .env("MAYI_CONFIG", config.path())
         .env("XDG_DATA_HOME", trust_dir.path())
@@ -129,7 +128,7 @@ fn eval_blocked_on_change() {
     std::fs::write(&rules_path, r#"(rule "echo" (deny "v2 changed"))"#).unwrap();
 
     // Evaluate — should block because hash changed
-    let mut cmd = cargo_bin_cmd!("may-i");
+    let mut cmd = may_i_cmd();
     cmd.env("MAYI_CONFIG", config.path())
         .env("XDG_DATA_HOME", trust_dir.path())
         .write_stdin(bash_payload("echo hello"));
@@ -149,7 +148,7 @@ fn trust_list_shows_new_status() {
     let (_dir, config) = setup_loaded_config("", r#"(rule "echo" (allow "loaded rule"))"#);
     let trust_dir = tempfile::tempdir().unwrap();
 
-    let mut cmd = cargo_bin_cmd!("may-i");
+    let mut cmd = may_i_cmd();
     cmd.env("MAYI_CONFIG", config.path())
         .env("XDG_DATA_HOME", trust_dir.path())
         .args(["trust", "--json"]);
@@ -172,7 +171,7 @@ fn trust_approve_specific_program() {
     let trust_dir = tempfile::tempdir().unwrap();
 
     // Approve just "echo"
-    let mut approve = cargo_bin_cmd!("may-i");
+    let mut approve = may_i_cmd();
     approve
         .env("MAYI_CONFIG", config.path())
         .env("XDG_DATA_HOME", trust_dir.path())
@@ -185,7 +184,7 @@ fn trust_approve_specific_program() {
     );
 
     // Verify it's now trusted
-    let mut list = cargo_bin_cmd!("may-i");
+    let mut list = may_i_cmd();
     list.env("MAYI_CONFIG", config.path())
         .env("XDG_DATA_HOME", trust_dir.path())
         .args(["trust", "--json"]);
@@ -209,7 +208,7 @@ fn trust_all_approves_all_programs() {
     );
     let trust_dir = tempfile::tempdir().unwrap();
 
-    let mut approve = cargo_bin_cmd!("may-i");
+    let mut approve = may_i_cmd();
     approve
         .env("MAYI_CONFIG", config.path())
         .env("XDG_DATA_HOME", trust_dir.path())
@@ -222,7 +221,7 @@ fn trust_all_approves_all_programs() {
     assert!(approved.len() >= 2, "should approve at least echo and cat");
 
     // Verify all trusted
-    let mut list = cargo_bin_cmd!("may-i");
+    let mut list = may_i_cmd();
     list.env("MAYI_CONFIG", config.path())
         .env("XDG_DATA_HOME", trust_dir.path())
         .args(["trust", "--json"]);
@@ -238,7 +237,7 @@ fn trust_nonexistent_program_fails() {
     let (_dir, config) = setup_loaded_config("", r#"(rule "echo" (allow "loaded"))"#);
     let trust_dir = tempfile::tempdir().unwrap();
 
-    let mut cmd = cargo_bin_cmd!("may-i");
+    let mut cmd = may_i_cmd();
     cmd.env("MAYI_CONFIG", config.path())
         .env("XDG_DATA_HOME", trust_dir.path())
         .args(["trust", "nonexistent"]);
@@ -251,7 +250,7 @@ fn primary_only_config_bypasses_trust() {
     let config = common::write_config(r#"(rule "echo" (allow "safe"))"#);
     let trust_dir = tempfile::tempdir().unwrap();
 
-    let mut cmd = cargo_bin_cmd!("may-i");
+    let mut cmd = may_i_cmd();
     cmd.env("MAYI_CONFIG", config.path())
         .env("XDG_DATA_HOME", trust_dir.path())
         .write_stdin(bash_payload("echo hello"));
@@ -275,7 +274,7 @@ fn eval_untrusted_shows_warning_and_trace() {
 
     let trust_dir = tempfile::tempdir().unwrap();
 
-    let mut cmd = cargo_bin_cmd!("may-i");
+    let mut cmd = may_i_cmd();
     cmd.env("MAYI_CONFIG", config.path())
         .env("XDG_DATA_HOME", trust_dir.path())
         .args(["eval", "echo hello"]);
@@ -306,7 +305,7 @@ fn check_untrusted_shows_warning_then_results() {
 
     let trust_dir = tempfile::tempdir().unwrap();
 
-    let mut cmd = cargo_bin_cmd!("may-i");
+    let mut cmd = may_i_cmd();
     cmd.env("MAYI_CONFIG", config.path())
         .env("XDG_DATA_HOME", trust_dir.path())
         .args(["check"]);
@@ -336,7 +335,7 @@ fn check_json_unaffected_by_trust() {
 
     let trust_dir = tempfile::tempdir().unwrap();
 
-    let mut cmd = cargo_bin_cmd!("may-i");
+    let mut cmd = may_i_cmd();
     cmd.env("MAYI_CONFIG", config.path())
         .env("XDG_DATA_HOME", trust_dir.path())
         .args(["check", "--json"]);
@@ -366,7 +365,7 @@ fn eval_json_untrusted_still_blocks() {
 
     let trust_dir = tempfile::tempdir().unwrap();
 
-    let mut cmd = cargo_bin_cmd!("may-i");
+    let mut cmd = may_i_cmd();
     cmd.env("MAYI_CONFIG", config.path())
         .env("XDG_DATA_HOME", trust_dir.path())
         .args(["eval", "--json", "echo hello"]);

@@ -5,6 +5,7 @@
 
 mod common;
 
+use common::may_i_cmd;
 use predicates::prelude::*;
 use tempfile::TempDir;
 
@@ -40,7 +41,7 @@ fn migrate_walks_load_graph_and_rewrites_each_file() {
         r#"(rule "git" (effect :allow))"#,
     );
 
-    let mut cmd = assert_cmd::cargo::cargo_bin_cmd!("may-i");
+    let mut cmd = may_i_cmd();
     cmd.env("MAYI_CONFIG", &root);
     cmd.args(["migrate", "--yes"])
         .assert()
@@ -80,7 +81,7 @@ fn migrate_dry_run_does_not_modify_files() {
     let original_root = std::fs::read_to_string(&root).unwrap();
     let original_echo = std::fs::read_to_string(&echo).unwrap();
 
-    let mut cmd = assert_cmd::cargo::cargo_bin_cmd!("may-i");
+    let mut cmd = may_i_cmd();
     cmd.env("MAYI_CONFIG", &root);
     cmd.args(["migrate", "--dry-run", "--yes"])
         .assert()
