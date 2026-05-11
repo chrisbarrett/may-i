@@ -1,8 +1,8 @@
-# Rule Evaluation Specification
+# Rule-Decisions Specification
 
 ## Purpose
 
-Describes the user-level model for how a command resolves to a Decision. Given a parsed command and the loaded set of Rules, the engine selects the Rules whose command name matches the program being evaluated, evaluates each one, and combines the results into a single Decision and aggregate reason. The resolution is order-independent: shuffling the Rule list (across files or `(load …)` boundaries) MUST yield the same Decision and reason. This spec covers semantics only; the trust closure that determines which Rules are eligible is described in `trust-hashing`. Per-segment decisions on `EvalResult` and check-evaluation error propagation are also documented here.
+Describes the user-level model for how a command resolves to a Decision. Given a parsed command and the loaded set of Rules, the engine selects the Rules whose command name matches the program being evaluated, derives a Decision for each, and combines them into a single Decision and aggregate reason. The resolution is order-independent: shuffling the Rule list (across files or `(load …)` boundaries) MUST yield the same Decision and reason. This spec covers Decision semantics only; the trust closure that determines which Rules are eligible is described in `trust-hashing`. Per-segment decisions on `EvalResult` and check-evaluation error propagation are also documented here.
 
 Trust-relevant: no.
 

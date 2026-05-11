@@ -1,14 +1,14 @@
-# Trace-System Specification
+# Traces Specification
 
 ## Purpose
 
-The trace-system internals: how `TracingFold` implements `EvalFold` to
-produce annotated `Doc` trees alongside evaluation results, and the `Ann`
-payloads downstream renderers consume to lay out the human and JSON trace
-surfaces. Also covers visible-character-width arithmetic in the layout
-renderer (for `NoteHeading` and `ColRow` label alignment) and the
-var-breakout section that surfaces `Predicate::Named` references and their
-expanded bodies at the point of use.
+Traces internals: how `TracingFold` implements `EvalFold` to produce
+annotated `Doc` trees alongside evaluation results, and the `Ann` payloads
+downstream renderers consume to lay out the human and JSON trace surfaces.
+Also covers visible-character-width arithmetic in the layout renderer (for
+`NoteHeading` and `ColRow` label alignment) and the var-breakout section
+that surfaces `Predicate::Named` references and their expanded bodies at the
+point of use.
 
 ## Requirements
 

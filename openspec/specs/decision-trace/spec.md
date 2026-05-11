@@ -1,8 +1,8 @@
-# Human-Evaluation-Trace Specification
+# Decision-Trace Specification
 
 ## Purpose
 
-Defines how the human-readable evaluation trace renders to the terminal: which signals are surfaced, how multi-line queries are annotated, and what the JSON counterpart preserves for machine consumers.
+Defines how the human-readable Decision trace renders to the terminal: which signals are surfaced, how multi-line queries are annotated, and what the JSON counterpart preserves for machine consumers.
 ## Requirements
 ### Requirement: Human trace renders compact evidence for context fact queries
 The human-readable evaluation trace SHALL preserve the written `fact?` query on the left and summarize context-fact evidence on the right using a single compact annotation. Presence queries MUST render only `yes` or `no`. Exact scalar queries MUST render `yes` on success, the observed scalar value on mismatch, and `no` when no scalar value is available. Pattern-based scalar queries MUST render the observed scalar value with the final verdict whenever a scalar value is available, and `no` otherwise. (CHANGED: annotation data now carried via `Ann` enum produced by `TracingFold` instead of `EvalAnn` produced by `annotate.rs`)

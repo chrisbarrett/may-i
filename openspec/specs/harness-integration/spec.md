@@ -1,8 +1,8 @@
-# claude-code-hook Specification
+# Harness-Integration Specification
 
 ## Purpose
 
-The `may-i` hook-mode entry point invoked by the Claude Code harness: reads a JSON tool-use envelope from stdin, evaluates the bash command against the loaded config, and emits a JSON response or blocks via exit code 2. Non-bash tool calls silently no-op. See `CONTEXT.md` for hook-mode positioning within the invocation-modes table. This spec also covers OpenCode-agent context ingestion via explicit `--fact` flags on `may-i eval` and the stdin command-reading semantics for `eval`.
+The umbrella harness-input contract: how external agent harnesses hand a command (and optional context) to `may-i` and consume its response. Claude Code is one adapter — the `may-i` hook-mode entry point reading a JSON tool-use envelope from stdin, evaluating the bash command, and emitting a JSON response (or blocking via exit code 2 for non-bash tool calls' silent no-op). OpenCode is another adapter — `may-i eval` ingests explicit OpenCode-agent context via `--fact` flags. Generic stdin command-reading on `may-i eval` is the third surface. See `CONTEXT.md` for hook-mode positioning within the invocation-modes table.
 
 ## Requirements
 
