@@ -244,6 +244,131 @@ pub(crate) fn evaluate_authorised_string<F: EvalFold>(
     Ok(EvalResult::new(aggregate_decision, aggregate_reason))
 }
 
+/// Token-list sibling of [`evaluate_authorised_string`].
+///
+/// Used when the binding came in as `BindingValue::Tokens(_)` — e.g.
+/// `(rest #cmd)`, `(positional #var *|+)`. Unlike the string helper,
+/// this one does NOT re-parse argv. The outer shell already decomposed
+/// the command line into tokens; joining them with single spaces and
+/// re-parsing discards boundary information and exposes shell
+/// metacharacters embedded in a single token (e.g. an outer-quoted
+/// `-c` argument) as structure at the wrapper's frame. That's the
+/// policy-bypass the `authorise-token-list-quoting` change closes.
+///
+/// Semantics:
+///
+/// - Empty `tokens` → `:ask` with an empty-command reason. Callers
+///   normally short-circuit before this via [`BindingValue::is_empty`];
+///   the guard preserves the "don't silently mis-recurse" invariant.
+/// - Single-element `tokens` → delegate to
+///   [`evaluate_authorised_string`] on `tokens[0]`. With one boundary
+///   there is no information to lose by re-parsing — the user wrote a
+///   single quoted command and expects it to be parsed.
+/// - Multi-element `tokens` with `tokens[0]` containing shell
+///   metacharacters or empty → `:ask` with a dynamic-or-malformed
+///   command-name reason.
+/// - Otherwise: push `:via` into facts and evaluate the inner command
+///   directly via [`evaluate_at_depth`] with `tokens[0]` as the
+///   command and `tokens[1..]` as argv. Each `tokens[i]` arrives at
+///   the inner parser as a single argument; the inner program's own
+///   parser handles any further structure (e.g. bash's
+///   `(parameter "c" #cmd)`).
+pub(crate) fn evaluate_authorised_tokens<F: EvalFold>(
+    tokens: &[String],
+    config: Option<&Config>,
+    facts: &ContextFacts,
+    fold: &mut F,
+    depth: usize,
+    via_program: Option<&str>,
+) -> Result<EvalResult, EvalError> {
+    if depth >= DEFAULT_RECURSION_LIMIT {
+        return Ok(EvalResult::new(
+            Decision::Ask,
+            Some(format!(
+                "recursion depth limit ({DEFAULT_RECURSION_LIMIT}) exceeded"
+            )),
+        ));
+    }
+
+    if tokens.is_empty() {
+        return Ok(EvalResult::new(
+            Decision::Ask,
+            Some("empty command".to_string()),
+        ));
+    }
+
+    if tokens.len() == 1 {
+        // One token = one outer-shell boundary. No structural
+        // information to preserve; re-parsing the lone element as a
+        // command line is correct (it's how the user authored it).
+        return evaluate_authorised_string(&tokens[0], config, facts, fold, depth, via_program);
+    }
+
+    let command = &tokens[0];
+    if command.is_empty() || contains_shell_metacharacter(command) {
+        return Ok(EvalResult::new(
+            Decision::Ask,
+            Some(format!(
+                "dynamic or malformed inner command name: {command:?}"
+            )),
+        ));
+    }
+
+    let mut effective_facts = facts.clone();
+    if let Some(name) = via_program
+        && let Ok(key) = Keyword::new(":via")
+    {
+        effective_facts.insert_scalar(key, name);
+    }
+
+    let default_config = Config::default();
+    let effective_config = config.unwrap_or(&default_config);
+
+    evaluate_at_depth(
+        command,
+        &tokens[1..],
+        effective_config,
+        &effective_facts,
+        fold,
+        depth,
+    )
+}
+
+/// Characters that mark a token as "structurally meaningful in a
+/// shell context." When such a character appears in argv[0] of a
+/// token-list capture, the outer shell either did not produce that
+/// token (the binding consumed an unresolved variable) or the parser
+/// upstream is malformed — either way, the recursion has no
+/// well-defined inner command name and must `:ask`.
+///
+/// `=` is included to catch shell assignment-prefix syntax
+/// (`FOO=bar cmd`); argv[0] would not normally carry an `=` from a
+/// regular outer parse, but if it does, the user almost certainly
+/// did not mean to recurse on an environment-prefix as if it were a
+/// command name.
+pub(crate) fn contains_shell_metacharacter(s: &str) -> bool {
+    s.chars().any(|c| {
+        matches!(
+            c,
+            ' ' | '\t'
+                | '\n'
+                | ';'
+                | '|'
+                | '&'
+                | '('
+                | ')'
+                | '<'
+                | '>'
+                | '"'
+                | '\''
+                | '$'
+                | '\\'
+                | '`'
+                | '='
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -760,6 +885,44 @@ mod tests {
             )
             .unwrap();
             prop_assert_eq!(top.decision, auth.decision);
+        }
+
+        /// Equivalence guarantee: for any token list whose elements are
+        /// all metacharacter-free, the new token-list helper SHALL
+        /// agree with the old join-and-parse path on the decision.
+        /// This is the regression-safety invariant — rules that
+        /// authorised correctly under the old code path keep working.
+        #[test]
+        fn prop_tokens_match_string_when_metafree(
+            tokens in proptest::collection::vec("[a-zA-Z0-9_./-]{1,8}", 1..6),
+        ) {
+            let config = config_with_rules(vec![allow_rule("echo"), deny_rule("rm")]);
+            for tok in &tokens {
+                prop_assert!(!contains_shell_metacharacter(tok),
+                    "strategy generated metacharacter-bearing token: {tok:?}");
+            }
+            let mut fold_s = PureFold;
+            let mut fold_t = PureFold;
+            let joined = tokens.join(" ");
+            let from_string = evaluate_authorised_string(
+                &joined,
+                Some(&config),
+                &empty_facts(),
+                &mut fold_s,
+                1,
+                Some("wrapper"),
+            )
+            .unwrap();
+            let from_tokens = evaluate_authorised_tokens(
+                &tokens,
+                Some(&config),
+                &empty_facts(),
+                &mut fold_t,
+                1,
+                Some("wrapper"),
+            )
+            .unwrap();
+            prop_assert_eq!(from_string.decision, from_tokens.decision);
         }
     }
 }

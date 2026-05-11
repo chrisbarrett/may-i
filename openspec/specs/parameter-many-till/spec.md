@@ -45,7 +45,7 @@ If end-of-argv is reached before any token matches `PAT`, tokenisation SHALL emi
 
 Rule-side access to a `(many-till …)` capture SHALL go through the parser-declared `#var` binding using one of:
 
-- `(authorise #var)` — join the captured tokens with single spaces and parse the result via the shell command parser as a full command line. Compound forms (`&&`, `||`, `;`, `|`, `if`/`for`/`case`, command substitutions) SHALL be decomposed and each unit evaluated separately, with the strictest decision returned. `:via PROG` SHALL accumulate into the facts seen by every inner unit.
+- `(authorise #var)` — join the captured tokens with single spaces and parse the result via the shell command parser as a full command line. Compound forms (`&&`, `||`, `;`, `|`, `if`/`for`/`case`, command substitutions) SHALL be decomposed and each unit evaluated separately, with the strictest decision returned. `:via PROG` SHALL accumulate into the facts seen by every inner unit. _This join-and-parse behaviour is intentional and differs from `(rest …)` / `(positional … *|+)` recursion: a `(many-till …)` capture is a fragment the user **authored** inside their own argument (e.g. `find -exec rm /tmp/x ;` — the tokens `rm /tmp/x` were written by the user with spaces as separators), not an argument the outer shell delivered as a single quoted string. There is no outer-shell quote envelope to preserve; the captured tokens are semantically a command-line fragment, not a structured argument list._
 - `(matches? #var PAT)` — match the joined string against `PAT` as a single token.
 - `(with-facts [[:k #var]] …)` — promote the joined token list (as a single string) to a fact for the inner recurse.
 

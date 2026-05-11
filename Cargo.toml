@@ -18,7 +18,7 @@ workspace = true
 
 [package]
 name = "may-i"
-version = "0.3.0-pre5"
+version = "0.3.0-pre6"
 edition = "2024"
 
 [dependencies]
