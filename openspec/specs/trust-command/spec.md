@@ -1,17 +1,21 @@
-## ADDED Requirements
+# trust-command Specification
+
+## Purpose
+
+The `may-i trust` CLI subcommand: reviewing and approving rules loaded from outside the primary config. Trust-relevant: yes — see `trust-store` for hash storage, `trust-hashing` for what the stored hash covers, `trust-provenance` for what counts as Loaded content, `interactive-trust-review` for the per-rule review flow.
+
+## Requirements
 
 ### Requirement: may-i trust subcommand exists
 
-The system SHALL provide a `may-i trust` subcommand for reviewing and approving
-trust for programs with changed or new loaded content.
+The system SHALL provide a `may-i trust` subcommand for reviewing and approving trust for programs with changed or new loaded content.
 
 When run interactively (TTY on stdin, no `--json`) with pending rules, `may-i trust` SHALL enter per-rule interactive review directly, without first displaying the full listing. When all rules are trusted, the grouped-by-file listing is shown. Non-interactive and JSON paths are unchanged.
 
 #### Scenario: Trust with no arguments shows status
 
 - **WHEN** the user runs `may-i trust`
-- **THEN** the system lists all programs that need approval, showing which are
-  new, changed, or up-to-date
+- **THEN** the system lists all programs that need approval, showing which are new, changed, or up-to-date
 
 #### Scenario: Interactive with pending enters review
 
@@ -30,8 +34,7 @@ The user SHALL be able to approve trust for a specific program by name.
 #### Scenario: Approve a single program
 
 - **WHEN** the user runs `may-i trust "git"`
-- **THEN** the system computes the current hash for `"git"`, stores it, and
-  confirms approval
+- **THEN** the system computes the current hash for `"git"`, stores it, and confirms approval
 
 #### Scenario: Approve safe-env-vars
 
@@ -54,5 +57,4 @@ The `may-i trust` subcommand SHALL support `--json` output.
 #### Scenario: JSON trust status
 
 - **WHEN** the user runs `may-i trust --json`
-- **THEN** the output is a JSON object listing programs with their trust status
-  (approved, changed, new)
+- **THEN** the output is a JSON object listing programs with their trust status (approved, changed, new)
