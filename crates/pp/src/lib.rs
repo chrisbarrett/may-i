@@ -238,7 +238,9 @@ fn snap_to_preset(width: usize) -> usize {
 pub const INDENT_SPECS: &[(&str, u8)] = &[
     ("cond", 0),
     ("define", 1),
+    ("define-arg-style", 1),
     ("if", 2),
+    ("parser", 1),
     ("rule", 1),
     ("unless", 1),
     ("when", 1),

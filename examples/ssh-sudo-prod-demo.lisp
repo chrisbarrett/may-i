@@ -5,13 +5,16 @@
 ;;; (rest #cmd)` and `ssh` as `(flags posix) (positional #host (regex
 ;;; "^[^-].*")) (rest #cmd)` — so we only add the recursion rules.
 
-(rule "sudo" (authorise #cmd))
+(rule "sudo"
+  (authorise #cmd))
 
 ;; ssh — branch on the bound #host and recurse on the inner command.
 (rule "ssh"
-  (cond ((matches? #host (regex "(^|@).*prod.*"))
-         (deny "Production host — no direct recursion"))
-        (else (authorise #cmd))))
+  (cond
+   ((matches? #host (regex "(^|@).*prod.*"))
+    (deny "Production host — no direct recursion"))
+   (else
+    (authorise #cmd))))
 
 (define immutable
   (fact? [:via "ssh"]))

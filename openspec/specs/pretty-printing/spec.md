@@ -27,7 +27,9 @@ body.
 |------|---|-------|
 | `cond` | 0 | Dedicated renderer; clause indent is `+1`, see Cond Form Layout |
 | `define` | 1 | Name is special, body follows |
+| `define-arg-style` | 1 | Name is special, attribute body follows |
 | `if` | 2 | Pred and then-branch are special, else is body |
+| `parser` | 1 | Program name is special, declaration body follows |
 | `rule` | 1 | Command/pattern is special, body follows |
 | `unless` | 1 | Pred is special, body follows |
 | `when` | 1 | Pred is special, body follows |
@@ -154,8 +156,10 @@ subsequent arguments align under the first argument.
 The pretty-printer SHALL syntax-color the head atoms of known forms in blue.
 
 **Colored form list:**
-- All forms in the indent spec table: `check`, `cond`, `define`, `if`, `rule`,
-  `unless`, `when`, `with-facts`
+- All forms in the indent spec table: `cond`, `define`, `define-arg-style`,
+  `if`, `parser`, `rule`, `unless`, `when`, `with-facts`
+- `check` (keyword-color only; uses function-call alignment, not in indent
+  spec table)
 - Structural effect form: `effect`
 - Pattern forms: `anywhere`, `exact`, `positional`
 - Control forms: `else`

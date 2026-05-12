@@ -6,5 +6,9 @@ expression: out
 (parser "xargs" (style gnu) (parameter ["n" "I" "L" "P" "d"])
   (flag ["0" "r"]) (flags posix) (rest #cmd))
 ── output ──
-(parser "xargs" (style gnu) (parameter ["n" "I" "L" "P" "d"])
-        (flag ["0" "r"]) (flags posix) (rest #cmd))
+(parser "xargs"
+  (style gnu)
+  (parameter ["n" "I" "L" "P" "d"])
+  (flag ["0" "r"])
+  (flags posix)
+  (rest #cmd))

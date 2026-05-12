@@ -890,6 +890,42 @@ fn if_indent_spec_is_2() {
 }
 
 #[test]
+fn parser_body_indent_is_plus_two() {
+    // (parser PROG ...) — N=1: program name is special (inline if fits),
+    // body declarations break to indent+2 from the opening paren.
+    let doc = l(vec![
+        a("parser"),
+        a("\"timeout\""),
+        l(vec![a("style"), a("gnu")]),
+        l(vec![a("flags"), a("posix")]),
+        l(vec![a("rest"), a("#cmd")]),
+    ]);
+    let result = pp(&doc, 30);
+    assert_eq!(
+        result,
+        "(parser \"timeout\"\n  (style gnu)\n  (flags posix)\n  (rest #cmd))"
+    );
+}
+
+#[test]
+fn define_arg_style_body_indent_is_plus_two() {
+    // (define-arg-style NAME ...) — N=1: name is special, attribute body
+    // breaks to indent+2.
+    let doc = l(vec![
+        a("define-arg-style"),
+        a("mystyle"),
+        l(vec![a("long-prefix"), a("\"--\"")]),
+        l(vec![a("overrides"), a("gnu")]),
+        l(vec![a("separators"), a("\"=\"")]),
+    ]);
+    let result = pp(&doc, 30);
+    assert_eq!(
+        result,
+        "(define-arg-style mystyle\n  (long-prefix \"--\")\n  (overrides gnu)\n  (separators \"=\"))"
+    );
+}
+
+#[test]
 fn breaking_descendant_prevents_flat() {
     // (? (and (or "a" "b") "--")) where (or ...) is AlwaysBreak.
     // Even at wide width, (? ...) must not flatten since the or

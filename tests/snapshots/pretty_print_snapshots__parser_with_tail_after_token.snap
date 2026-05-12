@@ -5,4 +5,7 @@ expression: out
 ── input (width 80) ──
 (parser "mise" (style gnu) (flags (until "--")) (rest #cmd))
 ── output ──
-(parser "mise" (style gnu) (flags (until "--")) (rest #cmd))
+(parser "mise"
+  (style gnu)
+  (flags (until "--"))
+  (rest #cmd))

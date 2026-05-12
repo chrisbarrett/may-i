@@ -5,4 +5,6 @@ expression: out
 ── input (width 80) ──
 (define-arg-style java (overrides gnu) (separators " " "=" ":"))
 ── output ──
-(define-arg-style java (overrides gnu) (separators " " "=" ":"))
+(define-arg-style java
+  (overrides gnu)
+  (separators " " "=" ":"))

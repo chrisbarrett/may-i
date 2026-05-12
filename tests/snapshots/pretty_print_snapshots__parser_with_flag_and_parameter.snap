@@ -5,4 +5,7 @@ expression: out
 ── input (width 80) ──
 (parser "kubectl" (style gnu) (flag "v") (parameter ["n" "namespace"]))
 ── output ──
-(parser "kubectl" (style gnu) (flag "v") (parameter ["n" "namespace"]))
+(parser "kubectl"
+  (style gnu)
+  (flag "v")
+  (parameter ["n" "namespace"]))

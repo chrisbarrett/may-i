@@ -11,8 +11,8 @@ expression: out
   (pun :allow))
 ── output ──
 (define-arg-style gnu
-                  (long-prefix "--")
-                  (short-prefix "-")
-                  (separators " " "=")
-                  (combined-shorts t)
-                  (pun :allow))
+  (long-prefix "--")
+  (short-prefix "-")
+  (separators " " "=")
+  (combined-shorts t)
+  (pun :allow))

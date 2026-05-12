@@ -25,7 +25,9 @@ expression: out
   (or (positional "status") (positional "log")))
 
 
-(parser "kubectl" (style gnu) (parameter ["n" "namespace"]))
+(parser "kubectl"
+  (style gnu)
+  (parameter ["n" "namespace"]))
 
 
 (rule "ls"

@@ -8,7 +8,8 @@ expression: out
   (parameter "execdir" (many-till (or ";" "+")))
   (parameter ["name" "type" "size"]))
 ── output ──
-(parser "find" (style single-dash-long)
-        (parameter "exec" (many-till (or ";" "+")))
-        (parameter "execdir" (many-till (or ";" "+")))
-        (parameter ["name" "type" "size"]))
+(parser "find"
+  (style single-dash-long)
+  (parameter "exec" (many-till (or ";" "+")))
+  (parameter "execdir" (many-till (or ";" "+")))
+  (parameter ["name" "type" "size"]))
