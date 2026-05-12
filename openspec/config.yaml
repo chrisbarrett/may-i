@@ -1,20 +1,72 @@
 schema: spec-driven
 
-# Project context (optional)
-# This is shown to AI when creating artifacts.
-# Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+# Injected into <context> for every artifact generation.
+# See: home/config/programs/openspec/skills/openspec-customisation/ in the
+# user's nix-configuration for placement rubric (config vs spec vs validator).
+context: |
+  `may-i` is a bash command authorisation tool for agent harnesses. Architecture
+  is a four-layer model:
 
-# Per-artifact rules (optional)
-# Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always include a "Non-goals" section
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
+  1. Rules — static policy authored by the user.
+  2. Facts — runtime context supplied by the harness per invocation.
+  3. Parsing — argv tokenisation, the surface DSL, parser declarations.
+  4. Trust — gate on whether externally-loaded rules participate.
+
+  CONTEXT.md is the authoritative vocabulary source. Read it before
+  discussing design or authoring user-facing specs.
+
+  User vocabulary (appears in user-facing specs, DSL forms, error messages):
+  Rule, Decision, Reason, Fact, Pattern, Authorise, Binding, Style, Parser,
+  Trust. Decisions are spelled `(allow REASON?)`, `(ask REASON?)`,
+  `(deny REASON?)` — never "verdict" or "effect".
+
+  Contributor vocabulary (appears in design docs, code review, ADRs — never
+  in user-facing specs): Effect, Predicate, ArgPattern, Expr<T>, Provenance,
+  Canonical form, Invocation mode, Wordpart, Span.
+
+  Buckets a spec must fit into (one per spec, kebab-case identifier):
+  rules-and-evaluation, facts, parsing, trust, loading, tracing-and-output,
+  migration, cli, testing, contributor-internals. The first four mirror the
+  four-layer model; the rest cover cross-cutting concerns.
+
+  Audience rule: every stable spec is either user-facing or
+  contributor-facing — no mixing. User-facing specs use only user vocabulary
+  (including in their directory name); contributor specs declare audience in
+  Purpose and may use contributor vocabulary. The meta-spec `spec-conventions`
+  is exempt.
+
+  Trust-relevance: a spec is trust-relevant if its requirements affect
+  (a) which rules participate in evaluation, (b) which rules require
+  approval, or (c) how rules are hashed for trust storage. Trust-relevant
+  specs cross-reference the relevant trust-model spec(s) in Purpose.
+
+  Project is pre-1.0; back-compatibility is not required. Use the migration
+  system for user-config migrations.
+
+# Per-artifact authoring reminders. Inject into <rules> when generating that
+# artifact type. Scope is openspec/changes/<name>/, never the stable store
+# under openspec/specs/.
+rules:
+  proposal:
+    - State the affected bucket(s) in the Capabilities section.
+    - Distinguish new capabilities (new specs) from modified capabilities (delta specs).
+    - Pure structural / hygiene edits to existing specs (heading shuffles, prose tweaks that touch no `### Requirement:` body) go in tasks.md, not as spec deltas.
+
+  design:
+    - Required only if the change is cross-cutting, introduces a new dependency, has migration / security / performance complexity, or has ambiguity worth resolving before code.
+    - Decisions section lists alternatives considered and why rejected, not just the chosen path.
+    - Cite source file paths + line numbers for any third-party-tool behaviour the design relies on.
+
+  specs:
+    - Delta-style headings (`## ADDED Requirements`, `## MODIFIED Requirements`, `## REMOVED Requirements`) appear ONLY in delta files under `openspec/changes/<change>/specs/`. Never in stable specs under `openspec/specs/`.
+    - MODIFIED requirements include the FULL updated requirement body (heading + prose + all scenarios), not a partial edit. Partial MODIFIED loses content at archive time.
+    - REMOVED requirements include `**Reason:**` and `**Migration:**` lines.
+    - Each requirement has at least one `#### Scenario:` (exactly 4 hashes — 3 fails silently).
+    - Use SHALL or MUST for normative statements; avoid should/may.
+    - Capability renames are filesystem moves driven by tasks.md, not paired ADDED+REMOVED blocks.
+    - Spec directory names use user vocabulary unless the spec declares itself contributor-facing in its Purpose.
+
+  tasks:
+    - Each task is a `- [ ]` checkbox under a numbered `## N. <group>` heading; the apply phase parses this format.
+    - Group by dependency order — earliest tasks first.
+    - Verification tasks (running validators, running tests, confirming output) go in a final group, not interspersed.
