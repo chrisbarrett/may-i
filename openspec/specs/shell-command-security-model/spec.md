@@ -1,3 +1,8 @@
+---
+audience: user
+bucket: parsing
+trust-relevant: true
+---
 # Shell-Command-Security-Model Specification
 
 ## Purpose

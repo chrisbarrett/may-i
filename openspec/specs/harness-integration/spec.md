@@ -1,3 +1,7 @@
+---
+audience: user
+bucket: cli
+---
 # Harness-Integration Specification
 
 ## Purpose

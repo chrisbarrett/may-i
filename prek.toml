@@ -47,6 +47,15 @@ hooks = [
     pass_filenames = false,
     stages = ["pre-commit"],
   },
+  {
+    id = "validate-spec-frontmatter",
+    name = "validate spec frontmatter",
+    entry = "scripts/validate-spec-frontmatter.sh",
+    language = "system",
+    files = "^openspec/specs/",
+    pass_filenames = false,
+    stages = ["pre-commit"],
+  },
 
   # Pre-push hooks (full verification)
   {

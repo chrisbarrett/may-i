@@ -1,3 +1,7 @@
+---
+audience: contributor
+bucket: testing
+---
 # oracle-trace-testing Specification
 
 ## Purpose

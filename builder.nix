@@ -87,6 +87,7 @@ in
       cargo-insta
       cargo-tarpaulin
       prek
+      yq-go
     ];
 
     shellHook = ''

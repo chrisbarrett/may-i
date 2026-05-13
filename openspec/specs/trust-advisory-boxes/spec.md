@@ -1,3 +1,8 @@
+---
+audience: user
+bucket: trust
+trust-relevant: true
+---
 # Trust-Advisory-Boxes Specification
 
 ## Purpose
@@ -8,7 +13,7 @@ and the block-context output rendered when the trust gate blocks `eval` in
 non-JSON TTY mode (untrusted rules default to `:ask`). Output surfaces
 excluded are hook mode, JSON, and help/reference.
 
-Trust-relevant: yes — see `trust-gate` for the gate decision the
+See related trust specs: `trust-gate` for the gate decision the
 block-context renders, `trust-store` for the stored approvals these
 advisories refer the user to.
 

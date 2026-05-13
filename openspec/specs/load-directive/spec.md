@@ -1,3 +1,8 @@
+---
+audience: user
+bucket: loading
+trust-relevant: true
+---
 # load-directive Specification
 
 ## Purpose

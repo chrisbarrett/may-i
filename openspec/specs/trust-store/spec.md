@@ -1,3 +1,8 @@
+---
+audience: user
+bucket: trust
+trust-relevant: true
+---
 # trust-store Specification
 
 ## Purpose

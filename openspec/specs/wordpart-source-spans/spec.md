@@ -1,3 +1,7 @@
+---
+audience: contributor
+bucket: contributor-internals
+---
 # wordpart-source-spans Specification
 
 ## Purpose

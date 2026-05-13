@@ -1,3 +1,7 @@
+---
+audience: user
+bucket: rules-and-evaluation
+---
 # Rule-Decisions Specification
 
 ## Purpose

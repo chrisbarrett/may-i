@@ -1,3 +1,7 @@
+---
+audience: contributor
+bucket: testing
+---
 # test-infrastructure Specification
 
 ## Purpose

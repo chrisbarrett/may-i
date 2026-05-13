@@ -1,3 +1,7 @@
+---
+audience: user
+bucket: facts
+---
 # Facts Specification
 
 ## Purpose

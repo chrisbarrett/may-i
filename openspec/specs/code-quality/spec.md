@@ -1,3 +1,7 @@
+---
+audience: contributor
+bucket: contributor-internals
+---
 # Code-Quality Specification
 
 ## Purpose

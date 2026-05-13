@@ -1,3 +1,8 @@
+---
+audience: user
+bucket: trust
+trust-relevant: true
+---
 # trust-command Specification
 
 ## Purpose
@@ -7,7 +12,7 @@ interactive review flow, listing approved and pending programs grouped by
 source file, approving individual programs or all pending entries, the
 per-rule approve/skip prompt, and `--json` output.
 
-Trust-relevant: yes — see `trust-store` for hash storage, `trust-hashing`
+See related trust specs: `trust-store` for hash storage, `trust-hashing`
 for what the stored hash covers, `trust-provenance` for what counts as
 Loaded content, `trust-gate` for runtime enforcement.
 

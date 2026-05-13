@@ -1,3 +1,7 @@
+---
+audience: user
+bucket: tracing-and-output
+---
 # Pretty-Printing Specification
 
 ## Purpose

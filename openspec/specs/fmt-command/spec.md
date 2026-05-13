@@ -1,3 +1,7 @@
+---
+audience: user
+bucket: cli
+---
 # fmt-command Specification
 
 ## Purpose

@@ -1,3 +1,8 @@
+---
+audience: contributor
+bucket: trust
+trust-relevant: true
+---
 # Trust-Hashing Specification
 
 ## Purpose
@@ -7,7 +12,7 @@ closure: which rules and defines participate, the canonical order-independent
 serialisation, exclusion of non-semantic content, the `safe-env-vars` scope,
 and the Class A / Class B migration interaction with stored hashes.
 
-Trust-relevant: yes — see `trust-store`, `trust-command`, `trust-provenance`.
+See related trust specs: `trust-store`, `trust-command`, `trust-provenance`.
 
 ## Requirements
 

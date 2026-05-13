@@ -1,3 +1,7 @@
+---
+audience: user
+bucket: migration
+---
 # migration-diff-display Specification
 
 ## Purpose

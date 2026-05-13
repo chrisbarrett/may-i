@@ -1,3 +1,8 @@
+---
+audience: user
+bucket: trust
+trust-relevant: true
+---
 # Per-Rule-Trust Specification
 
 ## Purpose
@@ -6,7 +11,7 @@ Per-rule trust granularity: each loaded rule is tracked individually in the
 trust store by its canonical-form hash, and approve / ignore decisions apply
 to single rules rather than to whole programs.
 
-Trust-relevant: yes — see `trust-store`, `trust-hashing`.
+See related trust specs: `trust-store`, `trust-hashing`.
 
 ## Requirements
 

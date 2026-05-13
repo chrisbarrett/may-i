@@ -1,3 +1,7 @@
+---
+audience: contributor
+bucket: parsing
+---
 # fact-predicates-in-args Specification
 
 ## Purpose

@@ -1,3 +1,7 @@
+---
+audience: user
+bucket: parsing
+---
 # dsl-form-list-syntax Specification
 
 ## Purpose

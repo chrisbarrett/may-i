@@ -1,3 +1,7 @@
+---
+audience: contributor
+bucket: contributor-internals
+---
 # Parser-Engine-Invariants Specification
 
 ## Purpose

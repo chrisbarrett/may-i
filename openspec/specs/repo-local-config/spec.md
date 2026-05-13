@@ -1,3 +1,8 @@
+---
+audience: user
+bucket: loading
+trust-relevant: true
+---
 # repo-local-config Specification
 
 ## Purpose

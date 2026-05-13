@@ -1,3 +1,7 @@
+---
+audience: user
+bucket: parsing
+---
 # Patterns Specification
 
 ## Purpose
