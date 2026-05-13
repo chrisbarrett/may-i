@@ -44,6 +44,32 @@ Every spec SHALL declare its audience via the `audience:` field in its YAML fron
 - **THEN** the frontmatter contains `audience: contributor`
 - **AND** the spec MAY use contributor vocabulary in requirements and scenarios
 
+### Requirement: Trust-relevance is declared in frontmatter
+
+A spec whose requirements meet the trust-relevance criteria (documented in `openspec/config.yaml` under `context:`) SHALL set `trust-relevant: true` in its YAML frontmatter (see "Stable specs declare metadata in YAML frontmatter"). The Purpose section SHALL additionally cross-reference the relevant trust-model spec(s) in prose so a human reader can navigate to them.
+
+A spec that does not affect trust state SHOULD omit the `trust-relevant` field (or set it to `false`). The legacy `Trust-relevant: yes` line in the Purpose section is no longer the source of truth and SHALL be removed when a spec is touched; the frontmatter field replaces it. Authors uncertain whether their spec is trust-relevant SHOULD set `trust-relevant: true` and let review confirm.
+
+#### Scenario: Trust-relevant spec declares it in frontmatter
+
+- **GIVEN** a spec that changes how rules are aggregated for hashing
+- **WHEN** the spec is opened
+- **THEN** the frontmatter contains `trust-relevant: true`
+- **AND** the Purpose section cross-references the relevant trust-model spec(s) in prose
+
+#### Scenario: Non-trust spec omits the field
+
+- **GIVEN** a spec for human-readable trace layout
+- **WHEN** the spec is opened
+- **THEN** the frontmatter omits `trust-relevant` or sets it to `false`
+- **AND** the Purpose section does not contain a `Trust-relevant: yes` line
+
+#### Scenario: Legacy Purpose-line form flagged on touch
+
+- **GIVEN** an existing spec that still carries a `Trust-relevant: yes` line in its Purpose alongside a `trust-relevant: true` frontmatter field
+- **WHEN** any change touches that spec
+- **THEN** the change SHALL remove the Purpose-line form, retaining only the frontmatter field and the prose cross-reference
+
 ### Requirement: Spec names use user vocabulary
 
 A stable spec under `openspec/specs/<capability>/spec.md` SHALL choose its capability identifier (the directory name) from the user vocabulary documented in `CONTEXT.md` and summarised in `openspec/config.yaml` under `context:`, or from neutral domain words that do not collide with the contributor vocabulary table. A spec name SHALL NOT include any term from the contributor vocabulary unless one of the exemptions below applies.

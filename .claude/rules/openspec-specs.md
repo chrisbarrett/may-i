@@ -9,8 +9,8 @@ Authority: `openspec/specs/spec-conventions/spec.md`. Read first.
 Spec-touching edit checklist:
 
 1. Stable spec uses `# X Specification` / `## Purpose` / `## Requirements` / `### Requirement: ...` / `#### Scenario: ...`. Delta headings (`## ADDED/MODIFIED/REMOVED Requirements`) only under `openspec/changes/*/specs/`.
-2. Spec fits one bucket: Rules-and-Evaluation, Facts, Parsing, Trust, Loading, Tracing-and-Output, Migration, CLI, Testing, Contributor-Internals. New bucket → design.md decision.
-3. User-facing specs use `CONTEXT.md` user vocabulary (Rule, Decision, Pattern, Fact, Trust, Authorise, Tail, Style, Parser) — *including in the spec's directory name / capability identifier*, not only its prose. Contributor specs may use internals (`Effect`, `Predicate`, `ArgPattern`, `Expr<T>`) and declare audience via `audience: contributor` in frontmatter; their names MAY use contributor vocabulary. The meta-spec `spec-conventions` is exempt by name.
+2. Spec fits one bucket. Authoritative list lives in `openspec/config.yaml` under `context:`. New bucket → amend `config.yaml` + design.md decision.
+3. User-facing specs use the user vocabulary register (documented in `CONTEXT.md`, summarised in `openspec/config.yaml:context`) — *including in the spec's directory name / capability identifier*, not only its prose. Contributor specs MAY use contributor vocabulary and declare audience via `audience: contributor` in frontmatter; their names MAY use contributor vocabulary. The meta-spec `spec-conventions` is exempt by name.
 4. Trust-relevant specs (affect what runs / what gets approved / how rules are hashed) declare `trust-relevant: true` in frontmatter and cross-ref the trust-model spec(s) in Purpose prose.
 5. <2 requirements or <40 lines → fold into parent unless Purpose justifies standalone. Overlap → cross-reference, not restatement.
 6. No `TBD` in Purpose. Archive-generated stubs filled before merge.
