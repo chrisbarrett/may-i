@@ -7,7 +7,7 @@ trust-relevant: true
 
 ## Purpose
 
-Contributor-only. On-disk persistence layer for trust approvals: the v3 store format keyed by canonical-form hash, per-rule entries, source-file provenance carried on `Provenance::Loaded`, the `TrustHashes` metadata returned by `compute_trust_hashes`, and the integrity-verification + interactive-repair flow for tampered entries. Runtime evaluation semantics (when a mismatch blocks, when the gate bypasses) live in `trust-gate`; hash computation lives in `trust-hashing`; the user-facing CLI surface lives in `trust-command`.
+Contributor-only. On-disk persistence layer for trust approvals: the `Provenance` tag (`PrimaryConfig`/`Loaded`) every rule and define carries, the v3 store format keyed by canonical-form hash, per-rule entries, source-file provenance carried on `Provenance::Loaded`, the `TrustHashes` metadata returned by `compute_trust_hashes`, and the integrity-verification + interactive-repair flow for tampered entries. Runtime evaluation semantics (when a mismatch blocks, when the gate bypasses) live in `trust-gate`; hash computation lives in `trust-hashing`; the user-facing CLI surface lives in `trust-command`.
 
 ## Requirements
 
@@ -56,6 +56,43 @@ The trust store SHALL use a v3 format keyed by canonical form hash, with each en
 - **GIVEN** the store contains entries for rules no longer present in the current config
 - **WHEN** interactive review completes and the store is saved
 - **THEN** orphaned entries (hashes not in current config) are removed
+
+### Requirement: Rules are tagged with provenance
+
+Every `Rule` in the parsed config SHALL carry a `Provenance` value: either
+`PrimaryConfig` (from the root config file) or `Loaded` (from a file included
+via `(load ...)`).
+
+#### Scenario: Root config rules are PrimaryConfig
+
+- **WHEN** a rule is defined in the root config file
+- **THEN** the rule's provenance is `PrimaryConfig`
+
+#### Scenario: Loaded file rules are Loaded
+
+- **WHEN** a rule is defined in a file included via `(load "rules.lisp")`
+- **THEN** the rule's provenance is `Loaded`
+
+#### Scenario: Recursively loaded rules are Loaded
+
+- **WHEN** `a.lisp` is loaded from the root config, and `a.lisp` loads
+  `b.lisp` which contains a rule
+- **THEN** the rule from `b.lisp` has provenance `Loaded`
+
+### Requirement: Defines are tagged with provenance
+
+Every `Define` in the parsed config SHALL carry a `Provenance` value, following
+the same rules as rule provenance.
+
+#### Scenario: Root config defines are PrimaryConfig
+
+- **WHEN** a define is declared in the root config file
+- **THEN** the define's provenance is `PrimaryConfig`
+
+#### Scenario: Loaded file defines are Loaded
+
+- **WHEN** a define is declared in a file included via `(load "defines.lisp")`
+- **THEN** the define's provenance is `Loaded`
 
 ### Requirement: Provenance carries source file path
 

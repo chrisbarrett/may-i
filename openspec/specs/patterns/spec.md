@@ -2,7 +2,7 @@
 audience: user
 bucket: parsing
 ---
-# Patterns Specification
+# patterns Specification
 
 ## Purpose
 
@@ -284,3 +284,12 @@ A `Quantifier::ZeroOrMore` (*) pattern SHALL match zero or more remaining args f
 #### Scenario: Bind in forbidden rejected
 - **WHEN** parsing `(forbidden [:key *])`
 - **THEN** the parser SHALL reject it with an error explaining bind is not valid in forbidden patterns
+
+### Requirement: Command-dispatch position rejects regex patterns
+
+The command-dispatch position of a `(rule …)` SHALL accept only a literal string or an `(or …)` of literal strings — the program name the rule applies to. A `(regex …)` in command-dispatch position SHALL be a parse error.
+
+#### Scenario: Regex in command position is a parse error
+
+- **WHEN** config contains `(rule (regex "^git-.*") (allow))`
+- **THEN** the parser reports an error

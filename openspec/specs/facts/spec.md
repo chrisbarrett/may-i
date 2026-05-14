@@ -2,7 +2,7 @@
 audience: user
 bucket: facts
 ---
-# Facts Specification
+# facts Specification
 
 ## Purpose
 

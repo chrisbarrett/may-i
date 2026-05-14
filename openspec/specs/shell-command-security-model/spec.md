@@ -3,7 +3,7 @@ audience: user
 bucket: parsing
 trust-relevant: true
 ---
-# Shell-Command-Security-Model Specification
+# shell-command-security-model Specification
 
 ## Purpose
 

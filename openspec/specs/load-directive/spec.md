@@ -7,7 +7,7 @@ trust-relevant: true
 
 ## Purpose
 
-The `(load "<path-or-glob>")` top-level form: parsing (one string argument), glob expansion (lexical order), path resolution (relative to the containing file), recursive load, circular-load detection, per-file legacy migration, and the `Provenance` tag carried by every rule and define so the trust subsystem can distinguish PrimaryConfig from Loaded. Trust-relevant: yes — see `trust-store` for how `Loaded` content is gated, `trust-hashing` for what gets hashed.
+The `(load "<path-or-glob>")` top-level form: parsing (one string argument), glob expansion (lexical order), path resolution (relative to the containing file), recursive load, circular-load detection, and per-file legacy migration. Rules and defines pulled in via `(load …)` are tagged as loaded content and gated by the trust subsystem — see `trust-store` for how loaded content carries provenance and is gated, `trust-hashing` for what gets hashed.
 
 ## Requirements
 
@@ -139,59 +139,13 @@ The system SHALL report an error when a `load` argument is a literal path
 
 ### Requirement: Load is transparent to downstream
 
-The `Config` AST type SHALL not change. Code consuming `Config` (evaluator,
-checker, etc.) SHALL be unaware whether the config was loaded from one file or
-many.
+Loading SHALL be transparent to evaluation: a config assembled from many files
+via `(load …)` SHALL behave identically to the equivalent single-file config.
+Evaluation and checking SHALL NOT depend on whether the config was loaded from
+one file or many.
 
 #### Scenario: Equivalent single-file and multi-file configs
 
 - **WHEN** a single-file config and a multi-file config (using `load`) contain
   the same rules in the same order
-- **THEN** both produce identical `Config` values
-
-### Requirement: Rules are tagged with provenance
-
-Every `Rule` in the parsed config SHALL carry a `Provenance` value: either
-`PrimaryConfig` (from the root config file) or `Loaded` (from a file included
-via `(load ...)`).
-
-#### Scenario: Root config rules are PrimaryConfig
-
-- **WHEN** a rule is defined in the root config file
-- **THEN** the rule's provenance is `PrimaryConfig`
-
-#### Scenario: Loaded file rules are Loaded
-
-- **WHEN** a rule is defined in a file included via `(load "rules.lisp")`
-- **THEN** the rule's provenance is `Loaded`
-
-#### Scenario: Recursively loaded rules are Loaded
-
-- **WHEN** `a.lisp` is loaded from the root config, and `a.lisp` loads
-  `b.lisp` which contains a rule
-- **THEN** the rule from `b.lisp` has provenance `Loaded`
-
-### Requirement: Defines are tagged with provenance
-
-Every `Define` in the parsed config SHALL carry a `Provenance` value, following
-the same rules as rule provenance.
-
-#### Scenario: Root config defines are PrimaryConfig
-
-- **WHEN** a define is declared in the root config file
-- **THEN** the define's provenance is `PrimaryConfig`
-
-#### Scenario: Loaded file defines are Loaded
-
-- **WHEN** a define is declared in a file included via `(load "defines.lisp")`
-- **THEN** the define's provenance is `Loaded`
-
-### Requirement: CommandPattern::Regex is removed
-
-The system SHALL NOT accept regex patterns in command dispatch position. The
-`CommandPattern` type SHALL only support `Literal` and `Or` variants.
-
-#### Scenario: Regex in command position is a parse error
-
-- **WHEN** config contains `(rule (regex "^git-.*") (allow))`
-- **THEN** the parser reports an error
+- **THEN** both produce identical evaluation results for every command

@@ -11,7 +11,7 @@ Contributor-only. The internal `BoolExpr` enum the evaluator uses for fact-based
 ## Requirements
 
 ### Requirement: BoolExpr type for fact predicates
-The system SHALL support a `BoolExpr` type representing fact predicates with the following variants: (CHANGED: `Has` renamed to `Fact` to align with `fact?` syntax)
+The system SHALL support a `BoolExpr` type representing fact predicates with the following variants:
 - `Fact(FactQuery)` - query for presence or value of a fact
 - `And(Vec<BoolExpr>)` - all sub-predicates must match
 - `Or(Vec<BoolExpr>)` - any sub-predicate must match
@@ -34,7 +34,7 @@ The system SHALL support a `BoolExpr` type representing fact predicates with the
 - **THEN** the predicate SHALL return true
 
 ### Requirement: Polymorphic conditional branches
-The system SHALL support conditional branches where each test can be a full `ArgMatcher`, an `Expr` (inline string predicate), or a `BoolExpr` (fact predicate). (CHANGED: syntax uses `fact?` instead of `has`)
+The system SHALL support conditional branches where each test can be a full `ArgMatcher`, an `Expr` (inline string predicate), or a `BoolExpr` (fact predicate).
 
 #### Scenario: When with fact predicate
 - **WHEN** using `(when (fact? [:env "prod"]) (deny))` in args
@@ -49,12 +49,12 @@ The system SHALL support conditional branches where each test can be a full `Arg
 - **THEN** the appropriate branch SHALL apply based on fact evaluation
 
 ### Requirement: ContextFacts threading
-The system SHALL thread `ContextFacts` through all argument evaluation functions. (CHANGED: uses set-based facts model; syntax uses `fact?` instead of `has`)
+The system SHALL thread `ContextFacts` through all argument evaluation functions.
 
 #### Scenario: Evaluate with context
 - **WHEN** evaluating arguments with runtime facts in context
 - **THEN** `fact?` predicates SHALL have access to those facts
 
 #### Scenario: Facts from recursive evaluation
-- **WHEN** `(may-i *)` adds `:via` facts during unwrapping
+- **WHEN** `(authorise)` adds `:via` facts during unwrapping
 - **THEN** subsequent `fact?` predicates in the inner command SHALL see those facts

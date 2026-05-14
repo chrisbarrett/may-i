@@ -2,7 +2,7 @@
 audience: contributor
 bucket: contributor-internals
 ---
-# Parser-Engine-Invariants Specification
+# parser-engine-invariants Specification
 
 ## Purpose
 
@@ -10,8 +10,10 @@ Contributor-only. Cross-crate invariants between the `may-i-shell-parser` AST an
 `may-i-engine`'s source-byte bookkeeping. Owns the contract that emitted
 spans lie within input bounds, embedded sources match span slices, quoted
 regions and heredoc bodies are inviolable, recursive evaluation stays within
-its parent span, and the parser and engine agree on substitution
-boundaries.
+its parent span, the parser and engine agree on substitution
+boundaries, and the per-segment decision bookkeeping on `EvalResult`
+(byte ranges, non-overlap, and the eval pipeline as the single source of
+truth for display colouring).
 ## Requirements
 ### Requirement: Emitted spans lie within input bounds
 
@@ -193,4 +195,63 @@ recognise.
 #### Scenario: Helper ignores opener after a comment-start
 - **WHEN** the input is `echo hi # <<'EOF' not a heredoc`
 - **THEN** the helper SHALL NOT identify the `<<'EOF'` as a heredoc opener
+
+### Requirement: EvalResult exposes per-segment decisions
+`EvalResult` SHALL include a `segment_decisions` field that lists each
+evaluated unit of the input command with its byte range in the original
+input string and the `Decision` reached for that unit. The aggregate
+`decision` and `reason` fields SHALL retain their current semantics
+(strictest decision over all units; reason from the contributing unit).
+
+#### Scenario: Single command produces one segment
+- **WHEN** `evaluate_command("echo hi", config, facts)` is called and `echo` is
+  allowed
+- **THEN** `result.segment_decisions` is one entry covering the byte range
+  `0..7` with decision `Allow`
+- **AND** `result.decision` is `Allow`
+
+#### Scenario: Compound `&&` produces one entry per command
+- **WHEN** `evaluate_command("echo a && rm -rf /", config, facts)` is called,
+  `echo` is allowed, `rm` is unmatched
+- **THEN** `result.segment_decisions` contains two entries: `(0..6, Allow)`
+  for `echo a` and `(10..18, Ask)` for `rm -rf /` (operator `&&` is not a
+  segment)
+- **AND** `result.decision` is `Ask`
+
+#### Scenario: Embedded substitution becomes its own segment
+- **WHEN** `evaluate_command("echo $(rm)", config, facts)` is called
+- **THEN** `result.segment_decisions` contains an entry covering the inner
+  `rm` range with the decision reached for `rm`
+- **AND** the outer `echo` segment is also present
+
+#### Scenario: Dynamic command segments report Ask
+- **WHEN** the input contains `$EDITOR file.txt`
+- **THEN** the corresponding `segment_decisions` entry has decision `Ask`,
+  matching the engine's existing `EvalUnit::DynamicCommand` behaviour
+
+#### Scenario: Empty or malformed input yields no segments
+- **WHEN** the input is empty, whitespace-only, or fails parsing such that no
+  `EvalUnit` is produced
+- **THEN** `segment_decisions` is empty
+- **AND** `decision` is `Ask` with a reason as today
+
+### Requirement: Segment decisions describe non-overlapping byte ranges
+Within a single `EvalResult`, segment byte ranges SHALL NOT overlap, except
+that an embedded-command segment MAY be contained within its enclosing
+segment's range. Display code SHALL be able to walk the input top-to-bottom
+mapping segments to their decisions without ambiguity for top-level units.
+
+#### Scenario: Top-level segments are disjoint
+- **WHEN** the input is `a; b; c` with three simple commands
+- **THEN** the three top-level entries' byte ranges are pairwise disjoint
+
+### Requirement: Display does not re-evaluate to colourise
+CLI display SHALL derive per-segment colours from `EvalResult.segment_decisions`
+without invoking the engine a second time. The eval pipeline is the single
+source of truth for any segment's decision.
+
+#### Scenario: cmd_eval colourises from the result
+- **WHEN** `cmd_eval` renders the coloured command line for the Result block
+- **THEN** it reads colours from `result.segment_decisions` only; no call to
+  `engine::eval::evaluate_command` originates from the display path
 

@@ -11,9 +11,10 @@ Discovery layer that merges project-scoped config files from the
 current repository or worktree root into the loaded config. Lets
 projects ship `.may-i.lisp` (and friends) alongside their source so
 that contributors get the same command-authorisation policy without
-hand-configuring `MAYI_CONFIG`. Discovery is gated by the existing
-trust store — discovered rules carry `Provenance::Loaded` and stay
-inert until approved via `may-i trust`.
+hand-configuring `MAYI_CONFIG`. Discovered rules are treated as loaded
+content and stay inert until approved via `may-i trust` — see
+`trust-store` for how repo-local discovery carries provenance and is
+gated by the trust store.
 
 ## Requirements
 
@@ -85,7 +86,7 @@ Missing files SHALL be silently skipped. The order affects
 #### Scenario: Only one file present
 - **GIVEN** a repo root containing `.may-i.lisp` only
 - **WHEN** discovery runs
-- **THEN** that single file is loaded with `Provenance::Loaded`
+- **THEN** that single file is loaded as loaded content
 
 #### Scenario: All five locations present
 - **GIVEN** a repo root containing all five file types
@@ -104,35 +105,6 @@ Missing files SHALL be silently skipped. The order affects
 - **AND** they SHALL appear in lexical order:
   `.may-i/cargo.lisp` before `.may-i/git.lisp`
 
-### Requirement: Repo-local rules carry Loaded provenance
-
-The resolver SHALL tag every rule and define originating from a repo-local discovered file with `Provenance::Loaded { path }`, where `path` is the canonical path to the discovered file. These rules SHALL be subject to the existing trust gate and SHALL NOT take effect until approved via `may-i trust`.
-
-#### Scenario: Rule from .may-i.lisp is gated by trust
-- **GIVEN** a repo containing `.may-i.lisp` with
-  `(rule "echo" (allow))`
-- **AND** the trust store has no entry for this rule
-- **WHEN** `may-i eval "echo hi"` is invoked
-- **THEN** the rule SHALL be filtered out before evaluation
-- **AND** the trust advisory SHALL surface the file path of the
-  un-approved rule
-
-#### Scenario: Approved repo-local rule contributes to evaluation
-- **GIVEN** a repo containing `.may-i.lisp` with an approved rule
-  in the trust store
-- **WHEN** evaluation occurs
-- **THEN** the rule SHALL participate in the most-strict-wins
-  combine (per `rule-decisions`)
-
-#### Scenario: Same rule reached via load and discovery has same hash
-- **GIVEN** a rule that may be reached either via `(load
-  ".may-i.lisp")` from the primary config or via repo-local
-  discovery of the same file
-- **WHEN** trust hashes are computed
-- **THEN** the hash SHALL be identical in both cases
-- **AND** an approval granted via one path SHALL apply when the rule
-  is reached via the other
-
 ### Requirement: Resolver layer order
 
 The complete resolver precedence SHALL be:
@@ -144,8 +116,8 @@ The complete resolver precedence SHALL be:
 
 After the primary config is loaded, repo-local discovery (this
 capability) SHALL run as a post-load step that adds discovered
-files as `Loaded` rules. Discovery does NOT alter selection of the
-primary config; it only contributes additional `Loaded` rules.
+files as loaded rules. Discovery does NOT alter selection of the
+primary config; it only contributes additional loaded rules.
 
 #### Scenario: --config wins over MAYI_CONFIG
 - **GIVEN** both `--config /tmp/a.lisp` and `MAYI_CONFIG=/tmp/b.lisp`
@@ -155,5 +127,5 @@ primary config; it only contributes additional `Loaded` rules.
 #### Scenario: Repo-local layer always runs after primary selection
 - **GIVEN** any primary config selection (CLI flag, env, XDG, or home)
 - **WHEN** the resolver runs in a repo
-- **THEN** repo-local discovery SHALL run and contribute `Loaded`
+- **THEN** repo-local discovery SHALL run and contribute loaded
   rules in addition to the primary config

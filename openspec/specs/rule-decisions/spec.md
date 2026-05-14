@@ -2,11 +2,11 @@
 audience: user
 bucket: rules-and-evaluation
 ---
-# Rule-Decisions Specification
+# rule-decisions Specification
 
 ## Purpose
 
-Describes the user-level model for how a command resolves to a Decision. Given a parsed command and the loaded set of Rules, the engine selects the Rules whose command name matches the program being evaluated, derives a Decision for each, and combines them into a single Decision and aggregate reason under the **most-strict-wins lattice** `Allow < Ask < Deny` (so loaded or repo-local rules cannot widen the policy established by an existing matching primary rule). The resolution is order-independent: shuffling the Rule list (across files or `(load …)` boundaries) MUST yield the same Decision and reason. This spec covers Decision semantics only; the trust closure that determines which Rules are eligible is described in `trust-hashing`. Per-segment decisions on `EvalResult` and check-evaluation error propagation are also documented here.
+Describes the user-level model for how a command resolves to a Decision. Given a parsed command and the loaded set of Rules, the engine selects the Rules whose command name matches the program being evaluated, derives a Decision for each, and combines them into a single Decision and aggregate reason under the **most-strict-wins lattice** `:allow < :ask < :deny` (so loaded or repo-local rules cannot widen the policy established by an existing matching primary rule). The resolution is order-independent: shuffling the Rule list (across files or `(load …)` boundaries) MUST yield the same Decision and reason. This spec covers Decision semantics only; the trust closure that determines which Rules are eligible is described in `trust-hashing`. Check-evaluation error propagation is also documented here.
 
 ## Requirements
 
@@ -140,119 +140,50 @@ ordering.
 - **THEN** the result SHALL be `:deny` from the `rm` segment
 
 ### Requirement: Check evaluation propagates errors
-The check evaluation system SHALL propagate evaluation errors as diagnostic results rather than panicking. When `evaluate()` returns an error (e.g., UnresolvedPredicate), the check system SHALL report it as a check failure with a descriptive message.
+The check evaluation system SHALL propagate evaluation errors as diagnostic results rather than panicking. When evaluation fails (for example, a rule references an undefined predicate), the check system SHALL report it as a check failure with a descriptive message.
 
 #### Scenario: Unresolved predicate during check
 - **WHEN** a check rule references an undefined predicate
 - **THEN** the check system SHALL report a diagnostic failure instead of panicking
 
-### Requirement: EvalResult exposes per-segment decisions
-`EvalResult` SHALL include a `segment_decisions` field that lists each
-evaluated unit of the input command with its byte range in the original
-input string and the `Decision` reached for that unit. The aggregate
-`decision` and `reason` fields SHALL retain their current semantics
-(strictest decision over all units; reason from the contributing unit).
-
-#### Scenario: Single command produces one segment
-- **WHEN** `evaluate_command("echo hi", config, facts)` is called and `echo` is
-  allowed
-- **THEN** `result.segment_decisions` is one entry covering the byte range
-  `0..7` with decision `Allow`
-- **AND** `result.decision` is `Allow`
-
-#### Scenario: Compound `&&` produces one entry per command
-- **WHEN** `evaluate_command("echo a && rm -rf /", config, facts)` is called,
-  `echo` is allowed, `rm` is unmatched
-- **THEN** `result.segment_decisions` contains two entries: `(0..6, Allow)`
-  for `echo a` and `(10..18, Ask)` for `rm -rf /` (operator `&&` is not a
-  segment)
-- **AND** `result.decision` is `Ask`
-
-#### Scenario: Embedded substitution becomes its own segment
-- **WHEN** `evaluate_command("echo $(rm)", config, facts)` is called
-- **THEN** `result.segment_decisions` contains an entry covering the inner
-  `rm` range with the decision reached for `rm`
-- **AND** the outer `echo` segment is also present
-
-#### Scenario: Dynamic command segments report Ask
-- **WHEN** the input contains `$EDITOR file.txt`
-- **THEN** the corresponding `segment_decisions` entry has decision `Ask`,
-  matching the engine's existing `EvalUnit::DynamicCommand` behaviour
-
-#### Scenario: Empty or malformed input yields no segments
-- **WHEN** the input is empty, whitespace-only, or fails parsing such that no
-  `EvalUnit` is produced
-- **THEN** `segment_decisions` is empty
-- **AND** `decision` is `Ask` with a reason as today
-
-### Requirement: Segment decisions describe non-overlapping byte ranges
-Within a single `EvalResult`, segment byte ranges SHALL NOT overlap, except
-that an embedded-command segment MAY be contained within its enclosing
-segment's range. Display code SHALL be able to walk the input top-to-bottom
-mapping segments to their decisions without ambiguity for top-level units.
-
-#### Scenario: Top-level segments are disjoint
-- **WHEN** the input is `a; b; c` with three simple commands
-- **THEN** the three top-level entries' byte ranges are pairwise disjoint
-
-### Requirement: Display does not re-evaluate to colourise
-CLI display SHALL derive per-segment colours from `EvalResult.segment_decisions`
-without invoking the engine a second time. The eval pipeline is the single
-source of truth for any segment's decision.
-
-#### Scenario: cmd_eval colourises from the result
-- **WHEN** `cmd_eval` renders the coloured command line for the Result block
-- **THEN** it reads colours from `result.segment_decisions` only; no call to
-  `engine::eval::evaluate_command` originates from the display path
-
-### Requirement: Aggregate decision unchanged
-The aggregate `decision` and `reason` returned for any input SHALL be
-byte-identical before and after this change. `segment_decisions` is additive
-information; existing callers ignore it without semantic change.
-
-#### Scenario: All existing engine tests pass unchanged
-- **WHEN** the engine test suite runs against the post-change implementation
-- **THEN** every assertion that compares `result.decision` or `result.reason`
-  passes without modification
-
 ### Requirement: Top-level rule combination is most-strict-wins
 
 When a command is evaluated against a config, the engine SHALL combine
-the effects of **all** matching rules under the `Decision` lattice
-(`Allow < Ask < Deny`). The resulting decision SHALL be the maximum
+the effects of **all** matching rules under the decision lattice
+`:allow < :ask < :deny`. The resulting decision SHALL be the maximum
 under this ordering. The combine SHALL be order-independent: shuffling
 the rule list within or across source files MUST NOT change the
-resulting `Decision`.
+resulting decision.
 
 #### Scenario: Allow and Deny on same command — Deny wins
 - **GIVEN** rules `(rule "rm" (allow))` and
   `(rule "rm" (deny "danger"))` in any order
 - **WHEN** evaluating the command `rm file`
-- **THEN** the result SHALL be `Decision::Deny`
+- **THEN** the result SHALL be `:deny`
 
 #### Scenario: Allow and Ask on same command — Ask wins
 - **GIVEN** rules `(rule "git" (allow))` and
   `(rule "git" (positional "push") (ask))` in any order
 - **WHEN** evaluating the command `git push`
-- **THEN** the result SHALL be `Decision::Ask`
+- **THEN** the result SHALL be `:ask`
 
 #### Scenario: Ask and Deny on same command — Deny wins
 - **GIVEN** rules `(rule "rm" (ask))` and
   `(rule "rm" (positional "-rf") (deny "danger"))` in any
   order
 - **WHEN** evaluating the command `rm -rf /tmp`
-- **THEN** the result SHALL be `Decision::Deny`
+- **THEN** the result SHALL be `:deny`
 
 #### Scenario: Multiple rules at same effect collapse
 - **GIVEN** three rules all matching `echo` and all yielding
-  `Decision::Allow`
+  `:allow`
 - **WHEN** evaluating `echo hi`
-- **THEN** the result SHALL be `Decision::Allow`
+- **THEN** the result SHALL be `:allow`
 
 #### Scenario: No rule matches — Ask
 - **GIVEN** a config with no rule whose predicate matches the command
 - **WHEN** evaluating that command
-- **THEN** the result SHALL be `Decision::Ask`
+- **THEN** the result SHALL be `:ask`
 
 ### Requirement: Tie-breaking on `reason` is earliest source order
 
@@ -262,14 +193,14 @@ The engine SHALL break ties on the `reason` string by selecting the earliest rul
 - **GIVEN** primary config `(rule "rm" (deny "primary"))`
   and loaded file `(rule "rm" (deny "loaded"))`
 - **WHEN** evaluating `rm file`
-- **THEN** the result decision SHALL be `Decision::Deny`
+- **THEN** the result decision SHALL be `:deny`
 - **AND** the result reason SHALL be `"primary"`
 
 #### Scenario: Loaded rule strictest, no primary match
 - **GIVEN** primary config `(rule "git" (allow))`
   and loaded file `(rule "git" (positional "push") (deny "no push"))`
 - **WHEN** evaluating `git push`
-- **THEN** the result SHALL be `Decision::Deny` with reason
+- **THEN** the result SHALL be `:deny` with reason
   `"no push"` (the only rule contributing the strictest effect)
 
 ### Requirement: Trace surfaces all tied entries
@@ -278,7 +209,7 @@ The engine SHALL include every rule that contributed the most-strict effect in t
 
 #### Scenario: Two rules tied at Deny — both appear in trace
 - **GIVEN** two rules both matching `rm` and both yielding
-  `Decision::Deny`, the first with reason `"primary"` and the second
+  `:deny`, the first with reason `"primary"` and the second
   with reason `"loaded"`
 - **WHEN** the command `rm file` is evaluated with trace output
   enabled
@@ -289,29 +220,29 @@ The engine SHALL include every rule that contributed the most-strict effect in t
   sibling at the same effect
 
 #### Scenario: Single most-strict rule — no sibling annotation
-- **GIVEN** a single matching rule yielding `Decision::Deny` and
-  other matching rules yielding `Decision::Allow`
+- **GIVEN** a single matching rule yielding `:deny` and
+  other matching rules yielding `:allow`
 - **WHEN** trace output is rendered
-- **THEN** the `Deny` rule SHALL appear as the reason source with no
+- **THEN** the `:deny` rule SHALL appear as the reason source with no
   tied-sibling annotation
 
 ### Requirement: Adding a rule cannot relax the decision
 
-The engine SHALL NOT produce a less-strict decision when a rule is added to a config in which at least one rule already matches the command. Formally, for any config `C`, command `cmd`, and additional rule `r`, if `C` contains at least one rule whose command pattern matches `cmd`, then `evaluate(C ++ [r], cmd).decision >= evaluate(C, cmd).decision` under the `Decision` lattice. This is the load-bearing security property: loaded rules — including those discovered via repo-local resolution — MUST NOT widen the policy established by an existing matching primary rule.
+The engine SHALL NOT produce a less-strict decision when a rule is added to a config in which at least one rule already matches the command. Formally, for any config `C`, command `cmd`, and additional rule `r`, if `C` already contains a rule whose command name matches `cmd`, then evaluating `C` with `r` appended SHALL yield a decision at least as strict as evaluating `C` alone, under the decision lattice `:allow < :ask < :deny`. This is the load-bearing security property: loaded rules — including those discovered via repo-local resolution — MUST NOT widen the policy established by an existing matching primary rule.
 
-The no-match fallback (`Ask`) is excluded from this property: when no rule in `C` matches, appending the first matching rule replaces the fallback with that rule's decision, which may be `Allow`. Configs that wish to deny by default must encode that as an explicit catch-all rule.
+The no-match fallback (`:ask`) is excluded from this property: when no rule in `C` matches, appending the first matching rule replaces the fallback with that rule's decision, which may be `:allow`. Configs that wish to deny by default must encode that as an explicit catch-all rule.
 
 #### Scenario: Adding an Allow rule to an Allow result is a no-op
-- **GIVEN** a config that yields `Decision::Allow` for a command
-- **WHEN** any rule yielding `Decision::Allow` is appended
-- **THEN** the result SHALL still be `Decision::Allow`
+- **GIVEN** a config that yields `:allow` for a command
+- **WHEN** any rule yielding `:allow` is appended
+- **THEN** the result SHALL still be `:allow`
 
 #### Scenario: Adding an Allow rule to a Deny result does not widen
-- **GIVEN** a config that yields `Decision::Deny` for a command
-- **WHEN** a rule yielding `Decision::Allow` is appended
-- **THEN** the result SHALL remain `Decision::Deny`
+- **GIVEN** a config that yields `:deny` for a command
+- **WHEN** a rule yielding `:allow` is appended
+- **THEN** the result SHALL remain `:deny`
 
 #### Scenario: Adding a Deny rule can tighten an Allow result
-- **GIVEN** a config that yields `Decision::Allow` for a command
-- **WHEN** a matching rule yielding `Decision::Deny` is appended
-- **THEN** the result SHALL become `Decision::Deny`
+- **GIVEN** a config that yields `:allow` for a command
+- **WHEN** a matching rule yielding `:deny` is appended
+- **THEN** the result SHALL become `:deny`

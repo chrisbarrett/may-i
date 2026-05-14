@@ -2,7 +2,7 @@
 audience: contributor
 bucket: testing
 ---
-# Testing-Strategy Specification
+# testing-strategy Specification
 
 ## Purpose
 

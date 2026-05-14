@@ -2,7 +2,7 @@
 audience: user
 bucket: cli
 ---
-# Pretty-Printing Specification
+# pretty-printing Specification
 
 ## Purpose
 

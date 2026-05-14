@@ -3,7 +3,7 @@ audience: user
 bucket: trust
 trust-relevant: true
 ---
-# Trust-Advisory-Boxes Specification
+# trust-advisory-boxes Specification
 
 ## Purpose
 

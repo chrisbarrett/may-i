@@ -3,7 +3,7 @@ audience: contributor
 bucket: trust
 trust-relevant: true
 ---
-# Trust-Hashing Specification
+# trust-hashing Specification
 
 ## Purpose
 
