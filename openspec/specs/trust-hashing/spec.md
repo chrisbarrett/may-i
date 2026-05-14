@@ -12,7 +12,7 @@ closure: which rules and defines participate, the canonical order-independent
 serialisation, exclusion of non-semantic content, the `safe-env-vars` scope,
 and the Class A / Class B migration interaction with stored hashes.
 
-See related trust specs: `trust-store`, `trust-command`, `trust-provenance`.
+See related trust specs: `trust-store`, `trust-command`.
 
 ## Requirements
 
@@ -135,7 +135,7 @@ If any condition fails, the rule's trust SHALL be invalidated and a manual `may-
 
 #### Scenario: Class A rewrite preserves approval, updates hash
 
-- **GIVEN** a trusted loaded rule `(rule "ls" (effect :allow))` with stored hash H1
+- **GIVEN** a trusted loaded rule `(rule "ls" (allow))` with stored hash H1
 - **WHEN** `may-i migrate` rewrites to `(rule "ls" (allow))`
 - **THEN** the stored hash SHALL update to H2 (matching new canonical form)
 - **AND** the rule SHALL remain trusted without prompting.

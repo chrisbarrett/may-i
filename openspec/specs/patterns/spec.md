@@ -185,7 +185,7 @@ There SHALL be no separate `(no-flag …)` form. Negation of `(flag …)` and
 
 #### Scenario: `(not (flag …))` blocks force-style operations
 
-- **GIVEN** `(rule "git" (and (positional "push") (not (flag ["f" "force"])) (effect :allow)))`
+- **GIVEN** `(rule "git" (and (positional "push") (not (flag ["f" "force"])) (allow)))`
 - **WHEN** evaluating `git push --force`
 - **THEN** the rule SHALL NOT apply
 - **AND** the default decision (`:ask`) SHALL stand

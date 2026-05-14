@@ -1,5 +1,5 @@
 ---
-audience: user
+audience: contributor
 bucket: trust
 trust-relevant: true
 ---
@@ -7,7 +7,7 @@ trust-relevant: true
 
 ## Purpose
 
-Contributor-only. The single `trust_gate::evaluate` entry point that CLI commands consult before evaluating a shell command; produces either a Trust-filtered config (with an optional pre-built advisory layout) or a block decision with reason and source files. Trust-relevant: yes — see `trust-store` for hash storage, `trust-advisory-boxes` for the output formats this gate selects.
+The single `trust_gate::evaluate` entry point that CLI commands consult before evaluating a shell command; produces either a Trust-filtered config (with an optional pre-built advisory layout) or a block decision with reason and source files. See `trust-store` for hash storage, `trust-advisory-boxes` for the output formats this gate selects.
 
 ## Requirements
 
@@ -66,7 +66,7 @@ The gate SHALL load the trust store from `default_trust_store_path()`. CLI comma
 
 ### Requirement: External Trust behaviour preserved
 
-The user-visible output of `eval`, `check`, and the hook SHALL be byte-for-byte identical before and after the gate is introduced for any input that does not exercise the duplicated program-name extraction inconsistency. This is a refactor; existing specs (`trust-advisory-boxes`, `trust-provenance`, `per-rule-trust`) remain authoritative for what the gate must produce.
+The user-visible output of `eval`, `check`, and the hook SHALL be byte-for-byte identical before and after the gate is introduced for any input that does not exercise the duplicated program-name extraction inconsistency. This is a refactor; existing specs (`trust-advisory-boxes`, `trust-store`) remain authoritative for what the gate must produce.
 
 #### Scenario: Existing trust integration tests pass unchanged
 

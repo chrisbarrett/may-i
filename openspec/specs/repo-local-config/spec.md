@@ -79,7 +79,7 @@ in this order, and merge any that exist:
 5. `.claude/may-i.local.lisp`
 
 Missing files SHALL be silently skipped. The order affects
-`reason` tie-breaking only (per `rule-combination`), since
+`reason` tie-breaking only (per `rule-decisions`), since
 `Decision` selection is order-independent.
 
 #### Scenario: Only one file present
@@ -110,7 +110,7 @@ The resolver SHALL tag every rule and define originating from a repo-local disco
 
 #### Scenario: Rule from .may-i.lisp is gated by trust
 - **GIVEN** a repo containing `.may-i.lisp` with
-  `(rule "echo" (effect :allow))`
+  `(rule "echo" (allow))`
 - **AND** the trust store has no entry for this rule
 - **WHEN** `may-i eval "echo hi"` is invoked
 - **THEN** the rule SHALL be filtered out before evaluation
@@ -122,7 +122,7 @@ The resolver SHALL tag every rule and define originating from a repo-local disco
   in the trust store
 - **WHEN** evaluation occurs
 - **THEN** the rule SHALL participate in the most-strict-wins
-  combine (per `rule-combination`)
+  combine (per `rule-decisions`)
 
 #### Scenario: Same rule reached via load and discovery has same hash
 - **GIVEN** a rule that may be reached either via `(load

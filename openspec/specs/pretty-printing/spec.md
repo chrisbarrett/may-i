@@ -1,6 +1,6 @@
 ---
 audience: user
-bucket: tracing-and-output
+bucket: cli
 ---
 # Pretty-Printing Specification
 

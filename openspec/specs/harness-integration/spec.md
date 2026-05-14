@@ -38,7 +38,7 @@ evaluation context before evaluation.
 
 #### Scenario: Facts available to rules
 
-- **GIVEN** a config with `(rule "rm" (when (fact? :client/claude-code) (effect :deny)) :effect (effect :allow))`
+- **GIVEN** a config with `(rule "rm" (when (fact? :client/claude-code) (deny)) :effect (allow))`
 - **WHEN** the hook evaluates `rm foo`
 - **THEN** the rule SHALL match the `fact?` predicate and return Deny
 
@@ -50,13 +50,13 @@ evaluation, ensuring that `(define ...)` predicates are inlined.
 #### Scenario: Config with define works in hook mode
 
 - **GIVEN** a config with `(define is-cc (fact? :client/claude-code))` and a
-  rule `(rule "rm" (when is-cc (effect :deny)) :effect (effect :allow))`
+  rule `(rule "rm" (when is-cc (deny)) :effect (allow))`
 - **WHEN** the hook evaluates `rm foo`
 - **THEN** `is-cc` SHALL be resolved and the rule SHALL return Deny
 
 #### Scenario: Config with unresolvable reference reports error
 
-- **GIVEN** a config with a rule using `(when nonexistent (effect :allow))`
+- **GIVEN** a config with a rule using `(when nonexistent (allow))`
 - **WHEN** the hook attempts to evaluate
 - **THEN** it SHALL report a resolution error rather than panicking
 

@@ -12,9 +12,9 @@ interactive review flow, listing approved and pending programs grouped by
 source file, approving individual programs or all pending entries, the
 per-rule approve/skip prompt, and `--json` output.
 
-See related trust specs: `trust-store` for hash storage, `trust-hashing`
-for what the stored hash covers, `trust-provenance` for what counts as
-Loaded content, `trust-gate` for runtime enforcement.
+See related trust specs: `trust-store` for hash storage and provenance,
+`trust-hashing` for what the stored hash covers, `trust-gate` for runtime
+enforcement.
 
 ## Requirements
 
@@ -217,12 +217,12 @@ The rule form displayed during interactive review SHALL be pretty-printed using 
 
 #### Scenario: Multi-line rule display
 
-- **WHEN** reviewing a rule with canonical form `(rule "git" (when (fact? :env "prod") (effect :allow "safe")))`
+- **WHEN** reviewing a rule with canonical form `(rule "git" (when (fact? :env "prod") (allow "safe")))`
 - **THEN** the form is displayed with proper indentation across multiple lines
 
 #### Scenario: Simple rule stays single-line
 
-- **WHEN** reviewing a rule with canonical form `(rule "echo" (effect :allow))`
+- **WHEN** reviewing a rule with canonical form `(rule "echo" (allow))`
 - **THEN** the form is displayed on a single line (fits within width)
 
 ### Requirement: Pretty-printed diff for changed rules
@@ -231,7 +231,7 @@ When a rule is CHANGED, both the old and new forms SHALL be pretty-printed befor
 
 #### Scenario: Changed rule diff display
 
-- **WHEN** a rule changed from `(rule "kubectl" (effect :allow))` to `(rule "kubectl" (when on-vpn (effect :allow)))`
+- **WHEN** a rule changed from `(rule "kubectl" (allow))` to `(rule "kubectl" (when on-vpn (allow)))`
 - **THEN** the diff shows pretty-printed old lines with `-` prefix in red and pretty-printed new lines with `+` prefix in green
 
 ### Requirement: Direct entry to review from list_status

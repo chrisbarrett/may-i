@@ -1,6 +1,6 @@
 ---
 audience: contributor
-bucket: parsing
+bucket: contributor-internals
 ---
 # fact-predicates-in-args Specification
 
@@ -37,15 +37,15 @@ The system SHALL support a `BoolExpr` type representing fact predicates with the
 The system SHALL support conditional branches where each test can be a full `ArgMatcher`, an `Expr` (inline string predicate), or a `BoolExpr` (fact predicate). (CHANGED: syntax uses `fact?` instead of `has`)
 
 #### Scenario: When with fact predicate
-- **WHEN** using `(when (fact? [:env "prod"]) (effect :deny))` in args
+- **WHEN** using `(when (fact? [:env "prod"]) (deny))` in args
 - **THEN** the effect SHALL apply when the fact matches
 
 #### Scenario: Unless with positional and fact
-- **WHEN** using `(unless (and (fact? [:env "prod"]) (positional "delete")) (effect :allow))`
+- **WHEN** using `(unless (and (fact? [:env "prod"]) (positional "delete")) (allow))`
 - **THEN** the effect SHALL apply when either predicate fails
 
 #### Scenario: If with fact predicates
-- **WHEN** using `(if (fact? [:env "prod"]) (effect :deny) (effect :allow))`
+- **WHEN** using `(if (fact? [:env "prod"]) (deny) (allow))`
 - **THEN** the appropriate branch SHALL apply based on fact evaluation
 
 ### Requirement: ContextFacts threading

@@ -1,6 +1,6 @@
 ---
-audience: user
-bucket: tracing-and-output
+audience: contributor
+bucket: contributor-internals
 ---
 # Traces Specification
 
@@ -26,7 +26,7 @@ evaluated AST node.
 #### Scenario: Terminal effect produces annotated doc
 - **WHEN** evaluating `Effect::Allow(Some("safe"))`
 - **THEN** the fold output contains `EffectResult::Decision(Allow, Some("safe"))`
-- **AND** a `Doc` representing `(effect :allow "safe")` with an `Ann` recording
+- **AND** a `Doc` representing `(allow "safe")` with an `Ann` recording
   the decision
 
 #### Scenario: Command match produces annotated doc
