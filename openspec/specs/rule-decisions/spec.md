@@ -29,12 +29,12 @@ evaluated. Rules whose command effect does not match SHALL be excluded.
 - **WHEN** evaluating `git push`
 - **THEN** the applicable set SHALL contain both rules
 
-### Requirement: All applicable rules run; strictest non-Nil decision wins
+### Requirement: All applicable rules run; strictest decision wins
 
 The engine SHALL evaluate every rule in the applicable set, collect each
-rule's outcome, discard outcomes whose effect resolved to Nil, and return
-the *strictest* of the remaining decisions. Strictness is ordered
-`Deny > Ask > Allow`.
+rule's outcome, discard rules whose body did not produce a decision, and
+combine the remaining decisions by taking the *strictest* under the lattice
+`:allow < :ask < :deny`.
 
 #### Scenario: Allow and Deny coexist; Deny wins
 
@@ -50,13 +50,34 @@ the *strictest* of the remaining decisions. Strictness is ordered
 - **WHEN** evaluating `scp host:foo .` with fact `:prod`
 - **THEN** the result SHALL be `:ask "prod"`
 
-#### Scenario: A non-matching rule body returns Nil and does not contribute
+#### Scenario: Ask and Deny coexist; Deny wins
+
+- **GIVEN** `(rule "rm" (ask))` and
+  `(rule "rm" (positional "-rf") (deny "danger"))` in any order
+- **WHEN** evaluating `rm -rf /tmp`
+- **THEN** the result SHALL be `:deny`
+
+#### Scenario: Multiple rules at the same decision collapse
+
+- **GIVEN** three rules all matching `echo` and all yielding `:allow`
+- **WHEN** evaluating `echo hi`
+- **THEN** the result SHALL be `:allow`
+
+#### Scenario: A non-matching rule body produces no decision and does not contribute
 
 - **GIVEN** `(rule "rm" (when (flag "r") (deny)))` and
   `(rule "rm" (allow))`
 - **WHEN** evaluating `rm foo` (no `-r`)
-- **THEN** the first rule's body SHALL produce Nil
+- **THEN** the first rule's body SHALL produce no decision
 - **AND** the result SHALL be `:allow` from the second rule
+
+#### Scenario: Loaded rule contributes the strictest decision
+
+- **GIVEN** primary config `(rule "git" (allow))`
+  and loaded file `(rule "git" (positional "push") (deny "no push"))`
+- **WHEN** evaluating `git push`
+- **THEN** the result SHALL be `:deny "no push"` (the only rule
+  contributing the strictest decision)
 
 ### Requirement: Order of rules in the config SHALL not affect the decision
 
@@ -83,7 +104,7 @@ across files and `(load …)` order).
 ### Requirement: Tie-breaking among equally-strict decisions is order-free
 
 The engine SHALL produce a deterministic aggregate reason when two or
-more rules return the strictest decision (e.g. two `Deny`s); the
+more rules return the strictest decision (e.g. two `:deny`s); the
 aggregate SHALL NOT depend on rule order. Distinct reasons SHALL be
 sorted lexically and joined with `"; "`. Identical reasons SHALL be
 deduplicated.
@@ -106,7 +127,7 @@ deduplicated.
 
 When the applicable set is empty, the engine SHALL return `:ask` with a
 reason that names the missing program. When the applicable set is
-non-empty but every rule body produces Nil, the engine SHALL return
+non-empty but no rule body produces a decision, the engine SHALL return
 `:ask` with a reason explaining that rules exist but no patterns
 matched. The choice between these reasons MUST depend only on whether
 the applicable set is empty, not on rule order.
@@ -146,66 +167,9 @@ The check evaluation system SHALL propagate evaluation errors as diagnostic resu
 - **WHEN** a check rule references an undefined predicate
 - **THEN** the check system SHALL report a diagnostic failure instead of panicking
 
-### Requirement: Top-level rule combination is most-strict-wins
-
-When a command is evaluated against a config, the engine SHALL combine
-the effects of **all** matching rules under the decision lattice
-`:allow < :ask < :deny`. The resulting decision SHALL be the maximum
-under this ordering. The combine SHALL be order-independent: shuffling
-the rule list within or across source files MUST NOT change the
-resulting decision.
-
-#### Scenario: Allow and Deny on same command — Deny wins
-- **GIVEN** rules `(rule "rm" (allow))` and
-  `(rule "rm" (deny "danger"))` in any order
-- **WHEN** evaluating the command `rm file`
-- **THEN** the result SHALL be `:deny`
-
-#### Scenario: Allow and Ask on same command — Ask wins
-- **GIVEN** rules `(rule "git" (allow))` and
-  `(rule "git" (positional "push") (ask))` in any order
-- **WHEN** evaluating the command `git push`
-- **THEN** the result SHALL be `:ask`
-
-#### Scenario: Ask and Deny on same command — Deny wins
-- **GIVEN** rules `(rule "rm" (ask))` and
-  `(rule "rm" (positional "-rf") (deny "danger"))` in any
-  order
-- **WHEN** evaluating the command `rm -rf /tmp`
-- **THEN** the result SHALL be `:deny`
-
-#### Scenario: Multiple rules at same effect collapse
-- **GIVEN** three rules all matching `echo` and all yielding
-  `:allow`
-- **WHEN** evaluating `echo hi`
-- **THEN** the result SHALL be `:allow`
-
-#### Scenario: No rule matches — Ask
-- **GIVEN** a config with no rule whose predicate matches the command
-- **WHEN** evaluating that command
-- **THEN** the result SHALL be `:ask`
-
-### Requirement: Tie-breaking on `reason` is earliest source order
-
-The engine SHALL break ties on the `reason` string by selecting the earliest rule in source order when multiple matching rules share the most-strict effect. Source order is defined as: rules from the primary config in file order, then rules from each loaded file in load order, then within each loaded file in file order.
-
-#### Scenario: Two Deny rules with different reasons — earliest wins
-- **GIVEN** primary config `(rule "rm" (deny "primary"))`
-  and loaded file `(rule "rm" (deny "loaded"))`
-- **WHEN** evaluating `rm file`
-- **THEN** the result decision SHALL be `:deny`
-- **AND** the result reason SHALL be `"primary"`
-
-#### Scenario: Loaded rule strictest, no primary match
-- **GIVEN** primary config `(rule "git" (allow))`
-  and loaded file `(rule "git" (positional "push") (deny "no push"))`
-- **WHEN** evaluating `git push`
-- **THEN** the result SHALL be `:deny` with reason
-  `"no push"` (the only rule contributing the strictest effect)
-
 ### Requirement: Trace surfaces all tied entries
 
-The engine SHALL include every rule that contributed the most-strict effect in the trace output for an evaluation. The rule whose `reason` survived the earliest-in-source-order tie-breaker SHALL be marked as the reason source; the remaining tied rules SHALL be presented as also-matched siblings at the same effect.
+The engine SHALL include every rule that contributed the most-strict decision in the trace output for an evaluation. Among the tied rules, the one carrying a `reason` that is earliest in source order SHALL be marked as the reason source; the remaining tied rules SHALL be presented as also-matched siblings at the same decision. (The aggregate result `reason` is the order-free sorted join of all distinct tied reasons — see "Tie-breaking among equally-strict decisions is order-free"; the reason-source marking affects only trace presentation.)
 
 #### Scenario: Two rules tied at Deny — both appear in trace
 - **GIVEN** two rules both matching `rm` and both yielding

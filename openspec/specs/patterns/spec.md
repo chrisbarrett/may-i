@@ -10,18 +10,17 @@ Defines the Pattern sublanguage used in rule bodies (see `CONTEXT.md` for the *P
 
 ## Requirements
 
-### Requirement: Expression serialization roundtrips through parser
-Expr values serialized to sexpr form SHALL parse back to structurally equivalent expressions.
+### Requirement: Pattern serialization roundtrips through the parser
+A Pattern serialized to its s-expression form SHALL parse back to a structurally equivalent Pattern.
 
-#### Scenario: Arbitrary expression roundtrip
-- **WHEN** a randomly generated Expr is converted to sexpr string and parsed via parse_expr
-- **THEN** the result SHALL match the original expression
+#### Scenario: Arbitrary pattern roundtrip
+- **WHEN** a randomly generated Pattern is converted to an s-expression string and parsed back
+- **THEN** the result SHALL be structurally equivalent to the original Pattern
 
 ### Requirement: `(flag X)` matches flag presence
 
-The pattern `(flag X)` SHALL evaluate to a positive match (Allow) when the
-named flag is present in the tokenised arg stream, and SHALL return Nil
-otherwise. `X` SHALL be one of:
+The pattern `(flag X)` SHALL match when the named flag is present in the
+tokenised arg stream, and SHALL NOT match otherwise. `X` SHALL be one of:
 
 - a single string of length 1 — interpreted as a short flag,
 - a single string of length greater than 1 — interpreted as a long flag,
@@ -54,7 +53,7 @@ see the full token stream.
 - **WHEN** evaluating `git push --force`
 - **THEN** `(flag ["f" "force"])` SHALL also match
 
-#### Scenario: Absent flag returns Nil
+#### Scenario: Absent flag does not match
 
 - **WHEN** evaluating `git push origin`
 - **THEN** `(flag "force")` SHALL NOT match
@@ -64,7 +63,7 @@ see the full token stream.
 
 The pattern `(parameter X FORM)` SHALL extract the value of the named flag
 from the tokenised arg stream and evaluate `FORM` against that value. If
-the flag is absent, the pattern SHALL return Nil. If the flag is present,
+the flag is absent, the pattern SHALL NOT match. If the flag is present,
 the pattern's result SHALL be the result of `FORM` evaluated against the
 flag's value.
 
@@ -115,7 +114,7 @@ string of the captured value.
 - **THEN** the rule SHALL apply
 - **AND** the decision SHALL be `:ask`
 
-#### Scenario: Flag absence yields Nil
+#### Scenario: Flag absence means no match
 
 - **GIVEN** `(rule "curl" (parameter ["X" "request"] "POST"))`
 - **WHEN** evaluating `curl https://example.com`
@@ -190,96 +189,96 @@ There SHALL be no separate `(no-flag …)` form. Negation of `(flag …)` and
 - **THEN** the rule SHALL NOT apply
 - **AND** the default decision (`:ask`) SHALL stand
 
-### Requirement: Expr::Or matches if any sub-expression matches
-`Expr::Or` SHALL return true if any sub-expression matches the value. The evaluation SHALL short-circuit on the first matching sub-expression. Only bound facts from the first matching sub-expression SHALL be included in the result. Later alternatives SHALL NOT be evaluated once a match is found.
+### Requirement: `(or …)` matches if any sub-pattern matches
+`(or …)` SHALL match if any sub-pattern matches the value. The evaluation SHALL short-circuit on the first matching sub-pattern. Only the facts bound by the first matching sub-pattern SHALL be included in the result. Later alternatives SHALL NOT be evaluated once a match is found.
 
-#### Scenario: First sub-expression matches
-- **WHEN** matching `Expr::Or([Literal("prod"), Literal("staging")])` against `"prod"`
-- **THEN** it SHALL return matched=true
+#### Scenario: First sub-pattern matches
+- **WHEN** matching `(or "prod" "staging")` against `"prod"`
+- **THEN** it SHALL match
 
-#### Scenario: Later sub-expression matches
-- **WHEN** matching `Expr::Or([Literal("prod"), Literal("staging")])` against `"staging"`
-- **THEN** it SHALL return matched=true
+#### Scenario: Later sub-pattern matches
+- **WHEN** matching `(or "prod" "staging")` against `"staging"`
+- **THEN** it SHALL match
 
-#### Scenario: No sub-expression matches
-- **WHEN** matching `Expr::Or([Literal("prod"), Literal("staging")])` against `"dev"`
-- **THEN** it SHALL return matched=false
+#### Scenario: No sub-pattern matches
+- **WHEN** matching `(or "prod" "staging")` against `"dev"`
+- **THEN** it SHALL NOT match
 
 #### Scenario: Bound facts from first matching branch only
-- **WHEN** matching `Expr::Or([Bind(:a, Literal("prod")), Bind(:b, Literal("staging"))])` against `"staging"`
+- **WHEN** matching `(or [:a "prod"] [:b "staging"])` against `"staging"`
 - **THEN** bound facts SHALL contain `:b = "staging"` but NOT `:a`
 
 #### Scenario: Short-circuit prevents later binding leakage
-- **WHEN** matching `Expr::Or([Bind(:x, Wildcard), Bind(:y, Wildcard)])` against `"val"`
+- **WHEN** matching `(or [:x *] [:y *])` against `"val"`
 - **THEN** bound facts SHALL contain only `:x = "val"`
 - **AND** `:y` SHALL NOT be present in bound facts
 
 ### Requirement: Fewer args than required patterns returns no match
-When the number of available positional args is less than the number of patterns (accounting for quantifiers), positional matching SHALL return false.
+When the number of available positional args is less than the number of patterns (accounting for quantifiers), positional matching SHALL NOT match.
 
 #### Scenario: Zero args with one required pattern
-- **WHEN** matching positional patterns `["push"]` against args `[]`
-- **THEN** it SHALL return matched=false
+- **WHEN** matching the positional pattern `"push"` against an empty arg list
+- **THEN** it SHALL NOT match
 
 #### Scenario: One arg with two required patterns
-- **WHEN** matching positional patterns `["remote" "add"]` against args `["remote"]`
-- **THEN** it SHALL return matched=false
+- **WHEN** matching the positional patterns `"remote" "add"` against the args `remote`
+- **THEN** it SHALL NOT match
 
 ### Requirement: Optional quantifier matches with or without arg
-A `Quantifier::Optional` (?) pattern SHALL match even when the arg at that position is absent. When the arg is present, it MUST match the pattern.
+A pattern with the `?` (optional) quantifier SHALL match even when the arg at that position is absent. When the arg is present, it MUST match the pattern.
 
 #### Scenario: Optional with matching arg present
-- **WHEN** matching positional pattern `"branch"?` against args `["branch"]`
-- **THEN** it SHALL return matched=true
+- **WHEN** matching the positional pattern `"branch"?` against the args `branch`
+- **THEN** it SHALL match
 
 #### Scenario: Optional with non-matching arg present
-- **WHEN** matching positional pattern `"branch"?` against args `["tag"]`
-- **THEN** it SHALL return matched=false
+- **WHEN** matching the positional pattern `"branch"?` against the args `tag`
+- **THEN** it SHALL NOT match
 
 #### Scenario: Optional with no arg at position
-- **WHEN** matching positional patterns `["push" "origin"?]` against args `["push"]`
-- **THEN** it SHALL return matched=true (optional pattern satisfied by absence)
+- **WHEN** matching the positional patterns `"push" "origin"?` against the args `push`
+- **THEN** it SHALL match (the optional pattern is satisfied by absence)
 
-### Requirement: OneOrMore quantifier requires at least one match
-A `Quantifier::OneOrMore` (+) pattern SHALL require at least one arg at the pattern's position. All remaining args from that position onward MUST match the pattern.
+### Requirement: One-or-more quantifier requires at least one match
+A pattern with the `+` (one-or-more) quantifier SHALL require at least one arg at the pattern's position. All remaining args from that position onward MUST match the pattern.
 
 #### Scenario: One matching arg
-- **WHEN** matching positional pattern `*+` against args `["file1"]`
-- **THEN** it SHALL return matched=true
+- **WHEN** matching the positional pattern `*+` against the args `file1`
+- **THEN** it SHALL match
 
 #### Scenario: Multiple matching args
-- **WHEN** matching positional pattern `*+` against args `["file1" "file2" "file3"]`
-- **THEN** it SHALL return matched=true
+- **WHEN** matching the positional pattern `*+` against the args `file1 file2 file3`
+- **THEN** it SHALL match
 
 #### Scenario: No args at position
-- **WHEN** matching positional patterns `["cmd" *+]` against args `["cmd"]`
-- **THEN** it SHALL return matched=false (OneOrMore requires at least one)
+- **WHEN** matching the positional patterns `"cmd" *+` against the args `cmd`
+- **THEN** it SHALL NOT match (one-or-more requires at least one)
 
-### Requirement: ZeroOrMore quantifier matches any count
-A `Quantifier::ZeroOrMore` (*) pattern SHALL match zero or more remaining args from that position. All remaining args MUST match the pattern.
+### Requirement: Zero-or-more quantifier matches any count
+A pattern with the `*` (zero-or-more) quantifier SHALL match zero or more remaining args from that position. All remaining args MUST match the pattern.
 
 #### Scenario: Zero remaining args
-- **WHEN** matching positional patterns `["cmd" **]` against args `["cmd"]`
-- **THEN** it SHALL return matched=true
+- **WHEN** matching the positional patterns `"cmd" **` against the args `cmd`
+- **THEN** it SHALL match
 
 #### Scenario: Multiple remaining args all match
-- **WHEN** matching positional pattern `**` against args `["a" "b" "c"]`
-- **THEN** it SHALL return matched=true
+- **WHEN** matching the positional pattern `**` against the args `a b c`
+- **THEN** it SHALL match
 
 ### Requirement: Bind is valid in positional, exact, and anywhere but not forbidden
-`Expr::Bind` SHALL be accepted by the parser inside `positional`, `exact`, and `anywhere` patterns. The parser SHALL reject `Expr::Bind` inside `forbidden` patterns with a clear error.
+A `[:k …]` bind pattern SHALL be accepted by the parser inside `(positional …)`, `(exact …)`, and `(anywhere …)` patterns. The parser SHALL reject a bind inside `(forbidden …)` patterns with a clear error.
 
 #### Scenario: Bind in positional
 - **WHEN** parsing `(positional [:ssh/host *])`
-- **THEN** it SHALL succeed with a Bind expression
+- **THEN** it SHALL succeed with a bind pattern
 
 #### Scenario: Bind in exact
 - **WHEN** parsing `(exact [:env "prod"])`
-- **THEN** it SHALL succeed with a Bind expression
+- **THEN** it SHALL succeed with a bind pattern
 
 #### Scenario: Bind in anywhere
 - **WHEN** parsing `(anywhere [:git/branch (regex "^(main|master)$")])`
-- **THEN** it SHALL succeed with a Bind expression
+- **THEN** it SHALL succeed with a bind pattern
 
 #### Scenario: Bind in forbidden rejected
 - **WHEN** parsing `(forbidden [:key *])`
