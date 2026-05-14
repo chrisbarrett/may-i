@@ -216,3 +216,35 @@ A `parse_json` helper function SHALL exist in `tests/common/` for parsing JSON f
 
 - **WHEN** instantiating `TracingFold` from CLI code
 - **THEN** a single constructor SHALL accept source text and pre-migration forms in one call
+
+### Requirement: Advisory note builders are pure functions owned by their data module
+
+Advisory `Layout` builders for trust state (warning, integrity) and migration notices SHALL be pure functions returning `Option<Layout>` or `Layout` and performing no IO. Each builder SHALL live in the module that owns its data — `trust_advisory` for trust-state advisories; the migration command or a sibling notes module for migration notices — NOT in `output`. The `output` module SHALL expose only layout primitives and trace-rendering functions; it SHALL NOT export domain-specific advisory builders. Builder inputs SHALL be the domain data (`Config`, trust-store result, loaded forms) and SHALL NOT leak flattened internal structs across module boundaries.
+
+#### Scenario: Trust advisory warning builder is pure and returns None when nothing to warn about
+
+- **WHEN** `trust_advisory::build_warning_layout(&config)` is called against a config whose loaded rules are all trusted
+- **THEN** the function returns `None`
+- **AND** no IO occurs
+
+#### Scenario: Trust advisory warning builder returns Some(Layout) when untrusted rules exist
+
+- **WHEN** `trust_advisory::build_warning_layout(&config)` is called against a config with untrusted loaded rules
+- **THEN** the function returns `Some(Layout)` matching the rendered output specified in `trust-advisory-boxes`
+- **AND** no IO occurs
+
+#### Scenario: Output module exposes only primitives
+
+- **WHEN** the public API of `output` is inspected
+- **THEN** no domain-specific advisory builders (e.g. `trust_warning_note`, `trust_integrity_note`, `migration_note`) are exported
+- **AND** layout primitives (`Layout`, `Advisory`, `Note`, `write_layout`, `strip_ansi`, `HRuleLabel`, `NoteLevel`, `Terminal`, `ColRow`, `ColAlign`) and trace-rendering functions (`print_trace`, `write_trace`, `trace_to_json`, `colorize_decision_keyword`) remain
+
+#### Scenario: Migration note imported from migration / notes module
+
+- **WHEN** `migration_note` is imported by `cmd_eval` or `cmd_check`
+- **THEN** the import path is the migration / notes module, not `output`
+
+#### Scenario: Migration note rendered output is byte-equal to existing form
+
+- **WHEN** a config with pre-migration forms is loaded and the migration note is rendered to stderr
+- **THEN** the produced text is byte-equal to today's output for the same config

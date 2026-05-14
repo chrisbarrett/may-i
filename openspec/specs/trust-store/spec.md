@@ -1,5 +1,5 @@
 ---
-audience: user
+audience: contributor
 bucket: trust
 trust-relevant: true
 ---
@@ -7,7 +7,7 @@ trust-relevant: true
 
 ## Purpose
 
-Persistent on-disk storage of approved trust hashes — including per-rule granularity (each loaded rule tracked individually by canonical-form hash) and source-file provenance (every Loaded form records the `PathBuf` it came from, enabling per-file grouping in the trust UI and accurate trust-scope assignment). Also defines the evaluation block behaviour when a stored hash does not match the current computed hash, the v3 store format, integrity verification of stored canonical forms, and the interactive-repair flow for tampered entries. See `trust-hashing` for hash computation, `trust-command` for the approval UI, `trust-gate` for the runtime check.
+Contributor-only. On-disk persistence layer for trust approvals: the v3 store format keyed by canonical-form hash, per-rule entries, source-file provenance carried on `Provenance::Loaded`, the `TrustHashes` metadata returned by `compute_trust_hashes`, and the integrity-verification + interactive-repair flow for tampered entries. Runtime evaluation semantics (when a mismatch blocks, when the gate bypasses) live in `trust-gate`; hash computation lives in `trust-hashing`; the user-facing CLI surface lives in `trust-command`.
 
 ## Requirements
 
@@ -20,48 +20,8 @@ The system SHALL store trust hashes in a persistent file at a platform-appropria
 - **WHEN** the user approves trust for program `"git"`
 - **THEN** the hash is written to the trust store and survives process restart
 
-### Requirement: Evaluation blocks on trust mismatch
-
-When a program's computed trust hash does not match the stored hash, the system SHALL block evaluation for that program, returning `ask` with a reason indicating trust approval is needed.
-
-#### Scenario: Hash mismatch blocks evaluation
-
-- **WHEN** evaluating `"git commit"` and the trust hash for `"git"` has changed since last approved
-- **THEN** the system returns decision `ask` with a reason mentioning trust approval
-
-#### Scenario: Hash match allows evaluation
-
-- **WHEN** evaluating `"git commit"` and the trust hash for `"git"` matches the stored value
-- **THEN** evaluation proceeds normally
-
-### Requirement: First load of a program requires approval
-
-When a program has `Loaded` content and no entry exists in the trust store, the system SHALL treat it as a trust mismatch (no TOFU).
-
-#### Scenario: New loaded program blocks until approved
-
-- **WHEN** a loaded file introduces rules for `"kubectl"` and no trust entry exists
-- **THEN** evaluation for `"kubectl"` blocks with a trust approval message
-
-### Requirement: Programs without loaded content bypass trust
-
-Programs whose rules and referenced defines are all `PrimaryConfig` SHALL bypass trust checking entirely — no hash computed, no store lookup.
-
-#### Scenario: PrimaryConfig-only program evaluates freely
-
-- **WHEN** program `"ls"` has only `PrimaryConfig` rules
-- **THEN** evaluation proceeds without any trust check
-
-### Requirement: Hook mode uses exit code 2 for trust blocks
-
-In Claude Code hook mode, a trust block SHALL produce exit code 2 (blocking error), consistent with other blocking errors.
-
-#### Scenario: Trust block in hook mode
-
-- **WHEN** a trust mismatch occurs during hook-mode evaluation
-- **THEN** the process exits with code 2 and the error message is fed back to the harness
-
 ### Requirement: Trust is per-rule, not per-program
+
 Each loaded rule SHALL be individually tracked in the trust store by its canonical form hash. Trust decisions (approve, ignore) apply to individual rules, not to programs as a whole.
 
 #### Scenario: Two rules for same program, one approved one ignored
@@ -83,30 +43,8 @@ Each loaded rule SHALL be individually tracked in the trust store by its canonic
 - **GIVEN** rules defined directly in the primary config (not via `(load ...)`)
 - **THEN** those rules always participate in evaluation regardless of trust state
 
-### Requirement: Interactive review uses `git add -p` style keybindings
-When run interactively, `may-i trust` SHALL present each pending rule one at a time with single-key actions.
-
-#### Scenario: Keybindings
-- **WHEN** a pending rule is displayed
-- **THEN** the prompt offers: `[y] approve  [n] ignore  [s] skip  [q] quit`
-- **AND** `y` approves the rule (stores as approved)
-- **AND** `n` ignores the rule (stores as ignored, excluded from eval)
-- **AND** `s` skips the rule (leaves it pending, no store change)
-- **AND** `q` quits review (remaining rules keep their current state)
-
-#### Scenario: New rule display
-- **WHEN** a rule has never been reviewed
-- **THEN** it is displayed with a `NEW` badge, the canonical form, and source file path
-
-#### Scenario: Changed rule display with diff
-- **WHEN** a rule's canonical form has changed since last review (detected by position within program)
-- **THEN** it is displayed with a `CHANGED` badge and a line-level diff of old vs new canonical form
-
-#### Scenario: Review summary
-- **WHEN** interactive review completes (all rules processed or user quits)
-- **THEN** a summary line is shown: `Approved: N  Ignored: N  Skipped: N`
-
 ### Requirement: Trust store v3 format with per-rule entries
+
 The trust store SHALL use a v3 format keyed by canonical form hash, with each entry recording program name, canonical form, and status (approved/ignored).
 
 #### Scenario: v2 to v3 migration
@@ -119,45 +57,8 @@ The trust store SHALL use a v3 format keyed by canonical form hash, with each en
 - **WHEN** interactive review completes and the store is saved
 - **THEN** orphaned entries (hashes not in current config) are removed
 
-### Requirement: Eval pipeline filters rules by trust status
-The evaluation pipeline SHALL exclude loaded rules that are not approved in the trust store.
-
-#### Scenario: Ignored rule excluded from eval
-- **GIVEN** rule B is marked `ignored` in the trust store
-- **WHEN** `may-i eval` runs a command that would match rule B
-- **THEN** rule B does not affect the evaluation result
-
-#### Scenario: Pending rule excluded from eval
-- **GIVEN** rule C has never been reviewed (not in trust store)
-- **WHEN** `may-i eval` runs a command that would match rule C
-- **THEN** rule C does not affect the evaluation result
-
-#### Scenario: Approved rule included in eval
-- **GIVEN** rule A is marked `approved` in the trust store
-- **WHEN** `may-i eval` runs a command that would match rule A
-- **THEN** rule A participates in evaluation normally
-
-### Requirement: Non-interactive batch mode
-When stdin is not a TTY or `--json` is set, `may-i trust --all` SHALL approve all pending rules without prompting.
-
-#### Scenario: Batch approve all
-- **GIVEN** 5 pending rules and stdin is piped
-- **WHEN** `may-i trust --all` runs
-- **THEN** all 5 rules are approved without prompting
-
-### Requirement: Trust listing reflects per-rule status
-`may-i trust` listing SHALL show per-rule status, not per-program.
-
-#### Scenario: Mixed rule statuses within a program
-- **GIVEN** program `git` has 3 rules: 1 approved, 1 ignored, 1 pending
-- **WHEN** `may-i trust` lists status
-- **THEN** each rule is shown individually with its status (approved/ignored/pending)
-
-#### Scenario: JSON output per-rule
-- **WHEN** `may-i trust --json` runs
-- **THEN** JSON output contains an array of per-rule entries, each with `program`, `hash`, `form`, `status`, and `file`
-
 ### Requirement: Provenance carries source file path
+
 `Provenance::Loaded` SHALL carry the `PathBuf` of the file from which the form was loaded. `Provenance::PrimaryConfig` remains unchanged.
 
 #### Scenario: Rule loaded from a file records its path
@@ -177,6 +78,7 @@ When stdin is not a TTY or `--json` is set, `may-i trust --all` SHALL approve al
 - **THEN** its provenance is `Provenance::PrimaryConfig` (unchanged)
 
 ### Requirement: TrustHashes carries per-program metadata
+
 `compute_trust_hashes` SHALL return per-program metadata including the hash, canonical rule strings, and set of source file paths.
 
 #### Scenario: Metadata includes canonical rule forms
@@ -192,6 +94,7 @@ When stdin is not a TTY or `--json` is set, `may-i trust --all` SHALL approve al
 - **THEN** the program does not appear in TrustHashes (unchanged behavior)
 
 ### Requirement: Trust store persists canonical forms
+
 The trust store SHALL persist canonical rule forms alongside hashes so that diffs can be computed when rules change.
 
 #### Scenario: Approving a program stores its canonical forms
@@ -208,6 +111,7 @@ The trust store SHALL persist canonical rule forms alongside hashes so that diff
 - **THEN** the trust store provides the previously-stored canonical forms for comparison
 
 ### Requirement: Trust store verifies integrity of stored canonical forms
+
 The trust store SHALL verify that stored canonical forms are consistent with their stored hash on load. The hash is the source of truth; canonical forms are untrusted display metadata that MUST be cryptographically verified before use.
 
 #### Scenario: Stored forms match their hash
@@ -223,34 +127,41 @@ The trust store SHALL verify that stored canonical forms are consistent with the
 - **THEN** the verification joins the stored forms with newline and computes SHA-256 identically to `compute_trust_hashes`
 
 ### Requirement: Integrity failures gate trust operations with interactive repair
+
 When the trust store contains entries whose canonical forms fail integrity verification, the system SHALL warn the user and require interactive resolution before any trust operation proceeds. This prevents a tampered trust store from silently poisoning diff output.
 
 #### Scenario: Suspect entries detected — warning displayed
+
 - **WHEN** the trust store is loaded and one or more entries have canonical forms that do NOT re-hash to their stored hash
 - **THEN** the system prints a warning naming each suspect program and stating the stored forms may have been modified by another tool
 
 #### Scenario: Interactive repair session before trust operation
+
 - **WHEN** suspect entries exist and the user runs any `may-i trust` subcommand (list, approve, approve-all)
 - **THEN** before the requested operation proceeds, the system enters an interactive session presenting each suspect entry
 - **AND** for each suspect entry the user sees: the program name, the stored hash, and the stored (unverified) canonical forms
 - **AND** the user may choose to **re-approve** (re-hash the stored forms, accepting them as correct) or **drop** (remove the entry from the trust store)
 
 #### Scenario: Re-approve updates hash to match stored forms
+
 - **WHEN** the user chooses to re-approve a suspect entry
 - **THEN** the entry's hash is recomputed from its stored canonical forms and saved
 - **AND** the entry is now verified and proceeds as trusted
 
 #### Scenario: Drop removes entry from trust store
+
 - **WHEN** the user chooses to drop a suspect entry
 - **THEN** the entry is removed from the trust store entirely
 - **AND** the program will be treated as NEW on next trust check
 
 #### Scenario: All suspect entries resolved before proceeding
+
 - **WHEN** the interactive session completes (all suspect entries resolved)
 - **THEN** the modified trust store is saved to disk
 - **AND** the originally requested trust operation proceeds with the cleaned store
 
 #### Scenario: Non-interactive context skips repair, treats forms as unavailable
+
 - **WHEN** suspect entries exist but the context is non-interactive (e.g., hook mode, piped stdin, `--json` flag)
 - **THEN** the system does NOT enter interactive repair
 - **AND** suspect entries' canonical forms are treated as unavailable (empty) for that invocation

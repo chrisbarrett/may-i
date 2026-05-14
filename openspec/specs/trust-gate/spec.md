@@ -7,7 +7,7 @@ trust-relevant: true
 
 ## Purpose
 
-The single `trust_gate::evaluate` entry point that CLI commands consult before evaluating a shell command; produces either a Trust-filtered config (with an optional pre-built advisory layout) or a block decision with reason and source files. See `trust-store` for hash storage, `trust-advisory-boxes` for the output formats this gate selects.
+Contributor-only. The single `trust_gate::evaluate` entry point that CLI commands consult before evaluating a shell command, and the runtime semantics it enforces: when an unmatched hash blocks evaluation, when first load of a new loaded program requires approval before any rule applies, when a program bypasses trust entirely (no `Loaded` content), and the hook-mode exit-code contract. Produces either a Trust-filtered config (with an optional pre-built advisory layout) or a block decision with reason and source files. See `trust-store` for hash storage, `trust-hashing` for what gets hashed, `trust-advisory-boxes` for the output formats this gate selects.
 
 ## Requirements
 
@@ -63,6 +63,47 @@ The gate SHALL load the trust store from `default_trust_store_path()`. CLI comma
 
 - **WHEN** the trust store cannot be loaded (path missing, IO error)
 - **THEN** the gate behaves as today's call sites do: `Proceed` with the original config (no filtering) and no advisory; failure does not propagate as an error to the caller
+
+### Requirement: Evaluation blocks on trust mismatch
+
+When a program's computed trust hash does not match the stored hash, the gate SHALL block evaluation for that program, returning `Block` with an `:ask` decision and a reason indicating trust approval is needed.
+
+#### Scenario: Hash mismatch blocks evaluation
+
+- **WHEN** evaluating `"git commit"` and the trust hash for `"git"` has changed since last approved
+- **THEN** the gate returns `Block` with decision `:ask` and a reason mentioning trust approval
+
+#### Scenario: Hash match allows evaluation
+
+- **WHEN** evaluating `"git commit"` and the trust hash for `"git"` matches the stored value
+- **THEN** evaluation proceeds normally
+
+### Requirement: First load of a program requires approval
+
+When a program has `Loaded` content and no entry exists in the trust store, the gate SHALL treat it as a trust mismatch (no TOFU).
+
+#### Scenario: New loaded program blocks until approved
+
+- **WHEN** a loaded file introduces rules for `"kubectl"` and no trust entry exists
+- **THEN** evaluation for `"kubectl"` blocks with a trust approval message
+
+### Requirement: Programs without loaded content bypass trust
+
+Programs whose rules and referenced defines are all `PrimaryConfig` SHALL bypass trust checking entirely — no hash computed, no store lookup.
+
+#### Scenario: PrimaryConfig-only program evaluates freely
+
+- **WHEN** program `"ls"` has only `PrimaryConfig` rules
+- **THEN** evaluation proceeds without any trust check
+
+### Requirement: Hook mode uses exit code 2 for trust blocks
+
+In Claude Code hook mode, a trust block SHALL produce exit code 2 (blocking error), consistent with other blocking errors.
+
+#### Scenario: Trust block in hook mode
+
+- **WHEN** a trust mismatch occurs during hook-mode evaluation
+- **THEN** the process exits with code 2 and the error message is fed back to the harness
 
 ### Requirement: External Trust behaviour preserved
 

@@ -7,20 +7,15 @@ trust-relevant: true
 
 ## Purpose
 
-How `may-i` renders trust state into terminal traces: the Advisory warning
-box surfaced around loaded but untrusted rules in user-facing subcommands,
-and the block-context output rendered when the trust gate blocks `eval` in
-non-JSON TTY mode (untrusted rules default to `:ask`). Output surfaces
-excluded are hook mode, JSON, and help/reference.
+How `may-i` renders trust state into terminal traces: the advisory warning box surfaced around loaded but untrusted rules in user-facing subcommands (`eval`, `check`, `trust`, `migrate`, `parse`), the error advisory box rendered on trust-store integrity failure, and the runtime fall-through behaviour when untrusted rules are detected in non-JSON TTY mode (evaluation proceeds with the warning; untrusted rules default to `:ask`). Output surfaces excluded are hook mode, JSON, and help/reference.
 
-See related trust specs: `trust-gate` for the gate decision the
-block-context renders, `trust-store` for the stored approvals these
-advisories refer the user to.
+See related specs: `trust-gate` for the runtime decision the advisories reflect; `trust-store` for the stored approvals these advisories refer the user to; `code-quality` for the module-ownership invariants on the advisory builders.
 
 ## Requirements
-### Requirement: Untrusted rules render as Advisory warning box
 
-When user-facing subcommands (eval, check, trust, migrate, parse) detect untrusted rules in non-JSON TTY mode, they SHALL render a `Layout::Note` warning box (NoteLevel::Warn) to stderr. Hook mode and help/reference are excluded.
+### Requirement: Untrusted rules render as advisory warning box
+
+When user-facing subcommands (`eval`, `check`, `trust`, `migrate`, `parse`) detect untrusted rules in non-JSON TTY mode, they SHALL render a warning advisory box to stderr. Hook mode and help/reference are excluded.
 
 #### Scenario: Single untrusted program names the program
 
@@ -51,9 +46,9 @@ When user-facing subcommands (eval, check, trust, migrate, parse) detect untrust
 - **WHEN** stdout/stderr is not a TTY (piped) and untrusted rules exist
 - **THEN** no advisory box is rendered
 
-### Requirement: Trust store integrity failures render as Advisory error box
+### Requirement: Trust store integrity failures render as advisory error box
 
-When the trust store has integrity issues, user-facing subcommands SHALL render a `Layout::Note` error box (NoteLevel::Error) to stderr. The box includes the trust store file path.
+When the trust store has integrity issues, user-facing subcommands SHALL render an error advisory box to stderr. The box includes the trust store file path.
 
 #### Scenario: Specific entries have mismatched hashes
 
@@ -77,28 +72,33 @@ When the trust store has integrity issues, user-facing subcommands SHALL render 
 
 ### Requirement: Eval proceeds with warning instead of blocking
 
-When `cmd_eval` detects untrusted rules in non-JSON mode, it SHALL show the advisory warning box and then proceed with evaluation, treating untrusted rules as defaulting to `:ask`. Previously, eval returned early without evaluating.
+When `may-i eval` detects untrusted rules in non-JSON TTY mode, it SHALL render the advisory warning box to stderr and then proceed with evaluation, treating untrusted rules as defaulting to `:ask`. Previously, eval returned early without evaluating. JSON mode and hook mode still block with an `:ask` response.
 
-#### Scenario: Eval shows trace alongside trust warning
+#### Scenario: Eval shows trace alongside trust warning (single file)
 
-- **WHEN** `may-i eval "git push"` is run and `git` has untrusted rules
-- **THEN** the warning box is rendered to stderr
+- **WHEN** `may-i eval "echo hi"` is run in TTY mode and `echo` has untrusted rules from `~/rules/basics.lisp`
+- **THEN** the warning box is rendered to stderr naming the source file with suggestion `$ may-i trust "echo"`
 - **AND** the evaluation proceeds, producing trace and result output
 - **AND** the result reflects `:ask` for the untrusted rules
+
+#### Scenario: Eval names multiple source files
+
+- **WHEN** `git` has untrusted rules from both `~/rules/vcs.lisp` and `~/rules/extras.lisp`
+- **THEN** the warning box body names both file paths
 
 #### Scenario: Eval JSON mode still blocks
 
 - **WHEN** `may-i eval --json "git push"` is run and `git` has untrusted rules
-- **THEN** the JSON response returns `"decision": "ask"` with the trust reason (unchanged behavior)
+- **THEN** the JSON response returns `"decision": "ask"` with the trust reason and a `"files"` array of source paths
 
 #### Scenario: Hook mode still blocks
 
-- **WHEN** the hook receives a command for an untrusted program
+- **WHEN** the Claude Code hook receives a command for an untrusted program
 - **THEN** the hook returns the JSON `:ask` block response (unchanged behavior)
 
 ### Requirement: Check subcommand gains trust awareness
 
-`cmd_check` SHALL detect untrusted rules and render the advisory warning box. Checks still run so the user sees results, but the warning provides context that results may reflect unapproved rules.
+`may-i check` SHALL detect untrusted rules and render the advisory warning box. Checks still run so the user sees results, but the warning provides context that results may reflect unapproved rules.
 
 #### Scenario: Check with untrusted rules shows warning then results
 
@@ -111,76 +111,16 @@ When `cmd_eval` detects untrusted rules in non-JSON mode, it SHALL show the advi
 - **WHEN** `may-i check --json` is run and untrusted rules exist
 - **THEN** JSON output is unchanged (no advisory box)
 
-### Requirement: Trust advisory builders are pure functions
-The Trust advisory builders SHALL be pure functions returning `Option<Layout>` (warning box) or `Layout` (integrity box), performing no IO. They SHALL live in `src/trust_advisory.rs` (the module owning the data) rather than in `src/output/mod.rs`. Their input shapes SHALL NOT leak across module boundaries: callers pass the trust config or the trust-store result, not flattened internal data structures.
-
-#### Scenario: Warning builder returns None when no untrusted rules
-- **WHEN** `trust_advisory::build_warning_layout(&config)` is called and no
-  loaded rules are untrusted
-- **THEN** the function returns `None`
-- **AND** no IO occurs
-
-#### Scenario: Warning builder returns a Layout when untrusted rules exist
-- **WHEN** the same call is made against a config with untrusted loaded
-  rules
-- **THEN** the function returns `Some(Layout)` whose rendered output
-  matches the existing requirement scenarios in this spec (heading,
-  body, suggestion)
-- **AND** the function performs no IO
-
-#### Scenario: Integrity builder returns a Layout
-- **WHEN** `trust_advisory::build_integrity_layout(store_path, suspects)`
-  is called
-- **THEN** the function returns a `Layout` matching the existing integrity
-  requirement scenarios
-- **AND** the function performs no IO
-
-#### Scenario: Output module no longer exports advisory builders
-- **WHEN** the `src/output/mod.rs` public API is inspected
-- **THEN** `migration_note`, `trust_warning_note`, and
-  `trust_integrity_note` are no longer exported from `output`
-- **AND** the trace-rendering functions (`print_trace`, `write_trace`,
-  `trace_to_json`, `colorize_decision_keyword`) remain
-- **AND** layout primitive re-exports (`Layout`, `Advisory`, `Note`,
-  `Terminal`, `ColRow`, `ColAlign`, `write_layout`, `strip_ansi`,
-  `HRuleLabel`, `NoteLevel`) remain
-
-### Requirement: Migration note builder lives outside output
-The migration advisory note builder SHALL live in the module that owns its data (the migration command or a sibling notes module), not in `src/output/mod.rs`. Its signature SHALL remain `(loaded, config_path) -> Option<Layout>` and its rendered text SHALL be byte-equal to today's output.
-
-#### Scenario: Builder lives in cmd_migrate or a notes module
-- **WHEN** `migration_note` is imported by `cmd_eval` or `cmd_check`
-- **THEN** the import path is the migration / notes module, not `output`
-
-#### Scenario: Rendered output is unchanged
-- **WHEN** a config with pre-migration forms is loaded and the migration
-  note is rendered to stderr
-- **THEN** the produced text is byte-equal to today's output for the same
-  config
-
-### Requirement: Eval TTY mode shows advisory box instead of blocking
-When eval detects untrusted rules in non-JSON TTY mode, it SHALL render an advisory warning box and proceed with evaluation (untrusted rules default to `:ask`). It no longer returns early.
-
-#### Scenario: Single source file
-- **WHEN** `echo` has untrusted rules from `~/rules/basics.lisp` and eval is run in TTY mode
-- **THEN** a warning box is rendered naming the source file, with suggestion `$ may-i trust "echo"`
-- **AND** evaluation proceeds with trace and result output
-
-#### Scenario: Multiple source files
-- **WHEN** `git` has untrusted rules from both `~/rules/vcs.lisp` and `~/rules/extras.lisp`
-- **THEN** the warning box body names both file paths
-
-#### Scenario: JSON mode blocks with files in response
-- **WHEN** eval runs with `--json` and blocks due to untrusted rules
-- **THEN** the JSON response includes `"decision": "ask"`, reason string with file paths, and a `"files"` array
-
 ### Requirement: Hook block response includes source files
+
 When the Claude Code hook blocks due to untrusted rules, the reason string SHALL include source file paths.
 
 #### Scenario: Hook block reason mentions file
-- **WHEN** the hook blocks `echo` with rules from `~/rules/basics.lisp`
-- **THEN** `permissionDecisionReason` includes the file path
 
-#### Scenario: Hook response structure unchanged
+- **WHEN** the hook blocks `echo` with rules from `~/rules/basics.lisp`
+- **THEN** the hook response's `permissionDecisionReason` includes the file path
+
+#### Scenario: Hook response shape unchanged
+
 - **WHEN** the hook blocks due to untrusted rules
-- **THEN** the response shape (`hookSpecificOutput.permissionDecision`, `hookSpecificOutput.permissionDecisionReason`) is unchanged; file info is embedded in the reason string
+- **THEN** the hook response shape is unchanged; file information is embedded in the reason string
