@@ -6,7 +6,7 @@ bucket: tracing-and-output
 
 ## Purpose
 
-Contributor-only. The trace subsystem end to end: how `TracingFold` implements `EvalFold` to produce annotated `Doc` trees alongside evaluation results, the `Ann` payloads downstream renderers consume, and the contracts governing the rendered human and JSON trace surfaces — two-column layout, fact-query evidence compaction, decisive-line annotation placement, parser kv-row rendering, source-syntax rendering of rule bodies, dimming of unevaluated branches, the var-breakout section for `Predicate::Named` references, and visible-character-width arithmetic in the layout renderer.
+Contributor-only. The trace subsystem end to end: how `TracingFold` implements `EvalFold` to produce annotated `Doc` trees alongside evaluation results, the `Ann` payloads downstream renderers consume, and the contracts governing the rendered human and JSON trace surfaces — two-column layout, fact-query evidence compaction, decisive-line annotation placement, parser kv-row rendering, source-syntax rendering of rule bodies, dimming of unevaluated branches, the var-breakout section for `Predicate::Named` references, and visible-character-width arithmetic in the layout renderer. Callers render via the `output-rendering` intent surface (`render_trace`, `render_eval_result`, `render_check_failure`); the `may_i_layout` `Layout` ADT is an implementation detail of that module.
 
 ## Requirements
 

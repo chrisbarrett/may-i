@@ -266,6 +266,49 @@ fn primary_only_config_bypasses_trust() {
 }
 
 #[test]
+fn eval_renders_integrity_then_warning_when_both_apply() {
+    // Pin the spec scenario from `trust-gate` /
+    // `Integrity advisory and warning advisory render in stable order`:
+    // a corrupt trust store paired with an untrusted Loaded rule renders the
+    // integrity advisory BEFORE the warning advisory in the same invocation.
+    let (_dir, config) = setup_loaded_config(
+        r#"(rule "ls" (allow))"#,
+        r#"(rule "echo" (allow "loaded rule"))"#,
+    );
+
+    let trust_dir = tempfile::tempdir().unwrap();
+    let store_dir = trust_dir.path().join("may-i");
+    std::fs::create_dir_all(&store_dir).unwrap();
+    let store_path = store_dir.join("trust.json");
+    std::fs::write(&store_path, "this is not valid json{{").unwrap();
+
+    let mut cmd = may_i_cmd();
+    cmd.env("MAYI_CONFIG", config.path())
+        .env("XDG_DATA_HOME", trust_dir.path())
+        .args(["eval", "echo hi"]);
+
+    let output = cmd.output().expect("run eval");
+    assert!(
+        output.status.success(),
+        "eval should succeed even with corrupt store: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let integrity_idx = stderr
+        .find("Trust store corrupted")
+        .or_else(|| stderr.find("Trust store integrity failure"))
+        .unwrap_or_else(|| panic!("expected integrity advisory in stderr: {stderr}"));
+    let warning_idx = stderr
+        .find("Untrusted rules")
+        .unwrap_or_else(|| panic!("expected warning advisory in stderr: {stderr}"));
+    assert!(
+        integrity_idx < warning_idx,
+        "integrity must render before warning: {stderr}"
+    );
+}
+
+#[test]
 fn eval_untrusted_shows_warning_and_trace() {
     let (_dir, config) = setup_loaded_config(
         r#"(rule "ls" (allow))"#,

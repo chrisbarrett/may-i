@@ -9,7 +9,7 @@ use may_i_engine::trust::{ProgramMeta, RuleMeta, TrustHashes};
 use may_i_core::Doc;
 
 use crate::output::shorten_home;
-use crate::trust_store::{SuspectEntry, TrustCheck, TrustStatus, TrustStore};
+use crate::trust::store::{SuspectEntry, TrustCheck, TrustStatus, TrustStore};
 
 /// Whether the session is interactive (TTY on stdin, no --json).
 pub fn is_interactive(json_mode: bool) -> bool {
@@ -77,9 +77,9 @@ pub fn repair_integrity(
 
     if !interactive {
         let names: Vec<&str> = suspects.iter().map(|s| s.program.as_str()).collect();
-        if let Some(store_path) = crate::trust_store::default_trust_store_path() {
+        if let Some(store_path) = crate::trust::store::default_trust_store_path() {
             let term = crate::output::Terminal::detect();
-            let note = crate::trust_advisory::build_integrity_layout(&store_path, Some(&names));
+            let note = crate::trust::advisory::build_integrity_layout(&store_path, Some(&names));
             crate::output::write_layout(&mut std::io::stderr(), &note, &term);
         }
         return Ok(false);
@@ -213,12 +213,12 @@ pub fn interactive_review(
         );
         let visible_len = format!("Rule {}/{} ── {}", idx + 1, total_pending, badge).len();
         let out_term = crate::output::Terminal::detect();
-        let hrule = may_i_layout::Layout::HRule(Some(may_i_layout::HRuleLabel {
-            text: progress_label,
-            visible_width: visible_len,
-        }));
-        let indented = may_i_layout::Layout::Indent(2, Box::new(hrule));
-        may_i_layout::write_layout(&mut std::io::stderr(), &indented, &out_term);
+        crate::output::render_labelled_separator(
+            &mut std::io::stderr(),
+            &out_term,
+            "  ",
+            Some((&progress_label, visible_len)),
+        );
         let _ = writeln!(term);
 
         render_rule_detail(&mut term, rule_meta, prev_form.as_deref(), pp_width)?;

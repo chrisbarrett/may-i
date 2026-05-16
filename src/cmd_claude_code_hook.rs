@@ -2,15 +2,15 @@
 
 use std::io::Read;
 
-use may_i_config as config;
 use may_i_core::{ContextFacts, Keyword};
 use may_i_engine as engine;
 use may_i_engine::EvalResult;
 use miette::Context;
 
-use may_i::trust_gate::{self, GateMode, GateOutcome};
+use may_i::pipeline::CommandPipeline;
+use may_i::trust::TrustMode;
 
-pub(crate) fn cmd_claude_code_hook(config_path: Option<&std::path::Path>) -> miette::Result<()> {
+pub(crate) fn cmd_claude_code_hook(pipeline: &mut CommandPipeline) -> miette::Result<()> {
     let mut input = String::new();
     std::io::stdin()
         .take(65536)
@@ -22,36 +22,24 @@ pub(crate) fn cmd_claude_code_hook(config_path: Option<&std::path::Path>) -> mie
         .map_err(|e| miette::miette!("{e}"))
         .wrap_err("Invalid JSON")?;
 
-    // Extract command from payload; None means silent (non-Bash tool)
     let Some(command) = extract_command(&payload)? else {
         return Ok(());
     };
 
-    let mut loaded = config::load_and_resolve(config_path)?;
-
-    let config = std::mem::take(&mut loaded.config);
-    match trust_gate::evaluate(config, &command, GateMode::Hook) {
-        GateOutcome::Block {
-            decision, reason, ..
-        } => {
-            let response = render_response(EvalResult::new(decision, Some(reason)));
-            println!(
-                "{}",
-                serde_json::to_string(&response).expect("response serialization is infallible")
-            );
-            return Ok(());
-        }
-        GateOutcome::Proceed { config, .. } => {
-            loaded.config = *config;
-        }
+    if let Err(block) = pipeline.consult_trust(&command, TrustMode::Hook) {
+        let response = render_response(EvalResult::new(block.decision, Some(block.reason)));
+        println!(
+            "{}",
+            serde_json::to_string(&response).expect("response serialization is infallible")
+        );
+        return Ok(());
     }
 
     let context = build_context(&payload);
-    let result = engine::eval::evaluate_command(&command, &loaded.config, &context)
+    let result = engine::eval::evaluate_command(&command, pipeline.config(), &context)
         .map_err(|e| miette::miette!("{e}"))?;
 
     let response = render_response(result);
-
     println!(
         "{}",
         serde_json::to_string(&response).expect("response serialization is infallible")
@@ -70,7 +58,6 @@ fn extract_command(payload: &serde_json::Value) -> miette::Result<Option<String>
     };
 
     if tool_name != "Bash" {
-        // Non-Bash tools are handled silently
         return Ok(None);
     }
 

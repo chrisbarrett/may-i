@@ -3,11 +3,16 @@
 // Trace-specific rendering built on top of the `may_i_layout` crate's
 // declarative Layout primitives.
 
+mod advisory;
 mod annotate;
+pub mod check;
 mod colorize;
+mod eval_result;
 mod json;
+mod migrate;
 mod render_rule;
 mod transform;
+mod trust_groups;
 
 #[cfg(test)]
 mod test_helpers;
@@ -15,15 +20,20 @@ mod test_helpers;
 use std::io::Write;
 
 use colored::Colorize;
+use may_i_layout::{ColAlign, ColContent, ColItem, ColRow, HRuleLabel, Layout};
 use may_i_pp::colorize_atom;
 
-pub use may_i_layout::{
-    Advisory, ColAlign, ColContent, ColItem, ColRow, HRuleLabel, Layout, Note, NoteLevel, Terminal,
-    strip_ansi, write_layout,
-};
+pub use may_i_layout::{Terminal, strip_ansi, write_layout};
 
+pub(crate) use self::advisory::render_advisory_stack;
+pub use self::check::{
+    CheckFailureView, render_check_failure, render_check_summary, render_labelled_separator,
+};
 pub use self::colorize::colorize_decision_keyword;
+pub use self::eval_result::render_eval_result;
 pub use self::json::trace_to_json;
+pub use self::migrate::{render_skipped_readonly_advisory, render_wrapper_boundary_advisory};
+pub use self::trust_groups::render_trusted_groups;
 
 use self::colorize::colorize_right;
 use self::render_rule::render_annotated_rule;
@@ -82,32 +92,10 @@ fn command_row(cmd: &str, _geom: &ColumnGeometry) -> Vec<ColRow> {
     vec![row]
 }
 
-// ── Separator (public convenience for cmd_check) ──────────────────
-
-pub(crate) fn print_separator(indent: &str, label: Option<(&str, usize)>, term: &Terminal) {
-    let hrule_label = label.map(|(text, w)| HRuleLabel {
-        text: text.to_string(),
-        visible_width: w,
-    });
-    let layout = Layout::HRule(hrule_label);
-    let indented = Layout::Indent(indent.len(), Box::new(layout));
-    write_layout(&mut std::io::stdout(), &indented, term);
-}
-
-// ── Public convenience for cmd_check ──────────────────────────────
-
-pub(crate) fn render_elements(indent: &str, elements: &[Layout], term: &Terminal) {
-    let layout = Layout::Indent(indent.len(), Box::new(Layout::Stack(elements.to_vec())));
-    write_layout(&mut std::io::stdout(), &layout, term);
-}
-
 // ── Trace rendering ────────────────────────────────────────────────
 
-pub fn print_trace(entries: &[TraceEntry], command: &str, indent: &str, term: &Terminal) {
-    write_trace(&mut std::io::stdout(), entries, command, indent, term);
-}
-
-pub fn write_trace(
+/// Render trace entries to `w`. Sole sanctioned path for emitting a trace.
+pub fn render_trace(
     w: &mut impl Write,
     entries: &[TraceEntry],
     command: &str,
@@ -116,6 +104,18 @@ pub fn write_trace(
 ) {
     let layout = trace_to_layout(entries, command, indent.len(), term);
     write_layout(w, &layout, term);
+}
+
+/// Internal alias kept for callers inside the `output` module that already
+/// have a writer. Equivalent to `render_trace`.
+pub(crate) fn write_trace(
+    w: &mut impl Write,
+    entries: &[TraceEntry],
+    command: &str,
+    indent: &str,
+    term: &Terminal,
+) {
+    render_trace(w, entries, command, indent, term);
 }
 
 /// Convert trace entries into a declarative layout tree.

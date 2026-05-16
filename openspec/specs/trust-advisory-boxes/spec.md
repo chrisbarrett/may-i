@@ -9,7 +9,7 @@ trust-relevant: true
 
 How `may-i` renders trust state into terminal traces: the advisory warning box surfaced around loaded but untrusted rules in user-facing subcommands (`eval`, `check`, `trust`, `migrate`, `parse`), the error advisory box rendered on trust-store integrity failure, and the runtime fall-through behaviour when untrusted rules are detected in non-JSON TTY mode (evaluation proceeds with the warning; untrusted rules default to `:ask`). Output surfaces excluded are hook mode, JSON, and help/reference.
 
-See related specs: `trust-gate` for the runtime decision the advisories reflect; `trust-store` for the stored approvals these advisories refer the user to; `code-quality` for the module-ownership invariants on the advisory builders.
+See related specs: `trust-gate` for the runtime decision the advisories reflect; `trust-store` for the stored approvals these advisories refer the user to; `command-pipeline` for the per-invocation orchestration that triggers integrity and warning advisory rendering; `output-rendering` for the intent operations (`render_advisory_stack`) that emit these layouts; `code-quality` for the module-ownership invariants on the advisory builders.
 
 ## Requirements
 

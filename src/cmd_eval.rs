@@ -10,43 +10,43 @@ use may_i_shell_parser as parser;
 
 use crate::annotation::{TraceEntry, TracingFold};
 use crate::output;
+use crate::pipeline::CommandPipeline;
 use crate::runtime_facts::parse_cli_facts;
-use crate::trust_gate::{self, GateMode, GateOutcome};
+use crate::trust::TrustMode;
 
 pub fn cmd_eval(
+    pipeline: &mut CommandPipeline,
     command: &str,
     raw_facts: &[String],
-    json_mode: bool,
-    config_path: Option<&std::path::Path>,
 ) -> miette::Result<()> {
-    let mut loaded = may_i_config::load_and_resolve(config_path)?;
-    let config_file = &loaded.config_path.clone();
     let context = parse_cli_facts(raw_facts)?;
+    pipeline.render_prelude_advisories();
 
-    if json_mode {
-        let config = std::mem::take(&mut loaded.config);
-        match trust_gate::evaluate(config, command, GateMode::Json) {
-            GateOutcome::Block { reason, files, .. } => {
-                let block = serde_json::json!({
-                    "decision": "ask",
-                    "reason": reason,
-                    "files": files,
-                });
-                println!(
-                    "{}",
-                    serde_json::to_string(&block).expect("response serialization is infallible")
-                );
-                return Ok(());
-            }
-            GateOutcome::Proceed { config, .. } => {
-                loaded.config = *config;
-            }
+    let mode = TrustMode::for_eval(pipeline.json());
+    if let Err(block) = pipeline.consult_trust(command, mode) {
+        if pipeline.json() {
+            let body = serde_json::json!({
+                "decision": block.decision.to_string(),
+                "reason": block.reason,
+                "files": block.files,
+            });
+            println!(
+                "{}",
+                serde_json::to_string(&body).expect("response serialization is infallible")
+            );
         }
+        return Ok(());
+    }
 
-        let mut fold = TracingFold::from_load_result(&loaded);
-        let result =
-            engine::eval::evaluate_command_with_fold(command, &loaded.config, &context, &mut fold)
-                .map_err(|e| miette::miette!("{e}"))?;
+    if pipeline.json() {
+        let mut fold = TracingFold::from_load_result(pipeline.loaded());
+        let result = engine::eval::evaluate_command_with_fold(
+            command,
+            pipeline.config(),
+            &context,
+            &mut fold,
+        )
+        .map_err(|e| miette::miette!("{e}"))?;
         if !result.parse_diagnostics.is_empty() {
             fold.traces.push(TraceEntry::ParseDiagnostics {
                 diagnostics: result.parse_diagnostics.clone(),
@@ -78,52 +78,34 @@ pub fn cmd_eval(
             serde_json::to_string(&json).expect("response serialization is infallible")
         );
     } else {
-        let term = output::Terminal::detect();
-        if let Some(note) = crate::notes::migration_note(&loaded, config_file) {
-            output::write_layout(&mut std::io::stderr(), &note, &term);
-        }
-        // Integrity advisories are orthogonal to the gate; render before it.
-        crate::trust_advisory::write_integrity_advisories(&loaded.config, &term);
-
-        let config = std::mem::take(&mut loaded.config);
-        match trust_gate::evaluate(config, command, GateMode::Text) {
-            GateOutcome::Proceed { config, advisory } => {
-                loaded.config = *config;
-                if let Some(layout) = advisory {
-                    output::write_layout(&mut std::io::stderr(), &layout, &term);
-                }
-            }
-            GateOutcome::Block { .. } => unreachable!("text mode never blocks"),
-        }
-
         let (result, mut traces, colored_command) =
-            evaluate_with_colorization(command, &loaded, &context)?;
+            evaluate_with_colorization(command, pipeline.loaded(), &context)?;
         if !result.parse_diagnostics.is_empty() {
             traces.push(TraceEntry::ParseDiagnostics {
                 diagnostics: result.parse_diagnostics.clone(),
             });
         }
-        // Render miette diagnostics on stderr
         for diag in &result.parse_diagnostics {
             let err = crate::shell_parse_error::ShellParseError::from_diagnostic(diag, command);
             let _ = writeln!(std::io::stderr(), "{:?}", miette::Report::new(err));
         }
-        let display_path = output::shorten_home(config_file);
-        write_eval_output(
+        let display_path = output::shorten_home(pipeline.config_path());
+        output::render_eval_result(
             &mut std::io::stdout(),
-            &traces,
+            pipeline.terminal(),
             command,
             &colored_command,
+            &traces,
             &result,
             &display_path,
-            &term,
         );
     }
 
     Ok(())
 }
 
-/// Render trace + result output to a writer.
+/// Compatibility wrapper for the original `cmd_eval::write_eval_output` API
+/// used by snapshot tests. New callers should prefer `output::render_eval_result`.
 pub fn write_eval_output(
     w: &mut impl Write,
     traces: &[TraceEntry],
@@ -133,35 +115,15 @@ pub fn write_eval_output(
     display_path: &str,
     term: &output::Terminal,
 ) {
-    if !traces.is_empty() {
-        let _ = writeln!(w, "\n{}\n", "Trace".bold());
-        output::write_trace(w, traces, command, "  ", term);
-    }
-
-    let _ = writeln!(w, "\n{}\n", "Result".bold());
-    let _ = writeln!(w, "  {colored_command}");
-    let _ = writeln!(w);
-    {
-        use may_i_pp::colorize_atom;
-        let keyword = format!(":{}", result.decision);
-        let colored_keyword = output::colorize_decision_keyword(&keyword);
-        match &result.reason {
-            Some(reason) => {
-                let quoted = format!("\"{reason}\"");
-                let _ = writeln!(
-                    w,
-                    "  {} {colored_keyword} {}",
-                    "→".dimmed(),
-                    colorize_atom(&quoted, true)
-                );
-            }
-            None => {
-                let _ = writeln!(w, "  {} {colored_keyword}", "→".dimmed());
-            }
-        }
-    }
-    let _ = writeln!(w);
-    let _ = writeln!(w, "  {} {}", "config:".dimmed(), display_path.dimmed());
+    output::render_eval_result(
+        w,
+        term,
+        command,
+        colored_command,
+        traces,
+        result,
+        display_path,
+    );
 }
 
 /// Evaluate a command using the unified pipeline, then colorize using segments

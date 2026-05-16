@@ -44,9 +44,14 @@ No `cmd_*` module SHALL construct `Layout::Stack`, `Layout::Columns`, `Layout::I
 
 ### Requirement: Advisory rendering composes via render_advisory_stack
 
-The `render_advisory_stack(writer, terminal, advisories)` operation SHALL accept an ordered slice of advisory layouts and render them with consistent spacing. It is the only sanctioned path for writing multiple advisories in sequence.
+The `render_advisory_stack(writer, terminal, advisories)` operation SHALL accept an ordered slice of advisory layouts and render them with consistent spacing. Any caller that emits two or more advisories in one pass SHALL do so via a single `render_advisory_stack` call rather than repeated `write_layout` calls. A caller that emits a single advisory MAY use `write_layout` directly.
 
-#### Scenario: Multiple advisories rendered with consistent spacing
+#### Scenario: Stacked integrity advisories use render_advisory_stack
 
-- **WHEN** the Trust gate has both an integrity advisory and a warning advisory to render
-- **THEN** they are rendered via a single `render_advisory_stack` call, not by repeated `write_layout` calls in the caller
+- **WHEN** the trust-store load surfaces a corrupt-store advisory and a per-entry hash-mismatch advisory in the same invocation
+- **THEN** they are emitted via a single `render_advisory_stack` call, not by two `write_layout` calls in the caller
+
+#### Scenario: Prelude and gate-time advisories may render at separate times
+
+- **WHEN** an invocation has both an integrity advisory (rendered in the prelude for early feedback) and a warning advisory (rendered after the gate's block decision)
+- **THEN** the two MAY be emitted by separate calls because they happen at different points in the invocation, but their relative order (integrity first, warning second) MUST match the `trust-gate` ordering scenario
