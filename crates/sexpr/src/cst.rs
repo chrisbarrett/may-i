@@ -1704,7 +1704,7 @@ mod proptests {
         /// equivalence classes under `Sexpr` equality.
         #[test]
         fn sigil_classes_disjoint(name in "[a-z][a-z0-9_-]{0,8}") {
-            let symbol = format!("{name}");
+            let symbol = name.to_string();
             let keyword = format!(":{name}");
             let binding = format!("#{name}");
             let string = format!("\"{name}\"");
