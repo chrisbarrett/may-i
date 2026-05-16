@@ -3,7 +3,15 @@ use may_i_core::doc::{Doc, DocF, LayoutHint};
 use super::annotate::is_forbidden_pattern;
 use crate::annotation::Ann;
 
-pub(super) fn truncate_matched_anywhere(doc: &Doc<Option<Ann>>) -> Doc<Option<Ann>> {
+/// Apply every doc transform the two-column text renderer expects, in the
+/// order it expects them. The four passes are private implementation details
+/// — pass selection and order are not part of the module surface.
+pub(super) fn prepare_doc_for_text(doc: &Doc<Option<Ann>>) -> Doc<Option<Ann>> {
+    let doc = dim_unevaluated(truncate_unevaluated(&truncate_matched_anywhere(doc), 2));
+    distribute_arg_annotations(&doc)
+}
+
+fn truncate_matched_anywhere(doc: &Doc<Option<Ann>>) -> Doc<Option<Ann>> {
     if let Some(Ann::ArgMatch {
         matched: true,
         search_tokens,
@@ -41,7 +49,7 @@ pub(super) fn truncate_matched_anywhere(doc: &Doc<Option<Ann>>) -> Doc<Option<An
     }
 }
 
-pub(super) fn truncate_unevaluated(doc: &Doc<Option<Ann>>, keep: usize) -> Doc<Option<Ann>> {
+fn truncate_unevaluated(doc: &Doc<Option<Ann>>, keep: usize) -> Doc<Option<Ann>> {
     if let Some(Ann::ArgMatch { search_tokens, .. }) = &doc.ann
         && !search_tokens.is_empty()
     {
@@ -98,7 +106,7 @@ pub(super) fn truncate_unevaluated(doc: &Doc<Option<Ann>>, keep: usize) -> Doc<O
     }
 }
 
-pub(super) fn dim_unevaluated(doc: Doc<Option<Ann>>) -> Doc<Option<Ann>> {
+fn dim_unevaluated(doc: Doc<Option<Ann>>) -> Doc<Option<Ann>> {
     dim_unevaluated_inner(doc, false).0
 }
 
@@ -163,7 +171,7 @@ fn dim_unevaluated_inner(
 ///
 /// Handles forbidden patterns `(not (anywhere ...))` by distributing into the
 /// inner anywhere's children.
-pub(super) fn distribute_arg_annotations(doc: &Doc<Option<Ann>>) -> Doc<Option<Ann>> {
+fn distribute_arg_annotations(doc: &Doc<Option<Ann>>) -> Doc<Option<Ann>> {
     if let Some(Ann::ArgMatch {
         search_tokens,
         arg_set,
@@ -399,29 +407,13 @@ mod tests {
     use crate::output::test_helpers::*;
     use may_i_core::doc::LayoutHint;
 
-    #[test]
-    fn dim_unevaluated_dims_unannotated() {
-        let doc = list(vec![atom("rule"), atom("body")]);
-        let dimmed = dim_unevaluated(doc);
-        assert!(dimmed.dimmed);
-    }
+    // ── prepare_doc_for_text end-to-end coverage ─────────────────────
+    //
+    // Distinctive behaviours of each composed pass: anywhere truncation,
+    // unevaluated truncation, dimming propagation, annotation distribution.
 
     #[test]
-    fn dim_unevaluated_preserves_annotated() {
-        let child = atom_ann(
-            "x",
-            Ann::EffectDecision {
-                decision: may_i_core::Decision::Allow,
-                reason: None,
-            },
-        );
-        let doc = list(vec![atom("rule"), child]);
-        let dimmed = dim_unevaluated(doc);
-        assert!(!dimmed.dimmed);
-    }
-
-    #[test]
-    fn truncate_anywhere_keeps_first_match() {
+    fn prepare_truncates_matched_anywhere() {
         let doc = list_ann(
             Ann::ArgMatch {
                 search_tokens: vec!["a".into(), "b".into(), "c".into()],
@@ -431,16 +423,15 @@ mod tests {
             },
             vec![atom("anywhere"), atom("a"), atom("b"), atom("c")],
         );
-        let truncated = truncate_matched_anywhere(&doc);
-        if let DocF::List(children) = &truncated.node {
-            assert_eq!(children.len(), 2);
-        } else {
+        let result = prepare_doc_for_text(&doc);
+        let DocF::List(cs) = &result.node else {
             panic!("expected list");
-        }
+        };
+        assert_eq!(cs.len(), 2);
     }
 
     #[test]
-    fn truncate_anywhere_preserves_unmatched() {
+    fn prepare_preserves_unmatched_anywhere() {
         let doc = list_ann(
             Ann::ArgMatch {
                 search_tokens: vec!["a".into()],
@@ -450,12 +441,158 @@ mod tests {
             },
             vec![atom("anywhere"), atom("a"), atom("b")],
         );
-        let truncated = truncate_matched_anywhere(&doc);
-        if let DocF::List(children) = &truncated.node {
-            assert_eq!(children.len(), 3);
-        } else {
+        let result = prepare_doc_for_text(&doc);
+        let DocF::List(cs) = &result.node else {
             panic!("expected list");
+        };
+        assert_eq!(cs.len(), 3);
+    }
+
+    #[test]
+    fn prepare_truncates_long_unevaluated_list() {
+        let mut children = vec![atom("or")];
+        for i in 0..10 {
+            children.push(atom(&format!("c{i}")));
         }
+        let doc = list(children);
+        let result = prepare_doc_for_text(&doc);
+        let DocF::List(cs) = &result.node else {
+            panic!("expected list");
+        };
+        // head + 2 kept + ellipsis + last
+        assert_eq!(cs.len(), 5);
+        assert_eq!(cs[cs.len() - 2].as_atom(), Some("…"));
+    }
+
+    #[test]
+    fn prepare_skips_unevaluated_truncation_when_arg_match_carries_tokens() {
+        // matched=false skips anywhere truncation; ArgMatch with non-empty
+        // search_tokens skips unevaluated truncation.
+        let doc = list_ann(
+            Ann::ArgMatch {
+                search_tokens: vec!["x".into()],
+                arg_set: vec![],
+                matched: false,
+                captured_value: None,
+            },
+            vec![
+                atom("anywhere"),
+                atom("a"),
+                atom("b"),
+                atom("c"),
+                atom("d"),
+                atom("e"),
+            ],
+        );
+        let result = prepare_doc_for_text(&doc);
+        let DocF::List(cs) = &result.node else {
+            panic!("expected list");
+        };
+        assert_eq!(cs.len(), 6);
+    }
+
+    #[test]
+    fn prepare_dims_doc_with_no_annotations() {
+        let doc = list(vec![atom("rule"), atom("body")]);
+        let result = prepare_doc_for_text(&doc);
+        assert!(result.dimmed);
+    }
+
+    #[test]
+    fn prepare_preserves_annotated_doc_undimmed() {
+        let child = atom_ann(
+            "x",
+            Ann::EffectDecision {
+                decision: may_i_core::Decision::Allow,
+                reason: None,
+            },
+        );
+        let doc = list(vec![atom("rule"), child]);
+        let result = prepare_doc_for_text(&doc);
+        assert!(!result.dimmed);
+    }
+
+    #[test]
+    fn prepare_distributes_argmatch_to_token_children() {
+        // matched=false skips anywhere truncation so all tokens survive
+        // to be observed in the distributed output.
+        let doc = list_ann(
+            Ann::ArgMatch {
+                search_tokens: vec!["\"t1\"".into(), "\"t2\"".into()],
+                arg_set: vec!["a".into()],
+                matched: false,
+                captured_value: None,
+            },
+            vec![atom("anywhere"), atom("\"t1\""), atom("\"t2\"")],
+        );
+        let result = prepare_doc_for_text(&doc);
+        assert!(result.ann.is_none(), "parent ArgMatch should be cleared");
+        let DocF::List(cs) = &result.node else {
+            panic!("expected list");
+        };
+        assert!(cs[0].ann.is_none());
+        match &cs[1].ann {
+            Some(Ann::ArgMatch { search_tokens, .. }) => {
+                assert_eq!(search_tokens, &["\"t1\""]);
+            }
+            other => panic!("expected per-token ArgMatch, got {other:?}"),
+        }
+        match &cs[2].ann {
+            Some(Ann::ArgMatch { search_tokens, .. }) => {
+                assert_eq!(search_tokens, &["\"t2\""]);
+            }
+            other => panic!("expected per-token ArgMatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn prepare_distributes_forbidden_not_anywhere() {
+        let inner = list(vec![atom("anywhere"), atom("\"t1\""), atom("\"t2\"")]);
+        let doc = Doc {
+            ann: Some(Ann::ArgMatch {
+                search_tokens: vec!["\"t1\"".into(), "\"t2\"".into()],
+                arg_set: vec!["x".into()],
+                matched: false,
+                captured_value: None,
+            }),
+            node: DocF::List(vec![atom("not"), inner]),
+            layout: LayoutHint::Auto,
+            dimmed: false,
+        };
+        let result = prepare_doc_for_text(&doc);
+        let DocF::List(cs) = &result.node else {
+            panic!("expected list");
+        };
+        assert_eq!(cs[0].as_atom(), Some("not"));
+        let DocF::List(inner_cs) = &cs[1].node else {
+            panic!("expected inner list");
+        };
+        assert_eq!(inner_cs[0].as_atom(), Some("anywhere"));
+        assert!(matches!(
+            &inner_cs[1].ann,
+            Some(Ann::ArgMatch { search_tokens, .. }) if search_tokens == &["\"t1\""]
+        ));
+        assert!(matches!(
+            &inner_cs[2].ann,
+            Some(Ann::ArgMatch { search_tokens, .. }) if search_tokens == &["\"t2\""]
+        ));
+    }
+
+    #[test]
+    fn prepare_preserves_non_argmatch_nodes() {
+        let doc = list(vec![
+            atom_ann("cmd", Ann::CommandMatch { matched: true }),
+            atom("arg"),
+        ]);
+        let result = prepare_doc_for_text(&doc);
+        let DocF::List(cs) = &result.node else {
+            panic!("expected list");
+        };
+        assert!(matches!(
+            &cs[0].ann,
+            Some(Ann::CommandMatch { matched: true })
+        ));
+        assert!(cs[1].ann.is_none());
     }
 
     #[test]
@@ -483,39 +620,12 @@ mod tests {
     }
 
     #[test]
-    fn truncate_unevaluated_passes_through_vector() {
+    fn prepare_passes_through_vector() {
         let doc = vec_doc(vec![atom("a"), atom("b")]);
-        let result = truncate_unevaluated(&doc, 2);
+        let result = prepare_doc_for_text(&doc);
         match &result.node {
             DocF::Vector(cs) => assert_eq!(cs.len(), 2),
             _ => panic!("expected vector"),
-        }
-    }
-
-    #[test]
-    fn truncate_unevaluated_skips_anywhere_pattern() {
-        let doc = Doc {
-            ann: Some(Ann::ArgMatch {
-                search_tokens: vec!["tok".into()],
-                arg_set: vec![],
-                matched: true,
-                captured_value: None,
-            }),
-            node: DocF::List(vec![
-                atom("anywhere"),
-                atom("a"),
-                atom("b"),
-                atom("c"),
-                atom("d"),
-                atom("e"),
-            ]),
-            layout: LayoutHint::Auto,
-            dimmed: false,
-        };
-        let result = truncate_unevaluated(&doc, 1);
-        match &result.node {
-            DocF::List(cs) => assert_eq!(cs.len(), 6),
-            _ => panic!("expected list"),
         }
     }
 
@@ -533,98 +643,6 @@ mod tests {
         let (result, score) = dim_unevaluated_inner(doc, false);
         assert!(!result.dimmed);
         assert!(score > 0);
-    }
-
-    // ── distribute_arg_annotations tests ─────────────────────────────
-
-    #[test]
-    fn distribute_anywhere_gives_per_token_annotations() {
-        let doc = list_ann(
-            Ann::ArgMatch {
-                search_tokens: vec!["\"t1\"".into(), "\"t2\"".into()],
-                arg_set: vec!["a".into(), "b".into()],
-                matched: true,
-                captured_value: None,
-            },
-            vec![atom("anywhere"), atom("\"t1\""), atom("\"t2\"")],
-        );
-        let result = distribute_arg_annotations(&doc);
-        if let DocF::List(children) = &result.node {
-            // Head "anywhere" unchanged
-            assert!(children[0].ann.is_none());
-            // Token children each have their own ArgMatch
-            match &children[1].ann {
-                Some(Ann::ArgMatch { search_tokens, .. }) => {
-                    assert_eq!(search_tokens, &["\"t1\""]);
-                }
-                other => panic!("expected ArgMatch, got {other:?}"),
-            }
-            match &children[2].ann {
-                Some(Ann::ArgMatch { search_tokens, .. }) => {
-                    assert_eq!(search_tokens, &["\"t2\""]);
-                }
-                other => panic!("expected ArgMatch, got {other:?}"),
-            }
-        } else {
-            panic!("expected list");
-        }
-    }
-
-    #[test]
-    fn distribute_forbidden_not_anywhere() {
-        // (not (anywhere "t1" "t2")) with parent ArgMatch
-        let inner = list(vec![atom("anywhere"), atom("\"t1\""), atom("\"t2\"")]);
-        let doc = Doc {
-            ann: Some(Ann::ArgMatch {
-                search_tokens: vec!["\"t1\"".into(), "\"t2\"".into()],
-                arg_set: vec!["x".into()],
-                matched: false,
-                captured_value: None,
-            }),
-            node: DocF::List(vec![atom("not"), inner]),
-            layout: LayoutHint::Auto,
-            dimmed: false,
-        };
-        let result = distribute_arg_annotations(&doc);
-        if let DocF::List(children) = &result.node {
-            // "not" head unchanged
-            assert_eq!(children[0].as_atom(), Some("not"));
-            // Inner (anywhere ...) has distributed children
-            if let DocF::List(inner_children) = &children[1].node {
-                assert_eq!(inner_children[0].as_atom(), Some("anywhere"));
-                assert!(matches!(
-                    &inner_children[1].ann,
-                    Some(Ann::ArgMatch { search_tokens, .. }) if search_tokens == &["\"t1\""]
-                ));
-                assert!(matches!(
-                    &inner_children[2].ann,
-                    Some(Ann::ArgMatch { search_tokens, .. }) if search_tokens == &["\"t2\""]
-                ));
-            } else {
-                panic!("expected inner list");
-            }
-        } else {
-            panic!("expected list");
-        }
-    }
-
-    #[test]
-    fn distribute_preserves_non_argmatch_nodes() {
-        let doc = list(vec![
-            atom_ann("cmd", Ann::CommandMatch { matched: true }),
-            atom("arg"),
-        ]);
-        let result = distribute_arg_annotations(&doc);
-        // Structure unchanged
-        if let DocF::List(children) = &result.node {
-            assert!(matches!(
-                &children[0].ann,
-                Some(Ann::CommandMatch { matched: true })
-            ));
-            assert!(children[1].ann.is_none());
-        } else {
-            panic!("expected list");
-        }
     }
 
     // ── Property tests ────────────────────────────────────────────────
@@ -814,7 +832,7 @@ mod tests {
     // ── Targeted branch-coverage unit tests ──────────────────────────
 
     #[test]
-    fn truncate_matched_anywhere_recurses_into_vector() {
+    fn prepare_truncates_anywhere_inside_vector() {
         let inner = list_ann(
             Ann::ArgMatch {
                 search_tokens: vec!["a".into(), "b".into()],
@@ -825,10 +843,9 @@ mod tests {
             vec![atom("anywhere"), atom("a"), atom("b")],
         );
         let doc = vec_doc(vec![inner]);
-        let result = truncate_matched_anywhere(&doc);
+        let result = prepare_doc_for_text(&doc);
         match &result.node {
             DocF::Vector(cs) => {
-                // Inner list should be truncated
                 if let DocF::List(inner_cs) = &cs[0].node {
                     assert_eq!(
                         inner_cs.len(),
@@ -844,7 +861,7 @@ mod tests {
     }
 
     #[test]
-    fn distribute_arg_annotations_recurses_into_vector() {
+    fn prepare_distributes_arg_annotations_inside_vector() {
         let inner = list_ann(
             Ann::ArgMatch {
                 search_tokens: vec!["\"t1\"".into()],
@@ -855,11 +872,10 @@ mod tests {
             vec![atom("anywhere"), atom("\"t1\"")],
         );
         let doc = vec_doc(vec![inner]);
-        let result = distribute_arg_annotations(&doc);
+        let result = prepare_doc_for_text(&doc);
         match &result.node {
             DocF::Vector(cs) => {
                 if let DocF::List(inner_cs) = &cs[0].node {
-                    // Token child should have its own ArgMatch
                     assert!(matches!(&inner_cs[1].ann, Some(Ann::ArgMatch { .. })));
                 } else {
                     panic!("expected inner list");
@@ -891,20 +907,20 @@ mod tests {
     }
 
     #[test]
-    fn distribute_to_token_children_unmatched_token_preserved() {
-        // A token that doesn't appear in search_tokens should be preserved as-is
+    fn prepare_preserves_anywhere_tokens_not_in_search_set() {
+        // matched=false skips anywhere truncation so the un-searched token
+        // survives to be observed unannotated after distribution.
         let doc = list_ann(
             Ann::ArgMatch {
                 search_tokens: vec!["\"t1\"".into()],
                 arg_set: vec!["a".into()],
-                matched: true,
+                matched: false,
                 captured_value: None,
             },
             vec![atom("anywhere"), atom("\"t1\""), atom("\"t2\"")],
         );
-        let result = distribute_arg_annotations(&doc);
+        let result = prepare_doc_for_text(&doc);
         if let DocF::List(cs) = &result.node {
-            // "t2" not in search_tokens, should have no annotation
             assert!(
                 cs[2].ann.is_none(),
                 "unmatched token should have no annotation"
@@ -915,21 +931,21 @@ mod tests {
     }
 
     #[test]
-    fn distribute_to_token_children_non_atom_recurses() {
-        // A non-atom child in an anywhere list should be recursed into
+    fn prepare_distribute_recurses_into_non_atom_child() {
+        // matched=false to skip anywhere truncation; distribute should
+        // still recurse into the non-atom child.
         let inner_list = list(vec![atom("nested")]);
         let doc = list_ann(
             Ann::ArgMatch {
                 search_tokens: vec!["\"t1\"".into()],
                 arg_set: vec!["a".into()],
-                matched: true,
+                matched: false,
                 captured_value: None,
             },
             vec![atom("anywhere"), atom("\"t1\""), inner_list],
         );
-        let result = distribute_arg_annotations(&doc);
+        let result = prepare_doc_for_text(&doc);
         if let DocF::List(cs) = &result.node {
-            // Third child was a list — should have been recursed
             assert!(matches!(&cs[2].node, DocF::List(_)));
         } else {
             panic!("expected list");
@@ -949,8 +965,9 @@ mod tests {
     }
 
     #[test]
-    fn distribute_positional_adds_positional_match() {
-        // Positional patterns have empty search_tokens — distributes PositionalMatch
+    fn prepare_distributes_positional_match() {
+        // Positional patterns have empty search_tokens — distribution turns
+        // the parent ArgMatch into per-literal PositionalMatch annotations.
         let doc = list_ann(
             Ann::ArgMatch {
                 search_tokens: vec![],
@@ -960,8 +977,7 @@ mod tests {
             },
             vec![atom("positional"), atom("\"a\"")],
         );
-        let result = distribute_arg_annotations(&doc);
-        // Parent annotation cleared
+        let result = prepare_doc_for_text(&doc);
         assert!(result.ann.is_none());
         if let DocF::List(children) = &result.node {
             assert!(matches!(
