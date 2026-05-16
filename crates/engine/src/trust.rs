@@ -1098,3 +1098,65 @@ mod tests {
         assert_ne!(env1.hash, env2.hash, "adding env var should change hash");
     }
 }
+
+#[cfg(test)]
+mod canonical_form_snapshot {
+    use super::*;
+    use may_i_config::parse_config;
+
+    // Hand-crafted fixture covering every rule-body Effect variant
+    // (Terminal × {Allow, Ask, Deny} with/without reason, And, Or, Not,
+    // When, Unless, If, Cond, ArgPattern, CommandPattern, Authorise),
+    // every Predicate variant (Fact, NamedRef, And, Or, Not), and every
+    // ArgPattern shape (positional, exact, anywhere, forbidden, flag,
+    // parameter). Also exercises `(define …)` for the canonical-define
+    // path.
+    //
+    // The starter config was rejected as a fixture source: it still
+    // carries legacy `(check :deny …)` syntax that no longer parses.
+    // The prelude was rejected: it has zero rules and zero defines.
+    const RULE_BODY_FIXTURE: &str = r#"
+(define safe-positional
+  (or (positional "status") (positional "log")))
+
+(rule "git"
+  (cond ((fact? [:env "prod"]) (deny "no git in prod"))
+        (safe-positional (allow))
+        ((and (flag ["v" "verbose"]) (not (positional "push")))
+         (ask "verbose non-push"))
+        ((or (positional "commit") (positional "rebase"))
+         (when (fact? [:ci "true"]) (ask "ci write op")))
+        (else (allow))))
+
+(rule (or "rm" "shred")
+  (if (and (flag ["r" "recursive"]) (positional "/"))
+      (deny "recursive root delete")
+    (unless (fact? [:user "root"]) (allow))))
+
+(rule "kubectl"
+  (and (anywhere "delete") (deny "no deletes")))
+
+(rule "curl"
+  (or (exact "--insecure") (forbidden "--data-binary")))
+
+(rule "make"
+  (parameter "j" *))
+"#;
+
+    // Snapshots the canonical-form output for every rule and define in
+    // the fixture. Guards rule-body parsers against an accidental
+    // parse-time normalisation slip during the
+    // consolidate-rule-body-parser change: any drift in `canonical_rule`
+    // / `canonical_define` output for the same surface syntax would
+    // silently invalidate user trust entries that depend on the same
+    // rule shapes.
+    #[test]
+    fn rule_body_fixture_canonical_form_is_stable() {
+        let config = parse_config(RULE_BODY_FIXTURE).expect("fixture parses");
+
+        let mut lines: Vec<String> = config.rules.iter().map(canonical_rule).collect();
+        lines.extend(config.defines.iter().map(canonical_define));
+
+        insta::assert_snapshot!(lines.join("\n"));
+    }
+}

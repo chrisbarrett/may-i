@@ -53,7 +53,8 @@ divide stops being a published contract.
   (`may_i_core::ast::{Effect, Predicate}`,
   `may_i_core::pattern::ArgPattern`) directly. This change does not touch
   those types, the parsers' output, or the canonicalisation path. A
-  snapshot of canonical-form output for the prelude SHALL be unchanged
+  snapshot of canonical-form output for a hand-crafted rule-body fixture
+  (covering every Effect/Predicate/ArgPattern variant) SHALL be unchanged
   byte-for-byte across the change.
 - **No DSL surface change.** No user-visible behaviour change. No parse
   error message changes. No spec changes to user-facing specs

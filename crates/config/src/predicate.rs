@@ -16,7 +16,7 @@ use may_i_sexpr::{RawError, Sexpr};
 /// - Boolean combinators: `(and PREDICATE ...)`, `(or PREDICATE ...)`, `(not PREDICATE)`
 /// - Named predicate references (will be resolved later)
 #[must_use = "parsed predicate should be used"]
-pub fn parse_predicate(sexpr: &Sexpr) -> Result<Predicate, RawError> {
+pub(crate) fn parse_predicate(sexpr: &Sexpr) -> Result<Predicate, RawError> {
     // If it's an atom, it's a named predicate reference
     if let Some(name) = sexpr.as_atom() {
         // Named predicate reference - will be resolved during validation

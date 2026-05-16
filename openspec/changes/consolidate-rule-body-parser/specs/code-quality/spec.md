@@ -26,9 +26,9 @@ The top-level form parsers `parse_rule`, `parse_define`, `parse_parser_form`, `p
 
 ### Requirement: Rule-body consolidation preserves canonical form byte-for-byte
 
-The canonical-form serialisation produced by `may_i_engine`'s trust hashing for the prelude (`crates/config/src/prelude.lisp`) SHALL be byte-identical before and after the rule-body parser consolidation. This guards the trust hash against an accidental parse-time normalisation slip during the consolidation, since invalidating prelude hashes would silently invalidate user trust entries that depend on prelude rules.
+The canonical-form serialisation produced by `may_i_engine`'s trust hashing for a hand-crafted rule-body fixture (covering every `Effect`, `Predicate`, and `ArgPattern` variant) SHALL be byte-identical before and after the rule-body parser consolidation. This guards the trust hash against an accidental parse-time normalisation slip during the consolidation, since invalidating canonical-form output would silently invalidate user trust entries that depend on the same rule shapes.
 
-#### Scenario: Prelude canonical form is unchanged
+#### Scenario: Rule-body fixture canonical form is unchanged
 
-- **WHEN** the prelude is parsed via `may_i_config::parse_config` and each resolved rule and define is rendered through the canonical-form serialiser used by trust hashing
+- **WHEN** the fixture is parsed via `may_i_config::parse_config` and each resolved rule and define is rendered through the canonical-form serialiser used by trust hashing
 - **THEN** the concatenated canonical output SHALL be byte-equal to a snapshot captured before this change

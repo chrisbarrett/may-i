@@ -1,0 +1,10 @@
+---
+source: crates/engine/src/trust.rs
+expression: "lines.join(\"\\n\")"
+---
+(rule "git" (cond ((fact? [:env "prod"]) (deny "no git in prod")) (safe-positional (allow)) ((and (flag ["v" "verbose"]) (not (positional "push"))) (ask "verbose non-push")) ((or (positional "commit") (positional "rebase")) (when (fact? [:ci "true"]) (ask "ci write op"))) (else (allow))))
+(rule (or "rm" "shred") (if (and (flag ["r" "recursive"]) (positional "/")) (deny "recursive root delete") (unless (fact? [:user "root"]) (allow))))
+(rule "kubectl" (and (anywhere "delete") (deny "no deletes")))
+(rule "curl" (or (exact "--insecure") (forbidden "--data-binary")))
+(rule "make" (parameter "j" *))
+(define safe-positional (or (positional "status") (positional "log")))

@@ -223,7 +223,7 @@ fn parse_expr(sexpr: &Sexpr) -> Result<Expr<Effect>, RawError> {
 /// - `(anywhere PATTERN ...)` - token appears anywhere
 /// - `(forbidden PATTERN ...)` - token must not appear
 /// - `(= N PATTERN)` - match at specific position
-pub fn parse_arg_pattern(sexpr: &Sexpr) -> Result<ArgPattern, RawError> {
+pub(crate) fn parse_arg_pattern(sexpr: &Sexpr) -> Result<ArgPattern, RawError> {
     let list = sexpr
         .as_list()
         .ok_or_else(|| RawError::new("argument pattern must be a list", sexpr.span()))?;
@@ -454,7 +454,7 @@ fn parse_positional_form(
 /// - `(? PATTERN)` - optional (0 or 1)
 /// - `(+ PATTERN)` - one or more
 /// - `(* PATTERN)` - zero or more
-pub fn parse_positional_arg(sexpr: &Sexpr) -> Result<PositionalArg, RawError> {
+pub(crate) fn parse_positional_arg(sexpr: &Sexpr) -> Result<PositionalArg, RawError> {
     match sexpr {
         Sexpr::List(list, _) if !list.is_empty() => {
             let tag = list[0]
