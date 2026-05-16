@@ -8,7 +8,7 @@ use std::io::Write;
 
 use colored::Colorize;
 use may_i_core::{ContextFacts, Decision};
-use may_i_layout::{ColRow, HRuleLabel, Layout};
+use may_i_output::{ColRow, HRuleLabel, Layout};
 use may_i_pp::colorize_atom;
 
 use super::{Terminal, colorize_decision_keyword, shorten_home, write_layout, write_trace};

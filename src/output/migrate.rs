@@ -5,7 +5,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use colored::Colorize;
-use may_i_layout::{Advisory, ColItem, Layout, NoteLevel};
+use may_i_output::{Advisory, ColItem, Layout, NoteLevel};
 
 use super::{Terminal, shorten_home, write_layout};
 

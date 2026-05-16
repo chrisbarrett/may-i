@@ -1,5 +1,5 @@
 ---
-source: crates/layout/src/lib.rs
+source: crates/may-i-output/src/lib.rs
 expression: strip_ansi(&s)
 ---
 ╭─ ⚠ Outdated configuration format ────────────────────────╮

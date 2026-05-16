@@ -1,6 +1,6 @@
 // Shared display helpers for trace output.
 //
-// Trace-specific rendering built on top of the `may_i_layout` crate's
+// Trace-specific rendering built on top of the `may_i_output` crate's
 // declarative Layout primitives.
 
 mod advisory;
@@ -22,10 +22,10 @@ use std::io::Write;
 use colored::Colorize;
 use may_i_core::ast::FlagsMode;
 use may_i_core::doc::Doc;
-use may_i_layout::{ColAlign, ColContent, ColItem, ColRow, HRuleLabel, Layout};
+use may_i_output::{ColAlign, ColContent, ColItem, ColRow, HRuleLabel, Layout};
 use may_i_pp::colorize_atom;
 
-pub use may_i_layout::{Terminal, strip_ansi, write_layout};
+pub use may_i_output::{Terminal, strip_ansi, write_layout};
 
 pub(crate) use self::advisory::render_advisory_stack;
 pub use self::check::{

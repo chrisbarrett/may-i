@@ -744,7 +744,7 @@ dependencies = [
  "may-i-config",
  "may-i-core",
  "may-i-engine",
- "may-i-layout",
+ "may-i-output",
  "may-i-pp",
  "may-i-sexpr",
  "may-i-shell-parser",
@@ -804,7 +804,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "may-i-layout"
+name = "may-i-output"
 version = "0.1.0"
 dependencies = [
  "colored",
