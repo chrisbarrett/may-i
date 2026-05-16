@@ -1,14 +1,13 @@
 // Check subcommand — validate config and run checks with trace output.
 
 use colored::Colorize;
-use may_i_pp::colorize_atom;
 
 use engine::check::CheckResult;
 use may_i_engine as engine;
 
 use crate::annotation::{TraceEntry, TracingFold};
-use crate::output;
-use crate::trust_gate::{self, GateMode, GateOutcome};
+use crate::output::{self, CheckFailureView};
+use crate::pipeline::CommandPipeline;
 
 /// Error indicating one or more checks failed.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
@@ -20,37 +19,20 @@ struct TraceExtra {
     traces: Vec<TraceEntry>,
 }
 
-pub fn cmd_check(
-    json_mode: bool,
-    verbose: bool,
-    config_path: Option<&std::path::Path>,
-) -> miette::Result<()> {
-    let loaded = may_i_config::load_and_resolve(config_path)?;
-    let config_file = &loaded.config_path.clone();
-    let term = output::Terminal::detect();
+pub fn cmd_check(pipeline: &mut CommandPipeline, verbose: bool) -> miette::Result<()> {
+    pipeline.render_prelude_advisories();
+    // `cmd_check` validates the config as authored, so it does NOT filter
+    // untrusted Loaded rules; it just renders the warning advisory.
+    pipeline.render_trust_warning();
 
-    // Trust integrity check (orthogonal to the gate's filtering).
-    if !json_mode {
-        crate::trust_advisory::write_integrity_advisories(&loaded.config, &term);
-    }
-
-    // Trust gate (Text mode): consult only for the advisory layout. cmd_check
-    // validates the config as authored, so the unfiltered ruleset stays in
-    // play for evaluating embedded checks.
-    let advisory = {
-        let config_for_gate = loaded.config.clone();
-        match trust_gate::evaluate(config_for_gate, "", GateMode::Text) {
-            GateOutcome::Proceed { advisory, .. } => advisory,
-            GateOutcome::Block { .. } => unreachable!("text mode never blocks"),
-        }
-    };
-
-    let results = run_checks_with_traces(&loaded, config_file)?;
+    let results = run_checks_with_traces(pipeline.loaded())?;
 
     let passed = results.iter().filter(|r| r.passed).count();
     let failed = results.len() - passed;
 
-    if json_mode {
+    let config_file = pipeline.config_path().to_path_buf();
+
+    if pipeline.json() {
         let json_results: Vec<serde_json::Value> = results
             .iter()
             .map(|r| {
@@ -67,23 +49,17 @@ pub fn cmd_check(
             })
             .collect();
 
-        let output = serde_json::json!({
+        let body = serde_json::json!({
             "passed": passed,
             "failed": failed,
             "results": json_results
         });
         println!(
             "{}",
-            serde_json::to_string(&output).expect("response serialization is infallible")
+            serde_json::to_string(&body).expect("response serialization is infallible")
         );
     } else {
-        if let Some(note) = crate::notes::migration_note(&loaded, config_file) {
-            output::write_layout(&mut std::io::stderr(), &note, &term);
-        }
-        if let Some(layout) = advisory {
-            output::write_layout(&mut std::io::stderr(), &layout, &term);
-        }
-
+        let term = pipeline.terminal();
         let mut failures = Vec::new();
 
         for r in &results {
@@ -107,66 +83,30 @@ pub fn cmd_check(
             }
         }
 
+        let mut stdout = std::io::stdout();
         for (i, r) in failures.iter().enumerate() {
             if i > 0 {
                 println!();
             }
-
             println!();
-            let icon = "✗".red().bold().to_string();
-            let label = format!("{icon} {}", r.command.bold());
-            let label_width = 2 + r.command.len();
-            output::print_separator("", Some((&label, label_width)), &term);
-            println!();
-
-            let loc = r.extra.location.as_deref().unwrap_or("<unknown>");
-            let (file, line_col) = loc.split_once(':').unwrap_or((loc, ""));
-            let short_file = output::shorten_home(std::path::Path::new(file));
-            print!("{}", short_file.dimmed());
-            if !line_col.is_empty() {
-                print!("{}", format!(":{line_col}").dimmed());
-            }
-            println!();
-
-            let expected_kw = format!(":{}", r.expected);
-            let actual_kw = format!(":{}", r.actual);
-            let mut rows = vec![
-                output::ColRow::kv("expected", output::colorize_decision_keyword(&expected_kw)),
-                output::ColRow::kv("actual", output::colorize_decision_keyword(&actual_kw)),
-            ];
-            if r.context.iter().next().is_some() {
-                rows.push(output::ColRow::kv("context", render_context(&r.context)));
-            }
-            if let Some(reason) = &r.reason {
-                let quoted = format!("\"{reason}\"");
-                rows.push(output::ColRow::kv("reason", colorize_atom(&quoted, true)));
-            }
-            output::render_elements("  ", &[output::Layout::Columns(rows)], &term);
-
-            if !r.extra.traces.is_empty() {
-                println!("\n  {}\n", "Trace".bold());
-                output::print_trace(&r.extra.traces, &r.command, "  ", &term);
-            }
+            let view = CheckFailureView {
+                command: &r.command,
+                expected: r.expected,
+                actual: r.actual,
+                context: &r.context,
+                location: r.extra.location.as_deref(),
+                reason: r.reason.as_deref(),
+                traces: &r.extra.traces,
+            };
+            output::render_check_failure(&mut stdout, term, &view);
         }
 
         if !failures.is_empty() {
             println!();
-            output::print_separator("", None, &term);
+            output::render_labelled_separator(&mut stdout, term, "", None);
         }
-        println!("\n{}\n", "Summary".bold());
-        let icon = if failed > 0 {
-            "✗".red()
-        } else {
-            "✓".green()
-        };
-        println!(
-            "  {icon} {} passed, {} failed",
-            passed.to_string().bold(),
-            failed.to_string().bold()
-        );
-        println!();
-        let display_path = output::shorten_home(config_file);
-        println!("  {} {}", "config:".dimmed(), display_path.dimmed());
+        let display_path = output::shorten_home(&config_file);
+        output::render_check_summary(&mut stdout, term, passed, failed, &display_path);
     }
 
     if failed > 0 {
@@ -179,11 +119,10 @@ pub fn cmd_check(
 /// Run all checks using TracingFold to capture traces for failure reporting.
 fn run_checks_with_traces(
     loaded: &may_i_config::LoadResult,
-    config_file: &std::path::Path,
 ) -> miette::Result<Vec<CheckResult<TraceExtra>>> {
     use may_i_core::span::offset_to_line_col;
 
-    let file_str = config_file.display().to_string();
+    let file_str = loaded.config_path.display().to_string();
 
     let make_location = |span: &may_i_core::Span| -> Option<String> {
         loaded.source_text.as_ref().map(|source| {
@@ -230,19 +169,4 @@ fn context_to_json(context: &may_i_core::ContextFacts) -> serde_json::Value {
         }
     }
     serde_json::Value::Object(obj)
-}
-
-fn render_context(context: &may_i_core::ContextFacts) -> String {
-    context
-        .iter()
-        .map(|(key, values)| {
-            if values.is_empty() {
-                key.to_string()
-            } else {
-                let vals: Vec<&str> = values.iter().map(|s| s.as_str()).collect();
-                format!("{key}={}", vals.join(","))
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
 }

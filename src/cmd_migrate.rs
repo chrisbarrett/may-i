@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 
 use colored::Colorize;
 use may_i_config::migrate::{migrate_forms, validate_migration};
-use may_i_layout::{Advisory, ColItem, Layout, NoteLevel};
 use may_i_pp::detect_column_width;
 use may_i_sexpr::parse_cst;
 use similar::{ChangeTag, TextDiff};
@@ -64,15 +63,6 @@ pub(crate) fn cmd_migrate(
     dry_run: bool,
 ) -> miette::Result<()> {
     let config_file = may_i_config::resolve_path(config_path)?;
-
-    // Show trust advisory if applicable (best-effort, don't fail migration on trust errors).
-    if let Ok(loaded) = may_i_config::load_and_resolve(config_path) {
-        let term = may_i::output::Terminal::detect();
-        may_i::trust_advisory::write_integrity_advisories(&loaded.config, &term);
-        if let Some(layout) = may_i::trust_advisory::build_warning_layout(&loaded.config) {
-            may_i::output::write_layout(&mut std::io::stderr(), &layout, &term);
-        }
-    }
 
     // When `-o` is provided we operate on the root file only — the user
     // is asking for a single migrated artifact at a specific path.
@@ -141,8 +131,7 @@ pub(crate) fn cmd_migrate(
 
     if !skipped_readonly.is_empty() {
         let term = output::Terminal::detect();
-        let layout = build_skipped_readonly_layout(&skipped_readonly);
-        output::write_layout(&mut std::io::stderr(), &layout, &term);
+        output::render_skipped_readonly_advisory(&mut std::io::stderr(), &term, &skipped_readonly);
     }
 
     if changed_files.is_empty() {
@@ -228,7 +217,7 @@ pub(crate) fn cmd_migrate(
 /// forward to the new key. Returns the number of entries whose hash
 /// changed.
 fn rehash_trust_store_class_a() -> miette::Result<usize> {
-    use may_i::trust_store::{RuleEntry, TrustStore, default_trust_store_path};
+    use may_i::trust::store::{RuleEntry, TrustStore, default_trust_store_path};
 
     let Some(store_path) = default_trust_store_path() else {
         return Ok(0);
@@ -302,60 +291,7 @@ fn warn_about_wrapper_rules(config: &may_i_core::ast::Config) {
     }
 
     let term = output::Terminal::detect();
-    let layout = build_wrapper_boundary_layout(&affected);
-    output::write_layout(&mut std::io::stderr(), &layout, &term);
-}
-
-/// Advisory: a list of read-only files that were skipped during migration.
-fn build_skipped_readonly_layout(paths: &[PathBuf]) -> Layout {
-    let displays: Vec<String> = paths.iter().map(|p| output::shorten_home(p)).collect();
-    let listing = Layout::Stack(
-        displays
-            .iter()
-            .map(|p| Layout::Text(p.clone()))
-            .collect::<Vec<_>>(),
-    );
-    let (n_phrase, target) = if paths.len() == 1 {
-        ("1 file".to_string(), "it is")
-    } else {
-        (format!("{} files", paths.len()), "they are")
-    };
-    Advisory {
-        level: NoteLevel::Warn,
-        heading: "Skipped read-only files".into(),
-        detail: format!("{n_phrase} could not be migrated in place because {target} not writable."),
-        suggestion: "Make them writable, then re-run:".into(),
-        command: "may-i migrate".into(),
-        children: vec![listing],
-    }
-    .into_layout()
-}
-
-/// Advisory: the wrapper-boundary semantic shift may have changed how
-/// rules over the listed wrapper commands evaluate. Recommends re-running
-/// `(check …)` cases.
-fn build_wrapper_boundary_layout(affected: &[&str]) -> Layout {
-    let items: Vec<ColItem> = affected
-        .iter()
-        .map(|name| ColItem::new(name.cyan().to_string(), name.len()))
-        .collect();
-    let names = Layout::Wrap {
-        items,
-        separator: ColItem::new(", ", 2),
-    };
-    Advisory {
-        level: NoteLevel::Warn,
-        heading: "Wrapper-boundary fix may change behaviour".into(),
-        detail: "Rules over these wrapper commands now correctly see flags after \
-                 the inner command attributed to the inner command, where they \
-                 previously were absorbed by the outer parser. Re-validate your \
-                 expectations:"
-            .into(),
-        suggestion: "Re-run your check cases:".into(),
-        command: "may-i check".into(),
-        children: vec![names],
-    }
-    .into_layout()
+    output::render_wrapper_boundary_advisory(&mut std::io::stderr(), &term, &affected);
 }
 
 #[cfg(test)]

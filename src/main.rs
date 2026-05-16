@@ -150,10 +150,14 @@ fn run() -> miette::Result<ExitCode> {
                 None
             };
             let resolved = resolve_eval_command(command, piped_stdin)?;
-            may_i::cmd_eval::cmd_eval(&resolved, &facts, cli.json, cli.config.as_deref())?
+            let mut pipeline =
+                may_i::pipeline::CommandPipeline::load(cli.config.as_deref(), cli.json)?;
+            may_i::cmd_eval::cmd_eval(&mut pipeline, &resolved, &facts)?
         }
         Some(Command::Check { verbose }) => {
-            may_i::cmd_check::cmd_check(cli.json, verbose, cli.config.as_deref())?
+            let mut pipeline =
+                may_i::pipeline::CommandPipeline::load(cli.config.as_deref(), cli.json)?;
+            may_i::cmd_check::cmd_check(&mut pipeline, verbose)?
         }
         Some(Command::Parse { command, file }) => cmd_parse::cmd_parse(command, file, cli.json)?,
         Some(Command::Migrate {
@@ -175,7 +179,9 @@ fn run() -> miette::Result<ExitCode> {
                     .map_err(|e| miette::miette!("Failed to print help: {e}"))?;
                 println!();
             } else {
-                cmd_claude_code_hook::cmd_claude_code_hook(cli.config.as_deref())?;
+                let mut pipeline =
+                    may_i::pipeline::CommandPipeline::load(cli.config.as_deref(), cli.json)?;
+                cmd_claude_code_hook::cmd_claude_code_hook(&mut pipeline)?;
             }
         }
     }

@@ -6,7 +6,7 @@ bucket: cli
 
 ## Purpose
 
-The umbrella harness-input contract: how external agent harnesses hand a command (and optional context) to `may-i` and consume its response. Claude Code is one adapter — the `may-i` hook-mode entry point reading a JSON tool-use envelope from stdin, evaluating the bash command, and emitting a JSON response (or blocking via exit code 2 for non-bash tool calls' silent no-op). OpenCode is another adapter — `may-i eval` ingests explicit OpenCode-agent context via `--fact` flags. Generic stdin command-reading on `may-i eval` is the third surface. See `CONTEXT.md` for hook-mode positioning within the invocation-modes table.
+The umbrella harness-input contract: how external agent harnesses hand a command (and optional context) to `may-i` and consume its response. Claude Code is one adapter — the `may-i` hook-mode entry point reading a JSON tool-use envelope from stdin, evaluating the bash command, and emitting a JSON response (or blocking via exit code 2 for non-bash tool calls' silent no-op). OpenCode is another adapter — `may-i eval` ingests explicit OpenCode-agent context via `--fact` flags. Generic stdin command-reading on `may-i eval` is the third surface. The hook entry — like `eval` and `check` — consumes a `CommandPipeline` (see `command-pipeline`) so config loading, terminal detection, and Trust consultation are not re-implemented per surface. See `CONTEXT.md` for hook-mode positioning within the invocation-modes table.
 
 ## Requirements
 

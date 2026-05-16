@@ -9,7 +9,7 @@ use may_i_engine::trust::{ProgramMeta, RuleMeta, TrustHashes, compute_trust_hash
 
 use crate::interactive;
 use crate::output;
-use crate::trust_store::{TrustCheck, TrustStatus, TrustStore, default_trust_store_path};
+use crate::trust::store::{TrustCheck, TrustStatus, TrustStore, default_trust_store_path};
 
 /// Run the trust subcommand.
 ///
@@ -239,17 +239,7 @@ fn print_trusted_summary(
 
     let grouped = group_by_file(&trusted);
     let term = output::Terminal::detect();
-    let rows: Vec<output::ColRow> = grouped
-        .iter()
-        .map(|(file, progs)| {
-            let names = progs.join(", ");
-            let right = output::shorten_home(file).dimmed().to_string();
-            output::ColRow::new(names.clone(), names.len(), right)
-        })
-        .collect();
-
-    let layout = output::Layout::Indent(2, Box::new(output::Layout::Columns(rows)));
-    output::write_layout(&mut w, &layout, &term);
+    output::render_trusted_groups(&mut w, &term, &grouped);
 }
 
 /// Per-rule JSON output.
@@ -356,17 +346,7 @@ fn list_status_human(
         }
         let grouped = group_by_file(&all_approved_programs);
         let term = output::Terminal::detect();
-        let rows: Vec<output::ColRow> = grouped
-            .iter()
-            .map(|(file, progs)| {
-                let names = progs.join(", ");
-                let right = output::shorten_home(file).dimmed().to_string();
-                output::ColRow::new(names.clone(), names.len(), right)
-            })
-            .collect();
-
-        let layout = output::Layout::Indent(2, Box::new(output::Layout::Columns(rows)));
-        output::write_layout(&mut w, &layout, &term);
+        output::render_trusted_groups(&mut w, &term, &grouped);
 
         if !has_pending {
             let _ = writeln!(w);

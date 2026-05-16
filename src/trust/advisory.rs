@@ -11,52 +11,55 @@ use may_i_engine::trust::{canonical_rule, compute_trust_hashes, hash_rule};
 use may_i_layout::{Advisory, ColItem, Layout, NoteLevel};
 
 use crate::output;
-use crate::trust_store::{self, TrustCheck, TrustStatus, TrustStore};
+use crate::trust::store::{TrustCheck, TrustStatus, TrustStore};
 
 /// An untrusted program entry with its provenance.
-pub struct UntrustedEntry {
+pub(crate) struct UntrustedEntry {
     program: String,
     source_files: BTreeSet<PathBuf>,
     display_files: Vec<String>,
 }
 
 impl UntrustedEntry {
-    pub fn program(&self) -> &str {
+    pub(crate) fn program(&self) -> &str {
         &self.program
     }
 
-    pub fn display_files(&self) -> &[String] {
+    pub(crate) fn display_files(&self) -> &[String] {
         &self.display_files
     }
 }
 
 /// Result of computing the trust state for a config.
-pub struct TrustState {
+pub(crate) struct TrustState {
     untrusted: Vec<UntrustedEntry>,
 }
 
 impl TrustState {
-    pub fn untrusted(&self) -> &[UntrustedEntry] {
+    pub(crate) fn untrusted(&self) -> &[UntrustedEntry] {
         &self.untrusted
     }
 }
 
 /// Compute trust state: which programs have untrusted loaded rules.
 ///
-/// Returns `None` if there are no loaded rules at all (trust is irrelevant).
-pub(crate) fn compute(config: &may_i_core::ast::Config) -> Option<TrustState> {
+/// Returns `None` if there are no loaded rules (trust is irrelevant) or no
+/// store was supplied.
+pub(crate) fn compute(
+    config: &may_i_core::ast::Config,
+    store: Option<&TrustStore>,
+) -> Option<TrustState> {
     let hashes = compute_trust_hashes(config);
     if hashes.is_empty() {
         return None;
     }
 
-    let store_path = trust_store::default_trust_store_path()?;
-    let load_result = TrustStore::load(&store_path).ok()?;
+    let store = store?;
     let programs = hashes.programs();
 
     let untrusted: Vec<UntrustedEntry> = programs
         .iter()
-        .filter(|(name, meta)| load_result.store.check(name, &meta.hash) != TrustStatus::Trusted)
+        .filter(|(name, meta)| store.check(name, &meta.hash) != TrustStatus::Trusted)
         .map(|(name, meta)| UntrustedEntry {
             program: name.clone(),
             source_files: meta.source_files.clone(),
@@ -75,8 +78,11 @@ pub(crate) fn compute(config: &may_i_core::ast::Config) -> Option<TrustState> {
 ///
 /// Returns `None` if there are no loaded rules, no trust store available,
 /// or no untrusted programs.
-pub fn build_warning_layout(config: &may_i_core::ast::Config) -> Option<Layout> {
-    let state = compute(config)?;
+pub(crate) fn build_warning_layout(
+    config: &may_i_core::ast::Config,
+    store: Option<&TrustStore>,
+) -> Option<Layout> {
+    let state = compute(config, store)?;
     build_warning_layout_from_entries(&state.untrusted)
 }
 
@@ -198,46 +204,6 @@ fn format_name_list<'a>(names: impl Iterator<Item = &'a str>, total: usize) -> S
         result.push_str(&format!(" (and {} more)", total - 5));
     }
     result
-}
-
-/// Write trust store integrity advisories to stderr if any apply.
-///
-/// Handles corrupt-store and per-entry hash-mismatch cases.
-/// Skipped silently if the config has no loaded rules or the store path is
-/// unavailable.
-pub fn write_integrity_advisories(config: &may_i_core::ast::Config, term: &output::Terminal) {
-    let hashes = compute_trust_hashes(config);
-    if hashes.is_empty() {
-        return;
-    }
-
-    let Some(store_path) = trust_store::default_trust_store_path() else {
-        return;
-    };
-
-    let load_result = match TrustStore::load(&store_path) {
-        Ok(r) => r,
-        Err(_) => {
-            let layout = build_integrity_layout(&store_path, None);
-            output::write_layout(&mut std::io::stderr(), &layout, term);
-            return;
-        }
-    };
-
-    if load_result.was_corrupt {
-        let layout = build_integrity_layout(&store_path, None);
-        output::write_layout(&mut std::io::stderr(), &layout, term);
-    }
-
-    if !load_result.suspects.is_empty() {
-        let names: Vec<&str> = load_result
-            .suspects
-            .iter()
-            .map(|s| s.program.as_str())
-            .collect();
-        let layout = build_integrity_layout(&store_path, Some(&names));
-        output::write_layout(&mut std::io::stderr(), &layout, term);
-    }
 }
 
 /// Filter loaded rules by trust status, removing unapproved ones in place.
