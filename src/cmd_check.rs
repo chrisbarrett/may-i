@@ -1,7 +1,5 @@
 // Check subcommand — validate config and run checks with trace output.
 
-use colored::Colorize;
-
 use engine::check::CheckResult;
 use may_i_engine as engine;
 
@@ -14,9 +12,9 @@ use crate::pipeline::CommandPipeline;
 #[error("{0} check(s) failed")]
 pub struct CheckFailure(pub usize);
 
-struct TraceExtra {
-    location: Option<String>,
-    traces: Vec<TraceEntry>,
+pub struct TraceExtra {
+    pub location: Option<String>,
+    pub traces: Vec<TraceEntry>,
 }
 
 pub fn cmd_check(pipeline: &mut CommandPipeline, verbose: bool) -> miette::Result<()> {
@@ -33,57 +31,31 @@ pub fn cmd_check(pipeline: &mut CommandPipeline, verbose: bool) -> miette::Resul
     let config_file = pipeline.config_path().to_path_buf();
 
     if pipeline.json() {
-        let json_results: Vec<serde_json::Value> = results
-            .iter()
-            .map(|r| {
-                serde_json::json!({
-                    "command": r.command,
-                    "expected": r.expected.to_string(),
-                    "actual": r.actual.to_string(),
-                    "passed": r.passed,
-                    "context": context_to_json(&r.context),
-                    "location": r.extra.location,
-                    "reason": r.reason,
-                    "trace": output::trace_to_json(&r.extra.traces),
-                })
-            })
-            .collect();
-
-        let body = serde_json::json!({
-            "passed": passed,
-            "failed": failed,
-            "results": json_results
-        });
+        let body = output::render_check_results_json(passed, failed, &results);
         println!(
             "{}",
             serde_json::to_string(&body).expect("response serialization is infallible")
         );
     } else {
         let term = pipeline.terminal();
+        let mut stdout = std::io::stdout();
         let mut failures = Vec::new();
 
         for r in &results {
             if verbose {
-                if r.passed {
-                    println!(
-                        "  {} {}",
-                        "PASS".green().bold(),
-                        format!("{} → {}", r.command, r.actual).dimmed()
-                    );
-                } else {
-                    println!(
-                        "  {} {}",
-                        "FAIL".red().bold(),
-                        format!("{} → {} (expected {})", r.command, r.actual, r.expected).yellow()
-                    );
-                }
+                output::render_check_verbose_line(
+                    &mut stdout,
+                    &r.command,
+                    r.expected,
+                    r.actual,
+                    r.passed,
+                );
             }
             if !r.passed {
                 failures.push(r);
             }
         }
 
-        let mut stdout = std::io::stdout();
         for (i, r) in failures.iter().enumerate() {
             if i > 0 {
                 println!();
@@ -148,25 +120,4 @@ fn run_checks_with_traces(
             },
         ))
     })
-}
-
-fn context_to_json(context: &may_i_core::ContextFacts) -> serde_json::Value {
-    let mut obj = serde_json::Map::new();
-    for (key, values) in context.iter() {
-        if values.is_empty() {
-            obj.insert(key.to_string(), serde_json::Value::Bool(true));
-        } else if values.len() == 1 {
-            obj.insert(
-                key.to_string(),
-                serde_json::Value::String(values.iter().next().unwrap().clone()),
-            );
-        } else {
-            let arr: Vec<serde_json::Value> = values
-                .iter()
-                .map(|v| serde_json::Value::String(v.clone()))
-                .collect();
-            obj.insert(key.to_string(), serde_json::Value::Array(arr));
-        }
-    }
-    serde_json::Value::Object(obj)
 }

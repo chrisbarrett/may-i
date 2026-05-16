@@ -26,6 +26,32 @@ pub struct CheckFailureView<'a> {
     pub traces: &'a [TraceEntry],
 }
 
+/// Render the verbose per-result PASS/FAIL line for `cmd_check`. `passed`
+/// drives both the label colour and which of expected/actual is shown.
+pub fn render_check_verbose_line(
+    w: &mut impl Write,
+    command: &str,
+    expected: Decision,
+    actual: Decision,
+    passed: bool,
+) {
+    if passed {
+        let _ = writeln!(
+            w,
+            "  {} {}",
+            "PASS".green().bold(),
+            format!("{command} → {actual}").dimmed()
+        );
+    } else {
+        let _ = writeln!(
+            w,
+            "  {} {}",
+            "FAIL".red().bold(),
+            format!("{command} → {actual} (expected {expected})").yellow()
+        );
+    }
+}
+
 /// Render one failed check to `w`. Includes the labelled separator, the
 /// source location, the expected/actual/context/reason rows, and the trace
 /// block (when present).
@@ -122,4 +148,38 @@ fn render_context(context: &ContextFacts) -> String {
         })
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::output::strip_ansi;
+
+    #[test]
+    fn render_check_verbose_line_pass_shows_actual_only() {
+        let mut buf = Vec::new();
+        render_check_verbose_line(
+            &mut buf,
+            "git status",
+            Decision::Allow,
+            Decision::Allow,
+            true,
+        );
+        let out = strip_ansi(&String::from_utf8(buf).unwrap());
+        assert!(out.contains("PASS"));
+        assert!(out.contains("git status"));
+        assert!(out.contains("allow"));
+        assert!(!out.contains("expected"));
+    }
+
+    #[test]
+    fn render_check_verbose_line_fail_shows_expected_and_actual() {
+        let mut buf = Vec::new();
+        render_check_verbose_line(&mut buf, "rm -rf /", Decision::Deny, Decision::Allow, false);
+        let out = strip_ansi(&String::from_utf8(buf).unwrap());
+        assert!(out.contains("FAIL"));
+        assert!(out.contains("rm -rf /"));
+        assert!(out.contains("allow"));
+        assert!(out.contains("expected deny"));
+    }
 }

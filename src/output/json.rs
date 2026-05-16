@@ -1,6 +1,59 @@
+use may_i_core::ContextFacts;
 use may_i_core::doc::{Doc, DocF};
+use may_i_engine::check::CheckResult;
 
 use crate::annotation::{Ann, CombineRole, TraceEntry};
+use crate::cmd_check::TraceExtra;
+
+/// Assemble the JSON body for `cmd_check --json`: the top-level
+/// `{ passed, failed, results: [...] }` envelope with one entry per check.
+pub fn render_check_results_json(
+    passed: usize,
+    failed: usize,
+    results: &[CheckResult<TraceExtra>],
+) -> serde_json::Value {
+    let json_results: Vec<serde_json::Value> = results
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "command": r.command,
+                "expected": r.expected.to_string(),
+                "actual": r.actual.to_string(),
+                "passed": r.passed,
+                "context": context_to_json(&r.context),
+                "location": r.extra.location,
+                "reason": r.reason,
+                "trace": trace_to_json(&r.extra.traces),
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "passed": passed,
+        "failed": failed,
+        "results": json_results,
+    })
+}
+
+fn context_to_json(context: &ContextFacts) -> serde_json::Value {
+    let mut obj = serde_json::Map::new();
+    for (key, values) in context.iter() {
+        if values.is_empty() {
+            obj.insert(key.to_string(), serde_json::Value::Bool(true));
+        } else if values.len() == 1 {
+            obj.insert(
+                key.to_string(),
+                serde_json::Value::String(values.iter().next().unwrap().clone()),
+            );
+        } else {
+            let arr: Vec<serde_json::Value> = values
+                .iter()
+                .map(|v| serde_json::Value::String(v.clone()))
+                .collect();
+            obj.insert(key.to_string(), serde_json::Value::Array(arr));
+        }
+    }
+    serde_json::Value::Object(obj)
+}
 
 pub fn trace_to_json(entries: &[TraceEntry]) -> Vec<serde_json::Value> {
     entries
@@ -194,6 +247,70 @@ mod tests {
     use super::*;
     use crate::output::test_helpers::*;
     use may_i_core::Decision;
+
+    #[test]
+    fn render_check_results_json_emits_envelope_with_per_result_fields() {
+        use may_i_core::Decision;
+
+        let result = CheckResult {
+            command: "git push".into(),
+            expected: Decision::Allow,
+            actual: Decision::Deny,
+            passed: false,
+            context: ContextFacts::default(),
+            reason: Some("blocked by rule".into()),
+            extra: TraceExtra {
+                location: Some("/tmp/cfg.lisp:3:4".into()),
+                traces: vec![TraceEntry::DefaultAsk {
+                    reason: "no match".into(),
+                }],
+            },
+        };
+        let json = render_check_results_json(2, 1, std::slice::from_ref(&result));
+
+        assert_eq!(json["passed"], 2);
+        assert_eq!(json["failed"], 1);
+        let results = json["results"].as_array().expect("results array");
+        assert_eq!(results.len(), 1);
+        let r0 = &results[0];
+        assert_eq!(r0["command"], "git push");
+        assert!(r0["expected"].as_str().unwrap().contains("allow"));
+        assert!(r0["actual"].as_str().unwrap().contains("deny"));
+        assert_eq!(r0["passed"], false);
+        assert_eq!(r0["reason"], "blocked by rule");
+        assert_eq!(r0["location"], "/tmp/cfg.lisp:3:4");
+        assert_eq!(r0["trace"][0]["type"], "default_ask");
+    }
+
+    #[test]
+    fn render_check_results_json_context_renders_single_multi_and_flag() {
+        use may_i_core::{Decision, Keyword};
+
+        let mut context = ContextFacts::default();
+        context.insert_scalar(Keyword::new(":single").unwrap(), "one");
+        context.insert_scalar(Keyword::new(":multi").unwrap(), "a");
+        context.insert_scalar(Keyword::new(":multi").unwrap(), "b");
+        context.insert_present(Keyword::new(":flag").unwrap());
+
+        let result = CheckResult {
+            command: "cmd".into(),
+            expected: Decision::Allow,
+            actual: Decision::Allow,
+            passed: true,
+            context,
+            reason: None,
+            extra: TraceExtra {
+                location: None,
+                traces: vec![],
+            },
+        };
+        let json = render_check_results_json(1, 0, std::slice::from_ref(&result));
+        let ctx = &json["results"][0]["context"];
+        assert_eq!(ctx[":single"], "one");
+        assert_eq!(ctx[":flag"], true);
+        let multi = ctx[":multi"].as_array().expect("multi array");
+        assert_eq!(multi.len(), 2);
+    }
 
     #[test]
     fn trace_to_json_segment_header() {

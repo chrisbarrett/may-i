@@ -8,7 +8,7 @@ use std::path::Path;
 
 use serde::Deserialize;
 
-use may_i::cmd_eval::{evaluate_with_colorization, write_eval_output};
+use may_i::cmd_eval::evaluate_with_colorization;
 use may_i::output;
 use may_i_config::LoadResult;
 
@@ -63,14 +63,14 @@ fn render_output(command: &str, config: &LoadResult, facts: &[String]) -> Vec<u8
     let display_path = output::shorten_home(&fixture_dir().join("config.lisp"));
 
     let mut buf = Vec::new();
-    write_eval_output(
+    output::render_eval_result(
         &mut buf,
-        &traces,
+        &term,
         command,
         &colored_command,
+        &traces,
         &result,
         &display_path,
-        &term,
     );
     buf
 }
