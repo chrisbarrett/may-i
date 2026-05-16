@@ -2,19 +2,24 @@ use may_i_core::doc::Doc;
 use may_i_pp::{AnnotatedLineBuilder, Format, pretty, pretty_into, visible_len};
 
 use super::colorize::colorize_right;
-use super::transform::{
-    dim_unevaluated, distribute_arg_annotations, truncate_matched_anywhere, truncate_unevaluated,
-};
+use super::transform::prepare_doc_for_text;
 use super::{ColRow, ColumnGeometry};
-use crate::annotation::Ann;
+use crate::annotation::{Ann, CapturedValue};
+
+/// Display label for a captured-value capture source.
+fn captured_value_label(captured: &CapturedValue) -> &'static str {
+    match captured {
+        CapturedValue::Tail(_) => "tail",
+        CapturedValue::Parameter(_) => "value",
+    }
+}
 
 pub(super) fn render_annotated_rule(
     doc: &Doc<Option<Ann>>,
     line: Option<usize>,
     geom: &ColumnGeometry,
 ) -> Vec<ColRow> {
-    let doc = dim_unevaluated(truncate_unevaluated(&truncate_matched_anywhere(doc), 2));
-    let doc = distribute_arg_annotations(&doc);
+    let doc = prepare_doc_for_text(doc);
 
     // Render with AnnotatedLineBuilder for structural annotation collection.
     let prefix_width = line.map_or(0, may_i_pp::line_prefix_width);
@@ -102,7 +107,8 @@ fn format_line_annotation(anns: &[Option<Ann>]) -> String {
         {
             return match observed {
                 Some(values) if !values.is_empty() => {
-                    let observed_str = render_observed_value(&values[0]);
+                    let first = values.iter().next().expect("non-empty checked above");
+                    let observed_str = render_observed_value(first);
                     let arrow = if *matched { "yes" } else { "no" };
                     format!("{observed_str} → {arrow}")
                 }
@@ -119,10 +125,12 @@ fn format_line_annotation(anns: &[Option<Ann>]) -> String {
 
     for ann in anns {
         if let Some(Ann::ArgMatch {
-            captured_value: Some((label, value)),
+            captured_value: Some(captured),
             ..
         }) = ann
         {
+            let label = captured_value_label(captured);
+            let value = captured.value();
             return format!("{label} = \"{value}\"");
         }
     }
@@ -243,10 +251,12 @@ mod tests {
 
     #[test]
     fn format_line_annotation_fact_query_with_observed() {
+        let mut observed = std::collections::BTreeSet::new();
+        observed.insert("val".to_string());
         let anns = vec![Some(Ann::FactQuery {
             query_source: "test".into(),
             matched: true,
-            observed: Some(vec!["val".into()]),
+            observed: Some(observed),
             failure_reason: None,
         })];
         assert_eq!(format_line_annotation(&anns), "\"val\" → yes");
@@ -412,13 +422,17 @@ mod tests {
                 "[a-z]{1,5}",
                 prop::bool::ANY,
                 proptest::option::of(prop::collection::vec("[a-z]{1,5}", 0..3)),
-                proptest::option::of("[a-z]{1,5}"),
+                prop::bool::ANY,
             )
-                .prop_map(|(qs, m, obs, fr)| Ann::FactQuery {
+                .prop_map(|(qs, m, obs, has_fr)| Ann::FactQuery {
                     query_source: qs,
                     matched: m,
-                    observed: obs,
-                    failure_reason: fr,
+                    observed: obs.map(|v| v.into_iter().collect()),
+                    failure_reason: if has_fr {
+                        Some(crate::annotation::FactFailure::KeyAbsent)
+                    } else {
+                        None
+                    },
                 }),
             ("[a-z]{1,10}", prop::bool::ANY)
                 .prop_map(|(name, matched)| Ann::VarRef { name, matched }),

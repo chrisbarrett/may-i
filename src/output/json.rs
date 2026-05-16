@@ -2,8 +2,9 @@ use may_i_core::ContextFacts;
 use may_i_core::doc::{Doc, DocF};
 use may_i_engine::check::CheckResult;
 
-use crate::annotation::{Ann, CombineRole, TraceEntry};
+use crate::annotation::{Ann, CombineRole, FactFailure, TraceEntry};
 use crate::cmd_check::TraceExtra;
+use crate::output::format_flags_mode;
 
 /// Assemble the JSON body for `cmd_check --json`: the top-level
 /// `{ passed, failed, results: [...] }` envelope with one entry per check.
@@ -93,7 +94,7 @@ pub fn trace_to_json(entries: &[TraceEntry]) -> Vec<serde_json::Value> {
                 "command": command,
                 "style": style,
                 "parameter_tokens": parameter_tokens,
-                "flags": flags,
+                "flags": format_flags_mode(flags),
                 "rest_binding": rest_binding,
             }),
             TraceEntry::Rule {
@@ -165,8 +166,8 @@ fn ann_to_json(ann: &Ann) -> serde_json::Value {
                 "arg_set": arg_set,
                 "matched": matched,
             });
-            if let Some((_label, value)) = captured_value {
-                obj["captured_value"] = serde_json::json!(value);
+            if let Some(captured) = captured_value {
+                obj["captured_value"] = serde_json::json!(captured.value());
             }
             obj
         }
@@ -180,7 +181,7 @@ fn ann_to_json(ann: &Ann) -> serde_json::Value {
             "source": query_source,
             "matched": matched,
             "observed": observed,
-            "failure_reason": failure_reason,
+            "failure_reason": failure_reason.as_ref().map(fact_failure_to_str),
         }),
         Ann::EffectDecision { decision, reason } => serde_json::json!({
             "type": "effect_decision",
@@ -226,6 +227,14 @@ fn ann_to_json(ann: &Ann) -> serde_json::Value {
             "name": name,
             "matched": matched,
         }),
+    }
+}
+
+/// Serialise a fact failure reason as the historical string form that JSON
+/// consumers expect (e.g. `"absent"` for `FactFailure::KeyAbsent`).
+fn fact_failure_to_str(failure: &FactFailure) -> &'static str {
+    match failure {
+        FactFailure::KeyAbsent => "absent",
     }
 }
 
@@ -376,7 +385,7 @@ mod tests {
             search_tokens: vec![],
             arg_set: vec!["exec".into(), "true".into()],
             matched: true,
-            captured_value: Some(("tail", "true".into())),
+            captured_value: Some(crate::annotation::CapturedValue::Tail("true".into())),
         });
         assert_eq!(json["type"], "arg_match");
         assert_eq!(json["captured_value"], "true");
@@ -388,18 +397,33 @@ mod tests {
             search_tokens: vec![],
             arg_set: vec!["-c".into(), "echo hi".into()],
             matched: true,
-            captured_value: Some(("value", "echo hi".into())),
+            captured_value: Some(crate::annotation::CapturedValue::Parameter(
+                "echo hi".into(),
+            )),
         });
         assert_eq!(json["type"], "arg_match");
         assert_eq!(json["captured_value"], "echo hi");
     }
 
     #[test]
+    fn ann_to_json_fact_query_with_failure_reason_absent() {
+        let json = ann_to_json(&Ann::FactQuery {
+            query_source: "src".into(),
+            matched: false,
+            observed: None,
+            failure_reason: Some(FactFailure::KeyAbsent),
+        });
+        assert_eq!(json["failure_reason"], "absent");
+    }
+
+    #[test]
     fn ann_to_json_fact_query() {
+        let mut observed = std::collections::BTreeSet::new();
+        observed.insert("val".to_string());
         let json = ann_to_json(&Ann::FactQuery {
             query_source: "src".into(),
             matched: true,
-            observed: Some(vec!["val".into()]),
+            observed: Some(observed),
             failure_reason: None,
         });
         assert_eq!(json["type"], "fact_query");
@@ -460,10 +484,12 @@ mod tests {
 
     #[test]
     fn ann_to_json_var_ref_matched() {
+        let mut observed = std::collections::BTreeSet::new();
+        observed.insert("build".to_string());
         let body_ann = Ann::FactQuery {
             query_source: ":agent".into(),
             matched: true,
-            observed: Some(vec!["build".into()]),
+            observed: Some(observed),
             failure_reason: None,
         };
         let body_doc = atom_ann("(has [:agent \"build\"])", body_ann);

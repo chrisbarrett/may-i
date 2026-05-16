@@ -20,6 +20,8 @@ mod test_helpers;
 use std::io::Write;
 
 use colored::Colorize;
+use may_i_core::ast::FlagsMode;
+use may_i_core::doc::Doc;
 use may_i_layout::{ColAlign, ColContent, ColItem, ColRow, HRuleLabel, Layout};
 use may_i_pp::colorize_atom;
 
@@ -38,7 +40,7 @@ pub use self::trust_groups::render_trusted_groups;
 
 use self::colorize::colorize_right;
 use self::render_rule::render_annotated_rule;
-use crate::annotation::TraceEntry;
+use crate::annotation::{Ann, TraceEntry};
 
 // ── Column geometry (trace-specific) ──────────────────────────────
 
@@ -126,41 +128,11 @@ fn trace_to_layout(
     indent: usize,
     term: &Terminal,
 ) -> Layout {
-    let geom = detect_column_geometry(term);
-    let mut children: Vec<Layout> = Vec::new();
-    let mut first = true;
-
-    let has_segments = entries
-        .iter()
-        .any(|e| matches!(e, TraceEntry::SegmentHeader { .. }));
-
-    let mut pending_command: Option<&str> = if !has_segments { Some(command) } else { None };
-
-    let mut current_rows: Vec<ColRow> = Vec::new();
-    let mut last_shown_facts: Option<&Vec<(String, String)>> = None;
-    // Parser rows pending placement under their command row, keyed by the
-    // bare command name recorded with each `TraceEntry::Parser`. Inner
-    // evaluations also push parser entries; only those whose command name
-    // matches a subsequently-rendered command row are consumed.
-    let mut pending_parsers: std::collections::HashMap<String, ColRow> =
-        std::collections::HashMap::new();
-
-    let flush_rows = |rows: &mut Vec<ColRow>, children: &mut Vec<Layout>| {
-        if !rows.is_empty() {
-            children.push(Layout::Columns(std::mem::take(rows)));
-        }
-    };
-
+    let mut builder = TraceLayoutBuilder::new(entries, command, term);
     for entry in entries {
         match entry {
             TraceEntry::SegmentHeader { command, decision } => {
-                flush_rows(&mut current_rows, &mut children);
-                if !first {
-                    children.push(Layout::Blank);
-                    children.push(Layout::Blank);
-                }
-                children.push(segment_header_layout(command, *decision));
-                pending_command = Some(command);
+                builder.on_segment_header(command, *decision);
             }
             TraceEntry::Rule {
                 doc,
@@ -170,52 +142,13 @@ fn trace_to_layout(
                 inner_command,
                 combine_role: _,
             } => {
-                if inner_command.is_some() || pending_command.is_some() {
-                    flush_rows(&mut current_rows, &mut children);
-                    last_shown_facts = None;
-                    if !first {
-                        children.push(Layout::Blank);
-                    }
-                } else if !current_rows.is_empty() {
-                    current_rows.push(ColRow::new(" ", 1, ""));
-                }
-
-                let pushed_cmd: Option<&str> = if let Some(cmd) = pending_command.take() {
-                    current_rows.extend(command_row(cmd, &geom));
-                    Some(cmd)
-                } else if let Some(cmd) = inner_command.as_deref() {
-                    current_rows.extend(command_row(cmd, &geom));
-                    Some(cmd)
-                } else {
-                    None
-                };
-                if let Some(cmd) = pushed_cmd
-                    && let Some(first_token) = cmd.split_whitespace().next()
-                    && let Some(parser_row) = pending_parsers.remove(first_token)
-                {
-                    current_rows.push(parser_row);
-                }
-                if !facts.is_empty() && last_shown_facts.as_ref() != Some(&facts) {
-                    current_rows.extend(facts_rows(facts));
-                }
-                last_shown_facts = Some(facts);
-                current_rows.extend(render_annotated_rule(doc, *line, &geom));
+                builder.on_rule(doc, *line, facts, inner_command.as_deref());
             }
             TraceEntry::EmbeddedCommand { source, decision } => {
-                let decision_str = format!(":{decision}");
-                let label = format!("{} {}", "embedded:".dimmed(), source.italic());
-                let label_visible = "embedded: ".len() + source.len();
-                let right = colorize_right(&format!("→ {decision_str}"));
-                let mut row = ColRow::new(label, label_visible, right);
-                row.left_align = ColAlign::Right;
-                current_rows.push(row);
+                builder.on_embedded_command(source, *decision);
             }
             TraceEntry::DefaultAsk { .. } => {
-                let label = "No matching rule".italic().yellow().to_string();
-                let label_visible = "No matching rule".len();
-                let mut row = ColRow::new(label, label_visible, colorize_right("→ :ask (default)"));
-                row.left_align = ColAlign::Right;
-                current_rows.push(row);
+                builder.on_default_ask();
             }
             TraceEntry::Parser {
                 command,
@@ -224,48 +157,210 @@ fn trace_to_layout(
                 flags,
                 rest_binding,
             } => {
-                let mut value = style.clone();
-                value.push_str(&format!("  flags {flags}"));
-                if !parameter_tokens.is_empty() {
-                    value.push_str(&format!("  parameters ({})", parameter_tokens.join(" ")));
-                }
-                if let Some(b) = rest_binding {
-                    value.push_str(&format!("  rest {b}"));
-                }
-                let label = "parser";
-                let mut row = ColRow::new(label.dimmed().to_string(), label.len(), value);
-                row.left_align = ColAlign::Right;
-                pending_parsers.insert(command.clone(), row);
-                continue;
+                builder.on_parser(
+                    command,
+                    style,
+                    parameter_tokens,
+                    flags,
+                    rest_binding.as_deref(),
+                );
             }
             TraceEntry::ParseDiagnostics { diagnostics } => {
-                for diag in diagnostics {
-                    let severity_str = match diag.severity {
-                        may_i_shell_parser::Severity::Error => "error".red().bold().to_string(),
-                        may_i_shell_parser::Severity::Warning => {
-                            "warning".yellow().bold().to_string()
-                        }
-                    };
-                    let msg = diag.message();
-                    let label = format!("parse {severity_str}: {msg}");
-                    let label_visible = "parse ".len()
-                        + match diag.severity {
-                            may_i_shell_parser::Severity::Error => "error".len(),
-                            may_i_shell_parser::Severity::Warning => "warning".len(),
-                        }
-                        + ": ".len()
-                        + msg.len();
-                    let mut row = ColRow::new(label, label_visible, "");
-                    row.left_align = ColAlign::Right;
-                    current_rows.push(row);
-                }
+                builder.on_parse_diagnostics(diagnostics);
             }
         }
-        first = false;
     }
-    flush_rows(&mut current_rows, &mut children);
+    builder.finish(indent)
+}
 
-    Layout::Indent(indent, Box::new(Layout::Stack(children)))
+/// Accumulator for `trace_to_layout`. Each method consumes one
+/// `TraceEntry` variant and updates the row/children buffers and the
+/// state slots (`pending_command`, `current_rows`, `last_shown_facts`,
+/// `pending_parsers`, `first`). `finish` produces the final layout tree.
+struct TraceLayoutBuilder<'a> {
+    geom: ColumnGeometry,
+    children: Vec<Layout>,
+    current_rows: Vec<ColRow>,
+    pending_command: Option<&'a str>,
+    last_shown_facts: Option<&'a Vec<(String, String)>>,
+    /// Parser rows pending placement under their command row, keyed by the
+    /// bare command name recorded with each `TraceEntry::Parser`. Inner
+    /// evaluations also push parser entries; only those whose command name
+    /// matches a subsequently-rendered command row are consumed.
+    pending_parsers: std::collections::HashMap<String, ColRow>,
+    first: bool,
+}
+
+impl<'a> TraceLayoutBuilder<'a> {
+    fn new(entries: &'a [TraceEntry], command: &'a str, term: &Terminal) -> Self {
+        let has_segments = entries
+            .iter()
+            .any(|e| matches!(e, TraceEntry::SegmentHeader { .. }));
+        let pending_command = if has_segments { None } else { Some(command) };
+        Self {
+            geom: detect_column_geometry(term),
+            children: Vec::new(),
+            current_rows: Vec::new(),
+            pending_command,
+            last_shown_facts: None,
+            pending_parsers: std::collections::HashMap::new(),
+            first: true,
+        }
+    }
+
+    fn flush_rows(&mut self) {
+        if !self.current_rows.is_empty() {
+            self.children
+                .push(Layout::Columns(std::mem::take(&mut self.current_rows)));
+        }
+    }
+
+    fn on_segment_header(&mut self, command: &'a str, decision: may_i_core::Decision) {
+        self.flush_rows();
+        if !self.first {
+            self.children.push(Layout::Blank);
+            self.children.push(Layout::Blank);
+        }
+        self.children.push(segment_header_layout(command, decision));
+        self.pending_command = Some(command);
+        self.first = false;
+    }
+
+    fn on_rule(
+        &mut self,
+        doc: &Doc<Option<Ann>>,
+        line: Option<usize>,
+        facts: &'a Vec<(String, String)>,
+        inner_command: Option<&str>,
+    ) {
+        if inner_command.is_some() || self.pending_command.is_some() {
+            self.flush_rows();
+            self.last_shown_facts = None;
+            if !self.first {
+                self.children.push(Layout::Blank);
+            }
+        } else if !self.current_rows.is_empty() {
+            self.current_rows.push(ColRow::new(" ", 1, ""));
+        }
+
+        let pushed_cmd: Option<&str> = if let Some(cmd) = self.pending_command.take() {
+            self.current_rows.extend(command_row(cmd, &self.geom));
+            Some(cmd)
+        } else if let Some(cmd) = inner_command {
+            self.current_rows.extend(command_row(cmd, &self.geom));
+            Some(cmd)
+        } else {
+            None
+        };
+        if let Some(cmd) = pushed_cmd
+            && let Some(parser_row) = self.take_pending_parser(cmd)
+        {
+            self.current_rows.push(parser_row);
+        }
+        if !facts.is_empty() && self.last_shown_facts.as_ref() != Some(&facts) {
+            self.current_rows.extend(facts_rows(facts));
+        }
+        self.last_shown_facts = Some(facts);
+        self.current_rows
+            .extend(render_annotated_rule(doc, line, &self.geom));
+        self.first = false;
+    }
+
+    /// Pop the buffered parser row whose recorded command matches the first
+    /// token of the rendered command. The "parser row binds to next matching
+    /// command row" rule lives here.
+    fn take_pending_parser(&mut self, command: &str) -> Option<ColRow> {
+        let first_token = command.split_whitespace().next()?;
+        self.pending_parsers.remove(first_token)
+    }
+
+    fn on_embedded_command(&mut self, source: &str, decision: may_i_core::Decision) {
+        let decision_str = format!(":{decision}");
+        let label = format!("{} {}", "embedded:".dimmed(), source.italic());
+        let label_visible = "embedded: ".len() + source.len();
+        let right = colorize_right(&format!("→ {decision_str}"));
+        let mut row = ColRow::new(label, label_visible, right);
+        row.left_align = ColAlign::Right;
+        self.current_rows.push(row);
+        self.first = false;
+    }
+
+    fn on_default_ask(&mut self) {
+        let label = "No matching rule".italic().yellow().to_string();
+        let label_visible = "No matching rule".len();
+        let mut row = ColRow::new(label, label_visible, colorize_right("→ :ask (default)"));
+        row.left_align = ColAlign::Right;
+        self.current_rows.push(row);
+        self.first = false;
+    }
+
+    fn on_parser(
+        &mut self,
+        command: &str,
+        style: &str,
+        parameter_tokens: &[String],
+        flags: &FlagsMode,
+        rest_binding: Option<&str>,
+    ) {
+        let mut value = style.to_string();
+        value.push_str(&format!("  flags {}", format_flags_mode(flags)));
+        if !parameter_tokens.is_empty() {
+            value.push_str(&format!("  parameters ({})", parameter_tokens.join(" ")));
+        }
+        if let Some(b) = rest_binding {
+            value.push_str(&format!("  rest {b}"));
+        }
+        let label = "parser";
+        let mut row = ColRow::new(label.dimmed().to_string(), label.len(), value);
+        row.left_align = ColAlign::Right;
+        self.pending_parsers.insert(command.to_string(), row);
+        // Parser entries do not flip `first`: they are buffered and bind
+        // to a later command row.
+    }
+
+    fn on_parse_diagnostics(&mut self, diagnostics: &[may_i_shell_parser::ParseDiagnostic]) {
+        for diag in diagnostics {
+            let severity_str = match diag.severity {
+                may_i_shell_parser::Severity::Error => "error".red().bold().to_string(),
+                may_i_shell_parser::Severity::Warning => "warning".yellow().bold().to_string(),
+            };
+            let msg = diag.message();
+            let label = format!("parse {severity_str}: {msg}");
+            let label_visible = "parse ".len()
+                + match diag.severity {
+                    may_i_shell_parser::Severity::Error => "error".len(),
+                    may_i_shell_parser::Severity::Warning => "warning".len(),
+                }
+                + ": ".len()
+                + msg.len();
+            let mut row = ColRow::new(label, label_visible, "");
+            row.left_align = ColAlign::Right;
+            self.current_rows.push(row);
+        }
+        self.first = false;
+    }
+
+    fn finish(mut self, indent: usize) -> Layout {
+        self.flush_rows();
+        Layout::Indent(indent, Box::new(Layout::Stack(self.children)))
+    }
+}
+
+/// Render a parser's flag-mode selection as the text the trace shows
+/// (`posix`, `permute`, or `until "<tok>"…`).
+pub(crate) fn format_flags_mode(mode: &FlagsMode) -> String {
+    match mode {
+        FlagsMode::Posix => "posix".to_string(),
+        FlagsMode::Permute => "permute".to_string(),
+        FlagsMode::Until(toks) => {
+            let inner = toks
+                .iter()
+                .map(|t| format!("\"{t}\""))
+                .collect::<Vec<_>>()
+                .join(" ");
+            format!("until {inner}")
+        }
+    }
 }
 
 fn segment_header_layout(command: &str, decision: may_i_core::Decision) -> Layout {
@@ -532,7 +627,7 @@ mod tests {
 
     fn parser_then_rule(
         parameter_tokens: Vec<String>,
-        flags: &str,
+        flags: FlagsMode,
         rest_binding: Option<&str>,
     ) -> Vec<TraceEntry> {
         let doc = list_ann(
@@ -547,7 +642,7 @@ mod tests {
                 command: "cmd".into(),
                 style: "gnu".into(),
                 parameter_tokens,
-                flags: flags.to_string(),
+                flags,
                 rest_binding: rest_binding.map(str::to_string),
             },
             TraceEntry::Rule {
@@ -577,7 +672,7 @@ mod tests {
 
     #[test]
     fn parser_row_renders_directly_under_command_no_blank_line() {
-        let entries = parser_then_rule(vec![], "permute", None);
+        let entries = parser_then_rule(vec![], FlagsMode::Permute, None);
         let out = render_trace(&entries, "cmd");
         let (cmd_idx, _) = find_row_with(&out, "command").expect("command row missing");
         let (parser_idx, parser_line) = find_row_with(&out, "parser").expect("parser row missing");
@@ -596,7 +691,11 @@ mod tests {
 
     #[test]
     fn parser_row_with_parameters() {
-        let entries = parser_then_rule(vec!["-X".into(), "--request".into()], "permute", None);
+        let entries = parser_then_rule(
+            vec!["-X".into(), "--request".into()],
+            FlagsMode::Permute,
+            None,
+        );
         let out = render_trace(&entries, "cmd");
         assert!(
             out.contains("gnu  flags permute  parameters (-X --request)"),
@@ -606,7 +705,7 @@ mod tests {
 
     #[test]
     fn parser_row_with_posix_flags_and_rest() {
-        let entries = parser_then_rule(vec![], "posix", Some("#cmd"));
+        let entries = parser_then_rule(vec![], FlagsMode::Posix, Some("#cmd"));
         let out = render_trace(&entries, "cmd");
         assert!(
             out.contains("gnu  flags posix  rest #cmd"),
@@ -616,7 +715,11 @@ mod tests {
 
     #[test]
     fn parser_row_with_parameters_and_rest() {
-        let entries = parser_then_rule(vec!["-c".into()], r#"until "--""#, Some("#cmd"));
+        let entries = parser_then_rule(
+            vec!["-c".into()],
+            FlagsMode::Until(vec!["--".into()]),
+            Some("#cmd"),
+        );
         let out = render_trace(&entries, "cmd");
         assert!(
             out.contains(r#"gnu  flags until "--"  parameters (-c)  rest #cmd"#),
@@ -641,14 +744,14 @@ mod tests {
                 command: "nix".into(),
                 style: "gnu".into(),
                 parameter_tokens: vec![],
-                flags: r#"until "--command" "-c""#.to_string(),
+                flags: FlagsMode::Until(vec!["--command".into(), "-c".into()]),
                 rest_binding: Some("#cmd".to_string()),
             },
             TraceEntry::Parser {
                 command: "run".into(),
                 style: "gnu".into(),
                 parameter_tokens: vec![],
-                flags: "permute".to_string(),
+                flags: FlagsMode::Permute,
                 rest_binding: None,
             },
             TraceEntry::DefaultAsk {
@@ -673,7 +776,7 @@ mod tests {
 
     #[test]
     fn no_full_width_parser_banner() {
-        let entries = parser_then_rule(vec![], "permute", None);
+        let entries = parser_then_rule(vec![], FlagsMode::Permute, None);
         let out = render_trace(&entries, "cmd");
         for line in out.lines() {
             assert!(

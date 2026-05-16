@@ -2,7 +2,9 @@
 //
 // Lives in the CLI binary so `Doc` never enters the engine crate.
 
-use may_i_core::ast::{Effect, EffectResult, Rule};
+use std::collections::BTreeSet;
+
+use may_i_core::ast::{Effect, EffectResult, FlagsMode, Rule};
 use may_i_core::doc::{Doc, DocF, LayoutHint};
 use may_i_core::pattern::{ArgPattern, CommandPattern, MatchMode, Quantifier};
 use may_i_core::primitives::ToDoc;
@@ -13,6 +15,34 @@ use may_i_engine::eval::PredicateResult;
 use may_i_engine::fold::{
     ArgMatchDetail, ChildResult, EvalFold, FactDetail, PositionalElementDetail, PositionalMatchKind,
 };
+
+/// Captured value flowing into a rule body via `(authorise)`. The variant
+/// names the capture source; renderers map each variant to its display
+/// label (`tail` / `value`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CapturedValue {
+    /// Captured by `(tail (authorise))`.
+    Tail(String),
+    /// Captured by `(parameter X (authorise))`.
+    Parameter(String),
+}
+
+impl CapturedValue {
+    /// The captured argument value, regardless of capture source.
+    pub fn value(&self) -> &str {
+        match self {
+            CapturedValue::Tail(v) | CapturedValue::Parameter(v) => v,
+        }
+    }
+}
+
+/// Why a fact query did not match. Renderers turn each variant into the
+/// prose the trace shows; the producer records only the structural reason.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FactFailure {
+    /// The queried key is not present in the context facts.
+    KeyAbsent,
+}
 
 /// Annotation carried on each Doc node in a trace.
 ///
@@ -27,17 +57,15 @@ pub enum Ann {
         search_tokens: Vec<String>,
         arg_set: Vec<String>,
         matched: bool,
-        /// Captured value with its display label, set for
-        /// `(tail (authorise))` (label `"tail"`) and
-        /// `(parameter X (authorise))` (label `"value"`).
-        captured_value: Option<(&'static str, String)>,
+        /// Captured value when the pattern is `(authorise)`-style.
+        captured_value: Option<CapturedValue>,
     },
     /// Fact query result with evidence.
     FactQuery {
         query_source: String,
         matched: bool,
-        observed: Option<Vec<String>>,
-        failure_reason: Option<String>,
+        observed: Option<BTreeSet<String>>,
+        failure_reason: Option<FactFailure>,
     },
     /// Effect decision.
     EffectDecision {
@@ -243,16 +271,21 @@ fn positional_arg_to_doc(p: &may_i_core::pattern::PositionalArg) -> Doc<()> {
     }
 }
 
-/// Display label for an `ArgMatch` carrying a captured value. The renderer
-/// formats the right column as `<label> = "<value>"`.
-fn captured_value_label(pattern: &ArgPattern) -> Option<&'static str> {
+/// Build a `CapturedValue` for an `ArgMatch` whose pattern captures a
+/// value (tail or parameter). Renderers map each variant to its display
+/// label. Only called when the engine has already produced a captured
+/// value, which it only does for `Tail` and `Parameter { Authorise }`
+/// patterns — any other pattern reaching this function is an engine bug.
+fn make_captured_value(pattern: &ArgPattern, value: String) -> CapturedValue {
     match pattern {
-        ArgPattern::Tail => Some("tail"),
+        ArgPattern::Tail => CapturedValue::Tail(value),
         ArgPattern::Parameter {
             form: may_i_core::pattern::ParameterForm::Authorise,
             ..
-        } => Some("value"),
-        _ => None,
+        } => CapturedValue::Parameter(value),
+        other => {
+            unreachable!("engine produced a captured value for a non-capturing pattern: {other:?}")
+        }
     }
 }
 
@@ -504,9 +537,9 @@ pub enum TraceEntry {
         command: String,
         style: String,
         parameter_tokens: Vec<String>,
-        /// Rendered `(flags MODE)` for the parser:
-        /// `"posix"`, `"permute"`, or `"until <tok>…"`.
-        flags: String,
+        /// Structural `(flags MODE)` selection. Renderers format it
+        /// (`posix`, `permute`, or `until "<tok>"…`).
+        flags: FlagsMode,
         /// Bound `(rest #var)` name when the parser declares one.
         rest_binding: Option<String>,
     },
@@ -690,7 +723,7 @@ impl EvalFold for TracingFold {
         let captured_value = detail
             .captured_value
             .as_ref()
-            .and_then(|v| captured_value_label(pattern).map(|label| (label, v.clone())));
+            .map(|v| make_captured_value(pattern, v.clone()));
         let ann = Some(Ann::ArgMatch {
             search_tokens: detail.search_tokens.clone(),
             arg_set: detail.arg_set.clone(),
@@ -906,7 +939,7 @@ impl EvalFold for TracingFold {
         let captured_value = detail
             .captured_value
             .as_ref()
-            .and_then(|v| captured_value_label(pattern).map(|label| (label, v.clone())));
+            .map(|v| make_captured_value(pattern, v.clone()));
         let ann_doc = Doc {
             ann: Some(Ann::ArgMatch {
                 search_tokens: detail.search_tokens,
@@ -1004,25 +1037,12 @@ impl EvalFold for TracingFold {
     }
 
     fn record_parser(&mut self, command: &str, parser: &may_i_core::ast::ResolvedParser) {
-        let flags = match &parser.flags_mode {
-            may_i_core::ast::FlagsMode::Posix => "posix".to_string(),
-            may_i_core::ast::FlagsMode::Permute => "permute".to_string(),
-            may_i_core::ast::FlagsMode::Until(toks) => {
-                let inner = toks
-                    .iter()
-                    .map(|t| format!("\"{t}\""))
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                format!("until {inner}")
-            }
-        };
-        let rest_binding = parser.rest.as_ref().map(|b| b.to_string());
         self.traces.push(TraceEntry::Parser {
             command: command.to_string(),
             style: parser.style.name().to_string(),
             parameter_tokens: parser.parameter_tokens(),
-            flags,
-            rest_binding,
+            flags: parser.flags_mode.clone(),
+            rest_binding: parser.rest.as_ref().map(|b| b.to_string()),
         });
     }
 
@@ -1034,12 +1054,19 @@ impl EvalFold for TracingFold {
     ) -> Self::PredicateOut {
         let source = query.to_source();
         let doc = unannotated_to_ann(fact_query_to_doc(query));
+        let observed = detail
+            .observed
+            .map(|values| values.into_iter().collect::<BTreeSet<String>>());
+        let failure_reason = detail.failure_reason.as_deref().map(|r| match r {
+            "absent" => FactFailure::KeyAbsent,
+            other => unreachable!("unexpected fact failure reason: {other}"),
+        });
         let ann_doc = Doc {
             ann: Some(Ann::FactQuery {
                 query_source: source,
                 matched: result == PredicateResult::Match,
-                observed: detail.observed,
-                failure_reason: detail.failure_reason,
+                observed,
+                failure_reason,
             }),
             ..doc
         };
