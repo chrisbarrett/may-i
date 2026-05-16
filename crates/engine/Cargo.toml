@@ -23,3 +23,4 @@ may-i-config = { path = "../config" }
 may-i-core = { path = "../core", features = ["test-generators"] }
 proptest = "1"
 regex = "1"
+insta = "1"

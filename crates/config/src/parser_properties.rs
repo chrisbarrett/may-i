@@ -81,23 +81,43 @@ mod tests {
         #[test]
         fn parse_effect_never_panics_on_canonical(cst in any_canonical_effect_cst(2)) {
             let sexpr = cst.to_sexpr();
-            let _ = crate::parse_effect(&sexpr);
+            let _ = crate::effect::parse_effect(&sexpr);
         }
 
         #[test]
         fn parse_effect_never_panics_on_arbitrary(sexpr in any_sexpr(3)) {
-            let _ = crate::parse_effect(&sexpr);
+            let _ = crate::effect::parse_effect(&sexpr);
+        }
+
+        // parse_rule_body is the only public entry point for rule-body
+        // parsing; it forwards to crate::effect::parse_effect. The two
+        // SHALL produce structurally equal results on every input.
+        #[test]
+        fn parse_rule_body_agrees_with_parse_effect_on_canonical(
+            cst in any_canonical_effect_cst(2)
+        ) {
+            let sexpr = cst.to_sexpr();
+            let via_body = crate::parse_rule_body(&sexpr);
+            let via_effect = crate::effect::parse_effect(&sexpr);
+            prop_assert_eq!(format!("{:?}", via_body), format!("{:?}", via_effect));
+        }
+
+        #[test]
+        fn parse_rule_body_agrees_with_parse_effect_on_arbitrary(sexpr in any_sexpr(3)) {
+            let via_body = crate::parse_rule_body(&sexpr);
+            let via_effect = crate::effect::parse_effect(&sexpr);
+            prop_assert_eq!(format!("{:?}", via_body), format!("{:?}", via_effect));
         }
 
         #[test]
         fn parse_predicate_never_panics_on_generated(cst in any_predicate_cst(2)) {
             let sexpr = cst.to_sexpr();
-            let _ = crate::parse_predicate(&sexpr);
+            let _ = crate::predicate::parse_predicate(&sexpr);
         }
 
         #[test]
         fn parse_predicate_never_panics_on_arbitrary(sexpr in any_sexpr(3)) {
-            let _ = crate::parse_predicate(&sexpr);
+            let _ = crate::predicate::parse_predicate(&sexpr);
         }
 
         #[test]

@@ -173,11 +173,22 @@ core AST type and no canonicalisation code. Therefore the trust hash
 
 To guard against a slip — e.g. a tasks-time accidental edit of
 `effect.rs` that changes a parse-time normalisation — we snapshot the
-canonical form of the prelude (`crates/config/src/prelude.lisp`) before
-and after, and assert byte equality. The snapshot is the test; no new
-spec requirement is needed in `trust-hashing` because the requirement
-the snapshot enforces (canonical form is deterministic) is already
-covered there.
+canonical form of a hand-crafted rule-body fixture (inline string in
+the `trust.rs` snapshot test) before and after, and assert byte
+equality. The fixture is designed to exhaustively cover every
+rule-body shape the consolidation could disturb: every `Effect`
+variant (Terminal × {Allow, Ask, Deny}, And, Or, Not, When, Unless,
+If, Cond, ArgPattern, CommandPattern, Authorise), every `Predicate`
+variant (Fact, NamedRef, And, Or, Not), every `ArgPattern` shape
+(positional, exact, anywhere, forbidden, flag, parameter), and one
+`(define …)` for the canonical-define path. Two simpler candidates
+were rejected: the prelude (`prelude.lisp`) contains only
+`(parser …)` and `(define-arg-style …)` forms with no rules or
+defines; the starter config (`starter_config.lisp`) still uses legacy
+`(check :deny …)` syntax that no longer parses (a separate bug, out
+of scope here). The snapshot is the test; no new spec requirement is
+needed in `trust-hashing` because the requirement the snapshot
+enforces (canonical form is deterministic) is already covered there.
 
 ## Risks / Trade-offs
 
@@ -188,9 +199,10 @@ covered there.
 
 - **[Risk]** A parse-time normalisation slip changes the canonical form
   of some rule and silently invalidates a user's trust entries.
-  **Mitigation:** snapshot-test the canonicalised serialisation of the
-  prelude pre/post and assert byte equality. The prelude exercises every
-  rule-body shape (combinators, predicates, arg patterns, decisions).
+  **Mitigation:** snapshot-test the canonicalised serialisation of a
+  hand-crafted rule-body fixture pre/post and assert byte equality.
+  The fixture exercises every rule-body shape (combinators,
+  predicates, arg patterns, decisions) — see Decisions.
 
 - **[Risk]** Test code outside `crates/config/` imports the four
   downgraded names and we don't notice until later.

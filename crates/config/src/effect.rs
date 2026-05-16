@@ -15,7 +15,7 @@ use may_i_sexpr::{RawError, Sexpr};
 /// - Conditionals: `(when PREDICATE EFFECT)`, `(unless PREDICATE EFFECT)`, `(if PREDICATE THEN ELSE)`, `(cond ...)`
 /// - Recursion: `(authorise)` (inside a host context)
 #[must_use = "parsed effect should be used"]
-pub fn parse_effect(sexpr: &Sexpr) -> Result<Spanned<Effect>, RawError> {
+pub(crate) fn parse_effect(sexpr: &Sexpr) -> Result<Spanned<Effect>, RawError> {
     // Handle string literals: always command literals (even if they match a reserved word).
     if let Some(s) = sexpr.as_str() {
         let pattern = crate::command::parse_command_pattern_from_atom(s)?;
@@ -334,7 +334,7 @@ fn parse_not(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawError>
 
 #[cfg(test)]
 mod tests {
-    use crate::*;
+    use super::parse_effect;
     use may_i_core::Decision;
     use may_i_core::ast::Effect;
     use may_i_core::pattern::{ArgPattern, MatchMode};
