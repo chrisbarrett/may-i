@@ -104,28 +104,6 @@ pub fn cmd_eval(
     Ok(())
 }
 
-/// Compatibility wrapper for the original `cmd_eval::write_eval_output` API
-/// used by snapshot tests. New callers should prefer `output::render_eval_result`.
-pub fn write_eval_output(
-    w: &mut impl Write,
-    traces: &[TraceEntry],
-    command: &str,
-    colored_command: &str,
-    result: &engine::EvalResult,
-    display_path: &str,
-    term: &output::Terminal,
-) {
-    output::render_eval_result(
-        w,
-        term,
-        command,
-        colored_command,
-        traces,
-        result,
-        display_path,
-    );
-}
-
 /// Evaluate a command using the unified pipeline, then colorize using segments
 /// for display purposes only.
 pub fn evaluate_with_colorization(

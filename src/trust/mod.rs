@@ -8,7 +8,10 @@
 
 pub mod advisory;
 pub mod gate;
+pub mod rehash;
 pub mod store;
+
+pub use rehash::rehash_after_migration;
 
 use std::io::Write;
 use std::path::PathBuf;

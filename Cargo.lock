@@ -755,6 +755,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "similar",
+ "temp-env",
  "tempfile",
  "termimad",
  "terminal_size",

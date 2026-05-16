@@ -193,7 +193,7 @@ pub(crate) fn cmd_migrate(
 
         // Class A trust-hash rehash: re-canonicalise every approved rule
         // entry so existing approvals carry over to the new canonical form.
-        let rehashed = rehash_trust_store_class_a()?;
+        let rehashed = may_i::trust::rehash_after_migration()?;
         if rehashed > 0 {
             println!(
                 "Rehashed {rehashed} trust entr{} to the new canonical form.",
@@ -210,62 +210,6 @@ pub(crate) fn cmd_migrate(
     }
 
     Ok(())
-}
-
-/// Re-canonicalise every rule entry in the trust store and rewrite the
-/// store with new hashes. Approvals (Approved/Blocked status) carry
-/// forward to the new key. Returns the number of entries whose hash
-/// changed.
-fn rehash_trust_store_class_a() -> miette::Result<usize> {
-    use may_i::trust::store::{RuleEntry, TrustStore, default_trust_store_path};
-
-    let Some(store_path) = default_trust_store_path() else {
-        return Ok(0);
-    };
-    if !store_path.exists() {
-        return Ok(0);
-    }
-    let load = TrustStore::load(&store_path)
-        .map_err(|e| miette::miette!("Failed to load trust store: {e}"))?;
-    let mut store = load.store;
-    let mut rehashed = 0usize;
-    let entries: Vec<(String, RuleEntry)> = store
-        .iter_rules()
-        .map(|(h, e)| (h.to_string(), e.clone()))
-        .collect();
-    for (old_hash, entry) in entries {
-        let Some(new_form) = recanonicalise_rule_form(&entry.form) else {
-            continue;
-        };
-        if new_form == entry.form {
-            continue;
-        }
-        let new_hash = may_i_engine::trust::hash_rule(&new_form);
-        if new_hash == old_hash {
-            continue;
-        }
-        store.replace_rule(&old_hash, new_hash, new_form);
-        rehashed += 1;
-    }
-    if rehashed > 0 {
-        store
-            .save(&store_path)
-            .map_err(|e| miette::miette!("Failed to save trust store: {e}"))?;
-    }
-    Ok(rehashed)
-}
-
-/// Re-parse a stored canonical rule form and re-emit it with the
-/// current canonicaliser. Returns `None` if the form fails to parse —
-/// caller leaves such entries untouched.
-fn recanonicalise_rule_form(form: &str) -> Option<String> {
-    let (forms, errs) = may_i_sexpr::parse(form);
-    if !errs.is_empty() {
-        return None;
-    }
-    let sexpr = forms.into_iter().next()?;
-    let rule = may_i_config::parse_rule(&sexpr).ok()?;
-    Some(may_i_engine::trust::canonical_rule(&rule.value))
 }
 
 /// Emit a warning advisory naming any wrapper commands (sudo, xargs,
