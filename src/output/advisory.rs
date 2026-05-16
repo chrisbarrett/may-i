@@ -3,7 +3,7 @@
 
 use std::io::Write;
 
-use may_i_layout::Layout;
+use may_i_output::Layout;
 
 use super::{Terminal, write_layout};
 

@@ -6,7 +6,7 @@ use std::io::Write;
 use std::path::Path;
 
 use colored::Colorize;
-use may_i_layout::{ColRow, Layout};
+use may_i_output::{ColRow, Layout};
 
 use super::{Terminal, shorten_home, write_layout};
 

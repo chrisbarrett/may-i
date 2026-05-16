@@ -92,7 +92,7 @@ fn colorize_effect_sexpr(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use may_i_layout::strip_ansi;
+    use may_i_output::strip_ansi;
 
     #[test]
     fn colorize_right_empty() {

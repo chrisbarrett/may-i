@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use colored::Colorize;
 use may_i_engine::trust::{canonical_rule, compute_trust_hashes, hash_rule};
-use may_i_layout::{Advisory, ColItem, Layout, NoteLevel};
+use may_i_output::{Advisory, ColItem, Layout, NoteLevel};
 
 use crate::output;
 use crate::trust::store::{TrustCheck, TrustStatus, TrustStore};
@@ -366,7 +366,7 @@ mod tests {
         let mut buf = Vec::new();
         output::write_layout(&mut buf, layout, &term);
         let raw = String::from_utf8(buf).unwrap();
-        may_i_layout::strip_ansi(&raw)
+        may_i_output::strip_ansi(&raw)
     }
 
     fn entry(program: &str, files: &[&str]) -> UntrustedEntry {

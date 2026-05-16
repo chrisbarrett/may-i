@@ -20,7 +20,7 @@ use colored::Colorize;
 use may_i_config::LoadResult;
 use may_i_core::Decision;
 use may_i_core::ast::Config;
-use may_i_layout::{Advisory, Layout, NoteHeading, NoteLevel};
+use may_i_output::{Advisory, Layout, NoteHeading, NoteLevel};
 
 use crate::output::{self, Terminal};
 use crate::trust::store::{SuspectEntry, TrustStore, default_trust_store_path};
