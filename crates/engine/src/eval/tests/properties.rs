@@ -1173,6 +1173,16 @@ mod parser_engine_invariants {
     //       proptest. Inviolability is now covered by
     //       `heredoc_body_inviolable_simple` and the 2026-05-11 regression
     //       seed.
+    //   Spec: § EvalResult exposes per-segment decisions.
+    //     — established by `EvalResult.segment_decisions` and the scenario
+    //       tests in `crates/engine/src/eval/tests/segment_decisions.rs`.
+    //   Spec: § Segment decisions describe non-overlapping byte ranges.
+    //     — established by the same segment-decisions scenarios, which
+    //       assert disjoint top-level ranges per scenario.
+    //   Spec: § Display does not re-evaluate to colourise.
+    //     — established by `cmd_eval` reading `result.segment_decisions`
+    //       directly; the display path makes no call to
+    //       `engine::eval::evaluate_command`.
 
     /// Grep-based check: every Requirement heading in the
     /// `parser-engine-invariants` spec is named in the property body via its
