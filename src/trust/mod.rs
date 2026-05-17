@@ -10,8 +10,10 @@ pub mod advisory;
 pub mod gate;
 pub mod rehash;
 pub mod store;
+pub mod view;
 
 pub use rehash::rehash_after_migration;
+pub use view::{TrustCatalog, TrustState, TrustView};
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -19,7 +21,6 @@ use std::path::PathBuf;
 use colored::Colorize;
 use may_i_config::LoadResult;
 use may_i_core::Decision;
-use may_i_core::ast::Config;
 use may_i_output::{Advisory, Layout, NoteHeading, NoteLevel};
 
 use crate::output::{self, Terminal};
@@ -57,9 +58,20 @@ pub struct TrustBlock {
 
 /// Snapshot of the trust store as loaded for this invocation. Carries the
 /// store, any integrity-suspect entries, the `was_corrupt` flag, and the
-/// store path for advisory rendering.
+/// store path for advisory rendering. The pipeline joins this with the
+/// loaded config to produce a [`TrustCatalogState`].
 pub struct TrustStoreState {
     pub store: TrustStore,
+    pub suspects: Vec<SuspectEntry>,
+    pub was_corrupt: bool,
+    pub store_path: PathBuf,
+}
+
+/// Per-invocation join of trust-store state with the loaded config's per-rule
+/// metadata. The pipeline builds one of these once and reuses it for
+/// filtering, advisory rendering, and block decisions.
+pub struct TrustCatalogState {
+    pub catalog: TrustCatalog,
     pub suspects: Vec<SuspectEntry>,
     pub was_corrupt: bool,
     pub store_path: PathBuf,
@@ -124,22 +136,19 @@ pub(crate) fn migration_note(loaded: &LoadResult) -> Option<Layout> {
 
 /// Render trust-store integrity advisories to the supplied writer.
 ///
-/// No-op when `config` has no loaded rules (trust is irrelevant) or when no
-/// store state was loaded (path unavailable).
+/// No-op when the catalog is empty (trust is irrelevant) or when no catalog
+/// state was loaded (path unavailable).
 pub(crate) fn render_integrity_advisories(
-    config: &Config,
-    state: Option<&TrustStoreState>,
+    state: Option<&TrustCatalogState>,
     term: &Terminal,
     w: &mut impl Write,
 ) {
-    use may_i_engine::trust::compute_trust_hashes;
-
-    if compute_trust_hashes(config).is_empty() {
-        return;
-    }
     let Some(state) = state else {
         return;
     };
+    if state.catalog.is_empty() {
+        return;
+    }
 
     let mut stack: Vec<Layout> = Vec::new();
     if state.was_corrupt {
@@ -155,36 +164,36 @@ pub(crate) fn render_integrity_advisories(
     output::render_advisory_stack(w, term, &stack);
 }
 
-/// Build the warning advisory for untrusted Loaded rules in `config`.
+/// Build the warning advisory for untrusted Loaded rules in the catalog.
 ///
-/// Returns `None` when there are no loaded rules, when no store state is
+/// Returns `None` when there are no loaded rules, when no catalog is
 /// available, or when every loaded program is trusted.
-pub(crate) fn build_warning_advisory(
-    config: &Config,
-    store: Option<&TrustStore>,
-) -> Option<Layout> {
-    advisory::build_warning_layout(config, store)
+pub(crate) fn build_warning_advisory(catalog: Option<&TrustCatalog>) -> Option<Layout> {
+    advisory::build_warning_layout(catalog?)
 }
 
 /// Filter the config in place, removing Loaded rules whose hash is not
-/// approved in `store`. Primary-config rules are kept. No-op when `store`
-/// is `None`.
-pub(crate) fn filter_untrusted(config: &mut Config, store: Option<&TrustStore>) {
-    if let Some(store) = store {
-        advisory::filter_trusted_rules(config, store);
+/// approved in the catalog. Primary-config rules are kept. No-op when
+/// `catalog` is `None`.
+pub(crate) fn filter_untrusted(
+    config: &mut may_i_core::ast::Config,
+    catalog: Option<&TrustCatalog>,
+) {
+    if let Some(catalog) = catalog {
+        advisory::filter_trusted_rules(config, catalog);
     }
 }
 
 /// Check whether Trust should block the command in `mode`.
 pub(crate) fn check_block(
-    config: &Config,
     command: &str,
     mode: TrustMode,
-    store: Option<&TrustStore>,
+    catalog: Option<&TrustCatalog>,
 ) -> Option<TrustBlock> {
+    let catalog = catalog?;
     match mode {
         TrustMode::Text => None,
-        TrustMode::Json => gate::json_block(config, command, store),
-        TrustMode::Hook => gate::hook_block(config, command, store),
+        TrustMode::Json => gate::json_block(catalog, command),
+        TrustMode::Hook => gate::hook_block(catalog, command),
     }
 }

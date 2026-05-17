@@ -1446,18 +1446,12 @@ mod tests {
         write_file(dir2.path(), ".may-i.lisp", r#"(rule "echo" (allow))"#);
         let via_discovery = load_and_resolve_with_cwd(Some(&neutral_primary), dir2.path()).unwrap();
 
-        let hashes_load = may_i_engine::trust::compute_trust_hashes(&via_load.config);
-        let hashes_disc = may_i_engine::trust::compute_trust_hashes(&via_discovery.config);
-        let echo_load: Vec<&may_i_engine::trust::RuleMeta> = hashes_load
-            .rules
-            .iter()
-            .filter(|m| m.program == "echo")
-            .collect();
-        let echo_disc: Vec<&may_i_engine::trust::RuleMeta> = hashes_disc
-            .rules
-            .iter()
-            .filter(|m| m.program == "echo")
-            .collect();
+        let metas_load = may_i_engine::trust::compute_trust_views(&via_load.config);
+        let metas_disc = may_i_engine::trust::compute_trust_views(&via_discovery.config);
+        let echo_load: Vec<&may_i_engine::trust::TrustViewMeta> =
+            metas_load.iter().filter(|m| m.program == "echo").collect();
+        let echo_disc: Vec<&may_i_engine::trust::TrustViewMeta> =
+            metas_disc.iter().filter(|m| m.program == "echo").collect();
         assert_eq!(echo_load.len(), 1);
         assert_eq!(echo_disc.len(), 1);
         assert_eq!(echo_load[0].hash, echo_disc[0].hash);
@@ -1475,9 +1469,8 @@ mod tests {
             r#"(rule "noop" (allow))"#,
         );
         let result = load_and_resolve_with_cwd(Some(&primary), dir.path()).unwrap();
-        let hashes = may_i_engine::trust::compute_trust_hashes(&result.config);
-        let git = hashes
-            .rules
+        let views = may_i_engine::trust::compute_trust_views(&result.config);
+        let git = views
             .iter()
             .find(|m| m.program == "git")
             .expect("git rule should be present");
