@@ -12,7 +12,8 @@ use may_i_config::LoadResult;
 use may_i_core::ast::Config;
 
 use crate::output::{self, Terminal};
-use crate::trust::{self, TrustBlock, TrustMode, TrustStoreState};
+use crate::trust::view::build_catalog;
+use crate::trust::{self, TrustBlock, TrustCatalogState, TrustMode, TrustStoreState};
 
 type StoreLoader = Box<dyn Fn() -> Option<TrustStoreState>>;
 
@@ -21,8 +22,8 @@ pub struct CommandPipeline {
     terminal: Terminal,
     json: bool,
     store_loader: StoreLoader,
-    store_cache: Option<TrustStoreState>,
-    store_attempted: bool,
+    catalog_cache: Option<TrustCatalogState>,
+    catalog_attempted: bool,
     prelude_rendered: bool,
 }
 
@@ -52,8 +53,8 @@ impl CommandPipeline {
             terminal,
             json,
             store_loader: loader,
-            store_cache: None,
-            store_attempted: false,
+            catalog_cache: None,
+            catalog_attempted: false,
             prelude_rendered: false,
         }
     }
@@ -92,8 +93,7 @@ impl CommandPipeline {
 
         self.ensure_trust_loaded();
         trust::render_integrity_advisories(
-            &self.loaded.config,
-            self.store_cache.as_ref(),
+            self.catalog_cache.as_ref(),
             &self.terminal,
             &mut io::stderr(),
         );
@@ -105,20 +105,19 @@ impl CommandPipeline {
     pub fn consult_trust(&mut self, command: &str, mode: TrustMode) -> Result<(), TrustBlock> {
         self.ensure_trust_loaded();
 
-        let store_ref = self.store_cache.as_ref().map(|s| &s.store);
-        if let Some(block) = trust::check_block(&self.loaded.config, command, mode, store_ref) {
+        let catalog_ref = self.catalog_cache.as_ref().map(|s| &s.catalog);
+        if let Some(block) = trust::check_block(command, mode, catalog_ref) {
             return Err(block);
         }
 
         if matches!(mode, TrustMode::Text)
-            && let Some(layout) = trust::build_warning_advisory(&self.loaded.config, store_ref)
+            && let Some(layout) = trust::build_warning_advisory(catalog_ref)
         {
             output::write_layout(&mut io::stderr(), &layout, &self.terminal);
         }
 
-        // Re-borrow disjoint fields for the filter step.
-        let store_ref = self.store_cache.as_ref().map(|s| &s.store);
-        trust::filter_untrusted(&mut self.loaded.config, store_ref);
+        let catalog_ref = self.catalog_cache.as_ref().map(|s| &s.catalog);
+        trust::filter_untrusted(&mut self.loaded.config, catalog_ref);
         Ok(())
     }
 
@@ -130,19 +129,30 @@ impl CommandPipeline {
             return;
         }
         self.ensure_trust_loaded();
-        let store_ref = self.store_cache.as_ref().map(|s| &s.store);
-        if let Some(layout) = trust::build_warning_advisory(&self.loaded.config, store_ref) {
+        let catalog_ref = self.catalog_cache.as_ref().map(|s| &s.catalog);
+        if let Some(layout) = trust::build_warning_advisory(catalog_ref) {
             output::write_layout(&mut io::stderr(), &layout, &self.terminal);
         }
     }
 
-    /// Lazily load the trust store. The injected loader is called at most once
-    /// per invocation.
+    /// Lazily load the trust store and build the catalog. The injected loader
+    /// is called at most once per invocation; the catalog is built once from
+    /// the loader's result and the pipeline's loaded config.
     fn ensure_trust_loaded(&mut self) {
-        if !self.store_attempted {
-            self.store_attempted = true;
-            self.store_cache = (self.store_loader)();
+        if self.catalog_attempted {
+            return;
         }
+        self.catalog_attempted = true;
+        let Some(state) = (self.store_loader)() else {
+            return;
+        };
+        let catalog = build_catalog(&self.loaded.config, state.store);
+        self.catalog_cache = Some(TrustCatalogState {
+            catalog,
+            suspects: state.suspects,
+            was_corrupt: state.was_corrupt,
+            store_path: state.store_path,
+        });
     }
 }
 

@@ -3,7 +3,7 @@
 // Computes SHA-256 hashes over resolved rule closures, grouped by program name.
 // Programs with any `Loaded` provenance content require trust approval.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use may_i_core::Decision;
@@ -13,98 +13,18 @@ use may_i_core::pattern::{ArgPattern, CommandPattern, Expr, MatchMode, Positiona
 use may_i_core::primitives::ToDoc;
 use sha2::{Digest, Sha256};
 
-/// Per-rule metadata: hash, canonical form, program, source file, position within program.
+/// Per-rule trust descriptor: hash, canonical form, program, source file,
+/// position within program. The engine produces these as the *input* to the
+/// CLI's trust-store join — it carries no approval state. Callers join with
+/// [`crate::trust::store::TrustStore`] via [`crate::trust::view::build_catalog`]
+/// to obtain the unified `TrustView`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RuleMeta {
+pub struct TrustViewMeta {
     pub hash: String,
     pub canonical_form: String,
     pub program: String,
     pub source_file: Option<PathBuf>,
     pub position: usize,
-}
-
-/// Per-program metadata (derived view from per-rule data).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProgramMeta {
-    pub hash: String,
-    pub canonical_rules: Vec<String>,
-    pub canonical_defines: Vec<String>,
-    pub source_files: BTreeSet<PathBuf>,
-}
-
-/// Trust hash results containing per-rule metadata.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TrustHashes {
-    /// Per-rule metadata, ordered by (program, position).
-    pub rules: Vec<RuleMeta>,
-    /// Per-program canonical forms of transitively-referenced defines.
-    /// Hashed alongside rules so a define edit invalidates the trust of
-    /// every program that reaches it.
-    pub defines_by_program: BTreeMap<String, Vec<String>>,
-}
-
-impl TrustHashes {
-    /// Derive the per-program view (backward-compat grouping for listing UI).
-    ///
-    /// The hash is computed over the canonical, order-independent set of
-    /// rules: canonical forms are sorted lexically and joined with `\n`
-    /// before hashing. Source-file order, comments, whitespace, and the
-    /// way rules are partitioned across `(load …)` files do not
-    /// influence the hash. `canonical_defines` carries the transitively
-    /// referenced defines for the UI; folding them into the hash is
-    /// deferred (see `openspec/changes/order-independent-rules/tasks.md`
-    /// § 3.2).
-    pub fn programs(&self) -> BTreeMap<String, ProgramMeta> {
-        let mut groups: BTreeMap<String, Vec<&RuleMeta>> = BTreeMap::new();
-        for meta in &self.rules {
-            groups.entry(meta.program.clone()).or_default().push(meta);
-        }
-
-        groups
-            .into_iter()
-            .map(|(program, rule_metas)| {
-                let canonical_rules: Vec<String> = rule_metas
-                    .iter()
-                    .map(|m| m.canonical_form.clone())
-                    .collect();
-                let source_files: BTreeSet<PathBuf> = rule_metas
-                    .iter()
-                    .filter_map(|m| m.source_file.clone())
-                    .collect();
-                let canonical_defines: Vec<String> = self
-                    .defines_by_program
-                    .get(&program)
-                    .cloned()
-                    .unwrap_or_default();
-                let hash = canonical_set_hash(&canonical_rules);
-                (
-                    program,
-                    ProgramMeta {
-                        hash,
-                        canonical_rules,
-                        canonical_defines,
-                        source_files,
-                    },
-                )
-            })
-            .collect()
-    }
-
-    /// Check if there are no rules needing trust.
-    pub fn is_empty(&self) -> bool {
-        self.rules.is_empty()
-    }
-}
-
-/// Hash the canonical, order-independent representation of a program's
-/// trust closure. Canonical rule forms are sorted lexically and joined
-/// with `\n`; the trust store re-derives the same hash from stored rule
-/// forms via the matching sort+join in
-/// [`crate::trust_store::hash_rules_from_strs`] (in the binary crate).
-fn canonical_set_hash(canonical_rules: &[String]) -> String {
-    let mut rules_sorted: Vec<&str> = canonical_rules.iter().map(String::as_str).collect();
-    rules_sorted.sort();
-    sha256_hex(&rules_sorted.join("\n"))
 }
 
 /// Extract all program names from a `CommandPattern`.
@@ -399,18 +319,19 @@ pub fn hash_rule(form: &str) -> String {
     sha256_hex(form)
 }
 
-/// Compute trust hashes for all rules that need trust approval.
+/// Compute per-rule trust descriptors for all rules that need trust approval.
 ///
-/// Returns per-rule metadata. Only rules with `Loaded` provenance or referencing
-/// loaded defines are included.
-pub fn compute_trust_hashes(config: &Config) -> TrustHashes {
+/// Only rules with `Loaded` provenance or referencing loaded defines are
+/// included. The returned `Vec` is the join *input* — see
+/// [`crate::trust::view::build_catalog`] in the CLI crate for the join with
+/// trust-store state.
+pub fn compute_trust_views(config: &Config) -> Vec<TrustViewMeta> {
     let programs_need_trust = programs_needing_trust(config);
-    let mut rules = Vec::new();
+    let mut views = Vec::new();
 
     // Track position per program.
-    let mut position_counters: BTreeMap<String, usize> = BTreeMap::new();
-    // Collect rule references per program for define-closure expansion.
-    let mut rules_by_program: BTreeMap<String, Vec<&Rule>> = BTreeMap::new();
+    let mut position_counters: std::collections::BTreeMap<String, usize> =
+        std::collections::BTreeMap::new();
 
     for rule in &config.rules {
         let rule_programs = extract_command_programs(&rule.command_effect.value);
@@ -428,39 +349,16 @@ pub fn compute_trust_hashes(config: &Config) -> TrustHashes {
             let source_file = rule.provenance.path().map(|p| p.to_path_buf());
             let position = position_counters.entry(program.to_string()).or_insert(0);
 
-            rules.push(RuleMeta {
+            views.push(TrustViewMeta {
                 hash,
                 canonical_form: form,
                 program: program.to_string(),
                 source_file,
                 position: *position,
             });
-            rules_by_program
-                .entry(program.to_string())
-                .or_default()
-                .push(rule);
 
             *position += 1;
         }
-    }
-
-    let defines_by_name: BTreeMap<&str, &Define> = config
-        .defines
-        .iter()
-        .map(|d| (d.name.as_str(), d))
-        .collect();
-    let mut defines_by_program: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for (program, rules_for_program) in &rules_by_program {
-        let mut reached: BTreeSet<String> = BTreeSet::new();
-        for rule in rules_for_program {
-            collect_define_closure(&rule.effect.value, &defines_by_name, &mut reached);
-        }
-        let mut canonical_defines: Vec<String> = reached
-            .iter()
-            .filter_map(|n| defines_by_name.get(n.as_str()).map(|d| canonical_define(d)))
-            .collect();
-        canonical_defines.sort();
-        defines_by_program.insert(program.clone(), canonical_defines);
     }
 
     // Handle safe-env-vars trust scope.
@@ -474,7 +372,7 @@ pub fn compute_trust_hashes(config: &Config) -> TrustHashes {
             .join(" ");
         let form = format!("(safe-env-vars {})", canonical_form);
         let hash = sha256_hex(&form);
-        rules.push(RuleMeta {
+        views.push(TrustViewMeta {
             hash,
             canonical_form: form,
             program: ":safe-env-vars".to_string(),
@@ -483,10 +381,7 @@ pub fn compute_trust_hashes(config: &Config) -> TrustHashes {
         });
     }
 
-    TrustHashes {
-        rules,
-        defines_by_program,
-    }
+    views
 }
 
 /// Canonical s-expression form of a `(define …)` (excluding spans).
@@ -496,69 +391,6 @@ pub fn canonical_define(define: &Define) -> String {
         define.name,
         canonical_predicate(&define.predicate.value)
     )
-}
-
-/// Walk an effect tree and collect names of every define it reaches,
-/// transitively (a define's body may itself reference further defines).
-fn collect_define_closure(
-    effect: &Effect,
-    defines_by_name: &BTreeMap<&str, &Define>,
-    reached: &mut BTreeSet<String>,
-) {
-    match effect {
-        Effect::When { predicate, effect } | Effect::Unless { predicate, effect } => {
-            collect_define_names_in_predicate(&predicate.value, defines_by_name, reached);
-            collect_define_closure(&effect.value, defines_by_name, reached);
-        }
-        Effect::If {
-            predicate,
-            then_effect,
-            else_effect,
-        } => {
-            collect_define_names_in_predicate(&predicate.value, defines_by_name, reached);
-            collect_define_closure(&then_effect.value, defines_by_name, reached);
-            collect_define_closure(&else_effect.value, defines_by_name, reached);
-        }
-        Effect::Cond { branches, fallback } => {
-            for (pred, eff) in branches {
-                collect_define_names_in_predicate(&pred.value, defines_by_name, reached);
-                collect_define_closure(&eff.value, defines_by_name, reached);
-            }
-            if let Some(fb) = fallback {
-                collect_define_closure(&fb.value, defines_by_name, reached);
-            }
-        }
-        Effect::And { effects } | Effect::Or { effects } => {
-            for e in effects {
-                collect_define_closure(&e.value, defines_by_name, reached);
-            }
-        }
-        Effect::Not { effect } => collect_define_closure(&effect.value, defines_by_name, reached),
-        _ => {}
-    }
-}
-
-fn collect_define_names_in_predicate(
-    pred: &Predicate,
-    defines_by_name: &BTreeMap<&str, &Define>,
-    reached: &mut BTreeSet<String>,
-) {
-    match pred {
-        Predicate::Named(name) => {
-            if reached.insert(name.clone())
-                && let Some(d) = defines_by_name.get(name.as_str())
-            {
-                collect_define_names_in_predicate(&d.predicate.value, defines_by_name, reached);
-            }
-        }
-        Predicate::And(preds) | Predicate::Or(preds) => {
-            for p in preds {
-                collect_define_names_in_predicate(p, defines_by_name, reached);
-            }
-        }
-        Predicate::Not(inner) => collect_define_names_in_predicate(inner, defines_by_name, reached),
-        _ => {}
-    }
 }
 
 /// Compute SHA-256 hash and return hex-encoded string with "sha256:" prefix.
@@ -708,8 +540,8 @@ mod tests {
             )],
             vec![],
         );
-        let h1 = compute_trust_hashes(&config);
-        let h2 = compute_trust_hashes(&config);
+        let h1 = compute_trust_views(&config);
+        let h2 = compute_trust_views(&config);
         assert_eq!(h1, h2);
     }
 
@@ -734,9 +566,9 @@ mod tests {
             ],
             vec![],
         );
-        let hashes = compute_trust_hashes(&config);
-        assert_eq!(hashes.rules.len(), 2);
-        assert_ne!(hashes.rules[0].hash, hashes.rules[1].hash);
+        let views = compute_trust_views(&config);
+        assert_eq!(views.len(), 2);
+        assert_ne!(views[0].hash, views[1].hash);
     }
 
     #[test]
@@ -761,9 +593,9 @@ mod tests {
             )],
             vec![],
         );
-        let h1 = compute_trust_hashes(&c1);
-        let h2 = compute_trust_hashes(&c2);
-        assert_ne!(h1.rules[0].hash, h2.rules[0].hash);
+        let h1 = compute_trust_views(&c1);
+        let h2 = compute_trust_views(&c2);
+        assert_ne!(h1[0].hash, h2[0].hash);
     }
 
     #[test]
@@ -785,9 +617,9 @@ mod tests {
             ],
             vec![],
         );
-        let hashes = compute_trust_hashes(&config);
-        assert_eq!(hashes.rules.len(), 1);
-        assert_eq!(hashes.rules[0].program, "git");
+        let views = compute_trust_views(&config);
+        assert_eq!(views.len(), 1);
+        assert_eq!(views[0].program, "git");
     }
 
     #[test]
@@ -802,8 +634,8 @@ mod tests {
             )],
             vec![],
         );
-        let hashes = compute_trust_hashes(&config);
-        let hash = &hashes.rules[0].hash;
+        let views = compute_trust_views(&config);
+        let hash = &views[0].hash;
         assert!(
             hash.starts_with("sha256:"),
             "hash should have sha256: prefix"
@@ -829,11 +661,8 @@ mod tests {
             )],
             vec![],
         );
-        let hashes = compute_trust_hashes(&config);
-        assert_eq!(
-            hashes.rules[0].source_file,
-            Some(PathBuf::from("/rules/vcs.lisp"))
-        );
+        let views = compute_trust_views(&config);
+        assert_eq!(views[0].source_file, Some(PathBuf::from("/rules/vcs.lisp")));
     }
 
     #[test]
@@ -855,10 +684,10 @@ mod tests {
             ],
             vec![],
         );
-        let hashes = compute_trust_hashes(&config);
+        let views = compute_trust_views(&config);
         // Primary rule is included in trust set (because git has loaded rules),
         // but has no source file.
-        let primary = hashes.rules.iter().find(|r| r.source_file.is_none());
+        let primary = views.iter().find(|r| r.source_file.is_none());
         assert!(primary.is_some());
     }
 
@@ -885,105 +714,18 @@ mod tests {
             ],
             vec![],
         );
-        let hashes = compute_trust_hashes(&config);
-        assert_eq!(hashes.rules[0].position, 0);
-        assert_eq!(hashes.rules[1].position, 1);
+        let views = compute_trust_views(&config);
+        assert_eq!(views[0].position, 0);
+        assert_eq!(views[1].position, 1);
     }
 
-    // --- programs() derived view ---
+    // --- rule-hash invariants (replacing the removed per-program hash) ---
 
     #[test]
-    fn programs_view_groups_by_program() {
-        let config = make_config(
-            vec![
-                make_rule(
-                    "git",
-                    terminal(Decision::Allow, None),
-                    Provenance::Loaded {
-                        path: PathBuf::from("/rules/a.lisp"),
-                    },
-                ),
-                make_rule(
-                    "git",
-                    terminal(Decision::Deny, None),
-                    Provenance::Loaded {
-                        path: PathBuf::from("/rules/b.lisp"),
-                    },
-                ),
-                make_rule(
-                    "cargo",
-                    terminal(Decision::Allow, None),
-                    Provenance::Loaded {
-                        path: PathBuf::from("/rules/a.lisp"),
-                    },
-                ),
-            ],
-            vec![],
-        );
-        let hashes = compute_trust_hashes(&config);
-        let programs = hashes.programs();
-        assert_eq!(programs.len(), 2);
-        assert_eq!(programs["git"].canonical_rules.len(), 2);
-        assert_eq!(programs["cargo"].canonical_rules.len(), 1);
-        assert_eq!(programs["git"].source_files.len(), 2);
-    }
-
-    #[test]
-    fn programs_view_hash_matches_old_algorithm() {
-        // The programs() hash should match joining canonical rules with \n.
-        let config = make_config(
-            vec![make_rule(
-                "git",
-                terminal(Decision::Allow, Some("safe")),
-                Provenance::Loaded {
-                    path: PathBuf::from("test.lisp"),
-                },
-            )],
-            vec![],
-        );
-        let hashes = compute_trust_hashes(&config);
-        let programs = hashes.programs();
-        let meta = &programs["git"];
-        assert_eq!(meta.canonical_rules.len(), 1);
-        assert_eq!(meta.canonical_rules[0], r#"(rule "git" (allow "safe"))"#);
-    }
-
-    #[test]
-    fn programs_view_hash_is_order_independent() {
-        // Two configs differing only in rule order produce the same
-        // per-program hash. Spec: order-independent-rules /
-        // trust-hashing.
-        let r_a = make_rule(
-            "git",
-            terminal(Decision::Allow, Some("a")),
-            Provenance::Loaded {
-                path: PathBuf::from("/rules/a.lisp"),
-            },
-        );
-        let r_b = make_rule(
-            "git",
-            terminal(Decision::Deny, Some("b")),
-            Provenance::Loaded {
-                path: PathBuf::from("/rules/b.lisp"),
-            },
-        );
-
-        let c_forward = make_config(vec![r_a.clone(), r_b.clone()], vec![]);
-        let c_reversed = make_config(vec![r_b, r_a], vec![]);
-
-        let h_forward = compute_trust_hashes(&c_forward).programs()["git"]
-            .hash
-            .clone();
-        let h_reversed = compute_trust_hashes(&c_reversed).programs()["git"]
-            .hash
-            .clone();
-        assert_eq!(h_forward, h_reversed);
-    }
-
-    #[test]
-    fn programs_view_hash_unchanged_when_rule_moves_between_load_files() {
-        // Moving a rule's source file (Loaded { path }) verbatim does not
-        // change the per-program hash. Spec: trust-hashing.
+    fn rule_hash_unchanged_when_rule_moves_between_load_files() {
+        // Spec: trust-hashing — a rule's hash depends on its canonical form,
+        // not its source file. Moving a rule between `(load …)` files
+        // therefore preserves the hash.
         let rule_in_a = make_rule(
             "git",
             terminal(Decision::Allow, Some("safe")),
@@ -998,10 +740,10 @@ mod tests {
                 path: PathBuf::from("/rules/b.lisp"),
             },
         );
-        let h_a = compute_trust_hashes(&make_config(vec![rule_in_a], vec![])).programs()["git"]
+        let h_a = compute_trust_views(&make_config(vec![rule_in_a], vec![]))[0]
             .hash
             .clone();
-        let h_b = compute_trust_hashes(&make_config(vec![rule_in_b], vec![])).programs()["git"]
+        let h_b = compute_trust_views(&make_config(vec![rule_in_b], vec![]))[0]
             .hash
             .clone();
         assert_eq!(h_a, h_b);
@@ -1053,9 +795,9 @@ mod tests {
             .safe_env_vars
             .insert("AWS_SECRET_KEY".into());
         config.security.has_loaded_env_vars = true;
-        let hashes = compute_trust_hashes(&config);
+        let views = compute_trust_views(&config);
         assert!(
-            hashes.rules.iter().any(|r| r.program == ":safe-env-vars"),
+            views.iter().any(|r| r.program == ":safe-env-vars"),
             "should have :safe-env-vars rule"
         );
     }
@@ -1065,9 +807,9 @@ mod tests {
         let mut config = make_config(vec![], vec![]);
         config.security.safe_env_vars.insert("HOME".into());
         config.security.has_loaded_env_vars = false;
-        let hashes = compute_trust_hashes(&config);
+        let views = compute_trust_views(&config);
         assert!(
-            !hashes.rules.iter().any(|r| r.program == ":safe-env-vars"),
+            !views.iter().any(|r| r.program == ":safe-env-vars"),
             "should not have :safe-env-vars rule when all primary"
         );
     }
@@ -1083,18 +825,10 @@ mod tests {
         c2.security.safe_env_vars.insert("SECRET".into());
         c2.security.has_loaded_env_vars = true;
 
-        let h1 = compute_trust_hashes(&c1);
-        let h2 = compute_trust_hashes(&c2);
-        let env1 = h1
-            .rules
-            .iter()
-            .find(|r| r.program == ":safe-env-vars")
-            .unwrap();
-        let env2 = h2
-            .rules
-            .iter()
-            .find(|r| r.program == ":safe-env-vars")
-            .unwrap();
+        let h1 = compute_trust_views(&c1);
+        let h2 = compute_trust_views(&c2);
+        let env1 = h1.iter().find(|r| r.program == ":safe-env-vars").unwrap();
+        let env2 = h2.iter().find(|r| r.program == ":safe-env-vars").unwrap();
         assert_ne!(env1.hash, env2.hash, "adding env var should change hash");
     }
 }

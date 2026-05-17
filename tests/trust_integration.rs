@@ -399,6 +399,93 @@ fn check_json_unaffected_by_trust() {
     );
 }
 
+/// Pin the per-rule join: with one approved Loaded rule, one pending Loaded
+/// rule, one blocked Loaded rule, and one PrimaryConfig-only rule, the JSON
+/// listing surfaces the correct state tag for each of the three Loaded
+/// rules and excludes the primary-only rule entirely.
+#[test]
+fn trust_json_pins_state_tag_for_mixed_rules() {
+    let dir = tempfile::tempdir().unwrap();
+    let loaded_path = dir.path().join("loaded.lisp");
+    std::fs::write(
+        &loaded_path,
+        r#"(rule "echo" (allow "approved"))
+(rule "kubectl" (allow "pending"))
+(rule "rm" (allow "blocked"))"#,
+    )
+    .unwrap();
+    let mut config = tempfile::NamedTempFile::new().unwrap();
+    write!(
+        config,
+        "(rule \"ls\" (allow \"primary\"))\n(load \"{}\")",
+        loaded_path.display()
+    )
+    .unwrap();
+
+    let trust_dir = tempfile::tempdir().unwrap();
+
+    let mut approve = may_i_cmd();
+    approve
+        .env("MAYI_CONFIG", config.path())
+        .env("XDG_DATA_HOME", trust_dir.path())
+        .args(["trust", "--all"]);
+    let out = approve.output().expect("approve --all");
+    assert!(
+        out.status.success(),
+        "trust --all should succeed, stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let store_path = trust_dir.path().join("may-i").join("trust.json");
+    let raw = std::fs::read_to_string(&store_path).unwrap();
+    let mut store_json: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    {
+        let rules = store_json["rules"].as_object_mut().unwrap();
+        let kubectl_keys: Vec<String> = rules
+            .iter()
+            .filter(|(_, v)| v["program"] == "kubectl")
+            .map(|(k, _)| k.clone())
+            .collect();
+        for k in kubectl_keys {
+            rules.remove(&k);
+        }
+        for (_, v) in rules.iter_mut() {
+            if v["program"] == "rm" {
+                v["status"] = serde_json::json!("blocked");
+            }
+        }
+    }
+    std::fs::write(&store_path, serde_json::to_string(&store_json).unwrap()).unwrap();
+
+    let mut list = may_i_cmd();
+    list.env("MAYI_CONFIG", config.path())
+        .env("XDG_DATA_HOME", trust_dir.path())
+        .args(["trust", "--json"]);
+    let output = list.output().expect("trust --json");
+    assert!(
+        output.status.success(),
+        "trust --json should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let entries: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("parse JSON listing");
+    let arr = entries.as_array().expect("expected array");
+    let by_program = |name: &str| {
+        arr.iter()
+            .find(|e| e["program"] == name)
+            .unwrap_or_else(|| panic!("no entry for {name}: {arr:?}"))
+    };
+
+    assert_eq!(by_program("echo")["status"], "approved");
+    assert_eq!(by_program("kubectl")["status"], "pending");
+    assert_eq!(by_program("rm")["status"], "blocked");
+    assert!(
+        !arr.iter().any(|e| e["program"] == "ls"),
+        "primary-only rule must not appear in trust listing: {arr:?}"
+    );
+}
+
 #[test]
 fn eval_json_untrusted_still_blocks() {
     let (_dir, config) = setup_loaded_config(

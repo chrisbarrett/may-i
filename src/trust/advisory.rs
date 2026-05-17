@@ -1,17 +1,19 @@
-// Shared trust advisory logic — computes trust state and renders advisory boxes.
+// Shared trust advisory logic — derives advisory entries from a TrustCatalog
+// and renders integrity / warning advisory boxes.
 //
 // Used by cmd_eval, cmd_check, and cmd_migrate to show consistent trust
-// warnings without duplicating the hash computation / store loading dance.
+// warnings without duplicating the join between engine metadata and the
+// trust store. The join itself lives in `crate::trust::view`.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use colored::Colorize;
-use may_i_engine::trust::{canonical_rule, compute_trust_hashes, hash_rule};
+use may_i_engine::trust::{canonical_rule, hash_rule};
 use may_i_output::{Advisory, ColItem, Layout, NoteLevel};
 
 use crate::output;
-use crate::trust::store::{TrustCheck, TrustStatus, TrustStore};
+use crate::trust::view::{TrustCatalog, TrustState};
 
 /// An untrusted program entry with its provenance.
 pub(crate) struct UntrustedEntry {
@@ -30,60 +32,42 @@ impl UntrustedEntry {
     }
 }
 
-/// Result of computing the trust state for a config.
-pub(crate) struct TrustState {
-    untrusted: Vec<UntrustedEntry>,
-}
-
-impl TrustState {
-    pub(crate) fn untrusted(&self) -> &[UntrustedEntry] {
-        &self.untrusted
-    }
-}
-
-/// Compute trust state: which programs have untrusted loaded rules.
-///
-/// Returns `None` if there are no loaded rules (trust is irrelevant) or no
-/// store was supplied.
-pub(crate) fn compute(
-    config: &may_i_core::ast::Config,
-    store: Option<&TrustStore>,
-) -> Option<TrustState> {
-    let hashes = compute_trust_hashes(config);
-    if hashes.is_empty() {
-        return None;
+/// Collect the set of untrusted programs from the catalog. Returns
+/// program-name-ordered entries, each with the deduplicated set of source
+/// files contributed by its untrusted views.
+pub(crate) fn untrusted_entries(catalog: &TrustCatalog) -> Vec<UntrustedEntry> {
+    let mut by_program: BTreeMap<&str, BTreeSet<PathBuf>> = BTreeMap::new();
+    for view in catalog.untrusted_loaded() {
+        let entry = by_program.entry(view.program()).or_default();
+        if let Some(p) = view.source_file() {
+            entry.insert(p.to_path_buf());
+        }
     }
 
-    let store = store?;
-    let programs = hashes.programs();
-
-    let untrusted: Vec<UntrustedEntry> = programs
-        .iter()
-        .filter(|(name, meta)| store.check(name, &meta.hash) != TrustStatus::Trusted)
-        .map(|(name, meta)| UntrustedEntry {
-            program: name.clone(),
-            source_files: meta.source_files.clone(),
-            display_files: meta
-                .source_files
+    by_program
+        .into_iter()
+        .map(|(program, source_files)| {
+            let display_files = source_files
                 .iter()
                 .map(|p| output::shorten_home(p))
-                .collect(),
+                .collect();
+            UntrustedEntry {
+                program: program.to_string(),
+                source_files,
+                display_files,
+            }
         })
-        .collect();
-
-    Some(TrustState { untrusted })
+        .collect()
 }
 
-/// Build a trust warning advisory layout for untrusted programs in `config`.
-///
-/// Returns `None` if there are no loaded rules, no trust store available,
-/// or no untrusted programs.
-pub(crate) fn build_warning_layout(
-    config: &may_i_core::ast::Config,
-    store: Option<&TrustStore>,
-) -> Option<Layout> {
-    let state = compute(config, store)?;
-    build_warning_layout_from_entries(&state.untrusted)
+/// Build a trust warning advisory layout from a catalog. Returns `None`
+/// when the catalog is empty or contains no untrusted views.
+pub(crate) fn build_warning_layout(catalog: &TrustCatalog) -> Option<Layout> {
+    if catalog.is_empty() {
+        return None;
+    }
+    let entries = untrusted_entries(catalog);
+    build_warning_layout_from_entries(&entries)
 }
 
 fn build_warning_layout_from_entries(entries: &[UntrustedEntry]) -> Option<Layout> {
@@ -92,8 +76,7 @@ fn build_warning_layout_from_entries(entries: &[UntrustedEntry]) -> Option<Layou
     }
 
     // Group programs by source file.
-    let mut file_to_programs: std::collections::BTreeMap<&Path, Vec<&str>> =
-        std::collections::BTreeMap::new();
+    let mut file_to_programs: BTreeMap<&Path, Vec<&str>> = BTreeMap::new();
     for entry in entries {
         if entry.source_files.is_empty() {
             file_to_programs
@@ -168,7 +151,7 @@ pub(crate) fn build_integrity_layout(store_path: &Path, suspect_names: Option<&[
 ///
 /// Each entry shows the file path (teal) with count, and up to 5 sample
 /// command names that wrap at terminal width.
-fn trust_samples(file_to_programs: &std::collections::BTreeMap<&Path, Vec<&str>>) -> Layout {
+fn trust_samples(file_to_programs: &BTreeMap<&Path, Vec<&str>>) -> Layout {
     let mut children: Vec<Layout> = Vec::new();
     for (file, progs) in file_to_programs {
         let path = output::shorten_home(file);
@@ -206,25 +189,32 @@ fn format_name_list<'a>(names: impl Iterator<Item = &'a str>, total: usize) -> S
     result
 }
 
-/// Filter loaded rules by trust status, removing unapproved ones in place.
+/// Filter loaded rules by approval state, removing unapproved ones in place.
 ///
 /// - Primary config rules always pass through.
-/// - Loaded rules included only if per-rule hash is approved in store.
+/// - Loaded rules included only if their hash is `Approved` in the catalog.
 /// - Blocked and pending loaded rules are excluded.
-pub(crate) fn filter_trusted_rules(config: &mut may_i_core::ast::Config, store: &TrustStore) {
+pub(crate) fn filter_trusted_rules(config: &mut may_i_core::ast::Config, catalog: &TrustCatalog) {
+    let approved: BTreeSet<&str> = catalog
+        .iter()
+        .filter(|v| v.state() == TrustState::Approved)
+        .map(|v| v.hash())
+        .collect();
     config.rules.retain(|rule| {
         if !rule.provenance.is_loaded() {
             return true;
         }
         let form = canonical_rule(rule);
         let hash = hash_rule(&form);
-        store.check_rule(&hash) == TrustCheck::Approved
+        approved.contains(hash.as_str())
     });
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::trust::store::TrustStore;
+    use crate::trust::view::build_catalog;
     use may_i_core::Decision;
     use may_i_core::ast::{Config, Effect, Provenance, Rule, Spanned};
     use may_i_core::pattern::CommandPattern;
@@ -262,8 +252,8 @@ mod tests {
             Decision::Allow,
             Provenance::PrimaryConfig,
         )]);
-        let store = TrustStore::default(); // empty store
-        filter_trusted_rules(&mut config, &store);
+        let cat = build_catalog(&config, TrustStore::default());
+        filter_trusted_rules(&mut config, &cat);
         assert_eq!(config.rules.len(), 1, "primary rule should remain");
     }
 
@@ -276,8 +266,8 @@ mod tests {
                 path: PathBuf::from("test"),
             },
         )]);
-        let store = TrustStore::default(); // empty = all pending
-        filter_trusted_rules(&mut config, &store);
+        let cat = build_catalog(&config, TrustStore::default());
+        filter_trusted_rules(&mut config, &cat);
         assert!(
             config.rules.is_empty(),
             "pending loaded rule should be removed"
@@ -300,7 +290,8 @@ mod tests {
         store.approve_rule(hash, "git".into(), form);
 
         let mut config = make_config(vec![loaded_rule]);
-        filter_trusted_rules(&mut config, &store);
+        let cat = build_catalog(&config, store);
+        filter_trusted_rules(&mut config, &cat);
         assert_eq!(config.rules.len(), 1, "approved loaded rule should remain");
     }
 
@@ -320,7 +311,8 @@ mod tests {
         store.block_rule(hash, "git".into(), form);
 
         let mut config = make_config(vec![loaded_rule]);
-        filter_trusted_rules(&mut config, &store);
+        let cat = build_catalog(&config, store);
+        filter_trusted_rules(&mut config, &cat);
         assert!(
             config.rules.is_empty(),
             "blocked loaded rule should be removed"
@@ -351,7 +343,8 @@ mod tests {
         store.approve_rule(hash, "git".into(), form);
 
         let mut config = make_config(vec![primary, approved_rule, pending_rule]);
-        filter_trusted_rules(&mut config, &store);
+        let cat = build_catalog(&config, store);
+        filter_trusted_rules(&mut config, &cat);
         assert_eq!(
             config.rules.len(),
             2,
