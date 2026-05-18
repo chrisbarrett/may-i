@@ -10,7 +10,11 @@ use may_i_output::{Advisory, ColItem, Layout, NoteLevel};
 use super::{Terminal, shorten_home, write_layout};
 
 /// Render the "skipped read-only files" advisory listing `paths` as children.
-pub fn render_skipped_readonly_advisory(w: &mut impl Write, term: &Terminal, paths: &[PathBuf]) {
+pub(crate) fn render_skipped_readonly_advisory(
+    w: &mut impl Write,
+    term: &Terminal,
+    paths: &[PathBuf],
+) {
     let displays: Vec<String> = paths.iter().map(|p| shorten_home(p)).collect();
     let listing = Layout::Stack(
         displays
@@ -37,7 +41,11 @@ pub fn render_skipped_readonly_advisory(w: &mut impl Write, term: &Terminal, pat
 
 /// Render the wrapper-boundary advisory listing the `affected` wrapper
 /// commands whose evaluation semantics may have shifted.
-pub fn render_wrapper_boundary_advisory(w: &mut impl Write, term: &Terminal, affected: &[&str]) {
+pub(crate) fn render_wrapper_boundary_advisory(
+    w: &mut impl Write,
+    term: &Terminal,
+    affected: &[&str],
+) {
     let items: Vec<ColItem> = affected
         .iter()
         .map(|name| ColItem::new(name.cyan().to_string(), name.len()))

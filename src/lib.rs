@@ -3,6 +3,7 @@
 pub mod annotation;
 pub mod cmd_check;
 pub mod cmd_eval;
+pub mod cmd_migrate;
 pub mod cmd_trust;
 pub mod interactive;
 pub mod output;

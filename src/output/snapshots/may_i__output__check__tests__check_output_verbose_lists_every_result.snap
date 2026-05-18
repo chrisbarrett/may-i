@@ -1,0 +1,12 @@
+---
+source: src/output/check.rs
+expression: "render_check_output(&views, true)"
+---
+  PASS echo hi → allow
+  PASS rm -rf / → deny
+
+Summary
+
+  ✓ 2 passed, 0 failed
+
+  config: /tmp/test-config.lisp

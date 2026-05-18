@@ -28,15 +28,15 @@ use may_i_pp::colorize_atom;
 pub use may_i_output::{Terminal, strip_ansi, write_layout};
 
 pub(crate) use self::advisory::render_advisory_stack;
-pub use self::check::{
-    CheckFailureView, render_check_failure, render_check_summary, render_check_verbose_line,
-    render_labelled_separator,
-};
+pub(crate) use self::check::render_labelled_separator;
+pub use self::check::{CheckOutput, CheckResultView};
 pub use self::colorize::colorize_decision_keyword;
-pub use self::eval_result::render_eval_result;
+pub use self::eval_result::EvalOutput;
 pub use self::json::{render_check_results_json, trace_to_json};
-pub use self::migrate::{render_skipped_readonly_advisory, render_wrapper_boundary_advisory};
-pub use self::trust_groups::render_trusted_groups;
+pub(crate) use self::migrate::{
+    render_skipped_readonly_advisory, render_wrapper_boundary_advisory,
+};
+pub use self::trust_groups::TrustListing;
 
 use self::colorize::colorize_right;
 use self::render_rule::render_annotated_rule;

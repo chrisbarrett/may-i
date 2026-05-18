@@ -25,6 +25,7 @@ pub struct CommandPipeline {
     catalog_cache: Option<TrustCatalogState>,
     catalog_attempted: bool,
     prelude_rendered: bool,
+    trust_warning_rendered: bool,
 }
 
 impl CommandPipeline {
@@ -56,6 +57,7 @@ impl CommandPipeline {
             catalog_cache: None,
             catalog_attempted: false,
             prelude_rendered: false,
+            trust_warning_rendered: false,
         }
     }
 
@@ -81,7 +83,9 @@ impl CommandPipeline {
 
     /// Text-mode prelude: render the migration note (if applicable) then trust
     /// integrity advisories to stderr. No-op in JSON mode. Idempotent.
-    pub fn render_prelude_advisories(&mut self) {
+    ///
+    /// Reachable only from the per-subcommand builders in `crate::output`.
+    pub(crate) fn render_prelude_advisories(&mut self) {
         if self.json || self.prelude_rendered {
             return;
         }
@@ -102,6 +106,10 @@ impl CommandPipeline {
     /// Consult Trust for `command` in `mode`. On `Ok`, the pipeline's config
     /// has untrusted Loaded rules filtered in place. On `Err`, the caller
     /// serialises the block in its mode-appropriate response shape.
+    ///
+    /// Pure gate logic — emits no output. The trust warning advisory is
+    /// rendered by the per-subcommand builder via
+    /// [`Self::render_trust_warning`].
     pub fn consult_trust(&mut self, command: &str, mode: TrustMode) -> Result<(), TrustBlock> {
         self.ensure_trust_loaded();
 
@@ -110,24 +118,19 @@ impl CommandPipeline {
             return Err(block);
         }
 
-        if matches!(mode, TrustMode::Text)
-            && let Some(layout) = trust::build_warning_advisory(catalog_ref)
-        {
-            output::write_layout(&mut io::stderr(), &layout, &self.terminal);
-        }
-
         let catalog_ref = self.catalog_cache.as_ref().map(|s| &s.catalog);
         trust::filter_untrusted(&mut self.loaded.config, catalog_ref);
         Ok(())
     }
 
-    /// Render the Trust warning advisory to stderr without filtering. Used by
-    /// `cmd_check`, which validates the config as authored and so must not
-    /// drop untrusted Loaded rules from evaluation. No-op in JSON mode.
-    pub fn render_trust_warning(&mut self) {
-        if self.json {
+    /// Render the Trust warning advisory to stderr. Reachable only from the
+    /// per-subcommand builders in `crate::output`; no-op in JSON mode and
+    /// idempotent across repeat calls within one invocation.
+    pub(crate) fn render_trust_warning(&mut self) {
+        if self.json || self.trust_warning_rendered {
             return;
         }
+        self.trust_warning_rendered = true;
         self.ensure_trust_loaded();
         let catalog_ref = self.catalog_cache.as_ref().map(|s| &s.catalog);
         if let Some(layout) = trust::build_warning_advisory(catalog_ref) {

@@ -9,7 +9,7 @@ use may_i_engine as engine;
 use may_i_shell_parser as parser;
 
 use crate::annotation::{TraceEntry, TracingFold};
-use crate::output;
+use crate::output::{self, EvalOutput};
 use crate::pipeline::CommandPipeline;
 use crate::runtime_facts::parse_cli_facts;
 use crate::trust::TrustMode;
@@ -20,7 +20,6 @@ pub fn cmd_eval(
     raw_facts: &[String],
 ) -> miette::Result<()> {
     let context = parse_cli_facts(raw_facts)?;
-    pipeline.render_prelude_advisories();
 
     let mode = TrustMode::for_eval(pipeline.json());
     if let Err(block) = pipeline.consult_trust(command, mode) {
@@ -89,16 +88,15 @@ pub fn cmd_eval(
             let err = crate::shell_parse_error::ShellParseError::from_diagnostic(diag, command);
             let _ = writeln!(std::io::stderr(), "{:?}", miette::Report::new(err));
         }
-        let display_path = output::shorten_home(pipeline.config_path());
-        output::render_eval_result(
-            &mut std::io::stdout(),
-            pipeline.terminal(),
+        let config_path = pipeline.config_path().to_path_buf();
+        let builder = EvalOutput {
+            config_path: &config_path,
+            trace_entries: &traces,
             command,
-            &colored_command,
-            &traces,
-            &result,
-            &display_path,
-        );
+            colored_command: &colored_command,
+            eval_result: &result,
+        };
+        builder.render(&mut std::io::stdout(), pipeline);
     }
 
     Ok(())

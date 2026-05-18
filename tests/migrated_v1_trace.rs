@@ -9,7 +9,8 @@ use std::path::Path;
 use serde::Deserialize;
 
 use may_i::cmd_eval::evaluate_with_colorization;
-use may_i::output;
+use may_i::output::{self, EvalOutput};
+use may_i::pipeline::CommandPipeline;
 use may_i_config::LoadResult;
 
 #[derive(Deserialize)]
@@ -53,25 +54,25 @@ fn parse_facts(raw_facts: &[String]) -> may_i_core::ContextFacts {
 }
 
 /// Render trace output for a command evaluation into a buffer.
-fn render_output(command: &str, config: &LoadResult, facts: &[String]) -> Vec<u8> {
+fn render_output(command: &str, facts: &[String]) -> Vec<u8> {
     colored::control::set_override(true);
 
-    let term = output::Terminal::new(80);
     let context = parse_facts(facts);
+    let config = load_config();
     let (result, traces, colored_command) =
-        evaluate_with_colorization(command, config, &context).unwrap();
-    let display_path = output::shorten_home(&fixture_dir().join("config.lisp"));
+        evaluate_with_colorization(command, &config, &context).unwrap();
+    let config_path = fixture_dir().join("config.lisp");
 
+    let mut pipeline = CommandPipeline::with_store_loader(config, false, Box::new(|| None));
     let mut buf = Vec::new();
-    output::render_eval_result(
-        &mut buf,
-        &term,
+    EvalOutput {
+        config_path: &config_path,
+        trace_entries: &traces,
         command,
-        &colored_command,
-        &traces,
-        &result,
-        &display_path,
-    );
+        colored_command: &colored_command,
+        eval_result: &result,
+    }
+    .render(&mut buf, &mut pipeline);
     buf
 }
 
@@ -99,10 +100,9 @@ fn normalise_config_path(s: &str) -> String {
 #[test]
 fn migrated_v1_stripped_snapshots() {
     let cases = load_cases();
-    let config = load_config();
 
     for case in &cases {
-        let raw_output = render_output(&case.command, &config, &case.facts);
+        let raw_output = render_output(&case.command, &case.facts);
         let output_str = String::from_utf8_lossy(&raw_output);
         let stripped = output::strip_ansi(&output_str);
         let normalised = normalise_config_path(&stripped);
@@ -114,10 +114,9 @@ fn migrated_v1_stripped_snapshots() {
 #[test]
 fn migrated_v1_raw_snapshots() {
     let cases = load_cases();
-    let config = load_config();
 
     for case in &cases {
-        let raw_output = render_output(&case.command, &config, &case.facts);
+        let raw_output = render_output(&case.command, &case.facts);
         let output_str = String::from_utf8_lossy(&raw_output);
         let normalised = normalise_config_path(output_str.as_ref());
 

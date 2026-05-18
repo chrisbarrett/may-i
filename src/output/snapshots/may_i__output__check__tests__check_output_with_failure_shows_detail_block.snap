@@ -1,0 +1,19 @@
+---
+source: src/output/check.rs
+expression: "render_check_output(&views, false)"
+---
+
+─── ✗ rm -rf / ─────────────────────────────────────────────────────────────────
+
+/tmp/test-config.lisp:3:4
+  expected │ :deny
+  actual   │ :allow
+  reason   │ "rule matched"
+
+────────────────────────────────────────────────────────────────────────────────
+
+Summary
+
+  ✗ 0 passed, 1 failed
+
+  config: /tmp/test-config.lisp

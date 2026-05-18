@@ -8,8 +8,9 @@ use clap::{CommandFactory, Parser, Subcommand};
 mod cmd_claude_code_hook;
 mod cmd_fmt;
 mod cmd_help;
-mod cmd_migrate;
 mod cmd_parse;
+
+use may_i::cmd_migrate;
 
 #[derive(Parser)]
 #[command(

@@ -9,13 +9,13 @@ use may_i_pp::detect_column_width;
 use may_i_sexpr::parse_cst;
 use similar::{ChangeTag, TextDiff};
 
-use may_i::output;
+use crate::output;
 
 fn generate_diff(original: &str, migrated: &str, config_path: &Path, use_color: bool) -> String {
     let diff = TextDiff::from_lines(original, migrated);
     let mut output = String::new();
 
-    let display_path = may_i::output::shorten_home(config_path);
+    let display_path = crate::output::shorten_home(config_path);
     output.push_str(&format!("{}:\n", display_path));
 
     let mut has_changes = false;
@@ -56,7 +56,7 @@ fn prompt_confirm(message: &str) -> io::Result<String> {
     Ok(input.trim().to_string())
 }
 
-pub(crate) fn cmd_migrate(
+pub fn cmd_migrate(
     config_path: Option<&Path>,
     output: Option<&str>,
     yes: bool,
@@ -193,7 +193,7 @@ pub(crate) fn cmd_migrate(
 
         // Class A trust-hash rehash: re-canonicalise every approved rule
         // entry so existing approvals carry over to the new canonical form.
-        let rehashed = may_i::trust::rehash_after_migration()?;
+        let rehashed = crate::trust::rehash_after_migration()?;
         if rehashed > 0 {
             println!(
                 "Rehashed {rehashed} trust entr{} to the new canonical form.",
