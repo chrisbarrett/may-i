@@ -16,7 +16,6 @@ use may_i_pp::colorize_atom;
 
 use super::{Terminal, colorize_decision_keyword, shorten_home, write_layout, write_trace};
 use crate::annotation::TraceEntry;
-use crate::pipeline::CommandPipeline;
 
 /// All data a single `cmd_check` result needs to be rendered, either as a
 /// verbose PASS/FAIL line or as a full failure block. Lifetimes borrow from
@@ -42,17 +41,11 @@ pub struct CheckOutput<'a> {
 }
 
 impl CheckOutput<'_> {
-    /// Emit the complete `may-i check` text output. Prelude advisories and
-    /// the trust warning go to `pipeline`'s own stderr writer; the body
-    /// (verbose lines, failure detail blocks, separator, summary) goes to
-    /// `w`.
-    pub fn render(&self, w: &mut impl Write, pipeline: &mut CommandPipeline) {
-        pipeline.render_prelude_advisories();
-        pipeline.render_trust_warning();
-
+    /// Emit the `may-i check` text body (verbose lines, failure detail
+    /// blocks, separator, summary) to `w`.
+    pub fn render(&self, w: &mut impl Write, term: &Terminal) {
         let passed = self.results.iter().filter(|r| r.passed).count();
         let failed = self.results.len() - passed;
-        let term = pipeline.terminal();
 
         let mut failures: Vec<&CheckResultView<'_>> = Vec::new();
         for r in self.results {
@@ -213,9 +206,7 @@ fn render_context(context: &ContextFacts) -> String {
 mod tests {
     use std::path::PathBuf;
 
-    use may_i_config::LoadResult;
     use may_i_core::ContextFacts;
-    use may_i_core::ast::Config;
 
     use super::*;
     use crate::output::strip_ansi;
@@ -248,16 +239,6 @@ mod tests {
         assert!(out.contains("expected deny"));
     }
 
-    fn empty_pipeline() -> CommandPipeline {
-        let loaded = LoadResult {
-            config: Config::default(),
-            source_text: None,
-            pre_migration_forms: None,
-            config_path: PathBuf::from("/tmp/test-config.lisp"),
-        };
-        CommandPipeline::with_store_loader(loaded, false, Box::new(|| None))
-    }
-
     fn render_check_output(views: &[CheckResultView<'_>], verbose: bool) -> String {
         temp_env::with_var("COLUMNS", Some("80"), || {
             let config_path = PathBuf::from("/tmp/test-config.lisp");
@@ -266,9 +247,9 @@ mod tests {
                 results: views,
                 verbose,
             };
-            let mut pipeline = empty_pipeline();
+            let term = Terminal::detect();
             let mut buf = Vec::new();
-            builder.render(&mut buf, &mut pipeline);
+            builder.render(&mut buf, &term);
             strip_ansi(&String::from_utf8(buf).unwrap())
         })
     }

@@ -14,10 +14,10 @@ use may_i_pp::colorize_atom;
 
 use super::{Terminal, colorize_decision_keyword, shorten_home, write_trace};
 use crate::annotation::TraceEntry;
-use crate::pipeline::CommandPipeline;
 
-/// Per-subcommand text-output builder for `may-i eval`. Owns the full
-/// rendering script (prelude → trust warning → trace + decision).
+/// Per-subcommand text-output renderer for `may-i eval`. Pure body
+/// rendering (trace + decision block); prelude advisories and trust
+/// warnings are owned by `CommandPipeline::run`.
 pub struct EvalOutput<'a> {
     pub config_path: &'a Path,
     pub trace_entries: &'a [TraceEntry],
@@ -27,16 +27,12 @@ pub struct EvalOutput<'a> {
 }
 
 impl EvalOutput<'_> {
-    /// Emit the complete `may-i eval` text output. Prelude advisories and
-    /// the trust warning go to `pipeline`'s own stderr writer; the body
-    /// (trace + result block) goes to `w`.
-    pub fn render(&self, w: &mut impl Write, pipeline: &mut CommandPipeline) {
-        pipeline.render_prelude_advisories();
-        pipeline.render_trust_warning();
+    /// Emit the `may-i eval` text body (trace + result block) to `w`.
+    pub fn render(&self, w: &mut impl Write, terminal: &Terminal) {
         let display_path = shorten_home(self.config_path);
         render_eval_result(
             w,
-            pipeline.terminal(),
+            terminal,
             self.command,
             self.colored_command,
             self.trace_entries,

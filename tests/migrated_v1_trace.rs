@@ -63,7 +63,7 @@ fn render_output(command: &str, facts: &[String]) -> Vec<u8> {
         evaluate_with_colorization(command, &config, &context).unwrap();
     let config_path = fixture_dir().join("config.lisp");
 
-    let mut pipeline = CommandPipeline::with_store_loader(config, false, Box::new(|| None));
+    let pipeline = CommandPipeline::with_store_loader(config, false, Box::new(|| None));
     let mut buf = Vec::new();
     EvalOutput {
         config_path: &config_path,
@@ -72,7 +72,7 @@ fn render_output(command: &str, facts: &[String]) -> Vec<u8> {
         colored_command: &colored_command,
         eval_result: &result,
     }
-    .render(&mut buf, &mut pipeline);
+    .render(&mut buf, pipeline.terminal());
     buf
 }
 

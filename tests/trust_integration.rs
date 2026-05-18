@@ -509,4 +509,14 @@ fn eval_json_untrusted_still_blocks() {
         resp["reason"].as_str().unwrap_or("").contains("trust"),
         "reason should mention trust"
     );
+    let files = resp["files"]
+        .as_array()
+        .expect("eval JSON trust-block must include a files array");
+    assert!(
+        !files.is_empty()
+            && files
+                .iter()
+                .any(|p| p.as_str().unwrap_or("").ends_with(".lisp")),
+        "files array should list the untrusted source files: {files:?}"
+    );
 }

@@ -9,76 +9,19 @@ use may_i_engine as engine;
 use may_i_shell_parser as parser;
 
 use crate::annotation::{TraceEntry, TracingFold};
-use crate::output::{self, EvalOutput};
-use crate::pipeline::CommandPipeline;
+use crate::pipeline::{CommandPipeline, EvalOutcome, EvalOutcomeBody, InvocationMode};
 use crate::runtime_facts::parse_cli_facts;
-use crate::trust::TrustMode;
 
 pub fn cmd_eval(
     pipeline: &mut CommandPipeline,
     command: &str,
     raw_facts: &[String],
 ) -> miette::Result<()> {
-    let context = parse_cli_facts(raw_facts)?;
+    let context_facts = parse_cli_facts(raw_facts)?;
 
-    let mode = TrustMode::for_eval(pipeline.json());
-    if let Err(block) = pipeline.consult_trust(command, mode) {
-        if pipeline.json() {
-            let body = serde_json::json!({
-                "decision": block.decision.to_string(),
-                "reason": block.reason,
-                "files": block.files,
-            });
-            println!(
-                "{}",
-                serde_json::to_string(&body).expect("response serialization is infallible")
-            );
-        }
-        return Ok(());
-    }
-
-    if pipeline.json() {
-        let mut fold = TracingFold::from_load_result(pipeline.loaded());
-        let result = engine::eval::evaluate_command_with_fold(
-            command,
-            pipeline.config(),
-            &context,
-            &mut fold,
-        )
-        .map_err(|e| miette::miette!("{e}"))?;
-        if !result.parse_diagnostics.is_empty() {
-            fold.traces.push(TraceEntry::ParseDiagnostics {
-                diagnostics: result.parse_diagnostics.clone(),
-            });
-        }
-        let mut json = serde_json::json!({
-            "decision": result.decision.to_string(),
-            "reason": result.reason.unwrap_or_default(),
-            "trace": output::trace_to_json(&fold.traces),
-        });
-        if !result.parse_diagnostics.is_empty() {
-            json["parse_diagnostics"] = serde_json::json!(
-                result
-                    .parse_diagnostics
-                    .iter()
-                    .map(|d| {
-                        serde_json::json!({
-                            "span": { "start": d.span.start, "end": d.span.end },
-                            "kind": d.kind,
-                            "severity": d.severity,
-                            "message": d.message(),
-                        })
-                    })
-                    .collect::<Vec<_>>()
-            );
-        }
-        println!(
-            "{}",
-            serde_json::to_string(&json).expect("response serialization is infallible")
-        );
-    } else {
+    pipeline.run(InvocationMode::Eval, command, |ctx| {
         let (result, mut traces, colored_command) =
-            evaluate_with_colorization(command, pipeline.loaded(), &context)?;
+            evaluate_with_colorization(command, ctx.loaded, &context_facts)?;
         if !result.parse_diagnostics.is_empty() {
             traces.push(TraceEntry::ParseDiagnostics {
                 diagnostics: result.parse_diagnostics.clone(),
@@ -88,18 +31,14 @@ pub fn cmd_eval(
             let err = crate::shell_parse_error::ShellParseError::from_diagnostic(diag, command);
             let _ = writeln!(std::io::stderr(), "{:?}", miette::Report::new(err));
         }
-        let config_path = pipeline.config_path().to_path_buf();
-        let builder = EvalOutput {
-            config_path: &config_path,
-            trace_entries: &traces,
-            command,
-            colored_command: &colored_command,
-            eval_result: &result,
-        };
-        builder.render(&mut std::io::stdout(), pipeline);
-    }
-
-    Ok(())
+        Ok(EvalOutcome::Eval(EvalOutcomeBody {
+            command: command.to_string(),
+            colored: colored_command,
+            result,
+            traces,
+            display_path: ctx.display_path.clone(),
+        }))
+    })
 }
 
 /// Evaluate a command using the unified pipeline, then colorize using segments

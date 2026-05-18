@@ -1,11 +1,12 @@
 // Check subcommand — validate config and run checks with trace output.
 
+use std::cell::Cell;
+
 use engine::check::CheckResult;
 use may_i_engine as engine;
 
 use crate::annotation::{TraceEntry, TracingFold};
-use crate::output::{self, CheckOutput, CheckResultView};
-use crate::pipeline::CommandPipeline;
+use crate::pipeline::{CheckOutcomeBody, CommandPipeline, EvalOutcome, InvocationMode};
 
 /// Error indicating one or more checks failed.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
@@ -17,45 +18,32 @@ pub struct TraceExtra {
     pub traces: Vec<TraceEntry>,
 }
 
+/// The exit-1 signal lives outside `pipeline::run`: a failed-check count
+/// drives the process exit code (a clap-driver concern), and `run` itself
+/// returns `Ok(())` after rendering. We capture the count from inside the
+/// closure via this `Cell` so the post-`run` check can promote it to
+/// `CheckFailure`.
 pub fn cmd_check(pipeline: &mut CommandPipeline, verbose: bool) -> miette::Result<()> {
-    let results = run_checks_with_traces(pipeline.loaded())?;
+    let failed_signal = Cell::new(0usize);
 
-    let passed = results.iter().filter(|r| r.passed).count();
-    let failed = results.len() - passed;
-
-    if pipeline.json() {
-        let body = output::render_check_results_json(passed, failed, &results);
-        println!(
-            "{}",
-            serde_json::to_string(&body).expect("response serialization is infallible")
-        );
-    } else {
-        let config_path = pipeline.config_path().to_path_buf();
-        let views: Vec<CheckResultView<'_>> = results
-            .iter()
-            .map(|r| CheckResultView {
-                command: &r.command,
-                expected: r.expected,
-                actual: r.actual,
-                passed: r.passed,
-                context: &r.context,
-                location: r.extra.location.as_deref(),
-                reason: r.reason.as_deref(),
-                traces: &r.extra.traces,
-            })
-            .collect();
-        let builder = CheckOutput {
-            config_path: &config_path,
-            results: &views,
+    pipeline.run(InvocationMode::Check, "", |ctx| {
+        let results = run_checks_with_traces(ctx.loaded)?;
+        let passed = results.iter().filter(|r| r.passed).count();
+        let failed = results.len() - passed;
+        failed_signal.set(failed);
+        Ok(EvalOutcome::Check(CheckOutcomeBody {
+            results,
             verbose,
-        };
-        builder.render(&mut std::io::stdout(), pipeline);
-    }
+            passed,
+            failed,
+            display_path: ctx.display_path.clone(),
+        }))
+    })?;
 
+    let failed = failed_signal.get();
     if failed > 0 {
         return Err(CheckFailure(failed).into());
     }
-
     Ok(())
 }
 
