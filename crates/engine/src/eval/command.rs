@@ -552,6 +552,38 @@ mod tests {
         assert_eq!(result.decision, Decision::Deny);
     }
 
+    // -- POSIX line continuation regression (2026-05-18 incident) --
+
+    #[test]
+    fn line_continuation_reports_real_command_name() {
+        let config = config_with_rules(vec![allow_rule("mkdir"), allow_rule("ls")]);
+        // Input ends in `&& \<NL>   ls bar` — the lexer used to emit a
+        // phantom `\n` first word for the continuation segment, so the
+        // engine reported `No rule for command `\n``.
+        let result =
+            evaluate_command("mkdir -p foo && \\\n   ls bar", &config, &empty_facts()).unwrap();
+        assert_eq!(result.decision, Decision::Allow);
+        if let Some(reason) = result.reason.as_deref() {
+            assert!(
+                !reason.contains("`\n`"),
+                "reason still references phantom newline command: {reason}"
+            );
+        }
+    }
+
+    #[test]
+    fn line_continuation_unknown_command_names_real_command() {
+        let config = config_with_rules(vec![allow_rule("mkdir")]);
+        let result =
+            evaluate_command("mkdir -p foo && \\\n   ls bar", &config, &empty_facts()).unwrap();
+        assert_eq!(result.decision, Decision::Ask);
+        let reason = result.reason.as_deref().unwrap_or("");
+        assert!(
+            reason.contains("`ls`"),
+            "expected reason to name `ls`, got: {reason}"
+        );
+    }
+
     // -- Process substitution --
 
     #[test]
@@ -1049,6 +1081,47 @@ mod tests {
             )
             .unwrap();
             prop_assert_eq!(from_string.decision, from_tokens.decision);
+        }
+
+        /// `parser-engine-invariants`: span-bounds property must hold even
+        /// when the input contains POSIX `\<newline>` line continuations.
+        /// Insertions are placed at fresh positions in the un-mutated base
+        /// so each `\<NL>` lands in a clean (unquoted) context.
+        #[test]
+        fn prop_line_continuation_preserves_span_bounds(
+            base in arb_input(),
+            raw_positions in proptest::collection::vec(0usize..1000, 0..6),
+        ) {
+            let len = base.len();
+            let mut positions: Vec<usize> = raw_positions
+                .into_iter()
+                .map(|p| if len == 0 { 0 } else { p % (len + 1) })
+                .filter(|&p| base.is_char_boundary(p))
+                .collect();
+            positions.sort_unstable();
+
+            let mut input = String::with_capacity(len + positions.len() * 2);
+            let mut cursor = 0usize;
+            for pos in positions {
+                input.push_str(&base[cursor..pos]);
+                input.push_str("\\\n");
+                cursor = pos;
+            }
+            input.push_str(&base[cursor..]);
+
+            let config = config_with_rules(vec![allow_rule("echo"), deny_rule("rm")]);
+            let result = evaluate_command(&input, &config, &empty_facts()).unwrap();
+            for s in &result.segment_decisions {
+                prop_assert!(
+                    s.start <= s.end,
+                    "segment {s:?} has start > end for input {input:?}"
+                );
+                prop_assert!(
+                    s.end <= input.len(),
+                    "segment {s:?} extends past input length {} for input {input:?}",
+                    input.len()
+                );
+            }
         }
     }
 }

@@ -86,6 +86,32 @@ Two viable approaches were considered:
 the change to two short arms, and keeps the lexer state machine
 intact.
 
+Two follow-on adjustments fall out of the chosen approach:
+
+- **Empty-word fallback in `read_word_or_keyword`.** When `\<NL>` is
+  the only content at a tokenizer dispatch boundary (e.g. the input
+  ends `&& \<NL>   ls bar` — `skip_whitespace` consumes the single
+  space after `&&`, the dispatcher then calls into the word reader
+  on `\`), `read_word_parts` consumes both bytes and returns an empty
+  parts vector. The previous invariant — "called at non-metachar ⇒
+  at least one part" — is loosened: `read_word_or_keyword` returns
+  `None` in that case, and the outer tokenizer loop makes progress
+  via the cursor advance and re-enters `skip_whitespace`.
+- **Adjacent-`Literal` merge in the default literal arm of
+  `read_word_parts`.** Mid-word continuation (`ec\<NL>ho`) would
+  otherwise produce two adjacent `Literal` parts (`"ec"`, `"ho"`),
+  and `SimpleCommand::command_name` only inspects the first literal
+  — it would report `"ec"`. The default arm now appends into the
+  trailing `Literal` when one is present, collapsing the word to a
+  single `Literal("echo")`. The merge is unconditional (not gated
+  on `\<NL>`), which incidentally tidies pre-existing shapes:
+  `hello\ world` now parses as `[Literal("hello"), Literal(" world")]`
+  instead of three parts, and `{foo}` (unmatched brace expansion)
+  as `[Literal("{foo}")]` instead of two. Two parser snapshots
+  (`backslash_escape_outside_quotes`, `brace_no_comma_is_literal`)
+  were regenerated to reflect this; `Word::to_str()` output is
+  unchanged in every case.
+
 ### Decision 2: Apply inside double quotes, not only outside quotes
 
 POSIX 2.2.3 lists `\<newline>` as one of the few sequences that retain

@@ -1,5 +1,5 @@
 ---
-source: tests/parser_snapshots.rs
+source: crates/shell-parser/tests/parser_snapshots.rs
 expression: "parse(\"echo {foo}\")"
 ---
 Simple(
@@ -16,10 +16,7 @@ Simple(
             Word {
                 parts: [
                     Literal(
-                        "{",
-                    ),
-                    Literal(
-                        "foo}",
+                        "{foo}",
                     ),
                 ],
             },

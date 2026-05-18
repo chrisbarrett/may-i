@@ -587,3 +587,84 @@ fn extract_embedded_commands_nested_double_quote() {
     };
     assert_eq!(w.extract_embedded_commands(), vec!["echo $(rm /)"]);
 }
+
+// -- POSIX line continuation (`\<NL>`) --
+
+#[test]
+fn line_continuation_after_operator() {
+    let cmd = parse("mkdir -p foo && \\\n   ls bar").into_command();
+    let Command::And(left, right) = &cmd else {
+        panic!("expected And, got {cmd:?}");
+    };
+    let Command::Simple(left_sc) = left.as_ref() else {
+        panic!("expected simple command on left");
+    };
+    assert_eq!(left_sc.command_name(), Some("mkdir"));
+    let Command::Simple(right_sc) = right.as_ref() else {
+        panic!("expected simple command on right");
+    };
+    assert_eq!(right_sc.command_name(), Some("ls"));
+    assert_eq!(right_sc.args().len(), 1);
+    assert_eq!(right_sc.args()[0].to_str(), "bar");
+    // No `\n` should appear in any literal part of any word.
+    for w in &right_sc.words {
+        for p in &w.parts {
+            if let WordPart::Literal(s) = p {
+                assert!(
+                    !s.contains('\n'),
+                    "unexpected newline in literal part: {s:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn line_continuation_mid_word() {
+    let cmd = parse("ec\\\nho hi").into_command();
+    let Command::Simple(sc) = &cmd else {
+        panic!("expected simple command, got {cmd:?}");
+    };
+    assert_eq!(sc.command_name(), Some("echo"));
+    assert_eq!(sc.args().len(), 1);
+    assert_eq!(sc.args()[0].to_str(), "hi");
+}
+
+#[test]
+fn line_continuation_inside_double_quotes() {
+    let cmd = parse("echo \"foo\\\nbar\"").into_command();
+    let Command::Simple(sc) = &cmd else {
+        panic!("expected simple command, got {cmd:?}");
+    };
+    assert_eq!(sc.command_name(), Some("echo"));
+    assert_eq!(sc.args().len(), 1);
+    assert_eq!(sc.args()[0].to_str(), "foobar");
+}
+
+#[test]
+fn backslash_newline_inside_single_quotes_is_literal() {
+    let cmd = parse("echo 'foo\\\nbar'").into_command();
+    let Command::Simple(sc) = &cmd else {
+        panic!("expected simple command, got {cmd:?}");
+    };
+    assert_eq!(sc.args().len(), 1);
+    // Single quotes preserve the backslash and newline verbatim.
+    assert_eq!(sc.args()[0].to_str(), "foo\\\nbar");
+}
+
+#[test]
+fn backslash_newline_inside_quoted_heredoc_is_literal() {
+    let cmd = parse("cat <<'EOF'\nfoo\\\nbar\nEOF\n").into_command();
+    let Command::Simple(sc) = &cmd else {
+        panic!("expected simple command, got {cmd:?}");
+    };
+    assert_eq!(sc.command_name(), Some("cat"));
+    assert_eq!(sc.redirections.len(), 1);
+    let RedirectionTarget::Heredoc(body) = &sc.redirections[0].target else {
+        panic!("expected heredoc body");
+    };
+    assert!(
+        body.contains("foo\\\nbar"),
+        "heredoc body should preserve backslash-newline verbatim: {body:?}"
+    );
+}

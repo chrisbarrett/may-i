@@ -442,13 +442,13 @@ impl Lexer {
         }
 
         let parts = self.read_word_parts();
-        // The main tokenizer loop only calls read_word_or_keyword for
-        // characters that are not metacharacters, so read_word_parts
-        // always consumes at least one character here.
-        assert!(
-            !parts.is_empty(),
-            "unreachable: read_word_or_keyword called at metachar"
-        );
+        // Empty parts only occurs when the entire "word" was an unquoted
+        // `\<newline>` line continuation (POSIX 2.2.1). The cursor has
+        // advanced past both bytes, so the outer tokenizer loop will make
+        // progress; we simply emit no token for this position.
+        if parts.is_empty() {
+            return None;
+        }
 
         // Check if this is a keyword (single literal part)
         if parts.len() == 1
