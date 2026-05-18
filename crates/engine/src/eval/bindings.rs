@@ -19,7 +19,7 @@ use may_i_core::ast::{BindingName, FlagsMode, ResolvedParser};
 /// binding is a no-match (matches the historical boundary-absent
 /// semantics of `(tail (after …))`).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BindingValue {
+pub(crate) enum BindingValue {
     Token(String),
     Tokens(Vec<String>),
     Unbound,
@@ -27,7 +27,7 @@ pub enum BindingValue {
 
 impl BindingValue {
     /// True iff the value is `Unbound` or carries no tokens.
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         match self {
             BindingValue::Unbound => true,
             BindingValue::Token(s) => s.is_empty(),
@@ -38,7 +38,7 @@ impl BindingValue {
     /// Coerce to a single space-joined string for predicate matching.
     /// `Token` round-trips as-is; `Tokens` joins with single spaces;
     /// `Unbound` yields `None`.
-    pub fn as_joined(&self) -> Option<String> {
+    pub(crate) fn as_joined(&self) -> Option<String> {
         match self {
             BindingValue::Token(s) => Some(s.clone()),
             BindingValue::Tokens(v) if !v.is_empty() => Some(v.join(" ")),
@@ -54,36 +54,36 @@ impl BindingValue {
 /// "declared but empty" from "not declared at all" — both are
 /// no-match.
 #[derive(Debug, Clone, Default)]
-pub struct Bindings {
+pub(crate) struct Bindings {
     map: std::collections::HashMap<BindingName, BindingValue>,
 }
 
 impl Bindings {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
     /// Insert a binding. Overwrites a previous value for the same name
     /// (last-write-wins matches the "default to last value" decision
     /// from design.md for multi-occurrence parameters).
-    pub fn insert(&mut self, name: BindingName, value: BindingValue) {
+    pub(crate) fn insert(&mut self, name: BindingName, value: BindingValue) {
         self.map.insert(name, value);
     }
 
     /// Resolve a binding. Returns `Unbound` if the name was never
     /// produced; callers can distinguish via [`BindingValue::is_empty`]
     /// if they care.
-    pub fn get(&self, name: &BindingName) -> BindingValue {
+    pub(crate) fn get(&self, name: &BindingName) -> BindingValue {
         self.map.get(name).cloned().unwrap_or(BindingValue::Unbound)
     }
 
     /// True iff `name` resolves to a non-empty value.
-    pub fn is_bound(&self, name: &BindingName) -> bool {
+    pub(crate) fn is_bound(&self, name: &BindingName) -> bool {
         !self.get(name).is_empty()
     }
 
-    /// Iterate declared bindings (for trace rendering).
-    pub fn iter(&self) -> impl Iterator<Item = (&BindingName, &BindingValue)> {
+    #[cfg(test)]
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (&BindingName, &BindingValue)> {
         self.map.iter()
     }
 }
@@ -99,7 +99,7 @@ impl Bindings {
 /// environment (which needs to outlive the argv for recursion); the
 /// allocation is one `Vec` per evaluation and shows up in flame graphs
 /// as negligible.
-pub fn parse_argv(parser: &ResolvedParser, argv: &[String]) -> (Vec<String>, Bindings) {
+pub(crate) fn parse_argv(parser: &ResolvedParser, argv: &[String]) -> (Vec<String>, Bindings) {
     let mut bindings = Bindings::new();
 
     // Boundary: outer vs tail per flags_mode.

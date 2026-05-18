@@ -842,8 +842,9 @@ fn cond_short_circuits_predicates_after_first_match() {
 // link.
 
 mod parser_engine_invariants {
+    use crate::eval::decompose::{EvalUnit, decompose};
+    use crate::eval::evaluate_command;
     use crate::eval::tests::{arb_shell_chars, arb_with_heredoc, arb_with_single_quoted_region};
-    use crate::eval::{EvalUnit, decompose, evaluate_command};
     use may_i_core::ContextFacts;
     use may_i_core::ast::Config;
     use proptest::prelude::*;

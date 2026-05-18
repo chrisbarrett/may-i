@@ -5,7 +5,8 @@ pub(super) type Span = (usize, usize);
 
 /// A unit of evaluation extracted from an AST.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum EvalUnit {
+#[allow(clippy::enum_variant_names)]
+pub(crate) enum EvalUnit {
     /// A simple command extracted from the AST.
     SimpleCommand {
         command: String,
@@ -21,7 +22,7 @@ pub enum EvalUnit {
 impl EvalUnit {
     /// Byte range in the original input covered by this unit.
     #[must_use]
-    pub fn span(&self) -> Span {
+    pub(crate) fn span(&self) -> Span {
         match self {
             EvalUnit::SimpleCommand { span, .. }
             | EvalUnit::EmbeddedCommand { span, .. }
@@ -39,7 +40,7 @@ impl EvalUnit {
 /// - For all word parts across command name and arguments, extract embedded
 ///   commands (substitutions) as `EmbeddedCommand`, with spans located by
 ///   scanning the simple command's source slice in word-part order.
-pub fn decompose(cmd: &Command, input: &str) -> Vec<EvalUnit> {
+pub(crate) fn decompose(cmd: &Command, input: &str) -> Vec<EvalUnit> {
     let simple_commands = extract_simple_commands(cmd);
     let mut units = Vec::new();
 
