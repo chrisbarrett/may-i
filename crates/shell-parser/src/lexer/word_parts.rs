@@ -122,11 +122,20 @@ impl Lexer {
                 }
                 Some('\\') => {
                     self.advance();
-                    if let Some(escaped) = self.advance() {
-                        parts.push(WordPart::Literal(escaped.to_string()));
-                    } else {
-                        // Trailing backslash at EOF — treat as literal
-                        parts.push(WordPart::Literal("\\".to_string()));
+                    match self.peek() {
+                        // POSIX 2.2.1: `\<newline>` is line continuation —
+                        // both characters are removed before tokenisation.
+                        Some('\n') => {
+                            self.advance();
+                        }
+                        Some(_) => {
+                            let escaped = self.advance().unwrap();
+                            parts.push(WordPart::Literal(escaped.to_string()));
+                        }
+                        None => {
+                            // Trailing backslash at EOF — treat as literal
+                            parts.push(WordPart::Literal("\\".to_string()));
+                        }
                     }
                 }
                 Some(_) => {
@@ -150,7 +159,16 @@ impl Lexer {
                         self.advance();
                     }
                     if !s.is_empty() {
-                        parts.push(WordPart::Literal(s));
+                        // Merge into the trailing Literal so a `\<newline>`
+                        // elision in the middle of a word produces a single
+                        // Literal part rather than two adjacent ones.
+                        // `command_name` only inspects the first part, so an
+                        // un-merged shape would mis-report the command.
+                        if let Some(WordPart::Literal(last)) = parts.last_mut() {
+                            last.push_str(&s);
+                        } else {
+                            parts.push(WordPart::Literal(s));
+                        }
                     }
                 }
             }
@@ -198,8 +216,16 @@ impl Lexer {
                 }
                 Some('\\') => {
                     self.advance();
-                    if let Some(ch) = self.advance() {
-                        literal.push(ch);
+                    match self.peek() {
+                        // POSIX 2.2.3: `\<newline>` inside double quotes is
+                        // line continuation — both characters are elided.
+                        Some('\n') => {
+                            self.advance();
+                        }
+                        Some(_) => {
+                            literal.push(self.advance().unwrap());
+                        }
+                        None => {}
                     }
                 }
                 Some(ch) => {
