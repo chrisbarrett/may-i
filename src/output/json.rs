@@ -57,7 +57,13 @@ fn context_to_json(context: &ContextFacts) -> serde_json::Value {
 }
 
 pub fn trace_to_json(entries: &[TraceEntry]) -> Vec<serde_json::Value> {
-    entries
+    // Route the same prepared-trace artefact the text renderer consumes
+    // through this serializer. The rewrite passes (truncation, dimming,
+    // annotation distribution) are applied once inside `prepare_trace`;
+    // this function projects the result to JSON without re-deriving any
+    // structural decisions.
+    let prepared = super::prepare_trace(entries);
+    prepared
         .iter()
         .map(|entry| match entry {
             TraceEntry::SegmentHeader { command, decision } => serde_json::json!({
@@ -122,6 +128,12 @@ pub fn trace_to_json(entries: &[TraceEntry]) -> Vec<serde_json::Value> {
 }
 
 fn collect_json_annotations(doc: &Doc<Option<Ann>>, out: &mut Vec<serde_json::Value>) {
+    // Mirror the text renderer's `Dimmed nodes produce no right-column
+    // annotations` rule: a prepared doc marked `dimmed` contributes no
+    // annotations to the JSON `annotations` array either.
+    if doc.dimmed {
+        return;
+    }
     if let Some(Ann::VarRef { name, matched }) = &doc.ann {
         // Collect child annotations into a nested body array.
         let mut body = Vec::new();

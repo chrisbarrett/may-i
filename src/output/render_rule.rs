@@ -2,7 +2,6 @@ use may_i_core::doc::Doc;
 use may_i_pp::{AnnotatedLineBuilder, Format, pretty, pretty_into, visible_len};
 
 use super::colorize::colorize_right;
-use super::transform::prepare_doc_for_text;
 use super::{ColRow, ColumnGeometry};
 use crate::annotation::{Ann, CapturedValue};
 
@@ -14,18 +13,20 @@ fn captured_value_label(captured: &CapturedValue) -> &'static str {
     }
 }
 
+/// Render a rule's left/right column rows from a *prepared* doc. The doc is
+/// assumed to have already passed through the funnel pipeline in
+/// `super::prepare_trace`; this function applies no rewrite passes of its
+/// own.
 pub(super) fn render_annotated_rule(
     doc: &Doc<Option<Ann>>,
     line: Option<usize>,
     geom: &ColumnGeometry,
 ) -> Vec<ColRow> {
-    let doc = prepare_doc_for_text(doc);
-
     // Render with AnnotatedLineBuilder for structural annotation collection.
     let prefix_width = line.map_or(0, may_i_pp::line_prefix_width);
     let width = geom.left_width;
     let mut alb = AnnotatedLineBuilder::new();
-    pretty_into(&doc, prefix_width, width, &mut alb);
+    pretty_into(doc, prefix_width, width, &mut alb);
     let annotated_lines = alb.into_lines();
 
     // Build colorised left-column text (with line numbers).
@@ -35,7 +36,7 @@ pub(super) fn render_annotated_rule(
         line_number: line,
         preserve_user_breaks: false,
     };
-    let rendered = pretty(&doc, 0, &fmt);
+    let rendered = pretty(doc, 0, &fmt);
     let rendered_lines: Vec<&str> = rendered.lines().collect();
 
     // Map structural annotations to right-column text.

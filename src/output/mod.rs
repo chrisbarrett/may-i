@@ -121,15 +121,69 @@ pub(crate) fn write_trace(
     render_trace(w, entries, command, indent, term);
 }
 
-/// Convert trace entries into a declarative layout tree.
+/// Apply the ordered renderer-side rewrite pipeline to every `Rule` entry,
+/// producing the prepared shape that both the text and JSON renderers
+/// consume. This function is the sole call site of those rewrite passes;
+/// `trace_to_layout` and `trace_to_json` both route through it. The chosen
+/// shared intermediate is `Vec<TraceEntry>` with each Rule's `doc` replaced
+/// by its prepared form — the simpler of the two shapes weighed in
+/// `design.md` (shape 1: shared prepared tree; shape 2 would have Layout
+/// carry JSON-recoverable evidence, distorting Layout for a foreign
+/// audience).
+///
+/// Ordered steps owned by this funnel (encoded inside
+/// `transform::prepare_doc_for_text`):
+///
+/// 1. `truncate_matched_anywhere` — collapse a matched `(anywhere …)` list
+///    to head + first token once the match has been recorded on the parent
+///    annotation.
+/// 2. `truncate_unevaluated` — trim long unannotated child runs (head +
+///    keep + `…` + last) so the renderer doesn't spend column width on
+///    branches the engine never evaluated.
+/// 3. `dim_unevaluated` — mark subtrees with no inherited or contributed
+///    annotation as dimmed; the renderers project this to the existing
+///    dimming style and to JSON's structural decisions.
+/// 4. `distribute_arg_annotations` — push parent `ArgMatch` annotations
+///    down onto the literal child atoms they correspond to so
+///    `AnnotatedLineBuilder` (and the JSON walker) can read them
+///    structurally.
+fn prepare_trace(entries: &[TraceEntry]) -> Vec<TraceEntry> {
+    entries
+        .iter()
+        .map(|entry| match entry {
+            TraceEntry::Rule {
+                doc,
+                line,
+                pre_migration_doc,
+                facts,
+                inner_command,
+                combine_role,
+            } => TraceEntry::Rule {
+                doc: transform::prepare_doc_for_text(doc),
+                line: *line,
+                pre_migration_doc: pre_migration_doc.clone(),
+                facts: facts.clone(),
+                inner_command: inner_command.clone(),
+                combine_role: *combine_role,
+            },
+            other => other.clone(),
+        })
+        .collect()
+}
+
+/// Convert trace entries into a declarative layout tree. Calls
+/// `prepare_trace` to apply the ordered rewrite pipeline once, then walks
+/// the prepared entries via `TraceLayoutBuilder`. No rewrite passes are
+/// invoked outside `prepare_trace` and its private helpers.
 fn trace_to_layout(
     entries: &[TraceEntry],
     command: &str,
     indent: usize,
     term: &Terminal,
 ) -> Layout {
-    let mut builder = TraceLayoutBuilder::new(entries, command, term);
-    for entry in entries {
+    let prepared = prepare_trace(entries);
+    let mut builder = TraceLayoutBuilder::new(&prepared, command, term);
+    for entry in &prepared {
         match entry {
             TraceEntry::SegmentHeader { command, decision } => {
                 builder.on_segment_header(command, *decision);
