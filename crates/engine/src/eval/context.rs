@@ -36,7 +36,7 @@ pub struct EvalContext<'a> {
     /// Parser-bound names produced by `parse_argv`. Consulted by the
     /// rule-body verbs `(authorise #var)`, `(bound? #var)`, and
     /// `(matches? #var PAT)`.
-    pub parser_bindings: Bindings,
+    pub(crate) parser_bindings: Bindings,
     /// Full config — needed by `(may-i …)` recursion to resolve the
     /// inner command's parser.
     pub config: Option<&'a Config>,

@@ -119,7 +119,7 @@ pub(crate) fn evaluate_at_depth<F: EvalFold>(
 /// that downstream `parser_positional_args` and flag-matching code
 /// walks. Style-aware: combined-shorts, first-token-bundle, and
 /// prefix selection all come from `parser.style`.
-pub fn tokenise(args: &[String], parser: &ResolvedParser) -> Vec<String> {
+pub(crate) fn tokenise(args: &[String], parser: &ResolvedParser) -> Vec<String> {
     let style = &parser.style;
     if style.combined_shorts() {
         if style.first_token_bundle() {
@@ -247,7 +247,10 @@ fn expand_first_token_bundle_only(args: &[String]) -> Vec<String> {
 /// stream, peeling off flags and parameter-value pairs per the
 /// parser's style and parameter declarations. Returns the residual
 /// positional tokens.
-pub fn parser_positional_args<'a>(args: &'a [String], parser: &ResolvedParser) -> Vec<&'a str> {
+pub(crate) fn parser_positional_args<'a>(
+    args: &'a [String],
+    parser: &ResolvedParser,
+) -> Vec<&'a str> {
     let style = &parser.style;
     let long_prefix = style.long_prefix();
     let short_prefix = style.short_prefix();

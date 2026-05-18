@@ -300,3 +300,19 @@ The canonical-form serialisation produced by `may_i_engine`'s trust hashing for 
 
 - **WHEN** the fixture is parsed via `may_i_config::parse_config` and each resolved rule and define is rendered through the canonical-form serialiser used by trust hashing
 - **THEN** the concatenated canonical output SHALL be byte-equal to a snapshot captured before this change
+
+### Requirement: Engine crate public surface is bounded
+
+The `may-i-engine` crate SHALL export only items that have at least one consumer outside the crate. The supported `eval` surface comprises `Evaluator`, `EvalContext`, `PredicateResult`, `evaluate`, `evaluate_with_fold`, `evaluate_command`, and `evaluate_command_with_fold`. The crate-level surface additionally comprises `EvalResult`, `SegmentDecision`, `EvalError`, the `check` module, the `trust` module, and the `fold` module's `EvalFold`, `ChildResult`, and `PureFold` items.
+
+Items not listed above SHALL be `pub(crate)` or narrower. Re-exports for items that lack an external caller SHALL NOT exist in `crates/engine/src/eval/mod.rs` or `crates/engine/src/lib.rs`.
+
+#### Scenario: Demoted re-exports are crate-private
+
+- **WHEN** `crates/engine/src/eval/mod.rs` is inspected
+- **THEN** `BindingValue`, `Bindings`, `parse_argv`, `EvalUnit`, `decompose`, `parser_positional_args`, and `tokenise` SHALL NOT appear in a `pub use` statement
+
+#### Scenario: Documented surface compiles in isolation
+
+- **WHEN** `cargo check --workspace` runs against the workspace after the visibility change
+- **THEN** the build SHALL succeed without any consumer reaching for a demoted item
