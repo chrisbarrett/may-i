@@ -14,7 +14,7 @@ use may_i_core::ast::{Provenance, PunPolicy, StyleSpec};
 use may_i_sexpr::{RawError, Sexpr};
 
 /// Parse a top-level `(define-arg-style NAME ATTR…)` form into a `StyleSpec`.
-pub fn parse_style_definition(sexpr: &Sexpr) -> Result<StyleSpec, RawError> {
+pub(crate) fn parse_style_definition(sexpr: &Sexpr) -> Result<StyleSpec, RawError> {
     let list = sexpr
         .as_list()
         .ok_or_else(|| RawError::new("define-arg-style must be a list", sexpr.span()))?;

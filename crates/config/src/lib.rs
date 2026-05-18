@@ -20,29 +20,19 @@ mod parser_properties;
 #[cfg(test)]
 mod rule_body_tests;
 
-pub use canonicalise::{canonicalise_forms, canonicalise_node};
-pub use command::parse_command_pattern;
-pub use config::{parse_config, parse_config_from_sexprs, parse_config_from_tagged_sexprs};
+pub use canonicalise::canonicalise_forms;
+pub use config::{parse_config, parse_config_from_sexprs};
 pub use errors::ConfigError;
-pub use io::{
-    LoadResult, discover_repo_local_files, discover_repo_root, load, load_and_resolve,
-    load_and_resolve_with_cwd, resolve_path, walk_load_graph,
-};
-pub use parser_form::parse_parser_form;
-pub use rule::{parse_define, parse_rule};
-pub use style::parse_style_definition;
+pub use io::{LoadResult, load, load_and_resolve, resolve_path, walk_load_graph};
+pub use rule::parse_rule;
 
-/// Parse the body of a `(rule …)` form — everything between the
-/// command-pattern position and the trailing optional `(check …)`
-/// forms. This is the **only** public entry point for rule-body
-/// parsing; the sub-parsers it dispatches to (`parse_effect`,
-/// `parse_predicate`, `parse_arg_pattern`, `parse_positional_arg`)
-/// are crate-internal and produce contributor-vocabulary types
-/// (`Effect`, `Predicate`, `ArgPattern`) that intentionally do not
-/// leak past the config crate's API seam.
+/// Crate-internal entry point for rule-body parsing. Returns
+/// contributor-vocabulary types (`Effect`, `Predicate`, `ArgPattern`)
+/// that intentionally do not leak past the config crate's API seam.
 ///
 /// For parsing the surrounding `(rule …)` form, see [`parse_rule`].
-pub fn parse_rule_body(
+#[allow(dead_code)]
+pub(crate) fn parse_rule_body(
     sexpr: &may_i_sexpr::Sexpr,
 ) -> Result<may_i_core::ast::Spanned<may_i_core::ast::Effect>, may_i_sexpr::RawError> {
     crate::effect::parse_effect(sexpr)

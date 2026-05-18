@@ -135,7 +135,9 @@ fn push_style_spec(config: &mut Config, spec: may_i_core::ast::StyleSpec) {
 /// Each sexpr is paired with a `Provenance` value that gets applied to the
 /// resulting `Rule` or `Define`.
 #[must_use = "parsed config should be used"]
-pub fn parse_config_from_tagged_sexprs(forms: &[(Sexpr, Provenance)]) -> Result<Config, RawError> {
+pub(crate) fn parse_config_from_tagged_sexprs(
+    forms: &[(Sexpr, Provenance)],
+) -> Result<Config, RawError> {
     let mut config = Config::default();
     config
         .style_specs
