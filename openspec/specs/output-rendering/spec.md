@@ -6,7 +6,7 @@ bucket: tracing-and-output
 
 ## Purpose
 
-Contributor-only. The `crate::output` module's public surface — what `cmd_*` modules may use to render eval results, check failures, traces, and advisories. Hides `may_i_layout::Layout` primitives behind intent-level operations so CLI subcommands describe *what* they want shown, not *how* it is laid out. See `traces`, `pretty-printing`, and `trust-advisory-boxes` for the rendered formats themselves.
+Contributor-only. The `crate::output` module's public surface — what `cmd_*` modules may use to render eval results, check failures, traces, and advisories. Hides `may_i_layout::Layout` primitives behind intent-level operations so CLI subcommands describe *what* they want shown, not *how* it is laid out. The top-level intent operations are `render_eval_outcome` (dispatches a closure-produced `EvalOutcome` to its text or JSON shape) and `render_trust_block` (serialises a `TrustBlock` in the response shape dictated by an `InvocationMode`); both are reachable only through `CommandPipeline::run`. See `traces`, `pretty-printing`, and `trust-advisory-boxes` for the rendered formats themselves.
 
 ## Requirements
 
