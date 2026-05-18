@@ -9,6 +9,19 @@ use super::context::DEFAULT_RECURSION_LIMIT;
 use super::decompose::{EvalUnit, decompose};
 use super::entry::{evaluate_at_depth, evaluate_with_fold};
 
+/// Format the first `Error`-severity diagnostic for the engine's
+/// reason field, prefixed with `"parse error: "`. Falls back to the
+/// pre-existing generic string when no error-severity entry is
+/// present — defensive, since callers only invoke this when
+/// `has_errors()` is true.
+fn parse_error_reason(diagnostics: &[parser::ParseDiagnostic], input: &str) -> String {
+    diagnostics
+        .iter()
+        .find(|d| d.severity == parser::Severity::Error)
+        .map(|d| format!("parse error: {}", d.format_with_source(input)))
+        .unwrap_or_else(|| "parse error: ambiguous command boundary".to_string())
+}
+
 /// Evaluate a command string against config and context.
 ///
 /// Parses the input, walks the AST to extract all simple commands and embedded
@@ -126,7 +139,7 @@ fn evaluate_command_inner<F: EvalFold>(
     if has_parse_errors {
         if aggregate_decision < Decision::Ask {
             aggregate_decision = Decision::Ask;
-            aggregate_reason = Some("parse error: ambiguous command boundary".to_string());
+            aggregate_reason = Some(parse_error_reason(&diagnostics, input));
         }
         for seg in &mut segment_decisions {
             if seg.decision < Decision::Ask {
@@ -238,7 +251,7 @@ pub(crate) fn evaluate_authorised_string<F: EvalFold>(
 
     if has_parse_errors && aggregate_decision < Decision::Ask {
         aggregate_decision = Decision::Ask;
-        aggregate_reason = Some("parse error: ambiguous command boundary".to_string());
+        aggregate_reason = Some(parse_error_reason(&parse_result.diagnostics, input));
     }
 
     Ok(EvalResult::new(aggregate_decision, aggregate_reason))
@@ -553,12 +566,89 @@ mod tests {
     // -- Parse diagnostics --
 
     #[test]
+    fn parse_error_reason_names_diagnostic_kind_and_location() {
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        // Unterminated single quote — Error severity. Reason should
+        // name the diagnostic and a line position.
+        let result = evaluate_command("echo 'unterminated", &config, &empty_facts()).unwrap();
+        assert_eq!(result.decision, Decision::Ask);
+        let reason = result.reason.as_deref().unwrap_or("");
+        assert!(
+            reason.starts_with("parse error: unterminated single quote at line "),
+            "reason: {reason}"
+        );
+    }
+
+    #[test]
+    fn parse_error_reason_via_authorised_string() {
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        let mut fold = PureFold;
+        let result = evaluate_authorised_string(
+            "echo 'unterminated",
+            Some(&config),
+            &empty_facts(),
+            &mut fold,
+            1,
+            Some("bash"),
+        )
+        .unwrap();
+        assert_eq!(result.decision, Decision::Ask);
+        let reason = result.reason.as_deref().unwrap_or("");
+        assert!(
+            reason.starts_with("parse error: unterminated single quote at line "),
+            "reason: {reason}"
+        );
+    }
+
+    #[test]
+    fn parse_error_reason_describes_first_diagnostic_only() {
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        // Input that produces multiple Error-severity diagnostics from
+        // a single root cause (unterminated `$(` body cascades into an
+        // unterminated `"`).
+        // Both `echo`s are allowed so the rule-side aggregate stays at
+        // `:allow`; the parse-error floor raises it to `:ask` and the
+        // reason is the formatted first diagnostic.
+        let result = evaluate_command(r#"echo "foo $(echo"#, &config, &empty_facts()).unwrap();
+        assert_eq!(result.decision, Decision::Ask);
+        let errors = result
+            .parse_diagnostics
+            .iter()
+            .filter(|d| d.severity == may_i_shell_parser::Severity::Error)
+            .count();
+        assert!(
+            errors >= 2,
+            "expected >= 2 error diagnostics, got {errors}: {:?}",
+            result.parse_diagnostics
+        );
+        let reason = result.reason.as_deref().unwrap_or("");
+        let first = result
+            .parse_diagnostics
+            .iter()
+            .find(|d| d.severity == may_i_shell_parser::Severity::Error)
+            .unwrap();
+        let expected_prefix = format!("parse error: {}", first.message());
+        assert!(
+            reason.starts_with(&expected_prefix),
+            "reason `{reason}` does not start with `{expected_prefix}`"
+        );
+    }
+
+    #[test]
     fn parse_error_floors_allowed_at_ask() {
         let config = config_with_rules(vec![allow_rule("echo")]);
-        // Unterminated double quote — Error severity
+        // Unterminated double quote — Error severity. This is the
+        // exact input from spec scenario "Allowed command with parse
+        // error": pin the reason shape (kind + 1-based line/col).
         let result = evaluate_command(r#"echo "hello; rm -rf /"#, &config, &empty_facts()).unwrap();
         assert_eq!(result.decision, Decision::Ask);
         assert!(!result.parse_diagnostics.is_empty());
+        let reason = result.reason.as_deref().unwrap_or("");
+        assert!(
+            reason.starts_with("parse error: unterminated double quote"),
+            "reason: {reason}"
+        );
+        assert!(reason.contains("line 1, column 6"), "reason: {reason}");
     }
 
     #[test]
@@ -841,6 +931,42 @@ mod tests {
                     "overlapping top-level segments: {:?} and {:?} for input {:?}",
                     pair[0], pair[1], input
                 );
+            }
+        }
+
+        /// The reason field is consumed as a single JSON string value
+        /// in the Claude Code hook surface (`permissionDecisionReason`).
+        /// An embedded newline corrupts that surface; this invariant
+        /// guards every reason-producing path at once.
+        #[test]
+        fn prop_reason_is_single_line(input in arb_input()) {
+            let config = config_with_rules(vec![allow_rule("echo"), deny_rule("rm")]);
+            let result = evaluate_command(&input, &config, &empty_facts()).unwrap();
+            if let Some(reason) = &result.reason {
+                prop_assert!(
+                    !reason.contains('\n'),
+                    "multi-line reason for {input:?}: {reason:?}"
+                );
+            }
+        }
+
+        /// `parse_error_reason` invariants — exercises the floor's
+        /// reason helper directly so the property holds even on inputs
+        /// where the floor wouldn't activate (decision already at Ask
+        /// or above).
+        #[test]
+        fn prop_parse_error_reason_invariants(input in arb_input()) {
+            let parse_result = may_i_shell_parser::parse(&input);
+            let reason = parse_error_reason(&parse_result.diagnostics, &input);
+            prop_assert!(!reason.contains('\n'), "reason: {reason:?}");
+            prop_assert!(reason.starts_with("parse error: "), "reason: {reason:?}");
+            if let Some(first_err) = parse_result
+                .diagnostics
+                .iter()
+                .find(|d| d.severity == may_i_shell_parser::Severity::Error)
+            {
+                let expected = format!("parse error: {}", first_err.format_with_source(&input));
+                prop_assert_eq!(&reason, &expected);
             }
         }
 
