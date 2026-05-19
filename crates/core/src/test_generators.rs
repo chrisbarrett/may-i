@@ -117,6 +117,29 @@ pub fn any_expr(depth: u32) -> BoxedStrategy<Expr<Effect>> {
     }
 }
 
+/// Generate Expr<E> trees restricted to forms that survive Display/parse
+/// roundtrip — Literal, Wildcard, and the boolean combinators. Omits Bind
+/// and Cond, which the parser doesn't reconstruct from textual form.
+pub fn any_simple_expr(depth: u32) -> BoxedStrategy<Expr<Effect>> {
+    let leaf = prop_oneof![
+        "[a-zA-Z0-9_-]{1,20}".prop_map(Expr::Literal),
+        Just(Expr::Wildcard),
+    ];
+
+    if depth == 0 {
+        leaf.boxed()
+    } else {
+        leaf.prop_recursive(depth, 16, 4, move |inner| {
+            prop_oneof![
+                prop::collection::vec(inner.clone(), 1..4).prop_map(Expr::And),
+                prop::collection::vec(inner.clone(), 1..4).prop_map(Expr::Or),
+                inner.clone().prop_map(|e| Expr::Not(Box::new(e))),
+            ]
+        })
+        .boxed()
+    }
+}
+
 /// Generate PositionalArg values.
 pub fn any_positional_arg(depth: u32) -> BoxedStrategy<PositionalArg> {
     (any_quantifier(), any_expr(depth), proptest::bool::ANY)

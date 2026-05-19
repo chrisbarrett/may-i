@@ -1202,22 +1202,11 @@ mod tests {
         }
     }
 
-    fn is_simple_expr(expr: &Expr<may_i_core::Effect>) -> bool {
-        match expr {
-            Expr::Literal(_) | Expr::Wildcard | Expr::Regex(_) => true,
-            Expr::And(es) | Expr::Or(es) => es.iter().all(is_simple_expr),
-            Expr::Not(e) => is_simple_expr(e),
-            Expr::Cond(_) | Expr::Bind { .. } => false,
-            _ => false,
-        }
-    }
-
     proptest::proptest! {
         #![proptest_config(proptest::prelude::ProptestConfig { cases: 256, max_shrink_iters: 50, .. proptest::prelude::ProptestConfig::default() })]
 
         #[test]
-        fn expr_display_parse_roundtrip(expr in may_i_core::test_generators::any_expr(3)) {
-            proptest::prop_assume!(is_simple_expr(&expr));
+        fn expr_display_parse_roundtrip(expr in may_i_core::test_generators::any_simple_expr(3)) {
             let text = format!("{}", expr);
             let (forms, errors) = may_i_sexpr::parse(&text);
             proptest::prop_assert!(errors.is_empty(), "sexpr parse failed: {:?}\ntext: {}", errors, text);

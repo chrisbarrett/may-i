@@ -858,7 +858,12 @@ mod parser_engine_invariants {
     }
 
     proptest! {
-        #![proptest_config(ProptestConfig { cases: 256, max_shrink_iters: 64, .. ProptestConfig::default() })]
+        // `max_global_rejects` is bumped from the 1024 default because
+        // `prop_wordpart_reparse_round_trip` filters on `!pr.has_errors()`
+        // and `arb_with_heredoc()` produces parse-erroring inputs at a
+        // rate that overflows the default ceiling under the heavy sweep
+        // (`PROPTEST_CASES=10000`). Other tests in the block don't reject.
+        #![proptest_config(ProptestConfig { cases: 256, max_shrink_iters: 64, max_global_rejects: 100_000, .. ProptestConfig::default() })]
 
         /// Spec: § Emitted spans lie within input bounds.
         #[test]
