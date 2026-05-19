@@ -1604,6 +1604,9 @@ mod tests {
     use may_i_core::Span;
     use may_i_core::ast::{Config, Spanned};
     use may_i_engine::eval::evaluate_with_fold;
+    use may_i_engine::fold::PureFold;
+    use may_i_engine::test_generators::*;
+    use proptest::prelude::*;
 
     fn dummy_span() -> Span {
         Span::new(0, 0)
@@ -1706,6 +1709,39 @@ mod tests {
             1,
             "only the sole Deny rule should be marked"
         );
+    }
+
+    proptest! {
+        #[test]
+        fn tracing_fold_matches_pure_fold(
+            cfg in any_config(3),
+            (cmd, args, facts) in any_eval_context_data(),
+        ) {
+            let mut pure_fold = PureFold;
+            let pure_result = evaluate_with_fold(
+                cmd.as_str(),
+                &args,
+                &cfg,
+                &facts,
+                &mut pure_fold,
+            ).unwrap();
+            let mut tracing_fold = TracingFold::new();
+            let tracing_result = evaluate_with_fold(
+                cmd.as_str(),
+                &args,
+                &cfg,
+                &facts,
+                &mut tracing_fold,
+            ).unwrap();
+            prop_assert_eq!(
+                pure_result.decision, tracing_result.decision,
+                "TracingFold must produce the same decision as PureFold"
+            );
+            prop_assert_eq!(
+                pure_result.reason, tracing_result.reason,
+                "TracingFold must produce the same reason as PureFold"
+            );
+        }
     }
 
     #[test]

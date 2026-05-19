@@ -115,16 +115,6 @@ impl TraceNode {
         }
     }
 
-    pub fn plain_broken_list(children: Vec<TraceNode>) -> Self {
-        Self {
-            body: Body::List(children),
-            role: Role::Plain,
-            evidence: None,
-            dimmed: false,
-            layout: Layout::AlwaysBreak,
-        }
-    }
-
     pub fn plain_vector(children: Vec<TraceNode>) -> Self {
         Self {
             body: Body::Vector(children),
@@ -218,48 +208,6 @@ impl TraceNode {
         }
     }
 
-    /// Arg-pattern node carrying set-membership evidence (anywhere/forbidden).
-    pub fn arg_set_membership(
-        children: Vec<TraceNode>,
-        token: String,
-        observed: Vec<String>,
-        matched: bool,
-    ) -> Self {
-        Self {
-            body: Body::List(children),
-            role: Role::ArgMatch,
-            evidence: Some(Evidence::SetMembership {
-                token,
-                observed,
-                matched,
-            }),
-            dimmed: false,
-            layout: Layout::Auto,
-        }
-    }
-
-    /// Arg-pattern node carrying an authorise-style captured value.
-    pub fn arg_captured(children: Vec<TraceNode>, source: CaptureSource, value: String) -> Self {
-        Self {
-            body: Body::List(children),
-            role: Role::ArgMatch,
-            evidence: Some(Evidence::CapturedValue { source, value }),
-            dimmed: false,
-            layout: Layout::Auto,
-        }
-    }
-
-    /// Arg-pattern node with no per-token evidence (predicate or wrapper).
-    pub fn arg_plain_list(children: Vec<TraceNode>, matched: bool) -> Self {
-        Self {
-            body: Body::List(children),
-            role: Role::ArgMatch,
-            evidence: Some(Evidence::Match { matched }),
-            dimmed: false,
-            layout: Layout::Auto,
-        }
-    }
-
     /// Per-token atom annotated with set-membership evidence.
     pub fn arg_token_atom(
         label: impl Into<String>,
@@ -280,48 +228,6 @@ impl TraceNode {
         }
     }
 
-    /// Fact query that observed values for its key.
-    pub fn fact_query_values(
-        children: Vec<TraceNode>,
-        expected: String,
-        observed: BTreeSet<String>,
-        matched: bool,
-    ) -> Self {
-        Self {
-            body: Body::List(children),
-            role: Role::FactQuery,
-            evidence: Some(Evidence::FactValues {
-                expected,
-                observed,
-                matched,
-            }),
-            dimmed: false,
-            layout: Layout::Auto,
-        }
-    }
-
-    /// Fact query that failed because the key was absent from context.
-    pub fn fact_query_absent(children: Vec<TraceNode>) -> Self {
-        Self {
-            body: Body::List(children),
-            role: Role::FactQuery,
-            evidence: Some(Evidence::FactAbsent),
-            dimmed: false,
-            layout: Layout::Auto,
-        }
-    }
-
-    /// Fact query with no observed-value details (e.g. presence-only).
-    pub fn fact_query_match(children: Vec<TraceNode>, matched: bool) -> Self {
-        Self {
-            body: Body::List(children),
-            role: Role::FactQuery,
-            evidence: Some(Evidence::Match { matched }),
-            dimmed: false,
-            layout: Layout::Auto,
-        }
-    }
-
     /// Effect-decision (allow / ask / deny) atom carrying its outcome.
     pub fn effect_decision_atom(
         label: impl Into<String>,
@@ -330,21 +236,6 @@ impl TraceNode {
     ) -> Self {
         Self {
             body: Body::Atom(label.into()),
-            role: Role::EffectDecision,
-            evidence: Some(Evidence::Decision { decision, reason }),
-            dimmed: false,
-            layout: Layout::Auto,
-        }
-    }
-
-    /// Effect-decision list (e.g. `(effect :allow "reason")`).
-    pub fn effect_decision_list(
-        children: Vec<TraceNode>,
-        decision: Decision,
-        reason: Option<String>,
-    ) -> Self {
-        Self {
-            body: Body::List(children),
             role: Role::EffectDecision,
             evidence: Some(Evidence::Decision { decision, reason }),
             dimmed: false,
@@ -392,17 +283,6 @@ impl TraceNode {
             } else {
                 Layout::Auto
             },
-        }
-    }
-
-    /// Bind (`#var (authorise)`) match.
-    pub fn bind_match(children: Vec<TraceNode>, key: String, value: Option<String>) -> Self {
-        Self {
-            body: Body::List(children),
-            role: Role::BindMatch { key },
-            evidence: Some(Evidence::Bind { value }),
-            dimmed: false,
-            layout: Layout::Auto,
         }
     }
 
@@ -458,21 +338,6 @@ impl TraceNode {
         }
     }
 
-    /// Replace this node's body's child at `i`. Used by structural-decision
-    /// helpers in the producer (e.g. cond-branch evidence relocation).
-    pub(crate) fn map_child<F>(mut self, i: usize, f: F) -> Self
-    where
-        F: FnOnce(TraceNode) -> TraceNode,
-    {
-        if let Body::List(cs) = &mut self.body
-            && i < cs.len()
-        {
-            let child = std::mem::replace(&mut cs[i], TraceNode::plain_atom(""));
-            cs[i] = f(child);
-        }
-        self
-    }
-
     /// Build a plain `TraceNode` tree from an unannotated `Doc`. List and
     /// Vector docs preserve their bracket style for renderer fidelity.
     pub fn from_doc(doc: Doc<()>) -> Self {
@@ -511,23 +376,6 @@ impl TraceNode {
     pub(crate) fn with_dimmed_self(mut self) -> Self {
         self.dimmed = true;
         self
-    }
-
-    /// Plain list builder that preserves vector-ness from a template node.
-    /// Used by producer-side structural-decision passes to rebuild a node
-    /// without losing the bracket style of the original.
-    pub(crate) fn plain_list_like(template: &TraceNode, children: Vec<TraceNode>) -> Self {
-        if template.is_vector() {
-            Self {
-                body: Body::Vector(children),
-                role: Role::Plain,
-                evidence: None,
-                dimmed: false,
-                layout: Layout::Auto,
-            }
-        } else {
-            Self::plain_list(children)
-        }
     }
 
     /// Mutable access to list children for in-place rewrites by the
@@ -571,12 +419,6 @@ mod tests {
         assert_eq!(n.children()[0].label(), Some("a"));
         assert_eq!(n.children()[1].label(), Some("b"));
         assert_eq!(n.layout(), Layout::Auto);
-    }
-
-    #[test]
-    fn plain_broken_list_uses_always_break_layout() {
-        let n = TraceNode::plain_broken_list(vec![TraceNode::plain_atom("x")]);
-        assert_eq!(n.layout(), Layout::AlwaysBreak);
     }
 
     #[test]
