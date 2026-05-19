@@ -19,7 +19,7 @@ use may_i_core::pattern::Quantifier;
 use may_i_sexpr::{RawError, Sexpr};
 
 /// Parse a top-level `(parser PROGRAM (style STYLE) BODY…)` form.
-pub fn parse_parser_form(sexpr: &Sexpr) -> Result<Parser, RawError> {
+pub(crate) fn parse_parser_form(sexpr: &Sexpr) -> Result<Parser, RawError> {
     let list = sexpr
         .as_list()
         .ok_or_else(|| RawError::new("parser form must be a list", sexpr.span()))?;

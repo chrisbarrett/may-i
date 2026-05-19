@@ -10,37 +10,38 @@ mod colorize;
 mod eval_result;
 mod json;
 mod migrate;
+mod outcome;
 mod render_rule;
 mod transform;
+mod trust_block;
 mod trust_groups;
-
-#[cfg(test)]
-mod test_helpers;
 
 use std::io::Write;
 
 use colored::Colorize;
 use may_i_core::ast::FlagsMode;
-use may_i_core::doc::Doc;
 use may_i_output::{ColAlign, ColContent, ColItem, ColRow, HRuleLabel, Layout};
 use may_i_pp::colorize_atom;
 
 pub use may_i_output::{Terminal, strip_ansi, write_layout};
 
 pub(crate) use self::advisory::render_advisory_stack;
-pub use self::check::{
-    CheckFailureView, render_check_failure, render_check_summary, render_check_verbose_line,
-    render_labelled_separator,
-};
+pub(crate) use self::check::render_labelled_separator;
+pub use self::check::{CheckOutput, CheckResultView};
 pub use self::colorize::colorize_decision_keyword;
-pub use self::eval_result::render_eval_result;
+pub use self::eval_result::EvalOutput;
 pub use self::json::{render_check_results_json, trace_to_json};
-pub use self::migrate::{render_skipped_readonly_advisory, render_wrapper_boundary_advisory};
-pub use self::trust_groups::render_trusted_groups;
+pub(crate) use self::migrate::{
+    render_skipped_readonly_advisory, render_wrapper_boundary_advisory,
+};
+pub use self::outcome::render_eval_outcome;
+pub use self::trust_block::render_trust_block;
+pub use self::trust_groups::TrustListing;
 
 use self::colorize::colorize_right;
 use self::render_rule::render_annotated_rule;
-use crate::annotation::{Ann, TraceEntry};
+use crate::annotation::TraceEntry;
+use crate::trace::TraceNode;
 
 // ── Column geometry (trace-specific) ──────────────────────────────
 
@@ -121,28 +122,40 @@ pub(crate) fn write_trace(
     render_trace(w, entries, command, indent, term);
 }
 
-/// Convert trace entries into a declarative layout tree.
+/// Pass trace entries through unchanged. Structural decisions
+/// (truncation, dimming, distribution) are pre-decided by the trace
+/// producer in `crate::annotation`; renderers consume the producer's
+/// `TraceNode` output via accessors only.
+fn prepare_trace(entries: &[TraceEntry]) -> Vec<TraceEntry> {
+    entries.to_vec()
+}
+
+/// Convert trace entries into a declarative layout tree. Calls
+/// `prepare_trace` to apply the ordered rewrite pipeline once, then walks
+/// the prepared entries via `TraceLayoutBuilder`. No rewrite passes are
+/// invoked outside `prepare_trace` and its private helpers.
 fn trace_to_layout(
     entries: &[TraceEntry],
     command: &str,
     indent: usize,
     term: &Terminal,
 ) -> Layout {
-    let mut builder = TraceLayoutBuilder::new(entries, command, term);
-    for entry in entries {
+    let prepared = prepare_trace(entries);
+    let mut builder = TraceLayoutBuilder::new(&prepared, command, term);
+    for entry in &prepared {
         match entry {
             TraceEntry::SegmentHeader { command, decision } => {
                 builder.on_segment_header(command, *decision);
             }
             TraceEntry::Rule {
-                doc,
+                node,
                 line,
                 pre_migration_doc: _,
                 facts,
                 inner_command,
                 combine_role: _,
             } => {
-                builder.on_rule(doc, *line, facts, inner_command.as_deref());
+                builder.on_rule(node, *line, facts, inner_command.as_deref());
             }
             TraceEntry::EmbeddedCommand { source, decision } => {
                 builder.on_embedded_command(source, *decision);
@@ -228,7 +241,7 @@ impl<'a> TraceLayoutBuilder<'a> {
 
     fn on_rule(
         &mut self,
-        doc: &Doc<Option<Ann>>,
+        node: &TraceNode,
         line: Option<usize>,
         facts: &'a Vec<(String, String)>,
         inner_command: Option<&str>,
@@ -262,7 +275,7 @@ impl<'a> TraceLayoutBuilder<'a> {
         }
         self.last_shown_facts = Some(facts);
         self.current_rows
-            .extend(render_annotated_rule(doc, line, &self.geom));
+            .extend(render_annotated_rule(node, line, &self.geom));
         self.first = false;
     }
 
@@ -392,7 +405,24 @@ pub fn shorten_home(path: &std::path::Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use test_helpers::*;
+
+    fn rule_node(
+        commands: Vec<&str>,
+        decision: Option<(may_i_core::Decision, Option<&str>)>,
+    ) -> TraceNode {
+        let mut children = vec![TraceNode::plain_atom("rule")];
+        for c in commands {
+            children.push(TraceNode::command_atom(c, true));
+        }
+        if let Some((dec, reason)) = decision {
+            children.push(TraceNode::effect_decision_atom(
+                format!(":{dec}"),
+                dec,
+                reason.map(str::to_string),
+            ));
+        }
+        TraceNode::rule(children, Some(1), true)
+    }
 
     #[test]
     fn facts_rows_creates_breakable_row() {
@@ -480,25 +510,9 @@ mod tests {
     #[test]
     fn trace_to_layout_with_rule() {
         let term = Terminal::new(80);
-        let doc = list_ann(
-            Ann::RuleMatch {
-                matched: true,
-                line: Some(3),
-            },
-            vec![
-                atom("rule"),
-                atom_ann("git", Ann::CommandMatch { matched: true }),
-                atom_ann(
-                    ":allow",
-                    Ann::EffectDecision {
-                        decision: may_i_core::Decision::Allow,
-                        reason: Some("ok".into()),
-                    },
-                ),
-            ],
-        );
+        let node = rule_node(vec!["git"], Some((may_i_core::Decision::Allow, Some("ok"))));
         let entries = vec![TraceEntry::Rule {
-            doc,
+            node,
             line: Some(3),
             pre_migration_doc: None,
             facts: vec![(":env".into(), "prod".into())],
@@ -517,16 +531,10 @@ mod tests {
     #[test]
     fn trace_to_layout_with_inner_command() {
         let term = Terminal::new(80);
-        let doc = list_ann(
-            Ann::RuleMatch {
-                matched: true,
-                line: Some(1),
-            },
-            vec![atom("rule"), atom("rm")],
-        );
+        let node = rule_node(vec!["rm"], None);
         let entries = vec![
             TraceEntry::Rule {
-                doc: doc.clone(),
+                node: node.clone(),
                 line: Some(1),
                 pre_migration_doc: None,
                 facts: vec![],
@@ -534,7 +542,7 @@ mod tests {
                 combine_role: None,
             },
             TraceEntry::Rule {
-                doc,
+                node,
                 line: Some(2),
                 pre_migration_doc: None,
                 facts: vec![],
@@ -554,13 +562,7 @@ mod tests {
     fn trace_to_layout_consecutive_rules_get_separator() {
         let term = Terminal::new(80);
         let make_rule = |cmd: &str| TraceEntry::Rule {
-            doc: list_ann(
-                Ann::RuleMatch {
-                    matched: false,
-                    line: None,
-                },
-                vec![atom("rule"), atom(cmd)],
-            ),
+            node: rule_node(vec![cmd], None),
             line: None,
             pre_migration_doc: None,
             facts: vec![],
@@ -579,13 +581,7 @@ mod tests {
         let term = Terminal::new(80);
         let facts = vec![(":env".into(), "prod".into())];
         let make_rule = || TraceEntry::Rule {
-            doc: list_ann(
-                Ann::RuleMatch {
-                    matched: false,
-                    line: None,
-                },
-                vec![atom("rule"), atom("cmd")],
-            ),
+            node: rule_node(vec!["cmd"], None),
             line: None,
             pre_migration_doc: None,
             facts: facts.clone(),
@@ -630,13 +626,7 @@ mod tests {
         flags: FlagsMode,
         rest_binding: Option<&str>,
     ) -> Vec<TraceEntry> {
-        let doc = list_ann(
-            Ann::RuleMatch {
-                matched: true,
-                line: Some(1),
-            },
-            vec![atom("rule"), atom("cmd")],
-        );
+        let node = rule_node(vec!["cmd"], None);
         vec![
             TraceEntry::Parser {
                 command: "cmd".into(),
@@ -646,7 +636,7 @@ mod tests {
                 rest_binding: rest_binding.map(str::to_string),
             },
             TraceEntry::Rule {
-                doc,
+                node,
                 line: Some(1),
                 pre_migration_doc: None,
                 facts: vec![],
@@ -732,13 +722,7 @@ mod tests {
         // When a rule's effect recurses and the inner evaluation also
         // records a parser, the outer command's parser must still be the
         // one rendered under the outer command row.
-        let doc = list_ann(
-            Ann::RuleMatch {
-                matched: true,
-                line: Some(1),
-            },
-            vec![atom("rule"), atom("nix")],
-        );
+        let node = rule_node(vec!["nix"], None);
         let entries = vec![
             TraceEntry::Parser {
                 command: "nix".into(),
@@ -758,7 +742,7 @@ mod tests {
                 reason: "no rule".into(),
             },
             TraceEntry::Rule {
-                doc,
+                node,
                 line: Some(1),
                 pre_migration_doc: None,
                 facts: vec![],

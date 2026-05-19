@@ -82,7 +82,7 @@ pub fn parse_rule(sexpr: &Sexpr) -> Result<Spanned<Rule>, RawError> {
 /// - `(define remote-prod (and (fact? :via/ssh) (fact? [:ssh/host (regex "^prod-")])))`
 /// - `(define safe-cmd (or (positional "status") (positional "log")))`
 #[must_use = "parsed define should be used"]
-pub fn parse_define(sexpr: &Sexpr) -> Result<Define, RawError> {
+pub(crate) fn parse_define(sexpr: &Sexpr) -> Result<Define, RawError> {
     let list = sexpr
         .as_list()
         .ok_or_else(|| RawError::new("define must be a list", sexpr.span()))?;

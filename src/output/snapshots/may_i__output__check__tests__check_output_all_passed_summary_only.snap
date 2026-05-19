@@ -1,0 +1,10 @@
+---
+source: src/output/check.rs
+expression: "render_check_output(&views, false)"
+---
+
+Summary
+
+  ✓ 1 passed, 0 failed
+
+  config: /tmp/test-config.lisp

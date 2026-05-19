@@ -1,11 +1,12 @@
 // Check subcommand — validate config and run checks with trace output.
 
+use std::cell::Cell;
+
 use engine::check::CheckResult;
 use may_i_engine as engine;
 
 use crate::annotation::{TraceEntry, TracingFold};
-use crate::output::{self, CheckFailureView};
-use crate::pipeline::CommandPipeline;
+use crate::pipeline::{CheckOutcomeBody, CommandPipeline, EvalOutcome, InvocationMode};
 
 /// Error indicating one or more checks failed.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
@@ -17,74 +18,32 @@ pub struct TraceExtra {
     pub traces: Vec<TraceEntry>,
 }
 
+/// The exit-1 signal lives outside `pipeline::run`: a failed-check count
+/// drives the process exit code (a clap-driver concern), and `run` itself
+/// returns `Ok(())` after rendering. We capture the count from inside the
+/// closure via this `Cell` so the post-`run` check can promote it to
+/// `CheckFailure`.
 pub fn cmd_check(pipeline: &mut CommandPipeline, verbose: bool) -> miette::Result<()> {
-    pipeline.render_prelude_advisories();
-    // `cmd_check` validates the config as authored, so it does NOT filter
-    // untrusted Loaded rules; it just renders the warning advisory.
-    pipeline.render_trust_warning();
+    let failed_signal = Cell::new(0usize);
 
-    let results = run_checks_with_traces(pipeline.loaded())?;
+    pipeline.run(InvocationMode::Check, "", |ctx| {
+        let results = run_checks_with_traces(ctx.loaded)?;
+        let passed = results.iter().filter(|r| r.passed).count();
+        let failed = results.len() - passed;
+        failed_signal.set(failed);
+        Ok(EvalOutcome::Check(CheckOutcomeBody {
+            results,
+            verbose,
+            passed,
+            failed,
+            display_path: ctx.display_path.clone(),
+        }))
+    })?;
 
-    let passed = results.iter().filter(|r| r.passed).count();
-    let failed = results.len() - passed;
-
-    let config_file = pipeline.config_path().to_path_buf();
-
-    if pipeline.json() {
-        let body = output::render_check_results_json(passed, failed, &results);
-        println!(
-            "{}",
-            serde_json::to_string(&body).expect("response serialization is infallible")
-        );
-    } else {
-        let term = pipeline.terminal();
-        let mut stdout = std::io::stdout();
-        let mut failures = Vec::new();
-
-        for r in &results {
-            if verbose {
-                output::render_check_verbose_line(
-                    &mut stdout,
-                    &r.command,
-                    r.expected,
-                    r.actual,
-                    r.passed,
-                );
-            }
-            if !r.passed {
-                failures.push(r);
-            }
-        }
-
-        for (i, r) in failures.iter().enumerate() {
-            if i > 0 {
-                println!();
-            }
-            println!();
-            let view = CheckFailureView {
-                command: &r.command,
-                expected: r.expected,
-                actual: r.actual,
-                context: &r.context,
-                location: r.extra.location.as_deref(),
-                reason: r.reason.as_deref(),
-                traces: &r.extra.traces,
-            };
-            output::render_check_failure(&mut stdout, term, &view);
-        }
-
-        if !failures.is_empty() {
-            println!();
-            output::render_labelled_separator(&mut stdout, term, "", None);
-        }
-        let display_path = output::shorten_home(&config_file);
-        output::render_check_summary(&mut stdout, term, passed, failed, &display_path);
-    }
-
+    let failed = failed_signal.get();
     if failed > 0 {
         return Err(CheckFailure(failed).into());
     }
-
     Ok(())
 }
 

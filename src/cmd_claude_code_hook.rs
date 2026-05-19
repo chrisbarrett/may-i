@@ -4,11 +4,9 @@ use std::io::Read;
 
 use may_i_core::{ContextFacts, Keyword};
 use may_i_engine as engine;
-use may_i_engine::EvalResult;
 use miette::Context;
 
-use may_i::pipeline::CommandPipeline;
-use may_i::trust::TrustMode;
+use may_i::pipeline::{CommandPipeline, EvalOutcome, InvocationMode};
 
 pub(crate) fn cmd_claude_code_hook(pipeline: &mut CommandPipeline) -> miette::Result<()> {
     let mut input = String::new();
@@ -26,25 +24,12 @@ pub(crate) fn cmd_claude_code_hook(pipeline: &mut CommandPipeline) -> miette::Re
         return Ok(());
     };
 
-    if let Err(block) = pipeline.consult_trust(&command, TrustMode::Hook) {
-        let response = render_response(EvalResult::new(block.decision, Some(block.reason)));
-        println!(
-            "{}",
-            serde_json::to_string(&response).expect("response serialization is infallible")
-        );
-        return Ok(());
-    }
-
     let context = build_context(&payload);
-    let result = engine::eval::evaluate_command(&command, pipeline.config(), &context)
-        .map_err(|e| miette::miette!("{e}"))?;
-
-    let response = render_response(result);
-    println!(
-        "{}",
-        serde_json::to_string(&response).expect("response serialization is infallible")
-    );
-    Ok(())
+    pipeline.run(InvocationMode::Hook, &command, |ctx| {
+        let result = engine::eval::evaluate_command(&command, ctx.config, &context)
+            .map_err(|e| miette::miette!("{e}"))?;
+        Ok(EvalOutcome::Hook(result))
+    })
 }
 
 /// Extract the command from the hook payload.
@@ -105,15 +90,4 @@ fn build_context(payload: &serde_json::Value) -> ContextFacts {
     }
 
     context
-}
-
-/// Render the evaluation result in Claude Code hook response format.
-fn render_response(result: EvalResult) -> serde_json::Value {
-    serde_json::json!({
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": result.decision.to_string(),
-            "permissionDecisionReason": result.reason.unwrap_or_default(),
-        }
-    })
 }

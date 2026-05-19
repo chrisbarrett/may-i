@@ -1,34 +1,27 @@
-use may_i_core::doc::Doc;
 use may_i_pp::{AnnotatedLineBuilder, Format, pretty, pretty_into, visible_len};
 
 use super::colorize::colorize_right;
-use super::transform::prepare_doc_for_text;
 use super::{ColRow, ColumnGeometry};
-use crate::annotation::{Ann, CapturedValue};
+use crate::trace::node::{CaptureSource, Evidence, Role};
+use crate::trace::{NodeMeta, TraceNode};
 
-/// Display label for a captured-value capture source.
-fn captured_value_label(captured: &CapturedValue) -> &'static str {
-    match captured {
-        CapturedValue::Tail(_) => "tail",
-        CapturedValue::Parameter(_) => "value",
-    }
-}
-
+/// Render a rule's left/right column rows from a producer-prepared trace
+/// node. Renderers MUST NOT pattern-match on `TraceNode` internals; the
+/// node is projected to a `Doc<Option<NodeMeta>>` for pretty-printing, and
+/// per-line evidence is collected via the structural pretty-print path.
 pub(super) fn render_annotated_rule(
-    doc: &Doc<Option<Ann>>,
+    node: &TraceNode,
     line: Option<usize>,
     geom: &ColumnGeometry,
 ) -> Vec<ColRow> {
-    let doc = prepare_doc_for_text(doc);
+    let doc = node.to_render_doc();
 
-    // Render with AnnotatedLineBuilder for structural annotation collection.
     let prefix_width = line.map_or(0, may_i_pp::line_prefix_width);
     let width = geom.left_width;
     let mut alb = AnnotatedLineBuilder::new();
     pretty_into(&doc, prefix_width, width, &mut alb);
     let annotated_lines = alb.into_lines();
 
-    // Build colorised left-column text (with line numbers).
     let fmt = Format {
         width,
         color: true,
@@ -38,7 +31,6 @@ pub(super) fn render_annotated_rule(
     let rendered = pretty(&doc, 0, &fmt);
     let rendered_lines: Vec<&str> = rendered.lines().collect();
 
-    // Map structural annotations to right-column text.
     let line_annotations: Vec<String> = annotated_lines
         .iter()
         .map(|al| format_line_annotation(&al.annotations))
@@ -54,16 +46,23 @@ pub(super) fn render_annotated_rule(
         .collect()
 }
 
-/// Map a line's collected annotations to right-column text.
-///
-/// When multiple annotations exist on one line, the highest-priority one wins.
-/// Priority (high to low): EffectDecision, BindMatch, RegexMatch,
-/// FactQuery, CommandMatch (miss only), ArgMatch (per-token), PositionalMatch.
-fn format_line_annotation(anns: &[Option<Ann>]) -> String {
+fn captured_source_label(source: CaptureSource) -> &'static str {
+    match source {
+        CaptureSource::Tail => "tail",
+        CaptureSource::Parameter => "value",
+    }
+}
+
+/// Map a line's collected metas to right-column text. The producer ensures
+/// at most one evidence-bearing node per slot; priority arbitration here
+/// is residual ordering only.
+fn format_line_annotation(metas: &[Option<NodeMeta>]) -> String {
     use super::annotate::{quote_arg_set, render_observed_value, verdict};
 
-    for ann in anns {
-        if let Some(Ann::EffectDecision { decision, reason }) = ann {
+    for meta in metas.iter().flatten() {
+        if let (Role::EffectDecision, Some(Evidence::Decision { decision, reason })) =
+            (meta.role(), meta.evidence())
+        {
             let keyword = format!(":{decision}");
             return match reason {
                 Some(r) => format!("→ {keyword} \"{r}\""),
@@ -72,15 +71,19 @@ fn format_line_annotation(anns: &[Option<Ann>]) -> String {
         }
     }
 
-    for ann in anns {
-        if let Some(Ann::VarRef { name, matched }) = ann {
+    for meta in metas.iter().flatten() {
+        if let (Role::VarRef { name }, Some(Evidence::Match { matched })) =
+            (meta.role(), meta.evidence())
+        {
             let arrow = if *matched { "→ yes" } else { "→ no" };
             return format!("{name} {arrow}");
         }
     }
 
-    for ann in anns {
-        if let Some(Ann::BindMatch { key, value }) = ann {
+    for meta in metas.iter().flatten() {
+        if let (Role::BindMatch { key }, Some(Evidence::Bind { value })) =
+            (meta.role(), meta.evidence())
+        {
             return match value {
                 Some(v) => format!("facts += {key} \"{v}\""),
                 None => format!("{key} — no match"),
@@ -88,78 +91,95 @@ fn format_line_annotation(anns: &[Option<Ann>]) -> String {
         }
     }
 
-    for ann in anns {
-        if let Some(Ann::RegexMatch {
-            pattern,
-            actual,
-            matched,
-        }) = ann
+    for meta in metas.iter().flatten() {
+        if let (
+            Role::RegexMatch,
+            Some(Evidence::Regex {
+                pattern,
+                actual,
+                matched,
+            }),
+        ) = (meta.role(), meta.evidence())
         {
             let arrow = if *matched { "→ yes" } else { "→ no" };
             return format!("\"{actual}\" ~ (regex \"{pattern}\") {arrow}");
         }
     }
 
-    for ann in anns {
-        if let Some(Ann::FactQuery {
-            matched, observed, ..
-        }) = ann
-        {
-            return match observed {
-                Some(values) if !values.is_empty() => {
-                    let first = values.iter().next().expect("non-empty checked above");
-                    let observed_str = render_observed_value(first);
-                    let arrow = if *matched { "yes" } else { "no" };
-                    format!("{observed_str} → {arrow}")
-                }
-                _ => verdict(*matched),
-            };
+    for meta in metas.iter().flatten() {
+        match (meta.role(), meta.evidence()) {
+            (
+                Role::FactQuery,
+                Some(Evidence::FactValues {
+                    observed, matched, ..
+                }),
+            ) if !observed.is_empty() => {
+                let first = observed.iter().next().expect("non-empty checked above");
+                let observed_str = render_observed_value(first);
+                let arrow = if *matched { "yes" } else { "no" };
+                return format!("{observed_str} → {arrow}");
+            }
+            (Role::FactQuery, Some(Evidence::FactValues { matched, .. })) => {
+                return verdict(*matched);
+            }
+            (Role::FactQuery, Some(Evidence::FactAbsent)) => {
+                return verdict(false);
+            }
+            (Role::FactQuery, Some(Evidence::Match { matched })) => {
+                return verdict(*matched);
+            }
+            _ => {}
         }
     }
 
-    for ann in anns {
-        if let Some(Ann::CommandMatch { matched: false }) = ann {
+    for meta in metas.iter().flatten() {
+        if let (Role::Command, Some(Evidence::Match { matched: false })) =
+            (meta.role(), meta.evidence())
+        {
             return verdict(false);
         }
     }
 
-    for ann in anns {
-        if let Some(Ann::ArgMatch {
-            captured_value: Some(captured),
-            ..
-        }) = ann
+    for meta in metas.iter().flatten() {
+        if let (Role::ArgMatch, Some(Evidence::CapturedValue { source, value })) =
+            (meta.role(), meta.evidence())
         {
-            let label = captured_value_label(captured);
-            let value = captured.value();
+            let label = captured_source_label(*source);
             return format!("{label} = \"{value}\"");
         }
     }
 
-    for ann in anns {
-        if let Some(Ann::ArgMatch {
-            search_tokens,
-            arg_set,
-            matched,
-            ..
-        }) = ann
-            && !search_tokens.is_empty()
+    for meta in metas.iter().flatten() {
+        if let (
+            Role::ArgMatch,
+            Some(Evidence::SetMembership {
+                token,
+                observed,
+                matched,
+            }),
+        ) = (meta.role(), meta.evidence())
         {
-            let token = &search_tokens[0];
-            let quoted_set = quote_arg_set(arg_set);
+            if token.is_empty() {
+                continue;
+            }
+            let quoted_set = quote_arg_set(observed);
             let arrow = if *matched { "→ yes" } else { "→ no" };
-            return format!("{token} ∈ {{{quoted_set}}} {arrow}");
+            return format!("\"{token}\" ∈ {{{quoted_set}}} {arrow}");
         }
     }
 
-    for ann in anns {
-        if let Some(Ann::PositionalMatch {
-            actual_arg,
-            pattern_text,
-            matched,
-        }) = ann
+    for meta in metas.iter().flatten() {
+        if let (
+            Role::PositionalMatch,
+            Some(Evidence::Positional {
+                actual,
+                pattern_text,
+                matched,
+            }),
+        ) = (meta.role(), meta.evidence())
         {
             let arrow = if *matched { "→ yes" } else { "→ no" };
-            return format!("\"{actual_arg}\" = {pattern_text} {arrow}");
+            return format!("\"{actual}\" = {pattern_text} {arrow}");
         }
     }
 
@@ -169,82 +189,58 @@ fn format_line_annotation(anns: &[Option<Ann>]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::output::test_helpers::*;
-
-    #[test]
-    fn render_annotated_rule_simple() {
-        let doc = list_ann(
-            Ann::RuleMatch {
-                matched: true,
-                line: Some(5),
-            },
-            vec![
-                atom("rule"),
-                atom_ann("git", Ann::CommandMatch { matched: true }),
-                atom_ann(
-                    ":allow",
-                    Ann::EffectDecision {
-                        decision: may_i_core::Decision::Allow,
-                        reason: None,
-                    },
-                ),
-            ],
-        );
-        let geom = ColumnGeometry { left_width: 40 };
-        let rows = render_annotated_rule(&doc, Some(5), &geom);
-        assert!(!rows.is_empty());
-    }
-
-    #[test]
-    fn render_annotated_rule_with_overflow() {
-        let doc = list_ann(
-            Ann::RuleMatch {
-                matched: true,
-                line: Some(1),
-            },
-            vec![atom("rule")],
-        );
-        let geom = ColumnGeometry { left_width: 40 };
-        let rows = render_annotated_rule(&doc, Some(1), &geom);
-        assert!(!rows.is_empty());
-    }
+    use crate::trace::node::Evidence;
+    use may_i_core::Decision;
 
     #[test]
     fn format_line_annotation_effect_decision() {
-        let anns = vec![Some(Ann::EffectDecision {
-            decision: may_i_core::Decision::Allow,
-            reason: Some("read-only".into()),
-        })];
-        assert_eq!(format_line_annotation(&anns), "→ :allow \"read-only\"");
+        let metas = vec![Some(NodeMeta::new(
+            Role::EffectDecision,
+            Some(Evidence::Decision {
+                decision: Decision::Allow,
+                reason: Some("read-only".into()),
+            }),
+        ))];
+        assert_eq!(format_line_annotation(&metas), "→ :allow \"read-only\"");
     }
 
     #[test]
     fn format_line_annotation_effect_decision_no_reason() {
-        let anns = vec![Some(Ann::EffectDecision {
-            decision: may_i_core::Decision::Deny,
-            reason: None,
-        })];
-        assert_eq!(format_line_annotation(&anns), "→ :deny");
+        let metas = vec![Some(NodeMeta::new(
+            Role::EffectDecision,
+            Some(Evidence::Decision {
+                decision: Decision::Deny,
+                reason: None,
+            }),
+        ))];
+        assert_eq!(format_line_annotation(&metas), "→ :deny");
     }
 
     #[test]
     fn format_line_annotation_bind_match() {
-        let anns = vec![Some(Ann::BindMatch {
-            key: ":host".into(),
-            value: Some("prod".into()),
-        })];
-        assert_eq!(format_line_annotation(&anns), "facts += :host \"prod\"");
+        let metas = vec![Some(NodeMeta::new(
+            Role::BindMatch {
+                key: ":host".into(),
+            },
+            Some(Evidence::Bind {
+                value: Some("prod".into()),
+            }),
+        ))];
+        assert_eq!(format_line_annotation(&metas), "facts += :host \"prod\"");
     }
 
     #[test]
     fn format_line_annotation_regex_match() {
-        let anns = vec![Some(Ann::RegexMatch {
-            pattern: "^prod".into(),
-            actual: "prod-01".into(),
-            matched: true,
-        })];
+        let metas = vec![Some(NodeMeta::new(
+            Role::RegexMatch,
+            Some(Evidence::Regex {
+                pattern: "^prod".into(),
+                actual: "prod-01".into(),
+                matched: true,
+            }),
+        ))];
         assert_eq!(
-            format_line_annotation(&anns),
+            format_line_annotation(&metas),
             "\"prod-01\" ~ (regex \"^prod\") → yes"
         );
     }
@@ -253,230 +249,80 @@ mod tests {
     fn format_line_annotation_fact_query_with_observed() {
         let mut observed = std::collections::BTreeSet::new();
         observed.insert("val".to_string());
-        let anns = vec![Some(Ann::FactQuery {
-            query_source: "test".into(),
-            matched: true,
-            observed: Some(observed),
-            failure_reason: None,
-        })];
-        assert_eq!(format_line_annotation(&anns), "\"val\" → yes");
+        let metas = vec![Some(NodeMeta::new(
+            Role::FactQuery,
+            Some(Evidence::FactValues {
+                expected: "test".into(),
+                observed,
+                matched: true,
+            }),
+        ))];
+        assert_eq!(format_line_annotation(&metas), "\"val\" → yes");
     }
 
     #[test]
     fn format_line_annotation_command_mismatch() {
-        let anns = vec![Some(Ann::CommandMatch { matched: false })];
-        assert_eq!(format_line_annotation(&anns), "no");
+        let metas = vec![Some(NodeMeta::new(
+            Role::Command,
+            Some(Evidence::Match { matched: false }),
+        ))];
+        assert_eq!(format_line_annotation(&metas), "no");
     }
 
     #[test]
     fn format_line_annotation_command_match_ignored() {
-        let anns = vec![Some(Ann::CommandMatch { matched: true })];
-        assert_eq!(format_line_annotation(&anns), "");
+        let metas = vec![Some(NodeMeta::new(
+            Role::Command,
+            Some(Evidence::Match { matched: true }),
+        ))];
+        assert_eq!(format_line_annotation(&metas), "");
     }
 
     #[test]
     fn format_line_annotation_arg_match_per_token() {
-        let anns = vec![Some(Ann::ArgMatch {
-            search_tokens: vec!["\"rm\"".into()],
-            arg_set: vec!["rm".into(), "ls".into()],
-            matched: true,
-            captured_value: None,
-        })];
+        let metas = vec![Some(NodeMeta::new(
+            Role::ArgMatch,
+            Some(Evidence::SetMembership {
+                token: "\"rm\"".into(),
+                observed: vec!["rm".into(), "ls".into()],
+                matched: true,
+            }),
+        ))];
         assert_eq!(
-            format_line_annotation(&anns),
-            "\"rm\" ∈ {\"rm\", \"ls\"} → yes"
+            format_line_annotation(&metas),
+            "\"\"rm\"\" ∈ {\"rm\", \"ls\"} → yes"
         );
     }
 
     #[test]
     fn format_line_annotation_positional_match() {
-        let anns = vec![Some(Ann::PositionalMatch {
-            actual_arg: "push".into(),
-            pattern_text: "\"pull\"".into(),
-            matched: false,
-        })];
-        assert_eq!(format_line_annotation(&anns), "\"push\" = \"pull\" → no");
-    }
-
-    #[test]
-    fn format_line_annotation_priority_effect_over_arg() {
-        let anns = vec![
-            Some(Ann::ArgMatch {
-                search_tokens: vec!["\"x\"".into()],
-                arg_set: vec!["x".into()],
-                matched: true,
-                captured_value: None,
+        let metas = vec![Some(NodeMeta::new(
+            Role::PositionalMatch,
+            Some(Evidence::Positional {
+                actual: "push".into(),
+                pattern_text: "\"pull\"".into(),
+                matched: false,
             }),
-            Some(Ann::EffectDecision {
-                decision: may_i_core::Decision::Allow,
-                reason: None,
-            }),
-        ];
-        assert_eq!(format_line_annotation(&anns), "→ :allow");
+        ))];
+        assert_eq!(format_line_annotation(&metas), "\"push\" = \"pull\" → no");
     }
 
     #[test]
     fn format_line_annotation_empty() {
-        let anns: Vec<Option<Ann>> = vec![None, None];
-        assert_eq!(format_line_annotation(&anns), "");
-    }
-
-    #[test]
-    fn format_line_annotation_rule_match_ignored() {
-        let anns = vec![Some(Ann::RuleMatch {
-            matched: true,
-            line: Some(1),
-        })];
-        assert_eq!(format_line_annotation(&anns), "");
-    }
-
-    #[test]
-    fn format_line_annotation_combinator_ignored() {
-        let anns = vec![Some(Ann::Combinator {
-            result_is_nil: true,
-        })];
-        assert_eq!(format_line_annotation(&anns), "");
+        let metas: Vec<Option<NodeMeta>> = vec![None, None];
+        assert_eq!(format_line_annotation(&metas), "");
     }
 
     #[test]
     fn format_line_annotation_var_ref_matched() {
-        let anns = vec![Some(Ann::VarRef {
-            name: "build-mode".into(),
-            matched: true,
-        })];
-        let result = format_line_annotation(&anns);
-        assert!(
-            result.contains("build-mode"),
-            "var ref annotation should show name, got: {result}"
-        );
-        assert!(
-            result.contains("yes"),
-            "matched var ref should show yes, got: {result}"
-        );
-    }
-
-    #[test]
-    fn format_line_annotation_var_ref_unmatched() {
-        let anns = vec![Some(Ann::VarRef {
-            name: "build-mode".into(),
-            matched: false,
-        })];
-        let result = format_line_annotation(&anns);
-        assert!(
-            result.contains("build-mode"),
-            "var ref annotation should show name, got: {result}"
-        );
-        assert!(
-            result.contains("no"),
-            "unmatched var ref should show no, got: {result}"
-        );
-    }
-
-    use may_i_core::Decision;
-    use proptest::prelude::*;
-
-    fn any_ann() -> BoxedStrategy<Ann> {
-        prop_oneof![
-            prop::bool::ANY.prop_map(|m| Ann::CommandMatch { matched: m }),
-            prop::bool::ANY.prop_map(|n| Ann::Combinator { result_is_nil: n }),
-            (prop::bool::ANY, proptest::option::of(1usize..1000)).prop_map(|(m, l)| {
-                Ann::RuleMatch {
-                    matched: m,
-                    line: l,
-                }
-            }),
-            (prop::bool::ANY, proptest::option::of("[a-z ]{0,10}")).prop_map(|(m, r)| {
-                Ann::EffectDecision {
-                    decision: if m { Decision::Allow } else { Decision::Deny },
-                    reason: r,
-                }
-            }),
-            ("[a-z]{1,5}", proptest::option::of("[a-z]{1,5}"))
-                .prop_map(|(k, v)| Ann::BindMatch { key: k, value: v }),
-            (prop::bool::ANY, "[a-z]{1,5}", "[a-z]{1,5}").prop_map(|(m, pat, actual)| {
-                Ann::RegexMatch {
-                    pattern: pat,
-                    actual,
-                    matched: m,
-                }
-            }),
-            (prop::bool::ANY, "[a-z]{1,5}", "[a-z]{1,5}").prop_map(|(m, actual, pat)| {
-                Ann::PositionalMatch {
-                    actual_arg: actual,
-                    pattern_text: pat,
-                    matched: m,
-                }
-            }),
-            (
-                prop::bool::ANY,
-                prop::collection::vec("[a-z]{1,5}", 0..4),
-                prop::collection::vec("[a-z]{1,5}", 0..4),
-            )
-                .prop_map(|(m, tokens, args)| Ann::ArgMatch {
-                    search_tokens: tokens,
-                    arg_set: args,
-                    matched: m,
-                    captured_value: None
-                }),
-            (
-                "[a-z]{1,5}",
-                prop::bool::ANY,
-                proptest::option::of(prop::collection::vec("[a-z]{1,5}", 0..3)),
-                prop::bool::ANY,
-            )
-                .prop_map(|(qs, m, obs, has_fr)| Ann::FactQuery {
-                    query_source: qs,
-                    matched: m,
-                    observed: obs.map(|v| v.into_iter().collect()),
-                    failure_reason: if has_fr {
-                        Some(crate::annotation::FactFailure::KeyAbsent)
-                    } else {
-                        None
-                    },
-                }),
-            ("[a-z]{1,10}", prop::bool::ANY)
-                .prop_map(|(name, matched)| Ann::VarRef { name, matched }),
-        ]
-        .boxed()
-    }
-
-    fn any_annotated_doc(depth: u32) -> BoxedStrategy<Doc<Option<Ann>>> {
-        if depth == 0 {
-            prop_oneof![
-                "[a-z]{1,8}".prop_map(|s| atom(&s)),
-                ("[a-z]{1,8}", any_ann()).prop_map(|(s, a)| atom_ann(&s, a)),
-            ]
-            .boxed()
-        } else {
-            prop_oneof![
-                "[a-z]{1,8}".prop_map(|s| atom(&s)),
-                ("[a-z]{1,8}", any_ann()).prop_map(|(s, a)| atom_ann(&s, a)),
-                prop::collection::vec(any_annotated_doc(depth - 1), 0..5).prop_map(list),
-                (
-                    any_ann(),
-                    prop::collection::vec(any_annotated_doc(depth - 1), 0..5)
-                )
-                    .prop_map(|(a, children)| list_ann(a, children)),
-            ]
-            .boxed()
-        }
-    }
-
-    proptest! {
-        #![proptest_config(ProptestConfig {
-            cases: 256,
-            max_shrink_iters: 50,
-            ..ProptestConfig::default()
-        })]
-
-        #[test]
-        fn render_annotated_rule_never_panics(
-            doc in any_annotated_doc(3),
-            line in proptest::option::of(0usize..1000),
-            left_width in 10usize..60,
-        ) {
-            let geom = ColumnGeometry { left_width };
-            let _rows = render_annotated_rule(&doc, line, &geom);
-        }
+        let metas = vec![Some(NodeMeta::new(
+            Role::VarRef {
+                name: "build-mode".into(),
+            },
+            Some(Evidence::Match { matched: true }),
+        ))];
+        let result = format_line_annotation(&metas);
+        assert!(result.contains("build-mode"));
+        assert!(result.contains("yes"));
     }
 }

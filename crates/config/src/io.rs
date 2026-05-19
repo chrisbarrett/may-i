@@ -46,7 +46,7 @@ pub fn load(path: &Path) -> miette::Result<LoadResult> {
     if parse_errors.is_empty() {
         // Expand loads, then parse config with provenance tagging.
         let expanded = expand_loads(forms, base_dir, &mut seen, Provenance::PrimaryConfig)?;
-        match crate::parse_config_from_tagged_sexprs(&expanded) {
+        match crate::config::parse_config_from_tagged_sexprs(&expanded) {
             Ok(config) => {
                 return Ok(LoadResult {
                     config,
@@ -109,7 +109,7 @@ fn try_migrate_and_parse(
     let sexprs: Vec<_> = migrated.iter().map(|n| n.to_sexpr()).collect();
 
     let expanded = expand_loads(sexprs, base_dir, seen, Provenance::PrimaryConfig).ok()?;
-    let config = crate::parse_config_from_tagged_sexprs(&expanded).ok()?;
+    let config = crate::config::parse_config_from_tagged_sexprs(&expanded).ok()?;
     Some(LoadResult {
         config,
         source_text: Some(content.to_string()),
@@ -380,7 +380,7 @@ pub fn load_and_resolve(override_path: Option<&Path>) -> miette::Result<LoadResu
 
 /// Like [`load_and_resolve`] but uses an explicit `cwd` for repo-local
 /// discovery instead of `std::env::current_dir()`. Test entry point.
-pub fn load_and_resolve_with_cwd(
+pub(crate) fn load_and_resolve_with_cwd(
     override_path: Option<&Path>,
     cwd: &Path,
 ) -> miette::Result<LoadResult> {
@@ -445,7 +445,7 @@ fn splice_repo_local(result: &mut LoadResult, cwd: &Path) -> miette::Result<()> 
                 path: canonical.clone(),
             },
         )?;
-        let extra = crate::parse_config_from_tagged_sexprs(&expanded).map_err(|e| {
+        let extra = crate::config::parse_config_from_tagged_sexprs(&expanded).map_err(|e| {
             miette::miette!(
                 "failed to parse repo-local file {}: {}",
                 canonical.display(),
@@ -492,7 +492,7 @@ fn merge_config(target: &mut may_i_core::ast::Config, extra: may_i_core::ast::Co
 /// Tries `git rev-parse --show-toplevel` first (handles linked
 /// worktrees correctly). On failure walks ancestors of `cwd` looking
 /// for a `.git`, `.hg`, or `.jj` marker.
-pub fn discover_repo_root(cwd: &Path) -> Option<PathBuf> {
+pub(crate) fn discover_repo_root(cwd: &Path) -> Option<PathBuf> {
     if let Some(root) = git_show_toplevel(cwd) {
         return Some(root);
     }
@@ -556,7 +556,7 @@ fn marker_walk(cwd: &Path) -> Option<PathBuf> {
 
 /// List the project-scoped config files at `repo_root` that exist on
 /// disk, in the documented discovery order. Missing files are skipped.
-pub fn discover_repo_local_files(repo_root: &Path) -> Vec<PathBuf> {
+pub(crate) fn discover_repo_local_files(repo_root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let direct = repo_root.join(".may-i.lisp");
     if direct.is_file() {

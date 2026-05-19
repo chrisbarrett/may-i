@@ -7,7 +7,7 @@ use colored::Colorize;
 use may_i_config as config;
 
 use crate::interactive;
-use crate::output;
+use crate::output::{self, TrustListing};
 use crate::trust::store::{TrustStore, default_trust_store_path};
 use crate::trust::view::{TrustCatalog, TrustState, TrustView, build_catalog};
 
@@ -206,7 +206,11 @@ fn print_trusted_summary(catalog: &TrustCatalog) {
 
     let grouped = group_by_file(&trusted);
     let term = output::Terminal::detect();
-    output::render_trusted_groups(&mut w, &term, &grouped);
+    TrustListing {
+        heading: None,
+        groups: &grouped,
+    }
+    .render(&mut w, &term);
 }
 
 /// Per-rule JSON output.
@@ -284,12 +288,13 @@ fn list_status_human(catalog: &TrustCatalog) {
 
     // Show fully-approved programs grouped by file.
     if !all_approved_programs.is_empty() {
-        if has_pending {
-            let _ = writeln!(w, "  {}", "Trusted:".dimmed());
-        }
         let grouped = group_by_file(&all_approved_programs);
         let term = output::Terminal::detect();
-        output::render_trusted_groups(&mut w, &term, &grouped);
+        TrustListing {
+            heading: has_pending.then_some("Trusted:"),
+            groups: &grouped,
+        }
+        .render(&mut w, &term);
 
         if !has_pending {
             let _ = writeln!(w);

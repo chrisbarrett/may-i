@@ -11,7 +11,8 @@ Workspace grep across `src/`, `crates/` (excluding `crates/config/`), and `tests
 | Export                  | External callers                                                                                 |
 | ----------------------- | ------------------------------------------------------------------------------------------------ |
 | `parse_rule`            | `src/trust/rehash.rs`                                                                            |
-| `parse_config*`         | tests + `crates/engine/src/trust.rs` + `src/output/mod.rs`                                       |
+| `parse_config`, `parse_config_from_sexprs` | tests + `crates/engine/src/trust.rs` + `src/output/mod.rs` + `src/cmd_fmt.rs`         |
+| `parse_config_from_tagged_sexprs` | none                                                                                       |
 | `parse_define`          | none                                                                                             |
 | `parse_parser_form`     | none                                                                                             |
 | `parse_style_definition`| none                                                                                             |
@@ -21,7 +22,9 @@ Workspace grep across `src/`, `crates/` (excluding `crates/config/`), and `tests
 | `canonicalise_node`     | none                                                                                             |
 | `LoadResult`            | `src/{pipeline,annotation,cmd_eval,cmd_check}.rs`, `src/trust/mod.rs`, `tests/`                  |
 | `ConfigError`           | `src/cmd_migrate.rs`                                                                             |
-| `load*`, `walk_load_graph`, `discover_repo_*`, `resolve_path` | `src/{cmd_fmt,cmd_migrate}.rs` and integration tests             |
+| `load`, `load_and_resolve`, `walk_load_graph`, `resolve_path` | `src/{cmd_fmt,cmd_migrate,cmd_trust,pipeline}.rs` and integration tests |
+| `load_and_resolve_with_cwd` | none (test seam, only used by in-crate tests)                                                |
+| `discover_repo_root`, `discover_repo_local_files` | none (called only by `splice_repo_local` inside the crate)                         |
 
 ## Goals / Non-Goals
 
@@ -33,7 +36,7 @@ Workspace grep across `src/`, `crates/` (excluding `crates/config/`), and `tests
 **Non-Goals:**
 - Restructuring the parsers themselves. This is a visibility-only change.
 - Touching `parse_rule` — there is a legitimate external caller (`src/trust/rehash.rs` re-parses single rules during rehash).
-- Folding `parse_config_from_sexprs` and `parse_config_from_tagged_sexprs` into one entry point. They cover distinct provenance flows; consolidation is a separate refactor.
+- Folding `parse_config_from_sexprs` and `parse_config_from_tagged_sexprs` into one entry point. They cover distinct provenance flows; consolidation is a separate refactor. (`parse_config_from_tagged_sexprs` becomes `pub(crate)` since only `io.rs` calls it; the public seam is `parse_config` and `parse_config_from_sexprs`.)
 - Replacing the `parse_*` shape with a builder/typed-form API. Useful future direction but not in scope for the visibility narrowing.
 
 ## Decisions
@@ -42,9 +45,9 @@ Workspace grep across `src/`, `crates/` (excluding `crates/config/`), and `tests
 
 Each unused export gets `pub use` → `pub(crate) use` (or the underlying `pub fn` → `pub(crate) fn`). Alternative: delete `parse_rule_body` entirely, since it merely wraps `parse_effect`. Rejected because the wrapper is small and the narrowed-seam framing in its doc comment is still load-bearing for contributors browsing the crate.
 
-### Keep the loader/discovery surface public
+### Narrow the loader/discovery surface to `load_and_resolve`
 
-`discover_repo_root` and friends have callers in `cmd_fmt` and `cmd_migrate`. A future refactor could route them through `load_and_resolve` so they become internal, but the layering doesn't fit today — `cmd_fmt` needs the discovery output *without* loading or resolving. Keeping them public is the honest call.
+`load`, `load_and_resolve`, `resolve_path`, and `walk_load_graph` have external callers and stay public. `discover_repo_root`, `discover_repo_local_files`, and `load_and_resolve_with_cwd` do not — they are crate-internal plumbing reached only via `load_and_resolve`. An earlier draft kept them public on the theory that `cmd_fmt` might want discovery without loading; the actual `cmd_fmt` code uses `resolve_path` + `walk_load_graph` directly and never calls discovery. Demote.
 
 ### Anchor in `code-quality`
 

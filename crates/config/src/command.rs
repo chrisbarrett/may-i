@@ -17,7 +17,7 @@ pub(crate) fn parse_command_pattern_from_atom(atom: &str) -> Result<CommandPatte
 /// - `(or "git" "gh")` - matches any of the listed commands
 /// - `(regex "^git.*$")` - regex match
 #[must_use = "parsed command pattern should be used"]
-pub fn parse_command_pattern(sexpr: &Sexpr) -> Result<CommandPattern, RawError> {
+pub(crate) fn parse_command_pattern(sexpr: &Sexpr) -> Result<CommandPattern, RawError> {
     match sexpr {
         Sexpr::String(s, _) | Sexpr::Symbol(s, _) | Sexpr::Keyword(s, _) => {
             // Literal command name
@@ -69,7 +69,7 @@ pub fn parse_command_pattern(sexpr: &Sexpr) -> Result<CommandPattern, RawError> 
 
 #[cfg(test)]
 mod tests {
-    use crate::*;
+    use super::*;
     use may_i_core::pattern::CommandPattern;
     use may_i_sexpr::RawError;
 

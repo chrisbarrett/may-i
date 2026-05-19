@@ -34,7 +34,7 @@ pub fn canonicalise_forms(forms: Vec<Box<CstNode>>) -> Vec<Box<CstNode>> {
 /// from `ShapeF<Box<CstNode>>`'s children — accepting `Box` directly avoids
 /// an unbox/rebox at every call site.
 #[allow(clippy::boxed_local)]
-pub fn canonicalise_node(node: Box<CstNode>) -> Box<CstNode> {
+pub(crate) fn canonicalise_node(node: Box<CstNode>) -> Box<CstNode> {
     let CstNode { ann, shape } = *node;
     let new_shape = match shape {
         ShapeF::List(children) => {

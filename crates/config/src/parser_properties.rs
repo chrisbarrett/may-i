@@ -123,12 +123,12 @@ mod tests {
         #[test]
         fn parse_command_pattern_never_panics_on_generated(cst in any_command_pattern_cst()) {
             let sexpr = cst.to_sexpr();
-            let _ = crate::parse_command_pattern(&sexpr);
+            let _ = crate::command::parse_command_pattern(&sexpr);
         }
 
         #[test]
         fn parse_command_pattern_never_panics_on_arbitrary(sexpr in any_sexpr(3)) {
-            let _ = crate::parse_command_pattern(&sexpr);
+            let _ = crate::command::parse_command_pattern(&sexpr);
         }
 
         #[test]
