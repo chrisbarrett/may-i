@@ -10,4 +10,5 @@ pub mod output;
 pub mod pipeline;
 pub mod runtime_facts;
 pub mod shell_parse_error;
+pub mod trace;
 pub mod trust;

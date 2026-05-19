@@ -1,15 +1,15 @@
 ## 1. Define TraceNode and the new renderer interface
 
-- [ ] 1.1 Sketch `TraceNode`, `Role`, and `Evidence` in a new
+- [x] 1.1 Sketch `TraceNode`, `Role`, and `Evidence` in a new
   module (`src/trace/node.rs` or top of `src/annotation.rs`).
   Fields private; accessors for `label()`, `role()`,
   `evidence()`, `children()`, `dimmed()`.
-- [ ] 1.2 Enumerate `Role` variants from a sweep of the
+- [x] 1.2 Enumerate `Role` variants from a sweep of the
   existing `Ann::` matches across `src/output/transform.rs`,
   `src/output/render_rule.rs`, `src/output/json.rs`,
   `src/output/mod.rs`. Confirm coverage maps 1-to-1 onto
   current annotation kinds.
-- [ ] 1.3 Enumerate `Evidence` variants — at minimum
+- [x] 1.3 Enumerate `Evidence` variants — at minimum
   `Scalar`, `SetMembership`, `CapturedValue`,
   `FactAbsent`, `Presence`, `PatternBased`. Each carries
   the structural data the existing `Ann::` variant
@@ -17,7 +17,7 @@
 - [ ] 1.4 Write smart constructors on the producer side
   (`TraceNode::arg_match(…)`, `::fact_query(…)`, …) that
   admit only valid `(Role, Evidence)` combinations.
-- [ ] 1.5 Confirm `TraceNode` carries no `ArgPattern`,
+- [x] 1.5 Confirm `TraceNode` carries no `ArgPattern`,
   `Predicate`, `Expr`, `MatchMode`, `Quantifier` field
   exposed publicly (`pub(super)` at most for producer
   helpers).
