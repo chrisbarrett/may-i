@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc b3e235fba0a7c6922281c1307f164777d1f9e49d01435b832c5872234a2442dc # shrinks to input = "\"\">(<(\"\")"
+cc d165846c212133f6a080b6940da0857ceb7a9b8bbd0635e3194c8c222f12d519

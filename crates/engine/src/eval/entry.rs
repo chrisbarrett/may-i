@@ -518,13 +518,13 @@ impl<'a> Evaluator<'a> {
             return Ok(EvalResult::new(strictest, reason));
         }
 
+        let display_command = super::command::escape_for_reason(ctx.command);
         let reason = if any_command_matched {
             format!(
-                "Rules for `{}` exist but context or arguments did not match any patterns",
-                ctx.command
+                "Rules for `{display_command}` exist but context or arguments did not match any patterns"
             )
         } else {
-            format!("No rule for command `{}`", ctx.command)
+            format!("No rule for command `{display_command}`")
         };
         let _out = fold.default_ask(&reason);
         Ok(EvalResult::new(Decision::Ask, Some(reason)))

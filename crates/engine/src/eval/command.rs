@@ -9,6 +9,25 @@ use super::context::DEFAULT_RECURSION_LIMIT;
 use super::decompose::{EmbeddedKind, EvalUnit, decompose};
 use super::entry::{evaluate_at_depth, evaluate_with_fold};
 
+/// Escape control characters (e.g. newlines from `$'\n'` ANSI-C
+/// quoting) when interpolating a parsed command name into a reason
+/// string. The reason is consumed as a single JSON value by the
+/// Claude Code hook surface, so embedded newlines corrupt it.
+pub(super) fn escape_for_reason(s: &str) -> String {
+    if !s.chars().any(|c| c.is_control()) {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if c.is_control() {
+            out.extend(c.escape_default());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// Wrap an embedded-substitution's bubbled reason with an origin clause
 /// naming the outer command (when known) and the substitution form.
 ///
@@ -25,10 +44,10 @@ fn annotate_embedded_reason(
     }
     let suffix = match (kind, outer) {
         (Some(EmbeddedKind::Backtick), Some(name)) => {
-            format!(" (backtick substitution in `{name}`)")
+            format!(" (backtick substitution in `{}`)", escape_for_reason(name))
         }
         (Some(EmbeddedKind::Dollar), Some(name)) => {
-            format!(" ($(...) substitution in `{name}`)")
+            format!(" ($(...) substitution in `{}`)", escape_for_reason(name))
         }
         _ => " (embedded substitution)".to_string(),
     };
@@ -665,6 +684,23 @@ mod tests {
         )
         .unwrap();
         assert_eq!(result.decision, Decision::Deny);
+    }
+
+    // -- Control characters in command names --
+
+    /// `$'\n'` ANSI-C quoting (and unterminated forms like `$'\n`) can
+    /// yield a parsed command name containing a literal newline. The
+    /// reason field is consumed as a single JSON string by the Claude
+    /// Code hook surface; control chars must be escaped.
+    #[test]
+    fn control_chars_in_command_name_are_escaped_in_reason() {
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        let result = evaluate_command("$'\\n", &config, &empty_facts()).unwrap();
+        let reason = result.reason.as_deref().unwrap_or("");
+        assert!(
+            !reason.contains('\n'),
+            "reason must not contain literal newline: {reason:?}"
+        );
     }
 
     // -- POSIX line continuation regression (2026-05-18 incident) --
