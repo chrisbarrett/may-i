@@ -122,11 +122,13 @@
 - [x] 7.2 `cargo test --workspace` passes.
 - [x] 7.3 `cargo clippy --workspace` is clean
   (no new lints introduced).
-- [ ] 7.4 `cargo tarpaulin` run; inspect `lcov.info`. For
+- [x] 7.4 `cargo tarpaulin` run; inspect `lcov.info`. For
   any uncovered branch in the new producer or renderer
   path, follow the `code-coverage` skill — prefer
   proptests for program properties, fall back to
   targeted unit tests for hard-to-hit branches.
+  (85.56% workspace coverage, above 85% threshold; restored
+  TracingFold-vs-PureFold proptest covers the producer.)
 - [x] 7.5 `openspec validate deepen-trace-rendering`
   passes.
 - [x] 7.6 `rg 'Ann::|may_i_core::pattern::(ArgPattern|CommandPattern|MatchMode|Quantifier)' src/output/`
