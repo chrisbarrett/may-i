@@ -1,31 +1,30 @@
 // Trust — owns the per-invocation Trust concern:
 // store loading, untrusted-rule filtering, integrity/warning advisories,
-// and the block decision for each `TrustMode`.
+// and the block decision for each `TrustMode`. All orchestration lives
+// behind `InvocationTrust` (see `invocation`); this module re-exports the
+// data carriers and submodules.
 //
-// The pipeline (`crate::pipeline::CommandPipeline`) is the sole entry point
-// for evaluation subcommands. `cmd_trust` is the carve-out and may call
-// `TrustStore` directly for its administrative operations.
+// The pipeline (`crate::pipeline::CommandPipeline`) reaches Trust only via
+// the methods on its `InvocationTrust` field. `cmd_trust` is the carve-out
+// and may call `TrustStore` directly for its administrative operations.
 
 pub mod advisory;
 pub mod gate;
+pub mod invocation;
 pub mod rehash;
 pub mod review;
 pub mod store;
 pub mod view;
 
+pub use invocation::{InvocationTrust, StoreLoader};
 pub use rehash::rehash_after_migration;
 pub use view::{TrustCatalog, TrustState, TrustView};
 
-use std::io::Write;
 use std::path::PathBuf;
 
-use colored::Colorize;
-use may_i_config::LoadResult;
 use may_i_core::Decision;
-use may_i_output::{Advisory, Layout, NoteHeading, NoteLevel};
 
-use crate::output::{self, Terminal};
-use crate::trust::store::{SuspectEntry, TrustStore, default_trust_store_path};
+use crate::trust::store::{SuspectEntry, TrustStore};
 
 /// Mode driving how the gate produces its outcome for one invocation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,142 +58,12 @@ pub struct TrustBlock {
 
 /// Snapshot of the trust store as loaded for this invocation. Carries the
 /// store, any integrity-suspect entries, the `was_corrupt` flag, and the
-/// store path for advisory rendering. The pipeline joins this with the
-/// loaded config to produce a [`TrustCatalogState`].
+/// store path for advisory rendering. `InvocationTrust` joins this with the
+/// loaded config when it first builds its catalog. Public only as the
+/// loader-seam boundary ([`StoreLoader`]).
 pub struct TrustStoreState {
     pub store: TrustStore,
     pub suspects: Vec<SuspectEntry>,
     pub was_corrupt: bool,
     pub store_path: PathBuf,
-}
-
-/// Per-invocation join of trust-store state with the loaded config's per-rule
-/// metadata. The pipeline builds one of these once and reuses it for
-/// filtering, advisory rendering, and block decisions.
-pub struct TrustCatalogState {
-    pub catalog: TrustCatalog,
-    pub suspects: Vec<SuspectEntry>,
-    pub was_corrupt: bool,
-    pub store_path: PathBuf,
-}
-
-/// Production trust-store loader. Returns `None` when the store path cannot
-/// be determined; IO failures collapse into a state with `was_corrupt: true`
-/// and an empty store so callers can render the integrity advisory.
-pub fn default_store_loader() -> Option<TrustStoreState> {
-    let store_path = default_trust_store_path()?;
-    let state = match TrustStore::load(&store_path) {
-        Ok(load_result) => TrustStoreState {
-            store: load_result.store,
-            suspects: load_result.suspects,
-            was_corrupt: load_result.was_corrupt,
-            store_path,
-        },
-        Err(_) => TrustStoreState {
-            store: TrustStore::default(),
-            suspects: Vec::new(),
-            was_corrupt: true,
-            store_path,
-        },
-    };
-    Some(state)
-}
-
-/// Render the migration note advisory if the loaded config came from a
-/// transparent migration.
-pub(crate) fn migration_note(loaded: &LoadResult) -> Option<Layout> {
-    loaded.pre_migration_forms.as_ref()?;
-    let prog = std::env::args()
-        .next()
-        .map(|s| {
-            std::path::Path::new(&s)
-                .file_name()
-                .map(|f| f.to_string_lossy().into_owned())
-                .unwrap_or(s)
-        })
-        .unwrap_or_else(|| "may-i".into());
-    let display_path = output::shorten_home(&loaded.config_path);
-    let prefix = "Migrations available:";
-    let heading = NoteHeading {
-        text: format!("{} {}", prefix.yellow().bold(), display_path.bold()),
-        visible_width: prefix.len() + 1 + display_path.len(),
-    };
-    Some(
-        Advisory {
-            level: NoteLevel::Warn,
-            heading: String::new(),
-            detail: "Your config uses an older syntax that has been automatically \
-                 translated. Trace output reflects the translated rules, which \
-                 may not match the file on disk."
-                .into(),
-            suggestion: "Apply pending migrations by running:".into(),
-            command: format!("{prog} migrate"),
-            children: vec![],
-        }
-        .into_note_with_heading(heading),
-    )
-}
-
-/// Render trust-store integrity advisories to the supplied writer.
-///
-/// No-op when the catalog is empty (trust is irrelevant) or when no catalog
-/// state was loaded (path unavailable).
-pub(crate) fn render_integrity_advisories(
-    state: Option<&TrustCatalogState>,
-    term: &Terminal,
-    w: &mut impl Write,
-) {
-    let Some(state) = state else {
-        return;
-    };
-    if state.catalog.is_empty() {
-        return;
-    }
-
-    let mut stack: Vec<Layout> = Vec::new();
-    if state.was_corrupt {
-        stack.push(advisory::build_integrity_layout(&state.store_path, None));
-    }
-    if !state.suspects.is_empty() {
-        let names: Vec<&str> = state.suspects.iter().map(|s| s.program.as_str()).collect();
-        stack.push(advisory::build_integrity_layout(
-            &state.store_path,
-            Some(&names),
-        ));
-    }
-    output::render_advisory_stack(w, term, &stack);
-}
-
-/// Build the warning advisory for untrusted Loaded rules in the catalog.
-///
-/// Returns `None` when there are no loaded rules, when no catalog is
-/// available, or when every loaded program is trusted.
-pub(crate) fn build_warning_advisory(catalog: Option<&TrustCatalog>) -> Option<Layout> {
-    advisory::build_warning_layout(catalog?)
-}
-
-/// Filter the config in place, removing Loaded rules whose hash is not
-/// approved in the catalog. Primary-config rules are kept. No-op when
-/// `catalog` is `None`.
-pub(crate) fn filter_untrusted(
-    config: &mut may_i_core::ast::Config,
-    catalog: Option<&TrustCatalog>,
-) {
-    if let Some(catalog) = catalog {
-        advisory::filter_trusted_rules(config, catalog);
-    }
-}
-
-/// Check whether Trust should block the command in `mode`.
-pub(crate) fn check_block(
-    command: &str,
-    mode: TrustMode,
-    catalog: Option<&TrustCatalog>,
-) -> Option<TrustBlock> {
-    let catalog = catalog?;
-    match mode {
-        TrustMode::Text => None,
-        TrustMode::Json => gate::json_block(catalog, command),
-        TrustMode::Hook => gate::hook_block(catalog, command),
-    }
 }

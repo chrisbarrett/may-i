@@ -10,6 +10,7 @@ use std::io::Write;
 use may_i::cmd_eval::evaluate_with_colorization;
 use may_i::output::{self, EvalOutput};
 use may_i::pipeline::CommandPipeline;
+use may_i::trust::InvocationTrust;
 use tempfile::NamedTempFile;
 
 fn render_trace(config_source: &str, command: &str) -> String {
@@ -27,7 +28,8 @@ fn render_trace(config_source: &str, command: &str) -> String {
     let (result, traces, colored_command) =
         evaluate_with_colorization(command, &loaded, &context).unwrap();
 
-    let pipeline = CommandPipeline::with_store_loader(loaded, false, Box::new(|| None));
+    let trust = InvocationTrust::with_loader(false, Box::new(|| None));
+    let pipeline = CommandPipeline::with_trust(loaded, false, trust);
     let mut buf = Vec::new();
     EvalOutput {
         config_path: &path,
