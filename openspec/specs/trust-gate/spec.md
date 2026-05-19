@@ -13,7 +13,7 @@ Contributor-only. The single `trust_gate::evaluate` entry point that CLI command
 
 ### Requirement: Single Trust gate entry-point
 
-The system SHALL expose a single Trust gate entry-point that CLI commands consult before evaluating a shell command. The entry-point SHALL be a method on the per-invocation `CommandPipeline` object (working name; see the `command-pipeline` spec) that takes the command string and a `TrustMode` discriminating text output, JSON output, and Claude Code hook contexts. On allow it SHALL filter untrusted Loaded rules from the pipeline's loaded config in place and SHALL NOT return owned `Config` state to the caller. On block it SHALL return a `TrustBlock` carrying a `:ask` decision, a reason string, and the affected source files; the pipeline SHALL render the block through a single `output::render_trust_block` (or equivalent) operation shaped by the invocation mode. Evaluation `cmd_*` modules SHALL NOT consult the trust gate directly nor serialise a `TrustBlock` themselves — they drive the entire flow through `CommandPipeline::run` (see the `command-pipeline` spec).
+The system SHALL expose a single Trust gate entry-point that CLI commands consult before evaluating a shell command. The entry-point SHALL be a method on the per-invocation `InvocationTrust` object (owned by `CommandPipeline`; see the `command-pipeline` spec) that takes a mutable borrow of the pipeline's `LoadResult`, the command string, and a `TrustMode` discriminating text output, JSON output, and Claude Code hook contexts. On allow it SHALL filter untrusted Loaded rules from the borrowed `LoadResult`'s config in place and SHALL NOT return owned `Config` state to the caller. On block it SHALL return a `TrustBlock` carrying a `:ask` decision, a reason string, and the affected source files; the pipeline SHALL render the block through a single `output::render_trust_block` (or equivalent) operation shaped by the invocation mode. Evaluation `cmd_*` modules SHALL NOT consult the trust gate directly nor serialise a `TrustBlock` themselves — they drive the entire flow through `CommandPipeline::run` (see the `command-pipeline` spec).
 
 #### Scenario: Text mode with no untrusted programs
 
@@ -53,6 +53,11 @@ The system SHALL expose a single Trust gate entry-point that CLI commands consul
 - **WHEN** scanning evaluation `cmd_*` modules for references to `TrustBlock` field accesses inside `serde_json::json!`, `println!`, `write!`, or similar output macros
 - **THEN** zero references appear; the only call site rendering a `TrustBlock` to bytes is `output::render_trust_block`, invoked by `CommandPipeline::run`
 
+#### Scenario: Gate orchestration lives on InvocationTrust, not CommandPipeline
+
+- **WHEN** scanning `src/pipeline.rs` for trust orchestration logic (store-loader injection, catalog construction, lazy-load flags, idempotent advisory-rendered flags, `TrustCatalogState` field types)
+- **THEN** none of these appear directly on `CommandPipeline`; they live inside the `InvocationTrust` collaborator owned by the pipeline
+
 ### Requirement: Program-name extraction is internal to the gate
 
 The gate SHALL extract the invoked program name from the command string using the same rules currently duplicated in `cmd_eval.rs` and `cmd_claude_code_hook.rs` (first whitespace-separated token, then last component after `/`). Callers SHALL NOT perform program-name extraction for Trust purposes outside the gate.
@@ -69,7 +74,7 @@ The gate SHALL extract the invoked program name from the command string using th
 
 ### Requirement: Trust store loading is internal to the gate
 
-The gate SHALL load the trust store from `default_trust_store_path()` at most once per CLI invocation, caching the loaded store on the pipeline for subsequent consultations within the same invocation. CLI commands other than `cmd_trust` SHALL NOT call `TrustStore::load` directly.
+The gate SHALL load the trust store from `default_trust_store_path()` at most once per CLI invocation, caching the loaded store on the `InvocationTrust` collaborator (owned by `CommandPipeline`) for subsequent consultations within the same invocation. The single-load invariant is enforced inside `InvocationTrust`, not by `CommandPipeline`. CLI commands other than `cmd_trust` SHALL NOT call `TrustStore::load` directly.
 
 #### Scenario: Trust store missing or unreadable
 
@@ -80,7 +85,7 @@ The gate SHALL load the trust store from `default_trust_store_path()` at most on
 
 - **WHEN** a single `may-i` invocation consults the Trust gate one or more times (e.g. `cmd_check` evaluating many checks, or any subcommand combining the warning-advisory check with a block decision)
 - **THEN** `TrustStore::load` SHALL be called at most once for that invocation
-- **AND** a test fake counting calls to the store loader observes exactly one call per invocation
+- **AND** a test fake counting calls to the loader passed to `InvocationTrust::with_loader` observes exactly one call per invocation
 
 ### Requirement: Evaluation blocks on trust mismatch
 
@@ -134,17 +139,17 @@ The user-visible output of `eval`, `check`, and the hook SHALL be byte-for-byte 
 
 ### Requirement: Gate owns integrity advisory rendering
 
-The Trust gate SHALL own rendering of trust-store integrity advisories (the "Trust store corrupted" and "Trust store integrity failure" boxes whose content is defined in `trust-advisory-boxes`). CLI subcommands SHALL NOT call `trust_advisory::write_integrity_advisories` (or its successor) directly. The gate SHALL render integrity advisories during the same invocation as it consults the trust store, before producing its allow/block outcome.
+The Trust gate SHALL own rendering of trust-store integrity advisories (the "Trust store corrupted" and "Trust store integrity failure" boxes whose content is defined in `trust-advisory-boxes`). The rendering SHALL be reached through `InvocationTrust::render_prelude` (which renders the migration note first, then integrity advisories). CLI subcommands SHALL NOT call `trust_advisory::write_integrity_advisories` (or its successor) directly. The gate SHALL render integrity advisories during the same invocation as it consults the trust store, before producing its allow/block outcome.
 
 #### Scenario: Integrity advisory and warning advisory render in stable order
 
 - **WHEN** a single invocation has both an integrity issue (e.g. corrupt store) and an untrusted-program warning
-- **THEN** the gate renders the integrity advisory first, then the warning advisory, to stderr — matching today's ordering in `cmd_eval` and `cmd_check`
+- **THEN** `InvocationTrust::render_prelude` renders the integrity advisory and `InvocationTrust::render_warning` renders the warning advisory, in that order, to stderr — matching today's ordering in `cmd_eval` and `cmd_check`
 
 #### Scenario: Subcommand bypass forbidden
 
 - **WHEN** a CLI subcommand is added or modified
-- **THEN** it SHALL NOT call `write_integrity_advisories` or any other integrity-advisory routine outside the Trust gate; the gate is the sole call site
+- **THEN** it SHALL NOT call `write_integrity_advisories` or any other integrity-advisory routine outside the `InvocationTrust` type; the type is the sole call site
 
 ### Requirement: Migration-driven rehash routes through the trust module
 
