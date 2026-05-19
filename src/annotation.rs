@@ -652,75 +652,9 @@ fn dim_unevaluated_inner(node: TraceNode, ancestor_annotated: bool) -> (TraceNod
     (rebuilt, total)
 }
 
-/// Build the children of a rule node:
-/// `(rule (command …) [(context …)] (args …) [(effect …)])`.
-fn build_rule_children(
-    rule: &Rule,
-    command_out: (EffectResult, TraceNode),
-    effect_out: (EffectResult, TraceNode),
-) -> Vec<TraceNode> {
-    use may_i_core::ast::Effect;
-    let command_node = TraceNode::plain_list(vec![plain_atom("command"), command_out.1]);
-    let mut nodes = vec![plain_atom("rule"), command_node];
-
-    let mut context_nodes: Vec<TraceNode> = Vec::new();
-    let mut terminal_node: Option<TraceNode> = None;
-    let mut args_children = vec![plain_atom("args")];
-
-    match &rule.effect.value {
-        Effect::When {
-            predicate: _,
-            effect: body,
-        } if body.value.is_terminal() => {
-            extract_context_and_effect(effect_out.1, &mut context_nodes, &mut terminal_node);
-        }
-        Effect::Unless {
-            predicate: _,
-            effect: body,
-        } if body.value.is_terminal() => {
-            extract_context_and_effect(effect_out.1, &mut context_nodes, &mut terminal_node);
-        }
-        eff if eff.is_terminal() => {
-            terminal_node = Some(effect_out.1.clone());
-        }
-        _ => {
-            args_children.push(effect_out.1.clone());
-        }
-    }
-
-    for ctx in context_nodes {
-        nodes.push(ctx);
-    }
-
-    if args_children.len() > 1 {
-        let args_node = TraceNode::plain_list(args_children).with_layout(Layout::AlwaysBreak);
-        nodes.push(args_node);
-    }
-
-    if let Some(eff) = terminal_node {
-        nodes.push(eff);
-    }
-
-    nodes
-}
-
-fn extract_context_and_effect(
-    when_node: TraceNode,
-    context_nodes: &mut Vec<TraceNode>,
-    terminal_node: &mut Option<TraceNode>,
-) {
-    if when_node.label().is_some() || when_node.children().len() != 3 {
-        *terminal_node = Some(when_node);
-        return;
-    }
-    let mut children = when_node.into_children().unwrap();
-    let body = children.pop().unwrap();
-    let pred = children.pop().unwrap();
-    let _head = children.pop().unwrap();
-    let context =
-        TraceNode::plain_list(vec![plain_atom("context"), pred]).with_layout(Layout::AlwaysBreak);
-    context_nodes.push(context);
-    *terminal_node = Some(body);
+/// Build the children of a rule node: `(rule <command-pattern> <body>)`.
+fn build_rule_children(command_node: TraceNode, effect_node: TraceNode) -> Vec<TraceNode> {
+    vec![plain_atom("rule"), command_node, effect_node]
 }
 
 /// Annotate positional / exact pattern children with per-element match
@@ -1507,7 +1441,7 @@ impl EvalFold for TracingFold {
         let pre_migration_doc = self.find_pre_migration_doc(rule.span);
         let terminal_result = effect_out.0.clone();
 
-        let children = build_rule_children(rule, command_out, effect_out);
+        let children = build_rule_children(command_out.1, effect_out.1);
         let node = TraceNode::rule(children, line, true);
         let node = truncate_unevaluated(node, 2);
         let node = dim_unevaluated(node);
@@ -1539,7 +1473,7 @@ impl EvalFold for TracingFold {
         let line = self.line_of(rule.span.start);
         let pre_migration_doc = self.find_pre_migration_doc(rule.span);
 
-        let children = build_rule_children(rule, command_out, effect_out);
+        let children = build_rule_children(command_out.1, effect_out.1);
         let node = TraceNode::rule(children, line, false);
         let node = truncate_unevaluated(node, 2);
         let node = dim_unevaluated(node);

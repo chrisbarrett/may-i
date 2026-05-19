@@ -7,15 +7,15 @@ Trace
 
                                          command │ curl -d data https://example.com
                                           parser │ gnu  flags permute
-  65: (rule (command "curl")                     │
-        (context (and (not (flag "d"))           │
-                      …                          │
-                      …                          │
-                      …))                        │
-        (allow                                   │ → :allow "GET request (no mutating flags)"
-         "GET request (no mutating flags)"))     │
+  65: (rule "curl"                               │
+        (when (and (not (flag "d"))              │
+                   …                             │
+                   …                             │
+                   …)                            │
+          (allow                                 │ → :allow "GET request (no mutating flags)"
+           "GET request (no mutating flags)")))  │
                                                  │
-  69: (rule (command "curl")                     │
+  69: (rule "curl"                               │
         (ask                                     │ → :ask "Network operation requires approval"
          "Network operation requires approval")) │
 

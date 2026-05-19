@@ -5,13 +5,13 @@ expression: normalised
 
 Trace
 
-                              command │ mv a b
-                               parser │ gnu  flags permute
-  83: (rule (command "mv")            │
-        (args (if (or (flag "f")      │
-                      (flag "force")) │
-                  …                   │
-                (allow))))            │ → :allow
+                        command │ mv a b
+                         parser │ gnu  flags permute
+  83: (rule "mv"                │
+        (if (or (flag "f")      │
+                (flag "force")) │
+            …                   │
+          (allow)))             │ → :allow
 
 Result
 

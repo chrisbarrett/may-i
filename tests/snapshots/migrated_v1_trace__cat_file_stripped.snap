@@ -7,7 +7,7 @@ Trace
 
                             command │ cat foo
                              parser │ gnu  flags permute
-  90: (rule (command (or "cat" …))  │
+  90: (rule (or "cat" …)            │
         (allow "Read-only access")) │ → :allow "Read-only access"
 
 Result

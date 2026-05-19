@@ -5,26 +5,25 @@ expression: normalised
 
 Trace
 
-                                  command │ cargo run -- test
-                                   parser │ gnu  flags permute
-  95: (rule (command "cargo")             │
-        (args (if (exact)                 │
-                  …                       │
-                (positional               │
-                 (? "affected")           │ "run" = "affected" → no
-                 (?                       │
-                  (or "watch" "run" "r")) │ "run" = "watch" → no
-                 (? "--")                 │ "run" = "--" → no
-                 (cond                    │
-                  ((or "install"          │
-                       "uninstall")       │
-                   (deny))                │
-                  ((or "build"            │
-                       "b"                │
-                       …                  │
-                       "clippy")          │
-                   (allow)))              │ → :allow
-                 (allow)))))              │
+                                 command │ cargo run -- test
+                                  parser │ gnu  flags permute
+  95: (rule "cargo"                      │
+        (if (exact)                      │
+            …                            │
+          (positional (? "affected")     │ "run" = "affected" → no
+                      (? (or "watch"     │ "run" = "watch" → no
+                             "run" "r")) │ "run" = "run" → yes
+                      (? "--")           │ "run" = "--" → no
+                      (cond              │
+                       ((or "install"    │
+                            "uninstall") │
+                        (deny))          │
+                       ((or "build"      │
+                            "b"          │
+                            …            │
+                            "clippy")    │
+                        (allow)))        │ → :allow
+                      (allow))))         │
 
 Result
 
