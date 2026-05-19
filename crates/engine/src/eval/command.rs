@@ -6,8 +6,34 @@ use crate::fold::{EvalFold, PureFold};
 use crate::{EvalError, EvalResult, SegmentDecision};
 
 use super::context::DEFAULT_RECURSION_LIMIT;
-use super::decompose::{EvalUnit, decompose};
+use super::decompose::{EmbeddedKind, EvalUnit, decompose};
 use super::entry::{evaluate_at_depth, evaluate_with_fold};
+
+/// Wrap an embedded-substitution's bubbled reason with an origin clause
+/// naming the outer command (when known) and the substitution form.
+///
+/// Idempotent on already-annotated reasons: if `inner` already contains
+/// ` substitution in ` the original is returned unchanged so that nested
+/// substitutions don't accumulate layers of parens.
+fn annotate_embedded_reason(
+    inner: &str,
+    kind: Option<EmbeddedKind>,
+    outer: Option<&str>,
+) -> String {
+    if inner.contains(" substitution in ") {
+        return inner.to_string();
+    }
+    let suffix = match (kind, outer) {
+        (Some(EmbeddedKind::Backtick), Some(name)) => {
+            format!(" (backtick substitution in `{name}`)")
+        }
+        (Some(EmbeddedKind::Dollar), Some(name)) => {
+            format!(" ($(...) substitution in `{name}`)")
+        }
+        _ => " (embedded substitution)".to_string(),
+    };
+    format!("{inner}{suffix}")
+}
 
 /// Format the first `Error`-severity diagnostic for the engine's
 /// reason field, prefixed with `"parse error: "`. Falls back to the
@@ -87,13 +113,22 @@ fn evaluate_command_inner<F: EvalFold>(
     let mut aggregate_reason: Option<String> = None;
     let mut segment_decisions: Vec<SegmentDecision> = Vec::new();
 
+    // Outer command name for embedded-substitution origin annotations.
+    // None when the outer command's first word is itself dynamic (e.g.
+    // `$(which python) --version`) — the annotation then falls back to
+    // a generic "embedded substitution" form.
+    let outer_command_name: Option<String> = units.iter().find_map(|u| match u {
+        EvalUnit::SimpleCommand { command, .. } => Some(command.clone()),
+        _ => None,
+    });
+
     for unit in &units {
         let unit_span = unit.span();
         let result = match unit {
             EvalUnit::SimpleCommand { command, args, .. } => {
                 evaluate_with_fold(command, args, config, facts, fold)?
             }
-            EvalUnit::EmbeddedCommand { source, span } => {
+            EvalUnit::EmbeddedCommand { source, span, kind } => {
                 let embedded_result = evaluate_command_inner(
                     source,
                     config,
@@ -104,7 +139,14 @@ fn evaluate_command_inner<F: EvalFold>(
                     outer_offset + span.0,
                 )?;
                 fold.embedded_command(source, embedded_result.decision);
-                embedded_result
+                let annotated_reason = embedded_result
+                    .reason
+                    .as_deref()
+                    .map(|r| annotate_embedded_reason(r, *kind, outer_command_name.as_deref()));
+                EvalResult {
+                    reason: annotated_reason,
+                    ..embedded_result
+                }
             }
             EvalUnit::DynamicCommand { reason, .. } => {
                 let _out = fold.default_ask(reason);
@@ -494,6 +536,79 @@ mod tests {
         let config = config_with_rules(vec![allow_rule("echo"), deny_rule("rm")]);
         let result = evaluate_command("echo $(echo $(rm -rf /))", &config, &empty_facts()).unwrap();
         assert_eq!(result.decision, Decision::Deny);
+    }
+
+    // -- Embedded-substitution origin annotation --
+
+    #[test]
+    fn embedded_dollar_substitution_names_outer_command() {
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        let result = evaluate_command(r#"echo "$(:rebuild)""#, &config, &empty_facts()).unwrap();
+        assert_eq!(result.decision, Decision::Ask);
+        assert_eq!(
+            result.reason.as_deref(),
+            Some("No rule for command `:rebuild` ($(...) substitution in `echo`)")
+        );
+    }
+
+    #[test]
+    fn embedded_backtick_substitution_names_outer_command() {
+        let config = config_with_rules(vec![allow_rule("grep")]);
+        let result =
+            evaluate_command(r#"grep -nE "x|`:rebuild`y" file"#, &config, &empty_facts()).unwrap();
+        assert_eq!(result.decision, Decision::Ask);
+        assert_eq!(
+            result.reason.as_deref(),
+            Some("No rule for command `:rebuild` (backtick substitution in `grep`)")
+        );
+    }
+
+    #[test]
+    fn top_level_no_rule_reason_is_not_annotated() {
+        let config = config_with_rules(vec![]);
+        let result = evaluate_command("kubectl get pods", &config, &empty_facts()).unwrap();
+        assert_eq!(result.decision, Decision::Ask);
+        let reason = result.reason.as_deref().unwrap_or("");
+        assert_eq!(reason, "No rule for command `kubectl`");
+        assert!(
+            !reason.contains("substitution in"),
+            "top-level reason must not be annotated: {reason}"
+        );
+    }
+
+    #[test]
+    fn nested_embedded_substitution_does_not_double_wrap() {
+        let config = config_with_rules(vec![allow_rule("echo"), allow_rule("grep")]);
+        let result = evaluate_command(
+            r#"echo "$(grep -nE `:rebuild` file)""#,
+            &config,
+            &empty_facts(),
+        )
+        .unwrap();
+        assert_eq!(result.decision, Decision::Ask);
+        let reason = result.reason.as_deref().unwrap_or("");
+        let count = reason.matches(" substitution in ").count();
+        assert_eq!(
+            count, 1,
+            "expected exactly one ` substitution in ` clause, got {count}: {reason}"
+        );
+    }
+
+    #[test]
+    fn embedded_substitution_with_dynamic_outer_falls_back_to_generic() {
+        let config = config_with_rules(vec![]);
+        // Outer first word is `$(which python)` — dynamic — so the
+        // annotation cannot name an outer command and falls back to
+        // the generic "embedded substitution" form. `which` itself has
+        // no rule, so the embedded path bubbles up.
+        let result =
+            evaluate_command("$(which python) --version", &config, &empty_facts()).unwrap();
+        assert_eq!(result.decision, Decision::Ask);
+        let reason = result.reason.as_deref().unwrap_or("");
+        assert!(
+            reason.contains("(embedded substitution)"),
+            "reason should fall back to generic embedded substitution clause: {reason}"
+        );
     }
 
     // -- Dynamic command names --

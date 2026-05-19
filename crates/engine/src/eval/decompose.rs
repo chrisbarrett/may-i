@@ -1,7 +1,25 @@
-use may_i_shell_parser::{Command, SimpleCommand, extract_simple_commands};
+use may_i_shell_parser::{Command, SimpleCommand, SubstitutionForm, extract_simple_commands};
 
 /// Byte range in the original input string covered by an `EvalUnit`.
 pub(super) type Span = (usize, usize);
+
+/// Surface form of a `$( … )` / backtick substitution that the engine
+/// names in bubbled-up `:ask` reasons. `None` is used for substitution
+/// shapes that should not be named in the reason (currently process
+/// substitution, which the spec does not require an annotation for).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EmbeddedKind {
+    Backtick,
+    Dollar,
+}
+
+fn kind_from_form(form: SubstitutionForm) -> Option<EmbeddedKind> {
+    match form {
+        SubstitutionForm::Backtick => Some(EmbeddedKind::Backtick),
+        SubstitutionForm::Dollar => Some(EmbeddedKind::Dollar),
+        SubstitutionForm::Process => None,
+    }
+}
 
 /// A unit of evaluation extracted from an AST.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -14,7 +32,11 @@ pub(crate) enum EvalUnit {
         span: Span,
     },
     /// An embedded command found in a word part (substitution).
-    EmbeddedCommand { source: String, span: Span },
+    EmbeddedCommand {
+        source: String,
+        span: Span,
+        kind: Option<EmbeddedKind>,
+    },
     /// A command with a dynamic name that cannot be resolved.
     DynamicCommand { reason: String, span: Span },
 }
@@ -92,10 +114,11 @@ fn decompose_simple_command(sc: &SimpleCommand, _input: &str, units: &mut Vec<Ev
 /// `WordPart` already carries the inner-span the engine needs, so no flat
 /// re-scan over the input is required.
 fn push_embedded_units_from_word(word: &may_i_shell_parser::Word, units: &mut Vec<EvalUnit>) {
-    for (source, ast_span) in word.extract_embedded_with_spans() {
+    for (source, ast_span, form) in word.extract_embedded_with_spans() {
         units.push(EvalUnit::EmbeddedCommand {
             source: source.to_string(),
             span: (ast_span.start, ast_span.end),
+            kind: kind_from_form(form),
         });
     }
 }
@@ -220,19 +243,21 @@ mod tests {
                 .iter()
                 .any(|u| matches!(u, EvalUnit::SimpleCommand { command, .. } if command == "echo"))
         );
-        assert!(units.iter().any(
-            |u| matches!(u, EvalUnit::EmbeddedCommand { source, .. } if source == "rm -rf /")
-        ));
+        assert!(units.iter().any(|u| matches!(
+            u,
+            EvalUnit::EmbeddedCommand { source, kind: Some(EmbeddedKind::Dollar), .. }
+                if source == "rm -rf /"
+        )));
     }
 
     #[test]
     fn decompose_backtick_in_arg() {
         let units = decompose_input("echo `date`");
-        assert!(
-            units
-                .iter()
-                .any(|u| matches!(u, EvalUnit::EmbeddedCommand { source, .. } if source == "date"))
-        );
+        assert!(units.iter().any(|u| matches!(
+            u,
+            EvalUnit::EmbeddedCommand { source, kind: Some(EmbeddedKind::Backtick), .. }
+                if source == "date"
+        )));
     }
 
     #[test]
@@ -259,10 +284,12 @@ mod tests {
                 .iter()
                 .any(|u| matches!(u, EvalUnit::DynamicCommand { .. }))
         );
-        // Also extracts the embedded command
-        assert!(units.iter().any(
-            |u| matches!(u, EvalUnit::EmbeddedCommand { source, .. } if source == "which python")
-        ));
+        // Also extracts the embedded command, carrying the $( … ) kind.
+        assert!(units.iter().any(|u| matches!(
+            u,
+            EvalUnit::EmbeddedCommand { source, kind: Some(EmbeddedKind::Dollar), .. }
+                if source == "which python"
+        )));
     }
 
     #[test]
