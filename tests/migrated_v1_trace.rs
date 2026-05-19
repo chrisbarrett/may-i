@@ -11,6 +11,7 @@ use serde::Deserialize;
 use may_i::cmd_eval::evaluate_with_colorization;
 use may_i::output::{self, EvalOutput};
 use may_i::pipeline::CommandPipeline;
+use may_i::trust::InvocationTrust;
 use may_i_config::LoadResult;
 
 #[derive(Deserialize)]
@@ -63,7 +64,8 @@ fn render_output(command: &str, facts: &[String]) -> Vec<u8> {
         evaluate_with_colorization(command, &config, &context).unwrap();
     let config_path = fixture_dir().join("config.lisp");
 
-    let pipeline = CommandPipeline::with_store_loader(config, false, Box::new(|| None));
+    let trust = InvocationTrust::with_loader(false, Box::new(|| None));
+    let pipeline = CommandPipeline::with_trust(config, false, trust);
     let mut buf = Vec::new();
     EvalOutput {
         config_path: &config_path,

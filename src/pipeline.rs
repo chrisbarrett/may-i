@@ -1,9 +1,11 @@
 // Per-invocation orchestration shared by evaluation subcommands.
 //
-// Owns the loaded config, the detected terminal, the json flag, and the
-// lazily-loaded trust store. Subcommands receive `&mut CommandPipeline` and
-// drive their own logic; the prelude (migration note + integrity advisory)
-// and Trust consultation live here so they are not duplicated.
+// Owns the loaded config, the detected terminal, the json flag, and one
+// `InvocationTrust` collaborator that holds the per-invocation Trust state
+// (lazily-loaded catalog, idempotency flags, store-loader seam). Subcommands
+// drive their flow through `CommandPipeline::run`; the prelude (migration
+// note + integrity advisory) and Trust consultation delegate to
+// `InvocationTrust` so they are not duplicated.
 
 use std::io;
 use std::path::Path;
@@ -16,10 +18,7 @@ use may_i_engine::check::CheckResult;
 use crate::annotation::TraceEntry;
 use crate::cmd_check::TraceExtra;
 use crate::output::{self, Terminal};
-use crate::trust::view::build_catalog;
-use crate::trust::{self, TrustBlock, TrustCatalogState, TrustMode, TrustStoreState};
-
-type StoreLoader = Box<dyn Fn() -> Option<TrustStoreState>>;
+use crate::trust::{InvocationTrust, TrustBlock, TrustMode};
 
 /// Which evaluation flow `CommandPipeline::run` should drive.
 ///
@@ -105,11 +104,7 @@ pub struct CommandPipeline {
     loaded: LoadResult,
     terminal: Terminal,
     json: bool,
-    store_loader: StoreLoader,
-    catalog_cache: Option<TrustCatalogState>,
-    catalog_attempted: bool,
-    prelude_rendered: bool,
-    trust_warning_rendered: bool,
+    trust: InvocationTrust,
 }
 
 impl CommandPipeline {
@@ -117,31 +112,19 @@ impl CommandPipeline {
     /// trust-store loader.
     pub fn load(config_path: Option<&Path>, json: bool) -> miette::Result<Self> {
         let loaded = may_i_config::load_and_resolve(config_path)?;
-        Ok(Self::with_loaded(
-            loaded,
-            json,
-            Box::new(trust::default_store_loader),
-        ))
+        Ok(Self::with_trust(loaded, json, InvocationTrust::new(json)))
     }
 
-    /// Construct a pipeline with an injected store loader. Test entry-point —
-    /// the loader is invoked at most once per invocation, so a counting wrapper
-    /// can verify the single-load invariant.
-    pub fn with_store_loader(loaded: LoadResult, json: bool, loader: StoreLoader) -> Self {
-        Self::with_loaded(loaded, json, loader)
-    }
-
-    fn with_loaded(loaded: LoadResult, json: bool, loader: StoreLoader) -> Self {
-        let terminal = Terminal::detect();
+    /// Construct a pipeline with a pre-built `InvocationTrust`. Test
+    /// entry-point — callers build the trust collaborator (typically via
+    /// `InvocationTrust::with_loader`) so the single-load invariant can be
+    /// asserted against a counting loader.
+    pub fn with_trust(loaded: LoadResult, json: bool, trust: InvocationTrust) -> Self {
         Self {
             loaded,
-            terminal,
+            terminal: Terminal::detect(),
             json,
-            store_loader: loader,
-            catalog_cache: None,
-            catalog_attempted: false,
-            prelude_rendered: false,
-            trust_warning_rendered: false,
+            trust,
         }
     }
 
@@ -167,63 +150,26 @@ impl CommandPipeline {
 
     /// Text-mode prelude: render the migration note (if applicable) then trust
     /// integrity advisories to stderr. No-op in JSON mode. Idempotent.
-    ///
-    /// Reachable only from the per-subcommand builders in `crate::output`.
     pub(crate) fn render_prelude_advisories(&mut self) {
-        if self.json || self.prelude_rendered {
-            return;
-        }
-        self.prelude_rendered = true;
-
-        if let Some(note) = trust::migration_note(&self.loaded) {
-            output::write_layout(&mut io::stderr(), &note, &self.terminal);
-        }
-
-        self.ensure_trust_loaded();
-        trust::render_integrity_advisories(
-            self.catalog_cache.as_ref(),
-            &self.terminal,
-            &mut io::stderr(),
-        );
+        self.trust
+            .render_prelude(&self.loaded, &self.terminal, &mut io::stderr());
     }
 
     /// Consult Trust for `command` in `mode`. On `Ok`, the pipeline's config
     /// has untrusted Loaded rules filtered in place. On `Err`, the caller
     /// serialises the block in its mode-appropriate response shape.
-    ///
-    /// Pure gate logic — emits no output. The trust warning advisory is
-    /// rendered by the per-subcommand builder via
-    /// [`Self::render_trust_warning`].
     pub(crate) fn consult_trust(
         &mut self,
         command: &str,
         mode: TrustMode,
     ) -> Result<(), TrustBlock> {
-        self.ensure_trust_loaded();
-
-        let catalog_ref = self.catalog_cache.as_ref().map(|s| &s.catalog);
-        if let Some(block) = trust::check_block(command, mode, catalog_ref) {
-            return Err(block);
-        }
-
-        let catalog_ref = self.catalog_cache.as_ref().map(|s| &s.catalog);
-        trust::filter_untrusted(&mut self.loaded.config, catalog_ref);
-        Ok(())
+        self.trust.consult(&mut self.loaded, command, mode)
     }
 
-    /// Render the Trust warning advisory to stderr. Reachable only from the
-    /// per-subcommand builders in `crate::output`; no-op in JSON mode and
+    /// Render the Trust warning advisory to stderr. No-op in JSON mode;
     /// idempotent across repeat calls within one invocation.
     pub(crate) fn render_trust_warning(&mut self) {
-        if self.json || self.trust_warning_rendered {
-            return;
-        }
-        self.trust_warning_rendered = true;
-        self.ensure_trust_loaded();
-        let catalog_ref = self.catalog_cache.as_ref().map(|s| &s.catalog);
-        if let Some(layout) = trust::build_warning_advisory(catalog_ref) {
-            output::write_layout(&mut io::stderr(), &layout, &self.terminal);
-        }
+        self.trust.render_warning(&self.terminal, &mut io::stderr());
     }
 
     /// Sole evaluation entry point. Owns the per-invocation flow: prelude
@@ -288,30 +234,11 @@ impl CommandPipeline {
         );
         Ok(())
     }
-
-    /// Lazily load the trust store and build the catalog. The injected loader
-    /// is called at most once per invocation; the catalog is built once from
-    /// the loader's result and the pipeline's loaded config.
-    fn ensure_trust_loaded(&mut self) {
-        if self.catalog_attempted {
-            return;
-        }
-        self.catalog_attempted = true;
-        let Some(state) = (self.store_loader)() else {
-            return;
-        };
-        let catalog = build_catalog(&self.loaded.config, state.store);
-        self.catalog_cache = Some(TrustCatalogState {
-            catalog,
-            suspects: state.suspects,
-            was_corrupt: state.was_corrupt,
-            store_path: state.store_path,
-        });
-    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::path::PathBuf;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -321,9 +248,12 @@ mod tests {
     use may_i_core::ast::{Config, Effect, Provenance, Rule, Spanned};
     use may_i_core::pattern::CommandPattern;
     use may_i_core::span::Span;
+    use may_i_engine::EvalResult;
 
-    use crate::pipeline::CommandPipeline;
-    use crate::trust::{TrustMode, TrustStoreState, store::TrustStore};
+    use crate::pipeline::{
+        CheckOutcomeBody, CommandPipeline, EvalOutcome, EvalOutcomeBody, InvocationMode,
+    };
+    use crate::trust::{InvocationTrust, TrustMode, store::TrustStore};
 
     fn spanned<T>(value: T) -> Spanned<T> {
         Spanned::new(value, Span::new(0, 0))
@@ -344,24 +274,20 @@ mod tests {
         }
     }
 
-    fn config_with(rules: Vec<Rule>) -> Config {
-        Config {
-            rules,
-            ..Config::default()
-        }
-    }
-
     fn loaded_result(rules: Vec<Rule>) -> LoadResult {
         LoadResult {
-            config: config_with(rules),
+            config: Config {
+                rules,
+                ..Config::default()
+            },
             source_text: None,
             pre_migration_forms: None,
             config_path: PathBuf::from("/tmp/test-config.lisp"),
         }
     }
 
-    fn empty_state() -> TrustStoreState {
-        TrustStoreState {
+    fn empty_state() -> crate::trust::TrustStoreState {
+        crate::trust::TrustStoreState {
             store: TrustStore::default(),
             suspects: Vec::new(),
             was_corrupt: false,
@@ -369,87 +295,41 @@ mod tests {
         }
     }
 
-    /// Spec: `trust-gate`/`Store loaded once per invocation` — the pipeline
-    /// MUST load the store at most once even when an invocation renders the
-    /// prelude advisories AND consults the gate.
+    /// Spec: `command-pipeline` / `Single trust-store load is observable` —
+    /// thin forwarding test confirming the pipeline routes every trust-relevant
+    /// call through its `InvocationTrust`. Single-load, idempotency, and
+    /// JSON-mode invariants are exercised directly in
+    /// `crate::trust::invocation::tests`.
     #[test]
-    fn store_loads_once_per_invocation() {
+    fn pipeline_forwards_to_invocation_trust() {
         let calls = Arc::new(AtomicUsize::new(0));
         let counter = Arc::clone(&calls);
         let loader = Box::new(move || {
             counter.fetch_add(1, Ordering::SeqCst);
             Some(empty_state())
         });
-
+        let trust = InvocationTrust::with_loader(false, loader);
         let loaded = loaded_result(vec![loaded_rule("git", "/tmp/rules.lisp")]);
-        let mut pipeline = CommandPipeline::with_store_loader(loaded, false, loader);
+        let mut pipeline = CommandPipeline::with_trust(loaded, false, trust);
 
-        // Trigger every code path that needs the store.
         pipeline.render_prelude_advisories();
-        let _ = pipeline.consult_trust("git status", TrustMode::Hook);
         let _ = pipeline.consult_trust("git status", TrustMode::Hook);
         pipeline.render_trust_warning();
 
         assert_eq!(
             calls.load(Ordering::SeqCst),
             1,
-            "store loader must be invoked exactly once per invocation"
+            "pipeline must drive every trust call through the same InvocationTrust"
         );
     }
 
-    /// Spec: `command-pipeline`/`Idempotent on repeated calls` — the prelude
-    /// is a one-shot.
-    #[test]
-    fn prelude_is_idempotent() {
-        let calls = Arc::new(AtomicUsize::new(0));
-        let counter = Arc::clone(&calls);
-        let loader = Box::new(move || {
-            counter.fetch_add(1, Ordering::SeqCst);
-            Some(empty_state())
-        });
-
-        let loaded = loaded_result(vec![loaded_rule("git", "/tmp/rules.lisp")]);
-        let mut pipeline = CommandPipeline::with_store_loader(loaded, false, loader);
-
-        pipeline.render_prelude_advisories();
-        pipeline.render_prelude_advisories();
-        pipeline.render_prelude_advisories();
-
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
-    }
-
-    /// Spec: `command-pipeline`/`JSON mode skips prelude advisories`.
-    #[test]
-    fn json_mode_prelude_is_noop() {
-        let calls = Arc::new(AtomicUsize::new(0));
-        let counter = Arc::clone(&calls);
-        let loader = Box::new(move || {
-            counter.fetch_add(1, Ordering::SeqCst);
-            Some(empty_state())
-        });
-
-        let loaded = loaded_result(vec![loaded_rule("git", "/tmp/rules.lisp")]);
-        let mut pipeline = CommandPipeline::with_store_loader(loaded, true, loader);
-        pipeline.render_prelude_advisories();
-
-        assert_eq!(
-            calls.load(Ordering::SeqCst),
-            0,
-            "JSON-mode prelude must not load the store"
-        );
-    }
-
-    use std::cell::Cell;
-
-    use crate::pipeline::{CheckOutcomeBody, EvalOutcome, EvalOutcomeBody, InvocationMode};
-    use may_i_engine::EvalResult;
-
-    /// Spec: `command-pipeline`/`Check handler dispatches through run` —
+    /// Spec: `command-pipeline` / `Check handler dispatches through run` —
     /// `run(Check, …)` invokes the closure on the no-filter path.
     #[test]
     fn run_check_invokes_closure() {
         let loaded = loaded_result(vec![]);
-        let mut pipeline = CommandPipeline::with_store_loader(loaded, true, Box::new(|| None));
+        let trust = InvocationTrust::with_loader(true, Box::new(|| None));
+        let mut pipeline = CommandPipeline::with_trust(loaded, true, trust);
         let invoked = Cell::new(false);
         pipeline
             .run(InvocationMode::Check, "", |_ctx| {
@@ -466,13 +346,13 @@ mod tests {
         assert!(invoked.get(), "Check arm must invoke the closure");
     }
 
-    /// Spec: `trust-gate`/`Hook mode block reason includes file paths` —
+    /// Spec: `trust-gate` / `Hook mode block reason includes file paths` —
     /// `run(Hook, …)` short-circuits the closure on a trust block.
     #[test]
     fn run_hook_short_circuits_on_block() {
         let loaded = loaded_result(vec![loaded_rule("echo", "/tmp/rules.lisp")]);
-        let mut pipeline =
-            CommandPipeline::with_store_loader(loaded, true, Box::new(|| Some(empty_state())));
+        let trust = InvocationTrust::with_loader(true, Box::new(|| Some(empty_state())));
+        let mut pipeline = CommandPipeline::with_trust(loaded, true, trust);
         let invoked = Cell::new(false);
         pipeline
             .run(InvocationMode::Hook, "echo hi", |_ctx| {
@@ -486,12 +366,13 @@ mod tests {
         );
     }
 
-    /// Spec: `command-pipeline`/`Eval handler dispatches through run` —
+    /// Spec: `command-pipeline` / `Eval handler dispatches through run` —
     /// `run(Eval, …)` invokes the closure when trust allows.
     #[test]
     fn run_eval_invokes_closure_when_trust_allows() {
         let loaded = loaded_result(vec![]);
-        let mut pipeline = CommandPipeline::with_store_loader(loaded, false, Box::new(|| None));
+        let trust = InvocationTrust::with_loader(false, Box::new(|| None));
+        let mut pipeline = CommandPipeline::with_trust(loaded, false, trust);
         let invoked = Cell::new(false);
         pipeline
             .run(InvocationMode::Eval, "echo hi", |_ctx| {
