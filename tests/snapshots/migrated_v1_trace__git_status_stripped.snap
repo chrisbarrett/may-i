@@ -5,38 +5,36 @@ expression: normalised
 
 Trace
 
-                                                          command │ git status
-                                                           parser │ gnu  flags permute
-  43: (rule (command "git")                                       │
-        (context (and                                             │
-                  (positional "reset")                            │ "status" = "reset" → no
-                  …))                                             │
-        (ask "Dangerous git reset"))                              │ → :ask "Dangerous git reset"
-                                                                  │
-  47: (rule (command "git")                                       │
-        (context (or                                              │
-                  (positional "remote")                           │ "status" = "remote" → no
-                  (positional                                     │
-                   (or "clean" "gc"                               │ "status" = "clean" → no
-                       "push"))))                                 │ "status" = "push" → no
-        (ask "Dangerous git operation"))                          │ → :ask "Dangerous git operation"
-                                                                  │
-  52: (rule (command "git")                                       │
-        (context                                                  │
-         (and (or                                                 │
-               (positional (or "switch"                           │ "status" = "switch" → no
-                               "restore"                          │ "status" = "restore" → no
-                               …                                  │
-                               "clone"))                          │ "status" = "clone" → no
-               (positional "checkout"                             │ "status" = "checkout" → no
-                           "--")                                  │ "status" = "--" → no
-               (positional "worktree"))                           │ "status" = "worktree" → no
-              …))                                                 │
-        (ask                                                      │ → :ask "git mutation requires approval in non-writing agents"
-         "git mutation requires approval in non-writing agents")) │
-                                                                  │
-  60: (rule (command "git")                                       │
-        (allow))                                                  │ → :allow
+                                                             command │ git status
+                                                              parser │ gnu  flags permute
+  43: (rule "git"                                                    │
+        (when (and (positional "reset")                              │ "status" = "reset" → no
+                   …)                                                │
+          (ask "Dangerous git reset")))                              │ → :ask "Dangerous git reset"
+                                                                     │
+  47: (rule "git"                                                    │
+        (when (or (positional "remote")                              │ "status" = "remote" → no
+                  (positional                                        │
+                   (or "clean" "gc"                                  │ "status" = "clean" → no
+                       "push")))                                     │ "status" = "push" → no
+          (ask "Dangerous git operation")))                          │ → :ask "Dangerous git operation"
+                                                                     │
+  52: (rule "git"                                                    │
+        (when (and                                                   │
+               (or                                                   │
+                (positional (or "switch"                             │ "status" = "switch" → no
+                                "restore"                            │ "status" = "restore" → no
+                                …                                    │
+                                "clone"))                            │ "status" = "clone" → no
+                (positional "checkout"                               │ "status" = "checkout" → no
+                            "--")                                    │ "status" = "--" → no
+                (positional "worktree"))                             │ "status" = "worktree" → no
+               …)                                                    │
+          (ask                                                       │ → :ask "git mutation requires approval in non-writing agents"
+           "git mutation requires approval in non-writing agents"))) │
+                                                                     │
+  60: (rule "git"                                                    │
+        (allow))                                                     │ → :allow
 
 Result
 

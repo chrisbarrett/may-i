@@ -5,45 +5,43 @@ expression: normalised
 
 Trace
 
-                                         command │ rm -r /tmp/foo
-                                          parser │ gnu  flags permute
-                                           facts │ :opencode/agent "build"
-  24: (rule (command "rm")                       │
-        (context (and (or (flag "r")             │
-                          …)                     │
-                      (anywhere "/")))           │
-        (deny                                    │ → :deny "Recursive deletion from root"
-         "Recursive deletion from root"))        │
-                                                 │
-  29: (rule (command "rm")                       │
-        (args                                    │
-         (when (and                              │
-                (build-mode                      │ build-mode → yes
-                 (or                             │
-                  (has                           │ no
-                   [:claude-code/permission-mode │
-                    "acceptEdits"])              │
-                  (has [:opencode/agent          │ "build" → yes
-                        "build"])))              │
-                (or (flag "r")                   │
-                    …))                          │
-           (if (anywhere (regex                  │
-                          "^/tmp/.*"))           │
-               (allow                            │ → :allow "Deleting tmp files is allowed"
-                "Deleting tmp files is allowed") │
-             …))))                               │
-                                                 │
-  37: (rule (command "rm")                       │
-        (context                                 │
-         (build-mode                             │ build-mode → yes
-          (or                                    │
-           (has                                  │ no
-            [:claude-code/permission-mode        │
-             "acceptEdits"])                     │
-           (has                                  │ "build" → yes
-            [:opencode/agent "build"]))))        │
-        (allow                                   │ → :allow "Non-recursive delete is allowed"
-         "Non-recursive delete is allowed"))     │
+                                        command │ rm -r /tmp/foo
+                                         parser │ gnu  flags permute
+                                          facts │ :opencode/agent "build"
+  24: (rule "rm"                                │
+        (when (and (or (flag "r")               │
+                       …)                       │
+                   (anywhere "/"))              │
+          (deny                                 │ → :deny "Recursive deletion from root"
+           "Recursive deletion from root")))    │
+                                                │
+  29: (rule "rm"                                │
+        (when (and                              │
+               (build-mode                      │ build-mode → yes
+                (or                             │
+                 (has                           │ no
+                  [:claude-code/permission-mode │
+                   "acceptEdits"])              │
+                 (has [:opencode/agent          │ "build" → yes
+                       "build"])))              │
+               (or (flag "r")                   │
+                   …))                          │
+          (if (anywhere (regex                  │
+                         "^/tmp/.*"))           │
+              (allow                            │ → :allow "Deleting tmp files is allowed"
+               "Deleting tmp files is allowed") │
+            …)))                                │
+                                                │
+  37: (rule "rm"                                │
+        (when (build-mode                       │ build-mode → yes
+               (or                              │
+                (has                            │ no
+                 [:claude-code/permission-mode  │
+                  "acceptEdits"])               │
+                (has [:opencode/agent           │ "build" → yes
+                      "build"])))               │
+          (allow                                │ → :allow "Non-recursive delete is allowed"
+           "Non-recursive delete is allowed"))) │
 
 Result
 

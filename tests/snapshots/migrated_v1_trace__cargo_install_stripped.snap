@@ -5,26 +5,25 @@ expression: normalised
 
 Trace
 
-                                  command │ cargo install foo
-                                   parser │ gnu  flags permute
-  95: (rule (command "cargo")             │
-        (args (if (exact)                 │
-                  …                       │
-                (positional               │
-                 (? "affected")           │ "install" = "affected" → no
-                 (?                       │
-                  (or "watch" "run" "r")) │ "install" = "watch" → no
-                 (? "--")                 │ "install" = "--" → no
-                 (cond                    │
-                  ((or "install"          │
-                       "uninstall")       │
-                   (deny))                │ → :deny
-                  ((or "build"            │
-                       "b"                │
-                       …                  │
-                       "clippy")          │
-                   (allow)))              │
-                 (deny)))))               │
+                                 command │ cargo install foo
+                                  parser │ gnu  flags permute
+  95: (rule "cargo"                      │
+        (if (exact)                      │
+            …                            │
+          (positional (? "affected")     │ "install" = "affected" → no
+                      (? (or "watch"     │ "install" = "watch" → no
+                             "run" "r")) │ "install" = "run" → no
+                      (? "--")           │ "install" = "--" → no
+                      (cond              │
+                       ((or "install"    │
+                            "uninstall") │
+                        (deny))          │ → :deny
+                       ((or "build"      │
+                            "b"          │
+                            …            │
+                            "clippy")    │
+                        (allow)))        │
+                      (deny))))          │
 
 Result
 

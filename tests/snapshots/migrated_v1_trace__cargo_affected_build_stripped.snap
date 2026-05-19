@@ -5,26 +5,25 @@ expression: normalised
 
 Trace
 
-                                  command │ cargo affected build
-                                   parser │ gnu  flags permute
-  95: (rule (command "cargo")             │
-        (args (if (exact)                 │
-                  …                       │
-                (positional               │
-                 (? "affected")           │ "affected" = "affected" → yes
-                 (?                       │
-                  (or "watch" "run" "r")) │ "affected" = "watch" → no
-                 (? "--")                 │ "affected" = "--" → no
-                 (cond                    │
-                  ((or "install"          │
-                       "uninstall")       │
-                   (deny))                │
-                  ((or "build"            │
-                       "b"                │
-                       …                  │
-                       "clippy")          │
-                   (allow)))              │ → :allow
-                 (allow)))))              │
+                                 command │ cargo affected build
+                                  parser │ gnu  flags permute
+  95: (rule "cargo"                      │
+        (if (exact)                      │
+            …                            │
+          (positional (? "affected")     │ "affected" = "affected" → yes
+                      (? (or "watch"     │ "affected" = "watch" → no
+                             "run" "r")) │ "affected" = "run" → no
+                      (? "--")           │ "affected" = "--" → no
+                      (cond              │
+                       ((or "install"    │
+                            "uninstall") │
+                        (deny))          │
+                       ((or "build"      │
+                            "b"          │
+                            …            │
+                            "clippy")    │
+                        (allow)))        │ → :allow
+                      (allow))))         │
 
 Result
 

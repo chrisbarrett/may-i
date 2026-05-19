@@ -5,15 +5,15 @@ expression: normalised
 
 Trace
 
-                               command │ brew list
-                                parser │ gnu  flags permute
-  74: (rule (command "brew")           │
-        (args (cond                    │
-               ((positional "install") │ "list" = "install" → no
-                …)                     │
-               ((positional            │
-                 (or "list" "search")) │ "list" = "list" → yes
-                (allow)))))            │ → :allow
+                         command │ brew list
+                          parser │ gnu  flags permute
+  74: (rule "brew"               │
+        (cond                    │
+         ((positional "install") │ "list" = "install" → no
+          …)                     │
+         ((positional            │
+           (or "list" "search")) │ "list" = "list" → yes
+          (allow))))             │ → :allow
 
 Result
 

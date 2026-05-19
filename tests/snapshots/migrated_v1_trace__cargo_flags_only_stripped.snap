@@ -5,12 +5,12 @@ expression: normalised
 
 Trace
 
-                      command │ cargo --list
-                       parser │ gnu  flags permute
-  95: (rule (command "cargo") │
-        (args (if (exact)     │
-                  (allow)     │ → :allow
-                …)))          │
+            command │ cargo --list
+             parser │ gnu  flags permute
+  95: (rule "cargo" │
+        (if (exact) │
+            (allow) │ → :allow
+          …))       │
 
 Result
 

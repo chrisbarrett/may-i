@@ -5,13 +5,12 @@ expression: normalised
 
 Trace
 
-                             command │ ssh prod "rm -rf /"
-                              parser │ gnu  flags posix  rest #cmd
-  107: (rule (command "ssh")         │
-         (args (when (positional     │
-                      [:ssh/host *]) │
-                 <arg-pattern>)))    │
-                    No matching rule │ → :ask (default)
+                                  command │ ssh prod "rm -rf /"
+                                   parser │ gnu  flags posix  rest #cmd
+  107: (rule "ssh"                        │
+         (when (positional [:ssh/host *]) │
+           <arg-pattern>))                │
+                         No matching rule │ → :ask (default)
 
 Result
 

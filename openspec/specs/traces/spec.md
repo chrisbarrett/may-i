@@ -142,12 +142,55 @@ dimmed `…` atom rather than rendering each skipped branch individually.
 - **AND** no individual `(… …)` pairs are rendered
 
 ### Requirement: Long or-lists are truncated with elision
-When a `(command (or ...))` list contains many alternatives, the renderer SHALL
-truncate after a reasonable number of items and show `…` for the rest.
+When a command-pattern `(or …)` list at the head of a `(rule …)` contains many alternatives, the renderer SHALL truncate after a reasonable number of items and show `…` for the rest.
 
 #### Scenario: 20-alternative or-list truncates
-- **WHEN** a `(command (or ...))` list contains 20 alternatives
+- **WHEN** a rule's command-pattern is `(or …)` with 20 alternatives
 - **THEN** the renderer SHALL print a bounded prefix followed by `…`
+
+### Requirement: Trace rule shape matches source DSL surface
+
+The human-readable evaluation trace SHALL render each rule using the current source-DSL surface: a command-pattern atom (a quoted string for `CommandPattern::Literal`) or a `(or "a" "b" …)` list (for `CommandPattern::Or`) directly under `(rule …)`, followed by the rule body forms (any combination of `(when …)`, `(unless …)`, `(if …)`, `(cond …)`, `(and …)`, `(or …)`, `(not …)`, predicate atoms, and terminal decision verbs) as direct children of the `(rule …)` list.
+
+The legacy synthetic wrappers `(command …)`, `(args …)`, and `(context …)` SHALL NOT appear in the rendered rule body. `(when …)` and `(unless …)` predicates SHALL render literally — the trace producer SHALL NOT lift either form's predicate into a synthetic sibling.
+
+This requirement parallels the canonical decision-verb requirement: just as `(allow)`/`(ask)`/`(deny)` render in source form rather than the retired `(effect …)` form, the rule shell renders in source form rather than the retired `(command …) (args …)` form.
+
+#### Scenario: Literal command renders as a quoted string at rule head
+
+- **GIVEN** a rule `(rule "rm" (deny "no rm"))`
+- **WHEN** the trace renders the rule
+- **THEN** the rendered head reads `(rule "rm"` (the next form on the next line is `(deny "no rm")`)
+- **AND** the rendered output does not contain `(command "rm")`
+
+#### Scenario: Or-alternation command renders as `(or …)` at rule head
+
+- **GIVEN** a rule `(rule (or "cat" "tail" "head") (allow))`
+- **WHEN** the trace renders the rule
+- **THEN** the rendered head reads `(rule (or "cat" "tail" "head")` (followed by `(allow)`)
+- **AND** the rendered output does not contain `(command (or "cat" "tail" "head"))`
+
+#### Scenario: `when` body renders literally
+
+- **GIVEN** a rule `(rule "terragrunt" (when (positional "hcl") (allow "safe")))`
+- **WHEN** the trace renders the rule
+- **THEN** the rule body line reads `(when (positional "hcl")` with `(allow "safe")` as its body
+- **AND** the rendered output contains no `(args …)` wrapper
+- **AND** the rendered output contains no synthetic `(context …)` sibling
+
+#### Scenario: `unless` body renders literally
+
+- **GIVEN** a rule `(rule "kubectl" (unless (fact? [:env "prod"]) (allow)))`
+- **WHEN** the trace renders the rule
+- **THEN** the rule body line reads `(unless (fact? [:env "prod"])` with `(allow)` as its body
+- **AND** the rendered output contains no synthetic `(context …)` sibling
+
+#### Scenario: Terminal decision under rule renders as direct child
+
+- **GIVEN** a rule `(rule "ls" (allow "Read-only"))`
+- **WHEN** the trace renders the rule
+- **THEN** the rendered shape is `(rule "ls" (allow "Read-only"))` (with normal pretty-print line breaks)
+- **AND** the rendered output contains no `(args …)` wrapper and no `(command …)` wrapper
 
 ### Requirement: Compound commands show per-segment traces
 The renderer SHALL trace each command segment of a compound command (e.g., `echo hello && rm -rf /`) separately, with a segment header showing the command text and its decision.
@@ -462,7 +505,7 @@ The producer SHALL NOT expose `ArgPattern`-shaped fields across the producer/ren
 
 #### Scenario: Producer pre-decides truncation, dimming, and collapse
 
-- **WHEN** the producer emits a trace for a `(command (or …))` with 20 alternatives, or for a `cond` whose 2nd branch matches out of 5, or for a short-circuited `and`
+- **WHEN** the producer emits a trace for a rule whose command-pattern `(or …)` has 20 alternatives, or for a `cond` whose 2nd branch matches out of 5, or for a short-circuited `and`
 - **THEN** the emitted `TraceNode` tree already carries the bounded prefix + trailing `…` for the long `or`, the single trailing `…` for the collapsed `cond`, and the `Role::Dimmed` markers for the skipped `and` children
 - **AND** the renderer renders the tree it receives without re-applying truncation, collapse, or dimming logic
 
