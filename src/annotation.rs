@@ -1598,6 +1598,19 @@ fn flatten_facts(facts: &ContextFacts) -> Vec<(String, String)> {
         .collect()
 }
 
+impl std::fmt::Debug for TraceEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SegmentHeader { command, .. } => write!(f, "SegmentHeader({command})"),
+            Self::Rule { line, .. } => write!(f, "Rule(line={line:?})"),
+            Self::EmbeddedCommand { source, .. } => write!(f, "EmbeddedCommand({source})"),
+            Self::DefaultAsk { reason } => write!(f, "DefaultAsk({reason})"),
+            Self::ParseDiagnostics { .. } => write!(f, "ParseDiagnostics"),
+            Self::Parser { command, .. } => write!(f, "Parser({command})"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1758,18 +1771,5 @@ mod tests {
             panic!("expected at least one Rule entry, got: {entries:?}");
         };
         assert!(matches!(node.role(), Role::Rule { .. }));
-    }
-}
-
-impl std::fmt::Debug for TraceEntry {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::SegmentHeader { command, .. } => write!(f, "SegmentHeader({command})"),
-            Self::Rule { line, .. } => write!(f, "Rule(line={line:?})"),
-            Self::EmbeddedCommand { source, .. } => write!(f, "EmbeddedCommand({source})"),
-            Self::DefaultAsk { reason } => write!(f, "DefaultAsk({reason})"),
-            Self::ParseDiagnostics { .. } => write!(f, "ParseDiagnostics"),
-            Self::Parser { command, .. } => write!(f, "Parser({command})"),
-        }
     }
 }
