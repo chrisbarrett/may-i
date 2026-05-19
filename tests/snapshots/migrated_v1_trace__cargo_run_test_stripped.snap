@@ -11,10 +11,10 @@ Trace
         (args (if (exact)                 │
                   …                       │
                 (positional               │
-                 (? "affected")           │
+                 (? "affected")           │ "run" = "affected" → no
                  (?                       │
-                  (or "watch" "run" "r")) │
-                 (? "--")                 │
+                  (or "watch" "run" "r")) │ "run" = "watch" → no
+                 (? "--")                 │ "run" = "--" → no
                  (cond                    │
                   ((or "install"          │
                        "uninstall")       │

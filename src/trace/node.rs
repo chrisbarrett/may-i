@@ -9,6 +9,7 @@
 use std::collections::BTreeSet;
 
 use may_i_core::Decision;
+use may_i_core::doc::{Doc, DocF, LayoutHint};
 
 #[derive(Clone, Debug)]
 pub struct TraceNode {
@@ -23,6 +24,7 @@ pub struct TraceNode {
 enum Body {
     Atom(String),
     List(Vec<TraceNode>),
+    Vector(Vec<TraceNode>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -123,6 +125,16 @@ impl TraceNode {
         }
     }
 
+    pub fn plain_vector(children: Vec<TraceNode>) -> Self {
+        Self {
+            body: Body::Vector(children),
+            role: Role::Plain,
+            evidence: None,
+            dimmed: false,
+            layout: Layout::Auto,
+        }
+    }
+
     /// Collapsed-ellipsis stand-in for skipped children. Always dimmed,
     /// always the atom "…".
     pub fn ellipsis() -> Self {
@@ -151,11 +163,11 @@ impl TraceNode {
         self.layout
     }
 
-    /// Atom payload, or `None` if this node is a list.
+    /// Atom payload, or `None` if this node is a list/vector.
     pub fn label(&self) -> Option<&str> {
         match &self.body {
             Body::Atom(s) => Some(s),
-            Body::List(_) => None,
+            Body::List(_) | Body::Vector(_) => None,
         }
     }
 
@@ -163,15 +175,23 @@ impl TraceNode {
     pub fn children(&self) -> &[TraceNode] {
         match &self.body {
             Body::Atom(_) => &[],
-            Body::List(cs) => cs,
+            Body::List(cs) | Body::Vector(cs) => cs,
         }
+    }
+
+    /// True if this node renders with `[ ]` brackets rather than `( )`.
+    pub fn is_vector(&self) -> bool {
+        matches!(self.body, Body::Vector(_))
     }
 
     /// Mark this node and its subtree as dimmed.
     pub fn into_dimmed(mut self) -> Self {
         self.dimmed = true;
-        if let Body::List(cs) = &mut self.body {
-            *cs = cs.drain(..).map(|c| c.into_dimmed()).collect();
+        match &mut self.body {
+            Body::List(cs) | Body::Vector(cs) => {
+                *cs = cs.drain(..).map(|c| c.into_dimmed()).collect();
+            }
+            Body::Atom(_) => {}
         }
         self
     }
@@ -451,6 +471,81 @@ impl TraceNode {
             cs[i] = f(child);
         }
         self
+    }
+
+    /// Build a plain `TraceNode` tree from an unannotated `Doc`. List and
+    /// Vector docs preserve their bracket style for renderer fidelity.
+    pub fn from_doc(doc: Doc<()>) -> Self {
+        let layout = match doc.layout {
+            LayoutHint::AlwaysBreak => Layout::AlwaysBreak,
+            _ => Layout::Auto,
+        };
+        let body = match doc.node {
+            DocF::Atom(s) => Body::Atom(s),
+            DocF::List(cs) => Body::List(cs.into_iter().map(TraceNode::from_doc).collect()),
+            DocF::Vector(cs) => Body::Vector(cs.into_iter().map(TraceNode::from_doc).collect()),
+        };
+        Self {
+            body,
+            role: Role::Plain,
+            evidence: None,
+            dimmed: doc.dimmed,
+            layout,
+        }
+    }
+
+    /// Replace this node's role and evidence in-place.
+    pub(crate) fn with_role_and_evidence(mut self, role: Role, evidence: Option<Evidence>) -> Self {
+        self.role = role;
+        self.evidence = evidence;
+        self
+    }
+
+    /// Replace this node's layout hint.
+    pub(crate) fn with_layout(mut self, layout: Layout) -> Self {
+        self.layout = layout;
+        self
+    }
+
+    /// Mark this node (not its subtree) as dimmed.
+    pub(crate) fn with_dimmed_self(mut self) -> Self {
+        self.dimmed = true;
+        self
+    }
+
+    /// Plain list builder that preserves vector-ness from a template node.
+    /// Used by producer-side structural-decision passes to rebuild a node
+    /// without losing the bracket style of the original.
+    pub(crate) fn plain_list_like(template: &TraceNode, children: Vec<TraceNode>) -> Self {
+        if template.is_vector() {
+            Self {
+                body: Body::Vector(children),
+                role: Role::Plain,
+                evidence: None,
+                dimmed: false,
+                layout: Layout::Auto,
+            }
+        } else {
+            Self::plain_list(children)
+        }
+    }
+
+    /// Mutable access to list children for in-place rewrites by the
+    /// producer (used to relocate evidence onto cond-branch bodies).
+    pub(crate) fn children_mut(&mut self) -> Option<&mut Vec<TraceNode>> {
+        match &mut self.body {
+            Body::List(cs) | Body::Vector(cs) => Some(cs),
+            Body::Atom(_) => None,
+        }
+    }
+
+    /// Convert this node into a list of children if it is a list/vector;
+    /// otherwise return None (atoms cannot be flattened).
+    pub(crate) fn into_children(self) -> Option<Vec<TraceNode>> {
+        match self.body {
+            Body::List(cs) | Body::Vector(cs) => Some(cs),
+            Body::Atom(_) => None,
+        }
     }
 }
 

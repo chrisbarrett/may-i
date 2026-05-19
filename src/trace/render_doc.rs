@@ -59,33 +59,28 @@ impl TraceNode {
             (Role::Plain, None) => None,
             (role, ev) => Some(NodeMeta::new(role.clone(), ev.cloned())),
         };
-        let node = match self.body_for_render() {
-            BodyView::Atom(text) => DocF::Atom(text.into()),
-            BodyView::List(children) => {
-                DocF::List(children.iter().map(TraceNode::to_render_doc).collect())
-            }
+        let node = if let Some(text) = self.label() {
+            DocF::Atom(text.into())
+        } else if self.is_vector() {
+            DocF::Vector(
+                self.children()
+                    .iter()
+                    .map(TraceNode::to_render_doc)
+                    .collect(),
+            )
+        } else {
+            DocF::List(
+                self.children()
+                    .iter()
+                    .map(TraceNode::to_render_doc)
+                    .collect(),
+            )
         };
         Doc {
             ann,
             node,
             layout,
             dimmed: self.dimmed(),
-        }
-    }
-}
-
-/// Body view used internally by `to_render_doc`. Mirrors `node::Body` but
-/// is constructed via accessor logic rather than direct field access.
-enum BodyView<'a> {
-    Atom(&'a str),
-    List(&'a [TraceNode]),
-}
-
-impl TraceNode {
-    fn body_for_render(&self) -> BodyView<'_> {
-        match self.label() {
-            Some(s) => BodyView::Atom(s),
-            None => BodyView::List(self.children()),
         }
     }
 }

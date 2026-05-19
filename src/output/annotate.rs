@@ -1,6 +1,6 @@
 use may_i_core::doc::{Doc, DocF};
 
-use crate::annotation::Ann;
+use crate::trace::NodeMeta;
 
 pub(super) fn verdict(matched: bool) -> String {
     if matched { "yes".into() } else { "no".into() }
@@ -34,7 +34,8 @@ pub(super) fn render_observed_value(value: &str) -> String {
     }
 }
 
-pub(super) fn is_forbidden_pattern(doc: &Doc<Option<Ann>>) -> bool {
+#[allow(dead_code)]
+pub(super) fn is_forbidden_pattern(doc: &Doc<Option<NodeMeta>>) -> bool {
     if let DocF::List(children) = &doc.node
         && let Some(head) = children.first().and_then(|c| c.as_atom())
     {
@@ -71,8 +72,25 @@ fn truncate_list(items: &[String], max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::output::test_helpers::*;
     use proptest::prelude::*;
+
+    fn atom(s: &str) -> Doc<Option<NodeMeta>> {
+        Doc {
+            ann: None,
+            node: DocF::Atom(s.into()),
+            layout: may_i_core::doc::LayoutHint::Auto,
+            dimmed: false,
+        }
+    }
+
+    fn list(children: Vec<Doc<Option<NodeMeta>>>) -> Doc<Option<NodeMeta>> {
+        Doc {
+            ann: None,
+            node: DocF::List(children),
+            layout: may_i_core::doc::LayoutHint::Auto,
+            dimmed: false,
+        }
+    }
 
     #[test]
     fn truncate_list_short() {

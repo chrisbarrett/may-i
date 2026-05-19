@@ -1,14 +1,13 @@
-// Annotation types and TracingFold for producing annotated Doc trees.
-//
-// Lives in the CLI binary so `Doc` never enters the engine crate.
+// Trace producer. Lives in the CLI binary so `Doc` never enters the engine
+// crate. Emits `TraceNode` trees and structural metadata; renderers consume
+// via accessors only (see `crate::trace`).
 
 use std::collections::BTreeSet;
 
 use may_i_core::ast::{Effect, EffectResult, FlagsMode, Rule};
-use may_i_core::doc::{Doc, DocF, LayoutHint};
+use may_i_core::doc::Doc;
 use may_i_core::pattern::{ArgPattern, CommandPattern, MatchMode, Quantifier};
 use may_i_core::primitives::ToDoc;
-use may_i_core::trivia::{Trivia, TriviaSource};
 use may_i_core::{ContextFacts, Decision, FactQuery};
 
 use may_i_engine::eval::PredicateResult;
@@ -16,233 +15,94 @@ use may_i_engine::fold::{
     ArgMatchDetail, ChildResult, EvalFold, FactDetail, PositionalElementDetail, PositionalMatchKind,
 };
 
-/// Captured value flowing into a rule body via `(authorise)`. The variant
-/// names the capture source; renderers map each variant to its display
-/// label (`tail` / `value`).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CapturedValue {
-    /// Captured by `(tail (authorise))`.
-    Tail(String),
-    /// Captured by `(parameter X (authorise))`.
-    Parameter(String),
+use crate::trace::TraceNode;
+use crate::trace::node::{CaptureSource, Evidence, Layout, Role};
+
+/// Role of a matched rule in the most-strict-wins combine for its scope.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CombineRole {
+    /// Surviving `reason` (earliest in source order among rules tied at
+    /// the strictest effect).
+    ReasonSource,
+    /// Matched at the strictest effect but dropped in favour of an earlier
+    /// tied sibling for the `reason` field.
+    TiedSibling,
 }
 
-impl CapturedValue {
-    /// The captured argument value, regardless of capture source.
-    pub fn value(&self) -> &str {
-        match self {
-            CapturedValue::Tail(v) | CapturedValue::Parameter(v) => v,
-        }
-    }
-}
-
-/// Why a fact query did not match. Renderers turn each variant into the
-/// prose the trace shows; the producer records only the structural reason.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FactFailure {
-    /// The queried key is not present in the context facts.
-    KeyAbsent,
-}
-
-/// Annotation carried on each Doc node in a trace.
-///
-/// Public because `TraceEntry::Rule::doc` exposes `Doc<Option<Ann>>` and
-/// `TraceEntry` is used by integration tests via `evaluate_segments`.
-#[derive(Debug, Clone)]
-pub enum Ann {
-    /// Command pattern matched or not.
-    CommandMatch { matched: bool },
-    /// Argument pattern matched with evidence.
-    ArgMatch {
-        search_tokens: Vec<String>,
-        arg_set: Vec<String>,
-        matched: bool,
-        /// Captured value when the pattern is `(authorise)`-style.
-        captured_value: Option<CapturedValue>,
+/// A single trace entry produced by the fold.
+#[derive(Clone)]
+pub enum TraceEntry {
+    /// Header for a compound command segment.
+    SegmentHeader { command: String, decision: Decision },
+    /// A rule evaluation, carrying the producer-decided trace node tree.
+    Rule {
+        node: TraceNode,
+        line: Option<usize>,
+        /// Pre-migration Doc for display when the config was migrated.
+        pre_migration_doc: Option<Doc<()>>,
+        /// Context facts active when this rule was evaluated.
+        facts: Vec<(String, String)>,
+        /// The command being evaluated, when this rule is inside a
+        /// recursive `may-i` evaluation.
+        inner_command: Option<String>,
+        /// Role in the most-strict-wins combine; `None` for rules that did
+        /// not contribute the strictest decision.
+        combine_role: Option<CombineRole>,
     },
-    /// Fact query result with evidence.
-    FactQuery {
-        query_source: String,
-        matched: bool,
-        observed: Option<BTreeSet<String>>,
-        failure_reason: Option<FactFailure>,
+    /// An embedded command (substitution) was evaluated.
+    EmbeddedCommand { source: String, decision: Decision },
+    /// No matching rule — default ask.
+    DefaultAsk { reason: String },
+    /// Parse diagnostics were emitted.
+    ParseDiagnostics {
+        diagnostics: Vec<may_i_shell_parser::ParseDiagnostic>,
     },
-    /// Effect decision.
-    EffectDecision {
-        decision: Decision,
-        reason: Option<String>,
+    /// Resolved parser for the command being evaluated.
+    Parser {
+        command: String,
+        style: String,
+        parameter_tokens: Vec<String>,
+        flags: FlagsMode,
+        rest_binding: Option<String>,
     },
-    /// Bind expression matched with captured value.
-    BindMatch { key: String, value: Option<String> },
-    /// Regex match result.
-    RegexMatch {
-        pattern: String,
-        actual: String,
-        matched: bool,
-    },
-    /// Positional pattern comparison: actual arg vs pattern literal.
-    PositionalMatch {
-        actual_arg: String,
-        pattern_text: String,
-        matched: bool,
-    },
-    /// Quantifier/combinator result.
-    Combinator { result_is_nil: bool },
-    /// Rule-level annotation.
-    RuleMatch { matched: bool, line: Option<usize> },
-    /// Named predicate (define) reference with its resolved body.
-    VarRef { name: String, matched: bool },
 }
 
-impl TriviaSource for Ann {
-    fn forced_break(&self) -> bool {
-        false
-    }
-    fn leading_trivia(&self) -> &[Trivia] {
-        &[]
-    }
-    fn trailing_trivia(&self) -> &[Trivia] {
-        &[]
-    }
+// ── helpers ──────────────────────────────────────────────────────────────
+
+fn from_pattern_doc(doc: Doc<()>) -> TraceNode {
+    TraceNode::from_doc(doc)
 }
 
-type ADoc = Doc<Option<Ann>>;
-
-fn ann_atom(s: impl Into<String>, ann: Option<Ann>) -> ADoc {
-    Doc {
-        ann,
-        node: DocF::Atom(s.into()),
-        layout: LayoutHint::Auto,
-        dimmed: false,
-    }
+fn plain_atom(s: impl Into<String>) -> TraceNode {
+    TraceNode::plain_atom(s)
 }
 
-fn ann_list(children: Vec<ADoc>, ann: Option<Ann>) -> ADoc {
-    Doc {
-        ann,
-        node: DocF::List(children),
-        layout: LayoutHint::Auto,
-        dimmed: false,
-    }
+fn ellipsis() -> TraceNode {
+    TraceNode::ellipsis()
 }
 
-fn ann_list_break(children: Vec<ADoc>, ann: Option<Ann>) -> ADoc {
-    Doc {
-        ann,
-        node: DocF::List(children),
-        layout: LayoutHint::AlwaysBreak,
-        dimmed: false,
-    }
+fn dimmed(node: TraceNode) -> TraceNode {
+    node.into_dimmed()
 }
 
-fn plain_atom(s: impl Into<String>) -> ADoc {
-    ann_atom(s, None)
+/// Mark a single rendered Effect tree's terminal node with EffectDecision
+/// evidence. Used for unevaluated (skipped) bodies in `when` / `unless`.
+fn effect_to_static_trace(effect: &Effect) -> TraceNode {
+    let node = from_pattern_doc(effect.to_doc());
+    apply_terminal_effect(node, effect)
 }
 
-fn unannotated_to_ann(doc: Doc<()>) -> ADoc {
-    doc.map(&|()| None)
-}
-
-/// Convert an Effect to an annotated Doc, adding static EffectDecision
-/// annotations on terminal effect nodes. Used for rendering unevaluated
-/// (skipped) bodies in `when`/`unless`.
-fn effect_to_static_ann_doc(effect: &Effect) -> ADoc {
-    let doc = unannotated_to_ann(effect.to_doc());
-    annotate_terminal_effects(doc, effect)
-}
-
-fn annotate_terminal_effects(doc: ADoc, effect: &Effect) -> ADoc {
+fn apply_terminal_effect(node: TraceNode, effect: &Effect) -> TraceNode {
     match effect {
-        Effect::Terminal { decision, reason } => Doc {
-            ann: Some(Ann::EffectDecision {
+        Effect::Terminal { decision, reason } => node.with_role_and_evidence(
+            Role::EffectDecision,
+            Some(Evidence::Decision {
                 decision: *decision,
                 reason: reason.clone(),
             }),
-            ..doc
-        },
-        _ => doc,
+        ),
+        _ => node,
     }
-}
-
-fn dim(mut doc: ADoc) -> ADoc {
-    doc.dimmed = true;
-    doc
-}
-
-/// Build the children of a rule doc: (rule (command ...) [(context ...)] (args ...) [(effect ...)])
-///
-/// Separates arg predicates from terminal effects and context predicates.
-fn build_rule_doc_children(
-    rule: &Rule,
-    command_out: (EffectResult, ADoc),
-    effect_out: (EffectResult, ADoc),
-) -> Vec<ADoc> {
-    use may_i_core::ast::Effect;
-    let command_doc = ann_list(vec![plain_atom("command"), command_out.1], None);
-    let mut docs = vec![plain_atom("rule"), command_doc];
-
-    // Decompose the single body effect for display.
-    let mut context_docs: Vec<ADoc> = Vec::new();
-    let mut terminal_doc: Option<ADoc> = None;
-    let mut args_children = vec![plain_atom("args")];
-
-    match &rule.effect.value {
-        Effect::When {
-            predicate: _,
-            effect: body,
-        } if body.value.is_terminal() => {
-            extract_context_and_effect(&effect_out.1, &mut context_docs, &mut terminal_doc);
-        }
-        Effect::Unless {
-            predicate: _,
-            effect: body,
-        } if body.value.is_terminal() => {
-            extract_context_and_effect(&effect_out.1, &mut context_docs, &mut terminal_doc);
-        }
-        eff if eff.is_terminal() => {
-            terminal_doc = Some(effect_out.1.clone());
-        }
-        _ => {
-            args_children.push(effect_out.1.clone());
-        }
-    }
-
-    // Add context docs before args.
-    for ctx_doc in context_docs {
-        docs.push(ctx_doc);
-    }
-
-    // Only add (args ...) if there are arg predicates beyond the head atom.
-    if args_children.len() > 1 {
-        let args_doc = ann_list_break(args_children, None);
-        docs.push(args_doc);
-    }
-
-    // Add terminal effect as sibling.
-    if let Some(eff_doc) = terminal_doc {
-        docs.push(eff_doc);
-    }
-
-    docs
-}
-
-/// Extract context predicate and terminal effect from a (when pred effect) doc.
-fn extract_context_and_effect(
-    when_doc: &ADoc,
-    context_docs: &mut Vec<ADoc>,
-    terminal_doc: &mut Option<ADoc>,
-) {
-    // The when doc structure is (when pred-doc effect-doc)
-    if let DocF::List(children) = &when_doc.node
-        && children.len() == 3
-    {
-        let context = ann_list_break(vec![plain_atom("context"), children[1].clone()], None);
-        context_docs.push(context);
-        *terminal_doc = Some(children[2].clone());
-        return;
-    }
-    // Fallback: couldn't extract, use as-is
-    *terminal_doc = Some(when_doc.clone());
 }
 
 fn command_pattern_to_doc(pattern: &CommandPattern) -> Doc<()> {
@@ -271,18 +131,13 @@ fn positional_arg_to_doc(p: &may_i_core::pattern::PositionalArg) -> Doc<()> {
     }
 }
 
-/// Build a `CapturedValue` for an `ArgMatch` whose pattern captures a
-/// value (tail or parameter). Renderers map each variant to its display
-/// label. Only called when the engine has already produced a captured
-/// value, which it only does for `Tail` and `Parameter { Authorise }`
-/// patterns — any other pattern reaching this function is an engine bug.
-fn make_captured_value(pattern: &ArgPattern, value: String) -> CapturedValue {
+fn capture_source(pattern: &ArgPattern) -> CaptureSource {
     match pattern {
-        ArgPattern::Tail => CapturedValue::Tail(value),
+        ArgPattern::Tail => CaptureSource::Tail,
         ArgPattern::Parameter {
             form: may_i_core::pattern::ParameterForm::Authorise,
             ..
-        } => CapturedValue::Parameter(value),
+        } => CaptureSource::Parameter,
         other => {
             unreachable!("engine produced a captured value for a non-capturing pattern: {other:?}")
         }
@@ -357,211 +212,709 @@ fn fact_query_to_doc(query: &FactQuery) -> Doc<()> {
     Doc::list(vec![Doc::atom("has"), query.to_doc()])
 }
 
-/// Annotate a positional/exact pattern doc with per-element match details
-/// (bindings, regex matches). Walks the doc children (skipping the head atom)
-/// and matches them against the element details by index.
-fn annotate_positional_elements(doc: ADoc, elements: &[PositionalElementDetail]) -> ADoc {
-    if elements.is_empty() {
-        return doc;
+/// True if the top-level pattern doc represents a forbidden pattern shape:
+/// `(forbidden …)` or `(not (anywhere …))`.
+fn pattern_is_forbidden(node: &TraceNode) -> bool {
+    let Some(head_node) = node.children().first() else {
+        return false;
+    };
+    let Some(head) = head_node.label() else {
+        return false;
+    };
+    if head == "forbidden" {
+        return true;
     }
-    match doc.node {
-        DocF::List(children) if !children.is_empty() => {
-            let head = children.first().and_then(|c| c.as_atom());
-            if !matches!(head, Some("positional" | "exact")) {
-                return Doc {
-                    node: DocF::List(children),
-                    ..doc
-                };
-            }
-            let mut new_children = vec![children[0].clone()];
-            let mut elem_idx = 0;
-            for child in children.into_iter().skip(1) {
-                if elem_idx < elements.len() {
-                    new_children.push(annotate_pattern_element(child, &elements[elem_idx]));
-                    elem_idx += 1;
-                } else {
-                    new_children.push(child);
-                }
-            }
-            Doc {
-                node: DocF::List(new_children),
-                ..doc
-            }
+    if head == "not"
+        && let Some(inner) = node.children().get(1)
+        && let Some(inner_head) = inner.children().first().and_then(|c| c.label())
+    {
+        return inner_head == "anywhere";
+    }
+    false
+}
+
+/// Truncate a matched `(anywhere t1 t2 t3 …)` node to `(anywhere t1)` —
+/// producer-side replacement for the renderer's `truncate_matched_anywhere`.
+fn truncate_matched_anywhere(node: TraceNode) -> TraceNode {
+    if pattern_is_forbidden(&node) {
+        return node;
+    }
+    let head = node
+        .children()
+        .first()
+        .and_then(|c| c.label())
+        .map(|s| s.to_string());
+    let matched_set = matches!(
+        node.evidence(),
+        Some(Evidence::SetMembership { matched: true, .. })
+    );
+    if matched_set
+        && head.as_deref() == Some("anywhere")
+        && node.children().len() > 2
+        && let Some(role) = match node.role() {
+            Role::ArgMatch => Some(Role::ArgMatch),
+            _ => None,
         }
-        _ => doc,
+    {
+        let ev = node.evidence().cloned();
+        let children = node
+            .into_children()
+            .expect("matched-anywhere node is a list");
+        let kept: Vec<_> = children.into_iter().take(2).collect();
+        return TraceNode::plain_list(kept).with_role_and_evidence(role, ev);
+    }
+    node
+}
+
+/// Distribute parent `Evidence::SetMembership` evidence to per-token child
+/// atoms — producer-side replacement for the renderer's
+/// `distribute_arg_annotations` pass.
+fn distribute_anywhere(node: TraceNode) -> TraceNode {
+    let head = node
+        .children()
+        .first()
+        .and_then(|c| c.label())
+        .map(|s| s.to_string());
+    match (node.role(), node.evidence(), head.as_deref()) {
+        (
+            Role::ArgMatch,
+            Some(Evidence::SetMembership {
+                token,
+                observed,
+                matched,
+            }),
+            Some("anywhere") | Some("forbidden"),
+        ) if node.children().len() > 1 && !token.is_empty() => {
+            let observed = observed.clone();
+            let matched = *matched;
+            let mut cs = node
+                .clone()
+                .into_children()
+                .expect("anywhere node is a list");
+            let new_children: Vec<TraceNode> = cs
+                .drain(..)
+                .enumerate()
+                .map(|(i, c)| {
+                    if i == 0 {
+                        c
+                    } else if let Some(label) = c.label() {
+                        let label = label.to_string();
+                        TraceNode::arg_token_atom(label.clone(), label, observed.clone(), matched)
+                    } else {
+                        c
+                    }
+                })
+                .collect();
+            TraceNode::plain_list(new_children)
+        }
+        _ => node,
     }
 }
 
-/// Annotate a single pattern element (which may be a vector for binds,
-/// an atom for literals/wildcards, or a list for regex/quantifiers).
-fn annotate_pattern_element(doc: ADoc, detail: &PositionalElementDetail) -> ADoc {
-    // Handle bind: doc is a Vector [":key", expr]
+/// Handle `(not (anywhere …))`: distribute the inner anywhere with inverted
+/// match outcome.
+fn distribute_forbidden_not(node: TraceNode) -> TraceNode {
+    let head = node
+        .children()
+        .first()
+        .and_then(|c| c.label())
+        .map(|s| s.to_string());
+    if head.as_deref() != Some("not") {
+        return node;
+    }
+    let outer_matched = matches!(
+        node.evidence(),
+        Some(Evidence::SetMembership { matched: true, .. })
+    );
+    let observed = match node.evidence() {
+        Some(Evidence::SetMembership { observed, .. }) => observed.clone(),
+        _ => return node,
+    };
+    let mut children = node.into_children().expect("not-node is a list");
+    if children.len() < 2 {
+        return TraceNode::plain_list(children);
+    }
+    let inner = std::mem::replace(&mut children[1], TraceNode::plain_atom(""));
+    let inner_head = inner
+        .children()
+        .first()
+        .and_then(|c| c.label())
+        .map(|s| s.to_string());
+    let new_inner = if inner_head.as_deref() == Some("anywhere") {
+        let inner_observed = match inner.evidence() {
+            Some(Evidence::SetMembership { observed, .. }) => observed.clone(),
+            _ => observed,
+        };
+        let inner_matched = match inner.evidence() {
+            Some(Evidence::SetMembership { matched, .. }) => *matched,
+            _ => !outer_matched,
+        };
+        let mut inner_children = inner.into_children().expect("anywhere is a list");
+        let new_inner_children: Vec<TraceNode> = inner_children
+            .drain(..)
+            .enumerate()
+            .map(|(i, c)| {
+                if i == 0 {
+                    c
+                } else if let Some(label) = c.label() {
+                    let label = label.to_string();
+                    TraceNode::arg_token_atom(
+                        label.clone(),
+                        label,
+                        inner_observed.clone(),
+                        inner_matched,
+                    )
+                } else {
+                    c
+                }
+            })
+            .collect();
+        TraceNode::plain_list(new_inner_children)
+    } else {
+        inner
+    };
+    children[1] = new_inner;
+    TraceNode::plain_list(children)
+}
+
+/// Recursively walk a TraceNode tree, applying anywhere truncation and
+/// distribution at each list node.
+fn apply_structural_passes(node: TraceNode) -> TraceNode {
+    let node = truncate_matched_anywhere(node);
+    let node = distribute_forbidden_not(node);
+    let node = distribute_anywhere(node);
+    // Recurse into children.
+    if node.label().is_some() {
+        return node;
+    }
+    let role = node.role().clone();
+    let evidence = node.evidence().cloned();
+    let layout = node.layout();
+    let was_dimmed = node.dimmed();
+    let was_vector = node.is_vector();
+    let mut children = node.into_children().unwrap_or_default();
+    let new_children: Vec<TraceNode> = children.drain(..).map(apply_structural_passes).collect();
+    let mut rebuilt = if was_vector {
+        TraceNode::plain_vector(new_children)
+    } else {
+        TraceNode::plain_list(new_children)
+    }
+    .with_role_and_evidence(role, evidence)
+    .with_layout(layout);
+    if was_dimmed {
+        rebuilt = rebuilt.with_dimmed_self();
+    }
+    rebuilt
+}
+
+/// Distribute positional comparison annotations onto literal atoms within
+/// `(positional …)` / `(exact …)` children — producer-side replacement for
+/// the renderer's positional distribution pass.
+fn distribute_positional_comparisons(node: TraceNode, actual_arg: &str) -> TraceNode {
+    if let Some(label) = node.label() {
+        // Quoted literal atom?
+        if label.starts_with('"') && label.ends_with('"') && label.len() > 2 {
+            let inner_text = &label[1..label.len() - 1];
+            let matched = actual_arg == inner_text;
+            return TraceNode::positional_atom(
+                label.to_string(),
+                actual_arg.to_string(),
+                label.to_string(),
+                matched,
+            );
+        }
+        return node;
+    }
+    let head = node
+        .children()
+        .first()
+        .and_then(|c| c.label())
+        .map(|s| s.to_string());
+    match head.as_deref() {
+        Some("or") => {
+            let role = node.role().clone();
+            let ev = node.evidence().cloned();
+            let layout = node.layout();
+            let dimmed = node.dimmed();
+            let mut children = node.into_children().expect("or-list is a list");
+            let new_children: Vec<TraceNode> = children
+                .drain(..)
+                .enumerate()
+                .map(|(i, c)| {
+                    if i == 0 {
+                        c
+                    } else {
+                        distribute_positional_comparisons(c, actual_arg)
+                    }
+                })
+                .collect();
+            let mut out = TraceNode::plain_list(new_children)
+                .with_role_and_evidence(role, ev)
+                .with_layout(layout);
+            if dimmed {
+                out = out.with_dimmed_self();
+            }
+            out
+        }
+        Some("?" | "+" | "*") => {
+            let role = node.role().clone();
+            let ev = node.evidence().cloned();
+            let layout = node.layout();
+            let dimmed = node.dimmed();
+            let mut children = node.into_children().expect("quantifier wrapper is a list");
+            let new_children: Vec<TraceNode> = children
+                .drain(..)
+                .enumerate()
+                .map(|(i, c)| {
+                    if i == 1 {
+                        distribute_positional_comparisons(c, actual_arg)
+                    } else {
+                        c
+                    }
+                })
+                .collect();
+            let mut out = TraceNode::plain_list(new_children)
+                .with_role_and_evidence(role, ev)
+                .with_layout(layout);
+            if dimmed {
+                out = out.with_dimmed_self();
+            }
+            out
+        }
+        _ => node,
+    }
+}
+
+/// Extract positional arguments from an args slice, skipping flags and
+/// stopping at `--`. Used by the producer to determine the "actual arg"
+/// against which positional patterns compare.
+fn extract_positional_args(args: &[String]) -> Vec<&str> {
+    let mut result = Vec::new();
+    let mut iter = args.iter().peekable();
+    let mut past_terminator = false;
+
+    while let Some(arg) = iter.next() {
+        if past_terminator {
+            result.push(arg.as_str());
+        } else if arg == "--" {
+            result.push(arg.as_str());
+            past_terminator = true;
+        } else if arg.starts_with("--") {
+            if !arg.contains('=') {
+                iter.next();
+            }
+        } else if arg.starts_with('-') {
+            // Short flag — skip
+        } else {
+            result.push(arg.as_str());
+        }
+    }
+    result
+}
+
+/// Apply positional distribution to a `(positional|exact)` argv-match node
+/// when the args have at least one positional value.
+fn distribute_positional_at_top(node: TraceNode, args: &[String]) -> TraceNode {
+    let head = node
+        .children()
+        .first()
+        .and_then(|c| c.label())
+        .map(|s| s.to_string());
+    if !matches!(head.as_deref(), Some("positional") | Some("exact")) {
+        return node;
+    }
+    let positional_args = extract_positional_args(args);
+    let Some(first_arg) = positional_args.first().copied() else {
+        return node;
+    };
+    let role = node.role().clone();
+    let evidence = node.evidence().cloned();
+    let layout = node.layout();
+    let dimmed = node.dimmed();
+    let first_arg = first_arg.to_string();
+    let mut children = node.into_children().expect("positional is a list");
+    let new_children: Vec<TraceNode> = children
+        .drain(..)
+        .enumerate()
+        .map(|(i, c)| {
+            if i == 0 {
+                c
+            } else {
+                distribute_positional_comparisons(c, &first_arg)
+            }
+        })
+        .collect();
+    let mut out = TraceNode::plain_list(new_children)
+        .with_role_and_evidence(role, evidence)
+        .with_layout(layout);
+    if dimmed {
+        out = out.with_dimmed_self();
+    }
+    out
+}
+
+/// Truncate a long unannotated list down to head + keep + ellipsis + last.
+/// Producer-side replacement for the renderer's `truncate_unevaluated` pass.
+fn truncate_unevaluated(node: TraceNode, keep: usize) -> TraceNode {
+    if node.label().is_some() {
+        return node;
+    }
+    // Recurse first.
+    let role = node.role().clone();
+    let evidence = node.evidence().cloned();
+    let layout = node.layout();
+    let dimmed = node.dimmed();
+    let was_vector = node.is_vector();
+    let mut children = node.into_children().unwrap_or_default();
+    let children: Vec<TraceNode> = children
+        .drain(..)
+        .map(|c| truncate_unevaluated(c, keep))
+        .collect();
+    let head_present = children
+        .first()
+        .map(|c| c.label().is_some())
+        .unwrap_or(false);
+    let all_unannotated =
+        head_present && children[1..].iter().all(|c| !has_visible_evidence_rec(c));
+    let len = children.len();
+    let new_children = if all_unannotated && len > keep + 2 {
+        let mut truncated: Vec<TraceNode> = Vec::with_capacity(keep + 3);
+        truncated.push(children[0].clone());
+        truncated.extend(children[1..=keep].iter().cloned());
+        truncated.push(TraceNode::plain_atom("…").with_dimmed_self());
+        truncated.push(children.last().cloned().unwrap());
+        truncated
+    } else {
+        children
+    };
+    let mut rebuilt = if was_vector {
+        TraceNode::plain_vector(new_children)
+    } else {
+        TraceNode::plain_list(new_children)
+    }
+    .with_role_and_evidence(role, evidence)
+    .with_layout(layout);
+    if dimmed {
+        rebuilt = rebuilt.with_dimmed_self();
+    }
+    rebuilt
+}
+
+/// True if a node or any descendant carries Evidence (excluding RuleMatch
+/// which doesn't render as right-column text).
+fn has_visible_evidence_rec(node: &TraceNode) -> bool {
+    let role_is_rule = matches!(node.role(), Role::Rule { .. });
+    if !role_is_rule && node.evidence().is_some() {
+        return true;
+    }
+    node.children().iter().any(has_visible_evidence_rec)
+}
+
+/// Propagate dimming down subtrees that carry no visible evidence — analog
+/// of the renderer's `dim_unevaluated` pass.
+fn dim_unevaluated(node: TraceNode) -> TraceNode {
+    dim_unevaluated_inner(node, false).0
+}
+
+fn dim_unevaluated_inner(node: TraceNode, ancestor_annotated: bool) -> (TraceNode, usize) {
+    let self_score = usize::from(
+        node.evidence().is_some() && !matches!(node.role(), Role::Rule { .. } | Role::Plain),
+    );
+    let children_inherit = ancestor_annotated || self_score > 0;
+    if node.label().is_some() {
+        return (node, self_score);
+    }
+    let role = node.role().clone();
+    let evidence = node.evidence().cloned();
+    let layout = node.layout();
+    let initially_dimmed = node.dimmed();
+    let was_vector = node.is_vector();
+    let mut children = node.into_children().unwrap_or_default();
+    let mut total = self_score;
+    let new_children: Vec<TraceNode> = children
+        .drain(..)
+        .map(|c| {
+            let (c, n) = dim_unevaluated_inner(c, children_inherit);
+            total += n;
+            c
+        })
+        .collect();
+    let mut rebuilt = if was_vector {
+        TraceNode::plain_vector(new_children)
+    } else {
+        TraceNode::plain_list(new_children)
+    }
+    .with_role_and_evidence(role, evidence)
+    .with_layout(layout);
+    if initially_dimmed || (!ancestor_annotated && total == 0) {
+        rebuilt = rebuilt.with_dimmed_self();
+    }
+    (rebuilt, total)
+}
+
+/// Build the children of a rule node:
+/// `(rule (command …) [(context …)] (args …) [(effect …)])`.
+fn build_rule_children(
+    rule: &Rule,
+    command_out: (EffectResult, TraceNode),
+    effect_out: (EffectResult, TraceNode),
+) -> Vec<TraceNode> {
+    use may_i_core::ast::Effect;
+    let command_node = TraceNode::plain_list(vec![plain_atom("command"), command_out.1]);
+    let mut nodes = vec![plain_atom("rule"), command_node];
+
+    let mut context_nodes: Vec<TraceNode> = Vec::new();
+    let mut terminal_node: Option<TraceNode> = None;
+    let mut args_children = vec![plain_atom("args")];
+
+    match &rule.effect.value {
+        Effect::When {
+            predicate: _,
+            effect: body,
+        } if body.value.is_terminal() => {
+            extract_context_and_effect(effect_out.1, &mut context_nodes, &mut terminal_node);
+        }
+        Effect::Unless {
+            predicate: _,
+            effect: body,
+        } if body.value.is_terminal() => {
+            extract_context_and_effect(effect_out.1, &mut context_nodes, &mut terminal_node);
+        }
+        eff if eff.is_terminal() => {
+            terminal_node = Some(effect_out.1.clone());
+        }
+        _ => {
+            args_children.push(effect_out.1.clone());
+        }
+    }
+
+    for ctx in context_nodes {
+        nodes.push(ctx);
+    }
+
+    if args_children.len() > 1 {
+        let args_node = TraceNode::plain_list(args_children).with_layout(Layout::AlwaysBreak);
+        nodes.push(args_node);
+    }
+
+    if let Some(eff) = terminal_node {
+        nodes.push(eff);
+    }
+
+    nodes
+}
+
+fn extract_context_and_effect(
+    when_node: TraceNode,
+    context_nodes: &mut Vec<TraceNode>,
+    terminal_node: &mut Option<TraceNode>,
+) {
+    if when_node.label().is_some() || when_node.children().len() != 3 {
+        *terminal_node = Some(when_node);
+        return;
+    }
+    let mut children = when_node.into_children().unwrap();
+    let body = children.pop().unwrap();
+    let pred = children.pop().unwrap();
+    let _head = children.pop().unwrap();
+    let context =
+        TraceNode::plain_list(vec![plain_atom("context"), pred]).with_layout(Layout::AlwaysBreak);
+    context_nodes.push(context);
+    *terminal_node = Some(body);
+}
+
+/// Annotate positional / exact pattern children with per-element match
+/// details (bindings, regex matches).
+fn annotate_positional_elements(
+    node: TraceNode,
+    elements: &[PositionalElementDetail],
+) -> TraceNode {
+    if elements.is_empty() {
+        return node;
+    }
+    let head = node
+        .children()
+        .first()
+        .and_then(|c| c.label())
+        .map(|s| s.to_string());
+    if !matches!(head.as_deref(), Some("positional") | Some("exact")) {
+        return node;
+    }
+    let role = node.role().clone();
+    let evidence = node.evidence().cloned();
+    let layout = node.layout();
+    let dimmed = node.dimmed();
+    let mut children = node.into_children().expect("positional is a list");
+    let head_atom = children.remove(0);
+    let mut new_children = vec![head_atom];
+    let mut elem_idx = 0;
+    for child in children {
+        if elem_idx < elements.len() {
+            new_children.push(annotate_pattern_element(child, &elements[elem_idx]));
+            elem_idx += 1;
+        } else {
+            new_children.push(child);
+        }
+    }
+    let mut rebuilt = TraceNode::plain_list(new_children)
+        .with_role_and_evidence(role, evidence)
+        .with_layout(layout);
+    if dimmed {
+        rebuilt = rebuilt.with_dimmed_self();
+    }
+    rebuilt
+}
+
+fn annotate_pattern_element(node: TraceNode, detail: &PositionalElementDetail) -> TraceNode {
+    // BindMatch: structural shape is a Vector with `:key` head.
     if let Some(bind) = &detail.binding
-        && let DocF::Vector(children) = &doc.node
+        && node.label().is_none()
     {
-        let mut new_children = children.clone();
-        // Annotate the inner expression if there's detail
-        if new_children.len() >= 2
+        let role = node.role().clone();
+        let layout = node.layout();
+        let dimmed = node.dimmed();
+        let was_vector = node.is_vector();
+        let mut children = node.into_children().expect("bind shape is a list");
+        if children.len() >= 2
             && let Some(inner) = &bind.inner_match
         {
-            new_children[1] = annotate_expr_match(new_children[1].clone(), inner);
+            let snd = std::mem::replace(&mut children[1], TraceNode::plain_atom(""));
+            children[1] = annotate_expr_match(snd, inner);
         }
-        return Doc {
-            ann: Some(Ann::BindMatch {
+        let role_to_apply = match &role {
+            Role::Plain => Role::BindMatch {
                 key: bind.key.to_string(),
-                value: bind.value.clone(),
-            }),
-            node: DocF::Vector(new_children),
-            ..doc
+            },
+            other => other.clone(),
         };
+        let evidence_to_apply = Some(Evidence::Bind {
+            value: bind.value.clone(),
+        });
+        let mut rebuilt = if was_vector {
+            TraceNode::plain_vector(children)
+        } else {
+            TraceNode::plain_list(children)
+        }
+        .with_role_and_evidence(role_to_apply, evidence_to_apply)
+        .with_layout(layout);
+        if dimmed {
+            rebuilt = rebuilt.with_dimmed_self();
+        }
+        return rebuilt;
     }
 
-    // Handle regex/literal on non-bind expressions
     if let PositionalMatchKind::Expr(expr_match) = &detail.match_kind {
-        return annotate_expr_match(doc, expr_match);
+        return annotate_expr_match(node, expr_match);
     }
 
-    // Handle quantifier wrappers: (? expr), (* expr), (+ expr)
-    if let DocF::List(children) = &doc.node {
-        let head = children.first().and_then(|c| c.as_atom());
-        if matches!(head, Some("?" | "+" | "*")) && children.len() >= 2 {
-            let mut new_children = children.clone();
-            new_children[1] = annotate_pattern_element(new_children[1].clone(), detail);
-            return Doc {
-                node: DocF::List(new_children),
-                ..doc
-            };
+    // Quantifier wrapper: recurse into the wrapped element.
+    if node.label().is_none() {
+        let head = node
+            .children()
+            .first()
+            .and_then(|c| c.label())
+            .map(|s| s.to_string());
+        if matches!(head.as_deref(), Some("?") | Some("+") | Some("*"))
+            && node.children().len() >= 2
+        {
+            let role = node.role().clone();
+            let evidence = node.evidence().cloned();
+            let layout = node.layout();
+            let dimmed = node.dimmed();
+            let mut children = node.into_children().unwrap();
+            let inner = std::mem::replace(&mut children[1], TraceNode::plain_atom(""));
+            children[1] = annotate_pattern_element(inner, detail);
+            let mut rebuilt = TraceNode::plain_list(children)
+                .with_role_and_evidence(role, evidence)
+                .with_layout(layout);
+            if dimmed {
+                rebuilt = rebuilt.with_dimmed_self();
+            }
+            return rebuilt;
         }
     }
 
-    doc
+    node
 }
 
-/// Move an annotation to a cond branch body within the positional children.
-///
-/// When a positional pattern has a trailing `Expr::Cond` with no explicit
-/// continuation, `resolve_trailing_cond_effect` extracts the matching branch's
-/// effect and evaluates it as a continuation. This creates a duplicate
-/// `(effect :keyword)` node. This function places the evaluated annotation on
-/// the original cond branch body so the annotation renders on the correct line.
-fn move_ann_to_cond_branch(children: &mut [ADoc], branch_idx: usize, ann: Ann) {
-    // Find the cond child among the positional children (a list starting with "cond").
-    for child in children.iter_mut() {
-        if let DocF::List(cond_children) = &mut child.node {
-            let is_cond = cond_children.first().and_then(|c| c.as_atom()) == Some("cond");
-            if !is_cond {
-                continue;
-            }
-            // Cond children: ["cond", clause0, clause1, ...]
-            let clause_idx = branch_idx + 1;
-            if clause_idx >= cond_children.len() {
-                continue;
-            }
-            // Each clause is a list: (test body)
-            if let DocF::List(clause_parts) = &mut cond_children[clause_idx].node
-                && let Some(body) = clause_parts.last_mut()
-            {
-                body.ann = Some(ann);
-                return;
-            }
-        }
-    }
-}
-
-/// Annotate an expression doc node with match detail (regex, literal).
-fn annotate_expr_match(doc: ADoc, detail: &may_i_engine::fold::ExprMatchDetail) -> ADoc {
+fn annotate_expr_match(node: TraceNode, detail: &may_i_engine::fold::ExprMatchDetail) -> TraceNode {
     use may_i_engine::fold::ExprMatchDetail;
     match detail {
         ExprMatchDetail::Regex {
             pattern,
             actual,
             matched,
-        } => Doc {
-            ann: Some(Ann::RegexMatch {
-                pattern: pattern.clone(),
-                actual: actual.clone(),
-                matched: *matched,
-            }),
-            ..doc
-        },
-        _ => doc,
+        } => {
+            let label = node.label().map(|s| s.to_string()).unwrap_or_default();
+            let layout = node.layout();
+            let dimmed = node.dimmed();
+            let mut rebuilt =
+                TraceNode::regex_match_atom(label, pattern.clone(), actual.clone(), *matched)
+                    .with_layout(layout);
+            if dimmed {
+                rebuilt = rebuilt.with_dimmed_self();
+            }
+            rebuilt
+        }
+        _ => node,
     }
 }
 
-/// Role of a matched rule in the most-strict-wins combine for its scope.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CombineRole {
-    /// This rule contributed the surviving `reason` (earliest in source
-    /// order among rules tied at the strictest effect).
-    ReasonSource,
-    /// This rule matched at the strictest effect but its `reason` was
-    /// dropped in favour of an earlier tied sibling.
-    TiedSibling,
+/// Relocate an effect-decision evidence value onto a specific cond-branch
+/// body within positional children — supports the trailing-cond shorthand
+/// emitted by `effect_arg_continuation`.
+fn move_evidence_to_cond_branch(
+    children: &mut [TraceNode],
+    branch_idx: usize,
+    decision: Decision,
+    reason: Option<String>,
+) {
+    for child in children.iter_mut() {
+        if child.label().is_some() {
+            continue;
+        }
+        let head = child
+            .children()
+            .first()
+            .and_then(|c| c.label())
+            .map(|s| s.to_string());
+        if head.as_deref() != Some("cond") {
+            continue;
+        }
+        let Some(cond_children) = child.children_mut() else {
+            continue;
+        };
+        let clause_idx = branch_idx + 1;
+        if clause_idx >= cond_children.len() {
+            continue;
+        }
+        let clause = &mut cond_children[clause_idx];
+        let Some(clause_parts) = clause.children_mut() else {
+            continue;
+        };
+        if let Some(body) = clause_parts.last_mut() {
+            let new_body = std::mem::replace(body, TraceNode::plain_atom(""))
+                .with_role_and_evidence(
+                    Role::EffectDecision,
+                    Some(Evidence::Decision {
+                        decision,
+                        reason: reason.clone(),
+                    }),
+                );
+            *body = new_body;
+            return;
+        }
+    }
 }
 
-/// A single trace entry produced by the fold.
-#[derive(Clone)]
-pub enum TraceEntry {
-    /// Header for a compound command segment.
-    SegmentHeader { command: String, decision: Decision },
-    /// A rule evaluation with its annotated doc tree.
-    Rule {
-        doc: ADoc,
-        line: Option<usize>,
-        /// Pre-migration Doc for display when the config was migrated.
-        /// The `doc` field still carries annotations; this field provides
-        /// the original source structure for the left column.
-        pre_migration_doc: Option<Doc<()>>,
-        /// Context facts that were active when this rule was evaluated.
-        /// Non-empty only for recursive evaluations where facts were bound.
-        facts: Vec<(String, String)>,
-        /// The command being evaluated, when this rule is inside a recursive
-        /// `may-i` evaluation.
-        inner_command: Option<String>,
-        /// Role of this rule in the most-strict-wins combine. `None` for
-        /// rules that did not contribute the strictest decision (or for
-        /// rule entries pushed before the combine completed).
-        combine_role: Option<CombineRole>,
-    },
-    /// An embedded command (substitution) was evaluated.
-    EmbeddedCommand { source: String, decision: Decision },
-    /// No matching rule — default ask.
-    DefaultAsk { reason: String },
-    /// Parse diagnostics were emitted.
-    ParseDiagnostics {
-        diagnostics: Vec<may_i_shell_parser::ParseDiagnostic>,
-    },
-    /// Resolved parser (style + parameter spellings) for the command
-    /// being evaluated.
-    Parser {
-        command: String,
-        style: String,
-        parameter_tokens: Vec<String>,
-        /// Structural `(flags MODE)` selection. Renderers format it
-        /// (`posix`, `permute`, or `until "<tok>"…`).
-        flags: FlagsMode,
-        /// Bound `(rest #var)` name when the parser declares one.
-        rest_binding: Option<String>,
-    },
-}
+// ── TracingFold ──────────────────────────────────────────────────────────
 
-/// Fold that produces `(EffectResult, Doc<Option<Ann>>)` pairs and
-/// accumulates rule-level trace entries.
 pub(crate) struct TracingFold {
     pub traces: Vec<TraceEntry>,
     source_text: Option<String>,
     pre_migration_forms: Option<Vec<(may_i_core::Span, Doc<()>)>>,
-    /// Stack of trace positions saved before recursive may-i evaluations.
     recursive_trace_starts: Vec<usize>,
-    /// Inner traces extracted from recursive evaluations, waiting to be
-    /// appended after the outer rule's trace entry. Each entry is
-    /// (inner_command, traces).
     pending_inner_traces: Vec<(String, Vec<TraceEntry>)>,
-    /// Stack of trace-entry indices per `Evaluator::evaluate` scope.
-    /// Each `rule_matched` pushes its trace index onto the top vec;
-    /// `rules_combined` consumes the top to mark `CombineRole`s. A new
-    /// vec is pushed on `begin_recursive_eval` (one per inner scope).
-    /// The bottom vec is the outer-evaluator scope and is never popped.
     match_stack: Vec<Vec<usize>>,
 }
 
@@ -594,8 +947,6 @@ impl TracingFold {
         }
     }
 
-    /// Append inner traces from a recursive may-i evaluation, tagging the
-    /// first entry with the inner command string.
     fn append_inner_traces(&mut self, (cmd, mut traces): (String, Vec<TraceEntry>)) {
         if let Some(TraceEntry::Rule { inner_command, .. }) = traces.first_mut() {
             *inner_command = Some(cmd);
@@ -608,7 +959,6 @@ impl TracingFold {
         Some(text[..byte_offset.min(text.len())].matches('\n').count() + 1)
     }
 
-    /// Find the pre-migration Doc whose span contains the given byte offset.
     fn find_pre_migration_doc(&self, span: may_i_core::Span) -> Option<Doc<()>> {
         let forms = self.pre_migration_forms.as_ref()?;
         forms
@@ -619,8 +969,8 @@ impl TracingFold {
 }
 
 impl EvalFold for TracingFold {
-    type EffectOut = (EffectResult, ADoc);
-    type PredicateOut = (PredicateResult, ADoc);
+    type EffectOut = (EffectResult, TraceNode);
+    type PredicateOut = (PredicateResult, TraceNode);
 
     fn effect_result(out: &Self::EffectOut) -> &EffectResult {
         &out.0
@@ -638,15 +988,17 @@ impl EvalFold for TracingFold {
             },
             EffectResult::Nil => effect.clone(),
         };
-        let mut doc = unannotated_to_ann(display_effect.to_doc());
-        doc.ann = match &result {
-            EffectResult::Decision(decision, reason) => Some(Ann::EffectDecision {
-                decision: *decision,
-                reason: reason.clone(),
-            }),
-            EffectResult::Nil => None,
-        };
-        (result, doc)
+        let mut node = from_pattern_doc(display_effect.to_doc());
+        if let EffectResult::Decision(decision, reason) = &result {
+            node = node.with_role_and_evidence(
+                Role::EffectDecision,
+                Some(Evidence::Decision {
+                    decision: *decision,
+                    reason: reason.clone(),
+                }),
+            );
+        }
+        (result, node)
     }
 
     fn effect_nil(&mut self, _effect: &Effect) -> Self::EffectOut {
@@ -659,26 +1011,26 @@ impl EvalFold for TracingFold {
         cmd: &str,
         matched: bool,
     ) -> Self::EffectOut {
-        let ann_doc = match pattern {
+        let node = match pattern {
             CommandPattern::Or(sub_patterns) => {
-                // Show only matching sub-patterns; dim and elide the rest.
-                let mut cs: Vec<ADoc> = vec![plain_atom("or")];
+                let mut cs: Vec<TraceNode> = vec![plain_atom("or")];
                 let mut has_pre_ellipsis = false;
                 let mut has_post_match = false;
                 let mut seen_match = false;
                 for sub in sub_patterns {
                     let sub_matched = sub.is_match(cmd);
                     if sub_matched {
-                        let sub_doc = unannotated_to_ann(command_pattern_to_doc(sub));
-                        cs.push(Doc {
-                            ann: Some(Ann::CommandMatch { matched: true }),
-                            ..sub_doc
-                        });
+                        let sub_node = from_pattern_doc(command_pattern_to_doc(sub))
+                            .with_role_and_evidence(
+                                Role::Command,
+                                Some(Evidence::Match { matched: true }),
+                            );
+                        cs.push(sub_node);
                         seen_match = true;
                         has_post_match = false;
                     } else if !seen_match {
                         if !has_pre_ellipsis {
-                            cs.push(dim(plain_atom("…")));
+                            cs.push(ellipsis());
                             has_pre_ellipsis = true;
                         }
                     } else {
@@ -686,86 +1038,75 @@ impl EvalFold for TracingFold {
                     }
                 }
                 if has_post_match {
-                    cs.push(dim(plain_atom("…")));
+                    cs.push(ellipsis());
                 }
-                Doc {
-                    ann: Some(Ann::CommandMatch { matched }),
-                    node: DocF::List(cs),
-                    layout: LayoutHint::Auto,
-                    dimmed: false,
-                }
+                TraceNode::command_list(cs, matched)
             }
-            _ => {
-                let doc = unannotated_to_ann(command_pattern_to_doc(pattern));
-                Doc {
-                    ann: Some(Ann::CommandMatch { matched }),
-                    ..doc
-                }
-            }
+            _ => from_pattern_doc(command_pattern_to_doc(pattern))
+                .with_role_and_evidence(Role::Command, Some(Evidence::Match { matched })),
         };
         let result = if matched {
             EffectResult::Decision(Decision::Allow, None)
         } else {
             EffectResult::Nil
         };
-        (result, ann_doc)
+        (result, node)
     }
 
     fn effect_arg_match(
         &mut self,
         pattern: &ArgPattern,
-        _args: &[String],
+        args: &[String],
         matched: bool,
         detail: ArgMatchDetail,
     ) -> Self::EffectOut {
-        let doc = unannotated_to_ann(arg_pattern_to_doc(pattern));
-        let doc = annotate_positional_elements(doc, &detail.positional_elements);
-        let captured_value = detail
+        let mut node = from_pattern_doc(arg_pattern_to_doc(pattern));
+        node = annotate_positional_elements(node, &detail.positional_elements);
+
+        let captured = detail
             .captured_value
             .as_ref()
-            .map(|v| make_captured_value(pattern, v.clone()));
-        let ann = Some(Ann::ArgMatch {
-            search_tokens: detail.search_tokens.clone(),
-            arg_set: detail.arg_set.clone(),
-            matched,
-            captured_value: captured_value.clone(),
-        });
-        // For forbidden patterns (rendered as (not (anywhere ...))),
-        // also annotate the inner (anywhere ...) node so truncation logic
-        // can see it. The inner matched is inverted: forbidden matched=true
-        // means no tokens found, but the inner anywhere matched should be false.
-        let ann_doc = if matches!(pattern, ArgPattern::Forbidden(_)) {
-            if let DocF::List(mut children) = doc.node {
-                if children.len() == 2 {
-                    let inner_ann = Some(Ann::ArgMatch {
-                        search_tokens: detail.search_tokens.clone(),
-                        arg_set: detail.arg_set.clone(),
-                        matched: !matched,
-                        captured_value: None,
-                    });
-                    children[1] = Doc {
-                        ann: inner_ann,
-                        ..children[1].clone()
-                    };
-                }
-                Doc {
-                    ann,
-                    node: DocF::List(children),
-                    layout: doc.layout,
-                    dimmed: doc.dimmed,
-                }
-            } else {
-                Doc { ann, ..doc }
-            }
+            .map(|v| (capture_source(pattern), v.clone()));
+
+        let role = Role::ArgMatch;
+        let evidence = if let Some((source, value)) = captured.clone() {
+            Some(Evidence::CapturedValue { source, value })
+        } else if !detail.search_tokens.is_empty() {
+            Some(Evidence::SetMembership {
+                token: detail.search_tokens.first().cloned().unwrap_or_default(),
+                observed: detail.arg_set.clone(),
+                matched,
+            })
         } else {
-            Doc { ann, ..doc }
+            Some(Evidence::Match { matched })
         };
+        node = node.with_role_and_evidence(role, evidence);
+
+        // For forbidden patterns, annotate the inner anywhere with inverted
+        // match so distribution sees the correct flag.
+        if matches!(pattern, ArgPattern::Forbidden(_))
+            && let Some(children) = node.children_mut()
+            && children.len() == 2
+        {
+            let inner = std::mem::replace(&mut children[1], TraceNode::plain_atom(""));
+            let inner_inverted_evidence = Some(Evidence::SetMembership {
+                token: detail.search_tokens.first().cloned().unwrap_or_default(),
+                observed: detail.arg_set.clone(),
+                matched: !matched,
+            });
+            children[1] = inner.with_role_and_evidence(Role::ArgMatch, inner_inverted_evidence);
+        }
+
+        // Apply positional distribution at the top if appropriate.
+        node = distribute_positional_at_top(node, args);
+        node = apply_structural_passes(node);
+
         let result = if matched {
             EffectResult::Decision(Decision::Allow, None)
         } else {
             EffectResult::Nil
         };
-        (result, ann_doc)
+        (result, node)
     }
 
     fn effect_and(
@@ -776,14 +1117,12 @@ impl EvalFold for TracingFold {
         let mut docs = vec![plain_atom("and")];
         for child in children {
             match child {
-                ChildResult::Evaluated((_, doc)) => docs.push(doc),
-                ChildResult::Skipped => docs.push(dim(plain_atom("…"))),
+                ChildResult::Evaluated((_, node)) => docs.push(node),
+                ChildResult::Skipped => docs.push(ellipsis()),
             }
         }
-        let ann = Some(Ann::Combinator {
-            result_is_nil: result.is_nil(),
-        });
-        (result, ann_list_break(docs, ann))
+        let satisfied = !result.is_nil();
+        (result, TraceNode::combinator(docs, satisfied, true))
     }
 
     fn effect_or(
@@ -794,22 +1133,18 @@ impl EvalFold for TracingFold {
         let mut docs = vec![plain_atom("or")];
         for child in children {
             match child {
-                ChildResult::Evaluated((_, doc)) => docs.push(doc),
-                ChildResult::Skipped => docs.push(dim(plain_atom("…"))),
+                ChildResult::Evaluated((_, node)) => docs.push(node),
+                ChildResult::Skipped => docs.push(ellipsis()),
             }
         }
-        let ann = Some(Ann::Combinator {
-            result_is_nil: result.is_nil(),
-        });
-        (result, ann_list_break(docs, ann))
+        let satisfied = !result.is_nil();
+        (result, TraceNode::combinator(docs, satisfied, true))
     }
 
     fn effect_not(&mut self, child: Self::EffectOut, result: EffectResult) -> Self::EffectOut {
         let docs = vec![plain_atom("not"), child.1];
-        let ann = Some(Ann::Combinator {
-            result_is_nil: result.is_nil(),
-        });
-        (result, ann_list(docs, ann))
+        let satisfied = !result.is_nil();
+        (result, TraceNode::combinator(docs, satisfied, false))
     }
 
     fn effect_when(
@@ -819,15 +1154,13 @@ impl EvalFold for TracingFold {
         body_effect: &Effect,
         result: EffectResult,
     ) -> Self::EffectOut {
-        let body_doc = match body {
-            ChildResult::Evaluated((_, doc)) => doc,
-            ChildResult::Skipped => dim(effect_to_static_ann_doc(body_effect)),
+        let body_node = match body {
+            ChildResult::Evaluated((_, node)) => node,
+            ChildResult::Skipped => dimmed(effect_to_static_trace(body_effect)),
         };
-        let docs = vec![plain_atom("when"), pred.1, body_doc];
-        let ann = Some(Ann::Combinator {
-            result_is_nil: result.is_nil(),
-        });
-        (result, ann_list_break(docs, ann))
+        let docs = vec![plain_atom("when"), pred.1, body_node];
+        let satisfied = !result.is_nil();
+        (result, TraceNode::combinator(docs, satisfied, true))
     }
 
     fn effect_unless(
@@ -837,15 +1170,13 @@ impl EvalFold for TracingFold {
         body_effect: &Effect,
         result: EffectResult,
     ) -> Self::EffectOut {
-        let body_doc = match body {
-            ChildResult::Evaluated((_, doc)) => doc,
-            ChildResult::Skipped => dim(effect_to_static_ann_doc(body_effect)),
+        let body_node = match body {
+            ChildResult::Evaluated((_, node)) => node,
+            ChildResult::Skipped => dimmed(effect_to_static_trace(body_effect)),
         };
-        let docs = vec![plain_atom("unless"), pred.1, body_doc];
-        let ann = Some(Ann::Combinator {
-            result_is_nil: result.is_nil(),
-        });
-        (result, ann_list_break(docs, ann))
+        let docs = vec![plain_atom("unless"), pred.1, body_node];
+        let satisfied = !result.is_nil();
+        (result, TraceNode::combinator(docs, satisfied, true))
     }
 
     fn effect_if(
@@ -855,19 +1186,17 @@ impl EvalFold for TracingFold {
         else_: ChildResult<Self::EffectOut>,
         result: EffectResult,
     ) -> Self::EffectOut {
-        let then_doc = match then_ {
-            ChildResult::Evaluated((_, doc)) => doc,
-            ChildResult::Skipped => dim(plain_atom("…")),
+        let then_node = match then_ {
+            ChildResult::Evaluated((_, node)) => node,
+            ChildResult::Skipped => ellipsis(),
         };
-        let else_doc = match else_ {
-            ChildResult::Evaluated((_, doc)) => doc,
-            ChildResult::Skipped => dim(plain_atom("…")),
+        let else_node = match else_ {
+            ChildResult::Evaluated((_, node)) => node,
+            ChildResult::Skipped => ellipsis(),
         };
-        let docs = vec![plain_atom("if"), pred.1, then_doc, else_doc];
-        let ann = Some(Ann::Combinator {
-            result_is_nil: result.is_nil(),
-        });
-        (result, ann_list_break(docs, ann))
+        let docs = vec![plain_atom("if"), pred.1, then_node, else_node];
+        let satisfied = !result.is_nil();
+        (result, TraceNode::combinator(docs, satisfied, true))
     }
 
     fn effect_cond(
@@ -881,7 +1210,6 @@ impl EvalFold for TracingFold {
     ) -> Self::EffectOut {
         let mut docs = vec![plain_atom("cond")];
 
-        // Find where trailing (Skipped, Skipped) branches start.
         let trailing_skipped_start = {
             let mut start = branches.len();
             for (i, (pred, body)) in branches.iter().enumerate().rev() {
@@ -899,65 +1227,63 @@ impl EvalFold for TracingFold {
             if i >= trailing_skipped_start {
                 break;
             }
-            let pred_doc = match pred {
-                ChildResult::Evaluated((_, doc)) => doc,
-                ChildResult::Skipped => dim(plain_atom("…")),
+            let pred_node = match pred {
+                ChildResult::Evaluated((_, node)) => node,
+                ChildResult::Skipped => ellipsis(),
             };
-            let body_doc = match body {
-                ChildResult::Evaluated((_, doc)) => doc,
-                ChildResult::Skipped => dim(plain_atom("…")),
+            let body_node = match body {
+                ChildResult::Evaluated((_, node)) => node,
+                ChildResult::Skipped => ellipsis(),
             };
-            docs.push(ann_list(vec![pred_doc, body_doc], None));
+            docs.push(TraceNode::plain_list(vec![pred_node, body_node]));
         }
 
         if has_trailing_skipped {
-            // Collapse all trailing skipped branches (and skipped fallback) into one ellipsis.
-            docs.push(dim(plain_atom("…")));
+            docs.push(ellipsis());
         } else if let Some(fb) = fallback {
             match fb {
-                ChildResult::Evaluated((_, doc)) => docs.push(doc),
-                ChildResult::Skipped => docs.push(dim(plain_atom("…"))),
+                ChildResult::Evaluated((_, node)) => docs.push(node),
+                ChildResult::Skipped => docs.push(ellipsis()),
             }
         }
 
-        let ann = Some(Ann::Combinator {
-            result_is_nil: result.is_nil(),
-        });
-        (result, ann_list_break(docs, ann))
+        let satisfied = !result.is_nil();
+        (result, TraceNode::combinator(docs, satisfied, true))
     }
 
     fn effect_arg_continuation(
         &mut self,
         pattern: &ArgPattern,
-        _args: &[String],
+        args: &[String],
         detail: ArgMatchDetail,
         continuation: Self::EffectOut,
     ) -> Self::EffectOut {
         let result = continuation.0.clone();
-        let doc = unannotated_to_ann(arg_pattern_to_doc(pattern));
-        let doc = annotate_positional_elements(doc, &detail.positional_elements);
-        let captured_value = detail
+        let mut node = from_pattern_doc(arg_pattern_to_doc(pattern));
+        node = annotate_positional_elements(node, &detail.positional_elements);
+
+        let captured = detail
             .captured_value
             .as_ref()
-            .map(|v| make_captured_value(pattern, v.clone()));
-        let ann_doc = Doc {
-            ann: Some(Ann::ArgMatch {
-                search_tokens: detail.search_tokens,
-                arg_set: detail.arg_set,
+            .map(|v| (capture_source(pattern), v.clone()));
+        let evidence_for_node = if let Some((source, value)) = captured.clone() {
+            Some(Evidence::CapturedValue { source, value })
+        } else if !detail.search_tokens.is_empty() {
+            Some(Evidence::SetMembership {
+                token: detail.search_tokens.first().cloned().unwrap_or_default(),
+                observed: detail.arg_set.clone(),
                 matched: detail.matched,
-                captured_value: captured_value.clone(),
-            }),
-            ..doc
+            })
+        } else {
+            Some(Evidence::Match {
+                matched: detail.matched,
+            })
         };
-        // Wrap: (positional ... continuation-doc)
-        let mut children = match ann_doc.node {
-            DocF::List(cs) => cs,
-            _ => vec![ann_doc],
-        };
+        node = node.with_role_and_evidence(Role::ArgMatch, evidence_for_node);
+        node = distribute_positional_at_top(node, args);
 
-        // If the continuation came from a trailing cond (no explicit continuation),
-        // move the EffectDecision annotation to the matching cond branch body so it
-        // renders on the correct line rather than on the duplicate continuation.
+        let mut children = node.into_children().unwrap_or_default();
+
         let trailing_cond_branch = match pattern {
             ArgPattern::Ordered {
                 mode: MatchMode::Positional,
@@ -978,30 +1304,31 @@ impl EvalFold for TracingFold {
             _ => None,
         };
 
-        if let Some(branch_idx) = trailing_cond_branch {
-            if let Some(ref effect_ann @ Ann::EffectDecision { .. }) = continuation.1.ann {
-                move_ann_to_cond_branch(&mut children, branch_idx, effect_ann.clone());
-            }
-            // Push continuation without the EffectDecision annotation
-            children.push(Doc {
-                ann: None,
-                ..continuation.1
-            });
+        if let Some(branch_idx) = trailing_cond_branch
+            && let Some(Evidence::Decision { decision, reason }) = continuation.1.evidence()
+        {
+            let decision = *decision;
+            let reason = reason.clone();
+            move_evidence_to_cond_branch(&mut children, branch_idx, decision, reason);
+            let cont_clean = continuation
+                .1
+                .clone()
+                .with_role_and_evidence(Role::Plain, None);
+            children.push(cont_clean);
         } else {
             children.push(continuation.1);
         }
 
-        let wrapper = Doc {
-            ann: Some(Ann::ArgMatch {
-                search_tokens: vec![],
-                arg_set: vec![],
+        let captured_evidence = if let Some((source, value)) = captured {
+            Some(Evidence::CapturedValue { source, value })
+        } else {
+            Some(Evidence::Match {
                 matched: detail.matched,
-                captured_value,
-            }),
-            node: DocF::List(children),
-            layout: LayoutHint::AlwaysBreak,
-            dimmed: false,
+            })
         };
+        let wrapper = TraceNode::plain_list(children)
+            .with_role_and_evidence(Role::ArgMatch, captured_evidence)
+            .with_layout(Layout::AlwaysBreak);
         (result, wrapper)
     }
 
@@ -1011,9 +1338,6 @@ impl EvalFold for TracingFold {
     }
 
     fn rules_combined(&mut self, tied_rule_indices: &[usize], reason_source_index: Option<usize>) {
-        // The engine reports match-order positions: the Nth Decision
-        // produced by `rule_matched` corresponds to the Nth entry on
-        // the top of `match_stack`.
         let top: Vec<usize> = self.match_stack.last().cloned().unwrap_or_default();
         for &match_pos in tied_rule_indices {
             let Some(&trace_idx) = top.get(match_pos) else {
@@ -1052,25 +1376,25 @@ impl EvalFold for TracingFold {
         result: PredicateResult,
         detail: FactDetail,
     ) -> Self::PredicateOut {
-        let source = query.to_source();
-        let doc = unannotated_to_ann(fact_query_to_doc(query));
-        let observed = detail
-            .observed
-            .map(|values| values.into_iter().collect::<BTreeSet<String>>());
-        let failure_reason = detail.failure_reason.as_deref().map(|r| match r {
-            "absent" => FactFailure::KeyAbsent,
-            other => unreachable!("unexpected fact failure reason: {other}"),
-        });
-        let ann_doc = Doc {
-            ann: Some(Ann::FactQuery {
-                query_source: source,
-                matched: result == PredicateResult::Match,
+        let expected = query.to_source();
+        let node = from_pattern_doc(fact_query_to_doc(query));
+        let matched = result == PredicateResult::Match;
+        let evidence = if let Some(observed) = detail.observed {
+            let observed: BTreeSet<String> = observed.into_iter().collect();
+            Some(Evidence::FactValues {
+                expected,
                 observed,
-                failure_reason,
-            }),
-            ..doc
+                matched,
+            })
+        } else if matches!(detail.failure_reason.as_deref(), Some("absent")) {
+            Some(Evidence::FactAbsent)
+        } else {
+            Some(Evidence::Match { matched })
         };
-        (result, ann_doc)
+        (
+            result,
+            node.with_role_and_evidence(Role::FactQuery, evidence),
+        )
     }
 
     fn predicate_arg(
@@ -1079,17 +1403,20 @@ impl EvalFold for TracingFold {
         args: &[String],
         result: PredicateResult,
     ) -> Self::PredicateOut {
-        let doc = unannotated_to_ann(arg_pattern_to_doc(pattern));
-        let ann_doc = Doc {
-            ann: Some(Ann::ArgMatch {
-                captured_value: None,
-                search_tokens: vec![],
-                arg_set: args.to_vec(),
-                matched: result == PredicateResult::Match,
-            }),
-            ..doc
-        };
-        (result, ann_doc)
+        let matched = result == PredicateResult::Match;
+        let node = from_pattern_doc(arg_pattern_to_doc(pattern));
+        let evidence = Some(Evidence::SetMembership {
+            token: String::new(),
+            observed: args.to_vec(),
+            matched,
+        });
+        let node = node.with_role_and_evidence(Role::ArgMatch, evidence);
+        // Truncate long unannotated child lists BEFORE distributing
+        // positional evidence — otherwise the per-token evidence makes
+        // every literal atom "annotated" and suppresses truncation.
+        let node = truncate_unevaluated(node, 2);
+        let node = distribute_positional_at_top(node, args);
+        (result, apply_structural_passes(node))
     }
 
     fn predicate_and(
@@ -1100,11 +1427,11 @@ impl EvalFold for TracingFold {
         let mut docs = vec![plain_atom("and")];
         for child in children {
             match child {
-                ChildResult::Evaluated((_, doc)) => docs.push(doc),
-                ChildResult::Skipped => docs.push(dim(plain_atom("…"))),
+                ChildResult::Evaluated((_, node)) => docs.push(node),
+                ChildResult::Skipped => docs.push(ellipsis()),
             }
         }
-        (result, ann_list_break(docs, None))
+        (result, TraceNode::combinator_plain(docs, true))
     }
 
     fn predicate_or(
@@ -1115,11 +1442,11 @@ impl EvalFold for TracingFold {
         let mut docs = vec![plain_atom("or")];
         for child in children {
             match child {
-                ChildResult::Evaluated((_, doc)) => docs.push(doc),
-                ChildResult::Skipped => docs.push(dim(plain_atom("…"))),
+                ChildResult::Evaluated((_, node)) => docs.push(node),
+                ChildResult::Skipped => docs.push(ellipsis()),
             }
         }
-        (result, ann_list_break(docs, None))
+        (result, TraceNode::combinator_plain(docs, true))
     }
 
     fn predicate_not(
@@ -1128,7 +1455,7 @@ impl EvalFold for TracingFold {
         result: PredicateResult,
     ) -> Self::PredicateOut {
         let docs = vec![plain_atom("not"), child.1];
-        (result, ann_list(docs, None))
+        (result, TraceNode::combinator_plain(docs, false))
     }
 
     fn predicate_named(
@@ -1138,12 +1465,11 @@ impl EvalFold for TracingFold {
         _result: PredicateResult,
     ) -> Self::PredicateOut {
         let matched = resolved.0 == PredicateResult::Match;
-        let ann = Some(Ann::VarRef {
-            name: name.to_string(),
-            matched,
-        });
         let docs = vec![plain_atom(name), resolved.1];
-        (resolved.0, ann_list(docs, ann))
+        (
+            resolved.0,
+            TraceNode::var_ref(docs, name.to_string(), matched),
+        )
     }
 
     fn predicate_bound(
@@ -1152,7 +1478,7 @@ impl EvalFold for TracingFold {
         result: PredicateResult,
     ) -> Self::PredicateOut {
         let docs = vec![plain_atom("bound?"), plain_atom(binding.to_string())];
-        (result, ann_list(docs, None))
+        (result, TraceNode::plain_list(docs))
     }
 
     fn predicate_matches(
@@ -1166,7 +1492,7 @@ impl EvalFold for TracingFold {
             plain_atom(binding.to_string()),
             plain_atom("<expr>"),
         ];
-        (result, ann_list(docs, None))
+        (result, TraceNode::plain_list(docs))
     }
 
     fn rule_matched(
@@ -1179,17 +1505,15 @@ impl EvalFold for TracingFold {
     ) -> Self::EffectOut {
         let line = self.line_of(rule.span.start);
         let pre_migration_doc = self.find_pre_migration_doc(rule.span);
-        let ann = Some(Ann::RuleMatch {
-            matched: true,
-            line,
-        });
         let terminal_result = effect_out.0.clone();
 
-        let docs = build_rule_doc_children(rule, command_out, effect_out);
-        let doc = ann_list_break(docs, ann);
+        let children = build_rule_children(rule, command_out, effect_out);
+        let node = TraceNode::rule(children, line, true);
+        let node = truncate_unevaluated(node, 2);
+        let node = dim_unevaluated(node);
         let trace_idx = self.traces.len();
         self.traces.push(TraceEntry::Rule {
-            doc: doc.clone(),
+            node: node.clone(),
             line,
             pre_migration_doc,
             facts: flatten_facts(facts),
@@ -1199,12 +1523,10 @@ impl EvalFold for TracingFold {
         if let Some(top) = self.match_stack.last_mut() {
             top.push(trace_idx);
         }
-        // Append inner traces from recursive may-i evaluations after the
-        // outer rule, so the trace reads in evaluation order.
         if let Some(inner) = self.pending_inner_traces.pop() {
             self.append_inner_traces(inner);
         }
-        (terminal_result, doc)
+        (terminal_result, node)
     }
 
     fn rule_not_matched(
@@ -1214,18 +1536,15 @@ impl EvalFold for TracingFold {
         command_out: Self::EffectOut,
         effect_out: Self::EffectOut,
     ) -> Self::EffectOut {
-        // Command matched but body effect returned Nil — still show in trace.
         let line = self.line_of(rule.span.start);
         let pre_migration_doc = self.find_pre_migration_doc(rule.span);
-        let ann = Some(Ann::RuleMatch {
-            matched: false,
-            line,
-        });
 
-        let docs = build_rule_doc_children(rule, command_out, effect_out);
-        let doc = ann_list_break(docs, ann);
+        let children = build_rule_children(rule, command_out, effect_out);
+        let node = TraceNode::rule(children, line, false);
+        let node = truncate_unevaluated(node, 2);
+        let node = dim_unevaluated(node);
         self.traces.push(TraceEntry::Rule {
-            doc: doc.clone(),
+            node: node.clone(),
             line,
             pre_migration_doc,
             facts: flatten_facts(facts),
@@ -1235,31 +1554,32 @@ impl EvalFold for TracingFold {
         if let Some(inner) = self.pending_inner_traces.pop() {
             self.append_inner_traces(inner);
         }
-        (EffectResult::Nil, doc)
+        (EffectResult::Nil, node)
     }
 
     fn rule_skipped(&mut self, _rule: &Rule) -> Self::EffectOut {
-        // Command didn't match at all — don't add to trace.
         (EffectResult::Nil, plain_atom("…"))
     }
 
     fn default_ask(&mut self, reason: &str) -> Self::EffectOut {
-        let docs = vec![
+        let node = TraceNode::plain_list(vec![
             plain_atom("default"),
             plain_atom(":ask"),
             plain_atom(format!("\"{}\"", reason)),
-        ];
-        let ann = Some(Ann::EffectDecision {
-            decision: Decision::Ask,
-            reason: Some(reason.to_string()),
-        });
-        let doc = ann_list(docs, ann);
+        ])
+        .with_role_and_evidence(
+            Role::EffectDecision,
+            Some(Evidence::Decision {
+                decision: Decision::Ask,
+                reason: Some(reason.to_string()),
+            }),
+        );
         self.traces.push(TraceEntry::DefaultAsk {
             reason: reason.to_string(),
         });
         (
             EffectResult::Decision(Decision::Ask, Some(reason.to_string())),
-            doc,
+            node,
         )
     }
 
@@ -1271,7 +1591,6 @@ impl EvalFold for TracingFold {
     }
 }
 
-/// Flatten all facts into (key, value) pairs.
 fn flatten_facts(facts: &ContextFacts) -> Vec<(String, String)> {
     facts
         .iter()
@@ -1282,13 +1601,9 @@ fn flatten_facts(facts: &ContextFacts) -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use may_i_core::ast::{Config, Predicate, Spanned};
-    use may_i_core::pattern::PositionalArg;
-    use may_i_core::{FactQuery, Keyword, Span};
-    use may_i_engine::eval::{EvalContext, Evaluator, evaluate_with_fold};
-    use may_i_engine::fold::PureFold;
-    use may_i_engine::test_generators::*;
-    use proptest::prelude::*;
+    use may_i_core::Span;
+    use may_i_core::ast::{Config, Spanned};
+    use may_i_engine::eval::evaluate_with_fold;
 
     fn dummy_span() -> Span {
         Span::new(0, 0)
@@ -1312,12 +1627,6 @@ mod tests {
             vec![],
             dummy_span(),
         )
-    }
-
-    fn presence_query(key: &str) -> FactQuery {
-        FactQuery::Presence {
-            key: Keyword::new(key).unwrap(),
-        }
     }
 
     fn eval_tracing(config: &Config, cmd: &str, args: &[String]) -> Vec<TraceEntry> {
@@ -1347,15 +1656,12 @@ mod tests {
             ),
         ]);
         let entries = eval_tracing(&cfg, "rm", &[]);
-        let rule_entries: Vec<(usize, Option<CombineRole>, &Doc<Option<Ann>>)> = entries
+        let rule_entries: Vec<(usize, Option<CombineRole>)> = entries
             .iter()
             .enumerate()
             .filter_map(|(i, e)| {
-                if let TraceEntry::Rule {
-                    combine_role, doc, ..
-                } = e
-                {
-                    Some((i, *combine_role, doc))
+                if let TraceEntry::Rule { combine_role, .. } = e {
+                    Some((i, *combine_role))
                 } else {
                     None
                 }
@@ -1368,7 +1674,6 @@ mod tests {
 
     #[test]
     fn sole_strictest_rule_has_no_tied_sibling_marker() {
-        // One Deny rule, several Allow rules — Deny wins alone, no sibling.
         let cfg = make_config(vec![
             make_rule(
                 CommandPattern::Literal("rm".into()),
@@ -1384,7 +1689,7 @@ mod tests {
             ),
         ]);
         let entries = eval_tracing(&cfg, "rm", &[]);
-        let roles: Vec<Option<CombineRole>> = entries
+        let combines: Vec<Option<CombineRole>> = entries
             .iter()
             .filter_map(|e| {
                 if let TraceEntry::Rule { combine_role, .. } = e {
@@ -1394,545 +1699,41 @@ mod tests {
                 }
             })
             .collect();
-        // Only the Deny rule (position 1) is the reason source; the
-        // two Allow rules have no role assigned.
-        assert_eq!(roles, vec![None, Some(CombineRole::ReasonSource), None]);
-    }
-
-    proptest! {
-        #![proptest_config(ProptestConfig { cases: 256, max_shrink_iters: 50, .. ProptestConfig::default() })]
-
-        #[test]
-        fn tracing_fold_agrees_with_pure_fold(
-            config in any_config(3),
-            data in any_eval_context_data(),
-        ) {
-            let (cmd, args, facts) = data;
-            let ctx = EvalContext::new(&cmd, &args, &facts, EvalContext::build_bindings(&config.defines));
-
-            let evaluator = Evaluator::new(&config.rules);
-
-            let pure_result = evaluator.evaluate(&mut PureFold, &ctx)
-                .expect("evaluation should not fail on resolved config");
-            let tracing_result = evaluator.evaluate(&mut TracingFold::new(), &ctx)
-                .expect("evaluation should not fail on resolved config");
-
-            prop_assert_eq!(
-                pure_result.decision, tracing_result.decision,
-                "TracingFold must produce the same decision as PureFold"
-            );
-            prop_assert_eq!(
-                pure_result.reason, tracing_result.reason,
-                "TracingFold must produce the same reason as PureFold"
-            );
-        }
-    }
-
-    #[test]
-    fn tracing_fold_default_ask() {
-        let config = make_config(vec![make_rule(
-            CommandPattern::Literal("other".into()),
-            Effect::Terminal {
-                decision: Decision::Allow,
-                reason: None,
-            },
-        )]);
-        let entries = eval_tracing(&config, "git", &[]);
-        assert!(
-            entries
-                .iter()
-                .any(|e| matches!(e, TraceEntry::DefaultAsk { .. })),
-            "should produce DefaultAsk when no rule matches"
-        );
-    }
-
-    #[test]
-    fn tracing_fold_command_match_or() {
-        let config = make_config(vec![make_rule(
-            CommandPattern::Or(vec![
-                CommandPattern::Literal("git".into()),
-                CommandPattern::Literal("svn".into()),
-            ]),
-            Effect::Terminal {
-                decision: Decision::Allow,
-                reason: None,
-            },
-        )]);
-        let entries = eval_tracing(&config, "git", &[]);
-        assert!(entries.iter().any(|e| matches!(e, TraceEntry::Rule { .. })));
-    }
-
-    #[test]
-    fn tracing_fold_from_load_result() {
-        let lr = may_i_config::LoadResult {
-            config: Config::default(),
-            source_text: Some("(rule \"git\" :allow)".into()),
-            pre_migration_forms: Some(vec![(Span::new(0, 10), Doc::<()>::atom("test"))]),
-            config_path: std::path::PathBuf::from("/tmp/test.lisp"),
-        };
-        let fold = TracingFold::from_load_result(&lr);
-        assert!(fold.source_text.is_some());
-        assert!(fold.pre_migration_forms.is_some());
-    }
-
-    #[test]
-    fn tracing_fold_cond_effect() {
-        let config = make_config(vec![make_rule(
-            CommandPattern::Literal("git".into()),
-            Effect::Cond {
-                branches: vec![(
-                    spanned(Predicate::Fact(presence_query(":env"))),
-                    spanned(Effect::Terminal {
-                        decision: Decision::Allow,
-                        reason: None,
-                    }),
-                )],
-                fallback: Some(Box::new(spanned(Effect::Terminal {
-                    decision: Decision::Deny,
-                    reason: Some(String::from("no env")),
-                }))),
-            },
-        )]);
-        let entries = eval_tracing(&config, "git", &[]);
-        assert!(entries.iter().any(|e| matches!(e, TraceEntry::Rule { .. })));
-    }
-
-    #[test]
-    fn tracing_fold_when_terminal_context() {
-        let config = make_config(vec![make_rule(
-            CommandPattern::Literal("git".into()),
-            Effect::When {
-                predicate: spanned(Predicate::Fact(presence_query(":safe"))),
-                effect: Box::new(spanned(Effect::Terminal {
-                    decision: Decision::Allow,
-                    reason: None,
-                })),
-            },
-        )]);
-        let entries = eval_tracing(&config, "git", &[]);
-        assert!(entries.iter().any(|e| matches!(e, TraceEntry::Rule { .. })));
-    }
-
-    #[test]
-    fn tracing_fold_arg_continuation() {
-        let config = make_config(vec![make_rule(
-            CommandPattern::Literal("git".into()),
-            Effect::And {
-                effects: vec![
-                    spanned(Effect::ArgPattern(ArgPattern::Ordered {
-                        mode: MatchMode::Positional,
-                        patterns: vec![PositionalArg {
-                            quantifier: Quantifier::One,
-                            pattern: may_i_core::pattern::Expr::Literal("push".into()),
-                            recursive: false,
-                        }],
-                        continuation: None,
-                    })),
-                    spanned(Effect::Terminal {
-                        decision: Decision::Allow,
-                        reason: None,
-                    }),
-                ],
-            },
-        )]);
-        let entries = eval_tracing(&config, "git", &["push".to_string()]);
-        assert!(entries.iter().any(|e| matches!(e, TraceEntry::Rule { .. })));
-    }
-
-    #[test]
-    fn tracing_fold_effect_nil_on_false_predicate() {
-        let config = make_config(vec![make_rule(
-            CommandPattern::Literal("git".into()),
-            Effect::When {
-                predicate: spanned(Predicate::Fact(presence_query(":nonexistent"))),
-                effect: Box::new(spanned(Effect::Terminal {
-                    decision: Decision::Allow,
-                    reason: None,
-                })),
-            },
-        )]);
-        let facts = ContextFacts::default();
-        let mut fold = TracingFold::new();
-        evaluate_with_fold("git", &[], &config, &facts, &mut fold).unwrap();
-        assert!(!fold.traces.is_empty());
-    }
-
-    #[test]
-    fn tracing_fold_with_facts() {
-        let config = make_config(vec![make_rule(
-            CommandPattern::Literal("git".into()),
-            Effect::When {
-                predicate: spanned(Predicate::Fact(presence_query(":safe"))),
-                effect: Box::new(spanned(Effect::Terminal {
-                    decision: Decision::Allow,
-                    reason: None,
-                })),
-            },
-        )]);
-        let mut facts = ContextFacts::default();
-        facts.insert_present(Keyword::new(":safe").unwrap());
-        let mut fold = TracingFold::new();
-        evaluate_with_fold("git", &[], &config, &facts, &mut fold).unwrap();
-        assert!(
-            fold.traces
-                .iter()
-                .any(|e| matches!(e, TraceEntry::Rule { .. }))
-        );
-    }
-
-    #[test]
-    fn flatten_facts_produces_pairs() {
-        let mut facts = ContextFacts::default();
-        facts.insert_scalar(Keyword::new(":env").unwrap(), String::from("prod"));
-        facts.insert_scalar(Keyword::new(":host").unwrap(), String::from("example.com"));
-        let pairs = flatten_facts(&facts);
-        assert_eq!(pairs.len(), 2);
-        assert!(pairs.iter().any(|(k, _)| k == ":env"));
-        assert!(pairs.iter().any(|(k, _)| k == ":host"));
-    }
-
-    #[test]
-    fn command_pattern_to_doc_or() {
-        let pat = CommandPattern::Or(vec![
-            CommandPattern::Literal("a".into()),
-            CommandPattern::Literal("b".into()),
-        ]);
-        let doc = command_pattern_to_doc(&pat);
-        match &doc.node {
-            DocF::List(cs) => assert_eq!(cs[0].as_atom(), Some("or")),
-            _ => panic!("expected list for or pattern"),
-        }
-    }
-
-    #[test]
-    fn command_pattern_to_doc_or_broken_when_large() {
-        let pat = CommandPattern::Or(
-            (0..6)
-                .map(|i| CommandPattern::Literal(format!("cmd{}", i)))
-                .collect(),
-        );
-        let doc = command_pattern_to_doc(&pat);
-        assert_eq!(doc.layout, LayoutHint::AlwaysBreak);
-    }
-
-    #[test]
-    fn predicate_named_produces_var_ref_annotation() {
-        use may_i_engine::fold::EvalFold;
-
-        let mut fold = TracingFold::new();
-        let child_doc = plain_atom("child-body");
-        let child = (PredicateResult::Match, child_doc);
-        let result = fold.predicate_named("build-mode", child, PredicateResult::Match);
-
-        // The output doc should be annotated with VarRef
-        assert!(
-            matches!(
-                &result.1.ann,
-                Some(Ann::VarRef { name, matched: true }) if name == "build-mode"
-            ),
-            "expected VarRef annotation, got {:?}",
-            result.1.ann
-        );
-        // Should contain the name atom and child body as children
-        match &result.1.node {
-            DocF::List(children) => {
-                assert!(children.len() >= 2, "expected at least 2 children");
-            }
-            other => panic!("expected List node, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn predicate_named_no_match_produces_var_ref_unmatched() {
-        use may_i_engine::fold::EvalFold;
-
-        let mut fold = TracingFold::new();
-        let child_doc = plain_atom("child-body");
-        let child = (PredicateResult::NoMatch, child_doc);
-        let result = fold.predicate_named("build-mode", child, PredicateResult::NoMatch);
-
-        assert!(
-            matches!(
-                &result.1.ann,
-                Some(Ann::VarRef { name, matched: false }) if name == "build-mode"
-            ),
-            "expected unmatched VarRef annotation, got {:?}",
-            result.1.ann
-        );
-    }
-
-    // --- Cond trailing-branch collapsing tests ---
-
-    /// Recursively find a doc node whose head atom matches `name`.
-    fn find_doc_by_head<'a>(doc: &'a ADoc, name: &str) -> Option<&'a ADoc> {
-        if doc.head_atom() == Some(name) {
-            return Some(doc);
-        }
-        if let Some(children) = doc.children() {
-            for child in children {
-                if let Some(found) = find_doc_by_head(child, name) {
-                    return Some(found);
-                }
-            }
-        }
-        None
-    }
-
-    fn extract_cond_doc(entries: &[TraceEntry]) -> &ADoc {
-        for entry in entries {
-            if let TraceEntry::Rule { doc, .. } = entry
-                && let Some(cond_doc) = find_doc_by_head(doc, "cond")
-            {
-                return cond_doc;
-            }
-        }
-        panic!("no cond doc found in trace entries");
-    }
-
-    fn make_cond_branches(count: usize) -> Vec<(Spanned<Predicate>, Spanned<Effect>)> {
-        (0..count)
-            .map(|i| {
-                (
-                    spanned(Predicate::Fact(presence_query(
-                        // Use different keys so branches are distinguishable
-                        Box::leak(format!(":key{}", i).into_boxed_str()) as &str,
-                    ))),
-                    spanned(Effect::Terminal {
-                        decision: Decision::Allow,
-                        reason: None,
-                    }),
-                )
-            })
-            .collect()
-    }
-
-    #[test]
-    fn cond_collapse_match_in_middle() {
-        // Branch 0: :key0 absent → predicate evaluates false
-        // Branch 1: :key1 present → matches, short-circuits
-        // Branches 2-3: skipped → should collapse to single …
-        let mut facts = ContextFacts::default();
-        facts.insert_present(Keyword::new(":key1").unwrap());
-
-        let config = make_config(vec![make_rule(
-            CommandPattern::Literal("git".into()),
-            Effect::Cond {
-                branches: make_cond_branches(4),
-                fallback: Some(Box::new(spanned(Effect::Terminal {
-                    decision: Decision::Deny,
-                    reason: None,
-                }))),
-            },
-        )]);
-        let mut fold = TracingFold::new();
-        evaluate_with_fold("git", &[], &config, &facts, &mut fold).unwrap();
-        let cond_doc = extract_cond_doc(&fold.traces);
-        let children = cond_doc.children().expect("cond should be a list");
-
-        // children: ["cond", branch0, branch1, "…"]
+        assert_eq!(combines.len(), 3);
+        let strict_marks: Vec<_> = combines.iter().filter(|m| m.is_some()).collect();
         assert_eq!(
-            children.len(),
-            4,
-            "expected cond + 2 branches + 1 ellipsis, got {} children",
-            children.len()
+            strict_marks.len(),
+            1,
+            "only the sole Deny rule should be marked"
         );
-        assert_eq!(children[0].as_atom(), Some("cond"));
-        // Last child should be a dimmed ellipsis atom
-        let last = &children[3];
-        assert_eq!(last.as_atom(), Some("…"));
-        assert!(last.dimmed, "trailing ellipsis should be dimmed");
     }
 
     #[test]
-    fn cond_collapse_match_at_first_branch() {
-        // Branch 0: :key0 present → matches immediately
-        // Branches 1-3: skipped → should collapse to single …
-        let mut facts = ContextFacts::default();
-        facts.insert_present(Keyword::new(":key0").unwrap());
-
-        let config = make_config(vec![make_rule(
-            CommandPattern::Literal("git".into()),
-            Effect::Cond {
-                branches: make_cond_branches(4),
-                fallback: None,
-            },
+    fn rule_node_carries_role_rule_and_match_evidence() {
+        let cfg = make_config(vec![make_rule(
+            CommandPattern::Literal("rm".into()),
+            terminal(Decision::Allow, "ok"),
         )]);
-        let mut fold = TracingFold::new();
-        evaluate_with_fold("git", &[], &config, &facts, &mut fold).unwrap();
-        let cond_doc = extract_cond_doc(&fold.traces);
-        let children = cond_doc.children().expect("cond should be a list");
-
-        // children: ["cond", branch0, "…"]
-        assert_eq!(
-            children.len(),
-            3,
-            "expected cond + 1 branch + 1 ellipsis, got {} children",
-            children.len()
-        );
-        assert_eq!(children[2].as_atom(), Some("…"));
-        assert!(children[2].dimmed);
-    }
-
-    #[test]
-    fn cond_no_collapse_when_all_evaluated() {
-        // No facts match → all predicates evaluated to false, fallback used
-        let config = make_config(vec![make_rule(
-            CommandPattern::Literal("git".into()),
-            Effect::Cond {
-                branches: make_cond_branches(3),
-                fallback: Some(Box::new(spanned(Effect::Terminal {
-                    decision: Decision::Deny,
-                    reason: None,
-                }))),
-            },
-        )]);
-        let entries = eval_tracing(&config, "git", &[]);
-        let cond_doc = extract_cond_doc(&entries);
-        let children = cond_doc.children().expect("cond should be a list");
-
-        // children: ["cond", branch0, branch1, branch2, fallback]
-        assert_eq!(
-            children.len(),
-            5,
-            "expected cond + 3 branches + fallback, got {} children",
-            children.len()
-        );
-        // No trailing dimmed ellipsis — last child is the fallback (not "…")
-        let last = &children[4];
-        assert_ne!(
-            last.as_atom(),
-            Some("…"),
-            "should not have trailing ellipsis when all evaluated"
-        );
-    }
-
-    fn render_doc<A: Clone + may_i_core::trivia::TriviaSource>(doc: &Doc<A>) -> String {
-        let fmt = may_i_pp::Format {
-            width: 200,
-            color: false,
-            line_number: None,
-            preserve_user_breaks: false,
+        let entries = eval_tracing(&cfg, "rm", &[]);
+        let Some(TraceEntry::Rule { node, .. }) = entries
+            .iter()
+            .find(|e| matches!(e, TraceEntry::Rule { .. }))
+        else {
+            panic!("expected at least one Rule entry, got: {entries:?}");
         };
-        may_i_pp::pretty(doc, 0, &fmt)
+        assert!(matches!(node.role(), Role::Rule { .. }));
     }
+}
 
-    #[test]
-    fn arg_pattern_tail_renders_as_authorise() {
-        let doc = arg_pattern_to_doc(&ArgPattern::Tail);
-        let text = render_doc(&doc);
-        assert!(
-            text.contains("(tail (authorise))"),
-            "expected `(tail (authorise))` in {text:?}"
-        );
-        assert!(
-            !text.contains("<unknown-arg-pattern>"),
-            "should not render placeholder; got {text:?}"
-        );
-    }
-
-    #[test]
-    fn parameter_authorise_renders_as_authorise() {
-        let pat = ArgPattern::Parameter {
-            names: vec!["c".to_string()],
-            form: may_i_core::pattern::ParameterForm::Authorise,
-        };
-        let doc = arg_pattern_to_doc(&pat);
-        let text = render_doc(&doc);
-        assert!(
-            text.contains("(parameter \"c\" (authorise))"),
-            "expected `(parameter \"c\" (authorise))` in {text:?}"
-        );
-        assert!(
-            !text.contains("(may-i *)"),
-            "should not render `(may-i *)`; got {text:?}"
-        );
-    }
-
-    fn render_terminal_effect(decision: Decision, reason: Option<&str>) -> String {
-        let mut fold = TracingFold::new();
-        let effect = Effect::Terminal {
-            decision,
-            reason: reason.map(String::from),
-        };
-        let result = EffectResult::Decision(decision, reason.map(String::from));
-        let (_res, doc) = fold.effect_terminal(&effect, result);
-        render_doc(&doc)
-    }
-
-    #[test]
-    fn effect_terminal_allow_with_reason_renders_canonically() {
-        let text = render_terminal_effect(Decision::Allow, Some("safe"));
-        assert!(
-            text.contains("(allow \"safe\")"),
-            "expected `(allow \"safe\")` in {text:?}"
-        );
-        assert!(
-            !text.contains("(effect :allow"),
-            "should not render legacy `(effect :allow …)`; got {text:?}"
-        );
-    }
-
-    #[test]
-    fn effect_terminal_allow_no_reason_renders_canonically() {
-        let text = render_terminal_effect(Decision::Allow, None);
-        assert!(text.contains("(allow)"), "expected `(allow)` in {text:?}");
-        assert!(
-            !text.contains("(effect :allow"),
-            "should not render legacy `(effect :allow …)`; got {text:?}"
-        );
-    }
-
-    #[test]
-    fn effect_terminal_ask_renders_canonically() {
-        let with = render_terminal_effect(Decision::Ask, Some("why"));
-        assert!(with.contains("(ask \"why\")"));
-        assert!(!with.contains("(effect :ask"));
-        let bare = render_terminal_effect(Decision::Ask, None);
-        assert!(bare.contains("(ask)"));
-        assert!(!bare.contains("(effect :ask"));
-    }
-
-    #[test]
-    fn effect_terminal_deny_renders_canonically() {
-        let with = render_terminal_effect(Decision::Deny, Some("blocked in prod"));
-        assert!(with.contains("(deny \"blocked in prod\")"));
-        assert!(!with.contains("(effect :deny"));
-        let bare = render_terminal_effect(Decision::Deny, None);
-        assert!(bare.contains("(deny)"));
-        assert!(!bare.contains("(effect :deny"));
-    }
-
-    #[test]
-    fn cond_collapse_single_trailing_branch() {
-        // Branch 0: :key0 present → matches
-        // Branch 1: skipped → single trailing branch collapses to …
-        let mut facts = ContextFacts::default();
-        facts.insert_present(Keyword::new(":key0").unwrap());
-
-        let config = make_config(vec![make_rule(
-            CommandPattern::Literal("git".into()),
-            Effect::Cond {
-                branches: make_cond_branches(2),
-                fallback: Some(Box::new(spanned(Effect::Terminal {
-                    decision: Decision::Deny,
-                    reason: None,
-                }))),
-            },
-        )]);
-        let mut fold = TracingFold::new();
-        evaluate_with_fold("git", &[], &config, &facts, &mut fold).unwrap();
-        let cond_doc = extract_cond_doc(&fold.traces);
-        let children = cond_doc.children().expect("cond should be a list");
-
-        // children: ["cond", branch0, "…"]
-        // (branch1 + fallback collapsed into single "…")
-        assert_eq!(
-            children.len(),
-            3,
-            "expected cond + 1 branch + 1 ellipsis, got {} children",
-            children.len()
-        );
-        assert_eq!(children[2].as_atom(), Some("…"));
-        assert!(children[2].dimmed);
+impl std::fmt::Debug for TraceEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SegmentHeader { command, .. } => write!(f, "SegmentHeader({command})"),
+            Self::Rule { line, .. } => write!(f, "Rule(line={line:?})"),
+            Self::EmbeddedCommand { source, .. } => write!(f, "EmbeddedCommand({source})"),
+            Self::DefaultAsk { reason } => write!(f, "DefaultAsk({reason})"),
+            Self::ParseDiagnostics { .. } => write!(f, "ParseDiagnostics"),
+            Self::Parser { command, .. } => write!(f, "Parser({command})"),
+        }
     }
 }
