@@ -175,6 +175,283 @@ impl TraceNode {
         }
         self
     }
+
+    /// Command-pattern match site, atomic (literal pattern).
+    pub fn command_atom(label: impl Into<String>, matched: bool) -> Self {
+        Self {
+            body: Body::Atom(label.into()),
+            role: Role::Command,
+            evidence: Some(Evidence::Match { matched }),
+            dimmed: false,
+            layout: Layout::Auto,
+        }
+    }
+
+    /// Command-pattern match site, composite (e.g. `(or …)` over sub-patterns).
+    pub fn command_list(children: Vec<TraceNode>, matched: bool) -> Self {
+        Self {
+            body: Body::List(children),
+            role: Role::Command,
+            evidence: Some(Evidence::Match { matched }),
+            dimmed: false,
+            layout: Layout::Auto,
+        }
+    }
+
+    /// Arg-pattern node carrying set-membership evidence (anywhere/forbidden).
+    pub fn arg_set_membership(
+        children: Vec<TraceNode>,
+        token: String,
+        observed: Vec<String>,
+        matched: bool,
+    ) -> Self {
+        Self {
+            body: Body::List(children),
+            role: Role::ArgMatch,
+            evidence: Some(Evidence::SetMembership {
+                token,
+                observed,
+                matched,
+            }),
+            dimmed: false,
+            layout: Layout::Auto,
+        }
+    }
+
+    /// Arg-pattern node carrying an authorise-style captured value.
+    pub fn arg_captured(children: Vec<TraceNode>, source: CaptureSource, value: String) -> Self {
+        Self {
+            body: Body::List(children),
+            role: Role::ArgMatch,
+            evidence: Some(Evidence::CapturedValue { source, value }),
+            dimmed: false,
+            layout: Layout::Auto,
+        }
+    }
+
+    /// Arg-pattern node with no per-token evidence (predicate or wrapper).
+    pub fn arg_plain_list(children: Vec<TraceNode>, matched: bool) -> Self {
+        Self {
+            body: Body::List(children),
+            role: Role::ArgMatch,
+            evidence: Some(Evidence::Match { matched }),
+            dimmed: false,
+            layout: Layout::Auto,
+        }
+    }
+
+    /// Per-token atom annotated with set-membership evidence.
+    pub fn arg_token_atom(
+        label: impl Into<String>,
+        token: String,
+        observed: Vec<String>,
+        matched: bool,
+    ) -> Self {
+        Self {
+            body: Body::Atom(label.into()),
+            role: Role::ArgMatch,
+            evidence: Some(Evidence::SetMembership {
+                token,
+                observed,
+                matched,
+            }),
+            dimmed: false,
+            layout: Layout::Auto,
+        }
+    }
+
+    /// Fact query that observed values for its key.
+    pub fn fact_query_values(
+        children: Vec<TraceNode>,
+        expected: String,
+        observed: BTreeSet<String>,
+        matched: bool,
+    ) -> Self {
+        Self {
+            body: Body::List(children),
+            role: Role::FactQuery,
+            evidence: Some(Evidence::FactValues {
+                expected,
+                observed,
+                matched,
+            }),
+            dimmed: false,
+            layout: Layout::Auto,
+        }
+    }
+
+    /// Fact query that failed because the key was absent from context.
+    pub fn fact_query_absent(children: Vec<TraceNode>) -> Self {
+        Self {
+            body: Body::List(children),
+            role: Role::FactQuery,
+            evidence: Some(Evidence::FactAbsent),
+            dimmed: false,
+            layout: Layout::Auto,
+        }
+    }
+
+    /// Fact query with no observed-value details (e.g. presence-only).
+    pub fn fact_query_match(children: Vec<TraceNode>, matched: bool) -> Self {
+        Self {
+            body: Body::List(children),
+            role: Role::FactQuery,
+            evidence: Some(Evidence::Match { matched }),
+            dimmed: false,
+            layout: Layout::Auto,
+        }
+    }
+
+    /// Effect-decision (allow / ask / deny) atom carrying its outcome.
+    pub fn effect_decision_atom(
+        label: impl Into<String>,
+        decision: Decision,
+        reason: Option<String>,
+    ) -> Self {
+        Self {
+            body: Body::Atom(label.into()),
+            role: Role::EffectDecision,
+            evidence: Some(Evidence::Decision { decision, reason }),
+            dimmed: false,
+            layout: Layout::Auto,
+        }
+    }
+
+    /// Effect-decision list (e.g. `(effect :allow "reason")`).
+    pub fn effect_decision_list(
+        children: Vec<TraceNode>,
+        decision: Decision,
+        reason: Option<String>,
+    ) -> Self {
+        Self {
+            body: Body::List(children),
+            role: Role::EffectDecision,
+            evidence: Some(Evidence::Decision { decision, reason }),
+            dimmed: false,
+            layout: Layout::Auto,
+        }
+    }
+
+    /// Named-predicate (`define`) reference.
+    pub fn var_ref(children: Vec<TraceNode>, name: String, matched: bool) -> Self {
+        Self {
+            body: Body::List(children),
+            role: Role::VarRef { name },
+            evidence: Some(Evidence::Match { matched }),
+            dimmed: false,
+            layout: Layout::Auto,
+        }
+    }
+
+    /// Combinator / quantifier node (`and`, `or`, `not`, `if`, `cond`,
+    /// `when`, `unless`, `anywhere`). `broken` selects `Layout::AlwaysBreak`.
+    pub fn combinator(children: Vec<TraceNode>, satisfied: bool, broken: bool) -> Self {
+        Self {
+            body: Body::List(children),
+            role: Role::Combinator,
+            evidence: Some(Evidence::Match { matched: satisfied }),
+            dimmed: false,
+            layout: if broken {
+                Layout::AlwaysBreak
+            } else {
+                Layout::Auto
+            },
+        }
+    }
+
+    /// Combinator without rendered evidence (used for shape-only combinators
+    /// like `not`'s plain wrapper).
+    pub fn combinator_plain(children: Vec<TraceNode>, broken: bool) -> Self {
+        Self {
+            body: Body::List(children),
+            role: Role::Combinator,
+            evidence: None,
+            dimmed: false,
+            layout: if broken {
+                Layout::AlwaysBreak
+            } else {
+                Layout::Auto
+            },
+        }
+    }
+
+    /// Bind (`#var (authorise)`) match.
+    pub fn bind_match(children: Vec<TraceNode>, key: String, value: Option<String>) -> Self {
+        Self {
+            body: Body::List(children),
+            role: Role::BindMatch { key },
+            evidence: Some(Evidence::Bind { value }),
+            dimmed: false,
+            layout: Layout::Auto,
+        }
+    }
+
+    /// Regex match site.
+    pub fn regex_match_atom(
+        label: impl Into<String>,
+        pattern: String,
+        actual: String,
+        matched: bool,
+    ) -> Self {
+        Self {
+            body: Body::Atom(label.into()),
+            role: Role::RegexMatch,
+            evidence: Some(Evidence::Regex {
+                pattern,
+                actual,
+                matched,
+            }),
+            dimmed: false,
+            layout: Layout::Auto,
+        }
+    }
+
+    /// Positional argv match (literal vs actual).
+    pub fn positional_atom(
+        label: impl Into<String>,
+        actual: String,
+        pattern_text: String,
+        matched: bool,
+    ) -> Self {
+        Self {
+            body: Body::Atom(label.into()),
+            role: Role::PositionalMatch,
+            evidence: Some(Evidence::Positional {
+                actual,
+                pattern_text,
+                matched,
+            }),
+            dimmed: false,
+            layout: Layout::Auto,
+        }
+    }
+
+    /// Rule-level node carrying optional source line. `matched` is used by
+    /// renderers that highlight a rule as a whole.
+    pub fn rule(children: Vec<TraceNode>, line: Option<usize>, matched: bool) -> Self {
+        Self {
+            body: Body::List(children),
+            role: Role::Rule { line },
+            evidence: Some(Evidence::Match { matched }),
+            dimmed: false,
+            layout: Layout::AlwaysBreak,
+        }
+    }
+
+    /// Replace this node's body's child at `i`. Used by structural-decision
+    /// helpers in the producer (e.g. cond-branch evidence relocation).
+    pub(crate) fn map_child<F>(mut self, i: usize, f: F) -> Self
+    where
+        F: FnOnce(TraceNode) -> TraceNode,
+    {
+        if let Body::List(cs) = &mut self.body
+            && i < cs.len()
+        {
+            let child = std::mem::replace(&mut cs[i], TraceNode::plain_atom(""));
+            cs[i] = f(child);
+        }
+        self
+    }
 }
 
 #[cfg(test)]
