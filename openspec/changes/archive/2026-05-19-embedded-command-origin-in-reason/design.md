@@ -61,9 +61,17 @@ concern.
 
 ### Carry substitution form on `EvalUnit::EmbeddedCommand`
 
-Add a `kind: EmbeddedKind` field on `EmbeddedCommand` (variants: `Backtick`,
-`Dollar`). The parser already distinguishes the two `WordPart` shapes; the
-information just needs to survive into `EvalUnit`.
+Add a `kind: Option<EmbeddedKind>` field on `EmbeddedCommand` (variants:
+`Backtick`, `Dollar`). The parser already distinguishes those two
+`WordPart` shapes; the information just needs to survive into `EvalUnit`.
+
+Process substitution (`<( … )` / `>( … )`) is a third embedded shape but
+its origin is not named by the annotation — the spec only requires
+naming the `` ` ` `` and `$( … )` forms. It maps to `kind = None`, which
+the annotator treats the same as the dynamic-outer fallback (generic
+`(embedded substitution)` clause). Modelling it as `Option<…>` keeps
+the kind enum to the two variants the annotator names, while still
+giving every `EmbeddedCommand` unit a well-defined kind field.
 
 Alternative considered: re-scan the outer source slice for the leading
 backtick / `$(` to recover the form. Rejected — fragile, and the parser

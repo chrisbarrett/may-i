@@ -885,7 +885,7 @@ mod parser_engine_invariants {
             let parse_result = may_i_shell_parser::parse(&input);
             let units = decompose(&parse_result.command, &input);
             for unit in &units {
-                if let EvalUnit::EmbeddedCommand { source, span } = unit {
+                if let EvalUnit::EmbeddedCommand { source, span, .. } = unit {
                     let (s, e) = *span;
                     prop_assert!(s <= e && e <= input.len(),
                         "embedded span out of bounds: {:?} in input {:?}", span, input);

@@ -9,6 +9,7 @@ mod word;
 pub(crate) use helpers::abbreviate;
 pub(crate) use helpers::format_param_op;
 pub(super) use helpers::try_fold_static_cat;
+pub use word::SubstitutionForm;
 
 /// A complete parsed shell command (may contain compound structures).
 #[derive(Debug, Clone, PartialEq, Serialize)]

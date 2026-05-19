@@ -47,18 +47,35 @@ fn collect_embedded_commands<'a>(parts: &'a [WordPart], out: &mut Vec<&'a str>) 
     }
 }
 
+/// Surface form of an embedded substitution, preserved so downstream
+/// consumers (the engine's reason annotator) can name the form the
+/// user actually wrote (`` ` ` `` vs `$( … )` vs process substitution).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubstitutionForm {
+    Backtick,
+    Dollar,
+    Process,
+}
+
 /// Like `collect_embedded_commands` but also returns each substitution's
-/// source-byte span. Used by the engine's `decompose` pass to emit
-/// `EvalUnit::EmbeddedCommand` units without re-scanning the input.
+/// source-byte span and surface form. Used by the engine's `decompose`
+/// pass to emit `EvalUnit::EmbeddedCommand` units without re-scanning
+/// the input.
 fn collect_embedded_with_spans<'a>(
     parts: &'a [WordPart],
-    out: &mut Vec<(&'a str, crate::diagnostic::Span)>,
+    out: &mut Vec<(&'a str, crate::diagnostic::Span, SubstitutionForm)>,
 ) {
     for part in parts {
         match part {
-            WordPart::CommandSubstitution { source, span }
-            | WordPart::Backtick { source, span } => out.push((source, *span)),
-            WordPart::ProcessSubstitution { command, span, .. } => out.push((command, *span)),
+            WordPart::CommandSubstitution { source, span } => {
+                out.push((source, *span, SubstitutionForm::Dollar))
+            }
+            WordPart::Backtick { source, span } => {
+                out.push((source, *span, SubstitutionForm::Backtick))
+            }
+            WordPart::ProcessSubstitution { command, span, .. } => {
+                out.push((command, *span, SubstitutionForm::Process))
+            }
             WordPart::DoubleQuoted(inner) => collect_embedded_with_spans(inner, out),
             _ => {}
         }
@@ -167,8 +184,11 @@ impl Word {
     }
 
     /// Like `extract_embedded_commands` but returns each substitution paired
-    /// with its source-byte `Span` (inner-span semantics: excludes sigils).
-    pub fn extract_embedded_with_spans(&self) -> Vec<(&str, crate::diagnostic::Span)> {
+    /// with its source-byte `Span` (inner-span semantics: excludes sigils)
+    /// and the surface form (`SubstitutionForm`) it was written in.
+    pub fn extract_embedded_with_spans(
+        &self,
+    ) -> Vec<(&str, crate::diagnostic::Span, SubstitutionForm)> {
         let mut out = Vec::new();
         collect_embedded_with_spans(&self.parts, &mut out);
         out
