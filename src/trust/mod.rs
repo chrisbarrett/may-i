@@ -9,6 +9,7 @@
 pub mod advisory;
 pub mod gate;
 pub mod rehash;
+pub mod review;
 pub mod store;
 pub mod view;
 
