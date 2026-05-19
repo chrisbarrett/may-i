@@ -5,13 +5,14 @@ Cut a new release tag, push it, and write curated release notes.
 1. `git fetch --tags`
 2. Show 5 most recent: `git tag --list --sort=-v:refname | head -5`
 3. Ask user for next tag.
-4. Bump `version` in root `Cargo.toml` to match (no leading `v`).
-5. `cargo check`
-6. Commit `Cargo.toml` + `Cargo.lock` with message `Bump version to <version>`.
-7. `git tag -a <tag> -m "<tag>"` then `git push && git push origin <tag>`.
-8. Find workflow run: `gh run list --workflow=release --limit=1 --json databaseId,url`.
-9. Once `gh release view <tag>` succeeds, write curated notes (see below) and apply with `gh release edit <tag> --notes "$(cat <<'EOF' … EOF)"`.
-10. Report tag, workflow URL, release URL.
+4. Heavy proptest sweep: `PROPTEST_CASES=10000 cargo test --workspace`. Pre-push only runs 256 cases per proptest, so rare inputs (e.g. `$'\n'` ANSI-C quoting) routinely surface only on CI. If this run produces new `proptest-regressions/**` seeds or fails, **abort the release** — commit the seed, fix the bug, then restart `/release`.
+5. Bump `version` in root `Cargo.toml` to match (no leading `v`).
+6. `cargo check`
+7. Commit `Cargo.toml` + `Cargo.lock` with message `Bump version to <version>`.
+8. `git tag -a <tag> -m "<tag>"` then `git push && git push origin <tag>`.
+9. Find workflow run: `gh run list --workflow=release --limit=1 --json databaseId,url`.
+10. Once `gh release view <tag>` succeeds, write curated notes (see below) and apply with `gh release edit <tag> --notes "$(cat <<'EOF' … EOF)"`.
+11. Report tag, workflow URL, release URL.
 
 ## Release notes format
 
