@@ -29,7 +29,7 @@ If a change doesn't fit one of these, question whether it belongs.
 | Binding   | A parser-bound name. Written `#name` in the surface DSL — a fourth sigil alongside `:keyword`, bare symbol, and `"string"`. Parsers declare bindings; rules consume them through `(authorise #var)`, `(bound? #var)`, `(matches? #var PAT)`, or `(with-facts [[:k #var]] …)`. | `(rest #cmd)`, `(positional #host (regex "^[^-].*"))`              |
 | Style     | A reusable description of _how_ a program spells flags — prefixes, separators, combining rules. Bound by name with `(define-arg-style …)`. The prelude ships `gnu`, `single-dash-long`, `legacy-bundle`, `key-value`.                                                     | `(define-arg-style java (overrides gnu) (separators " " "=" ":"))` |
 | Parser    | A per-program declaration that picks a Style, declares its flag-scanning `(flags MODE)`, lists value-bearing parameters, and optionally names positionals / the rest tail with `#var` bindings. Programs without one default to `gnu` + `(flags permute)`. Common wrappers (sudo, xargs, env, …) ship pre-declared in the prelude. | `(parser "ssh" (style gnu) (flags posix) (positional #host (regex "^[^-].*")) (rest #cmd))` |
-| Trust     | The approval mechanism for rules loaded from outside the primary config. Rules from `(load …)` are inert until you approve them with `may-i trust`. Primary config is implicitly trusted. Approvals are keyed by canonical-form hash; `may-i migrate` rehashes Class A.   |                                                                    |
+| Trust     | The approval mechanism for rules loaded from outside the primary config. Rules from `(load …)` are inert until you approve them with `may-i trust`. Primary config is implicitly trusted. Approvals are keyed by canonical-form hash; `may-i migrate` preserves approval across syntactic rewrites (see _Class A / Class B_ below).   |                                                                    |
 
 ### Decision
 
@@ -38,7 +38,16 @@ denies this._ The surface verbs are `(allow REASON?)`, `(ask REASON?)`,
 `(deny REASON?)`. (The internal AST node is `Effect::Terminal` — that
 name stays in contributor docs but doesn't surface to users.)
 
-Combiners take the strictest decision: `:allow < :ask < :deny`.
+Two distinct combination layers:
+
+- **Across rules** (top-level): the strictest decision wins under
+  `:allow < :ask < :deny`. Tied reasons are deduplicated, sorted, and
+  joined with `"; "` so the result does not depend on rule order.
+- **Inside a rule body** (`and`, `or`, `not`): matching, not strictness.
+  A child either yields a decision or yields _no match_. `and`
+  short-circuits on the first no-match and otherwise returns the last
+  child's decision; `or` returns the first child's decision; `not`
+  flips no-match ↔ `allow` and preserves `ask`/`deny`.
 
 ### Fact
 
@@ -76,7 +85,8 @@ docs, error messages, or DSL forms.
 | Define          | Two surface forms, currently distinct: `(define NAME PAT)` binds a Pattern; `(define-arg-style NAME (PLIST))` binds a Style. We intend to unify these (likely via a typed body or usage inference); avoid entrenching the split.                                                                            | `(define prod-host …)` / `(define-arg-style java …)` |
 | Provenance      | Tags whether a rule came from the primary config (auto-trusted) or was pulled in via `(load …)` (requires explicit approval).                                                                                                                                                                               | `PrimaryConfig`, `Loaded { path }`                   |
 | Canonical form  | Deterministic, span-free s-expression serialisation used for hashing and diffs. Formatting/comments invisible to hash.                                                                                                                                                                                      |                                                      |
-| Invocation mode | How `may-i` was called. _Hook mode_ — invoked by a harness with structured stdin (Claude Code hook protocol); exit 2 on deny. The harness fires hooks for every tool, so hook mode silently exits 0 on non-Bash tool calls. _Eval mode_ — `may-i eval`, direct CLI use; outputs trace or JSON.              | `may-i` (stdin JSON) vs `may-i eval 'cmd'`           |
+| Class A / Class B | Two categories of migration rewrite. _Class A_ is syntactic and semantics-preserving (e.g. `(effect :allow)` → `(allow)`, `:style S` → `(style S)`, `(may-i *)` → `(authorise)`) — `may-i migrate` silently rehashes trust-store entries so approvals carry over. _Class B_ changes what a rule decides — the user is warned and no trust state is auto-updated. Full spec: `openspec/specs/migration-system/spec.md`. | `(effect :allow)` → `(allow)` is Class A |
+| Invocation mode | How `may-i` was called. Three modes reach the decision pipeline (`pipeline::run_hook`, `run_eval`, `run_check`); other subcommands (`fmt`, `migrate`, `trust`, `parse`) are utilities that bypass it. _Hook mode_ — harness-invoked via Claude Code hook protocol; JSON only; consults trust; exit 2 on deny. _Eval mode_ — `may-i eval`, direct CLI; text or JSON; consults trust; advisory (never blocks). _Check mode_ — `may-i check`, lint/validation; text or JSON; **never consults trust** and **never blocks**. | `may-i` (stdin JSON) / `may-i eval 'cmd'` / `may-i check` |
 
 ### Pattern internals
 
