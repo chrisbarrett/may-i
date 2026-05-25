@@ -6,7 +6,7 @@ use engine::check::CheckResult;
 use may_i_engine as engine;
 
 use crate::annotation::{TraceEntry, TracingFold};
-use crate::pipeline::{CheckOutcomeBody, CommandPipeline, EvalOutcome, InvocationMode};
+use crate::pipeline::{CheckOutcomeBody, CommandPipeline};
 
 /// Error indicating one or more checks failed.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
@@ -18,26 +18,26 @@ pub struct TraceExtra {
     pub traces: Vec<TraceEntry>,
 }
 
-/// The exit-1 signal lives outside `pipeline::run`: a failed-check count
-/// drives the process exit code (a clap-driver concern), and `run` itself
+/// The exit-1 signal lives outside `run_check`: a failed-check count drives
+/// the process exit code (a clap-driver concern), and `run_check` itself
 /// returns `Ok(())` after rendering. We capture the count from inside the
-/// closure via this `Cell` so the post-`run` check can promote it to
+/// closure via this `Cell` so the post-`run_check` check can promote it to
 /// `CheckFailure`.
 pub fn cmd_check(pipeline: &mut CommandPipeline, verbose: bool) -> miette::Result<()> {
     let failed_signal = Cell::new(0usize);
 
-    pipeline.run(InvocationMode::Check, "", |ctx| {
+    pipeline.run_check(|ctx| {
         let results = run_checks_with_traces(ctx.loaded)?;
         let passed = results.iter().filter(|r| r.passed).count();
         let failed = results.len() - passed;
         failed_signal.set(failed);
-        Ok(EvalOutcome::Check(CheckOutcomeBody {
+        Ok(CheckOutcomeBody {
             results,
             verbose,
             passed,
             failed,
             display_path: ctx.display_path.clone(),
-        }))
+        })
     })?;
 
     let failed = failed_signal.get();

@@ -9,7 +9,7 @@ use may_i_engine as engine;
 use may_i_shell_parser as parser;
 
 use crate::annotation::{TraceEntry, TracingFold};
-use crate::pipeline::{CommandPipeline, EvalOutcome, EvalOutcomeBody, InvocationMode};
+use crate::pipeline::{CommandPipeline, EvalOutcomeBody};
 use crate::runtime_facts::parse_cli_facts;
 
 pub fn cmd_eval(
@@ -19,7 +19,7 @@ pub fn cmd_eval(
 ) -> miette::Result<()> {
     let context_facts = parse_cli_facts(raw_facts)?;
 
-    pipeline.run(InvocationMode::Eval, command, |ctx| {
+    pipeline.run_eval(command, |ctx| {
         let (result, mut traces, colored_command) =
             evaluate_with_colorization(command, ctx.loaded, &context_facts)?;
         if !result.parse_diagnostics.is_empty() {
@@ -31,13 +31,13 @@ pub fn cmd_eval(
             let err = crate::shell_parse_error::ShellParseError::from_diagnostic(diag, command);
             let _ = writeln!(std::io::stderr(), "{:?}", miette::Report::new(err));
         }
-        Ok(EvalOutcome::Eval(EvalOutcomeBody {
+        Ok(EvalOutcomeBody {
             command: command.to_string(),
             colored: colored_command,
             result,
             traces,
             display_path: ctx.display_path.clone(),
-        }))
+        })
     })
 }
 

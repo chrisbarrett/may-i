@@ -1,64 +1,65 @@
-// Intent: dispatch an EvalOutcome to its text or JSON renderer. Sole
-// call site for the (text vs JSON) renderer choice — evaluation handlers
-// MUST NOT branch on `pipeline.json()` themselves. Reachable only
-// through `CommandPipeline::run`.
+// Intent: body-typed renderers driven by the pipeline's `run_*` entry
+// points. One renderer per body type; each branches on `json` internally
+// so handler closures never touch `pipeline.json()`. No mode-dispatch
+// indirection remains.
 
 use std::io::Write;
 use std::path::Path;
 
+use may_i_engine::EvalResult;
+
 use crate::output::{
     CheckOutput, CheckResultView, EvalOutput, Terminal, render_check_results_json, trace_to_json,
 };
-use crate::pipeline::{CheckOutcomeBody, EvalOutcome, EvalOutcomeBody};
+use crate::pipeline::{CheckOutcomeBody, EvalOutcomeBody};
 
-/// Dispatch `outcome` to its mode-shaped renderer, writing the body to
-/// `stdout` (and any auxiliary parse-diagnostic reports to `stderr` via
-/// the closures upstream, never from this dispatcher). `json` toggles the
-/// text-vs-JSON shape for `Eval` and `Check`; `Hook` is JSON-only.
-pub fn render_eval_outcome(
+/// Eval body → text or JSON. Sole caller: `CommandPipeline::run_eval`.
+pub fn render_eval(
     stdout: &mut impl Write,
-    _stderr: &mut impl Write,
     terminal: &Terminal,
     json: bool,
-    outcome: &EvalOutcome,
+    body: &EvalOutcomeBody,
 ) {
-    match outcome {
-        EvalOutcome::Eval(body) => {
-            if json {
-                render_eval_json(stdout, body);
-            } else {
-                render_eval_text(stdout, terminal, body);
-            }
-        }
-        EvalOutcome::Check(body) => {
-            if json {
-                render_check_json(stdout, body);
-            } else {
-                render_check_text(stdout, terminal, body);
-            }
-        }
-        EvalOutcome::Hook(result) => {
-            // Hook mode is JSON-only by design; ignore the `json` flag.
-            let body = serde_json::json!({
-                "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
-                    "permissionDecision": result.decision.to_string(),
-                    "permissionDecisionReason": result.reason.clone().unwrap_or_default(),
-                }
-            });
-            let _ = writeln!(
-                stdout,
-                "{}",
-                serde_json::to_string(&body).expect("response serialization is infallible")
-            );
-        }
+    if json {
+        render_eval_json(stdout, body);
+    } else {
+        render_eval_text(stdout, terminal, body);
     }
+}
+
+/// Check body → text or JSON. Sole caller: `CommandPipeline::run_check`.
+pub fn render_check(
+    stdout: &mut impl Write,
+    terminal: &Terminal,
+    json: bool,
+    body: &CheckOutcomeBody,
+) {
+    if json {
+        render_check_json(stdout, body);
+    } else {
+        render_check_text(stdout, terminal, body);
+    }
+}
+
+/// Hook response → JSON envelope. Sole caller:
+/// `CommandPipeline::run_hook`. Hook mode is JSON-only by design.
+pub fn render_hook(stdout: &mut impl Write, result: &EvalResult) {
+    let body = serde_json::json!({
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": result.decision.to_string(),
+            "permissionDecisionReason": result.reason.clone().unwrap_or_default(),
+        }
+    });
+    let _ = writeln!(
+        stdout,
+        "{}",
+        serde_json::to_string(&body).expect("response serialization is infallible")
+    );
 }
 
 fn render_eval_text(stdout: &mut impl Write, terminal: &Terminal, body: &EvalOutcomeBody) {
     let config_path = Path::new(&body.display_path);
-    // `EvalOutput` derives its own `display_path` from `config_path` via
-    // `shorten_home`, which is idempotent on a path that is already short.
     let builder = EvalOutput {
         config_path,
         trace_entries: &body.traces,
@@ -133,8 +134,6 @@ fn render_check_json(stdout: &mut impl Write, body: &CheckOutcomeBody) {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use may_i_core::{ContextFacts, Decision};
     use may_i_engine::EvalResult;
     use may_i_engine::check::CheckResult;
@@ -180,10 +179,8 @@ mod tests {
 
     #[test]
     fn eval_text_writes_result_block() {
-        let outcome = EvalOutcome::Eval(eval_body());
         let mut out = Vec::new();
-        let mut err = Vec::new();
-        render_eval_outcome(&mut out, &mut err, &term(), false, &outcome);
+        render_eval(&mut out, &term(), false, &eval_body());
         let s = strip_ansi(&String::from_utf8(out).unwrap());
         assert!(s.contains("Result"));
         assert!(s.contains("echo hi"));
@@ -191,10 +188,8 @@ mod tests {
 
     #[test]
     fn eval_json_writes_decision_reason_trace() {
-        let outcome = EvalOutcome::Eval(eval_body());
         let mut out = Vec::new();
-        let mut err = Vec::new();
-        render_eval_outcome(&mut out, &mut err, &term(), true, &outcome);
+        render_eval(&mut out, &term(), true, &eval_body());
         let v: serde_json::Value = serde_json::from_slice(&out).expect("parse");
         assert_eq!(v["decision"], "allow");
         assert_eq!(v["reason"], "safe");
@@ -203,20 +198,16 @@ mod tests {
 
     #[test]
     fn check_text_writes_summary() {
-        let outcome = EvalOutcome::Check(check_body());
         let mut out = Vec::new();
-        let mut err = Vec::new();
-        render_eval_outcome(&mut out, &mut err, &term(), false, &outcome);
+        render_check(&mut out, &term(), false, &check_body());
         let s = strip_ansi(&String::from_utf8(out).unwrap());
         assert!(s.contains("Summary"));
     }
 
     #[test]
     fn check_json_writes_envelope() {
-        let outcome = EvalOutcome::Check(check_body());
         let mut out = Vec::new();
-        let mut err = Vec::new();
-        render_eval_outcome(&mut out, &mut err, &term(), true, &outcome);
+        render_check(&mut out, &term(), true, &check_body());
         let v: serde_json::Value = serde_json::from_slice(&out).expect("parse");
         assert_eq!(v["passed"], 1);
         assert_eq!(v["failed"], 0);
@@ -224,17 +215,12 @@ mod tests {
     }
 
     #[test]
-    fn hook_writes_envelope_regardless_of_json_flag() {
-        let outcome = EvalOutcome::Hook(EvalResult::new(Decision::Allow, Some("ok".into())));
-        for json in [true, false] {
-            let mut out = Vec::new();
-            let mut err = Vec::new();
-            render_eval_outcome(&mut out, &mut err, &term(), json, &outcome);
-            let v: serde_json::Value = serde_json::from_slice(&out).expect("parse");
-            assert_eq!(v["hookSpecificOutput"]["permissionDecision"], "allow");
-            assert_eq!(v["hookSpecificOutput"]["permissionDecisionReason"], "ok");
-        }
+    fn hook_writes_envelope() {
+        let result = EvalResult::new(Decision::Allow, Some("ok".into()));
+        let mut out = Vec::new();
+        render_hook(&mut out, &result);
+        let v: serde_json::Value = serde_json::from_slice(&out).expect("parse");
+        assert_eq!(v["hookSpecificOutput"]["permissionDecision"], "allow");
+        assert_eq!(v["hookSpecificOutput"]["permissionDecisionReason"], "ok");
     }
-
-    fn _path_helper(_: PathBuf) {}
 }
