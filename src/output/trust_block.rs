@@ -1,70 +1,58 @@
 // Intent: serialise a TrustBlock in the response shape dictated by the
-// invocation mode. Sole call site for trust-block byte production —
-// `cmd_eval`, `cmd_check`, and `cmd_claude_code_hook` MUST NOT hand-roll
-// these payloads. Reachable only through `CommandPipeline::run`.
+// caller's `run_*` method. Two helpers (Eval, Hook) replace the legacy
+// mode-switching `render_trust_block`. `cmd_*` modules MUST NOT hand-roll
+// these payloads; the helpers are reachable only through the pipeline's
+// `run_eval` and `run_hook` entry points.
 
 use std::io::Write;
 
-use crate::pipeline::InvocationMode;
 use crate::trust::TrustBlock;
 
 use super::Terminal;
 
-/// Emit `block` in the response shape for `mode`. `stdout` and `stderr`
-/// are the pipeline's writers; `terminal` is held for symmetry with other
-/// renderers (no current variant uses it, but keeping it on the signature
-/// lets future text-mode shaping land without a churning surface change).
-pub fn render_trust_block(
+/// Emit `block` in the `eval` response shape. The text branch is silent
+/// (only the prelude renders to stderr); the JSON branch writes the
+/// `{decision, reason, files}` envelope to stdout.
+pub fn render_eval_trust_block(
     stdout: &mut impl Write,
     _stderr: &mut impl Write,
     _terminal: &Terminal,
     block: &TrustBlock,
-    mode: InvocationMode,
+    json: bool,
 ) {
-    match mode {
-        InvocationMode::Eval => {
-            // Pre-refactor `cmd_eval` text mode emits nothing on a trust
-            // block beyond what the prelude already showed; only JSON mode
-            // serialises the payload. We carry that shape forward.
-            //
-            // The JSON branch always writes; the text branch is silent.
-            // `pipeline::run` calls this regardless of `json`, so we
-            // re-derive the JSON-vs-text choice from the block's call
-            // site here: the only `InvocationMode::Eval` trust block
-            // currently emitted runs through the JSON path (the gate
-            // returns `None` in `TrustMode::Text`).
-            let body = serde_json::json!({
-                "decision": block.decision.to_string(),
-                "reason": block.reason,
-                "files": block.files,
-            });
-            let _ = writeln!(
-                stdout,
-                "{}",
-                serde_json::to_string(&body).expect("response serialization is infallible")
-            );
-        }
-        InvocationMode::Check => {
-            // `cmd_check` does not consult the gate via `run`; reaching
-            // this arm would indicate a pipeline-flow bug. Emit nothing
-            // rather than panic so production users never see a stack
-            // trace from a corner case.
-        }
-        InvocationMode::Hook => {
-            let body = serde_json::json!({
-                "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
-                    "permissionDecision": block.decision.to_string(),
-                    "permissionDecisionReason": block.reason,
-                }
-            });
-            let _ = writeln!(
-                stdout,
-                "{}",
-                serde_json::to_string(&body).expect("response serialization is infallible")
-            );
-        }
+    if !json {
+        // Text-mode `eval` shows nothing past the prelude on a trust block
+        // (the gate returns `None` in `TrustMode::Text`, so this branch is
+        // only reachable from a future caller). Preserve current bytes.
+        return;
     }
+    let body = serde_json::json!({
+        "decision": block.decision.to_string(),
+        "reason": block.reason,
+        "files": block.files,
+    });
+    let _ = writeln!(
+        stdout,
+        "{}",
+        serde_json::to_string(&body).expect("response serialization is infallible")
+    );
+}
+
+/// Emit `block` in the Claude Code hook response shape (always JSON,
+/// wrapped in `hookSpecificOutput`).
+pub fn render_hook_trust_block(stdout: &mut impl Write, block: &TrustBlock) {
+    let body = serde_json::json!({
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": block.decision.to_string(),
+            "permissionDecisionReason": block.reason,
+        }
+    });
+    let _ = writeln!(
+        stdout,
+        "{}",
+        serde_json::to_string(&body).expect("response serialization is infallible")
+    );
 }
 
 #[cfg(test)]
@@ -81,11 +69,11 @@ mod tests {
     }
 
     #[test]
-    fn eval_mode_emits_decision_reason_files() {
+    fn eval_json_emits_decision_reason_files() {
         let mut out = Vec::new();
         let mut err = Vec::new();
         let term = Terminal::detect();
-        render_trust_block(&mut out, &mut err, &term, &block(), InvocationMode::Eval);
+        render_eval_trust_block(&mut out, &mut err, &term, &block(), true);
         let s = String::from_utf8(out).unwrap();
         let v: serde_json::Value = serde_json::from_str(s.trim()).expect("parse json");
         assert_eq!(v["decision"], "ask");
@@ -95,11 +83,19 @@ mod tests {
     }
 
     #[test]
-    fn hook_mode_wraps_in_envelope() {
+    fn eval_text_emits_nothing() {
         let mut out = Vec::new();
         let mut err = Vec::new();
         let term = Terminal::detect();
-        render_trust_block(&mut out, &mut err, &term, &block(), InvocationMode::Hook);
+        render_eval_trust_block(&mut out, &mut err, &term, &block(), false);
+        assert!(out.is_empty());
+        assert!(err.is_empty());
+    }
+
+    #[test]
+    fn hook_wraps_in_envelope() {
+        let mut out = Vec::new();
+        render_hook_trust_block(&mut out, &block());
         let s = String::from_utf8(out).unwrap();
         let v: serde_json::Value = serde_json::from_str(s.trim()).expect("parse json");
         assert_eq!(v["hookSpecificOutput"]["hookEventName"], "PreToolUse");
@@ -110,16 +106,5 @@ mod tests {
                 .unwrap()
                 .contains("Untrusted")
         );
-        assert!(err.is_empty());
-    }
-
-    #[test]
-    fn check_mode_emits_nothing() {
-        let mut out = Vec::new();
-        let mut err = Vec::new();
-        let term = Terminal::detect();
-        render_trust_block(&mut out, &mut err, &term, &block(), InvocationMode::Check);
-        assert!(out.is_empty());
-        assert!(err.is_empty());
     }
 }

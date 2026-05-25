@@ -10,7 +10,7 @@ mod colorize;
 mod eval_result;
 mod json;
 mod migrate;
-mod outcome;
+mod render;
 mod render_rule;
 mod transform;
 mod trust_block;
@@ -34,8 +34,8 @@ pub use self::json::{render_check_results_json, trace_to_json};
 pub(crate) use self::migrate::{
     render_skipped_readonly_advisory, render_wrapper_boundary_advisory,
 };
-pub use self::outcome::render_eval_outcome;
-pub use self::trust_block::render_trust_block;
+pub use self::render::{render_check, render_eval, render_hook};
+pub use self::trust_block::{render_eval_trust_block, render_hook_trust_block};
 pub use self::trust_groups::TrustListing;
 
 use self::colorize::colorize_right;

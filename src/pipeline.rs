@@ -3,9 +3,10 @@
 // Owns the loaded config, the detected terminal, the json flag, and one
 // `InvocationTrust` collaborator that holds the per-invocation Trust state
 // (lazily-loaded catalog, idempotency flags, store-loader seam). Subcommands
-// drive their flow through `CommandPipeline::run`; the prelude (migration
-// note + integrity advisory) and Trust consultation delegate to
-// `InvocationTrust` so they are not duplicated.
+// drive their flow through one of the three typed entry points
+// (`run_eval`, `run_check`, `run_hook`); the prelude (migration note +
+// integrity advisory) and Trust consultation delegate to `InvocationTrust`
+// so they are not duplicated.
 
 use std::io;
 use std::path::Path;
@@ -20,45 +21,10 @@ use crate::cmd_check::TraceExtra;
 use crate::output::{self, Terminal};
 use crate::trust::{InvocationTrust, TrustBlock, TrustMode};
 
-/// Which evaluation flow `CommandPipeline::run` should drive.
-///
-/// Each variant fixes three behaviours: whether the text-mode prelude
-/// advisories render, whether the trust gate is consulted (with filtering)
-/// or the trust warning is rendered (without filtering), and which response
-/// shape `output::render_eval_outcome` produces.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InvocationMode {
-    /// `may-i eval`. Prelude advisories render in text mode. Trust gate is
-    /// consulted; untrusted Loaded rules are filtered in place. JSON-vs-text
-    /// renderer chosen from `pipeline.json()`.
-    Eval,
-    /// `may-i check`. Prelude advisories render in text mode. Trust warning
-    /// renders (no filtering — `check` validates the config as authored).
-    /// The `command` argument to `run` is unused for this mode.
-    Check,
-    /// Claude Code PreToolUse hook. No prelude (JSON-only by design). Trust
-    /// gate is consulted; untrusted Loaded rules are filtered in place. The
-    /// response is always wrapped in the `hookSpecificOutput` envelope.
-    Hook,
-}
-
-impl InvocationMode {
-    /// Project to the trust-side mode that drives block-reason phrasing.
-    pub(crate) fn into_trust_mode(self, json: bool) -> TrustMode {
-        match self {
-            InvocationMode::Eval => TrustMode::for_eval(json),
-            // Check never consults the gate via `run`; this is the no-op
-            // value, returned only for symmetry.
-            InvocationMode::Check => TrustMode::Text,
-            InvocationMode::Hook => TrustMode::Hook,
-        }
-    }
-}
-
-/// Borrowed evaluation context handed to the closure in
-/// [`CommandPipeline::run`]. Carries the loaded config and the per-invocation
-/// terminal / path facts that the closure needs to evaluate and produce an
-/// `EvalOutcome`. Crucially does *not* carry `&mut CommandPipeline` — the
+/// Borrowed evaluation context handed to the closure in one of the
+/// pipeline's `run_*` entry points. Carries the loaded config and the
+/// per-invocation terminal / path facts that the closure needs to produce
+/// its typed body. Crucially does *not* carry `&mut CommandPipeline` — the
 /// closure cannot re-drive the prelude, re-consult trust, or re-pick the
 /// renderer.
 pub struct EvalContext<'a> {
@@ -67,15 +33,6 @@ pub struct EvalContext<'a> {
     pub terminal: &'a Terminal,
     pub config_path: &'a Path,
     pub display_path: String,
-}
-
-/// Renderable outcome produced by an evaluation handler's closure. Each
-/// variant carries exactly the data `output::render_eval_outcome` needs to
-/// emit either the text or JSON response shape for one `InvocationMode`.
-pub enum EvalOutcome {
-    Eval(EvalOutcomeBody),
-    Check(CheckOutcomeBody),
-    Hook(EvalResult),
 }
 
 /// Eval handler payload: one engine result, the captured trace, the
@@ -172,49 +129,56 @@ impl CommandPipeline {
         self.trust.render_warning(&self.terminal, &mut io::stderr());
     }
 
-    /// Sole evaluation entry point. Owns the per-invocation flow: prelude
-    /// advisories (text modes only), trust consultation or warning (per
-    /// mode), invoking `closure` with a borrowed `EvalContext`, mapping any
-    /// trust block through `output::render_trust_block`, and dispatching the
-    /// closure's `EvalOutcome` through `output::render_eval_outcome`.
+    /// Shared prelude + trust flow used by `run_eval`, `run_check`, `run_hook`.
     ///
-    /// On trust block (Eval/Hook modes) the closure is NOT invoked: the
-    /// block is serialised and `run` returns `Ok(())`.
-    pub fn run<F>(&mut self, mode: InvocationMode, command: &str, closure: F) -> miette::Result<()>
-    where
-        F: FnOnce(&EvalContext<'_>) -> miette::Result<EvalOutcome>,
-    {
-        if mode != InvocationMode::Hook {
+    /// `prelude` toggles text-mode advisories (skipped for Hook).
+    /// `consult` selects the gate path (Eval/Hook) vs the warning-only path
+    /// (Check); on the consult path, `Err(block)` short-circuits the caller.
+    /// `warn_after` re-emits the trust warning after a successful gate
+    /// consultation (Eval text mode only).
+    fn prelude_and_trust(
+        &mut self,
+        command: &str,
+        trust_mode: TrustMode,
+        prelude: bool,
+        consult: bool,
+        warn_after: bool,
+    ) -> Result<(), TrustBlock> {
+        if prelude {
             self.render_prelude_advisories();
         }
-
-        match mode {
-            InvocationMode::Check => {
+        if consult {
+            self.consult_trust(command, trust_mode)?;
+            if warn_after {
                 self.render_trust_warning();
             }
-            InvocationMode::Eval | InvocationMode::Hook => {
-                let trust_mode = mode.into_trust_mode(self.json);
-                if let Err(block) = self.consult_trust(command, trust_mode) {
-                    output::render_trust_block(
-                        &mut io::stdout(),
-                        &mut io::stderr(),
-                        &self.terminal,
-                        &block,
-                        mode,
-                    );
-                    return Ok(());
-                }
-                // Text-mode Eval still surfaces the warning advisory for
-                // untrusted Loaded rules that weren't tied to the command;
-                // `render_trust_warning` no-ops in JSON / Hook modes.
-                if mode == InvocationMode::Eval {
-                    self.render_trust_warning();
-                }
-            }
+        } else {
+            self.render_trust_warning();
+        }
+        Ok(())
+    }
+
+    /// `may-i eval` entry point. Drives the prelude + trust consultation,
+    /// invokes the closure on the allow path, and dispatches its
+    /// `EvalOutcomeBody` to the text-or-JSON renderer.
+    pub fn run_eval<F>(&mut self, command: &str, closure: F) -> miette::Result<()>
+    where
+        F: FnOnce(&EvalContext<'_>) -> miette::Result<EvalOutcomeBody>,
+    {
+        let trust_mode = TrustMode::for_eval(self.json);
+        if let Err(block) = self.prelude_and_trust(command, trust_mode, true, true, !self.json) {
+            output::render_eval_trust_block(
+                &mut io::stdout(),
+                &mut io::stderr(),
+                &self.terminal,
+                &block,
+                self.json,
+            );
+            return Ok(());
         }
 
         let display_path = output::shorten_home(&self.loaded.config_path);
-        let outcome = {
+        let body = {
             let ctx = EvalContext {
                 config: &self.loaded.config,
                 loaded: &self.loaded,
@@ -225,13 +189,62 @@ impl CommandPipeline {
             closure(&ctx)?
         };
 
-        output::render_eval_outcome(
-            &mut io::stdout(),
-            &mut io::stderr(),
-            &self.terminal,
-            self.json,
-            &outcome,
-        );
+        output::render_eval(&mut io::stdout(), &self.terminal, self.json, &body);
+        Ok(())
+    }
+
+    /// `may-i check` entry point. Drives the prelude and trust warning
+    /// (Check never consults the gate), invokes the closure, and dispatches
+    /// its `CheckOutcomeBody` to the text-or-JSON renderer.
+    pub fn run_check<F>(&mut self, closure: F) -> miette::Result<()>
+    where
+        F: FnOnce(&EvalContext<'_>) -> miette::Result<CheckOutcomeBody>,
+    {
+        // `consult = false` routes through the warning-only branch; the
+        // `trust_mode` argument is unused on that branch.
+        let _ = self.prelude_and_trust("", TrustMode::Text, true, false, false);
+
+        let display_path = output::shorten_home(&self.loaded.config_path);
+        let body = {
+            let ctx = EvalContext {
+                config: &self.loaded.config,
+                loaded: &self.loaded,
+                terminal: &self.terminal,
+                config_path: &self.loaded.config_path,
+                display_path,
+            };
+            closure(&ctx)?
+        };
+
+        output::render_check(&mut io::stdout(), &self.terminal, self.json, &body);
+        Ok(())
+    }
+
+    /// Claude Code PreToolUse hook entry point. Skips the prelude (Hook is
+    /// JSON-only), consults trust, invokes the closure on the allow path,
+    /// and emits the hook JSON envelope.
+    pub fn run_hook<F>(&mut self, command: &str, closure: F) -> miette::Result<()>
+    where
+        F: FnOnce(&EvalContext<'_>) -> miette::Result<EvalResult>,
+    {
+        if let Err(block) = self.prelude_and_trust(command, TrustMode::Hook, false, true, false) {
+            output::render_hook_trust_block(&mut io::stdout(), &block);
+            return Ok(());
+        }
+
+        let display_path = output::shorten_home(&self.loaded.config_path);
+        let result = {
+            let ctx = EvalContext {
+                config: &self.loaded.config,
+                loaded: &self.loaded,
+                terminal: &self.terminal,
+                config_path: &self.loaded.config_path,
+                display_path,
+            };
+            closure(&ctx)?
+        };
+
+        output::render_hook(&mut io::stdout(), &result);
         Ok(())
     }
 }
@@ -250,9 +263,7 @@ mod tests {
     use may_i_core::span::Span;
     use may_i_engine::EvalResult;
 
-    use crate::pipeline::{
-        CheckOutcomeBody, CommandPipeline, EvalOutcome, EvalOutcomeBody, InvocationMode,
-    };
+    use crate::pipeline::{CheckOutcomeBody, CommandPipeline, EvalOutcomeBody};
     use crate::trust::{InvocationTrust, TrustMode, store::TrustStore};
 
     fn spanned<T>(value: T) -> Spanned<T> {
@@ -323,8 +334,8 @@ mod tests {
         );
     }
 
-    /// Spec: `command-pipeline` / `Check handler dispatches through run` —
-    /// `run(Check, …)` invokes the closure on the no-filter path.
+    /// Spec: `command-pipeline` / `Check handler dispatches through run_check`
+    /// — `run_check` invokes the typed closure on the no-filter path.
     #[test]
     fn run_check_invokes_closure() {
         let loaded = loaded_result(vec![]);
@@ -332,22 +343,22 @@ mod tests {
         let mut pipeline = CommandPipeline::with_trust(loaded, true, trust);
         let invoked = Cell::new(false);
         pipeline
-            .run(InvocationMode::Check, "", |_ctx| {
+            .run_check(|_ctx| {
                 invoked.set(true);
-                Ok(EvalOutcome::Check(CheckOutcomeBody {
+                Ok(CheckOutcomeBody {
                     results: vec![],
                     verbose: false,
                     passed: 0,
                     failed: 0,
                     display_path: "/tmp/cfg.lisp".into(),
-                }))
+                })
             })
             .expect("run check");
         assert!(invoked.get(), "Check arm must invoke the closure");
     }
 
     /// Spec: `trust-gate` / `Hook mode block reason includes file paths` —
-    /// `run(Hook, …)` short-circuits the closure on a trust block.
+    /// `run_hook` short-circuits the closure on a trust block.
     #[test]
     fn run_hook_short_circuits_on_block() {
         let loaded = loaded_result(vec![loaded_rule("echo", "/tmp/rules.lisp")]);
@@ -355,9 +366,9 @@ mod tests {
         let mut pipeline = CommandPipeline::with_trust(loaded, true, trust);
         let invoked = Cell::new(false);
         pipeline
-            .run(InvocationMode::Hook, "echo hi", |_ctx| {
+            .run_hook("echo hi", |_ctx| {
                 invoked.set(true);
-                Ok(EvalOutcome::Hook(EvalResult::new(Decision::Allow, None)))
+                Ok(EvalResult::new(Decision::Allow, None))
             })
             .expect("run hook");
         assert!(
@@ -366,8 +377,8 @@ mod tests {
         );
     }
 
-    /// Spec: `command-pipeline` / `Eval handler dispatches through run` —
-    /// `run(Eval, …)` invokes the closure when trust allows.
+    /// Spec: `command-pipeline` / `Eval handler dispatches through run_eval`
+    /// — `run_eval` invokes the typed closure when trust allows.
     #[test]
     fn run_eval_invokes_closure_when_trust_allows() {
         let loaded = loaded_result(vec![]);
@@ -375,25 +386,81 @@ mod tests {
         let mut pipeline = CommandPipeline::with_trust(loaded, false, trust);
         let invoked = Cell::new(false);
         pipeline
-            .run(InvocationMode::Eval, "echo hi", |_ctx| {
+            .run_eval("echo hi", |_ctx| {
                 invoked.set(true);
-                Ok(EvalOutcome::Eval(EvalOutcomeBody {
+                Ok(EvalOutcomeBody {
                     command: "echo hi".into(),
                     colored: "echo hi".into(),
                     result: EvalResult::new(Decision::Allow, None),
                     traces: vec![],
                     display_path: "/tmp/cfg.lisp".into(),
-                }))
+                })
             })
             .expect("run eval");
         assert!(invoked.get(), "Eval closure must run on trust allow");
     }
 
+    /// Spec: `command-pipeline` / `Single trust-store load is observable` —
+    /// `run_eval` drives the prelude path through the same `InvocationTrust`,
+    /// preserving the single-load invariant.
     #[test]
-    fn into_trust_mode_projections() {
-        assert_eq!(InvocationMode::Eval.into_trust_mode(true), TrustMode::Json);
-        assert_eq!(InvocationMode::Eval.into_trust_mode(false), TrustMode::Text);
-        assert_eq!(InvocationMode::Check.into_trust_mode(true), TrustMode::Text);
-        assert_eq!(InvocationMode::Hook.into_trust_mode(false), TrustMode::Hook);
+    fn store_loads_once_per_invocation() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&calls);
+        let loader = Box::new(move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+            Some(empty_state())
+        });
+        let trust = InvocationTrust::with_loader(false, loader);
+        let loaded = loaded_result(vec![loaded_rule("git", "/tmp/rules.lisp")]);
+        let mut pipeline = CommandPipeline::with_trust(loaded, false, trust);
+
+        pipeline
+            .run_eval("git status", |_ctx| {
+                Ok(EvalOutcomeBody {
+                    command: "git status".into(),
+                    colored: "git status".into(),
+                    result: EvalResult::new(Decision::Allow, None),
+                    traces: vec![],
+                    display_path: "/tmp/cfg.lisp".into(),
+                })
+            })
+            .expect("run_eval");
+
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "run_eval must load the trust store at most once per invocation"
+        );
+    }
+
+    /// Mode-to-body invariant is enforced statically by the closure type
+    /// signatures on each `run_*` method:
+    ///
+    /// - `run_eval` requires `FnOnce(&EvalContext<'_>) -> miette::Result<EvalOutcomeBody>`
+    /// - `run_check` requires `FnOnce(&EvalContext<'_>) -> miette::Result<CheckOutcomeBody>`
+    /// - `run_hook` requires `FnOnce(&EvalContext<'_>) -> miette::Result<EvalResult>`
+    ///
+    /// A `run_check` closure that returned an `EvalOutcomeBody` would fail to
+    /// type-check at compile time, not misrender at runtime. `trybuild` is
+    /// not a dev-dep so we record the invariant here rather than add the
+    /// dependency for one compile-fail fixture.
+    #[test]
+    fn closure_signatures_pin_mode_to_body() {
+        fn _eval_takes_eval_body<F>(_: F)
+        where
+            F: FnOnce(&super::EvalContext<'_>) -> miette::Result<EvalOutcomeBody>,
+        {
+        }
+        fn _check_takes_check_body<F>(_: F)
+        where
+            F: FnOnce(&super::EvalContext<'_>) -> miette::Result<CheckOutcomeBody>,
+        {
+        }
+        fn _hook_takes_eval_result<F>(_: F)
+        where
+            F: FnOnce(&super::EvalContext<'_>) -> miette::Result<EvalResult>,
+        {
+        }
     }
 }

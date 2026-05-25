@@ -6,7 +6,7 @@ use may_i_core::{ContextFacts, Keyword};
 use may_i_engine as engine;
 use miette::Context;
 
-use may_i::pipeline::{CommandPipeline, EvalOutcome, InvocationMode};
+use may_i::pipeline::CommandPipeline;
 
 pub(crate) fn cmd_claude_code_hook(pipeline: &mut CommandPipeline) -> miette::Result<()> {
     let mut input = String::new();
@@ -25,10 +25,9 @@ pub(crate) fn cmd_claude_code_hook(pipeline: &mut CommandPipeline) -> miette::Re
     };
 
     let context = build_context(&payload);
-    pipeline.run(InvocationMode::Hook, &command, |ctx| {
-        let result = engine::eval::evaluate_command(&command, ctx.config, &context)
-            .map_err(|e| miette::miette!("{e}"))?;
-        Ok(EvalOutcome::Hook(result))
+    pipeline.run_hook(&command, |ctx| {
+        engine::eval::evaluate_command(&command, ctx.config, &context)
+            .map_err(|e| miette::miette!("{e}"))
     })
 }
 
