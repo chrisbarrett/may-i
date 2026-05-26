@@ -88,6 +88,29 @@ docs, error messages, or DSL forms.
 | Class A / Class B | Two categories of migration rewrite. _Class A_ is syntactic and semantics-preserving (e.g. `(effect :allow)` → `(allow)`, `:style S` → `(style S)`, `(may-i *)` → `(authorise)`) — `may-i migrate` silently rehashes trust-store entries so approvals carry over. _Class B_ changes what a rule decides — the user is warned and no trust state is auto-updated. Full spec: `openspec/specs/migration-system/spec.md`. | `(effect :allow)` → `(allow)` is Class A |
 | Invocation mode | How `may-i` was called. Three modes reach the decision pipeline (`pipeline::run_hook`, `run_eval`, `run_check`); other subcommands (`fmt`, `migrate`, `trust`, `parse`) are utilities that bypass it. _Hook mode_ — harness-invoked via Claude Code hook protocol; JSON only; consults trust; exit 2 on deny. _Eval mode_ — `may-i eval`, direct CLI; text or JSON; consults trust; advisory (never blocks). _Check mode_ — `may-i check`, lint/validation; text or JSON; **never consults trust** and **never blocks**. | `may-i` (stdin JSON) / `may-i eval 'cmd'` / `may-i check` |
 
+### Canonical-form ordering
+
+The canonicaliser sorts a body form **only when both** of the following
+hold; otherwise authored order is preserved verbatim:
+
+1. **Engine-order-independent** — reordering children is a semantic
+   no-op (no short-circuit, no positional binding).
+2. **Not human-curated** — the form has no convention of embedded
+   organisation such as section-header comments or mnemonic grouping
+   between children.
+
+Either condition alone is enough to preserve order. `(rule …)` bodies
+fail #1 (short-circuit `and`/`or`). `(check …)` cases fail #2 — cases
+are engine-order-independent test assertions, but users group them with
+comments and the formatter must not scramble that authored structure.
+`(flag [a b])` name vectors and `(define-arg-style …)` attribute plists
+pass both and are sorted.
+
+This principle is independent of trust-hash participation. `(check …)`
+does not enter the hash but is still order-preserving because of #2.
+Conversely, the sorted forms remain sorted even when they enter the
+hash, because their chosen order carries no information.
+
 ### Pattern internals
 
 The internal representation is richer than the surface syntax — argv-shaped
