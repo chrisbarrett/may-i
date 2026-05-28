@@ -754,7 +754,9 @@ What `fmt` does:
       in source order, then `(rest …)` last.
     - **`define-arg-style` body**: attribute forms alphabetised by head
       atom (`combined-shorts` < `long-prefix` < … < `separators`).
-    - **`(check …)` body**: cases alphabetised by command string.
+    - **`(check …)` body**: source order preserved — cases are
+      engine-order-independent but human-curated (users group cases
+      under section-header comments).
     - **Rule bodies**: order **preserved** — rule body forms evaluate
       short-circuit, so order is semantic.
 - Sorts the name vector in `(flag VEC)` and `(parameter VEC …)`
@@ -859,7 +861,9 @@ What `fmt` does:
       in source order, then `(rest …)` last.
     - **`define-arg-style` body**: attribute forms alphabetised by head
       atom (`combined-shorts` < `long-prefix` < … < `separators`).
-    - **`(check …)` body**: cases alphabetised by command string.
+    - **`(check …)` body**: source order preserved — cases are
+      engine-order-independent but human-curated (users group cases
+      under section-header comments).
     - **Rule bodies**: order **preserved** — rule body forms evaluate
       short-circuit, so order is semantic.
 - Sorts the name vector in `(flag VEC)` and `(parameter VEC …)`
