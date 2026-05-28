@@ -21,6 +21,32 @@ use crate::cmd_check::TraceExtra;
 use crate::output::{self, Terminal};
 use crate::trust::{InvocationTrust, TrustBlock, TrustMode};
 
+/// Which agent harness is driving this hook invocation. Selected once at
+/// hook entry from the parsed stdin payload, then threaded through
+/// `run_hook` so renderers can branch on the harness-specific response
+/// shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HarnessProfile {
+    /// Claude Code's PreToolUse hook protocol.
+    ClaudeCode,
+    /// Codex's PreToolUse hook protocol. Distinguished by the presence of
+    /// a `turn_id` field in the stdin payload.
+    Codex,
+}
+
+impl HarnessProfile {
+    /// Select a profile from the parsed stdin payload. Codex iff the
+    /// top-level object contains a `turn_id` key (presence only — the
+    /// value is opaque); otherwise Claude Code.
+    pub fn from_payload(payload: &serde_json::Value) -> Self {
+        if payload.get("turn_id").is_some() {
+            HarnessProfile::Codex
+        } else {
+            HarnessProfile::ClaudeCode
+        }
+    }
+}
+
 /// Borrowed evaluation context handed to the closure in one of the
 /// pipeline's `run_*` entry points. Carries the loaded config and the
 /// per-invocation terminal / path facts that the closure needs to produce
@@ -220,15 +246,20 @@ impl CommandPipeline {
         Ok(())
     }
 
-    /// Claude Code PreToolUse hook entry point. Skips the prelude (Hook is
-    /// JSON-only), consults trust, invokes the closure on the allow path,
-    /// and emits the hook JSON envelope.
-    pub fn run_hook<F>(&mut self, command: &str, closure: F) -> miette::Result<()>
+    /// PreToolUse hook entry point. Skips the prelude (Hook is JSON-only),
+    /// consults trust, invokes the closure on the allow path, and emits
+    /// the hook JSON envelope in the shape dictated by `profile`.
+    pub fn run_hook<F>(
+        &mut self,
+        command: &str,
+        profile: HarnessProfile,
+        closure: F,
+    ) -> miette::Result<()>
     where
         F: FnOnce(&EvalContext<'_>) -> miette::Result<EvalResult>,
     {
         if let Err(block) = self.prelude_and_trust(command, TrustMode::Hook, false, true, false) {
-            output::render_hook_trust_block(&mut io::stdout(), &block);
+            output::render_hook_trust_block(&mut io::stdout(), profile, &block);
             return Ok(());
         }
 
@@ -244,7 +275,7 @@ impl CommandPipeline {
             closure(&ctx)?
         };
 
-        output::render_hook(&mut io::stdout(), &result);
+        output::render_hook(&mut io::stdout(), profile, &result);
         Ok(())
     }
 }
@@ -263,7 +294,7 @@ mod tests {
     use may_i_core::span::Span;
     use may_i_engine::EvalResult;
 
-    use crate::pipeline::{CheckOutcomeBody, CommandPipeline, EvalOutcomeBody};
+    use crate::pipeline::{CheckOutcomeBody, CommandPipeline, EvalOutcomeBody, HarnessProfile};
     use crate::trust::{InvocationTrust, TrustMode, store::TrustStore};
 
     fn spanned<T>(value: T) -> Spanned<T> {
@@ -366,7 +397,7 @@ mod tests {
         let mut pipeline = CommandPipeline::with_trust(loaded, true, trust);
         let invoked = Cell::new(false);
         pipeline
-            .run_hook("echo hi", |_ctx| {
+            .run_hook("echo hi", HarnessProfile::ClaudeCode, |_ctx| {
                 invoked.set(true);
                 Ok(EvalResult::new(Decision::Allow, None))
             })

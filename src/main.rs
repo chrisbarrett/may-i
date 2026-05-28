@@ -5,9 +5,9 @@ use std::process::ExitCode;
 
 use clap::{CommandFactory, Parser, Subcommand};
 
-mod cmd_claude_code_hook;
 mod cmd_fmt;
 mod cmd_help;
+mod cmd_hook;
 mod cmd_parse;
 
 use may_i::cmd_migrate;
@@ -182,7 +182,7 @@ fn run() -> miette::Result<ExitCode> {
             } else {
                 let mut pipeline =
                     may_i::pipeline::CommandPipeline::load(cli.config.as_deref(), cli.json)?;
-                cmd_claude_code_hook::cmd_claude_code_hook(&mut pipeline)?;
+                cmd_hook::cmd_hook(&mut pipeline)?;
             }
         }
     }

@@ -1,8 +1,10 @@
-// Integration tests for the Claude Code hook entry point.
+// Integration tests for the hook entry point. Covers both the default
+// Claude Code profile and the Codex profile (selected by the presence
+// of `turn_id` in the stdin payload).
 
 mod common;
 
-use common::{bash_payload, may_i, may_i_cmd, parse_json, write_config};
+use common::{bash_payload, codex_bash_payload, may_i, may_i_cmd, parse_json, write_config};
 use predicates::prelude::*;
 
 #[test]
@@ -115,6 +117,119 @@ fn hook_nonexistent_config_via_flag_exits_two() {
         .assert()
         .code(2)
         .stderr(predicate::str::contains("not found"));
+}
+
+#[test]
+fn codex_ask_omits_permission_decision_and_uses_additional_context() {
+    let cfg = write_config(
+        r#"
+(rule "curl" (ask "needs review"))
+"#,
+    );
+    let output = may_i(&cfg)
+        .write_stdin(codex_bash_payload("curl example.com"))
+        .output()
+        .expect("run");
+
+    assert!(
+        output.status.success(),
+        "exit 0 expected, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let resp = parse_json(&output);
+    let hook = &resp["hookSpecificOutput"];
+    assert_eq!(hook["hookEventName"], "PreToolUse");
+    assert_eq!(hook["additionalContext"], "needs review");
+    assert!(hook.get("permissionDecision").is_none());
+    assert!(hook.get("permissionDecisionReason").is_none());
+}
+
+#[test]
+fn claude_code_ask_unchanged_without_turn_id() {
+    let cfg = write_config(
+        r#"
+(rule "curl" (ask "needs review"))
+"#,
+    );
+    let output = may_i(&cfg)
+        .write_stdin(bash_payload("curl example.com"))
+        .output()
+        .expect("run");
+
+    assert!(output.status.success());
+
+    let resp = parse_json(&output);
+    let hook = &resp["hookSpecificOutput"];
+    assert_eq!(hook["permissionDecision"], "ask");
+    assert_eq!(hook["permissionDecisionReason"], "needs review");
+    assert!(hook.get("additionalContext").is_none());
+}
+
+#[test]
+fn codex_allow_and_deny_match_claude_code_shape() {
+    let cfg = write_config(
+        r#"
+(rule "echo" (allow "safe"))
+(rule "rm" (deny "dangerous"))
+"#,
+    );
+
+    for (cmd, expected) in [("echo hi", "allow"), ("rm foo", "deny")] {
+        let codex = may_i(&cfg)
+            .write_stdin(codex_bash_payload(cmd))
+            .output()
+            .expect("codex run");
+        let claude = may_i(&cfg)
+            .write_stdin(bash_payload(cmd))
+            .output()
+            .expect("claude run");
+
+        assert!(
+            codex.status.success(),
+            "codex {cmd}: {}",
+            String::from_utf8_lossy(&codex.stderr)
+        );
+        assert!(
+            claude.status.success(),
+            "claude {cmd}: {}",
+            String::from_utf8_lossy(&claude.stderr)
+        );
+
+        let codex_resp = parse_json(&codex);
+        let claude_resp = parse_json(&claude);
+
+        assert_eq!(
+            codex_resp, claude_resp,
+            "{cmd} response shapes must match bit-for-bit"
+        );
+        assert_eq!(
+            codex_resp["hookSpecificOutput"]["permissionDecision"],
+            expected
+        );
+    }
+}
+
+#[test]
+fn codex_client_fact_is_visible_to_rules() {
+    let cfg = write_config(
+        r#"
+(rule "rm"
+      (when (fact? :client/codex) (deny "Codex denied")))
+"#,
+    );
+    let output = may_i(&cfg)
+        .write_stdin(codex_bash_payload("rm foo"))
+        .output()
+        .expect("run");
+
+    assert!(output.status.success());
+    let resp = parse_json(&output);
+    assert_eq!(resp["hookSpecificOutput"]["permissionDecision"], "deny");
+    assert_eq!(
+        resp["hookSpecificOutput"]["permissionDecisionReason"],
+        "Codex denied"
+    );
 }
 
 #[test]
