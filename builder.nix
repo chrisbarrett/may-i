@@ -84,6 +84,7 @@ in
 
     packages = with pkgs; [
       cargo-affected
+      cargo-fuzz
       cargo-insta
       cargo-tarpaulin
       prek
