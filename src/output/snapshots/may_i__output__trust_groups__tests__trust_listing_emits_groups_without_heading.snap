@@ -2,5 +2,8 @@
 source: src/output/trust_groups.rs
 expression: "render_listing(None, &groups)"
 ---
-  git, hg │ /tmp/a.lisp
-  jj      │ /tmp/b.lisp
+  /tmp/a.lisp
+    git, hg
+
+  /tmp/b.lisp
+    jj
