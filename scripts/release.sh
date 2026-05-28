@@ -41,10 +41,21 @@ require_in_sync_with_origin() {
 
 require_tooling() {
   if ! command -v cargo-fuzz >/dev/null 2>&1; then
-    die "cargo-fuzz not found; install with: cargo install cargo-fuzz"
+    die "cargo-fuzz not found; install with: cargo install cargo-fuzz (or enter the nix devShell)"
   fi
-  if ! rustup toolchain list 2>/dev/null | grep -q '^nightly'; then
-    die "nightly toolchain not installed; install with: rustup toolchain install nightly"
+  detect_cargo_nightly
+}
+
+# Sets CARGO_NIGHTLY to the command prefix that invokes a nightly cargo:
+#   - "cargo +nightly" when cargo is the rustup proxy (toolchain switching works)
+#   - "cargo"          when cargo is already a nightly build (e.g. nix devShell)
+detect_cargo_nightly() {
+  if cargo +nightly --version >/dev/null 2>&1; then
+    CARGO_NIGHTLY=("cargo" "+nightly")
+  elif cargo --version 2>&1 | grep -q nightly; then
+    CARGO_NIGHTLY=("cargo")
+  else
+    die "no nightly cargo available; install nightly via rustup or enter a devShell with a nightly toolchain"
   fi
 }
 
@@ -68,8 +79,8 @@ verify() {
   step "cargo tarpaulin"
   cargo tarpaulin
 
-  step "cargo +nightly fuzz run fuzz_evaluator (60s)"
-  (cd fuzz && cargo +nightly fuzz run fuzz_evaluator -- -max_total_time=60)
+  step "${CARGO_NIGHTLY[*]} fuzz run fuzz_evaluator (60s)"
+  (cd fuzz && "${CARGO_NIGHTLY[@]}" fuzz run fuzz_evaluator -- -max_total_time=60)
 
   step "nix build .#default --no-link"
   nix build .#default --no-link
