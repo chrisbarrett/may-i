@@ -6,9 +6,13 @@
 
 use std::io::Write;
 
+use may_i_core::Decision;
+
+use crate::pipeline::HarnessProfile;
 use crate::trust::TrustBlock;
 
 use super::Terminal;
+use super::render::{codex_ask_envelope, standard_envelope};
 
 /// Emit `block` in the `eval` response shape. The text branch is silent
 /// (only the prelude renders to stderr); the JSON branch writes the
@@ -38,16 +42,20 @@ pub fn render_eval_trust_block(
     );
 }
 
-/// Emit `block` in the Claude Code hook response shape (always JSON,
-/// wrapped in `hookSpecificOutput`).
-pub fn render_hook_trust_block(stdout: &mut impl Write, block: &TrustBlock) {
-    let body = serde_json::json!({
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": block.decision.to_string(),
-            "permissionDecisionReason": block.reason,
-        }
-    });
+/// Emit `block` in the hook response shape dictated by `profile`. Under
+/// the Codex profile an `ask` block surfaces the reason via
+/// `additionalContext` instead of `permissionDecisionReason` (Codex
+/// rejects `permissionDecision: "ask"`); `allow` and `deny` keep the
+/// Claude Code envelope.
+pub fn render_hook_trust_block(
+    stdout: &mut impl Write,
+    profile: HarnessProfile,
+    block: &TrustBlock,
+) {
+    let body = match (profile, block.decision) {
+        (HarnessProfile::Codex, Decision::Ask) => codex_ask_envelope(Some(&block.reason)),
+        _ => standard_envelope(block.decision.to_string(), Some(&block.reason)),
+    };
     let _ = writeln!(
         stdout,
         "{}",
@@ -93,9 +101,9 @@ mod tests {
     }
 
     #[test]
-    fn hook_wraps_in_envelope() {
+    fn claude_code_hook_wraps_in_envelope() {
         let mut out = Vec::new();
-        render_hook_trust_block(&mut out, &block());
+        render_hook_trust_block(&mut out, HarnessProfile::ClaudeCode, &block());
         let s = String::from_utf8(out).unwrap();
         let v: serde_json::Value = serde_json::from_str(s.trim()).expect("parse json");
         assert_eq!(v["hookSpecificOutput"]["hookEventName"], "PreToolUse");
@@ -105,6 +113,40 @@ mod tests {
                 .as_str()
                 .unwrap()
                 .contains("Untrusted")
+        );
+    }
+
+    #[test]
+    fn codex_ask_block_surfaces_additional_context() {
+        let mut out = Vec::new();
+        render_hook_trust_block(&mut out, HarnessProfile::Codex, &block());
+        let v: serde_json::Value = serde_json::from_slice(&out).expect("parse");
+        let hook = &v["hookSpecificOutput"];
+        assert_eq!(hook["hookEventName"], "PreToolUse");
+        assert!(
+            hook["additionalContext"]
+                .as_str()
+                .unwrap()
+                .contains("Untrusted")
+        );
+        assert!(hook.get("permissionDecision").is_none());
+        assert!(hook.get("permissionDecisionReason").is_none());
+    }
+
+    #[test]
+    fn codex_deny_block_keeps_standard_envelope() {
+        let blk = TrustBlock {
+            decision: Decision::Deny,
+            reason: "denied".into(),
+            files: vec![],
+        };
+        let mut out = Vec::new();
+        render_hook_trust_block(&mut out, HarnessProfile::Codex, &blk);
+        let v: serde_json::Value = serde_json::from_slice(&out).expect("parse");
+        assert_eq!(v["hookSpecificOutput"]["permissionDecision"], "deny");
+        assert_eq!(
+            v["hookSpecificOutput"]["permissionDecisionReason"],
+            "denied"
         );
     }
 }

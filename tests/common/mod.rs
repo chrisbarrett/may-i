@@ -12,7 +12,7 @@ pub fn write_config(contents: &str) -> NamedTempFile {
     f
 }
 
-/// Build the JSON payload for a Bash hook event.
+/// Build the JSON payload for a Bash hook event (Claude Code shape).
 pub fn bash_payload(command: &str) -> String {
     serde_json::json!({
         "hook_event_name": "PreToolUse",
@@ -25,6 +25,26 @@ pub fn bash_payload(command: &str) -> String {
             "command": command
         },
         "tool_use_id": "toolu_test_001"
+    })
+    .to_string()
+}
+
+/// Build the JSON payload for a Codex Bash hook event. Same shape as
+/// [`bash_payload`] with `turn_id` added — that key is what the hook
+/// dispatcher uses to select the Codex profile.
+pub fn codex_bash_payload(command: &str) -> String {
+    serde_json::json!({
+        "hook_event_name": "PreToolUse",
+        "session_id": "test-session-001",
+        "transcript_path": "/tmp/transcript.jsonl",
+        "cwd": "/tmp",
+        "permission_mode": "default",
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": command
+        },
+        "tool_use_id": "toolu_test_001",
+        "turn_id": "t-test-001"
     })
     .to_string()
 }
