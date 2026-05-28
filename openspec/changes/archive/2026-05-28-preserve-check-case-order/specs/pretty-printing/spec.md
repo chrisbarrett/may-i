@@ -53,3 +53,7 @@ Either condition alone is sufficient to preserve order.
 
 - **WHEN** the canonicaliser receives a rule with multiple body forms (e.g., `(rule "git" (positional "diff") (allow))`)
 - **THEN** the body forms appear in source order in the rendered output
+
+## REMOVED Requirements
+
+- **Canonical form sorts check cases** — subsumed by the revised "Canonical body-form ordering" requirement, which now specifies source-order preservation for `(check …)` bodies (cases are engine-order-independent but human-curated).

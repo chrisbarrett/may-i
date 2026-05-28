@@ -229,7 +229,12 @@ determined by a static `&[&str]` lookup table in the pretty-serializer.
 
 ### Requirement: Canonical body-form ordering
 
-A pre-render canonicalisation pass SHALL apply deterministic ordering to multi-declaration bodies before the pretty-printer renders them. The canonical order is independent of source order.
+A pre-render canonicalisation pass SHALL apply deterministic ordering to multi-declaration bodies before the pretty-printer renders them. A body SHALL be sorted only when **both** of the following hold; otherwise authored order SHALL be preserved verbatim:
+
+1. **Engine-order-independent**: reordering the body's children is a semantic no-op (no short-circuit evaluation, no positional binding).
+2. **Not human-curated**: the body has no convention of embedded organisation such as section-header comments or mnemonic grouping between children.
+
+Either condition alone is sufficient to preserve order.
 
 **Order specification:**
 
@@ -239,7 +244,7 @@ A pre-render canonicalisation pass SHALL apply deterministic ordering to multi-d
     3. All `(parameter …)` declarations in alphabetical order by canonical name.
     4. `(tail …)` last.
 - **`define-arg-style` body** (`(define-arg-style NAME …)`): attribute forms in alphabetical order by attribute head atom.
-- **`check` body** (`(check …)`): cases in alphabetical order by their command string.
+- **`check` body** (`(check …)`): order preserved. Check cases are engine-order-independent but human-curated — users group cases under section-header comments, and the formatter SHALL NOT scramble that authored structure.
 - **Rule body**: order preserved. Rule bodies use short-circuit evaluation; order is semantic and SHALL NOT be reordered.
 
 **Canonical name extraction:**
@@ -261,10 +266,15 @@ A pre-render canonicalisation pass SHALL apply deterministic ordering to multi-d
 - **WHEN** the canonicaliser receives `(define-arg-style mystyle (separators "=") (long-prefix "--") (overrides gnu))`
 - **THEN** the rendered output is `(define-arg-style mystyle (long-prefix "--") (overrides gnu) (separators "="))`
 
-#### Scenario: Check cases alphabetised by command
+#### Scenario: Check cases preserve source order
 
 - **WHEN** the canonicaliser receives `(check (deny "rm -rf /") (allow "ls"))`
-- **THEN** the rendered output is `(check (allow "ls") (deny "rm -rf /"))`
+- **THEN** the rendered output preserves source order: `(check (deny "rm -rf /") (allow "ls"))`
+
+#### Scenario: Check section-header comments stay with their cases
+
+- **WHEN** the canonicaliser receives a `(check …)` form whose body interleaves section-header comments (e.g. `;; State manipulation`) with check cases
+- **THEN** each comment appears in the rendered output immediately above the same case it preceded in the source
 
 #### Scenario: Rule body order preserved
 
@@ -369,16 +379,6 @@ The canonical form of `(define-arg-style NAME …)` SHALL sort the body's attrib
 - **GIVEN** `(define-arg-style java (separators " " "=" ":") (overrides gnu) (combined-shorts nil))`
 - **WHEN** the canonical form is computed
 - **THEN** the canonical form SHALL list attributes in alphabetical order: `(combined-shorts nil)`, `(overrides gnu)`, `(separators " " "=" ":")`.
-
-### Requirement: Canonical form sorts check cases
-
-The canonical form of `(check …)` SHALL sort the body's case forms alphabetically by command string.
-
-#### Scenario: Check cases sort
-
-- **GIVEN** `(check (deny "rm -rf /") (allow "ls -la") (ask "rm -rf /tmp/foo"))`
-- **WHEN** the canonical form is computed
-- **THEN** the canonical form SHALL list cases in alphabetical order: `(allow "ls -la")`, `(ask "rm -rf /tmp/foo")`, `(deny "rm -rf /")`.
 
 ### Requirement: Rule order is preserved (not sorted)
 
