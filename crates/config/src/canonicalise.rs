@@ -1,9 +1,13 @@
 //! Canonical body-form ordering for the DSL.
 //!
 //! A pre-render pass that applies deterministic ordering to multi-declaration
-//! bodies whose declaration order has set semantics. The canonical order is
-//! independent of source order, so equivalent configs differing only in
-//! declaration order render to identical output.
+//! bodies. A body is sorted only when **both** conditions hold; otherwise
+//! authored order is preserved:
+//!
+//! 1. **Engine-order-independent**: reordering is a semantic no-op (no
+//!    short-circuit evaluation, no positional binding).
+//! 2. **Not human-curated**: the body has no convention of embedded
+//!    organisation (section-header comments, mnemonic grouping).
 //!
 //! Ordered bodies:
 //! - `(parser PROG …)`: `(style)` first, then `(flags)`, then `(flag …)`
@@ -12,14 +16,16 @@
 //!   order (positional order is semantic), then `(rest)`. Legacy
 //!   `(tail …)` if present is emitted last during the migration window.
 //! - `(define-arg-style NAME …)`: attribute forms alphabetised by head atom.
-//! - `(check …)`: cases alphabetised by their first-string sort key.
+//!
+//! Preserved-order bodies:
+//! - `(check …)`: cases are engine-order-independent but human-curated
+//!   (users group cases under section-header comments). Source order is
+//!   preserved verbatim.
+//! - Rule bodies: evaluated short-circuit, order is semantic.
 //!
 //! Vectors in the name position of `(flag VEC)` and `(parameter VEC …)` are
 //! set-typed and are sorted lexicographically. Vectors elsewhere
 //! (separators, prefixes, rule bodies) are sequence-typed and untouched.
-//!
-//! Rule bodies are evaluated short-circuit: order is semantic and is
-//! preserved.
 
 use may_i_sexpr::cst::{CstNode, ShapeF};
 
@@ -46,7 +52,6 @@ pub(crate) fn canonicalise_node(node: Box<CstNode>) -> Box<CstNode> {
             let reordered = match head.as_deref() {
                 Some("parser") => sort_parser_body(recursed),
                 Some("define-arg-style") => sort_define_arg_style_body(recursed),
-                Some("check") => sort_check_body(recursed),
                 Some("flag") => sort_flag_or_parameter_vec(recursed, 1),
                 Some("parameter") => sort_flag_or_parameter_vec(recursed, 1),
                 Some("after") => collapse_singleton_after(recursed),
@@ -156,27 +161,6 @@ fn sort_define_arg_style_body(children: Vec<Box<CstNode>>) -> Vec<Box<CstNode>> 
     out
 }
 
-fn sort_check_body(children: Vec<Box<CstNode>>) -> Vec<Box<CstNode>> {
-    if children.len() < 2 {
-        return children;
-    }
-    let mut iter = children.into_iter();
-    let head = iter.next().expect("check head");
-    let body: Vec<Box<CstNode>> = iter.collect();
-
-    let mut indexed: Vec<(usize, Box<CstNode>)> = body.into_iter().enumerate().collect();
-    indexed.sort_by(|(ai, a), (bi, b)| {
-        let ka = check_case_sort_key(a);
-        let kb = check_case_sort_key(b);
-        ka.cmp(&kb).then_with(|| ai.cmp(bi))
-    });
-
-    let mut out = Vec::with_capacity(indexed.len() + 1);
-    out.push(head);
-    out.extend(indexed.into_iter().map(|(_, n)| n));
-    out
-}
-
 /// If `children[vec_index]` is a vector (i.e. the name set of a `(flag …)` /
 /// `(parameter …)` declaration), sort its string children lexicographically.
 /// Other shapes are left untouched. Children outside the name slot are
@@ -267,20 +251,6 @@ fn flag_or_parameter_sort_key(node: &CstNode) -> String {
     }
 }
 
-fn check_case_sort_key(node: &CstNode) -> String {
-    first_string_literal(node).unwrap_or_else(|| head_atom_or_empty(node))
-}
-
-fn first_string_literal(node: &CstNode) -> Option<String> {
-    match &node.shape {
-        ShapeF::String(s) => Some(s.clone()),
-        ShapeF::List(children) | ShapeF::Vector(children) => {
-            children.iter().find_map(|c| first_string_literal(c))
-        }
-        _ => None,
-    }
-}
-
 fn head_atom_or_empty(node: &CstNode) -> String {
     node.as_list()
         .and_then(|c| c.first())
@@ -334,14 +304,39 @@ mod tests {
     }
 
     #[test]
-    fn check_cases_alphabetised_by_command() {
+    fn check_cases_preserve_source_order() {
         let src = r#"(check (deny "rm -rf /") (allow "ls"))"#;
         let (forms, errs) = parse_cst(src);
         assert!(errs.is_empty(), "{errs:?}");
         let canon = canonicalise_forms(forms);
         let out = render_flat(&canon);
-        let want = r#"(check (allow "ls") (deny "rm -rf /"))"#;
+        let want = r#"(check (deny "rm -rf /") (allow "ls"))"#;
         assert_eq!(out.trim(), want);
+    }
+
+    #[test]
+    fn check_section_header_comments_stay_with_their_cases() {
+        let src = "(check\n  ;; State manipulation\n  (deny \"rm -rf /\")\n  ;; Inspection\n  (allow \"ls\"))";
+        let (forms, errs) = parse_cst(src);
+        assert!(errs.is_empty(), "{errs:?}");
+        let canon = canonicalise_forms(forms);
+        let out = render(&canon);
+        let pos_state = out.find(";; State manipulation").expect(&out);
+        let pos_deny = out.find(r#"(deny "rm -rf /")"#).expect(&out);
+        let pos_inspect = out.find(";; Inspection").expect(&out);
+        let pos_allow = out.find(r#"(allow "ls")"#).expect(&out);
+        assert!(
+            pos_state < pos_deny,
+            "section header should precede its case: {out}"
+        );
+        assert!(
+            pos_deny < pos_inspect,
+            "deny case should precede next section header: {out}"
+        );
+        assert!(
+            pos_inspect < pos_allow,
+            "section header should precede its case: {out}"
+        );
     }
 
     #[test]

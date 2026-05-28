@@ -177,9 +177,12 @@ fn fmt_stdin_explicit_dash_reads_stdin() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let allow_pos = stdout.find(r#"(allow "ls")"#).expect(&stdout);
     let deny_pos = stdout.find(r#"(deny "rm")"#).expect(&stdout);
-    assert!(allow_pos < deny_pos, "check cases sorted: {stdout}");
+    let allow_pos = stdout.find(r#"(allow "ls")"#).expect(&stdout);
+    assert!(
+        deny_pos < allow_pos,
+        "check cases preserve source order: {stdout}"
+    );
 }
 
 #[test]
