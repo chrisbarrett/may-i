@@ -3,4 +3,5 @@ source: src/output/trust_groups.rs
 expression: "render_listing(Some(\"Trusted:\"), &groups)"
 ---
   Trusted:
-  git │ /tmp/rules.lisp
+  /tmp/rules.lisp
+    git

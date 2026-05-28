@@ -462,7 +462,8 @@ fn write_wrap(
         };
 
         if !cur.is_empty() && cur_width + addition > avail {
-            cur.push_str(&separator.text);
+            // Break before the next item without appending a trailing
+            // separator — Wrap is prose-style flow, not Breakable.
             lines.push(cur);
             cur = String::new();
             cur_width = 0;
