@@ -78,8 +78,8 @@ hooks = [
   },
   {
     id = "cargo-test-full",
-    name = "cargo tarpaulin (full)",
-    entry = "cargo tarpaulin",
+    name = "cargo test (full)",
+    entry = "cargo test --workspace",
     language = "system",
     types = ["rust"],
     pass_filenames = false,

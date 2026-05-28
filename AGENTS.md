@@ -31,5 +31,24 @@ Files under `**/proptest-regressions/` are always checked in.
 
 # Release tagging
 
-Before creating a release tag, bump the `version` field in `Cargo.toml` to match
-the tag being created. The Cargo version and the git tag must agree.
+Cut releases with `scripts/release.sh <version>` (e.g. `scripts/release.sh
+0.5.2`). The script enforces a verify-before-mutate ordering: it runs the
+full verification suite (fmt, clippy, `cargo tarpaulin`, time-boxed fuzz,
+`nix build`) before touching `Cargo.toml`. If any step fails, the working
+tree is left untouched and the release can be retried after the fix.
+
+Preconditions: clean working tree, on `main`, in sync with `origin/main`,
+`cargo-fuzz` + a nightly toolchain installed.
+
+After verification passes the script bumps `Cargo.toml`, refreshes
+`Cargo.lock`, commits, tags `v$VERSION`, and pushes the branch and tag.
+The `release.yml` workflow then builds and packages release artefacts —
+it does not re-run tests.
+
+## Nightly verification
+
+`.github/workflows/nightly.yml` runs `cargo tarpaulin` and a longer fuzz
+pass (`-max_total_time=600`) against `main` daily. It is non-blocking:
+failures surface as workflow-run failures in the Actions UI but do not
+gate PRs or releases. Use it to spot coverage regressions and grow the
+fuzz corpus between releases.

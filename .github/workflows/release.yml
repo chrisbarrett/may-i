@@ -41,9 +41,6 @@ jobs:
       - name: Build
         run: cargo build --release
 
-      - name: Test
-        run: cargo test --release --workspace
-
       - name: Package
         run: |
           cd target/release

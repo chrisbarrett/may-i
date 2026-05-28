@@ -1,6 +1,6 @@
 [default]
 command = "Test"
-run-types = ["Lib"]
+run-types = ["Lib", "Tests", "Doctests"]
 workspace = true
 fail-under = 85
 exclude-files = [
