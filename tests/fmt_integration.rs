@@ -334,6 +334,61 @@ fn fmt_check_legacy_with_noncanonical_whitespace_exits_one() {
 }
 
 #[test]
+fn fmt_comments_only_file_preserved_on_disk() {
+    let cfg = write_config(";; just a top comment\n;; another\n\n;; trailer\n");
+    let before = read_file(&cfg);
+    may_i(&cfg)
+        .args(["fmt", &cfg.path().display().to_string()])
+        .assert()
+        .code(0);
+    let after = read_file(&cfg);
+    assert_eq!(before, after, "comments-only file must be byte-identical");
+}
+
+#[test]
+fn fmt_comments_only_stdin_passes_through() {
+    let cfg = write_config("");
+    let input = ";; a\n;; b\n\n;; c\n";
+    let output = may_i(&cfg)
+        .args(["fmt"])
+        .write_stdin(input)
+        .output()
+        .expect("run");
+    assert!(output.status.success(), "exit 0 expected");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        input,
+        "stdout must match stdin byte-for-byte"
+    );
+}
+
+#[test]
+fn fmt_check_comments_only_exits_zero_with_empty_stdout() {
+    let cfg = write_config(";; comment only\n;; second line\n");
+    let output = may_i(&cfg)
+        .args(["fmt", "--check", &cfg.path().display().to_string()])
+        .output()
+        .expect("run");
+    assert_eq!(output.status.code(), Some(0), "exit 0 for clean input");
+    assert!(
+        output.stdout.is_empty(),
+        "stdout should be empty in --check mode"
+    );
+}
+
+#[test]
+fn fmt_whitespace_only_file_preserved_on_disk() {
+    let cfg = write_config("\n  \n\t\n\n");
+    let before = read_file(&cfg);
+    may_i(&cfg)
+        .args(["fmt", &cfg.path().display().to_string()])
+        .assert()
+        .code(0);
+    let after = read_file(&cfg);
+    assert_eq!(before, after, "whitespace-only file must be byte-identical");
+}
+
+#[test]
 fn fmt_preserves_trailing_newline_state_on_stdin() {
     let cfg = write_config("");
     // Input has trailing newline.

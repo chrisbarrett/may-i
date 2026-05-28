@@ -185,6 +185,12 @@ fn canonical_text(source: &str) -> Result<(String, bool), String> {
         return Err(format!("parse error: {err}"));
     }
 
+    // Formless inputs (comments-only, whitespace-only) carry no forms to
+    // canonicalise; pretty-printing nothing erases the file. Preserve verbatim.
+    if forms.is_empty() {
+        return Ok((source.to_string(), false));
+    }
+
     let canon = canonicalise_forms(forms);
     let width = detect_column_width(source);
 
@@ -225,4 +231,33 @@ fn is_canonical_loadable(text: &str) -> bool {
         return true;
     }
     parse_config_from_sexprs(&non_load).is_ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn comment_or_whitespace_input() -> impl Strategy<Value = String> {
+        let comment = r";;[ \tA-Za-z0-9._-]*\n";
+        let whitespace = r"[ \t\n]+";
+        prop::collection::vec(prop_oneof![comment, whitespace], 1..16)
+            .prop_map(|chunks| chunks.concat())
+    }
+
+    proptest! {
+        #[test]
+        fn formless_input_parses_clean(source in comment_or_whitespace_input()) {
+            let (forms, errors) = parse_cst(&source);
+            prop_assert!(forms.is_empty(), "comments+whitespace yields no forms");
+            prop_assert!(errors.is_empty(), "comments+whitespace is legal trivia");
+        }
+
+        #[test]
+        fn formless_input_round_trips_byte_identical(source in comment_or_whitespace_input()) {
+            let (text, legacy) = canonical_text(&source).expect("formless parses cleanly");
+            prop_assert!(!legacy, "formless input is not legacy");
+            prop_assert_eq!(&text, &source, "formless input must be preserved verbatim");
+        }
+    }
 }
