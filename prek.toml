@@ -1,3 +1,5 @@
+#:schema https://json.schemastore.org/prek.json
+
 [[repos]]
 repo = "local"
 hooks = [
