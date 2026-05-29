@@ -19,49 +19,56 @@ This policy teaches `may-i` that `sudo` and `ssh` interpret their arguments as
 commands. `rm` is denied on immutable hosts, even when snuck in via `sudo`.
 
 ```scheme
-; Define a reusable predicate for immutable production hosts
-(define immutable
-  (and (fact? [:via "ssh"])
-       (fact? [:ssh/host (regex "(^|@).*prod.*")])))
+; sudo unwraps to evaluate its inner command
+(rule "sudo" (authorise #cmd))
 
-; Allow echo always
-(rule "echo" (effect :allow "Local echo is always fine"))
+; ssh unwraps too, but production hosts are off-limits
+(rule "ssh"
+  (cond ((matches? #host (regex "(^|@).*prod.*"))
+         (deny "Production host — no direct recursion"))
+        (else (authorise #cmd))))
 
-; Deny rm on immutable hosts using the defined predicate
+; Anything reached via ssh is considered immutable
+(define immutable (fact? [:via "ssh"]))
+
+(rule "echo" (allow "Local echo is always fine"))
+
 (rule "rm"
-  (if immutable
-      (effect :deny "Production hosts are immutable")
-      (effect :allow)))
-
-; SSH unwraps to evaluate the inner command
-(rule "ssh" (positional [:ssh/host *] . (may-i *)))
-
-; Sudo unwraps to evaluate the inner command
-(rule "sudo" (positional . (may-i *)))
+  (and immutable
+       (deny "Production hosts are immutable")))
 ```
 
 </details>
 
-## Why use it?
+## Why use this thing?
 
-Without `may-i`, agent permission systems tend to be noisy. Safe, routine
-commands still trigger prompts, which interrupts the flow and trains you to
-click through approvals.
+Most harnesses require you to approve the shell commands your agents run. This
+is a _good thing_, but it limits how much work your agents can do independently
+before they get blocked waiting for your approval.
 
-`may-i` lets you describe your own policy for what an agent may do
-automatically, what should still ask, and what should be blocked outright.
+Over time, this trains you to blindly approve prompts without reading them, and
+you become tempted to disable these permission systems altogether. The
+solutions, like running under docker, or under sandboxes, are pretty
+heavyweight.
 
 ## How it works
 
-When an agent wants to run a shell command, `may-i` evaluates that command
-against your policy and returns one of three decisions:
+When an agent wants to run a shell command, your harness first runs `may-i` to
+authorise it. `may-i` parses the command to find the program calls inside. If
+everything looks good, the harness will be able to run your command without
+asking you. But if there's something in there that's sus, you get prompted.
 
-- `allow` - run it without asking
-- `ask` - escalate to the harness's normal permission prompt
-- `deny` - block it
+- it gives you a proper language for writing shell script permissions policies
 
-`may-i` parses shell accurately before applying rules, so policy decisions are
-based on the real command structure rather than brittle string matching.
+- it can see commands embedded inside strings, understand control flow
+  constructs, and detect sneaky environment variable dereferencing.
+
+- it can be taught that a program will use its arguments as shell commands
+  themselves. This means you can get meaningful approval prompts for
+  `ssh $host foo`, `sh -c foo`, `mise exec -- foo`, etc.
+
+- you can write & execute inline tests for your rules so you can be confident
+  your policies are working as intended
 
 ## A taste of the language
 
@@ -71,28 +78,20 @@ complex logic:
 ```scheme
 (rule "mv"
   (if (anywhere "-f" "--force")
-      (effect :ask "Force moves can be destructive")
-      (effect :allow)))
+      (ask "Force moves can be destructive")
+      (allow)))
 ```
 
 Wrapper commands like `ssh` and `sudo` can be unwrapped so their inner commands
-get evaluated too:
+get evaluated too. The prelude binds `#cmd` to the inner command:
 
 ```scheme
-(rule "ssh" (positional [:ssh/host *] . (may-i *)))
+(rule "sudo" (authorise #cmd))
 ```
 
-Facts let policies depend on runtime context — which agent is running, whether
-a command was reached through `ssh`, etc:
-
-```scheme
-(rule "kubectl"
-  (if (fact? [:env "prod"])
-      (effect :deny "No kubectl in production")
-      (effect :allow)))
-```
-
-Named predicates keep things readable as your policy grows:
+Named predicates and facts keep things readable as your policy grows. Facts
+expose runtime context — which harness is running, whether a command was
+reached through `ssh`, etc:
 
 ```scheme
 (define prod-host
@@ -100,23 +99,22 @@ Named predicates keep things readable as your policy grows:
 
 (rule "rm"
   (if (and prod-host (anywhere "-r" "--recursive"))
-      (effect :deny "Recursive delete on production hosts")
-      (effect :allow)))
+      (deny "Recursive delete on production hosts")
+      (allow)))
 ```
 
 Run `may-i reference` for the full DSL documentation.
 
 ## Installation
 
-Install `may-i` and put it on your `PATH`.
+Pre-built binaries for macOS and Linux are available on the
+[releases page](https://github.com/chrisbarrett/may-i/releases).
 
-When `may-i` runs for the first time, it will create a starter config at
-`~/.config/may-i/config.lisp` if one does not already exist.
+If you use Nix, this repo's flake provides an overlay adding `pkgs.may-i`.
 
-## Using with Claude Code
+### Claude Code
 
-Tell Claude Code to use `may-i` as a Bash pre-tool hook in
-`.claude/settings.json`:
+In `~/.claude/settings.json`:
 
 ```json
 {
@@ -124,38 +122,36 @@ Tell Claude Code to use `may-i` as a Bash pre-tool hook in
     "PreToolUse": [
       {
         "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "may-i"
-          }
-        ]
+        "hooks": [{ "type": "command", "command": "may-i" }]
       }
     ]
   }
 }
 ```
 
-## Using with OpenCode
+### Codex
 
-OpenCode does not currently expose the same hook mechanism, so the practical
-approach is to replace the built-in bash tool with a custom one that calls
-`may-i eval --json` before execution.
+In `~/.codex/config.toml`:
 
-The recommended workflow is to have your agent generate that replacement tool
-for your own environment. In broad strokes, it should:
+```toml
+[[hooks.PreToolUse]]
+matcher = "Bash"
 
-1. call `may-i eval --json` with the pending command
-2. pass OpenCode facts such as `:client/opencode` and `:opencode/agent`
-3. stop on `deny`
-4. fall through to OpenCode's normal approval flow on `ask`
-5. execute normally on `allow`
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "may-i"
+```
 
-For example, an OpenCode integration can pass facts that let policy distinguish
-planning from implementation work:
+### OpenCode
+
+OpenCode has no hook mechanism. Replace the built-in bash tool with one that
+shells out to `may-i eval --json` and interprets the returned decision.
+
+You'll want your implementation to execute something like the command below,
+with the shell command to test being passed via stdin:
 
 ```bash
-may-i eval --fact :client/opencode --fact :opencode/agent=plan 'git add .'
+may-i eval --fact :client/opencode --fact :opencode/agent=${agent}
 ```
 
 ## Usage
@@ -183,54 +179,33 @@ may-i eval 'rm -rf /'
 may-i eval --fact :opencode/agent=build 'git status'
 ```
 
-### Migration from v1
-
-If you have an older v1 config, `may-i migrate` converts it to canonical
-syntax:
-
-```bash
-may-i migrate ~/.config/may-i/config.lisp
-```
-
-Options: `--output <FILE>` (write to file instead of stdout), `--yes` (skip confirmation).
-
-### Global flags
-
-- `--json` — Output as JSON (works with `eval` and `check`)
-- `--config <FILE>` — Use a specific config file (overrides `$MAYI_CONFIG`)
-
 ### Repo-local config
 
-After loading the primary config, `may-i` discovers project-scoped
-config files at the current repository or worktree root. Discovery
-uses `git rev-parse --show-toplevel` (worktree-aware) and falls back
-to walking ancestors for `.git`, `.hg`, or `.jj` markers.
+When running inside a git repo, `may-i` will search for additional
+project-specific files to load:
 
-The following files are merged in order (later files break `reason`
-ties, since `Decision` selection is order-independent):
+- `.may-i.lisp`
+- `.may-i/**/*.lisp`
+- `.may-i.local.lisp`
+- `.claude/may-i.lisp`
+- `.claude/may-i.local.lisp`
 
-1. `.may-i.lisp`
-2. `.may-i/**/*.lisp` (sorted lexically)
-3. `.may-i.local.lisp`
-4. `.claude/may-i.lisp`
-5. `.claude/may-i.local.lisp`
+This is helpful for keeping project-specific stuff out of your main
+configuration.
 
-Rules discovered this way carry `Loaded` provenance and are subject
-to the same trust gate as `(load …)`-included files — they are inert
-until approved via `may-i trust`. Add `.may-i.local.lisp` to your
-project's `.gitignore` if you use it for per-user rules.
+> [!IMPORTANT]
+> Rules added via these files are ignored unless you approve them by running
+> `may-i trust`.
 
 ### Rule combination
 
-`may-i` evaluates **every** matching rule for a command and combines
-the results under the lattice `:allow < :ask < :deny` — the
-strictest match wins. The rule list's order does not affect the
-decision; it only breaks ties on the `reason` string (earliest match
-at the strictest effect supplies the reason).
+`may-i` evaluates **every** matching rule for a command and combines the results
+under the lattice `:allow < :ask < :deny` — the strictest match wins. The rule
+list's order does not affect the decision; it only breaks ties on the `reason`
+string (earliest match at the strictest decision supplies the reason).
 
-This means a loaded `:allow` rule **cannot widen** a primary `:deny`
-for the same command, even after trust approval, because the lattice
-combine always selects `:deny`. Configs that previously relied on
-"narrow `:allow` before broad `:deny`" to whitelist exceptions must
-now express the exception inside a single rule's effect tree, e.g.
-`(if narrow-pred (allow …) (deny …))`.
+This means a loaded `:allow` rule **cannot widen** a primary `:deny` for the
+same command, even after trust approval, because the lattice combine always
+selects `:deny`. Configs that previously relied on "narrow `:allow` before broad
+`:deny`" to whitelist exceptions must now express the exception inside a single
+rule body, e.g. `(if narrow-pred (allow …) (deny …))`.
