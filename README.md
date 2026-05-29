@@ -72,8 +72,8 @@ asking you. But if there's something in there that's sus, you get prompted.
 
 ## A taste of the language
 
-Each rule matches a command and returns a single decision. Use combinators for
-complex logic:
+Each rule matches a command and returns a single decision. Use `and`, `or`,
+`if`, and `cond` to express conditional logic:
 
 ```scheme
 (rule "mv"

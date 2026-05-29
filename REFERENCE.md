@@ -114,8 +114,8 @@ set of rules.
 
 ## Matching arguments
 
-The most useful patterns inspect a program's arguments. They return _Allow_ on a
-match (so they compose with terminals) and Nil otherwise.
+The most useful patterns inspect a program's arguments. They return _allow_ on
+a match (so they compose with decisions) and no-match otherwise.
 
 ### `(flag NAME)`
 
@@ -207,23 +207,23 @@ see the captured value as `:key`.
 
 ## Composing rule bodies
 
-A rule has exactly one body, so combinators glue patterns and decisions together:
+A rule has exactly one body, so `and`/`or`/`not` glue patterns and decisions together:
 
-| Form            | Result                                                            |
-| :-------------- | :---------------------------------------------------------------- |
-| `(and EFFECT…)` | All must succeed; short-circuits on Nil. Last child's value wins. |
-| `(or EFFECT…)`  | First non-Nil child wins.                                         |
-| `(not EFFECT)`  | Swap Allow ↔ Nil. Ask/Deny pass through unchanged.                |
+| Form          | Result                                                                  |
+| :------------ | :---------------------------------------------------------------------- |
+| `(and EXPR…)` | All must match; short-circuits on the first no-match. Last child wins.  |
+| `(or EXPR…)`  | First matching child wins.                                              |
+| `(not EXPR)`  | Swap allow ↔ no-match. ask/deny pass through unchanged.                 |
 
-Conditionals branch on a predicate (an arg pattern, `(fact? …)`, a named
+Conditionals branch on a predicate (an argv pattern, `(fact? …)`, a named
 `(define …)` reference, or an `and`/`or`/`not` of those):
 
-| Form                              | Behaviour                              |
-| :-------------------------------- | :------------------------------------- |
-| `(when PRED EFFECT)`              | Run `EFFECT` if `PRED` matches.        |
-| `(unless PRED EFFECT)`            | Run `EFFECT` if `PRED` doesn't match.  |
-| `(if PRED THEN ELSE)`             | The usual.                             |
-| `(cond ((PRED EFF)…) (else EFF))` | Multi-way branch; first matching wins. |
+| Form                                | Behaviour                              |
+| :---------------------------------- | :------------------------------------- |
+| `(when PRED EXPR)`                  | Run `EXPR` if `PRED` matches.          |
+| `(unless PRED EXPR)`                | Run `EXPR` if `PRED` doesn't match.    |
+| `(if PRED THEN ELSE)`               | The usual.                             |
+| `(cond ((PRED EXPR)…) (else EXPR))` | Multi-way branch; first matching wins. |
 
 ```lisp
 (rule "rm"
@@ -495,9 +495,9 @@ Two shapes:
 Query inside a rule with `(fact? …)`:
 
 ```lisp
-(rule "kubectl"
+(rule "systemctl"
   (if (fact? [:env "prod"])
-      (deny "No kubectl in production")
+      (deny "No systemctl in production")
     (allow)))
 ```
 
@@ -507,7 +507,7 @@ regexes, `or`/`and`/`not` — so you can write `(fact? [:host (regex "^prod-")])
 Pass facts at evaluation time:
 
 ```bash
-may-i eval --fact :ci --fact :env=prod 'kubectl get pods'
+may-i eval --fact :ci --fact :env=prod 'systemctl restart nginx'
 ```
 
 ## Reusable predicates
@@ -518,9 +518,9 @@ When the same condition shows up in several rules, lift it into a `(define …)`
 (define prod-host
   (fact? [:ssh/host (regex "^prod-")]))
 
-(rule "kubectl"
+(rule "systemctl"
   (if prod-host
-      (deny "No kubectl on prod hosts")
+      (deny "No systemctl on prod hosts")
     (allow)))
 
 (rule "rm"
@@ -528,8 +528,8 @@ When the same condition shows up in several rules, lift it into a `(define …)`
     (deny "No recursive rm on prod hosts")))
 ```
 
-A `(define …)` body is any predicate — `(fact? …)`, an arg pattern, a
-combinator, or a reference to another `(define …)`.
+A `(define …)` body is any predicate — `(fact? …)`, an argv pattern, an
+`and`/`or`/`not` of those, or a reference to another `(define …)`.
 
 ## Checks: testing your rules
 
@@ -549,9 +549,9 @@ more decision-tagged check entries.
 ```lisp
 (check
   (with-facts [[:env "prod"]]
-    (deny "kubectl get pods"))
+    (deny "systemctl restart nginx"))
   (with-facts [[:env "dev"]]
-    (allow "kubectl get pods")))
+    (allow "systemctl restart nginx")))
 ```
 
 `(with-facts …)` forms can nest — inner facts merge with outer:
@@ -617,8 +617,8 @@ treat these specific flags as value-bearing.
 ```lisp
 (parser "find" (style single-dash-long))
 
-(parser "kubectl" (style gnu)
-  (parameter ["n" "namespace"]))
+(parser "make" (style gnu)
+  (parameter ["f" "file"]))
 
 (parser "dd" (style key-value)
   (parameter "if") (parameter "of") (parameter "bs"))
@@ -706,8 +706,8 @@ Evaluate a shell command and report the decision.
 
 ```sh
 may-i eval 'rm -rf /tmp/foo'                    # → :ask "Recursive deletion"
-may-i eval --fact :ci 'kubectl get pods'         # set a presence fact
-may-i eval --fact :env=prod 'kubectl get pods'   # set a value fact
+may-i eval --fact :ci 'systemctl restart nginx'         # set a presence fact
+may-i eval --fact :env=prod 'systemctl restart nginx'   # set a value fact
 may-i eval --json 'sudo rm /etc/passwd'          # JSON output
 ```
 
@@ -838,59 +838,6 @@ may-i parse --file shellscript.sh
 
 Render this document with terminal pagination. The same content as
 `REFERENCE.md` in the repo.
-
-
-pre-commit hooks, or CI. It is the analog of `cargo fmt` for `.lisp`
-config files.
-
-```sh
-may-i fmt PATH [PATH…]   # format files in place
-may-i fmt                # walk (load …) graph from primary config
-cat foo.lisp | may-i fmt # stdin → stdout filter
-may-i fmt -              # explicit stdin
-may-i fmt --check …      # exit 0 (clean) / 1 (would change) / 2 (error); no writes
-```
-
-What `fmt` does:
-
-- Pretty-prints whitespace using the column width detected from source.
-- Sorts declaration-order-insensitive bodies into a deterministic order:
-    - **Parser body**: `(style …)` first, then `(flags …)`, then
-      `(flag …)` declarations alphabetised by name, then `(parameter
-      …)` declarations alphabetised by name, then `(positional …)`
-      in source order, then `(rest …)` last.
-    - **`define-arg-style` body**: attribute forms alphabetised by head
-      atom (`combined-shorts` < `long-prefix` < … < `separators`).
-    - **`(check …)` body**: source order preserved — cases are
-      engine-order-independent but human-curated (users group cases
-      under section-header comments).
-    - **Rule bodies**: order **preserved** — rule body forms evaluate
-      short-circuit, so order is semantic.
-- Sorts the name vector in `(flag VEC)` and `(parameter VEC …)`
-  declarations: `(flag ["r" "0"])` becomes `(flag ["0" "r"])`. Vectors
-  in any other position (separators, prefixes, rule bodies) are
-  order-significant and are left untouched.
-
-What `fmt` does **not** do:
-
-- It never silently rewrites legacy syntax. If the input contains
-  forms the canonical loader rejects (e.g. `(effect :allow)`,
-  `(may-i *)`), `fmt` formats the input as-is and emits a stderr
-  warning suggesting `may-i migrate`. Migration is the explicit
-  user-invoked path.
-- It does not change rule order or rule body order — both are semantic.
-
-**Comments travel with their owning form.** A comment placed between
-two body declarations is owned by the form that follows it; sorting
-moves comment + form as a unit. A "section header" comment between
-two flags will migrate with whichever flag now sits below it under
-the canonical sort order.
-
-Exit codes (also via `--check`):
-
-- `0` — every input matches its canonical form.
-- `1` — at least one input would change (`--check` only).
-- `2` — parse error, IO error, or other blocking failure.
 
 ## Notes for agents
 
