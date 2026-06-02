@@ -1,6 +1,6 @@
 // Prelude `(define-arg-style …)` and `(parser …)` declarations,
 // auto-loaded into every parsed config so user `(overrides gnu)`
-// resolves out of the box and common wrapper tools (sudo, xargs, env,
+// resolves out of the box and common carrier tools (sudo, xargs, env,
 // …) come pre-declared.
 //
 // User declarations come after prelude entries, so user
@@ -48,7 +48,7 @@ pub fn prelude_style_specs() -> Vec<StyleSpec> {
 
 /// Parse the prelude's `(parser …)` declarations. Each is tagged with
 /// `Provenance::Prelude` so user `(parser …)` declarations that shadow
-/// a prelude-shipped wrapper do so silently.
+/// a prelude-shipped carrier do so silently.
 pub fn prelude_parsers() -> Vec<Parser> {
     let mut parsers = Vec::new();
     for form in prelude_forms().iter().filter(|f| is_form(f, "parser")) {
@@ -155,12 +155,12 @@ mod tests {
     }
 
     #[test]
-    fn third_party_wrappers_excluded_from_prelude() {
+    fn third_party_carriers_excluded_from_prelude() {
         // Tools that don't ship with a regular Linux distribution
         // belong in user config unless their argv semantics are
         // silent-bypass footguns — mise / nix-shell / direnv / ssh
         // are exceptions because mis-parsing them leaks inner
-        // commands past wrapper rules. terragrunt is still
+        // commands past carrier rules. terragrunt is still
         // user-territory.
         let parsers = prelude_parsers();
         assert!(parsers.iter().all(|p| p.program != "terragrunt"));

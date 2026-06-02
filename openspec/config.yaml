@@ -17,8 +17,10 @@ context: |
 
   User vocabulary (appears in user-facing specs, DSL forms, error messages):
   Rule, Decision, Reason, Fact, Pattern, Authorise, Binding, Style, Parser,
-  Trust. Decisions are spelled `(allow REASON?)`, `(ask REASON?)`,
-  `(deny REASON?)` — never "verdict" or "effect".
+  Carrier, Trust, Advisory, Trace, Prelude, Quantifier, Wildcard, Many-till,
+  Outer slice, Tokenisation, Integrity. Decisions are spelled
+  `(allow REASON?)`, `(ask REASON?)`, `(deny REASON?)` — never "verdict" or
+  "effect". `Carrier` replaces the retired casual term "wrapper".
 
   Contributor vocabulary (appears in design docs, code review, ADRs — never
   in user-facing specs): Effect, Predicate, ArgPattern, Expr<T>, Provenance,

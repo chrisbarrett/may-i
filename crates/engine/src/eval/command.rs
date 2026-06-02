@@ -174,7 +174,7 @@ fn evaluate_command_inner<F: EvalFold>(
         };
 
         // SimpleCommand and DynamicCommand carry their own segment entries
-        // (one per unit). EmbeddedCommand units are wrappers — they only
+        // (one per unit). EmbeddedCommand units are carriers — they only
         // relay their child segments, otherwise the inner range would appear
         // twice (once as the embed unit, once as the child SimpleCommand).
         if !matches!(unit, EvalUnit::EmbeddedCommand { .. }) {
@@ -326,7 +326,7 @@ pub(crate) fn evaluate_authorised_string<F: EvalFold>(
 /// the command line into tokens; joining them with single spaces and
 /// re-parsing discards boundary information and exposes shell
 /// metacharacters embedded in a single token (e.g. an outer-quoted
-/// `-c` argument) as structure at the wrapper's frame. That's the
+/// `-c` argument) as structure at the carrier's frame. That's the
 /// policy-bypass the `authorise-token-list-quoting` change closes.
 ///
 /// Semantics:

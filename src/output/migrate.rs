@@ -39,7 +39,7 @@ pub(crate) fn render_skipped_readonly_advisory(
     write_layout(w, &layout, term);
 }
 
-/// Render the wrapper-boundary advisory listing the `affected` wrapper
+/// Render the carrier-boundary advisory listing the `affected` carrier
 /// commands whose evaluation semantics may have shifted.
 pub(crate) fn render_wrapper_boundary_advisory(
     w: &mut impl Write,
@@ -56,8 +56,8 @@ pub(crate) fn render_wrapper_boundary_advisory(
     };
     let layout = Advisory {
         level: NoteLevel::Warn,
-        heading: "Wrapper-boundary fix may change behaviour".into(),
-        detail: "Rules over these wrapper commands now correctly see flags after \
+        heading: "Carrier-boundary fix may change behaviour".into(),
+        detail: "Rules over these carrier commands now correctly see flags after \
                  the inner command attributed to the inner command, where they \
                  previously were absorbed by the outer parser. Re-validate your \
                  expectations:"

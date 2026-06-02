@@ -201,7 +201,7 @@ pub fn cmd_migrate(
             );
         }
 
-        // Class B warning: the wrapper-boundary fix may change behaviour
+        // Class B warning: the carrier-boundary fix may change behaviour
         // for rules over sudo/xargs/etc. Re-load and scan the resolved
         // ruleset so users know to re-run their `(check …)` cases.
         if let Ok(loaded) = may_i_config::load_and_resolve(config_path) {
@@ -212,8 +212,8 @@ pub fn cmd_migrate(
     Ok(())
 }
 
-/// Emit a warning advisory naming any wrapper commands (sudo, xargs,
-/// env, …) covered by user rules. The wrapper-boundary fix may change
+/// Emit a warning advisory naming any carrier commands (sudo, xargs,
+/// env, …) covered by user rules. The carrier-boundary fix may change
 /// these rules' behaviour even though the rule text is unchanged.
 fn warn_about_wrapper_rules(config: &may_i_core::ast::Config) {
     const WRAPPERS: &[&str] = &[

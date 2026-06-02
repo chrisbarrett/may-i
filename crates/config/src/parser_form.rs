@@ -197,7 +197,7 @@ pub(crate) fn parse_parser_form(sexpr: &Sexpr) -> Result<Parser, RawError> {
 
     // `(flags MODE)` is the source of truth. Parsers without an
     // explicit declaration default to permute (the historic behaviour
-    // for parsers without a wrapper-boundary).
+    // for parsers without a carrier-boundary).
     let flags_mode = declared_flags_mode.unwrap_or(FlagsMode::Permute);
     Ok(Parser {
         program,

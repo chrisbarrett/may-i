@@ -148,13 +148,13 @@ If any condition fails, the rule's trust SHALL be invalidated and a manual `may-
 
 ### Requirement: Class B migration shifts emit a warning, no auto-rehash
 
-When migration introduces a Class B change (semantic shift like the wrapper-boundary fix), trust hashes for affected rules SHALL NOT auto-update beyond what their accompanying Class A syntactic rewrites require. The migration SHALL emit a warning that names the affected commands and recommends re-running `may-i check` cases.
+When migration introduces a Class B change (semantic shift like the carrier-boundary fix), trust hashes for affected rules SHALL NOT auto-update beyond what their accompanying Class A syntactic rewrites require. The migration SHALL emit a warning that names the affected commands and recommends re-running `may-i check` cases.
 
 The intent: Class B changes alter what a rule does without changing how it's spelled. Trust covers approval that the rule's text is what the user wrote, not approval that its behaviour is what the user expects. The Class B warning is the user's signal to re-validate.
 
-#### Scenario: Wrapper-boundary fix emits warning
+#### Scenario: Carrier-boundary fix emits warning
 
 - **GIVEN** a config with rules covering `sudo`
 - **WHEN** `may-i migrate` runs with the dsl-coherence rewrites
-- **THEN** the output SHALL emit a warning naming `sudo` (and any other affected wrapper commands)
+- **THEN** the output SHALL emit a warning naming `sudo` (and any other affected carrier commands)
 - **AND** the warning SHALL recommend re-running `may-i check`.

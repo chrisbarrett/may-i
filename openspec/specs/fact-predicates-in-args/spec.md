@@ -29,7 +29,7 @@ The system SHALL support a `BoolExpr` type representing fact predicates with the
 - **WHEN** evaluating `BoolExpr::Fact` with a regex pattern against a fact set containing a matching member
 - **THEN** the predicate SHALL return true
 
-#### Scenario: Boolean combinators
+#### Scenario: Boolean Pattern composition
 - **WHEN** evaluating `BoolExpr::And` with two `Fact` sub-predicates where both match
 - **THEN** the predicate SHALL return true
 
@@ -56,5 +56,5 @@ The system SHALL thread `ContextFacts` through all argument evaluation functions
 - **THEN** `fact?` predicates SHALL have access to those facts
 
 #### Scenario: Facts from recursive evaluation
-- **WHEN** `(authorise)` adds `:via` facts during unwrapping
+- **WHEN** `(authorise)` adds `:via` facts during carrier recursion
 - **THEN** subsequent `fact?` predicates in the inner command SHALL see those facts
