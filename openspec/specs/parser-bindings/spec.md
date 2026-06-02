@@ -592,7 +592,10 @@ Recognised declaration kinds SHALL be:
 - `(style NAME)` — names a style defined in prelude or user config; required, exactly one.
 - `(flag NAME)` — declares a pure boolean flag spelling.
 - `(parameter NAME [BODY])` — declares a value-bearing parameter spelling.
-- `(tail …)` — declares a carrier-tail slice; at most one.
+
+(See "`(flags MODE)` declares flag-scanning mode" and "`(rest #var)` declares the rest-slice binding" elsewhere in this spec for the remaining recognised kinds.)
+
+The legacy `(tail (after …))` parser-body form SHALL retire and SHALL be a config-load error suggesting `(flags MODE)` plus `(rest #var)`.
 
 Unknown declaration kinds SHALL be a config-load error naming the unknown kind.
 
@@ -613,6 +616,12 @@ Unknown declaration kinds SHALL be a config-load error naming the unknown kind.
 - **GIVEN** `(parser "x" (style gnu) (frobnicate))`
 - **WHEN** the config is loaded
 - **THEN** loading SHALL fail with an error naming `frobnicate`.
+
+#### Scenario: Legacy `(tail (after …))` parser-body fails at load
+
+- **GIVEN** `(parser "sudo" (style gnu) (tail (after :flags)))`
+- **WHEN** the config is loaded
+- **THEN** loading SHALL fail with an error suggesting `(flags posix) (rest #cmd)`.
 
 ### Requirement: `define-arg-style` body is a form-list of attribute forms
 
@@ -691,7 +700,7 @@ The recursion verb SHALL be spelled `(authorise)`. It SHALL take no arguments. T
 `(authorise)` SHALL only appear nested in a host context that delivers a string operand:
 
 - inside `(parameter NAME (authorise))` — the parameter's captured value
-- inside `(tail (authorise))` — the tail slice
+- inside `(tail (authorise))` — the rule-side rest slice (scoped by the parser's `(flags MODE)`)
 - as a leaf element of `(positional X (authorise) Y)` — the single positional at this slot
 
 Bare `(authorise)` outside any host context SHALL be a config-load error.
@@ -704,7 +713,7 @@ Bare `(authorise)` outside any host context SHALL be a config-load error.
 
 #### Scenario: Authorise inside tail
 
-- **GIVEN** `(parser "sudo" (style gnu) (tail (after :flags)))` and `(rule "sudo" (tail (authorise)))`, with rules covering `rm`
+- **GIVEN** `(parser "sudo" (style gnu) (flags posix) (rest #cmd))` and `(rule "sudo" (tail (authorise)))`, with rules covering `rm`
 - **WHEN** evaluating `sudo rm -rf /tmp/x`
 - **THEN** the inner `rm -rf /tmp/x` SHALL be re-authorised.
 
