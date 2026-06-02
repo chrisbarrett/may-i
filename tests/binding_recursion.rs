@@ -133,10 +133,10 @@ fn bound_predicate_distinguishes_optional_capture() {
     );
 }
 
-// ── §13.4: chained wrappers — three-layer recursion ─────────────────
+// ── §13.4: chained carriers — three-layer recursion ─────────────────
 
 #[test]
-fn chained_wrappers_recurse_through_three_layers() {
+fn chained_carriers_recurse_through_three_layers() {
     // `mise exec -- timeout 30 cargo test`
     //   → mise's (flags (until "--")) binds #cmd = [timeout, 30, cargo, test]
     //   → authorise #cmd ⇒ recurse on `timeout 30 cargo test`
@@ -157,7 +157,7 @@ fn chained_wrappers_recurse_through_three_layers() {
 }
 
 #[test]
-fn chained_wrappers_set_nested_via_facts() {
+fn chained_carriers_set_nested_via_facts() {
     // The :via fact accumulates through the chain. The innermost
     // rule can see (fact? [:via "mise"]) AND (fact? [:via "timeout"]).
     let cfg = r#"

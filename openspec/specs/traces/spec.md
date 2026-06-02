@@ -35,7 +35,7 @@ evaluated AST node.
 
 ### Requirement: TraceNode roles cover all annotation kinds
 
-The trace producer SHALL emit a `TraceNode` tree whose `Role` enum covers every annotation kind a renderer needs to display: command match, argument match (with evidence), fact query result (with observed values and failure reason), effect decision (with decision and reason), quantifier / combinator result, named-predicate reference, and captured-value annotations. These roles correspond to the evidence needed for the right column in two-column trace output.
+The trace producer SHALL emit a `TraceNode` tree whose `Role` enum covers every annotation kind a renderer needs to display: command match, argument match (with evidence), fact query result (with observed values and failure reason), effect decision (with decision and reason), quantifier / Pattern result, named-predicate reference, and captured-value annotations. These roles correspond to the evidence needed for the right column in two-column trace output.
 
 `Role` SHALL NOT name `ArgPattern`-internal shape (no `SearchTokens`, no `MatchMode`-keyed variants). Evidence carried alongside a `Role` SHALL be a small, renderer-facing enum (`Evidence::Scalar`, `Evidence::SetMembership`, `Evidence::CapturedValue`, `Evidence::FactAbsent`, …) — not a destructured copy of the engine's `ArgPattern` payload.
 
@@ -71,8 +71,8 @@ recursively with the same `TracingFold` instance. The inner evaluation produces
 its own `(EffectResult, Doc<Option<Ann>>)`. The outer `effect_may_i` method
 SHALL incorporate the inner doc as a nested trace.
 
-#### Scenario: Wrapper command shows inner trace
-- **GIVEN** a wrapper rule for `nohup` and an inner command `git push`
+#### Scenario: Carrier command shows inner trace
+- **GIVEN** a carrier rule for `nohup` and an inner command `git push`
 - **WHEN** `may-i eval 'nohup git push'` is evaluated with `TracingFold`
 - **THEN** the trace shows the inner `git push` evaluation with full annotations
 

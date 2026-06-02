@@ -6,7 +6,7 @@ bucket: parsing
 
 ## Purpose
 
-The full per-program parser-declaration surface: `(style …)`, the required `(flags MODE)` declaration (`posix` | `permute` | `(until …)`) scoping outer flag scanning, parameters (single-occurrence and `(many-till PAT)` multi-token capture), `(positional …)` slots with quantifiers, the `(rest …)` unconsumed-tail binding, the `#var` sigil for parser-bound names referenced from rule bodies (`(authorise …)`, `(bound? …)`, `(matches? …)`, `(with-facts …)`), binding-scope rules, shadowing, and the set of parsers shipped in the prelude for common wrapper tools (sudo, xargs, env, timeout, ssh, mise, nix, find, bash, …). Replaces the prior `(tail …)` form's invisible side-channel with explicit, named bindings.
+The full per-program parser-declaration surface: `(style …)`, the required `(flags MODE)` declaration (`posix` | `permute` | `(until …)`) scoping outer flag scanning, parameters (single-occurrence and `(many-till PAT)` multi-token capture), `(positional …)` slots with quantifiers, the `(rest …)` unconsumed-tail binding, the `#var` sigil for parser-bound names referenced from rule bodies (`(authorise …)`, `(bound? …)`, `(matches? …)`, `(with-facts …)`), binding-scope rules, shadowing, and the set of parsers shipped in the prelude for common carrier tools (sudo, xargs, env, timeout, ssh, mise, nix, find, bash, …). Replaces the prior `(tail …)` form's invisible side-channel with explicit, named bindings.
 
 Also covers the **form-list calling convention** for DSL bodies — `(parser …)`, `(define-arg-style …)`, `(check …)` — and the **canonical surface syntax for decision verbs** (`(allow REASON?)`, `(ask REASON?)`, `(deny REASON?)`) and recursion (`(authorise)`). Legacy PLIST-style bodies and the `(effect …)` form are retired and rejected at config-load time.
 ## Requirements
@@ -205,7 +205,7 @@ The rule-body form `(authorise #var)` SHALL recursively authorise the value boun
 
 - If `#var` is unbound or bound to an empty value (empty string, empty token list), `(authorise #var)` SHALL be a no-match (the surrounding combinator continues to other branches).
 - If `#var` is bound to a **single string** (e.g. `(parameter "c" #cmd)` capturing one shell argument), the string SHALL be parsed by the shell command parser as a full command line — including compound forms (`&&`, `||`, `;`, `|`, `if`/`for`/`case`, command substitutions) — then decomposed into evaluation units and aggregated strictest-wins.
-- If `#var` is bound to a **token list** (e.g. `(rest #cmd)`, `(positional #var *)`, `(positional #var +)`), the recursion SHALL preserve each token's content as one argument: argv[0] SHALL be the inner command name and argv[1..] SHALL be the inner argv. The tokens SHALL NOT be joined with single spaces and re-parsed, because that join discards the boundary information the outer shell already established and exposes shell metacharacters inside a token (e.g. `&&`, `;`, `|`, parens, quotes) as if they were structure at the wrapper's frame.
+- If `#var` is bound to a **token list** (e.g. `(rest #cmd)`, `(positional #var *)`, `(positional #var +)`), the recursion SHALL preserve each token's content as one argument: argv[0] SHALL be the inner command name and argv[1..] SHALL be the inner argv. The tokens SHALL NOT be joined with single spaces and re-parsed, because that join discards the boundary information the outer shell already established and exposes shell metacharacters inside a token (e.g. `&&`, `;`, `|`, parens, quotes) as if they were structure at the carrier's frame.
 - For a token-list binding with exactly one element, the single element SHALL be treated as a single string and parsed as a full command line (there is only one outer-shell boundary, so no information is lost by re-parsing).
 - For a token-list binding with two or more elements, if `tokens[0]` contains shell metacharacters or is empty, the recursion SHALL return `:ask` with a reason naming the dynamic-or-malformed inner command name.
 - For a token-list binding with a well-formed `tokens[0]` (and at least two elements), the recursion SHALL evaluate the inner command directly without further parsing of `tokens[1..]`; each `tokens[i]` SHALL arrive at the inner parser as a single argument. The inner program's own parser then handles any further structure (e.g. `bash -c <string>` captures `<string>` via its own `(parameter "c" #cmd)`).
@@ -464,9 +464,9 @@ When the argv contains more than one occurrence of a `(many-till …)`-declared 
 - **WHEN** evaluating `bash -c "echo hi"`
 - **THEN** the rule body SHALL fire once for the single `-c` occurrence (existing semantics).
 
-### Requirement: Prelude ships parsers for common wrapper tools
+### Requirement: Prelude ships parsers for common carrier tools
 
-The prelude SHALL define parsers for the following wrapper tools before any user config is loaded. Each declaration SHALL include a `(style …)`, the required `(flags MODE)`, the relevant `(flag …)` and `(parameter …)` declarations, the positional slots needed to carve the recurse target accurately, and a `(rest #cmd)` binding for the recursive payload (where applicable).
+The prelude SHALL define parsers for the following carrier tools before any user config is loaded. Each declaration SHALL include a `(style …)`, the required `(flags MODE)`, the relevant `(flag …)` and `(parameter …)` declarations, the positional slots needed to carve the recurse target accurately, and a `(rest #cmd)` binding for the recursive payload (where applicable).
 
 The prelude SHALL declare:
 
@@ -489,11 +489,11 @@ The prelude SHALL declare:
 - `nix-shell` — `(style gnu) (flags posix) (parameter "run" #cmd)`
 - `nix`      — `(style gnu) (flags (until "--command" "-c")) (rest #cmd)`
 
-The `timeout` parser SHALL bind the DURATION argument to `#duration` so wrapper rules can carve the duration from the recursive payload — closing the silent bypass where `timeout 30 cmd` recursed on `30 cmd` rather than `cmd`.
+The `timeout` parser SHALL bind the DURATION argument to `#duration` so carrier rules can carve the duration from the recursive payload — closing the silent bypass where `timeout 30 cmd` recursed on `30 cmd` rather than `cmd`.
 
-The `ssh` parser SHALL bind the HOST argument to `#host` so wrapper rules can promote the host to a fact via `(with-facts [[:ssh/host #host]] …)`.
+The `ssh` parser SHALL bind the HOST argument to `#host` so carrier rules can promote the host to a fact via `(with-facts [[:ssh/host #host]] …)`.
 
-The `direnv` parser SHALL bind the verb to `#verb` so wrapper rules can dispatch on the verb explicitly.
+The `direnv` parser SHALL bind the verb to `#verb` so carrier rules can dispatch on the verb explicitly.
 
 User parsers MAY shadow any prelude parser.
 
@@ -536,7 +536,7 @@ User parsers MAY shadow any prelude parser.
 - **AND** the inner evaluation SHALL recurse with command `rm` and argv `[/tmp/x]`
 - **AND** the rule SHALL return `:deny`.
 
-#### Scenario: Chained wrappers compose correctly
+#### Scenario: Chained carriers compose correctly
 
 - **GIVEN** prelude parsers and `(rule "mise" (authorise #cmd))` and `(rule "timeout" (authorise #cmd))` and `(rule "rm" (and (flag "r") (deny "no rm -r")))`
 - **WHEN** evaluating `mise exec -- timeout 30 rm -rf /tmp/x`
@@ -592,7 +592,7 @@ Recognised declaration kinds SHALL be:
 - `(style NAME)` — names a style defined in prelude or user config; required, exactly one.
 - `(flag NAME)` — declares a pure boolean flag spelling.
 - `(parameter NAME [BODY])` — declares a value-bearing parameter spelling.
-- `(tail …)` — declares a wrapper-tail slice; at most one.
+- `(tail …)` — declares a carrier-tail slice; at most one.
 
 Unknown declaration kinds SHALL be a config-load error naming the unknown kind.
 

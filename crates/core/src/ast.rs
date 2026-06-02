@@ -15,7 +15,7 @@ pub enum Provenance {
     PrimaryConfig,
     /// From a file included via `(load ...)`.
     Loaded { path: PathBuf },
-    /// Shipped with the binary (e.g. wrapper-tool parser declarations).
+    /// Shipped with the binary (e.g. carrier-tool parser declarations).
     /// Implicitly trusted; user declarations of the same name shadow
     /// without a duplicate warning.
     Prelude,
@@ -789,7 +789,7 @@ impl std::fmt::Debug for BindingName {
 pub enum FlagsMode {
     /// `posix` — outer flags appear only before the first positional;
     /// the first non-flag token stops outer scanning. Matches
-    /// `POSIXLY_CORRECT` semantics. Default for wrappers like sudo,
+    /// `POSIXLY_CORRECT` semantics. Default for carriers like sudo,
     /// xargs, env, timeout.
     Posix,
     /// `permute` — outer flags may appear anywhere; the outer parser

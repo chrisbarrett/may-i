@@ -42,7 +42,7 @@ The bucket value SHALL be declared via the `bucket:` field in the spec's YAML fr
 
 #### Scenario: New spec fits an existing bucket
 
-- **GIVEN** a proposal adding a spec named `wrapper-tail-recursion`
+- **GIVEN** a proposal adding a spec named `carrier-rest-recursion`
 - **WHEN** the bucket assignment is reviewed
 - **THEN** the spec SHALL be filed under `parsing` with no new bucket required
 - **AND** its frontmatter `bucket: parsing` SHALL pass the validator

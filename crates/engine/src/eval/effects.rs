@@ -243,7 +243,7 @@ pub(crate) fn evaluate_effect_fold<F: EvalFold>(
 /// which preserves each token as one inner-argv element so an
 /// outer-shell-quoted argument carrying shell metacharacters reaches
 /// the inner parser as one preserved string rather than as
-/// re-exposed structure at the wrapper's frame.
+/// re-exposed structure at the carrier's frame.
 fn recurse_into_bound_command<F: EvalFold>(
     fold: &mut F,
     effect: &Effect,
@@ -345,7 +345,7 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
             // Honour `--` as a flag-stop: tokens after `--` are
             // path/positional, not flag-shaped, so `(anywhere "--foo")`
             // SHALL NOT match `git diff -- --foo`. Combined with the
-            // wrapper-tail scope: outer_args excludes the tail, and
+            // carrier-tail scope: outer_args excludes the tail, and
             // scan_until_double_dash further trims at `--`.
             let outer = scan_until_double_dash(outer_args);
             let mut matched = false;

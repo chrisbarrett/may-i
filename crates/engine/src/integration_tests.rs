@@ -459,7 +459,7 @@ fn integration_dot_notation_simple() {
 
 #[test]
 fn integration_dot_notation_with_may_i() {
-    // SSH-style wrapper: capture first arg as "host", recursively evaluate rest
+    // SSH-style carrier: capture first arg as "host", recursively evaluate rest
     let config = parse_config(
         r#"
         (rule "ssh"

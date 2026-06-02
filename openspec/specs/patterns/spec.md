@@ -6,7 +6,7 @@ bucket: parsing
 
 ## Purpose
 
-Defines the Pattern sublanguage used in rule bodies (see `CONTEXT.md` for the *Pattern* term): flag/parameter/positional matchers, the `--` flag-stop convention, parser-declared tail scoping, negation, and roundtrip serialisation.
+Defines the Pattern sublanguage used in rule bodies (see `CONTEXT.md` for the *Pattern* term): the flag/parameter/positional Patterns, the `--` flag-stop convention, parser-declared outer-slice scoping, negation, and roundtrip serialisation.
 
 ## Requirements
 
@@ -31,7 +31,7 @@ tokenisation profile, including combined short clusters (`-rf` ⇒ `r` and
 `f` are both present under `:gnu`) and `=`-attached values (`--force=true`
 ⇒ `force` is present).
 
-`(flag X)` SHALL NOT consume tokens; sibling matchers in the same rule SHALL
+`(flag X)` SHALL NOT consume tokens; sibling Patterns in the same rule SHALL
 see the full token stream.
 
 #### Scenario: Short flag presence in combined cluster
@@ -76,7 +76,7 @@ attached via `=` or supplied as the next argument:
 - `--long=VAL`
 
 `(parameter X FORM)` SHALL consume both the flag token and its value from
-the stream visible to sibling matchers in the same rule.
+the stream visible to sibling Patterns in the same rule.
 
 `(parameter X FORM)` SHALL implicitly register `X` as a value-bearing flag
 for the active tokenisation, so that the surrounding evaluation tokenises
@@ -134,9 +134,9 @@ string of the captured value.
 
 ### Requirement: `(anywhere …)` and `(forbidden …)` honour `--` as flag-stop
 
-The pattern matchers `(anywhere PAT…)` and `(forbidden PAT…)` SHALL stop scanning at the first occurrence of the literal token `--`. Tokens after `--` SHALL be invisible to these matchers.
+The Patterns `(anywhere PAT…)` and `(forbidden PAT…)` SHALL stop scanning at the first occurrence of the literal token `--`. Tokens after `--` SHALL be invisible to these Patterns.
 
-This SHALL apply universally, regardless of whether the active parser declares `(tail …)`. The `--` token is a universal lexical convention for "no more flags" in GNU-shaped argv; matchers that look for flag-shaped tokens SHALL respect it consistently with `(flag …)` and `(parameter …)`, which already do.
+This SHALL apply universally, regardless of the parser's `(flags MODE)` or `(rest …)` declaration. The `--` token is a universal lexical convention for "no more flags" in GNU-shaped argv; Patterns that look for flag-shaped tokens SHALL respect it consistently with `(flag …)` and `(parameter …)`, which already do.
 
 #### Scenario: `(anywhere "--force")` does not match post-`--` token
 
@@ -159,28 +159,40 @@ This SHALL apply universally, regardless of whether the active parser declares `
 - **THEN** `(anywhere "secret")` SHALL match
 - **AND** the rule SHALL return `:deny`.
 
-### Requirement: Argv matchers scope to outer slice when parser declares `(tail …)`
+### Requirement: Argv Patterns scope to the outer slice
 
-When the resolved parser for the command-under-evaluation declares a `(tail …)`, the matchers `(flag …)`, `(parameter …)`, `(positional …)`, `(exact …)`, `(anywhere …)`, `(forbidden …)` SHALL operate exclusively on the outer slice produced by tokenisation. Tokens in the tail slice SHALL NOT be visible to these matchers.
+The Patterns `(flag …)`, `(parameter …)`, `(positional …)`, `(exact …)`, `(anywhere …)`, `(forbidden …)` SHALL operate exclusively on the outer slice produced by tokenisation. Tokens past the outer slice (claimed by the parser's `(rest …)` binding) SHALL NOT be visible to these Patterns.
 
-The tail slice SHALL be addressable only via `(tail (authorise))` (see wrapper-tail spec).
+The outer/rest split SHALL be determined by the parser's `(flags MODE)`:
 
-#### Scenario: Flag matcher does not see tail tokens
+- Under `(flags posix)` the outer slice ends at the first non-flag token; everything from that point on is rest.
+- Under `(flags (until STR…))` the outer slice ends immediately before the first matching boundary token; the boundary token is consumed and dropped, and the remainder is rest.
+- Under `(flags permute)` (the default for undeclared programs) the outer slice is the whole argv and there is no rest unless a positional declaration leaves a residual.
 
-- **GIVEN** `(parser "sudo" (style gnu) (tail (after :flags)))` and `(rule "sudo" (and (flag "r") (deny "outer flag")))`
+The rest slice SHALL be addressable only via `(authorise #var)` where `#var` is the parser's `(rest …)` binding (typically `#cmd`).
+
+#### Scenario: Flag Pattern does not see rest tokens under posix
+
+- **GIVEN** `(parser "sudo" (style gnu) (flags posix) (rest #cmd))` and `(rule "sudo" (and (flag "r") (deny "outer flag")))`
 - **WHEN** evaluating `sudo rm -rf /tmp/x`
-- **THEN** `(flag "r")` SHALL NOT match (the `-r` is in the tail slice).
+- **THEN** `(flag "r")` SHALL NOT match (the `-r` is in the rest slice).
 
-#### Scenario: Forbidden matcher does not see tail tokens
+#### Scenario: Forbidden Pattern does not see rest tokens under posix
 
-- **GIVEN** `(parser "sudo" (style gnu) (tail (after :flags)))` and `(rule "sudo" (and (forbidden "secret") (allow)))`
+- **GIVEN** `(parser "sudo" (style gnu) (flags posix) (rest #cmd))` and `(rule "sudo" (and (forbidden "secret") (allow)))`
 - **WHEN** evaluating `sudo echo secret`
-- **THEN** `(forbidden "secret")` SHALL succeed (the `secret` token is in the tail slice, not visible).
+- **THEN** `(forbidden "secret")` SHALL succeed (the `secret` token is in the rest slice, not visible).
+
+#### Scenario: Outer slice ends at boundary token under until
+
+- **GIVEN** `(parser "nix" (style gnu) (flags (until "--command" "-c")) (rest #cmd))` and `(rule "nix" (and (flag "i") (deny "no impure")))`
+- **WHEN** evaluating `nix --command bash -i`
+- **THEN** `(flag "i")` SHALL NOT match (the `-i` is past the `--command` boundary, in the rest slice).
 
 ### Requirement: Negation uses `(not …)`
 
 There SHALL be no separate `(no-flag …)` form. Negation of `(flag …)` and
-`(parameter …)` SHALL use the existing `(not …)` combinator.
+`(parameter …)` SHALL use the existing `(not …)` Pattern.
 
 #### Scenario: `(not (flag …))` blocks force-style operations
 
@@ -225,45 +237,56 @@ When the number of available positional args is less than the number of patterns
 - **THEN** it SHALL NOT match
 
 ### Requirement: Optional quantifier matches with or without arg
-A pattern with the `?` (optional) quantifier SHALL match even when the arg at that position is absent. When the arg is present, it MUST match the pattern.
 
-#### Scenario: Optional with matching arg present
-- **WHEN** matching the positional pattern `"branch"?` against the args `branch`
-- **THEN** it SHALL match
+A pattern wrapped in `(? PAT)` (the optional quantifier) SHALL match even when the arg at that position is absent. When the arg is present, it MUST match `PAT`.
 
-#### Scenario: Optional with non-matching arg present
-- **WHEN** matching the positional pattern `"branch"?` against the args `tag`
-- **THEN** it SHALL NOT match
+#### Scenario: Optional positional present
 
-#### Scenario: Optional with no arg at position
-- **WHEN** matching the positional patterns `"push" "origin"?` against the args `push`
-- **THEN** it SHALL match (the optional pattern is satisfied by absence)
+- **WHEN** matching the positional patterns `"branch" (? "branch")` against the args `branch branch`
+- **THEN** matching SHALL succeed.
+
+#### Scenario: Optional positional absent
+
+- **WHEN** matching the positional patterns `"push" (? "origin")` against the args `push`
+- **THEN** matching SHALL succeed.
+
+#### Scenario: Optional positional present but value mismatch
+
+- **WHEN** matching the positional patterns `"branch" (? "branch")` against the args `branch tag`
+- **THEN** matching SHALL NOT succeed.
 
 ### Requirement: One-or-more quantifier requires at least one match
-A pattern with the `+` (one-or-more) quantifier SHALL require at least one arg at the pattern's position. All remaining args from that position onward MUST match the pattern.
 
-#### Scenario: One matching arg
-- **WHEN** matching the positional pattern `*+` against the args `file1`
-- **THEN** it SHALL match
+A pattern wrapped in `(+ PAT)` (the one-or-more quantifier) SHALL require at least one arg at the pattern's position. All remaining args from that position onward MUST match `PAT`.
 
-#### Scenario: Multiple matching args
-- **WHEN** matching the positional pattern `*+` against the args `file1 file2 file3`
-- **THEN** it SHALL match
+#### Scenario: One-or-more wildcard with one arg
 
-#### Scenario: No args at position
-- **WHEN** matching the positional patterns `"cmd" *+` against the args `cmd`
-- **THEN** it SHALL NOT match (one-or-more requires at least one)
+- **WHEN** matching the positional pattern `(+ *)` against the args `file1`
+- **THEN** matching SHALL succeed.
+
+#### Scenario: One-or-more wildcard with multiple args
+
+- **WHEN** matching the positional pattern `(+ *)` against the args `file1 file2 file3`
+- **THEN** matching SHALL succeed.
+
+#### Scenario: One-or-more with no args
+
+- **WHEN** matching the positional patterns `"cmd" (+ *)` against the args `cmd`
+- **THEN** matching SHALL NOT succeed.
 
 ### Requirement: Zero-or-more quantifier matches any count
-A pattern with the `*` (zero-or-more) quantifier SHALL match zero or more remaining args from that position. All remaining args MUST match the pattern.
 
-#### Scenario: Zero remaining args
-- **WHEN** matching the positional patterns `"cmd" **` against the args `cmd`
-- **THEN** it SHALL match
+A pattern wrapped in `(* PAT)` (the zero-or-more quantifier) SHALL match zero or more remaining args from that position. All remaining args MUST match `PAT`.
 
-#### Scenario: Multiple remaining args all match
-- **WHEN** matching the positional pattern `**` against the args `a b c`
-- **THEN** it SHALL match
+#### Scenario: Zero-or-more wildcard with no args
+
+- **WHEN** matching the positional patterns `"cmd" (* *)` against the args `cmd`
+- **THEN** matching SHALL succeed.
+
+#### Scenario: Zero-or-more wildcard with multiple args
+
+- **WHEN** matching the positional pattern `(* *)` against the args `a b c`
+- **THEN** matching SHALL succeed.
 
 ### Requirement: Bind is valid in positional, exact, and anywhere but not forbidden
 A `[:k …]` bind pattern SHALL be accepted by the parser inside `(positional …)`, `(exact …)`, and `(anywhere …)` patterns. The parser SHALL reject a bind inside `(forbidden …)` patterns with a clear error.

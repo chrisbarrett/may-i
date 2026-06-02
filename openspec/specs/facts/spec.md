@@ -12,7 +12,7 @@ facts through `(fact? …)` predicates over the `FactPattern` surface
 (Literal, Wildcard, Regex, And, Or, Not) and the `FactQuery` surface
 (Presence, Value). Users supply facts via the `--fact` CLI surface;
 recursive evaluation also pushes one automatic fact, `:via`, recording the
-chain of `(authorise …)` wrappers under which an inner command runs. Every
+chain of `(authorise …)` carriers under which an inner command runs. Every
 other fact (e.g. `:ssh/host`) must be declared explicitly via a
 parser-side `#var` binding paired with a rule-side `(with-facts …)` form.
 
@@ -27,7 +27,7 @@ The `FactPattern` enum (Literal, Wildcard, Regex, And, Or, Not) SHALL be defined
 - **WHEN** `FactPattern::Literal("prod")` is matched against "prod"
 - **THEN** it returns true
 
-#### Scenario: FactPattern supports boolean combinators
+#### Scenario: FactPattern supports boolean Pattern composition
 
 - **WHEN** `FactPattern::And(vec![p1, p2])` is matched
 - **THEN** it returns true only if both patterns match
@@ -113,17 +113,17 @@ The `FactQuery` enum (Presence, Value) SHALL be defined in `crates/core/src/pred
 - **WHEN** evaluating `FactQuery::Value { key: ":ssh/host", pattern: Literal("prod") }`
 - **THEN** it SHALL return NoMatch
 
-### Requirement: `(authorise …)` pushes wrapper command name onto :via set
+### Requirement: `(authorise …)` pushes carrier command name onto :via set
 
 When `(authorise #var)` (or any other `(authorise …)`-shaped recursion entry — `(parameter NAME (authorise))` single-token capture, `(tail (authorise))`) triggers recursive evaluation, the evaluator SHALL automatically push the current command name onto the `:via` fact set before evaluating the inner command. The push SHALL apply to every evaluation unit produced by the recursion (one push per `(authorise …)` call, not per inner unit).
 
-#### Scenario: Single wrapper
+#### Scenario: Single carrier
 
 - **GIVEN** `(parser "sudo" (style gnu) (flags posix) (rest #cmd))` and `(rule "sudo" (authorise #cmd))` and `(rule "rm" (deny))`
 - **WHEN** evaluating `sudo rm -rf /`
 - **THEN** the inner evaluation of `rm -rf /` SHALL have `:via` = `{"sudo"}`.
 
-#### Scenario: Nested wrappers accumulate
+#### Scenario: Nested carriers accumulate
 
 - **GIVEN** `(parser "sudo" (style gnu) (flags posix) (rest #cmd))`, `(parser "ssh" (style gnu) (flags posix) (positional #host (regex "^[^-].*")) (rest #cmd))`, `(rule "sudo" (authorise #cmd))`, and `(rule "ssh" (authorise #cmd))`
 - **WHEN** evaluating `sudo ssh prod-1 rm -rf /`
@@ -131,9 +131,9 @@ When `(authorise #var)` (or any other `(authorise …)`-shaped recursion entry �
 
 #### Scenario: Order does not matter for set membership
 
-- **GIVEN** `:via` = `{"sudo", "ssh"}` from nested unwrapping
+- **GIVEN** `:via` = `{"sudo", "ssh"}` from nested carrier recursion
 - **WHEN** evaluating `(fact? [:via "ssh"])`
-- **THEN** it SHALL return Match regardless of unwrapping order.
+- **THEN** it SHALL return Match regardless of carrier order.
 
 ### Requirement: :via is the only automatically pushed fact
 

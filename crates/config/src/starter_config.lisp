@@ -49,7 +49,7 @@
       (deny "No kubectl in production")
     (allow)))
 
-;; SSH wrapper — the prelude declares `(positional #host (regex …))`
+;; SSH carrier — the prelude declares `(positional #host (regex …))`
 ;; and `(rest #cmd)`. Branch on the host binding, then recurse on the
 ;; bound inner command.
 (rule "ssh"

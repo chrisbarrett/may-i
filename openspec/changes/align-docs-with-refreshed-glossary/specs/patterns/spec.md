@@ -1,8 +1,8 @@
 ## MODIFIED Requirements
 
-### Requirement: Argv matchers scope to the outer slice
+### Requirement: Argv Patterns scope to the outer slice
 
-The matchers `(flag …)`, `(parameter …)`, `(positional …)`, `(exact …)`, `(anywhere …)`, `(forbidden …)` SHALL operate exclusively on the outer slice produced by tokenisation. Tokens past the outer slice (claimed by the parser's `(rest …)` binding) SHALL NOT be visible to these matchers.
+The Patterns `(flag …)`, `(parameter …)`, `(positional …)`, `(exact …)`, `(anywhere …)`, `(forbidden …)` SHALL operate exclusively on the outer slice produced by tokenisation. Tokens past the outer slice (claimed by the parser's `(rest …)` binding) SHALL NOT be visible to these Patterns.
 
 The outer/rest split SHALL be determined by the parser's `(flags MODE)`:
 
@@ -12,13 +12,13 @@ The outer/rest split SHALL be determined by the parser's `(flags MODE)`:
 
 The rest slice SHALL be addressable only via `(authorise #var)` where `#var` is the parser's `(rest …)` binding (typically `#cmd`).
 
-#### Scenario: Flag matcher does not see rest tokens under posix
+#### Scenario: Flag Pattern does not see rest tokens under posix
 
 - **GIVEN** `(parser "sudo" (style gnu) (flags posix) (rest #cmd))` and `(rule "sudo" (and (flag "r") (deny "outer flag")))`
 - **WHEN** evaluating `sudo rm -rf /tmp/x`
 - **THEN** `(flag "r")` SHALL NOT match (the `-r` is in the rest slice).
 
-#### Scenario: Forbidden matcher does not see rest tokens under posix
+#### Scenario: Forbidden Pattern does not see rest tokens under posix
 
 - **GIVEN** `(parser "sudo" (style gnu) (flags posix) (rest #cmd))` and `(rule "sudo" (and (forbidden "secret") (allow)))`
 - **WHEN** evaluating `sudo echo secret`

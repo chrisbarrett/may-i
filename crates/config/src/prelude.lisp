@@ -30,14 +30,14 @@
   (combined-shorts nil)
   (pun :error))
 
-;; ── Wrapper-tool parsers ────────────────────────────────────────────
+;; ── Carrier-tool parsers ────────────────────────────────────────────
 ;;
 ;; Each declares its flag-scanning mode and the `(rest #cmd)` binding
 ;; that names the recurse target. Rules consult the binding via
 ;; `(authorise #cmd)`. Scope: tools that ship with a regular Linux
-;; distribution, plus widely-used wrappers whose argv semantics are
+;; distribution, plus widely-used carriers whose argv semantics are
 ;; silent-bypass footguns (a missing or mis-spelled boundary token
-;; would otherwise leak inner commands past wrapper rules).
+;; would otherwise leak inner commands past carrier rules).
 
 (parser "sudo"    (style gnu) (flags posix) (rest #cmd))
 (parser "env"     (style gnu) (flags posix) (rest #cmd))
@@ -121,7 +121,7 @@
   (parameter "c" #cmd))
 
 ;; sh -c "command …" — POSIX sh / dash. Same shape as bash -c; the
-;; captured `-c` argument is the recurse target. Used by wrappers
+;; captured `-c` argument is the recurse target. Used by carriers
 ;; that hand off to `/bin/sh -c …` (sudo, ssh, xargs, watchexec, …).
 (parser "sh"
   (style gnu)

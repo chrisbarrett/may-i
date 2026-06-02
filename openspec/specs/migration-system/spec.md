@@ -7,7 +7,7 @@ trust-relevant: true
 
 ## Purpose
 
-Defines the DSL migration pipeline: sexpr-level rewrite passes that transform older configuration syntax into the current canonical form before AST parsing, with comment/trivia preservation, transitive `(load …)` walking, and Class A/B classification controlling trust hash behaviour. Migration test policy — property-test generators for compound v1 forms, real-world wrapper patterns, and round-trip evaluation invariants — is documented here alongside the rewrite rules it verifies. Diff-display behaviour for `may-i migrate` (HOME-rewritten file-path header, three lines of context, `NO_COLOR`-respecting unified diff, interactive `[y/N]` confirm defaulting to cancel, `--yes` required for non-interactive) is also documented here.
+Defines the DSL migration pipeline: sexpr-level rewrite passes that transform older configuration syntax into the current canonical form before AST parsing, with comment/trivia preservation, transitive `(load …)` walking, and Class A/B classification controlling trust hash behaviour. Migration test policy — property-test generators for compound v1 forms, real-world carrier patterns, and round-trip evaluation invariants — is documented here alongside the rewrite rules it verifies. Diff-display behaviour for `may-i migrate` (HOME-rewritten file-path header, three lines of context, `NO_COLOR`-respecting unified diff, interactive `[y/N]` confirm defaulting to cancel, `--yes` required for non-interactive) is also documented here.
 
 ## Requirements
 
@@ -201,7 +201,7 @@ The migration SHALL classify each rewrite into one of two classes:
 
 - **Class A — syntactic, semantics-preserving**: rewrites that change the surface form of a rule without changing the decision the rule produces for any command. Examples: `(effect :allow)` → `(allow)`, `:style S` → `(style S)`, `(may-i *)` → `(authorise)`, `(positional X . CONT)` → `(positional X)` `(tail CONT)`, `define-arg-style` PLIST → form-list, `check` PLIST → form-list.
 
-- **Class B — semantic shift**: changes that alter evaluation behaviour for some commands without textual rule changes. The dsl-coherence wrapper-boundary fix is the canonical Class B case: rules over wrapper commands (sudo, xargs, env, …) now correctly see flags after the inner cmd attributed to the inner cmd, where they previously were absorbed by the outer parser.
+- **Class B — semantic shift**: changes that alter evaluation behaviour for some commands without textual rule changes. The dsl-coherence carrier-boundary fix is the canonical Class B case: rules over carrier commands (sudo, xargs, env, …) now correctly see flags after the inner cmd attributed to the inner cmd, where they previously were absorbed by the outer parser.
 
 Class A rewrites SHALL silently update trust hashes (see trust-hashing spec). Class B SHALL emit a prominent warning naming the affected commands and SHALL NOT auto-update any state beyond the syntactic rewrites that accompany it.
 
@@ -214,9 +214,9 @@ Class A rewrites SHALL silently update trust hashes (see trust-hashing spec). Cl
 
 #### Scenario: Class B emits a warning
 
-- **GIVEN** any config with rules covering wrapper tools
+- **GIVEN** any config with rules covering carrier tools
 - **WHEN** the user runs `may-i migrate`
-- **THEN** the migration SHALL emit a warning naming the wrapper commands
+- **THEN** the migration SHALL emit a warning naming the carrier commands
 - **AND** the warning SHALL recommend re-running `may-i check` cases.
 
 ### Requirement: dsl-coherence rewrite chain
@@ -334,7 +334,7 @@ All wrapper form patterns used in production configs SHALL be tested through mig
 
 #### Scenario: Wrapper with positional + flag + capture
 - **WHEN** a wrapper like (wrapper "mise" (positional "exec") (flag "--" :command+args)) is migrated
-- **THEN** the resulting rule SHALL evaluate identically for wrapped commands
+- **THEN** the resulting rule SHALL evaluate identically for carried commands
 
 ### Requirement: has with complex value patterns migrates correctly
 The rename_has_to_fact rewrite SHALL preserve semantics for all legal value patterns.
