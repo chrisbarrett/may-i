@@ -55,9 +55,9 @@
 
 ## 8. Canonical form and trust integration
 
-- [ ] 8.1 Extend the canonical-form serialiser to emit the new shape forms verbatim; preserve the existing unannotated `(parameter NAME #v)` serialisation byte-for-byte.
-- [ ] 8.2 Classify shape-changing rewrites as Class B in `crates/config/src/migration`; surface a Class B warning when a migration would alter a parameter's shape annotation.
-- [ ] 8.3 Add hash-stability tests over a corpus of existing rule bundles to confirm trust entries continue to verify after the upgrade.
+- [x] 8.1 Extend the canonical-form serialiser to emit the new shape forms verbatim; preserve the existing unannotated `(parameter NAME #v)` serialisation byte-for-byte.
+- [x] 8.2 Classify shape-changing rewrites as Class B in `crates/config/src/migration`; surface a Class B warning when a migration would alter a parameter's shape annotation.
+- [x] 8.3 Add hash-stability tests over a corpus of existing rule bundles to confirm trust entries continue to verify after the upgrade.
 
 ## 9. Documentation
 

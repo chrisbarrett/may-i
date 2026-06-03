@@ -274,3 +274,32 @@ proptest::proptest! {
         proptest::prop_assert_eq!(result_a.reason, result_b.reason);
     }
 }
+
+// ── shape-typed-bindings: trust hash stability (task 8.3) ───────────
+
+#[test]
+fn rule_trust_hash_unaffected_by_parser_shape_annotation() {
+    // Trust hashing is over rule closures, grouped by program. Opting a
+    // parser's parameter into a shape form changes the parser
+    // declaration but not the rule text — so a rule approved before the
+    // upgrade continues to verify. See design D8.
+    let unannotated = may_i_config::parse_config(
+        "(parser \"ssh\" (style gnu) (flags posix) (parameter \"o\" #opts) (rest #cmd))\n\
+         (rule \"ssh\" (allow \"fixed\"))",
+    )
+    .unwrap();
+    let with_set = may_i_config::parse_config(
+        "(parser \"ssh\" (style gnu) (flags posix) (parameter \"o\" (set #opts)) (rest #cmd))\n\
+         (rule \"ssh\" (allow \"fixed\"))",
+    )
+    .unwrap();
+    let h1: Vec<String> = crate::trust::compute_trust_views(&unannotated)
+        .iter()
+        .map(|v| v.hash.clone())
+        .collect();
+    let h2: Vec<String> = crate::trust::compute_trust_views(&with_set)
+        .iter()
+        .map(|v| v.hash.clone())
+        .collect();
+    assert_eq!(h1, h2, "rule hash must not depend on shape annotation");
+}

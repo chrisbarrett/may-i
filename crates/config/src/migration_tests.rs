@@ -397,3 +397,33 @@ fn migration_check_forms_after_body_in_rule_with_context() {
         "check form should come after body form in rule, got:\n{output}"
     );
 }
+
+// ── shape-typed-bindings: shape forms survive migration (task 8.2) ──
+
+#[test]
+fn migration_leaves_parameter_shape_forms_untouched() {
+    // No migration rewrites shape annotations; the new forms pass
+    // through `may-i migrate` byte-for-byte (so they are never flagged
+    // as unknown, and never silently reshaped — which would be a Class
+    // B change). See design D8.
+    let inputs = [
+        r#"(parser "ssh" (style gnu) (flags posix) (parameter "o" (set #opts)))"#,
+        r#"(parser "gcc" (style gnu) (flags permute) (parameter "O" (last #opt)))"#,
+        r#"(parser "bash" (style gnu) (flags posix) (parameter "c" (command #cmd)))"#,
+        r#"(parser "curl" (style gnu) (flags permute) (flag "v" (count #verbosity)))"#,
+    ];
+    for input in inputs {
+        let node = parse_single(input);
+        let output = migrate(node).serialize();
+        assert_eq!(output.trim(), input, "shape form mutated by migration");
+    }
+}
+
+#[test]
+fn migration_idempotent_on_shape_forms() {
+    let input =
+        r#"(parser "ssh" (style gnu) (flags posix) (parameter "o" (set #opts)) (rest #cmd))"#;
+    let once = migrate(parse_single(input)).serialize();
+    let twice = migrate(parse_single(&once)).serialize();
+    assert_eq!(once, twice);
+}
