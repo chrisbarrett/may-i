@@ -15,11 +15,11 @@
 
 ## 3. Multi-occurrence parameter evaluation
 
-- [ ] 3.1 Extend the tokeniser to retain all occurrences of a parameter (not just the last) when the declaration's shape is `(set …)` or `(count …)`.
-- [ ] 3.2 Bind `(set #v)` to a `Vec<String>` (token list) preserving source order, including duplicates.
-- [ ] 3.3 Bind `(count #v)` to a non-negative integer counting recognised occurrences across short, long, combined-short, and `=value` spellings.
-- [ ] 3.4 Confirm `(last #v)` and the unannotated `(parameter NAME #v)` path continue to bind only the final occurrence's value — same behaviour as today.
-- [ ] 3.5 Add proptest coverage for repeated-flag tokenisation under each shape.
+- [x] 3.1 Extend the tokeniser to retain all occurrences of a parameter (not just the last) when the declaration's shape is `(set …)` or `(count …)`.
+- [x] 3.2 Bind `(set #v)` to a `Vec<String>` (token list) preserving source order, including duplicates.
+- [x] 3.3 Bind `(count #v)` to a non-negative integer counting recognised occurrences across short, long, combined-short, and `=value` spellings.
+- [x] 3.4 Confirm `(last #v)` and the unannotated `(parameter NAME #v)` path continue to bind only the final occurrence's value — same behaviour as today.
+- [x] 3.5 Add proptest coverage for repeated-flag tokenisation under each shape.
 
 ## 4. Shape-checker pass
 

@@ -275,6 +275,11 @@ fn recurse_into_bound_command<F: EvalFold>(
             // this arm means the surrounding contract is broken.
             unreachable!("recurse_into_bound_command invoked on Unbound binding")
         }
+        super::bindings::BindingValue::Count(_) => {
+            // `(authorise #count)` is rejected by the shape checker at
+            // load time; eval never legitimately reaches this arm.
+            unreachable!("recurse_into_bound_command invoked on a Count binding")
+        }
     };
     Ok(fold.effect_terminal(
         effect,

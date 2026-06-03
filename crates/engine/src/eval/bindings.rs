@@ -22,26 +22,32 @@ use may_i_core::ast::{BindingName, FlagsMode, ResolvedParser};
 pub(crate) enum BindingValue {
     Token(String),
     Tokens(Vec<String>),
+    /// Occurrence count of a `(flag NAME (count #v))` binding. Always
+    /// "bound" (decision: `(bound? #count)` is true even for `0`).
+    Count(u32),
     Unbound,
 }
 
 impl BindingValue {
-    /// True iff the value is `Unbound` or carries no tokens.
+    /// True iff the value is `Unbound` or carries no tokens. A `Count`
+    /// is never empty — a counted flag binds even when it counts zero.
     pub(crate) fn is_empty(&self) -> bool {
         match self {
             BindingValue::Unbound => true,
             BindingValue::Token(s) => s.is_empty(),
             BindingValue::Tokens(v) => v.is_empty(),
+            BindingValue::Count(_) => false,
         }
     }
 
     /// Coerce to a single space-joined string for predicate matching.
     /// `Token` round-trips as-is; `Tokens` joins with single spaces;
-    /// `Unbound` yields `None`.
+    /// `Count` renders its integer; `Unbound` yields `None`.
     pub(crate) fn as_joined(&self) -> Option<String> {
         match self {
             BindingValue::Token(s) => Some(s.clone()),
             BindingValue::Tokens(v) if !v.is_empty() => Some(v.join(" ")),
+            BindingValue::Count(n) => Some(n.to_string()),
             BindingValue::Tokens(_) | BindingValue::Unbound => None,
         }
     }
@@ -124,6 +130,10 @@ pub(crate) fn parse_argv(parser: &ResolvedParser, argv: &[String]) -> (Vec<Strin
     // under `permute` and pre-boundary otherwise) for declared
     // parameters with bindings.
     collect_parameter_bindings(outer, parser, &mut bindings);
+
+    // Counted flags: `(flag NAME (count #v))` binds #v to the number of
+    // recognised occurrences across the flag-bearing region.
+    collect_flag_count_bindings(outer, parser, &mut bindings);
 
     // The "positional region" — where declared positionals match —
     // differs by mode. Under posix it's the tail slice (everything
@@ -237,6 +247,8 @@ fn capture_parameter_value(
 
     let mut last_single: Option<String> = None;
     let mut last_many: Option<Vec<String>> = None;
+    // Every single-token occurrence in source order, for `(set …)`.
+    let mut all_singles: Vec<String> = Vec::new();
 
     let mut i = 0;
     while i < outer.len() {
@@ -246,6 +258,7 @@ fn capture_parameter_value(
             .iter()
             .find_map(|p| arg.strip_prefix(p).map(str::to_owned))
         {
+            all_singles.push(value.clone());
             last_single = Some(value);
             i += 1;
             continue;
@@ -259,6 +272,7 @@ fn capture_parameter_value(
         match &decl.capture {
             Capture::Single => {
                 if space_separated && i + 1 < outer.len() {
+                    all_singles.push(outer[i + 1].clone());
                     last_single = Some(outer[i + 1].clone());
                     i += 2;
                 } else {
@@ -282,6 +296,7 @@ fn capture_parameter_value(
             // as single-token captures.
             _ => {
                 if space_separated && i + 1 < outer.len() {
+                    all_singles.push(outer[i + 1].clone());
                     last_single = Some(outer[i + 1].clone());
                     i += 2;
                 } else {
@@ -291,11 +306,82 @@ fn capture_parameter_value(
         }
     }
 
+    // `(set #v)` collects every occurrence in source order (duplicates
+    // preserved), binding to the empty list when the parameter is
+    // absent — never `Unbound`, so quantifiers see an empty collection.
+    if matches!(decl.shape_form, may_i_core::ast::ParamShapeForm::Set) {
+        return BindingValue::Tokens(all_singles);
+    }
+
     match (last_many, last_single) {
         (Some(v), _) => BindingValue::Tokens(v),
         (None, Some(s)) => BindingValue::Token(s),
         (None, None) => BindingValue::Unbound,
     }
+}
+
+/// Bind every `(flag NAME (count #v))` declaration to its occurrence
+/// count in `outer`. Flags without a count binding are skipped (they
+/// contribute no rule-visible value).
+fn collect_flag_count_bindings(outer: &[String], parser: &ResolvedParser, bindings: &mut Bindings) {
+    for decl in &parser.flags {
+        let Some(binding_name) = decl.count_binding.clone() else {
+            continue;
+        };
+        let n = count_flag_occurrences(outer, decl, parser);
+        bindings.insert(binding_name, BindingValue::Count(n));
+    }
+}
+
+/// Count occurrences of a flag across its recognised spellings: exact
+/// short/long tokens, members of a combined-short cluster (`-vvv`), and
+/// the `--name=VALUE` form (counted once per token).
+fn count_flag_occurrences(
+    outer: &[String],
+    decl: &may_i_core::ast::FlagDecl,
+    parser: &ResolvedParser,
+) -> u32 {
+    use may_i_core::pattern::is_short_flag_name;
+    let style = &parser.style;
+    let short_prefix = style.short_prefix();
+    let long_prefix = style.long_prefix();
+
+    let mut count: u32 = 0;
+    for arg in outer {
+        for name in &decl.names {
+            let token = parser.token_for_name(name);
+            if arg == &token {
+                count += 1;
+                continue;
+            }
+            // `--name=value` (and `--name=false`) — one occurrence each.
+            if !long_prefix.is_empty()
+                && !is_short_flag_name(name)
+                && arg.starts_with(&format!("{token}="))
+            {
+                count += 1;
+                continue;
+            }
+            // Combined-short cluster: `-xvv` contains two `v`s. Only
+            // applies to single-character short names under a non-empty
+            // short prefix that is distinct from the long prefix.
+            let is_short_cluster = !short_prefix.is_empty()
+                && short_prefix != long_prefix
+                && arg.starts_with(short_prefix)
+                && (long_prefix.is_empty() || !arg.starts_with(long_prefix));
+            if is_short_flag_name(name) && is_short_cluster {
+                let cluster = &arg[short_prefix.len()..];
+                // Guard: only treat as a cluster when every character is
+                // a short flag letter (avoids miscounting `-O2`-style
+                // value-bearing shorts).
+                if !cluster.is_empty() && cluster.chars().all(|c| c.is_ascii_alphabetic()) {
+                    let ch = name.chars().next().expect("short name is one char");
+                    count += cluster.chars().filter(|c| *c == ch).count() as u32;
+                }
+            }
+        }
+    }
+    count
 }
 
 /// Result of matching declared positionals against an input region.
@@ -502,8 +588,8 @@ fn positional_args_owned(args: &[String], parser: &ResolvedParser) -> Vec<String
 mod tests {
     use super::*;
     use may_i_core::ast::{
-        Capture, FlagsMode, ParameterDecl, ParameterTreatment, PositionalDecl, ResolvedParser,
-        Style,
+        Capture, FlagDecl, FlagsMode, ParamShapeForm, ParameterDecl, ParameterTreatment,
+        PositionalDecl, ResolvedParser, Style,
     };
 
     fn parser_permute() -> ResolvedParser {
@@ -624,6 +710,112 @@ mod tests {
         assert!(residual.contains(&"user@host".to_string()));
     }
 
+    // ── shape-typed-bindings: multi-occurrence parameter eval ───────
+
+    fn set_param(name: &str, binding: &str) -> ParameterDecl {
+        ParameterDecl {
+            names: vec![name.into()],
+            treatment: ParameterTreatment::None,
+            shape_form: ParamShapeForm::Set,
+            capture: Capture::Single,
+            binding: Some(BindingName::parse(binding).unwrap()),
+        }
+    }
+
+    #[test]
+    fn set_parameter_collects_all_occurrences_in_order() {
+        let mut parser = parser_permute();
+        parser.parameters.push(set_param("o", "opts"));
+        let (_r, b) = parse_argv(&parser, &argv(&["-o", "A=1", "-o", "B=2", "host"]));
+        assert_eq!(
+            b.get(&BindingName::parse("opts").unwrap()),
+            BindingValue::Tokens(vec!["A=1".into(), "B=2".into()])
+        );
+    }
+
+    #[test]
+    fn set_parameter_preserves_duplicates() {
+        let mut parser = parser_permute();
+        parser.parameters.push(set_param("o", "opts"));
+        let (_r, b) = parse_argv(&parser, &argv(&["-o", "X", "-o", "X"]));
+        assert_eq!(
+            b.get(&BindingName::parse("opts").unwrap()),
+            BindingValue::Tokens(vec!["X".into(), "X".into()])
+        );
+    }
+
+    #[test]
+    fn set_parameter_absent_is_empty_collection_not_bound() {
+        let mut parser = parser_permute();
+        parser.parameters.push(set_param("o", "opts"));
+        let (_r, b) = parse_argv(&parser, &argv(&["host"]));
+        let opts = BindingName::parse("opts").unwrap();
+        assert_eq!(b.get(&opts), BindingValue::Tokens(vec![]));
+        assert!(!b.is_bound(&opts), "empty set is not bound");
+    }
+
+    #[test]
+    fn last_and_unannotated_keep_final_value() {
+        for form in [ParamShapeForm::Last, ParamShapeForm::Unannotated] {
+            let mut parser = parser_permute();
+            parser.parameters.push(ParameterDecl {
+                names: vec!["O".into()],
+                treatment: ParameterTreatment::None,
+                shape_form: form,
+                capture: Capture::Single,
+                binding: Some(BindingName::parse("opt").unwrap()),
+            });
+            let (_r, b) = parse_argv(&parser, &argv(&["-O", "0", "-O", "2", "file.c"]));
+            assert_eq!(
+                b.get(&BindingName::parse("opt").unwrap()),
+                BindingValue::Token("2".into()),
+                "form {form:?}"
+            );
+        }
+    }
+
+    fn count_flag(name: &str, binding: &str) -> FlagDecl {
+        FlagDecl {
+            names: vec![name.into()],
+            count_binding: Some(BindingName::parse(binding).unwrap()),
+        }
+    }
+
+    #[test]
+    fn count_flag_combined_short_cluster() {
+        let mut parser = parser_permute();
+        parser.flags.push(count_flag("v", "verbosity"));
+        let (_r, b) = parse_argv(&parser, &argv(&["-vvv", "https://example.com"]));
+        assert_eq!(
+            b.get(&BindingName::parse("verbosity").unwrap()),
+            BindingValue::Count(3)
+        );
+    }
+
+    #[test]
+    fn count_flag_repeated_long_and_short() {
+        let mut parser = parser_permute();
+        parser.flags.push(FlagDecl {
+            names: vec!["r".into(), "recursive".into()],
+            count_binding: Some(BindingName::parse("r").unwrap()),
+        });
+        let (_r, b) = parse_argv(&parser, &argv(&["--recursive", "-r", "pattern"]));
+        assert_eq!(
+            b.get(&BindingName::parse("r").unwrap()),
+            BindingValue::Count(2)
+        );
+    }
+
+    #[test]
+    fn count_flag_absent_is_zero_and_bound() {
+        let mut parser = parser_permute();
+        parser.flags.push(count_flag("v", "verbosity"));
+        let (_r, b) = parse_argv(&parser, &argv(&["https://example.com"]));
+        let v = BindingName::parse("verbosity").unwrap();
+        assert_eq!(b.get(&v), BindingValue::Count(0));
+        assert!(b.is_bound(&v), "a count binds even at zero");
+    }
+
     // ── Section 5.5 property checkpoint ─────────────────────────────
 
     proptest::proptest! {
@@ -684,6 +876,55 @@ mod tests {
                 proptest::prop_assert!(!v.iter().any(|t| t == "BOUND"),
                     "boundary token leaked into rest binding: {v:?}");
             }
+        }
+
+        /// `(set #v)` binds exactly the value tokens, in source order,
+        /// including duplicates.
+        #[test]
+        fn set_collects_inserted_values_in_order(
+            vals in proptest::collection::vec("[a-zA-Z0-9=._/]{1,8}", 0..8),
+        ) {
+            let mut parser = parser_permute();
+            parser.parameters.push(set_param("o", "opts"));
+            let mut args = Vec::new();
+            for v in &vals {
+                args.push("-o".to_string());
+                args.push(v.clone());
+            }
+            let (_r, b) = parse_argv(&parser, &args);
+            match b.get(&BindingName::parse("opts").unwrap()) {
+                BindingValue::Tokens(got) => proptest::prop_assert_eq!(got, vals),
+                other => proptest::prop_assert!(false, "expected Tokens, got {:?}", other),
+            }
+        }
+
+        /// `(count #v)` over repeated separate short flags equals the
+        /// number of occurrences.
+        #[test]
+        fn count_equals_separate_short_occurrences(k in 0u32..6) {
+            let mut parser = parser_permute();
+            parser.flags.push(count_flag("v", "n"));
+            let mut args: Vec<String> = (0..k).map(|_| "-v".to_string()).collect();
+            args.push("url".into());
+            let (_r, b) = parse_argv(&parser, &args);
+            proptest::prop_assert_eq!(
+                b.get(&BindingName::parse("n").unwrap()),
+                BindingValue::Count(k)
+            );
+        }
+
+        /// `(count #v)` over a single combined-short cluster `-vvv…`
+        /// equals the cluster length.
+        #[test]
+        fn count_equals_combined_short_cluster_length(k in 1u32..6) {
+            let mut parser = parser_permute();
+            parser.flags.push(count_flag("v", "n"));
+            let cluster = format!("-{}", "v".repeat(k as usize));
+            let (_r, b) = parse_argv(&parser, &argv(&[&cluster, "url"]));
+            proptest::prop_assert_eq!(
+                b.get(&BindingName::parse("n").unwrap()),
+                BindingValue::Count(k)
+            );
         }
 
         /// posix-mode invariant: under (flags posix), the first
