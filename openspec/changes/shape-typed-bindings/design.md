@@ -258,13 +258,67 @@ mismatch family (operator × binding-shape → hint), kept beside the
 shape-check pass. New hints are easy to add; the cost is bounded by
 the small number of (operator, shape) pairs.
 
+**Implementation harness: miette.** The renderer SHALL be built on
+the `miette` crate. miette gives us source-span carets, "related"
+spans (the rule-body site + the parser-declaration site that the spec
+requires both shown), severity, `Diagnostic` derive macros, and JSON
+output for tooling consumers. Once miette is in the workspace for
+shape diagnostics, every existing parse/load diagnostic — currently
+terse and span-poor — SHALL be migrated to the same renderer using
+the same vocabulary discipline. The shape work pays for the upgrade;
+the upgrade pays out across the whole config-load surface.
+
 **Cite for prior art.** Elm's error message philosophy is documented
 in Evan Czaplicki, "Compiler Errors for Humans" — `https://elm-
-lang.org/news/compiler-errors-for-humans` (last verified 2026-06-03)
+lang.org/news/compiler-errors-for-humans` (last verified 2026-06-04)
 and the patterns used in Elm 0.19+'s compiler output (see e.g.
-`elm/compiler` v0.19.1, `compiler/src/Reporting/Error.hs`).
+`elm/compiler` v0.19.1, `compiler/src/Reporting/Error.hs`). The
+miette crate (`https://crates.io/crates/miette`) is the Rust
+ecosystem's closest analogue and the implementation harness for D9.
 
-### D7. Canonical form changes are Class B; default form's hash unchanged
+### D7. Quantifier argument order is binding-first: `(every? #v PRED)`
+
+The argument order for `(every? …)` and `(some? …)` is `(every?
+#binding PRED)` and `(some? #binding PRED)` — binding first, predicate
+second.
+
+**Rationale.**
+
+- Local convention beats imported convention. Every other
+  `#var`-consuming rule-body verb is binding-first: `(authorise #v)`,
+  `(bound? #v)`, `(matches? #v PAT)`, `(with-facts [[:k #v]] …)`.
+  Inverting just `every?`/`some?` because Clojure does so would make
+  them the odd ones out at the very moment they are introduced.
+- No first-class functions in the DSL. Clojure's pred-first ordering
+  exists partly to support `(partial every? pred)` over many
+  collections. We have no currying, so the FP argument does not
+  carry.
+- Scanability. `PRED` is often a multi-line `(or …)` / `(and …)` or a
+  named `(define …)` reference. Putting it after the binding means
+  the eye lands on "what we're working with" first; putting it first
+  buries the binding behind potentially long predicate prose.
+
+**Alternatives considered.**
+
+- *Pred-first `(every? PRED #v)` (Clojure / CL convention).* Stronger
+  fit for users who carry FP muscle memory in. Rejected because the
+  rest of this DSL's `#var` surface is binding-first; consistency
+  inside `may-i` matters more than consistency with Clojure when the
+  user is reading a rule.
+- *Both orders accepted by inference (binding sigil disambiguates).*
+  Considered but rejected: ambiguity inflates the surface for no
+  semantic gain, and the shape checker's error messages become
+  harder to author when the operator's arity has no fixed slot
+  meaning.
+
+**Migration hint.** The shape checker SHALL recognise the pred-first
+miscall pattern — `(every? PRED #v)` where the first argument is a
+Pattern expression and the second is a `#var` reference — and emit a
+dedicated hint suggesting the corrected order. This is cheap to
+detect and avoids a confusing "binding not bound" or "wrong shape"
+diagnostic when the user actually wrote a Clojure-shaped call.
+
+### D8. Canonical form changes are Class B; default form's hash unchanged
 
 The new shape forms (`(one …)`, `(last …)`, `(set …)`, `(command …)`,
 `(count …)`) participate in the canonical-form serialisation. Adding
@@ -292,7 +346,7 @@ don't opt anything into the new shapes.
   remain canonically distinct; the migration command can advise users
   who want the explicit form to rewrite manually.
 
-### D8. Implementation order: parser-side declarations → shape checker → rule-side quantifiers
+### D9. Implementation order: parser-side declarations → shape checker → rule-side quantifiers
 
 The implementation lands in three phases inside the single change:
 
