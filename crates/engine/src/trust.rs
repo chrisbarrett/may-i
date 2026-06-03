@@ -787,6 +787,42 @@ mod tests {
         assert_eq!(s1, s2, "adding checks should not change canonical form");
     }
 
+    /// Documents the upstream condition the review-prompt dedup defends
+    /// against: an OR-of-programs rule resolves to one view per program, and
+    /// because `canonical_rule` stringifies the whole rule (including the
+    /// `(or …)` command), those views share both `hash` and `canonical_form`.
+    /// They differ only in `program`. Not a regression assert — pins the
+    /// duplication that `build_pending` deduplicates one layer up.
+    #[test]
+    fn or_of_programs_emits_duplicate_hash_views() {
+        let rule = Rule {
+            command_effect: spanned(Effect::CommandPattern(CommandPattern::Or(vec![
+                CommandPattern::Literal("git".into()),
+                CommandPattern::Literal("gh".into()),
+            ]))),
+            effect: spanned(terminal(Decision::Allow, None)),
+            checks: vec![],
+            span: dummy_span(),
+            provenance: Provenance::Loaded {
+                path: PathBuf::from("test"),
+            },
+        };
+        let views = compute_trust_views(&make_config(vec![rule], vec![]));
+
+        assert_eq!(views.len(), 2, "one view per program in the (or …)");
+        assert_eq!(views[0].program, "git");
+        assert_eq!(views[1].program, "gh");
+        assert_eq!(
+            views[0].hash, views[1].hash,
+            "both programs share the rule's hash"
+        );
+        assert_eq!(
+            views[0].canonical_form, views[1].canonical_form,
+            "both programs share the rule's canonical form"
+        );
+        assert_eq!(views[0].canonical_form, r#"(rule (or "git" "gh") (allow))"#);
+    }
+
     // --- safe-env-vars trust scope ---
 
     #[test]

@@ -4,7 +4,8 @@
 // `TrustCatalog` is the cross-cutting consumer surface. CLI handlers (gate,
 // advisory, listing, review) take `&TrustCatalog` and never touch the bare
 // `TrustStore` or `TrustViewMeta` types directly. Mutations go through
-// `set_state` / `set_state_for_each`; persistence is a separate `save` call.
+// `set_state` (which fans across all views sharing a hash); persistence is a
+// separate `save` call.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -110,13 +111,28 @@ impl TrustCatalog {
         self.views.iter().find(|v| v.hash == hash)
     }
 
-    /// Set the state of the view with the given hash, mirroring the change
+    /// Set the state of *every* view with the given hash, mirroring the change
     /// into the underlying store. No-op if no view has that hash.
+    ///
+    /// An OR-of-programs rule (or identical rule text loaded twice) yields
+    /// multiple views sharing one hash. Updating only the first would leave
+    /// the rest stale at `Pending`; the catalog invariant is that its state
+    /// mirrors the (hash-keyed) store for every view, so the transition fans
+    /// out across all hash-equal views.
     pub fn set_state(&mut self, hash: &str, state: TrustState) {
-        let Some(view) = self.views.iter_mut().find(|v| v.hash == hash) else {
+        let mut matched = false;
+        for view in self.views.iter_mut().filter(|v| v.hash == hash) {
+            view.state = state;
+            matched = true;
+        }
+        if !matched {
+            return;
+        }
+        // The store is hash-keyed, so one insert mirrors all matching views;
+        // reuse the first matching view's program/form for the entry.
+        let Some(view) = self.views.iter().find(|v| v.hash == hash) else {
             return;
         };
-        view.state = state;
         match state {
             TrustState::Approved => self.store.approve_rule(
                 view.hash.clone(),
@@ -267,6 +283,54 @@ mod tests {
 
         let reloaded = TrustStore::load(&path).unwrap().store;
         assert_eq!(reloaded.check_rule(&hash), TrustCheck::Approved);
+    }
+
+    /// An OR-of-programs Loaded rule with `Loaded` provenance.
+    fn or_rule() -> Rule {
+        Rule {
+            command_effect: spanned(Effect::CommandPattern(
+                may_i_core::pattern::CommandPattern::Or(vec![
+                    CommandPattern::Literal("git".into()),
+                    CommandPattern::Literal("gh".into()),
+                ]),
+            )),
+            effect: spanned(Effect::Terminal {
+                decision: Decision::Allow,
+                reason: None,
+            }),
+            checks: vec![],
+            span: Span::new(0, 0),
+            provenance: Provenance::Loaded {
+                path: PathBuf::from("/r.lisp"),
+            },
+        }
+    }
+
+    #[test]
+    fn set_state_is_noop_for_unknown_hash() {
+        let rule = loaded_rule("git", Decision::Allow, "/r.lisp");
+        let mut cat = build_catalog(&config_of(vec![rule]), TrustStore::default());
+        // No view has this hash → no panic, no state change, store untouched.
+        cat.set_state("sha256:does-not-exist", TrustState::Approved);
+        assert!(cat.iter().all(|v| v.state() == TrustState::Pending));
+    }
+
+    #[test]
+    fn set_state_fans_out_to_all_views_sharing_a_hash() {
+        let rule = or_rule();
+        let hash = hash_rule(&canonical_rule(&rule));
+
+        let mut cat = build_catalog(&config_of(vec![rule]), TrustStore::default());
+        // Two views (git, gh) share the one hash.
+        assert_eq!(cat.len(), 2);
+        assert!(cat.iter().all(|v| v.hash() == hash));
+
+        cat.set_state(&hash, TrustState::Approved);
+
+        assert!(
+            cat.iter().all(|v| v.state() == TrustState::Approved),
+            "every view sharing the hash flips to Approved"
+        );
     }
 
     #[test]

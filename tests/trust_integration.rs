@@ -232,6 +232,57 @@ fn trust_all_approves_all_programs() {
     }
 }
 
+/// An OR-of-programs rule resolves to one trust view per program, all sharing
+/// one hash. Approving the rule SHALL cover every branch: `trust --all` reports
+/// both `git` and `gh` approved, and a follow-up listing shows no pending
+/// entries. (Non-interactive batch path — a scripted TTY isn't available here.)
+#[test]
+fn trust_or_of_programs_approves_all_branches() {
+    let (_dir, config) = setup_loaded_config("", r#"(rule (or "git" "gh") (allow "loaded"))"#);
+    let trust_dir = tempfile::tempdir().unwrap();
+
+    let mut approve = may_i_cmd();
+    approve
+        .env("MAYI_CONFIG", config.path())
+        .env("XDG_DATA_HOME", trust_dir.path())
+        .args(["trust", "--all", "--json"]);
+    let output = approve.output().expect("run trust --all");
+    assert!(
+        output.status.success(),
+        "trust --all should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let resp: serde_json::Value = serde_json::from_slice(&output.stdout).expect("parse JSON");
+    let approved: Vec<&str> = resp["approved"]
+        .as_array()
+        .expect("approved array")
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert!(
+        approved.contains(&"git") && approved.contains(&"gh"),
+        "both branches of the (or …) approved: {approved:?}"
+    );
+
+    // Follow-up listing: every entry approved, no pending.
+    let mut list = may_i_cmd();
+    list.env("MAYI_CONFIG", config.path())
+        .env("XDG_DATA_HOME", trust_dir.path())
+        .args(["trust", "--json"]);
+    let output = list.output().expect("run trust --json");
+    let resp: serde_json::Value = serde_json::from_slice(&output.stdout).expect("parse JSON");
+    let arr = resp.as_array().expect("array");
+    assert!(
+        arr.iter().any(|e| e["program"] == "git"),
+        "git listed: {arr:?}"
+    );
+    assert!(
+        arr.iter().all(|e| e["status"] == "approved"),
+        "no pending entries remain after approval: {arr:?}"
+    );
+}
+
 #[test]
 fn trust_nonexistent_program_fails() {
     let (_dir, config) = setup_loaded_config("", r#"(rule "echo" (allow "loaded"))"#);

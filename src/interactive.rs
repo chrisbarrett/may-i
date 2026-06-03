@@ -187,9 +187,18 @@ fn compute_pp_width() -> (usize, usize) {
 
 fn build_pending(catalog: &TrustCatalog) -> Vec<PendingRule> {
     let store = catalog.store();
+    // Dedup by canonical-form hash so the review prompts once per unique form.
+    // An OR-of-programs rule (or identical rule text loaded twice) yields
+    // multiple hash-equal views; we keep the first-seen and skip the rest. The
+    // decision fans back across every hash-equal view via `set_state` when the
+    // op is applied. The kept view's `position` is the first one seen for that
+    // hash, which is what `detect_change` reads — acceptable because hash-equal
+    // views share the same canonical form and therefore the same diff.
+    let mut seen: BTreeSet<String> = BTreeSet::new();
     catalog
         .iter()
         .filter(|v| v.state() == TrustState::Pending)
+        .filter(|v| seen.insert(v.hash().to_string()))
         .map(|v| {
             let (badge, prev_form) = detect_change(
                 &store.previous_rules(v.program()).unwrap_or_default(),
@@ -320,5 +329,107 @@ fn apply_store_op(store: &mut TrustStore, op: StoreOp) {
         } => store.block_rule(hash, program, form),
         StoreOp::Reapprove { program } => store.reapprove(&program),
         StoreOp::Drop { program } => store.drop_entry(&program),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use may_i_core::Decision;
+    use may_i_core::ast::{Config, Effect, Provenance, Rule, Spanned};
+    use may_i_core::pattern::CommandPattern;
+    use may_i_core::span::Span;
+
+    use super::*;
+    use crate::trust::store::TrustStore;
+    use crate::trust::view::build_catalog;
+
+    fn spanned<T>(value: T) -> Spanned<T> {
+        Spanned::new(value, Span::new(0, 0))
+    }
+
+    /// A `(rule "echo" (allow))` with `Loaded` provenance from `path`. Two of
+    /// these from different files share a canonical form (and hash), since the
+    /// canonical form excludes provenance.
+    fn echo_rule(path: &str) -> Rule {
+        Rule {
+            command_effect: spanned(Effect::CommandPattern(CommandPattern::Literal(
+                "echo".into(),
+            ))),
+            effect: spanned(Effect::Terminal {
+                decision: Decision::Allow,
+                reason: None,
+            }),
+            checks: vec![],
+            span: Span::new(0, 0),
+            provenance: Provenance::Loaded {
+                path: PathBuf::from(path),
+            },
+        }
+    }
+
+    /// A single OR-of-programs rule with `Loaded` provenance. The engine emits
+    /// one view per program, both sharing the rule's hash and canonical form.
+    fn or_rule_config() -> Config {
+        Config {
+            rules: vec![Rule {
+                command_effect: spanned(Effect::CommandPattern(CommandPattern::Or(vec![
+                    CommandPattern::Literal("git".into()),
+                    CommandPattern::Literal("gh".into()),
+                ]))),
+                effect: spanned(Effect::Terminal {
+                    decision: Decision::Allow,
+                    reason: None,
+                }),
+                checks: vec![],
+                span: Span::new(0, 0),
+                provenance: Provenance::Loaded {
+                    path: PathBuf::from("/r.lisp"),
+                },
+            }],
+            ..Config::default()
+        }
+    }
+
+    #[test]
+    fn build_pending_dedups_views_sharing_a_hash() {
+        let catalog = build_catalog(&or_rule_config(), TrustStore::default());
+        // Catalog faithfully holds one view per program (git, gh).
+        assert_eq!(catalog.len(), 2);
+
+        let pending = build_pending(&catalog);
+        assert_eq!(
+            pending.len(),
+            1,
+            "duplicate-hash views collapse to a single prompt"
+        );
+        assert_eq!(pending[0].program, "git", "first-seen program is preserved");
+    }
+
+    /// Spec scenario: identical rule text loaded from two files prompts once.
+    /// Two `(rule "echo" (allow))` rules from different `Loaded` paths share a
+    /// hash, so `build_pending` collapses them to one prompt — first-seen file
+    /// preserved — even though they are distinct catalog views.
+    #[test]
+    fn build_pending_dedups_identical_text_from_two_files() {
+        let cfg = Config {
+            rules: vec![echo_rule("/a.lisp"), echo_rule("/b.lisp")],
+            ..Config::default()
+        };
+        let catalog = build_catalog(&cfg, TrustStore::default());
+        assert_eq!(catalog.len(), 2, "one view per loaded occurrence");
+
+        let pending = build_pending(&catalog);
+        assert_eq!(
+            pending.len(),
+            1,
+            "identical rule text from two files collapses to one prompt"
+        );
+        assert_eq!(
+            pending[0].source_file.as_deref(),
+            Some(std::path::Path::new("/a.lisp")),
+            "first-seen occurrence is kept"
+        );
     }
 }
