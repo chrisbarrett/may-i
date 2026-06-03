@@ -61,9 +61,9 @@
 
 ## 9. Documentation
 
-- [ ] 9.1 Update `REFERENCE.md` to document the new shape forms (`(one …)`, `(last …)`, `(set …)`, `(command …)`, `(count …)`) and the new rule-body verbs `(every? …)` / `(some? …)`. Use the user-facing vocabulary throughout (no "shape", no internal type names). Show `(every? #seq PRED)` argument order in every example (per design D7).
-- [ ] 9.2 Update `CONTEXT.md` contributor vocabulary table to add `Shape` (and its four members) alongside `Effect`, `Predicate`, `ArgPattern`, etc.
-- [ ] 9.3 Add an `examples/` lisp file demonstrating the `rm` motivating case end-to-end (parser declaration + rule using `(every? …)`).
+- [x] 9.1 Update `REFERENCE.md` to document the new shape forms (`(one …)`, `(last …)`, `(set …)`, `(command …)`, `(count …)`) and the new rule-body verbs `(every? …)` / `(some? …)`. Use the user-facing vocabulary throughout (no "shape", no internal type names). Show `(every? #seq PRED)` argument order in every example (per design D7).
+- [x] 9.2 Update `CONTEXT.md` contributor vocabulary table to add `Shape` (and its four members) alongside `Effect`, `Predicate`, `ArgPattern`, etc.
+- [x] 9.3 Add an `examples/` lisp file demonstrating the `rm` motivating case end-to-end (parser declaration + rule using `(every? …)`).
 - [ ] 9.4 Cross-link `binding-shapes` from the Purpose of `parser-bindings` and `patterns` stable specs (during archive).
 
 ## 10. Verification
