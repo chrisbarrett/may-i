@@ -23,9 +23,9 @@
 
 ## 4. Shape-checker pass
 
-- [ ] 4.1 Implement the shape-check pass over rule bodies, invoked after parser resolution and before trust filtering. Walk every rule body and check each `#var` reference's shape against the consuming operator's signature.
-- [ ] 4.2 Encode operator shape signatures: `authorise → Command`, `bound? → any`, `matches? → Token|Command`, `every? → Collection Token`, `some? → Collection Token`, `with-facts → Token|Command|Collection Token`.
-- [ ] 4.3 Produce structured diagnostics carrying both spans (rule-body operator and parser declaration) plus the (operator, found shape, expected shape) triple.
+- [x] 4.1 Implement the shape-check pass over rule bodies, invoked after parser resolution and before trust filtering. Walk every rule body and check each `#var` reference's shape against the consuming operator's signature.
+- [x] 4.2 Encode operator shape signatures: `authorise → Command`, `bound? → any`, `matches? → Token|Command`, `every? → Collection Token`, `some? → Collection Token`, `with-facts → Token|Command|Collection Token`.
+- [x] 4.3 Produce structured diagnostics carrying both spans (rule-body operator and parser declaration) plus the (operator, found shape, expected shape) triple.
 - [ ] 4.4 Wire shape diagnostics into the existing diagnostic pipeline so they appear at config-load failure and `may-i check` consistently.
 
 ## 5. Rule-side quantifier evaluation

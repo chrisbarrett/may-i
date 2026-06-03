@@ -4,6 +4,7 @@ pub mod check;
 pub mod eval;
 pub mod fold;
 pub mod shape;
+pub mod shape_check;
 pub mod trust;
 
 #[cfg(any(test, feature = "test-generators"))]
