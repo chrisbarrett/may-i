@@ -10,7 +10,37 @@ use super::context::{EvalContext, PredicateResult};
 use super::positional::{
     build_positional_element_details, match_positional_patterns, resolve_trailing_cond_effect,
 };
-use super::predicates::evaluate_predicate_fold;
+use super::predicates::{captured_facts, evaluate_predicate_fold};
+
+/// Evaluate `body` after `predicate` matched, threading any facts the
+/// predicate captured under a quantifier (`(every? #v [:k *])` /
+/// `(some? …)`) into the body's fact environment. With no captures the
+/// body sees `ctx` unchanged.
+fn eval_body_with_captures<F: EvalFold>(
+    fold: &mut F,
+    predicate: &may_i_core::ast::Predicate,
+    body: &Effect,
+    ctx: &EvalContext,
+    rules: &[Rule],
+) -> Result<F::EffectOut, EvalError> {
+    let captured = captured_facts(predicate, ctx);
+    if captured.is_empty() {
+        return evaluate_effect_fold(fold, body, ctx, rules);
+    }
+    let merged = ctx.facts.merge(&captured);
+    let derived = EvalContext {
+        command: ctx.command,
+        args: ctx.args,
+        facts: &merged,
+        bindings: ctx.bindings.clone(),
+        recursion_depth: ctx.recursion_depth,
+        recursion_limit: ctx.recursion_limit,
+        parser: ctx.parser.clone(),
+        parser_bindings: ctx.parser_bindings.clone(),
+        config: ctx.config,
+    };
+    evaluate_effect_fold(fold, body, &derived, rules)
+}
 
 /// Evaluate an effect to produce an EffectResult (convenience, uses PureFold).
 #[cfg(test)]
@@ -117,7 +147,8 @@ pub(crate) fn evaluate_effect_fold<F: EvalFold>(
             let pred_out = evaluate_predicate_fold(fold, &predicate.value, ctx)?;
             let pred_result = F::predicate_result(&pred_out);
             let (body_child, result) = if pred_result == PredicateResult::Match {
-                let body_out = evaluate_effect_fold(fold, &body.value, ctx, rules)?;
+                let body_out =
+                    eval_body_with_captures(fold, &predicate.value, &body.value, ctx, rules)?;
                 let body_result = F::effect_result(&body_out).clone();
                 (ChildResult::Evaluated(body_out), body_result)
             } else {
@@ -150,7 +181,13 @@ pub(crate) fn evaluate_effect_fold<F: EvalFold>(
             let pred_out = evaluate_predicate_fold(fold, &predicate.value, ctx)?;
             let pred_result = F::predicate_result(&pred_out);
             let (then_child, else_child, result) = if pred_result == PredicateResult::Match {
-                let then_out = evaluate_effect_fold(fold, &then_effect.value, ctx, rules)?;
+                let then_out = eval_body_with_captures(
+                    fold,
+                    &predicate.value,
+                    &then_effect.value,
+                    ctx,
+                    rules,
+                )?;
                 let then_result = F::effect_result(&then_out).clone();
                 (
                     ChildResult::Evaluated(then_out),
@@ -181,8 +218,13 @@ pub(crate) fn evaluate_effect_fold<F: EvalFold>(
                     let pred_out = evaluate_predicate_fold(fold, &predicate.value, ctx)?;
                     let pred_result = F::predicate_result(&pred_out);
                     if pred_result == PredicateResult::Match {
-                        let body_out =
-                            evaluate_effect_fold(fold, &branch_effect.value, ctx, rules)?;
+                        let body_out = eval_body_with_captures(
+                            fold,
+                            &predicate.value,
+                            &branch_effect.value,
+                            ctx,
+                            rules,
+                        )?;
                         result = F::effect_result(&body_out).clone();
                         fold_branches.push((
                             ChildResult::Evaluated(pred_out),

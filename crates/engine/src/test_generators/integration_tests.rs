@@ -303,3 +303,23 @@ fn rule_trust_hash_unaffected_by_parser_shape_annotation() {
         .collect();
     assert_eq!(h1, h2, "rule hash must not depend on shape annotation");
 }
+
+// ── shape-typed-bindings: quantifier capture flows into the body ────
+
+#[test]
+fn every_capture_visible_in_body_fact() {
+    let config = may_i_config::parse_config(
+        "(parser \"ssh\" (style gnu) (flags posix) (parameter \"o\" (set #opts)) (rest #cmd))\n\
+         (rule \"ssh\" (when (every? #opts [:ssh/opt *]) \
+            (when (fact? [:ssh/opt \"BatchMode=yes\"]) (allow \"captured\"))))",
+    )
+    .unwrap();
+    let args: Vec<String> = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "host"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let facts = ContextFacts::default();
+    let result = evaluate("ssh", &args, &config, &facts).unwrap();
+    assert_eq!(result.decision, Decision::Allow);
+    assert_eq!(result.reason.as_deref(), Some("captured"));
+}

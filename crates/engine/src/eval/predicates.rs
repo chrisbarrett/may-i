@@ -3,7 +3,6 @@ use may_i_core::pattern::{ArgPattern, MatchMode};
 use may_i_core::{FactPattern, FactQuery};
 
 use crate::EvalError;
-#[cfg(test)]
 use crate::fold::PureFold;
 use crate::fold::{ChildResult, EvalFold, build_fact_detail};
 
@@ -159,6 +158,69 @@ pub(crate) fn evaluate_predicate_fold<F: EvalFold>(
     }
 }
 
+/// Collect the facts a *matched* predicate captures via fact-binding
+/// patterns under quantifiers (`(every? #v [:k *])` / `(some? #v …)`).
+///
+/// Per the `patterns` spec: `every?` contributes every element's
+/// captures when the whole fold matched; `some?` contributes the
+/// captures of each matching element. Fact sets dedupe (union via
+/// [`ContextFacts::merge`]). The caller invokes this only on the
+/// predicate of a branch that matched.
+pub(crate) fn captured_facts(pred: &Predicate, ctx: &EvalContext) -> may_i_core::ContextFacts {
+    let mut out = may_i_core::ContextFacts::default();
+    collect_captures(pred, ctx, &mut out);
+    out
+}
+
+fn collect_captures(pred: &Predicate, ctx: &EvalContext, out: &mut may_i_core::ContextFacts) {
+    use super::positional::match_expr_with_binding;
+    match pred {
+        Predicate::Every {
+            binding, pattern, ..
+        } => {
+            let value = ctx.parser_bindings.get(binding);
+            let coll = value.as_collection();
+            if coll.iter().all(|t| pattern.is_match(t)) {
+                for t in coll {
+                    let (_m, f) = match_expr_with_binding(pattern, t);
+                    *out = out.merge(&f);
+                }
+            }
+        }
+        Predicate::Some {
+            binding, pattern, ..
+        } => {
+            let value = ctx.parser_bindings.get(binding);
+            for t in value.as_collection() {
+                let (matched, f) = match_expr_with_binding(pattern, t);
+                if matched {
+                    *out = out.merge(&f);
+                }
+            }
+        }
+        // The caller only reaches here for a matched predicate, so an
+        // `and` means every child matched — recurse into all of them.
+        Predicate::And(preds) => {
+            for p in preds {
+                collect_captures(p, ctx, out);
+            }
+        }
+        // For `or`, only the disjuncts that actually matched contribute.
+        Predicate::Or(preds) => {
+            for p in preds {
+                let mut fold = PureFold;
+                if let Ok(r) = evaluate_predicate_fold(&mut fold, p, ctx)
+                    && PureFold::predicate_result(&r) == PredicateResult::Match
+                {
+                    collect_captures(p, ctx, out);
+                }
+            }
+        }
+        // Negation captures nothing; other predicates bind no quantifier.
+        _ => {}
+    }
+}
+
 /// Evaluate a fact query against the context.
 fn evaluate_fact_query(query: &FactQuery, ctx: &EvalContext) -> PredicateResult {
     match query {
@@ -283,6 +345,77 @@ mod quantifier_tests {
 
     fn tmp_regex() -> Expr {
         Expr::Regex(regex::Regex::new("^/tmp/").unwrap())
+    }
+
+    fn key(s: &str) -> may_i_core::Keyword {
+        may_i_core::Keyword::new(s).unwrap()
+    }
+
+    fn bind(k: &str, inner: Expr) -> Expr {
+        Expr::Bind {
+            key: key(k),
+            expr: Box::new(inner),
+        }
+    }
+
+    // ── shape-typed-bindings: fact capture under quantifiers (5.3) ──
+
+    #[test]
+    fn every_with_fact_binding_accumulates_all_values() {
+        let facts = ContextFacts::default();
+        let args: Vec<String> = vec![];
+        let ctx = ctx_with_collection(&facts, &args, vec!["BatchMode=yes", "ConnectTimeout=10"]);
+        let pred = Predicate::Every {
+            binding: bn("opts"),
+            binding_span: may_i_core::Span::new(0, 0),
+            pattern: bind(":ssh/opt", Expr::Wildcard),
+        };
+        let captured = captured_facts(&pred, &ctx);
+        let set = captured.get(&key(":ssh/opt")).expect("fact present");
+        assert!(set.contains("BatchMode=yes"));
+        assert!(set.contains("ConnectTimeout=10"));
+    }
+
+    #[test]
+    fn every_with_one_failing_element_retains_no_captures() {
+        let facts = ContextFacts::default();
+        let args: Vec<String> = vec![];
+        let ctx = ctx_with_collection(&facts, &args, vec!["/tmp/a", "/etc/passwd"]);
+        // every? requires all to match the regex; one fails ⇒ no fact.
+        let pred = Predicate::Every {
+            binding: bn("opts"),
+            binding_span: may_i_core::Span::new(0, 0),
+            pattern: Expr::And(vec![tmp_regex(), bind(":path", Expr::Wildcard)]),
+        };
+        let captured = captured_facts(&pred, &ctx);
+        assert!(captured.is_empty(), "no captures when the fold fails");
+    }
+
+    #[test]
+    fn some_with_fact_binding_accumulates_matching_only() {
+        let facts = ContextFacts::default();
+        let args: Vec<String> = vec![];
+        let ctx = ctx_with_collection(
+            &facts,
+            &args,
+            vec!["BatchMode=yes", "ProxyCommand=nc h p", "ProxyCommand=other"],
+        );
+        let pred = Predicate::Some {
+            binding: bn("opts"),
+            binding_span: may_i_core::Span::new(0, 0),
+            pattern: Expr::And(vec![
+                Expr::Regex(regex::Regex::new("^ProxyCommand=").unwrap()),
+                bind(":ssh/proxy", Expr::Wildcard),
+            ]),
+        };
+        let captured = captured_facts(&pred, &ctx);
+        let set = captured.get(&key(":ssh/proxy")).expect("fact present");
+        assert!(set.contains("ProxyCommand=nc h p"));
+        assert!(set.contains("ProxyCommand=other"));
+        assert!(
+            !set.contains("BatchMode=yes"),
+            "non-matching value excluded"
+        );
     }
 
     /// Build a context whose `opts` binding holds the given collection.
