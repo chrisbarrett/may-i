@@ -11,8 +11,8 @@ use may_i_sexpr::{RawError, Sexpr};
 /// Syntax:
 /// - Terminal effects: `(allow)`, `(ask)`, `(deny)` with optional reason
 /// - Pattern effects: command strings, `(positional ...)`, `(exact ...)`, `(anywhere ...)`, `(forbidden ...)`
-/// - Combinators: `(and EFFECT ...)`, `(or EFFECT ...)`, `(not EFFECT)`
-/// - Conditionals: `(when PREDICATE EFFECT)`, `(unless PREDICATE EFFECT)`, `(if PREDICATE THEN ELSE)`, `(cond ...)`
+/// - Combinators: `(and BODY ...)`, `(or BODY ...)`, `(not BODY)`
+/// - Conditionals: `(when PREDICATE BODY)`, `(unless PREDICATE BODY)`, `(if PREDICATE THEN ELSE)`, `(cond ...)`
 /// - Recursion: `(authorise)` (inside a host context)
 #[must_use = "parsed effect should be used"]
 pub(crate) fn parse_effect(sexpr: &Sexpr) -> Result<Spanned<Effect>, RawError> {
@@ -30,17 +30,20 @@ pub(crate) fn parse_effect(sexpr: &Sexpr) -> Result<Spanned<Effect>, RawError> {
         return Ok(Spanned::new(Effect::CommandPattern(pattern), sexpr.span()));
     }
 
-    let list = sexpr
-        .as_list()
-        .ok_or_else(|| RawError::new("effect must be a list or command literal", sexpr.span()))?;
+    let list = sexpr.as_list().ok_or_else(|| {
+        RawError::new(
+            "a rule body must be a list or command literal",
+            sexpr.span(),
+        )
+    })?;
 
     if list.is_empty() {
-        return Err(RawError::new("empty effect", sexpr.span()));
+        return Err(RawError::new("empty rule body", sexpr.span()));
     }
 
     let tag = list[0]
         .as_atom()
-        .ok_or_else(|| RawError::new("effect tag must be an atom", list[0].span()))?;
+        .ok_or_else(|| RawError::new("rule-body form tag must be an atom", list[0].span()))?;
 
     let effect = match tag {
         "effect" => {
@@ -128,8 +131,8 @@ pub(crate) fn parse_effect(sexpr: &Sexpr) -> Result<Spanned<Effect>, RawError> {
                 Effect::CommandPattern(pattern)
             } else {
                 return Err(
-                    RawError::new(format!("unknown effect form: {other}"), list[0].span())
-                        .with_help("valid effects: allow, ask, deny, authorise, cond, when, unless, if, and, or, not, positional, exact, anywhere, forbidden, flag, parameter, tail"),
+                    RawError::new(format!("unknown rule-body form: {other}"), list[0].span())
+                        .with_help("valid rule-body forms: allow, ask, deny, authorise, cond, when, unless, if, and, or, not, positional, exact, anywhere, forbidden, flag, parameter, tail"),
                 );
             }
         }
@@ -201,7 +204,7 @@ fn parse_cond(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawError
                 parse_effect(&branch_list[1])?
             } else {
                 return Err(RawError::new(
-                    "else branch must have exactly one effect",
+                    "else branch must have exactly one rule body",
                     arg.span(),
                 ));
             };
@@ -209,10 +212,10 @@ fn parse_cond(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawError
             continue;
         }
 
-        // Regular branch: (PREDICATE EFFECT)
+        // Regular branch: (PREDICATE BODY)
         if branch_list.len() != 2 {
             return Err(RawError::new(
-                "cond branch must have exactly a predicate and an effect",
+                "cond branch must have exactly a predicate and a rule body",
                 arg.span(),
             ));
         }
@@ -230,7 +233,7 @@ fn parse_cond(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawError
 fn parse_when(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawError> {
     if args.len() != 2 {
         return Err(RawError::new(
-            "when must have exactly a predicate and an effect: (when PREDICATE EFFECT)",
+            "when must have exactly a predicate and a rule body: (when PREDICATE BODY)",
             span,
         ));
     }
@@ -248,7 +251,7 @@ fn parse_when(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawError
 fn parse_unless(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawError> {
     if args.len() != 2 {
         return Err(RawError::new(
-            "unless must have exactly a predicate and an effect: (unless PREDICATE EFFECT)",
+            "unless must have exactly a predicate and a rule body: (unless PREDICATE BODY)",
             span,
         ));
     }
@@ -266,7 +269,7 @@ fn parse_unless(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawErr
 fn parse_if(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawError> {
     if args.len() != 3 {
         return Err(RawError::new(
-            "if must have exactly 3 arguments: (if PREDICATE THEN-EFFECT ELSE-EFFECT)",
+            "if must have exactly 3 arguments: (if PREDICATE THEN-BODY ELSE-BODY)",
             span,
         ));
     }
@@ -283,11 +286,11 @@ fn parse_if(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawError> 
 }
 
 /// Parse an and expression.
-/// Syntax: `(and EFFECT ...)` - all effects must return non-Nil
+/// Syntax: `(and BODY ...)` - all effects must return non-Nil
 fn parse_and(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawError> {
     if args.is_empty() {
         return Err(RawError::new(
-            "and must have at least one effect: (and EFFECT+)",
+            "and must have at least one rule body: (and BODY+)",
             span,
         ));
     }
@@ -301,11 +304,11 @@ fn parse_and(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawError>
 }
 
 /// Parse an or expression.
-/// Syntax: `(or EFFECT ...)` - returns first non-Nil effect
+/// Syntax: `(or BODY ...)` - returns first non-Nil effect
 fn parse_or(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawError> {
     if args.is_empty() {
         return Err(RawError::new(
-            "or must have at least one effect: (or EFFECT+)",
+            "or must have at least one rule body: (or BODY+)",
             span,
         ));
     }
@@ -319,11 +322,11 @@ fn parse_or(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawError> 
 }
 
 /// Parse a not expression.
-/// Syntax: `(not EFFECT)` - inverts Allow/Nil, passes through Ask/Deny
+/// Syntax: `(not BODY)` - inverts Allow/Nil, passes through Ask/Deny
 fn parse_not(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawError> {
     if args.len() != 1 {
         return Err(RawError::new(
-            "not must have exactly one effect: (not EFFECT)",
+            "not must have exactly one rule body: (not BODY)",
             span,
         ));
     }
@@ -596,7 +599,7 @@ mod tests {
     #[test]
     fn empty_effect_error() {
         let err = parse_effect_str(r#"()"#).expect_err("expected error");
-        assert!(format!("{err}").contains("empty effect"));
+        assert!(format!("{err}").contains("empty rule body"));
     }
 
     #[test]
@@ -610,13 +613,13 @@ mod tests {
     fn reserved_keyword_atom_is_not_command() {
         // Reserved keywords as bare atoms should not be treated as commands
         let err = parse_effect_str(r#"rule"#).expect_err("expected error");
-        assert!(format!("{err}").contains("effect must be a list or command literal"));
+        assert!(format!("{err}").contains("a rule body must be a list or command literal"));
     }
 
     #[test]
     fn unknown_effect_form_error() {
         let err = parse_effect_str(r#"(unknown)"#).expect_err("expected error");
-        assert!(format!("{err}").contains("unknown effect form"));
+        assert!(format!("{err}").contains("unknown rule-body form"));
     }
 
     #[test]
@@ -652,14 +655,14 @@ mod tests {
     #[test]
     fn cond_else_with_too_many_effects_error() {
         let err = parse_effect_str(r#"(cond (else (allow) (deny)))"#).expect_err("expected error");
-        assert!(format!("{err}").contains("else branch must have exactly one effect"));
+        assert!(format!("{err}").contains("else branch must have exactly one rule body"));
     }
 
     #[test]
     fn cond_branch_with_wrong_arg_count_error() {
         let err = parse_effect_str(r#"(cond ((fact? :via/ssh)))"#).expect_err("expected error");
         assert!(
-            format!("{err}").contains("cond branch must have exactly a predicate and an effect")
+            format!("{err}").contains("cond branch must have exactly a predicate and a rule body")
         );
     }
 

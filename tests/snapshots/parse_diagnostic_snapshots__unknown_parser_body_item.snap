@@ -1,0 +1,11 @@
+---
+source: tests/parse_diagnostic_snapshots.rs
+expression: "render(\"(parser \\\"git\\\" (style gnu) (wat \\\"v\\\"))\")"
+---
+  × unknown parser body item: wat
+   ╭─[config.lisp:1:27]
+ 1 │ (parser "git" (style gnu) (wat "v"))
+   ·                           ────┬────
+   ·                               ╰── here
+   ╰────
+  help: body items: (style …), (flags …), (flag NAME), (parameter NAME [FORM] [#var]), (positional [#var] PAT [QUANT]), (rest #var)

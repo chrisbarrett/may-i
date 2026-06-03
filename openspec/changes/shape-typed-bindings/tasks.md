@@ -47,11 +47,11 @@
 
 ## 7. Parser-diagnostic uplift via the same renderer
 
-- [ ] 7.1 Survey existing config-load diagnostics in `crates/config` and `crates/sexpr`. Catalogue each error type, the span data it currently emits, and the rendered text quality (terse / no source excerpt / contributor-vocab leakage).
-- [ ] 7.2 Migrate each surveyed diagnostic to a miette `Diagnostic` implementation, attaching source spans from the sexpr reader. Keep the existing error semantics; only the rendering changes.
-- [ ] 7.3 Apply the user-facing vocabulary discipline: rename rendered text to remove contributor-internal jargon (`AST`, `Effect`, `Predicate`, `Expr`, `ArgPattern`) following the same mapping principle used for shape mismatches.
-- [ ] 7.4 Add hints to the high-frequency parse failures (unknown declaration kind, legacy form suggestions, missing `(flags …)`, `#var` outside permitted positions, `(many-till …)` outside parser body). Hint vocabulary lives in the same centralised module as the shape-mismatch hints.
-- [ ] 7.5 Add golden-output `insta` snapshots covering each migrated diagnostic to lock the rendered format.
+- [x] 7.1 Survey existing config-load diagnostics in `crates/config` and `crates/sexpr`. Catalogue each error type, the span data it currently emits, and the rendered text quality (terse / no source excerpt / contributor-vocab leakage).
+- [x] 7.2 Migrate each surveyed diagnostic to a miette `Diagnostic` implementation, attaching source spans from the sexpr reader. Keep the existing error semantics; only the rendering changes.
+- [x] 7.3 Apply the user-facing vocabulary discipline: rename rendered text to remove contributor-internal jargon (`AST`, `Effect`, `Predicate`, `Expr`, `ArgPattern`) following the same mapping principle used for shape mismatches.
+- [x] 7.4 Add hints to the high-frequency parse failures (unknown declaration kind, legacy form suggestions, missing `(flags …)`, `#var` outside permitted positions, `(many-till …)` outside parser body). Hint vocabulary lives in the same centralised module as the shape-mismatch hints.
+- [x] 7.5 Add golden-output `insta` snapshots covering each migrated diagnostic to lock the rendered format.
 
 ## 8. Canonical form and trust integration
 

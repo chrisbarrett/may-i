@@ -1,0 +1,11 @@
+---
+source: tests/parse_diagnostic_snapshots.rs
+expression: "render(\"(rule \\\"find\\\" (when (matches? #a (many-till \\\";\\\")) (allow)))\")"
+---
+  × (many-till …) is only valid inside a (parameter …) declaration
+   ╭─[config.lisp:1:34]
+ 1 │ (rule "find" (when (matches? #a (many-till ";")) (allow)))
+   ·                                  ────┬────
+   ·                                      ╰── not valid in a rule body
+   ╰────
+  help: declare it parser-side: (parameter NAME (many-till PAT) #var), then reference #var from the rule

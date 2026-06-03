@@ -1,0 +1,11 @@
+---
+source: tests/parse_diagnostic_snapshots.rs
+expression: "render(\"(rule \\\"git\\\" (frobnicate))\")"
+---
+  × unknown rule-body form: frobnicate
+   ╭─[config.lisp:1:14]
+ 1 │ (rule "git" (frobnicate))
+   ·              ─────┬────
+   ·                   ╰── here
+   ╰────
+  help: valid rule-body forms: allow, ask, deny, authorise, cond, when, unless, if, and, or, not, positional, exact, anywhere, forbidden, flag, parameter, tail
