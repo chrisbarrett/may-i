@@ -45,7 +45,8 @@ pub(crate) fn parse_parser_form(sexpr: &Sexpr) -> Result<Parser, RawError> {
     let mut rest_binding: Option<BindingName> = None;
     let mut declared_names: std::collections::HashMap<String, &'static str> =
         std::collections::HashMap::new();
-    let mut declared_bindings: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut declared_bindings: std::collections::HashMap<BindingName, may_i_core::Span> =
+        std::collections::HashMap::new();
 
     for item in &list[2..] {
         let item_list = item
@@ -186,6 +187,7 @@ pub(crate) fn parse_parser_form(sexpr: &Sexpr) -> Result<Parser, RawError> {
         positionals,
         flags_mode,
         rest: rest_binding,
+        binding_spans: declared_bindings,
         span: sexpr.span(),
         provenance: Provenance::PrimaryConfig,
     })
@@ -205,9 +207,9 @@ fn parse_binding_atom(sexpr: &Sexpr) -> Result<BindingName, RawError> {
 fn record_binding(
     bn: &BindingName,
     span: may_i_core::Span,
-    declared: &mut std::collections::HashSet<String>,
+    declared: &mut std::collections::HashMap<BindingName, may_i_core::Span>,
 ) -> Result<(), RawError> {
-    if !declared.insert(bn.as_str().to_string()) {
+    if declared.insert(bn.clone(), span).is_some() {
         return Err(RawError::new(
             format!("binding `{bn}` declared more than once in parser body"),
             span,
@@ -283,7 +285,7 @@ fn parse_flags_mode(args: &[Sexpr], span: may_i_core::Span) -> Result<FlagsMode,
 fn parse_positional_decl(
     args: &[Sexpr],
     span: may_i_core::Span,
-    declared_bindings: &mut std::collections::HashSet<String>,
+    declared_bindings: &mut std::collections::HashMap<BindingName, may_i_core::Span>,
 ) -> Result<PositionalDecl, RawError> {
     if args.is_empty() {
         return Err(
@@ -404,7 +406,7 @@ fn reject_misplaced_shape_form(sexpr: &Sexpr) -> Result<(), RawError> {
 fn parse_flag_decl(
     args: &[Sexpr],
     span: may_i_core::Span,
-    declared_bindings: &mut std::collections::HashSet<String>,
+    declared_bindings: &mut std::collections::HashMap<BindingName, may_i_core::Span>,
 ) -> Result<FlagDecl, RawError> {
     if args.is_empty() {
         return Err(RawError::new("flag requires exactly one NAME", span));
@@ -429,7 +431,7 @@ fn parse_flag_decl(
 /// Parse a `(count #v)` shape form, returning the bound name.
 fn parse_count_form(
     sexpr: &Sexpr,
-    declared_bindings: &mut std::collections::HashSet<String>,
+    declared_bindings: &mut std::collections::HashMap<BindingName, may_i_core::Span>,
 ) -> Result<BindingName, RawError> {
     let list = sexpr
         .as_list()
@@ -472,7 +474,7 @@ fn parse_parameter_tail(
     names: Vec<String>,
     tail: &[Sexpr],
     span: may_i_core::Span,
-    declared_bindings: &mut std::collections::HashSet<String>,
+    declared_bindings: &mut std::collections::HashMap<BindingName, may_i_core::Span>,
 ) -> Result<ParameterDecl, RawError> {
     // Peel a trailing `#var` slot, if present.
     let (body, trailing) = match tail.last() {

@@ -97,7 +97,10 @@ pub(crate) fn parse_predicate(sexpr: &Sexpr) -> Result<Predicate, RawError> {
                 ));
             }
             let binding = parse_binding_ref(&list[1])?;
-            Ok(Predicate::Bound { binding })
+            Ok(Predicate::Bound {
+                binding,
+                binding_span: list[1].span(),
+            })
         }
         "matches?" => {
             if list.len() != 3 {
@@ -108,7 +111,11 @@ pub(crate) fn parse_predicate(sexpr: &Sexpr) -> Result<Predicate, RawError> {
             }
             let binding = parse_binding_ref(&list[1])?;
             let pattern = crate::pattern::parse_expr_for_capture(&list[2])?;
-            Ok(Predicate::Matches { binding, pattern })
+            Ok(Predicate::Matches {
+                binding,
+                binding_span: list[1].span(),
+                pattern,
+            })
         }
         "every?" | "some?" => {
             if list.len() != 3 {
@@ -131,11 +138,20 @@ pub(crate) fn parse_predicate(sexpr: &Sexpr) -> Result<Predicate, RawError> {
                 )));
             }
             let binding = parse_binding_ref(&list[1])?;
+            let binding_span = list[1].span();
             let pattern = crate::pattern::parse_expr_for_capture(&list[2])?;
             if tag == "every?" {
-                Ok(Predicate::Every { binding, pattern })
+                Ok(Predicate::Every {
+                    binding,
+                    binding_span,
+                    pattern,
+                })
             } else {
-                Ok(Predicate::Some { binding, pattern })
+                Ok(Predicate::Some {
+                    binding,
+                    binding_span,
+                    pattern,
+                })
             }
         }
 
@@ -309,7 +325,7 @@ mod tests {
     fn parse_bound_predicate() {
         let pred = parse_pred("(bound? #cmd)").unwrap();
         match pred {
-            Predicate::Bound { binding } => assert_eq!(binding.as_str(), "cmd"),
+            Predicate::Bound { binding, .. } => assert_eq!(binding.as_str(), "cmd"),
             other => panic!("expected Bound, got {other:?}"),
         }
     }

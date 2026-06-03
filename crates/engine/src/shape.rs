@@ -263,6 +263,7 @@ mod tests {
             }],
             flags_mode: FlagsMode::Posix,
             rest: Some(bn("cmd")),
+            binding_spans: Default::default(),
         };
         let env = ShapeEnv::from_parser(&parser);
         assert_eq!(env.get(&bn("opts")), Some(Shape::CollectionToken));

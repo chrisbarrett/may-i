@@ -652,6 +652,7 @@ mod tokenisation_properties {
             positionals: vec![],
             flags_mode: may_i_core::ast::FlagsMode::Permute,
             rest: None,
+            binding_spans: Default::default(),
         }
     }
 

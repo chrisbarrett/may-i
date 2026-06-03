@@ -169,7 +169,11 @@ pub enum Effect {
     /// token → tokenise; token list → join then tokenise) and
     /// re-evaluates against the active rule set.
     /// Syntax: `(authorise #var)`
-    Authorise { binding: BindingName },
+    Authorise {
+        binding: BindingName,
+        /// Source span of the `#var` reference, for shape diagnostics.
+        binding_span: Span,
+    },
 }
 
 impl Effect {
@@ -264,7 +268,7 @@ impl std::fmt::Display for Effect {
             Effect::Unless { .. } => write!(f, "<unless-effect>"),
             Effect::If { .. } => write!(f, "<if-effect>"),
             Effect::Cond { .. } => write!(f, "<cond-effect>"),
-            Effect::Authorise { binding } => write!(f, "(authorise {binding})"),
+            Effect::Authorise { binding, .. } => write!(f, "(authorise {binding})"),
         }
     }
 }
@@ -302,7 +306,11 @@ pub enum Predicate {
     /// True iff the named parser-binding resolves to a value (not
     /// `Unbound`) in the active binding environment.
     /// Syntax: `(bound? #var)`
-    Bound { binding: BindingName },
+    Bound {
+        binding: BindingName,
+        /// Source span of the `#var` reference, for shape diagnostics.
+        binding_span: Span,
+    },
 
     /// True iff the named parser-binding resolves and its value
     /// matches `pattern` (Token values matched directly; Tokens values
@@ -310,6 +318,7 @@ pub enum Predicate {
     /// Syntax: `(matches? #var PAT)`
     Matches {
         binding: BindingName,
+        binding_span: Span,
         pattern: crate::pattern::Expr<Effect>,
     },
 
@@ -319,6 +328,7 @@ pub enum Predicate {
     /// Syntax: `(every? #var PRED)`
     Every {
         binding: BindingName,
+        binding_span: Span,
         pattern: crate::pattern::Expr<Effect>,
     },
 
@@ -328,6 +338,7 @@ pub enum Predicate {
     /// Syntax: `(some? #var PRED)`
     Some {
         binding: BindingName,
+        binding_span: Span,
         pattern: crate::pattern::Expr<Effect>,
     },
 }
@@ -395,7 +406,7 @@ impl ToDoc for Predicate {
                 Doc::broken_list(cs)
             }
             Predicate::Not(pred) => Doc::list(vec![Doc::atom("not"), pred.to_doc()]),
-            Predicate::Bound { binding } => {
+            Predicate::Bound { binding, .. } => {
                 Doc::list(vec![Doc::atom("bound?"), Doc::atom(binding.to_string())])
             }
             Predicate::Matches { binding, .. } => Doc::list(vec![
@@ -960,6 +971,9 @@ pub struct Parser {
     /// Optional `(rest #var)` declaration. Binds the unconsumed tail
     /// of argv to a name.
     pub rest: Option<BindingName>,
+    /// Source span of each declared `#var` binding atom, keyed by name.
+    /// Used by the shape checker to point at the declaration site.
+    pub binding_spans: std::collections::HashMap<BindingName, Span>,
     pub span: Span,
     pub provenance: Provenance,
 }
@@ -975,6 +989,9 @@ pub struct ResolvedParser {
     pub positionals: Vec<PositionalDecl>,
     pub flags_mode: FlagsMode,
     pub rest: Option<BindingName>,
+    /// Source span of each declared `#var` binding atom, keyed by name.
+    /// Used by the shape checker to point at the declaration site.
+    pub binding_spans: std::collections::HashMap<BindingName, Span>,
 }
 
 impl ResolvedParser {
@@ -989,6 +1006,7 @@ impl ResolvedParser {
             positionals: Vec::new(),
             flags_mode: FlagsMode::Permute,
             rest: None,
+            binding_spans: std::collections::HashMap::new(),
         }
     }
 
@@ -1101,6 +1119,7 @@ impl Config {
             positionals: parser.positionals.clone(),
             flags_mode: parser.flags_mode.clone(),
             rest: parser.rest.clone(),
+            binding_spans: parser.binding_spans.clone(),
         }
     }
 
@@ -1238,7 +1257,7 @@ impl ToDoc for Effect {
             Effect::Unless { .. } => Doc::atom("<unless-effect>"),
             Effect::If { .. } => Doc::atom("<if-effect>"),
             Effect::Cond { .. } => Doc::atom("<cond-effect>"),
-            Effect::Authorise { binding } => {
+            Effect::Authorise { binding, .. } => {
                 Doc::list(vec![Doc::atom("authorise"), Doc::atom(binding.to_string())])
             }
         }

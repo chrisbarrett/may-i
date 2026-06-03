@@ -98,7 +98,7 @@ pub(crate) fn evaluate_predicate_fold<F: EvalFold>(
             }
         }
         // `(bound? #var)` — `#var` resolves to a non-empty value.
-        Predicate::Bound { binding } => {
+        Predicate::Bound { binding, .. } => {
             let result = if ctx.parser_bindings.is_bound(binding) {
                 PredicateResult::Match
             } else {
@@ -109,7 +109,9 @@ pub(crate) fn evaluate_predicate_fold<F: EvalFold>(
         // `(matches? #var PAT)` — `#var` resolves, and its
         // string-coerced value matches `PAT`. `Tokens` values are
         // joined with single spaces (mirrors the recurse semantics).
-        Predicate::Matches { binding, pattern } => {
+        Predicate::Matches {
+            binding, pattern, ..
+        } => {
             let value = ctx.parser_bindings.get(binding);
             let result = match value.as_joined() {
                 Some(s) if pattern.is_match(&s) => PredicateResult::Match,
@@ -119,7 +121,9 @@ pub(crate) fn evaluate_predicate_fold<F: EvalFold>(
         }
         // `(every? #var PRED)` — `PRED` matches every element of the
         // collection bound to `#var`. Vacuously true on empty.
-        Predicate::Every { binding, pattern } => {
+        Predicate::Every {
+            binding, pattern, ..
+        } => {
             let value = ctx.parser_bindings.get(binding);
             let matched = value
                 .as_collection()
@@ -134,7 +138,9 @@ pub(crate) fn evaluate_predicate_fold<F: EvalFold>(
         }
         // `(some? #var PRED)` — `PRED` matches at least one element.
         // False on empty.
-        Predicate::Some { binding, pattern } => {
+        Predicate::Some {
+            binding, pattern, ..
+        } => {
             let value = ctx.parser_bindings.get(binding);
             let matched = value
                 .as_collection()
@@ -300,6 +306,7 @@ mod quantifier_tests {
         let ctx = ctx_with_collection(&facts, &args, vec!["/tmp/a", "/tmp/b"]);
         let pred = Predicate::Every {
             binding: bn("opts"),
+            binding_span: may_i_core::Span::new(0, 0),
             pattern: tmp_regex(),
         };
         assert_eq!(
@@ -315,6 +322,7 @@ mod quantifier_tests {
         let ctx = ctx_with_collection(&facts, &args, vec!["/tmp/a", "/etc/passwd"]);
         let pred = Predicate::Every {
             binding: bn("opts"),
+            binding_span: may_i_core::Span::new(0, 0),
             pattern: tmp_regex(),
         };
         assert_eq!(
@@ -330,6 +338,7 @@ mod quantifier_tests {
         let ctx = ctx_with_collection(&facts, &args, vec![]);
         let pred = Predicate::Every {
             binding: bn("opts"),
+            binding_span: may_i_core::Span::new(0, 0),
             pattern: tmp_regex(),
         };
         assert_eq!(
@@ -345,6 +354,7 @@ mod quantifier_tests {
         let ctx = ctx_with_collection(&facts, &args, vec!["/etc/x", "/tmp/y"]);
         let pred = Predicate::Some {
             binding: bn("opts"),
+            binding_span: may_i_core::Span::new(0, 0),
             pattern: tmp_regex(),
         };
         assert_eq!(
@@ -360,6 +370,7 @@ mod quantifier_tests {
         let ctx = ctx_with_collection(&facts, &args, vec!["/etc/x", "/var/y"]);
         let pred = Predicate::Some {
             binding: bn("opts"),
+            binding_span: may_i_core::Span::new(0, 0),
             pattern: tmp_regex(),
         };
         assert_eq!(
@@ -375,6 +386,7 @@ mod quantifier_tests {
         let ctx = ctx_with_collection(&facts, &args, vec![]);
         let pred = Predicate::Some {
             binding: bn("opts"),
+            binding_span: may_i_core::Span::new(0, 0),
             pattern: tmp_regex(),
         };
         assert_eq!(
@@ -403,9 +415,9 @@ mod quantifier_tests {
             let some_ref = toks.iter().any(|t| t == &target);
 
             let every = evaluate_predicate(
-                &Predicate::Every { binding: bn("opts"), pattern: pat.clone() }, &ctx).unwrap();
+                &Predicate::Every { binding: bn("opts"), binding_span: may_i_core::Span::new(0, 0), pattern: pat.clone() }, &ctx).unwrap();
             let some = evaluate_predicate(
-                &Predicate::Some { binding: bn("opts"), pattern: pat }, &ctx).unwrap();
+                &Predicate::Some { binding: bn("opts"), binding_span: may_i_core::Span::new(0, 0), pattern: pat }, &ctx).unwrap();
 
             proptest::prop_assert_eq!(every == PredicateResult::Match, every_ref);
             proptest::prop_assert_eq!(some == PredicateResult::Match, some_ref);

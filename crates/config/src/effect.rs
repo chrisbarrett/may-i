@@ -83,7 +83,10 @@ pub(crate) fn parse_effect(sexpr: &Sexpr) -> Result<Spanned<Effect>, RawError> {
             let binding = BindingName::parse(raw).map_err(|e| {
                 RawError::new(format!("invalid binding reference: {e}"), list[1].span())
             })?;
-            Effect::Authorise { binding }
+            Effect::Authorise {
+                binding,
+                binding_span: list[1].span(),
+            }
         }
         "cond" => parse_cond(&list[1..], sexpr.span())?,
         "when" => parse_when(&list[1..], sexpr.span())?,
@@ -360,7 +363,7 @@ mod tests {
     fn parse_authorise_with_binding() {
         let effect = parse_effect_str("(authorise #cmd)").unwrap();
         match effect {
-            Effect::Authorise { binding } => assert_eq!(binding.as_str(), "cmd"),
+            Effect::Authorise { binding, .. } => assert_eq!(binding.as_str(), "cmd"),
             other => panic!("expected Effect::Authorise, got {other:?}"),
         }
     }

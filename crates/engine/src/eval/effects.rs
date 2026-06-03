@@ -222,7 +222,7 @@ pub(crate) fn evaluate_effect_fold<F: EvalFold>(
         // the inner parser intact. Joining tokens with single spaces
         // and re-parsing is the bypass closed by the
         // `authorise-token-list-quoting` change.
-        Effect::Authorise { binding } => {
+        Effect::Authorise { binding, .. } => {
             let value = ctx.parser_bindings.get(binding);
             if value.is_empty() {
                 return Ok(fold.effect_nil(effect));
