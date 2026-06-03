@@ -392,6 +392,32 @@ mod tests {
         );
     }
 
+    /// `run_review` is faithful to its input slice: it does not deduplicate.
+    /// Two `PendingRule`s sharing a hash yield two prompts and two ops. This
+    /// pins the contract that dedup is the caller's job (`build_pending`), so
+    /// the loop stays pure over "unique by hash" input.
+    #[test]
+    fn run_review_does_not_dedup_duplicate_hash_inputs() {
+        let mut prompt = FakeUserPrompt::with_keys(&['y', 'y']);
+        let pending = vec![
+            rule("git", "h1", r#"(rule (or "git" "gh") allow)"#),
+            rule("gh", "h1", r#"(rule (or "git" "gh") allow)"#),
+        ];
+        let term = Terminal::detect();
+
+        let (ops, summary) =
+            run_review(&mut prompt, &pending, TrustedSummary::default(), 80, &term)
+                .expect("loop succeeds");
+
+        assert_eq!(ops.len(), 2, "loop prompts once per input, no dedup");
+        assert!(
+            ops.iter()
+                .all(|op| matches!(op, StoreOp::ApproveRule { hash, .. } if hash == "h1"))
+        );
+        assert_eq!(summary.approved, 2);
+        assert!(prompt.keys.is_empty(), "both prompts consumed a keystroke");
+    }
+
     #[test]
     fn run_review_quit_short_circuits_remaining_rules() {
         let mut prompt = FakeUserPrompt::with_keys(&['y', 'q']);
