@@ -97,7 +97,10 @@ pub(crate) fn parse_predicate(sexpr: &Sexpr) -> Result<Predicate, RawError> {
                 ));
             }
             let binding = parse_binding_ref(&list[1])?;
-            Ok(Predicate::Bound { binding })
+            Ok(Predicate::Bound {
+                binding,
+                binding_span: list[1].span(),
+            })
         }
         "matches?" => {
             if list.len() != 3 {
@@ -108,12 +111,53 @@ pub(crate) fn parse_predicate(sexpr: &Sexpr) -> Result<Predicate, RawError> {
             }
             let binding = parse_binding_ref(&list[1])?;
             let pattern = crate::pattern::parse_expr_for_capture(&list[2])?;
-            Ok(Predicate::Matches { binding, pattern })
+            Ok(Predicate::Matches {
+                binding,
+                binding_span: list[1].span(),
+                pattern,
+            })
+        }
+        "every?" | "some?" => {
+            if list.len() != 3 {
+                return Err(RawError::new(
+                    format!("({tag} #var PRED) requires a binding and a predicate"),
+                    sexpr.span(),
+                )
+                .with_help(format!("({tag} #paths safe?)  — binding first, predicate second")));
+            }
+            // Pred-first miscall guard (design D7): `(every? PRED #var)`
+            // — first arg is a pattern, second a binding. Detect and
+            // point at the corrected order.
+            if !matches!(list[1], Sexpr::Binding(_, _)) && matches!(list[2], Sexpr::Binding(_, _)) {
+                return Err(RawError::new(
+                    format!("({tag} …) expects the binding first, then the predicate"),
+                    sexpr.span(),
+                )
+                .with_help(format!(
+                    "write the binding first: ({tag} #var PRED), not ({tag} PRED #var)"
+                )));
+            }
+            let binding = parse_binding_ref(&list[1])?;
+            let binding_span = list[1].span();
+            let pattern = crate::pattern::parse_expr_for_capture(&list[2])?;
+            if tag == "every?" {
+                Ok(Predicate::Every {
+                    binding,
+                    binding_span,
+                    pattern,
+                })
+            } else {
+                Ok(Predicate::Some {
+                    binding,
+                    binding_span,
+                    pattern,
+                })
+            }
         }
 
         other => Err(
             RawError::new(format!("unknown predicate form: {other}"), list[0].span()).with_help(
-                "valid predicates: fact?, and, or, not, bound?, matches?, positional, exact, anywhere, forbidden, flag, parameter, =",
+                "valid predicates: fact?, and, or, not, bound?, matches?, every?, some?, positional, exact, anywhere, forbidden, flag, parameter, =",
             ),
         ),
     }
@@ -281,7 +325,7 @@ mod tests {
     fn parse_bound_predicate() {
         let pred = parse_pred("(bound? #cmd)").unwrap();
         match pred {
-            Predicate::Bound { binding } => assert_eq!(binding.as_str(), "cmd"),
+            Predicate::Bound { binding, .. } => assert_eq!(binding.as_str(), "cmd"),
             other => panic!("expected Bound, got {other:?}"),
         }
     }
@@ -311,6 +355,44 @@ mod tests {
     fn rejects_matches_arity() {
         let err = parse_pred("(matches? #cmd)").unwrap_err();
         assert!(format!("{err}").contains("binding and a pattern"));
+    }
+
+    // ── shape-typed-bindings: (every? …) / (some? …) ────────────────
+
+    #[test]
+    fn parse_every_predicate() {
+        let pred = parse_pred(r#"(every? #paths (regex "^/tmp/"))"#).unwrap();
+        match pred {
+            Predicate::Every { binding, .. } => assert_eq!(binding.as_str(), "paths"),
+            other => panic!("expected Every, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_some_predicate() {
+        let pred = parse_pred(r#"(some? #opts (regex "^ProxyCommand="))"#).unwrap();
+        match pred {
+            Predicate::Some { binding, .. } => assert_eq!(binding.as_str(), "opts"),
+            other => panic!("expected Some, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_every_arity() {
+        let err = parse_pred("(every? #paths)").unwrap_err();
+        assert!(
+            format!("{err}").contains("binding and a predicate"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn pred_first_miscall_hints_corrected_order() {
+        // Clojure-style `(every? PRED #var)` — caught with a dedicated
+        // hint pointing at the binding-first order (design D7).
+        let err = parse_pred(r#"(every? (regex "^/tmp/") #paths)"#).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("binding first"), "{msg}");
     }
 
     #[test]

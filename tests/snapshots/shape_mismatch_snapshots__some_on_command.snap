@@ -1,0 +1,17 @@
+---
+source: tests/shape_mismatch_snapshots.rs
+expression: "render(\"(parser \\\"bash\\\" (style gnu) (flags posix) (parameter \\\"c\\\" (command #cmd)))\\n\\\n         (rule \\\"bash\\\" (when (some? #cmd (regex \\\"rm\\\")) (deny)))\")"
+---
+  × found 1 value-usage problem(s) in the configuration
+
+Error: 
+  × `some?` needs a list of values
+   ╭─[config.lisp:1:66]
+ 1 │ (parser "bash" (style gnu) (flags posix) (parameter "c" (command #cmd)))
+   ·                                                                  ──┬─
+   ·                                                                    ╰── but `#cmd` is a command line, declared here
+ 2 │ (rule "bash" (when (some? #cmd (regex "rm")) (deny)))
+   ·                           ──┬─
+   ·                             ╰── this looks for a value in a list
+   ╰────
+  help: This carries a command line, not a list. If -c repeats, declare it (parameter "c" (set #cmd)).

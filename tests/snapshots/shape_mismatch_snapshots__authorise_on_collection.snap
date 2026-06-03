@@ -1,0 +1,17 @@
+---
+source: tests/shape_mismatch_snapshots.rs
+expression: "render(\"(parser \\\"ssh\\\" (style gnu) (flags posix) (parameter \\\"o\\\" (set #opts)))\\n\\\n         (rule \\\"ssh\\\" (authorise #opts))\")"
+---
+  × found 1 value-usage problem(s) in the configuration
+
+Error: 
+  × `authorise` needs a command line
+   ╭─[config.lisp:1:61]
+ 1 │ (parser "ssh" (style gnu) (flags posix) (parameter "o" (set #opts)))
+   ·                                                             ──┬──
+   ·                                                               ╰── but `#opts` is a list of values, declared here
+ 2 │ (rule "ssh" (authorise #opts))
+   ·                        ──┬──
+   ·                          ╰── this runs a command line
+   ╰────
+  help: Did you mean to inspect each value? Try (some? #opts PRED) or (every? #opts PRED). Or, if -o carries a single command line, declare it (parameter "o" (command #opts)).

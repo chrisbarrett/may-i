@@ -449,6 +449,52 @@ positionals and parameters.
 `#var`'s value (single tokens as-is; multi-token captures
 space-joined). Lifts a bound value into the predicate algebra.
 
+### Rule-body quantifiers: `(every? #var PRED)` and `(some? #var PRED)`
+
+When a parser binds a list of values — a `(parameter NAME (set #var))`
+or a repeating `(positional #var PAT *)` / `(positional #var PAT +)` —
+fold a predicate over it:
+
+- `(every? #var PRED)` matches iff **every** value satisfies `PRED`. An
+  empty list matches (vacuously true).
+- `(some? #var PRED)` matches iff **at least one** value satisfies
+  `PRED`. An empty list does not match.
+
+The binding comes first, the predicate second — like every other
+binding form (`(authorise #var)`, `(matches? #var PAT)`). `PRED` is the
+same single-value pattern sublanguage as `(matches? …)`: a literal, a
+`(regex …)`, `*`, `(or …)`/`(and …)`/`(not …)`, or a fact-binding
+`[:k *]`.
+
+```lisp
+;; Allow recursive rm only when every path is under /tmp.
+(parser "rm" (style gnu) (flags posix)
+  (positional #paths (regex "^/tmp/") *))
+
+(rule "rm"
+  (when (flag ["r" "recursive"])
+    (cond
+      ((every? #paths (regex "^/tmp/"))  (allow "Tmp paths only"))
+      (else                              (ask  "Recursive deletion")))))
+
+;; Ask before an ssh that sets a ProxyCommand.
+(parser "ssh" (style gnu) (flags posix) (parameter "o" (set #opts)) (rest #cmd))
+
+(rule "ssh"
+  (when (some? #opts (regex "^ProxyCommand="))
+    (ask "review ProxyCommand")))
+```
+
+A fact-binding inside the predicate accumulates matched values into a
+fact: `(every? #opts [:ssh/opt *])` records each value under `:ssh/opt`
+when the whole list matches; `(some? #opts (and (regex "^ProxyCommand=")
+[:ssh/proxy *]))` records just the matching values.
+
+Using `(every? …)` / `(some? …)` on a binding that is **not** a list —
+or `(authorise …)` on something that is not a command line — is
+reported when the config loads, naming what the binding is and where it
+was declared, with a suggested rewrite.
+
 ### The `:via` fact
 
 Recursion sets `:via` on the inner evaluation's facts, accumulating
@@ -629,14 +675,26 @@ treat these specific flags as value-bearing.
 
 The body declares parser-scoped flags and parameters:
 
-| Form                         | Meaning                                                                                                   |
-| :--------------------------- | :-------------------------------------------------------------------------------------------------------- |
-| `(flag NAME)`                | `NAME` is a pure boolean flag — it never takes a value.                                                   |
-| `(parameter NAME)`           | `NAME` is value-bearing. The tokeniser groups `-NAME VAL` so rules see them paired.                       |
-| `(parameter NAME (authorise))` | As above, plus re-evaluate the captured value as a command line on every invocation (`:via` is recorded). |
+| Form                           | Meaning                                                                                                   |
+| :----------------------------- | :-------------------------------------------------------------------------------------------------------- |
+| `(flag NAME)`                  | `NAME` is a pure boolean flag — it never takes a value.                                                   |
+| `(flag NAME (count #v))`       | Boolean flag whose occurrence count binds to `#v` (a count). Models `-vvv`.                               |
+| `(parameter NAME)`             | `NAME` is value-bearing. The tokeniser groups `-NAME VAL` so rules see them paired.                       |
+| `(parameter NAME #v)`          | As above, binding the value to `#v`. If the flag repeats, `#v` is the last occurrence's value.            |
+| `(parameter NAME (one #v))`    | Single value, bound to `#v`. The explicit spelling of `(parameter NAME #v)`.                               |
+| `(parameter NAME (last #v))`   | The value of the last occurrence — signals the flag is expected to repeat, last-wins.                     |
+| `(parameter NAME (set #v))`    | The list of every occurrence's value, in order. Models `ssh -o`, `docker -e`, `curl -H`.                  |
+| `(parameter NAME (command #v))`| A single value that is itself a command line (e.g. `bash -c`). Pair with `(authorise #v)`.                |
+| `(parameter NAME (authorise))` | Re-evaluate the captured value as a command line on every invocation (`:via` is recorded).                |
 
 `NAME` follows the same rules as `(flag …)` in rules — a string (`"n"` short,
 `"namespace"` long) or a `[short long]` vector.
+
+Each `(parameter …)` takes at most one of the forms above. The plain
+`(parameter NAME #v)` keeps a single value (last-wins for repeats); reach
+for `(set #v)` when a flag accumulates a list you want to inspect with
+`(every? …)` / `(some? …)` (see below). A counted flag's `#v` binds to a
+count and is always present (zero when the flag is absent).
 
 The four prelude styles cover the common cases:
 

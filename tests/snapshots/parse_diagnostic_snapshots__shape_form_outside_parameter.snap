@@ -1,0 +1,11 @@
+---
+source: tests/parse_diagnostic_snapshots.rs
+expression: "render(\"(parser \\\"x\\\" (style gnu) (flags posix) (positional #p (set #q)))\")"
+---
+  × shape form `(set …)` is valid only inside a (parameter …) declaration
+   ╭─[config.lisp:1:54]
+ 1 │ (parser "x" (style gnu) (flags posix) (positional #p (set #q)))
+   ·                                                      ────┬───
+   ·                                                          ╰── here
+   ╰────
+  help: move the shape form into the parameter, e.g. (parameter NAME (set #v))

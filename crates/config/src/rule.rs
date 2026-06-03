@@ -1,12 +1,12 @@
 // Rule and define parser for the unified DSL.
-// Syntax: (rule COMMAND EFFECT [CHECK...])
+// Syntax: (rule COMMAND BODY [CHECK...])
 
 use may_i_core::ast::{Define, Rule, Spanned};
 use may_i_sexpr::{RawError, Sexpr};
 
 /// Parse a rule from an s-expression.
 ///
-/// Syntax: `(rule COMMAND EFFECT [CHECK...])`
+/// Syntax: `(rule COMMAND BODY [CHECK...])`
 ///
 /// A rule takes exactly two positional forms: a command pattern and a single
 /// body effect. Optional `(check ...)` forms may follow. Rules with zero or
@@ -25,7 +25,7 @@ pub fn parse_rule(sexpr: &Sexpr) -> Result<Spanned<Rule>, RawError> {
 
     if list.len() < 2 {
         return Err(RawError::new(
-            "rule must have at least a command and an effect: (rule COMMAND EFFECT)",
+            "rule must have at least a command and an effect: (rule COMMAND BODY)",
             sexpr.span(),
         ));
     }
@@ -33,7 +33,7 @@ pub fn parse_rule(sexpr: &Sexpr) -> Result<Spanned<Rule>, RawError> {
     // Parse command effect (position 1 in the list, after "rule")
     let command_effect = crate::effect::parse_effect(&list[1])?;
 
-    // Parse all remaining items - exactly one effect plus optional checks
+    // Parse all remaining items - exactly one rule body plus optional checks
     let mut effects = Vec::new();
     let mut checks = Vec::new();
 
@@ -55,17 +55,17 @@ pub fn parse_rule(sexpr: &Sexpr) -> Result<Spanned<Rule>, RawError> {
 
     if effects.is_empty() {
         return Err(RawError::new(
-            "rule requires an effect: (rule COMMAND EFFECT)",
+            "rule requires a rule body: (rule COMMAND BODY)",
             sexpr.span(),
         ));
     }
 
     if effects.len() > 1 {
         return Err(RawError::new(
-            "rule accepts exactly one effect, but multiple were given",
+            "rule accepts exactly one rule body, but multiple were given",
             sexpr.span(),
         )
-        .with_help("wrap multiple effects with a combinator: (and ...) or (or ...)"));
+        .with_help("wrap multiple rule bodies with a combinator: (and ...) or (or ...)"));
     }
 
     let effect = effects.into_iter().next().unwrap();
@@ -237,7 +237,7 @@ mod tests {
     #[test]
     fn rule_with_no_effect_is_error() {
         let err = parse_rule_str(r#"(rule "git")"#).expect_err("expected error");
-        assert!(format!("{err}").contains("requires an effect"));
+        assert!(format!("{err}").contains("requires a rule body"));
     }
 
     #[test]
@@ -290,7 +290,7 @@ mod tests {
     fn multiple_effects_are_error() {
         let err = parse_rule_str(r#"(rule "git" (allow) (deny))"#).expect_err("expected error");
         let msg = format!("{err}");
-        assert!(msg.contains("exactly one effect"));
+        assert!(msg.contains("exactly one rule body"));
         assert!(err.help.as_deref().unwrap_or("").contains("combinator"));
     }
 

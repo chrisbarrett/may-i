@@ -1429,6 +1429,34 @@ impl EvalFold for TracingFold {
         (result, TraceNode::plain_list(docs))
     }
 
+    fn predicate_every(
+        &mut self,
+        binding: &may_i_core::ast::BindingName,
+        _pattern: &may_i_core::pattern::Expr<may_i_core::ast::Effect>,
+        result: PredicateResult,
+    ) -> Self::PredicateOut {
+        let docs = vec![
+            plain_atom("every?"),
+            plain_atom(binding.to_string()),
+            plain_atom("<expr>"),
+        ];
+        (result, TraceNode::plain_list(docs))
+    }
+
+    fn predicate_some(
+        &mut self,
+        binding: &may_i_core::ast::BindingName,
+        _pattern: &may_i_core::pattern::Expr<may_i_core::ast::Effect>,
+        result: PredicateResult,
+    ) -> Self::PredicateOut {
+        let docs = vec![
+            plain_atom("some?"),
+            plain_atom(binding.to_string()),
+            plain_atom("<expr>"),
+        ];
+        (result, TraceNode::plain_list(docs))
+    }
+
     fn rule_matched(
         &mut self,
         rule: &Rule,

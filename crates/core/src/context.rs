@@ -18,6 +18,11 @@ impl ContextFacts {
         self.values.contains_key(key)
     }
 
+    /// True if no facts are recorded.
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+
     /// Get the set of values for a key.
     pub fn get(&self, key: &Keyword) -> Option<&BTreeSet<String>> {
         self.values.get(key)

@@ -1,0 +1,11 @@
+---
+source: tests/parse_diagnostic_snapshots.rs
+expression: "render(\"(rule \\\"git\\\" (effect :allow))\")"
+---
+  × (effect :decision …) is retired; use (allow|ask|deny REASON?)
+   ╭─[config.lisp:1:14]
+ 1 │ (rule "git" (effect :allow))
+   ·              ───┬──
+   ·                 ╰── here
+   ╰────
+  help: run `may-i migrate` to convert legacy syntax

@@ -87,7 +87,7 @@ fn parse_expr(sexpr: &Sexpr) -> Result<Expr<Effect>, RawError> {
                             // Else branch: (else effect)
                             if branch_list.len() != 2 {
                                 return Err(RawError::new(
-                                    "else branch must have exactly one effect",
+                                    "else branch must have exactly one rule body",
                                     branch.span(),
                                 ));
                             }
@@ -100,7 +100,7 @@ fn parse_expr(sexpr: &Sexpr) -> Result<Expr<Effect>, RawError> {
                             // Regular branch: (test effect)
                             if branch_list.len() != 2 {
                                 return Err(RawError::new(
-                                    "cond branch must have (test effect) form",
+                                    "cond branch must have (test body) form",
                                     branch.span(),
                                 ));
                             }
@@ -135,10 +135,10 @@ fn parse_expr(sexpr: &Sexpr) -> Result<Expr<Effect>, RawError> {
                     Ok(Expr::Cond(branches))
                 }
                 "when" => {
-                    // (when PRED EFFECT) -> Cond([(PRED, EFFECT)])
+                    // (when PRED BODY) -> Cond([(PRED, BODY)])
                     if list.len() != 3 {
                         return Err(RawError::new(
-                            "when must have exactly 2 arguments: (when PRED EFFECT)",
+                            "when must have exactly 2 arguments: (when PRED BODY)",
                             *span,
                         ));
                     }
@@ -151,10 +151,10 @@ fn parse_expr(sexpr: &Sexpr) -> Result<Expr<Effect>, RawError> {
                     Ok(Expr::Cond(branches))
                 }
                 "unless" => {
-                    // (unless PRED EFFECT) -> Cond([(Not(PRED), EFFECT)])
+                    // (unless PRED BODY) -> Cond([(Not(PRED), BODY)])
                     if list.len() != 3 {
                         return Err(RawError::new(
-                            "unless must have exactly 2 arguments: (unless PRED EFFECT)",
+                            "unless must have exactly 2 arguments: (unless PRED BODY)",
                             *span,
                         ));
                     }
@@ -166,6 +166,15 @@ fn parse_expr(sexpr: &Sexpr) -> Result<Expr<Effect>, RawError> {
                     }];
                     Ok(Expr::Cond(branches))
                 }
+                "many-till" => Err(RawError::new(
+                    "(many-till …) is only valid inside a (parameter …) declaration",
+                    list[0].span(),
+                )
+                .with_label("not valid in a rule body")
+                .with_help(
+                    "declare it parser-side: (parameter NAME (many-till PAT) #var), \
+                     then reference #var from the rule",
+                )),
                 other => Err(RawError::new(
                     format!("unknown expression form: {other}"),
                     list[0].span(),
@@ -1130,14 +1139,14 @@ mod tests {
     fn parse_cond_else_wrong_arity_error() {
         let err =
             parse_arg(r#"(positional (cond (else (allow) (deny))))"#).expect_err("expected error");
-        assert!(format!("{err}").contains("else branch must have exactly one effect"));
+        assert!(format!("{err}").contains("else branch must have exactly one rule body"));
     }
 
     #[test]
     fn parse_cond_branch_wrong_arity_error() {
         let err =
             parse_arg(r#"(positional (cond ("a" (allow) "extra")))"#).expect_err("expected error");
-        assert!(format!("{err}").contains("cond branch must have (test effect) form"));
+        assert!(format!("{err}").contains("cond branch must have (test body) form"));
     }
 
     #[test]

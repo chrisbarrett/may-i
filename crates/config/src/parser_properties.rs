@@ -42,14 +42,32 @@ mod tests {
         (binding, pat, quant).prop_map(|(b, p, q)| format!("(positional {b}{p}{q})"))
     }
 
-    /// `(parameter NAME [#var])` short form.
+    /// `(parameter NAME [SHAPE] [#var])` form, exercising every shape
+    /// spelling (unannotated, trailing `#var`, and `(one|last|set|command
+    /// #v)`).
     fn parameter_decl() -> impl Strategy<Value = String> {
         let name = "\"[a-z][a-z]{0,3}\"";
         let trailing = prop_oneof![
             Just("".to_string()),
             binding_atom().prop_map(|b| format!(" {b}")),
         ];
-        (name, trailing).prop_map(|(n, t)| format!("(parameter {n}{t})"))
+        let shaped = (
+            prop_oneof![Just("one"), Just("last"), Just("set"), Just("command")],
+            binding_atom(),
+        )
+            .prop_map(|(kind, b)| format!(" ({kind} {b})"));
+        let body = prop_oneof![trailing, shaped];
+        (name, body).prop_map(|(n, t)| format!("(parameter {n}{t})"))
+    }
+
+    /// `(flag NAME [(count #v)])` form.
+    fn flag_decl_gen() -> impl Strategy<Value = String> {
+        let name = "\"[a-z][a-z]{0,3}\"";
+        let body = prop_oneof![
+            Just("".to_string()),
+            binding_atom().prop_map(|b| format!(" (count {b})")),
+        ];
+        (name, body).prop_map(|(n, b)| format!("(flag {n}{b})"))
     }
 
     /// Assemble a complete `(parser …)` form with new-style body items.
@@ -63,9 +81,11 @@ mod tests {
             proptest::option::of(rest_decl()),
             prop::collection::vec(positional_decl(), 0..3),
             prop::collection::vec(parameter_decl(), 0..3),
+            prop::collection::vec(flag_decl_gen(), 0..3),
         )
-            .prop_map(|(flags, rest, positionals, parameters)| {
+            .prop_map(|(flags, rest, positionals, parameters, flag_decls)| {
                 let mut body: Vec<String> = vec!["(style gnu)".to_string(), flags];
+                body.extend(flag_decls);
                 body.extend(parameters);
                 body.extend(positionals);
                 if let Some(r) = rest {
@@ -194,6 +214,33 @@ mod tests {
             prop_assert_eq!(original.parameters.len(), reparsed.parameters.len());
             prop_assert_eq!(original.positionals.len(), reparsed.positionals.len());
             prop_assert_eq!(original.flags.len(), reparsed.flags.len());
+
+            // Shape forms survive canonicalisation: match parameters by
+            // name and compare the recovered shape form + binding.
+            for op in &original.parameters {
+                let rp = reparsed
+                    .parameters
+                    .iter()
+                    .find(|p| p.names == op.names)
+                    .expect("parameter survives by name");
+                prop_assert_eq!(op.shape_form, rp.shape_form);
+                prop_assert_eq!(
+                    op.binding.as_ref().map(|b| b.as_str().to_string()),
+                    rp.binding.as_ref().map(|b| b.as_str().to_string())
+                );
+            }
+            // Count bindings survive on flags.
+            for of in &original.flags {
+                let rf = reparsed
+                    .flags
+                    .iter()
+                    .find(|f| f.names == of.names)
+                    .expect("flag survives by name");
+                prop_assert_eq!(
+                    of.count_binding.as_ref().map(|b| b.as_str().to_string()),
+                    rf.count_binding.as_ref().map(|b| b.as_str().to_string())
+                );
+            }
         }
 
         /// Idempotence: canonicalise twice == canonicalise once.

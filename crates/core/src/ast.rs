@@ -169,7 +169,11 @@ pub enum Effect {
     /// token → tokenise; token list → join then tokenise) and
     /// re-evaluates against the active rule set.
     /// Syntax: `(authorise #var)`
-    Authorise { binding: BindingName },
+    Authorise {
+        binding: BindingName,
+        /// Source span of the `#var` reference, for shape diagnostics.
+        binding_span: Span,
+    },
 }
 
 impl Effect {
@@ -264,7 +268,7 @@ impl std::fmt::Display for Effect {
             Effect::Unless { .. } => write!(f, "<unless-effect>"),
             Effect::If { .. } => write!(f, "<if-effect>"),
             Effect::Cond { .. } => write!(f, "<cond-effect>"),
-            Effect::Authorise { binding } => write!(f, "(authorise {binding})"),
+            Effect::Authorise { binding, .. } => write!(f, "(authorise {binding})"),
         }
     }
 }
@@ -302,7 +306,11 @@ pub enum Predicate {
     /// True iff the named parser-binding resolves to a value (not
     /// `Unbound`) in the active binding environment.
     /// Syntax: `(bound? #var)`
-    Bound { binding: BindingName },
+    Bound {
+        binding: BindingName,
+        /// Source span of the `#var` reference, for shape diagnostics.
+        binding_span: Span,
+    },
 
     /// True iff the named parser-binding resolves and its value
     /// matches `pattern` (Token values matched directly; Tokens values
@@ -310,6 +318,27 @@ pub enum Predicate {
     /// Syntax: `(matches? #var PAT)`
     Matches {
         binding: BindingName,
+        binding_span: Span,
+        pattern: crate::pattern::Expr<Effect>,
+    },
+
+    /// True iff every element of the collection bound to `binding`
+    /// matches `pattern`. Vacuously true on the empty collection.
+    /// `binding` must be `Collection Token`-shaped.
+    /// Syntax: `(every? #var PRED)`
+    Every {
+        binding: BindingName,
+        binding_span: Span,
+        pattern: crate::pattern::Expr<Effect>,
+    },
+
+    /// True iff at least one element of the collection bound to
+    /// `binding` matches `pattern`. False on the empty collection.
+    /// `binding` must be `Collection Token`-shaped.
+    /// Syntax: `(some? #var PRED)`
+    Some {
+        binding: BindingName,
+        binding_span: Span,
         pattern: crate::pattern::Expr<Effect>,
     },
 }
@@ -377,11 +406,21 @@ impl ToDoc for Predicate {
                 Doc::broken_list(cs)
             }
             Predicate::Not(pred) => Doc::list(vec![Doc::atom("not"), pred.to_doc()]),
-            Predicate::Bound { binding } => {
+            Predicate::Bound { binding, .. } => {
                 Doc::list(vec![Doc::atom("bound?"), Doc::atom(binding.to_string())])
             }
             Predicate::Matches { binding, .. } => Doc::list(vec![
                 Doc::atom("matches?"),
+                Doc::atom(binding.to_string()),
+                Doc::atom("<expr>"),
+            ]),
+            Predicate::Every { binding, .. } => Doc::list(vec![
+                Doc::atom("every?"),
+                Doc::atom(binding.to_string()),
+                Doc::atom("<expr>"),
+            ]),
+            Predicate::Some { binding, .. } => Doc::list(vec![
+                Doc::atom("some?"),
                 Doc::atom(binding.to_string()),
                 Doc::atom("<expr>"),
             ]),
@@ -826,6 +865,29 @@ pub enum ParameterTreatment {
     Authorise,
 }
 
+/// Surface shape form written on a parameter binding: which of `(one …)`,
+/// `(last …)`, `(set …)`, `(command …)` appeared between the parameter
+/// name and its `#var`, or none. This records the *surface* declaration;
+/// the contributor-facing `Shape` the engine type-checks against is
+/// derived from this (plus `Capture`) — see the `binding-shapes` spec.
+///
+/// Contributor-facing. `Unannotated` is the legacy `(parameter NAME #v)`
+/// form and behaves identically to `Last` (last-occurrence wins).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ParamShapeForm {
+    /// `(parameter NAME #v)` with no shape form. Last-wins single token.
+    #[default]
+    Unannotated,
+    /// `(one #v)` — explicit single-occurrence; binds the last value.
+    One,
+    /// `(last #v)` — explicit last-wins across occurrences.
+    Last,
+    /// `(set #v)` — collects every occurrence into an ordered list.
+    Set,
+    /// `(command #v)` — single-occurrence; marks the value command-bearing.
+    Command,
+}
+
 /// Capture-shape of a parameter declaration. The default is single-token
 /// (the parameter consumes one trailing token); `ManyTill` consumes
 /// multiple tokens until a terminator pattern matches, used to model
@@ -846,6 +908,26 @@ pub enum Capture {
     },
 }
 
+/// One `(flag NAME [(count #v)])` declaration in a `(parser …)` body.
+/// `names` lists the short/long spellings (e.g. `["r", "recursive"]`).
+/// `count_binding` is set when the flag declares a `(count #v)` shape,
+/// binding `#v` to the number of occurrences in argv.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlagDecl {
+    pub names: Vec<String>,
+    pub count_binding: Option<BindingName>,
+}
+
+impl FlagDecl {
+    /// A presence-only flag with no count binding.
+    pub fn new(names: Vec<String>) -> Self {
+        Self {
+            names,
+            count_binding: None,
+        }
+    }
+}
+
 /// One parameter declaration in a `(parser …)` body. `names` lists the
 /// short/long spellings (e.g. `["n", "namespace"]`). For a single
 /// spelling, the vector has one entry.
@@ -853,6 +935,11 @@ pub enum Capture {
 pub struct ParameterDecl {
     pub names: Vec<String>,
     pub treatment: ParameterTreatment,
+    /// Surface shape form (`(one …)`/`(last …)`/`(set …)`/`(command …)`),
+    /// or `Unannotated` for the legacy `(parameter NAME #v)` spelling.
+    /// Drives multi-occurrence binding semantics and the engine's shape
+    /// inference.
+    pub shape_form: ParamShapeForm,
     /// How the parameter consumes tokens at tokenisation time. Defaults
     /// to single-token capture; `ManyTill` supports `find -exec … ;`.
     pub capture: Capture,
@@ -872,7 +959,7 @@ pub struct Parser {
     pub style_name: String,
     /// `(flag NAME)` body items — each entry is a single short/long
     /// spelling list.
-    pub flags: Vec<Vec<String>>,
+    pub flags: Vec<FlagDecl>,
     pub parameters: Vec<ParameterDecl>,
     /// Declared positional slots in source order (parser-body
     /// `(positional [#var] PAT [QUANT])`). Matched in declaration order
@@ -884,6 +971,9 @@ pub struct Parser {
     /// Optional `(rest #var)` declaration. Binds the unconsumed tail
     /// of argv to a name.
     pub rest: Option<BindingName>,
+    /// Source span of each declared `#var` binding atom, keyed by name.
+    /// Used by the shape checker to point at the declaration site.
+    pub binding_spans: std::collections::HashMap<BindingName, Span>,
     pub span: Span,
     pub provenance: Provenance,
 }
@@ -894,11 +984,14 @@ pub struct Parser {
 pub struct ResolvedParser {
     pub program: String,
     pub style: Style,
-    pub flags: Vec<Vec<String>>,
+    pub flags: Vec<FlagDecl>,
     pub parameters: Vec<ParameterDecl>,
     pub positionals: Vec<PositionalDecl>,
     pub flags_mode: FlagsMode,
     pub rest: Option<BindingName>,
+    /// Source span of each declared `#var` binding atom, keyed by name.
+    /// Used by the shape checker to point at the declaration site.
+    pub binding_spans: std::collections::HashMap<BindingName, Span>,
 }
 
 impl ResolvedParser {
@@ -913,6 +1006,7 @@ impl ResolvedParser {
             positionals: Vec::new(),
             flags_mode: FlagsMode::Permute,
             rest: None,
+            binding_spans: std::collections::HashMap::new(),
         }
     }
 
@@ -1025,6 +1119,7 @@ impl Config {
             positionals: parser.positionals.clone(),
             flags_mode: parser.flags_mode.clone(),
             rest: parser.rest.clone(),
+            binding_spans: parser.binding_spans.clone(),
         }
     }
 
@@ -1045,6 +1140,7 @@ impl Config {
                 parser.parameters.push(ParameterDecl {
                     names: vec![name],
                     treatment: ParameterTreatment::None,
+                    shape_form: ParamShapeForm::Unannotated,
                     capture: Capture::Single,
                     binding: None,
                 });
@@ -1161,7 +1257,7 @@ impl ToDoc for Effect {
             Effect::Unless { .. } => Doc::atom("<unless-effect>"),
             Effect::If { .. } => Doc::atom("<if-effect>"),
             Effect::Cond { .. } => Doc::atom("<cond-effect>"),
-            Effect::Authorise { binding } => {
+            Effect::Authorise { binding, .. } => {
                 Doc::list(vec![Doc::atom("authorise"), Doc::atom(binding.to_string())])
             }
         }

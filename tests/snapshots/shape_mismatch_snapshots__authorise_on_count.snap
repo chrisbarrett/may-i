@@ -1,0 +1,17 @@
+---
+source: tests/shape_mismatch_snapshots.rs
+expression: "render(\"(parser \\\"curl\\\" (style gnu) (flags permute) (flag \\\"v\\\" (count #verbosity)))\\n\\\n         (rule \\\"curl\\\" (authorise #verbosity))\")"
+---
+  × found 1 value-usage problem(s) in the configuration
+
+Error: 
+  × `authorise` needs a command line
+   ╭─[config.lisp:1:61]
+ 1 │ (parser "curl" (style gnu) (flags permute) (flag "v" (count #verbosity)))
+   ·                                                             ─────┬────
+   ·                                                                  ╰── but `#verbosity` is a count, declared here
+ 2 │ (rule "curl" (authorise #verbosity))
+   ·                         ─────┬────
+   ·                              ╰── this runs a command line
+   ╰────
+  help: A count is not a command line — review the parser declaration.

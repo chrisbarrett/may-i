@@ -256,6 +256,23 @@ pub trait EvalFold {
         result: PredicateResult,
     ) -> Self::PredicateOut;
 
+    /// `(every? #var PRED)` — `PRED` folded over a collection binding;
+    /// pattern preserved for trace rendering.
+    fn predicate_every(
+        &mut self,
+        binding: &may_i_core::ast::BindingName,
+        pattern: &may_i_core::pattern::Expr<Effect>,
+        result: PredicateResult,
+    ) -> Self::PredicateOut;
+
+    /// `(some? #var PRED)` — analogous to `every?`.
+    fn predicate_some(
+        &mut self,
+        binding: &may_i_core::ast::BindingName,
+        pattern: &may_i_core::pattern::Expr<Effect>,
+        result: PredicateResult,
+    ) -> Self::PredicateOut;
+
     // -- Rule-level --
 
     fn rule_matched(
@@ -476,6 +493,24 @@ impl EvalFold for PureFold {
     }
 
     fn predicate_matches(
+        &mut self,
+        _binding: &may_i_core::ast::BindingName,
+        _pattern: &may_i_core::pattern::Expr<Effect>,
+        result: PredicateResult,
+    ) -> PredicateResult {
+        result
+    }
+
+    fn predicate_every(
+        &mut self,
+        _binding: &may_i_core::ast::BindingName,
+        _pattern: &may_i_core::pattern::Expr<Effect>,
+        result: PredicateResult,
+    ) -> PredicateResult {
+        result
+    }
+
+    fn predicate_some(
         &mut self,
         _binding: &may_i_core::ast::BindingName,
         _pattern: &may_i_core::pattern::Expr<Effect>,
