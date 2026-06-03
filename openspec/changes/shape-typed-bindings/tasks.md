@@ -26,7 +26,7 @@
 - [x] 4.1 Implement the shape-check pass over rule bodies, invoked after parser resolution and before trust filtering. Walk every rule body and check each `#var` reference's shape against the consuming operator's signature.
 - [x] 4.2 Encode operator shape signatures: `authorise → Command`, `bound? → any`, `matches? → Token|Command`, `every? → Collection Token`, `some? → Collection Token`, `with-facts → Token|Command|Collection Token`.
 - [x] 4.3 Produce structured diagnostics carrying both spans (rule-body operator and parser declaration) plus the (operator, found shape, expected shape) triple.
-- [ ] 4.4 Wire shape diagnostics into the existing diagnostic pipeline so they appear at config-load failure and `may-i check` consistently.
+- [x] 4.4 Wire shape diagnostics into the existing diagnostic pipeline so they appear at config-load failure and `may-i check` consistently.
 
 ## 5. Rule-side quantifier evaluation
 
@@ -37,13 +37,13 @@
 
 ## 6. Elm-style error rendering (miette-backed)
 
-- [ ] 6.1 Add `miette` as a workspace dependency; pick a single graphical reporter configuration and wire it into the diagnostic emission path used by config-load failures and `may-i check`.
-- [ ] 6.2 Define a `ShapeDiagnostic` type implementing `miette::Diagnostic` carrying both spans (rule-body operator site and parser-declaration site) as `#[related]` labels, plus the operator name, found shape, expected shape, and an optional hint string.
-- [ ] 6.3 Implement the user-facing shape vocabulary mapping (`Token` → "a single value", `Command` → "a command line", `Collection Token` → "a list of values", `Count` → "a count") used in `ShapeDiagnostic`'s rendered prose; assert via tests that the internal names never leak.
-- [ ] 6.4 Implement per-mismatch hint generation as a centralised function keyed by `(operator, found_shape)` → optional rewrite suggestion. Cover the families enumerated in the `binding-shapes` spec.
-- [ ] 6.5 Implement the pred-first miscall detector — `(every? PRED #v)` where the first argument is a Pattern and the second is a `#var` reference — and emit a dedicated hint pointing at the corrected `(every? #v PRED)` order (per design D7).
-- [ ] 6.6 Add golden-output tests for each mismatch family using sample configs in `crates/engine/tests/golden/shape-mismatches/`. Pin rendered output via `insta` snapshots.
-- [ ] 6.7 Confirm the renderer's output respects existing terminal/colour conventions in `may-i-output`; in hook mode the JSON path SHALL keep using structured fields, with the rendered text suppressed.
+- [x] 6.1 Add `miette` as a workspace dependency; pick a single graphical reporter configuration and wire it into the diagnostic emission path used by config-load failures and `may-i check`.
+- [x] 6.2 Define a `ShapeDiagnostic` type implementing `miette::Diagnostic` carrying both spans (rule-body operator site and parser-declaration site) as `#[related]` labels, plus the operator name, found shape, expected shape, and an optional hint string.
+- [x] 6.3 Implement the user-facing shape vocabulary mapping (`Token` → "a single value", `Command` → "a command line", `Collection Token` → "a list of values", `Count` → "a count") used in `ShapeDiagnostic`'s rendered prose; assert via tests that the internal names never leak.
+- [x] 6.4 Implement per-mismatch hint generation as a centralised function keyed by `(operator, found_shape)` → optional rewrite suggestion. Cover the families enumerated in the `binding-shapes` spec.
+- [x] 6.5 Implement the pred-first miscall detector — `(every? PRED #v)` where the first argument is a Pattern and the second is a `#var` reference — and emit a dedicated hint pointing at the corrected `(every? #v PRED)` order (per design D7).
+- [x] 6.6 Add golden-output tests for each mismatch family using sample configs in `crates/engine/tests/golden/shape-mismatches/`. Pin rendered output via `insta` snapshots.
+- [x] 6.7 Confirm the renderer's output respects existing terminal/colour conventions in `may-i-output`; in hook mode the JSON path SHALL keep using structured fields, with the rendered text suppressed.
 
 ## 7. Parser-diagnostic uplift via the same renderer
 

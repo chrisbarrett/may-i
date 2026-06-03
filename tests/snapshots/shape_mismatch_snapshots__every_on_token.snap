@@ -1,0 +1,17 @@
+---
+source: tests/shape_mismatch_snapshots.rs
+expression: "render(\"(parser \\\"xargs\\\" (style gnu) (flags posix) (parameter \\\"n\\\" #procs) (rest #cmd))\\n\\\n         (rule \\\"xargs\\\" (when (every? #procs (regex \\\"^[0-9]+$\\\")) (allow)))\")"
+---
+  × found 1 value-usage problem(s) in the configuration
+
+Error: 
+  × `every?` needs a list of values
+   ╭─[config.lisp:1:58]
+ 1 │ (parser "xargs" (style gnu) (flags posix) (parameter "n" #procs) (rest #cmd))
+   ·                                                          ───┬──
+   ·                                                             ╰── but `#procs` is a single value, declared here
+ 2 │ (rule "xargs" (when (every? #procs (regex "^[0-9]+$")) (allow)))
+   ·                             ───┬──
+   ·                                ╰── this looks at every value in a list
+   ╰────
+  help: To match every occurrence, collect them into a list: declare the parser as (parameter "n" (set #procs)).

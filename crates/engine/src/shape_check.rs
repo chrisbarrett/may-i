@@ -70,6 +70,9 @@ pub struct ShapeMismatch {
     /// Source span of the parser declaration that assigned `found`
     /// (absent for synthetic parsers).
     pub decl_span: Option<Span>,
+    /// The declaring parameter/flag NAME, for rewrite hints (absent for
+    /// positional/rest bindings).
+    pub decl_name: Option<String>,
 }
 
 /// Run the shape checker over every rule body in `config`. Returns the
@@ -108,7 +111,7 @@ fn env_for_rule(config: &Config, rule: &may_i_core::ast::Rule) -> ShapeEnv {
         let parser = config.parser_for_with_rules(prog);
         let env = ShapeEnv::from_parser(&parser);
         for (name, decl) in env.iter() {
-            merged.entry(name.clone()).or_insert(decl);
+            merged.entry(name.clone()).or_insert_with(|| decl.clone());
         }
     }
     ShapeEnv::from_map(merged)
@@ -227,6 +230,7 @@ fn check_use(
             found: decl.shape,
             use_span,
             decl_span: decl.decl_span,
+            decl_name: decl.decl_name.clone(),
         });
     }
 }

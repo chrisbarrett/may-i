@@ -95,6 +95,16 @@ impl CommandPipeline {
     /// trust-store loader.
     pub fn load(config_path: Option<&Path>, json: bool) -> miette::Result<Self> {
         let loaded = may_i_config::load_and_resolve(config_path)?;
+        // Shape check runs after parser resolution and before trust
+        // filtering: a value-shape mismatch is a hard load error,
+        // surfaced consistently across every command that loads config.
+        let mismatches = may_i_engine::shape_check::check_config(&loaded.config);
+        if let Some(source) = loaded.source_text.as_deref() {
+            let path = loaded.config_path.display().to_string();
+            if let Some(report) = crate::shape_diag::build_report(&mismatches, source, &path) {
+                return Err(report);
+            }
+        }
         Ok(Self::with_trust(loaded, json, InvocationTrust::new(json)))
     }
 

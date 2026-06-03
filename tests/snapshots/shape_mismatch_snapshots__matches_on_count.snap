@@ -1,0 +1,17 @@
+---
+source: tests/shape_mismatch_snapshots.rs
+expression: "render(\"(parser \\\"curl\\\" (style gnu) (flags permute) (flag \\\"v\\\" (count #verbosity)))\\n\\\n         (rule \\\"curl\\\" (when (matches? #verbosity (regex \\\"3\\\")) (ask)))\")"
+---
+  × found 1 value-usage problem(s) in the configuration
+
+Error: 
+  × `matches?` needs a single value or a command line
+   ╭─[config.lisp:1:61]
+ 1 │ (parser "curl" (style gnu) (flags permute) (flag "v" (count #verbosity)))
+   ·                                                             ─────┬────
+   ·                                                                  ╰── but `#verbosity` is a count, declared here
+ 2 │ (rule "curl" (when (matches? #verbosity (regex "3")) (ask)))
+   ·                              ─────┬────
+   ·                                   ╰── this matches a single value
+   ╰────
+  help: Counts compare to numbers, not patterns. Check presence with (bound? #verbosity) until count comparisons are available.

@@ -93,12 +93,15 @@ pub fn shape_of_rest() -> Shape {
     Shape::Command
 }
 
-/// A binding's declared shape plus the source span of the declaration
-/// that assigned it (when known — synthetic parsers carry no spans).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A binding's declared shape, the source span of the declaration that
+/// assigned it (when known — synthetic parsers carry no spans), and the
+/// declaring parameter/flag NAME (for rewrite hints; absent for
+/// positional/rest bindings).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShapeDecl {
     pub shape: Shape,
     pub decl_span: Option<Span>,
+    pub decl_name: Option<String>,
 }
 
 /// The declared shapes of every `#var` a parser body binds, keyed by
@@ -114,32 +117,33 @@ impl ShapeEnv {
     /// with the span of its `#var` declaration atom.
     pub fn from_parser(parser: &ResolvedParser) -> Self {
         let mut map = HashMap::new();
-        let mut insert = |name: &BindingName, shape: Shape| {
+        let mut insert = |name: &BindingName, shape: Shape, decl_name: Option<String>| {
             map.insert(
                 name.clone(),
                 ShapeDecl {
                     shape,
                     decl_span: parser.binding_spans.get(name).copied(),
+                    decl_name,
                 },
             );
         };
         for decl in &parser.parameters {
             if let Some(name) = &decl.binding {
-                insert(name, shape_of_parameter(decl));
+                insert(name, shape_of_parameter(decl), decl.names.first().cloned());
             }
         }
         for decl in &parser.flags {
             if let (Some(name), Some(shape)) = (&decl.count_binding, shape_of_flag(decl)) {
-                insert(name, shape);
+                insert(name, shape, decl.names.first().cloned());
             }
         }
         for decl in &parser.positionals {
             if let Some(name) = &decl.binding {
-                insert(name, shape_of_positional(decl));
+                insert(name, shape_of_positional(decl), None);
             }
         }
         if let Some(name) = &parser.rest {
-            insert(name, shape_of_rest());
+            insert(name, shape_of_rest(), None);
         }
         Self { map }
     }
@@ -152,7 +156,7 @@ impl ShapeEnv {
 
     /// The full declaration (shape + span) for `name`.
     pub fn get_decl(&self, name: &BindingName) -> Option<ShapeDecl> {
-        self.map.get(name).copied()
+        self.map.get(name).cloned()
     }
 
     /// Build from a precomputed name → declaration map.
@@ -166,8 +170,8 @@ impl ShapeEnv {
     }
 
     /// Iterate over the declared bindings.
-    pub fn iter(&self) -> impl Iterator<Item = (&BindingName, ShapeDecl)> {
-        self.map.iter().map(|(k, v)| (k, *v))
+    pub fn iter(&self) -> impl Iterator<Item = (&BindingName, &ShapeDecl)> {
+        self.map.iter()
     }
 }
 
