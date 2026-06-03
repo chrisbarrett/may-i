@@ -332,6 +332,60 @@ mod tests {
     }
 
     #[test]
+    fn mismatch_inside_cond_if_and_or_not_arms() {
+        // every? on a Token (#n) flagged wherever it appears in the
+        // effect/predicate tree.
+        let parser =
+            "(parser \"xargs\" (style gnu) (flags posix) (parameter \"n\" #procs) (rest #c))";
+        let bad = "(every? #procs (regex \"x\"))";
+        for body in [
+            format!("(cond ({bad} (allow)) (else (deny)))"),
+            format!("(if {bad} (allow) (deny))"),
+            format!("(when (and {bad} (flag \"v\")) (allow))"),
+            format!("(when (or {bad} (flag \"v\")) (allow))"),
+            format!("(when (not {bad}) (allow))"),
+        ] {
+            let m = check(&format!("{parser}\n(rule \"xargs\" {body})"));
+            assert_eq!(m.len(), 1, "body `{body}` → {m:?}");
+            assert_eq!(m[0].operator, Operator::Every);
+        }
+    }
+
+    #[test]
+    fn merges_env_across_or_command_programs() {
+        // The rule matches two programs; the binding is declared by one.
+        let m = check(
+            r#"
+            (parser "ssh" (style gnu) (flags posix) (parameter "o" (set #opts)))
+            (rule (or "ssh" "scp") (authorise #opts))
+            "#,
+        );
+        assert_eq!(m.len(), 1, "{m:?}");
+        assert_eq!(m[0].found, Shape::CollectionToken);
+    }
+
+    #[test]
+    fn undeclared_binding_is_skipped() {
+        // #nope is not declared by any parser for this rule → no
+        // mismatch (conservative; avoids false positives).
+        let m = check(
+            r#"
+            (parser "ssh" (style gnu) (flags posix) (parameter "o" (set #opts)))
+            (rule "ssh" (when (every? #nope (regex "x")) (allow)))
+            "#,
+        );
+        assert!(m.is_empty(), "{m:?}");
+    }
+
+    #[test]
+    fn rule_for_program_without_bindings_is_skipped() {
+        // No parser declares bindings for this program → empty shape
+        // environment → the rule is skipped (the `env.is_empty()` guard).
+        let m = check("(rule \"totally-undeclared\" (when (every? #x (regex \"y\")) (allow)))");
+        assert!(m.is_empty(), "{m:?}");
+    }
+
+    #[test]
     fn mismatch_inside_define_is_checked() {
         let m = check(
             r#"

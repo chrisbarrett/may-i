@@ -68,9 +68,9 @@
 
 ## 10. Verification
 
-- [ ] 10.1 Run `cargo fmt` over all touched crates.
-- [ ] 10.2 Run `may-i fmt` over any updated `examples/*.lisp` files.
-- [ ] 10.3 Run `cargo test --workspace` and confirm all suites pass.
-- [ ] 10.4 Run `cargo tarpaulin` and confirm coverage on the new shape checker, quantifier evaluation, and renderer is at parity with surrounding code; add proptests for any branch the existing tests miss.
-- [ ] 10.5 Run `openspec validate shape-typed-bindings --strict` and resolve any spec/structure findings.
-- [ ] 10.6 Run `prek` over the working tree; resolve any hook findings.
+- [x] 10.1 Run `cargo fmt` over all touched crates.
+- [x] 10.2 Run `may-i fmt` over any updated `examples/*.lisp` files.
+- [x] 10.3 Run `cargo test --workspace` and confirm all suites pass.
+- [x] 10.4 Run `cargo tarpaulin` and confirm coverage on the new shape checker, quantifier evaluation, and renderer is at parity with surrounding code; add proptests for any branch the existing tests miss.
+- [x] 10.5 Run `openspec validate shape-typed-bindings --strict` and resolve any spec/structure findings.
+- [x] 10.6 Run `prek` over the working tree; resolve any hook findings.

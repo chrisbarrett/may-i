@@ -216,6 +216,23 @@ mod tests {
     }
 
     #[test]
+    fn hints_without_a_parameter_name() {
+        // A positional binding has no parameter NAME, exercising the
+        // name-less hint branches.
+        let out = render(
+            "(parser \"rm\" (style gnu) (flags posix) (positional #ps * *))\n\
+             (rule \"rm\" (authorise #ps))",
+        );
+        assert!(out.contains("`authorise` needs a command line"), "{out}");
+        assert!(out.contains("but `#ps` is a list of values"), "{out}");
+        // Name-less hint variant: no (parameter "NAME" …) rewrite.
+        assert!(
+            out.contains("(every? #ps") || out.contains("(command #ps)"),
+            "{out}"
+        );
+    }
+
+    #[test]
     fn authorise_on_collection_hints_iteration() {
         let out = render(
             "(parser \"ssh\" (style gnu) (flags posix) (parameter \"o\" (set #opts)))\n\
