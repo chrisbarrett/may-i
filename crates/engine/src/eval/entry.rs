@@ -700,6 +700,7 @@ mod tokenisation_properties {
             parser.parameters.push(ParameterDecl {
                 names: vec![name.clone()],
                 treatment: PT::None,
+                shape_form: may_i_core::ast::ParamShapeForm::Unannotated,
                 capture: may_i_core::ast::Capture::Single,
                 binding: None,
             });
@@ -790,6 +791,7 @@ mod tokenisation_properties {
         parser.parameters.push(may_i_core::ast::ParameterDecl {
             names: vec!["u".into()],
             treatment: ParameterTreatment::None,
+            shape_form: may_i_core::ast::ParamShapeForm::Unannotated,
             capture: may_i_core::ast::Capture::Single,
             binding: None,
         });

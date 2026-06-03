@@ -826,6 +826,29 @@ pub enum ParameterTreatment {
     Authorise,
 }
 
+/// Surface shape form written on a parameter binding: which of `(one …)`,
+/// `(last …)`, `(set …)`, `(command …)` appeared between the parameter
+/// name and its `#var`, or none. This records the *surface* declaration;
+/// the contributor-facing `Shape` the engine type-checks against is
+/// derived from this (plus `Capture`) — see the `binding-shapes` spec.
+///
+/// Contributor-facing. `Unannotated` is the legacy `(parameter NAME #v)`
+/// form and behaves identically to `Last` (last-occurrence wins).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ParamShapeForm {
+    /// `(parameter NAME #v)` with no shape form. Last-wins single token.
+    #[default]
+    Unannotated,
+    /// `(one #v)` — explicit single-occurrence; binds the last value.
+    One,
+    /// `(last #v)` — explicit last-wins across occurrences.
+    Last,
+    /// `(set #v)` — collects every occurrence into an ordered list.
+    Set,
+    /// `(command #v)` — single-occurrence; marks the value command-bearing.
+    Command,
+}
+
 /// Capture-shape of a parameter declaration. The default is single-token
 /// (the parameter consumes one trailing token); `ManyTill` consumes
 /// multiple tokens until a terminator pattern matches, used to model
@@ -846,6 +869,26 @@ pub enum Capture {
     },
 }
 
+/// One `(flag NAME [(count #v)])` declaration in a `(parser …)` body.
+/// `names` lists the short/long spellings (e.g. `["r", "recursive"]`).
+/// `count_binding` is set when the flag declares a `(count #v)` shape,
+/// binding `#v` to the number of occurrences in argv.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlagDecl {
+    pub names: Vec<String>,
+    pub count_binding: Option<BindingName>,
+}
+
+impl FlagDecl {
+    /// A presence-only flag with no count binding.
+    pub fn new(names: Vec<String>) -> Self {
+        Self {
+            names,
+            count_binding: None,
+        }
+    }
+}
+
 /// One parameter declaration in a `(parser …)` body. `names` lists the
 /// short/long spellings (e.g. `["n", "namespace"]`). For a single
 /// spelling, the vector has one entry.
@@ -853,6 +896,11 @@ pub enum Capture {
 pub struct ParameterDecl {
     pub names: Vec<String>,
     pub treatment: ParameterTreatment,
+    /// Surface shape form (`(one …)`/`(last …)`/`(set …)`/`(command …)`),
+    /// or `Unannotated` for the legacy `(parameter NAME #v)` spelling.
+    /// Drives multi-occurrence binding semantics and the engine's shape
+    /// inference.
+    pub shape_form: ParamShapeForm,
     /// How the parameter consumes tokens at tokenisation time. Defaults
     /// to single-token capture; `ManyTill` supports `find -exec … ;`.
     pub capture: Capture,
@@ -872,7 +920,7 @@ pub struct Parser {
     pub style_name: String,
     /// `(flag NAME)` body items — each entry is a single short/long
     /// spelling list.
-    pub flags: Vec<Vec<String>>,
+    pub flags: Vec<FlagDecl>,
     pub parameters: Vec<ParameterDecl>,
     /// Declared positional slots in source order (parser-body
     /// `(positional [#var] PAT [QUANT])`). Matched in declaration order
@@ -894,7 +942,7 @@ pub struct Parser {
 pub struct ResolvedParser {
     pub program: String,
     pub style: Style,
-    pub flags: Vec<Vec<String>>,
+    pub flags: Vec<FlagDecl>,
     pub parameters: Vec<ParameterDecl>,
     pub positionals: Vec<PositionalDecl>,
     pub flags_mode: FlagsMode,
@@ -1045,6 +1093,7 @@ impl Config {
                 parser.parameters.push(ParameterDecl {
                     names: vec![name],
                     treatment: ParameterTreatment::None,
+                    shape_form: ParamShapeForm::Unannotated,
                     capture: Capture::Single,
                     binding: None,
                 });

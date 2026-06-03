@@ -1,10 +1,10 @@
 ## 1. Parser-side shape declarations
 
-- [ ] 1.1 Add reader/parser support for `(parameter NAME (one #v))`, `(parameter NAME (last #v))`, `(parameter NAME (set #v))`, `(parameter NAME (command #v))` declaration forms in `crates/config`.
-- [ ] 1.2 Add reader/parser support for `(flag NAME (count #v))` declaration form.
-- [ ] 1.3 Extend the parser-body validator to reject (with clear errors): shape forms outside `(parameter …)` / `(flag …)`, multiple shape forms on one declaration, and unknown shape-form heads.
-- [ ] 1.4 Wire `(parameter NAME #v)` (no shape form) through as sugar for `(one #v)` — same AST node, no separate path; verify canonical-form serialisation is byte-identical to today's output.
-- [ ] 1.5 Add proptest coverage for parser-body round-trip including all shape forms.
+- [x] 1.1 Add reader/parser support for `(parameter NAME (one #v))`, `(parameter NAME (last #v))`, `(parameter NAME (set #v))`, `(parameter NAME (command #v))` declaration forms in `crates/config`.
+- [x] 1.2 Add reader/parser support for `(flag NAME (count #v))` declaration form.
+- [x] 1.3 Extend the parser-body validator to reject (with clear errors): shape forms outside `(parameter …)` / `(flag …)`, multiple shape forms on one declaration, and unknown shape-form heads.
+- [x] 1.4 Wire `(parameter NAME #v)` (no shape form) through as sugar for `(one #v)` — same AST node, no separate path; verify canonical-form serialisation is byte-identical to today's output.
+- [x] 1.5 Add proptest coverage for parser-body round-trip including all shape forms.
 
 ## 2. Binding-shape data model
 

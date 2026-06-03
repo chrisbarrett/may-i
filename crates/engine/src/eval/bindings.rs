@@ -581,6 +581,7 @@ mod tests {
         parser.parameters.push(ParameterDecl {
             names: vec!["c".into()],
             treatment: ParameterTreatment::None,
+            shape_form: may_i_core::ast::ParamShapeForm::Unannotated,
             capture: Capture::Single,
             binding: Some(BindingName::parse("c").unwrap()),
         });
@@ -595,6 +596,7 @@ mod tests {
         parser.parameters.push(ParameterDecl {
             names: vec!["c".into()],
             treatment: ParameterTreatment::None,
+            shape_form: may_i_core::ast::ParamShapeForm::Unannotated,
             capture: Capture::Single,
             binding: None,
         });

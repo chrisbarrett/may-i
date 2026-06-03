@@ -12,8 +12,8 @@
 // change).
 
 use may_i_core::ast::{
-    BindingName, Capture, FlagsMode, ParameterDecl, ParameterTreatment, Parser, PositionalDecl,
-    Provenance,
+    BindingName, Capture, FlagDecl, FlagsMode, ParamShapeForm, ParameterDecl, ParameterTreatment,
+    Parser, PositionalDecl, Provenance,
 };
 use may_i_core::pattern::Quantifier;
 use may_i_sexpr::{RawError, Sexpr};
@@ -38,7 +38,7 @@ pub(crate) fn parse_parser_form(sexpr: &Sexpr) -> Result<Parser, RawError> {
         .to_string();
 
     let mut style_name: Option<String> = None;
-    let mut flags: Vec<Vec<String>> = Vec::new();
+    let mut flags: Vec<FlagDecl> = Vec::new();
     let mut parameters: Vec<ParameterDecl> = Vec::new();
     let mut positionals: Vec<PositionalDecl> = Vec::new();
     let mut declared_flags_mode: Option<FlagsMode> = None;
@@ -77,58 +77,37 @@ pub(crate) fn parse_parser_form(sexpr: &Sexpr) -> Result<Parser, RawError> {
                 style_name = Some(name.to_string());
             }
             "flag" => {
-                let names = parse_names(&item_list[1..], "flag", item.span())?;
+                let decl = parse_flag_decl(&item_list[1..], item.span(), &mut declared_bindings)?;
                 check_dup(
-                    &names,
+                    &decl.names,
                     "flag",
                     &mut declared_names,
                     &mut flags,
                     &mut parameters,
                     item.span(),
                 )?;
-                flags.push(names);
+                flags.push(decl);
             }
             "parameter" => {
                 if item_list.len() < 2 {
                     return Err(RawError::new("parameter requires a name", item.span()));
                 }
                 let names = parse_name(&item_list[1])?;
-                // Trailing `#var` slot (introduced by parser-named-bindings):
-                // `(parameter NAME [FORM] [#var])`. Detect by trailing
-                // binding atom; consume it and shrink the FORM window.
-                let (form_end, binding) = match item_list.last() {
-                    Some(last) if matches!(last, Sexpr::Binding(_, _)) => {
-                        let bn = parse_binding_atom(last)?;
-                        record_binding(&bn, last.span(), &mut declared_bindings)?;
-                        (item_list.len() - 1, Some(bn))
-                    }
-                    _ => (item_list.len(), None),
-                };
-                let (treatment, capture) = if form_end >= 3 {
-                    parse_parameter_body(&item_list[2])?
-                } else {
-                    (ParameterTreatment::None, Capture::Single)
-                };
-                if form_end > 3 {
-                    return Err(RawError::new(
-                        "parameter accepts at most one FORM after the name (optionally followed by a #var binding)",
-                        item.span(),
-                    ));
-                }
+                let decl = parse_parameter_tail(
+                    names,
+                    &item_list[2..],
+                    item.span(),
+                    &mut declared_bindings,
+                )?;
                 check_dup(
-                    &names,
+                    &decl.names,
                     "parameter",
                     &mut declared_names,
                     &mut flags,
                     &mut parameters,
                     item.span(),
                 )?;
-                parameters.push(ParameterDecl {
-                    names,
-                    treatment,
-                    capture,
-                    binding,
-                });
+                parameters.push(decl);
             }
             "flags" => {
                 if declared_flags_mode.is_some() {
@@ -332,6 +311,7 @@ fn parse_positional_decl(
         )
         .with_help("(positional [#var] PAT [?|*|+|one])"));
     }
+    reject_misplaced_shape_form(&rest[0])?;
     let pattern = crate::pattern::parse_expr_for_capture(&rest[0])?;
     let quantifier = if rest.len() == 2 {
         parse_quantifier(&rest[1])?
@@ -392,68 +372,225 @@ fn parse_name(sexpr: &Sexpr) -> Result<Vec<String>, RawError> {
     }
 }
 
-/// Parse a (flag …) body's name slots. (flag NAME) takes one NAME, but
-/// historically some code paths might pass multiple — keep flexible by
-/// accepting one slot only.
-fn parse_names(args: &[Sexpr], tag: &str, span: may_i_core::Span) -> Result<Vec<String>, RawError> {
-    if args.len() != 1 {
-        return Err(RawError::new(
-            format!("{tag} requires exactly one NAME"),
-            span,
-        ));
-    }
-    parse_name(&args[0])
-}
-
-/// Parse the optional body slot after `(parameter NAME …)` in a parser
-/// declaration. The body is exactly one form, and its head determines
-/// whether it sets the value treatment or the capture-shape:
-///
-/// - `(authorise)` — value treatment is [`ParameterTreatment::Authorise`].
-/// - `(many-till PAT)` — capture-shape is multi-token until PAT matches.
-fn parse_parameter_body(sexpr: &Sexpr) -> Result<(ParameterTreatment, Capture), RawError> {
-    let list = sexpr.as_list().ok_or_else(|| {
-        RawError::new(
-            "parameter FORM must be a list, e.g. (authorise) or (many-till …)",
+/// Reject a shape form (`(one …)`/`(last …)`/`(set …)`/`(command …)`/
+/// `(count …)`) appearing outside a `(parameter …)` / `(flag …)`
+/// declaration. Returns `Ok(())` when `sexpr` is not a misplaced shape
+/// form, so callers can fall through to their normal parse.
+fn reject_misplaced_shape_form(sexpr: &Sexpr) -> Result<(), RawError> {
+    let Some(list) = sexpr.as_list() else {
+        return Ok(());
+    };
+    let Some(head) = list.first().and_then(Sexpr::as_atom) else {
+        return Ok(());
+    };
+    match head {
+        "one" | "last" | "set" | "command" => Err(RawError::new(
+            format!("shape form `({head} …)` is valid only inside a (parameter …) declaration"),
             sexpr.span(),
         )
-    })?;
-    if list.is_empty() {
-        return Err(RawError::new("empty parameter FORM", sexpr.span()));
-    }
-    let head = list[0]
-        .as_atom()
-        .ok_or_else(|| RawError::new("parameter FORM tag must be an atom", list[0].span()))?;
-    match head {
-        "authorise" => {
-            if list.len() != 1 {
-                return Err(RawError::new(
-                    "(authorise) takes no arguments",
-                    sexpr.span(),
-                ));
-            }
-            Ok((ParameterTreatment::Authorise, Capture::Single))
-        }
-        "may-i" => Err(RawError::new(
-            "(may-i …) is retired; use (authorise) inside the parameter body",
-            list[0].span(),
+        .with_help("move the shape form into the parameter, e.g. (parameter NAME (set #v))")),
+        "count" => Err(RawError::new(
+            "shape form `(count …)` is valid only inside a (flag …) declaration".to_string(),
+            sexpr.span(),
         )
-        .with_help("run `may-i migrate` to convert legacy syntax")),
-        "many-till" => {
-            if list.len() != 2 {
+        .with_help("(flag NAME (count #v))")),
+        _ => Ok(()),
+    }
+}
+
+/// Parse a `(flag NAME [(count #v)])` declaration. `NAME` is a string or
+/// `[short long]` vector; the optional trailing `(count #v)` shape form
+/// binds `#v` to the flag's occurrence count.
+fn parse_flag_decl(
+    args: &[Sexpr],
+    span: may_i_core::Span,
+    declared_bindings: &mut std::collections::HashSet<String>,
+) -> Result<FlagDecl, RawError> {
+    if args.is_empty() {
+        return Err(RawError::new("flag requires exactly one NAME", span));
+    }
+    let names = parse_name(&args[0])?;
+    let count_binding = match &args[1..] {
+        [] => None,
+        [form] => Some(parse_count_form(form, declared_bindings)?),
+        _ => {
+            return Err(
+                RawError::new("flag accepts at most one shape form after the name", span)
+                    .with_help("(flag NAME) | (flag NAME (count #v))"),
+            );
+        }
+    };
+    Ok(FlagDecl {
+        names,
+        count_binding,
+    })
+}
+
+/// Parse a `(count #v)` shape form, returning the bound name.
+fn parse_count_form(
+    sexpr: &Sexpr,
+    declared_bindings: &mut std::collections::HashSet<String>,
+) -> Result<BindingName, RawError> {
+    let list = sexpr
+        .as_list()
+        .ok_or_else(|| RawError::new("flag FORM must be `(count #v)`", sexpr.span()))?;
+    let head = list
+        .first()
+        .and_then(Sexpr::as_atom)
+        .ok_or_else(|| RawError::new("flag FORM tag must be an atom", sexpr.span()))?;
+    if head != "count" {
+        return Err(
+            RawError::new(format!("unsupported flag FORM: {head}"), sexpr.span())
+                .with_help("the only flag shape form is (count #v)"),
+        );
+    }
+    if list.len() != 2 {
+        return Err(RawError::new(
+            "(count #v) takes exactly one binding-name argument",
+            sexpr.span(),
+        )
+        .with_help("(count #v)"));
+    }
+    let bn = parse_binding_atom(&list[1])?;
+    record_binding(&bn, list[1].span(), declared_bindings)?;
+    Ok(bn)
+}
+
+/// Parse the optional tail of `(parameter NAME …)` — an optional shape
+/// form and/or trailing `#var` — into a [`ParameterDecl`].
+///
+/// Recognised tails:
+/// - (nothing) / `#v`              — unannotated single-occurrence.
+/// - `(one #v)` / `(last #v)` / `(set #v)` / `(command #v)` — shape forms
+///   that embed their own binding.
+/// - `(authorise) [#v]`            — re-authorise the captured value.
+/// - `(many-till PAT) [#v]`        — multi-token capture (Command-shaped).
+///
+/// At most one shape form per declaration; a shape form that embeds a
+/// binding SHALL NOT also carry a trailing `#var`.
+fn parse_parameter_tail(
+    names: Vec<String>,
+    tail: &[Sexpr],
+    span: may_i_core::Span,
+    declared_bindings: &mut std::collections::HashSet<String>,
+) -> Result<ParameterDecl, RawError> {
+    // Peel a trailing `#var` slot, if present.
+    let (body, trailing) = match tail.last() {
+        Some(last) if matches!(last, Sexpr::Binding(_, _)) => {
+            let bn = parse_binding_atom(last)?;
+            (&tail[..tail.len() - 1], Some((bn, last.span())))
+        }
+        _ => (tail, None),
+    };
+
+    if body.len() > 1 {
+        return Err(
+            RawError::new("at most one shape form is permitted per parameter", span).with_help(
+                "shape forms: (one #v), (last #v), (set #v), (command #v); \
+             or (authorise) / (many-till PAT)",
+            ),
+        );
+    }
+
+    let mut treatment = ParameterTreatment::None;
+    let mut capture = Capture::Single;
+    let mut shape_form = ParamShapeForm::Unannotated;
+    let mut binding = trailing;
+
+    if let Some(form) = body.first() {
+        let list = form.as_list().ok_or_else(|| {
+            RawError::new(
+                "parameter FORM must be a list, e.g. (set #v) or (many-till …)",
+                form.span(),
+            )
+        })?;
+        if list.is_empty() {
+            return Err(RawError::new("empty parameter FORM", form.span()));
+        }
+        let head = list[0]
+            .as_atom()
+            .ok_or_else(|| RawError::new("parameter FORM tag must be an atom", list[0].span()))?;
+        match head {
+            "authorise" => {
+                if list.len() != 1 {
+                    return Err(RawError::new("(authorise) takes no arguments", form.span()));
+                }
+                treatment = ParameterTreatment::Authorise;
+            }
+            "may-i" => {
                 return Err(RawError::new(
-                    "(many-till PAT) takes exactly one terminator pattern",
-                    sexpr.span(),
+                    "(may-i …) is retired; use (authorise) inside the parameter body",
+                    list[0].span(),
+                )
+                .with_help("run `may-i migrate` to convert legacy syntax"));
+            }
+            "many-till" => {
+                if list.len() != 2 {
+                    return Err(RawError::new(
+                        "(many-till PAT) takes exactly one terminator pattern",
+                        form.span(),
+                    ));
+                }
+                let terminator = crate::pattern::parse_expr_for_capture(&list[1])?;
+                capture = Capture::ManyTill { terminator };
+            }
+            "one" | "last" | "set" | "command" => {
+                if binding.is_some() {
+                    return Err(RawError::new(
+                        format!("({head} #v) already names a binding — drop the trailing #var"),
+                        span,
+                    ));
+                }
+                if list.len() != 2 {
+                    return Err(RawError::new(
+                        format!("({head} #v) takes exactly one binding-name argument"),
+                        form.span(),
+                    )
+                    .with_help(format!("({head} #v)")));
+                }
+                let bn = parse_binding_atom(&list[1])?;
+                binding = Some((bn, list[1].span()));
+                shape_form = match head {
+                    "one" => ParamShapeForm::One,
+                    "last" => ParamShapeForm::Last,
+                    "set" => ParamShapeForm::Set,
+                    _ => ParamShapeForm::Command,
+                };
+            }
+            "count" => {
+                return Err(RawError::new(
+                    "(count #v) is a flag shape form, not a parameter shape form",
+                    form.span(),
+                )
+                .with_help("counts come from flags: (flag NAME (count #v))"));
+            }
+            other => {
+                return Err(RawError::new(
+                    format!("unsupported parameter FORM: {other}"),
+                    form.span(),
+                )
+                .with_help(
+                    "use (one #v), (last #v), (set #v), (command #v), (authorise), or (many-till PAT)",
                 ));
             }
-            let terminator = crate::pattern::parse_expr_for_capture(&list[1])?;
-            Ok((ParameterTreatment::None, Capture::ManyTill { terminator }))
         }
-        other => Err(
-            RawError::new(format!("unsupported parameter FORM: {other}"), sexpr.span())
-                .with_help("use (authorise) or (many-till PAT)"),
-        ),
     }
+
+    let binding = match binding {
+        Some((bn, sp)) => {
+            record_binding(&bn, sp, declared_bindings)?;
+            Some(bn)
+        }
+        None => None,
+    };
+
+    Ok(ParameterDecl {
+        names,
+        treatment,
+        shape_form,
+        capture,
+        binding,
+    })
 }
 
 /// Check duplicate spelling within this parser body. Last-wins is the
@@ -463,7 +600,7 @@ fn check_dup(
     names: &[String],
     kind: &'static str,
     declared: &mut std::collections::HashMap<String, &'static str>,
-    flags: &mut Vec<Vec<String>>,
+    flags: &mut Vec<FlagDecl>,
     parameters: &mut Vec<ParameterDecl>,
     span: may_i_core::Span,
 ) -> Result<(), RawError> {
@@ -479,7 +616,7 @@ fn check_dup(
             // contained this name.
             eprintln!("warning: duplicate {kind} declaration for `{n}` — last declaration wins");
             if kind == "flag" {
-                flags.retain(|spellings| !spellings.iter().any(|s| s == n));
+                flags.retain(|decl| !decl.names.iter().any(|s| s == n));
             } else {
                 parameters.retain(|p| !p.names.iter().any(|s| s == n));
             }
@@ -518,7 +655,10 @@ mod tests {
                  (parameter ["n" "namespace"]))"#,
         ))
         .unwrap();
-        assert_eq!(p.flags, vec![vec!["v".to_string()]]);
+        assert_eq!(
+            p.flags.iter().map(|f| f.names.clone()).collect::<Vec<_>>(),
+            vec![vec!["v".to_string()]]
+        );
         assert_eq!(p.parameters.len(), 1);
         assert_eq!(
             p.parameters[0].names,
@@ -796,5 +936,158 @@ mod tests {
         ))
         .unwrap_err();
         assert!(format!("{err}").contains("flag and parameter"));
+    }
+
+    // ── shape-typed-bindings: parameter shape forms ─────────────────
+
+    fn one_param(input: &str) -> ParameterDecl {
+        let p = parse_parser_form(&first_form(input)).unwrap();
+        assert_eq!(p.parameters.len(), 1, "expected one parameter");
+        p.parameters.into_iter().next().unwrap()
+    }
+
+    #[test]
+    fn parses_set_shape_form() {
+        let d =
+            one_param(r#"(parser "ssh" (style gnu) (flags posix) (parameter "o" (set #opts)))"#);
+        assert_eq!(d.shape_form, ParamShapeForm::Set);
+        assert_eq!(d.binding.as_ref().map(|b| b.as_str()), Some("opts"));
+    }
+
+    #[test]
+    fn parses_last_shape_form() {
+        let d =
+            one_param(r#"(parser "gcc" (style gnu) (flags permute) (parameter "O" (last #opt)))"#);
+        assert_eq!(d.shape_form, ParamShapeForm::Last);
+        assert_eq!(d.binding.as_ref().map(|b| b.as_str()), Some("opt"));
+    }
+
+    #[test]
+    fn parses_one_shape_form() {
+        let d =
+            one_param(r#"(parser "bash" (style gnu) (flags posix) (parameter "c" (one #cmd)))"#);
+        assert_eq!(d.shape_form, ParamShapeForm::One);
+        assert_eq!(d.binding.as_ref().map(|b| b.as_str()), Some("cmd"));
+    }
+
+    #[test]
+    fn parses_command_shape_form() {
+        let d = one_param(
+            r#"(parser "bash" (style gnu) (flags posix) (parameter "c" (command #cmd)))"#,
+        );
+        assert_eq!(d.shape_form, ParamShapeForm::Command);
+        assert_eq!(d.binding.as_ref().map(|b| b.as_str()), Some("cmd"));
+    }
+
+    #[test]
+    fn unannotated_parameter_is_unannotated_shape() {
+        let d = one_param(r#"(parser "gcc" (style gnu) (flags permute) (parameter "O" #opt))"#);
+        assert_eq!(d.shape_form, ParamShapeForm::Unannotated);
+        assert_eq!(d.binding.as_ref().map(|b| b.as_str()), Some("opt"));
+    }
+
+    #[test]
+    fn many_till_keeps_unannotated_shape_form() {
+        // The shape comes from the capture, not the shape_form slot.
+        let d = one_param(
+            r#"(parser "find" (style gnu) (flags permute) (parameter "exec" (many-till ";") #args))"#,
+        );
+        assert_eq!(d.shape_form, ParamShapeForm::Unannotated);
+        assert!(matches!(d.capture, Capture::ManyTill { .. }));
+        assert_eq!(d.binding.as_ref().map(|b| b.as_str()), Some("args"));
+    }
+
+    #[test]
+    fn rejects_multiple_shape_forms() {
+        let err = parse_parser_form(&first_form(
+            r#"(parser "x" (style gnu) (flags posix) (parameter "k" (set #a) (last #b)))"#,
+        ))
+        .unwrap_err();
+        assert!(format!("{err}").contains("at most one shape form"), "{err}");
+    }
+
+    #[test]
+    fn rejects_shape_form_with_trailing_binding() {
+        let err = parse_parser_form(&first_form(
+            r#"(parser "x" (style gnu) (flags posix) (parameter "k" (set #a) #b))"#,
+        ))
+        .unwrap_err();
+        assert!(
+            format!("{err}").contains("already names a binding"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn rejects_set_without_binding() {
+        let err = parse_parser_form(&first_form(
+            r#"(parser "x" (style gnu) (flags posix) (parameter "k" (set "x")))"#,
+        ))
+        .unwrap_err();
+        assert!(format!("{err}").contains("binding"), "{err}");
+    }
+
+    #[test]
+    fn rejects_shape_form_in_positional() {
+        let err = parse_parser_form(&first_form(
+            r#"(parser "x" (style gnu) (flags posix) (positional #p (set #q)))"#,
+        ))
+        .unwrap_err();
+        assert!(
+            format!("{err}").contains("valid only inside a (parameter"),
+            "{err}"
+        );
+    }
+
+    // ── shape-typed-bindings: flag count form ───────────────────────
+
+    #[test]
+    fn parses_flag_count_form() {
+        let p = parse_parser_form(&first_form(
+            r#"(parser "curl" (style gnu) (flags permute) (flag "v" (count #verbosity)))"#,
+        ))
+        .unwrap();
+        assert_eq!(p.flags.len(), 1);
+        assert_eq!(p.flags[0].names, vec!["v".to_string()]);
+        assert_eq!(
+            p.flags[0].count_binding.as_ref().map(|b| b.as_str()),
+            Some("verbosity")
+        );
+    }
+
+    #[test]
+    fn parses_flag_count_with_long_short_vector() {
+        let p = parse_parser_form(&first_form(
+            r#"(parser "grep" (style gnu) (flags permute) (flag ["r" "recursive"] (count #r)))"#,
+        ))
+        .unwrap();
+        assert_eq!(
+            p.flags[0].count_binding.as_ref().map(|b| b.as_str()),
+            Some("r")
+        );
+    }
+
+    #[test]
+    fn plain_flag_has_no_count_binding() {
+        let p = parse_parser_form(&first_form(r#"(parser "x" (style gnu) (flag "v"))"#)).unwrap();
+        assert!(p.flags[0].count_binding.is_none());
+    }
+
+    #[test]
+    fn rejects_unknown_flag_form() {
+        let err = parse_parser_form(&first_form(
+            r#"(parser "x" (style gnu) (flag "v" (set #q)))"#,
+        ))
+        .unwrap_err();
+        assert!(format!("{err}").contains("unsupported flag FORM"), "{err}");
+    }
+
+    #[test]
+    fn rejects_count_form_in_parameter() {
+        let err = parse_parser_form(&first_form(
+            r#"(parser "x" (style gnu) (parameter "n" (count #c)))"#,
+        ))
+        .unwrap_err();
+        assert!(format!("{err}").contains("flag shape form"), "{err}");
     }
 }
