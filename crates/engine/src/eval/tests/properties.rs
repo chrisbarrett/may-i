@@ -739,6 +739,22 @@ fn cond_short_circuits_predicates_after_first_match() {
         ) -> PredicateResult {
             result
         }
+        fn predicate_every(
+            &mut self,
+            _: &may_i_core::ast::BindingName,
+            _: &may_i_core::pattern::Expr<Effect>,
+            result: PredicateResult,
+        ) -> PredicateResult {
+            result
+        }
+        fn predicate_some(
+            &mut self,
+            _: &may_i_core::ast::BindingName,
+            _: &may_i_core::pattern::Expr<Effect>,
+            result: PredicateResult,
+        ) -> PredicateResult {
+            result
+        }
 
         fn rule_matched(
             &mut self,

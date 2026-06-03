@@ -30,10 +30,10 @@
 
 ## 5. Rule-side quantifier evaluation
 
-- [ ] 5.1 Parse `(every? #v PRED)` and `(some? #v PRED)` rule-body forms; `PRED` accepts the same single-token Pattern sublanguage as `(matches? …)`.
-- [ ] 5.2 Implement evaluation: fold `PRED` over the bound collection; vacuous-true for `every?` on empty, vacuous-false for `some?` on empty.
+- [x] 5.1 Parse `(every? #v PRED)` and `(some? #v PRED)` rule-body forms; `PRED` accepts the same single-token Pattern sublanguage as `(matches? …)`.
+- [x] 5.2 Implement evaluation: fold `PRED` over the bound collection; vacuous-true for `every?` on empty, vacuous-false for `some?` on empty.
 - [ ] 5.3 Implement fact-binding capture under quantifiers per the `patterns` spec: `every?` retains captures only when the fold succeeds; `some?` retains captures of all matching elements.
-- [ ] 5.4 Add proptest coverage: generate `(set #v)` bindings, random `PRED`s, verify the fold semantics match the reference implementation.
+- [x] 5.4 Add proptest coverage: generate `(set #v)` bindings, random `PRED`s, verify the fold semantics match the reference implementation.
 
 ## 6. Elm-style error rendering (miette-backed)
 

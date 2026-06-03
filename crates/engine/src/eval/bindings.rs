@@ -51,6 +51,17 @@ impl BindingValue {
             BindingValue::Tokens(_) | BindingValue::Unbound => None,
         }
     }
+
+    /// View as an ordered collection of tokens, for quantifier folds.
+    /// `Tokens` yields its slice; every other shape yields an empty
+    /// slice (quantifiers only run against `Collection Token` bindings,
+    /// enforced by the shape checker).
+    pub(crate) fn as_collection(&self) -> &[String] {
+        match self {
+            BindingValue::Tokens(v) => v,
+            _ => &[],
+        }
+    }
 }
 
 /// The set of parser-bound names produced by [`parse_argv`].

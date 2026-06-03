@@ -312,6 +312,24 @@ pub enum Predicate {
         binding: BindingName,
         pattern: crate::pattern::Expr<Effect>,
     },
+
+    /// True iff every element of the collection bound to `binding`
+    /// matches `pattern`. Vacuously true on the empty collection.
+    /// `binding` must be `Collection Token`-shaped.
+    /// Syntax: `(every? #var PRED)`
+    Every {
+        binding: BindingName,
+        pattern: crate::pattern::Expr<Effect>,
+    },
+
+    /// True iff at least one element of the collection bound to
+    /// `binding` matches `pattern`. False on the empty collection.
+    /// `binding` must be `Collection Token`-shaped.
+    /// Syntax: `(some? #var PRED)`
+    Some {
+        binding: BindingName,
+        pattern: crate::pattern::Expr<Effect>,
+    },
 }
 
 impl Predicate {
@@ -382,6 +400,16 @@ impl ToDoc for Predicate {
             }
             Predicate::Matches { binding, .. } => Doc::list(vec![
                 Doc::atom("matches?"),
+                Doc::atom(binding.to_string()),
+                Doc::atom("<expr>"),
+            ]),
+            Predicate::Every { binding, .. } => Doc::list(vec![
+                Doc::atom("every?"),
+                Doc::atom(binding.to_string()),
+                Doc::atom("<expr>"),
+            ]),
+            Predicate::Some { binding, .. } => Doc::list(vec![
+                Doc::atom("some?"),
                 Doc::atom(binding.to_string()),
                 Doc::atom("<expr>"),
             ]),

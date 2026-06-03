@@ -117,6 +117,36 @@ pub(crate) fn evaluate_predicate_fold<F: EvalFold>(
             };
             Ok(fold.predicate_matches(binding, pattern, result))
         }
+        // `(every? #var PRED)` — `PRED` matches every element of the
+        // collection bound to `#var`. Vacuously true on empty.
+        Predicate::Every { binding, pattern } => {
+            let value = ctx.parser_bindings.get(binding);
+            let matched = value
+                .as_collection()
+                .iter()
+                .all(|tok| pattern.is_match(tok));
+            let result = if matched {
+                PredicateResult::Match
+            } else {
+                PredicateResult::NoMatch
+            };
+            Ok(fold.predicate_every(binding, pattern, result))
+        }
+        // `(some? #var PRED)` — `PRED` matches at least one element.
+        // False on empty.
+        Predicate::Some { binding, pattern } => {
+            let value = ctx.parser_bindings.get(binding);
+            let matched = value
+                .as_collection()
+                .iter()
+                .any(|tok| pattern.is_match(tok));
+            let result = if matched {
+                PredicateResult::Match
+            } else {
+                PredicateResult::NoMatch
+            };
+            Ok(fold.predicate_some(binding, pattern, result))
+        }
         // `Predicate` is `#[non_exhaustive]`; future variants must be
         // added here explicitly.
         _ => unreachable!("unknown Predicate variant"),
@@ -229,5 +259,156 @@ pub(super) fn evaluate_arg_pattern_predicate(
         // (tail (authorise)) yields a Decision via recursion — it has no
         // Match/NoMatch projection in predicate position.
         ArgPattern::Tail => PredicateResult::NoMatch,
+    }
+}
+
+#[cfg(test)]
+mod quantifier_tests {
+    use super::*;
+    use crate::eval::bindings::BindingValue;
+    use may_i_core::ast::BindingName;
+    use may_i_core::pattern::Expr;
+    use may_i_core::{ContextFacts, ast::Predicate};
+    use std::collections::HashMap;
+
+    fn bn(s: &str) -> BindingName {
+        BindingName::parse(s).unwrap()
+    }
+
+    fn tmp_regex() -> Expr {
+        Expr::Regex(regex::Regex::new("^/tmp/").unwrap())
+    }
+
+    /// Build a context whose `opts` binding holds the given collection.
+    fn ctx_with_collection<'a>(
+        facts: &'a ContextFacts,
+        args: &'a [String],
+        toks: Vec<&str>,
+    ) -> EvalContext<'a> {
+        let mut ctx = EvalContext::new("rm", args, facts, HashMap::new());
+        ctx.parser_bindings.insert(
+            bn("opts"),
+            BindingValue::Tokens(toks.into_iter().map(String::from).collect()),
+        );
+        ctx
+    }
+
+    #[test]
+    fn every_all_match_is_match() {
+        let facts = ContextFacts::default();
+        let args: Vec<String> = vec![];
+        let ctx = ctx_with_collection(&facts, &args, vec!["/tmp/a", "/tmp/b"]);
+        let pred = Predicate::Every {
+            binding: bn("opts"),
+            pattern: tmp_regex(),
+        };
+        assert_eq!(
+            evaluate_predicate(&pred, &ctx).unwrap(),
+            PredicateResult::Match
+        );
+    }
+
+    #[test]
+    fn every_one_fails_is_no_match() {
+        let facts = ContextFacts::default();
+        let args: Vec<String> = vec![];
+        let ctx = ctx_with_collection(&facts, &args, vec!["/tmp/a", "/etc/passwd"]);
+        let pred = Predicate::Every {
+            binding: bn("opts"),
+            pattern: tmp_regex(),
+        };
+        assert_eq!(
+            evaluate_predicate(&pred, &ctx).unwrap(),
+            PredicateResult::NoMatch
+        );
+    }
+
+    #[test]
+    fn every_empty_is_vacuously_true() {
+        let facts = ContextFacts::default();
+        let args: Vec<String> = vec![];
+        let ctx = ctx_with_collection(&facts, &args, vec![]);
+        let pred = Predicate::Every {
+            binding: bn("opts"),
+            pattern: tmp_regex(),
+        };
+        assert_eq!(
+            evaluate_predicate(&pred, &ctx).unwrap(),
+            PredicateResult::Match
+        );
+    }
+
+    #[test]
+    fn some_one_matches_is_match() {
+        let facts = ContextFacts::default();
+        let args: Vec<String> = vec![];
+        let ctx = ctx_with_collection(&facts, &args, vec!["/etc/x", "/tmp/y"]);
+        let pred = Predicate::Some {
+            binding: bn("opts"),
+            pattern: tmp_regex(),
+        };
+        assert_eq!(
+            evaluate_predicate(&pred, &ctx).unwrap(),
+            PredicateResult::Match
+        );
+    }
+
+    #[test]
+    fn some_none_matches_is_no_match() {
+        let facts = ContextFacts::default();
+        let args: Vec<String> = vec![];
+        let ctx = ctx_with_collection(&facts, &args, vec!["/etc/x", "/var/y"]);
+        let pred = Predicate::Some {
+            binding: bn("opts"),
+            pattern: tmp_regex(),
+        };
+        assert_eq!(
+            evaluate_predicate(&pred, &ctx).unwrap(),
+            PredicateResult::NoMatch
+        );
+    }
+
+    #[test]
+    fn some_empty_is_false() {
+        let facts = ContextFacts::default();
+        let args: Vec<String> = vec![];
+        let ctx = ctx_with_collection(&facts, &args, vec![]);
+        let pred = Predicate::Some {
+            binding: bn("opts"),
+            pattern: tmp_regex(),
+        };
+        assert_eq!(
+            evaluate_predicate(&pred, &ctx).unwrap(),
+            PredicateResult::NoMatch
+        );
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config { cases: 256, ..Default::default() })]
+
+        /// `every?`/`some?` fold semantics match a reference fold over
+        /// a literal predicate.
+        #[test]
+        fn fold_matches_reference(
+            toks in proptest::collection::vec("[a-c]{1,3}", 0..8),
+            target in "[a-c]{1,3}",
+        ) {
+            let facts = ContextFacts::default();
+            let args: Vec<String> = vec![];
+            let ctx = ctx_with_collection(
+                &facts, &args, toks.iter().map(String::as_str).collect());
+            let pat = Expr::Literal(target.clone());
+
+            let every_ref = toks.iter().all(|t| t == &target);
+            let some_ref = toks.iter().any(|t| t == &target);
+
+            let every = evaluate_predicate(
+                &Predicate::Every { binding: bn("opts"), pattern: pat.clone() }, &ctx).unwrap();
+            let some = evaluate_predicate(
+                &Predicate::Some { binding: bn("opts"), pattern: pat }, &ctx).unwrap();
+
+            proptest::prop_assert_eq!(every == PredicateResult::Match, every_ref);
+            proptest::prop_assert_eq!(some == PredicateResult::Match, some_ref);
+        }
     }
 }

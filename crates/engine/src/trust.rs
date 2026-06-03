@@ -219,6 +219,8 @@ fn canonical_predicate(pred: &Predicate) -> String {
         Predicate::Not(inner) => format!("(not {})", canonical_predicate(inner)),
         Predicate::Bound { binding } => format!("(bound? {binding})"),
         Predicate::Matches { binding, .. } => format!("(matches? {binding} <expr>)"),
+        Predicate::Every { binding, .. } => format!("(every? {binding} <expr>)"),
+        Predicate::Some { binding, .. } => format!("(some? {binding} <expr>)"),
         _ => "<unknown>".to_string(),
     }
 }
