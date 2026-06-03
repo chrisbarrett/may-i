@@ -8,10 +8,10 @@
 
 ## 2. Binding-shape data model
 
-- [ ] 2.1 Define the `Shape` enum (`Token`, `Command`, `CollectionToken`, `Count`) in the engine crate; mark contributor-facing in module docs.
-- [ ] 2.2 Implement `shape_of_declaration(&ParameterDecl | &FlagDecl | &PositionalDecl | &RestDecl) -> Shape` per the assignments in the `binding-shapes` spec.
-- [ ] 2.3 Persist declared shapes on the resolved parser entry so rule-body checking can look them up by `#var` name.
-- [ ] 2.4 Unit-test every (declaration form → shape) mapping including the unannotated fallbacks.
+- [x] 2.1 Define the `Shape` enum (`Token`, `Command`, `CollectionToken`, `Count`) in the engine crate; mark contributor-facing in module docs.
+- [x] 2.2 Implement `shape_of_declaration(&ParameterDecl | &FlagDecl | &PositionalDecl | &RestDecl) -> Shape` per the assignments in the `binding-shapes` spec.
+- [x] 2.3 Persist declared shapes on the resolved parser entry so rule-body checking can look them up by `#var` name.
+- [x] 2.4 Unit-test every (declaration form → shape) mapping including the unannotated fallbacks.
 
 ## 3. Multi-occurrence parameter evaluation
 
