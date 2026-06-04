@@ -93,15 +93,30 @@ pub fn shape_of_rest() -> Shape {
     Shape::Command
 }
 
+/// The kind of declaration that bound a `#var`, carrying the rewrite
+/// material each kind admits (decision D1). Hint selection dispatches on
+/// this so a remedy never proposes a form the declaration cannot take —
+/// e.g. a `(parameter NAME …)` rewrite for a `Positional` binding.
+///
+/// `Parameter`/`Flag` carry the declaring NAME (for parameter/flag
+/// rewrites); `Positional`/`Rest` carry none, because those forms have no
+/// name and no `(command …)` arm.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeclKind {
+    Parameter { name: String },
+    Flag { name: String },
+    Positional,
+    Rest,
+}
+
 /// A binding's declared shape, the source span of the declaration that
 /// assigned it (when known — synthetic parsers carry no spans), and the
-/// declaring parameter/flag NAME (for rewrite hints; absent for
-/// positional/rest bindings).
+/// kind of declaration that bound it (for kind-aware rewrite hints).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShapeDecl {
     pub shape: Shape,
     pub decl_span: Option<Span>,
-    pub decl_name: Option<String>,
+    pub decl_kind: DeclKind,
 }
 
 /// The declared shapes of every `#var` a parser body binds, keyed by
@@ -117,33 +132,54 @@ impl ShapeEnv {
     /// with the span of its `#var` declaration atom.
     pub fn from_parser(parser: &ResolvedParser) -> Self {
         let mut map = HashMap::new();
-        let mut insert = |name: &BindingName, shape: Shape, decl_name: Option<String>| {
+        let mut insert = |name: &BindingName, shape: Shape, decl_kind: DeclKind| {
             map.insert(
                 name.clone(),
                 ShapeDecl {
                     shape,
                     decl_span: parser.binding_spans.get(name).copied(),
-                    decl_name,
+                    decl_kind,
                 },
             );
         };
+        // Parameters and flags are name-bearing by construction (the
+        // config parser rejects empty name vectors; synthetic parsers
+        // supply a spelling too). Requiring a spelling here keeps that
+        // invariant at the boundary — `DeclKind::Parameter`/`Flag` never
+        // carries an empty name, so a hint can never render
+        // `(parameter "" …)`. A name-less declaration is silently skipped
+        // rather than fabricating a placeholder.
         for decl in &parser.parameters {
-            if let Some(name) = &decl.binding {
-                insert(name, shape_of_parameter(decl), decl.names.first().cloned());
+            if let (Some(binding), Some(spelling)) = (&decl.binding, decl.names.first()) {
+                insert(
+                    binding,
+                    shape_of_parameter(decl),
+                    DeclKind::Parameter {
+                        name: spelling.clone(),
+                    },
+                );
             }
         }
         for decl in &parser.flags {
-            if let (Some(name), Some(shape)) = (&decl.count_binding, shape_of_flag(decl)) {
-                insert(name, shape, decl.names.first().cloned());
+            if let (Some(binding), Some(shape), Some(spelling)) =
+                (&decl.count_binding, shape_of_flag(decl), decl.names.first())
+            {
+                insert(
+                    binding,
+                    shape,
+                    DeclKind::Flag {
+                        name: spelling.clone(),
+                    },
+                );
             }
         }
         for decl in &parser.positionals {
             if let Some(name) = &decl.binding {
-                insert(name, shape_of_positional(decl), None);
+                insert(name, shape_of_positional(decl), DeclKind::Positional);
             }
         }
         if let Some(name) = &parser.rest {
-            insert(name, shape_of_rest(), None);
+            insert(name, shape_of_rest(), DeclKind::Rest);
         }
         Self { map }
     }
@@ -314,5 +350,49 @@ mod tests {
         assert_eq!(env.get(&bn("host")), Some(Shape::Token));
         assert_eq!(env.get(&bn("cmd")), Some(Shape::Command));
         assert_eq!(env.get(&bn("nope")), None);
+    }
+
+    #[test]
+    fn shape_env_records_declaration_kind_per_source() {
+        let parser = ResolvedParser {
+            program: "ssh".into(),
+            style: Style::default_gnu(),
+            flags: vec![FlagDecl {
+                names: vec!["v".into()],
+                count_binding: Some(bn("verbosity")),
+            }],
+            parameters: vec![ParameterDecl {
+                names: vec!["o".into()],
+                treatment: ParameterTreatment::None,
+                shape_form: ParamShapeForm::Set,
+                capture: Capture::Single,
+                binding: Some(bn("opts")),
+            }],
+            positionals: vec![PositionalDecl {
+                binding: Some(bn("host")),
+                pattern: Expr::Wildcard,
+                quantifier: Quantifier::One,
+            }],
+            flags_mode: FlagsMode::Posix,
+            rest: Some(bn("cmd")),
+            binding_spans: Default::default(),
+        };
+        let env = ShapeEnv::from_parser(&parser);
+        assert_eq!(
+            env.get_decl(&bn("opts")).map(|d| d.decl_kind),
+            Some(DeclKind::Parameter { name: "o".into() })
+        );
+        assert_eq!(
+            env.get_decl(&bn("verbosity")).map(|d| d.decl_kind),
+            Some(DeclKind::Flag { name: "v".into() })
+        );
+        assert_eq!(
+            env.get_decl(&bn("host")).map(|d| d.decl_kind),
+            Some(DeclKind::Positional)
+        );
+        assert_eq!(
+            env.get_decl(&bn("cmd")).map(|d| d.decl_kind),
+            Some(DeclKind::Rest)
+        );
     }
 }

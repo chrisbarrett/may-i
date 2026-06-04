@@ -1,0 +1,17 @@
+---
+source: tests/shape_mismatch_snapshots.rs
+expression: "render(\"(parser \\\"rm\\\" (style gnu) (flags posix) (positional #target *))\\n\\\n         (rule \\\"rm\\\" (when (every? #target (regex \\\"^/tmp/\\\")) (allow)))\")"
+---
+  × found 1 value-usage problem(s) in the configuration
+
+Error: 
+  × `every?` needs a list of values
+   ╭─[config.lisp:1:52]
+ 1 │ (parser "rm" (style gnu) (flags posix) (positional #target *))
+   ·                                                    ───┬───
+   ·                                                       ╰── but `#target` is a single value, declared here
+ 2 │ (rule "rm" (when (every? #target (regex "^/tmp/")) (allow)))
+   ·                          ───┬───
+   ·                             ╰── this looks at every value in a list
+   ╰────
+  help: To match every positional, widen the quantifier: (positional #target +) for one-or-more or (positional #target *) for zero-or-more.

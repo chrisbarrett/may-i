@@ -1,0 +1,17 @@
+---
+source: tests/shape_mismatch_snapshots.rs
+expression: "render(\"(parser \\\"curl\\\" (style gnu) (flags permute) (flag \\\"v\\\" (count #verbosity)))\\n\\\n         (rule \\\"curl\\\" (when (every? #verbosity (regex \\\"3\\\")) (ask)))\")"
+---
+  × found 1 value-usage problem(s) in the configuration
+
+Error: 
+  × `every?` needs a list of values
+   ╭─[config.lisp:1:61]
+ 1 │ (parser "curl" (style gnu) (flags permute) (flag "v" (count #verbosity)))
+   ·                                                             ─────┬────
+   ·                                                                  ╰── but `#verbosity` is a count, declared here
+ 2 │ (rule "curl" (when (every? #verbosity (regex "3")) (ask)))
+   ·                            ─────┬────
+   ·                                 ╰── this looks at every value in a list
+   ╰────
+  help: The -v count is not a list. Check presence with (bound? #verbosity) until count comparisons are available.

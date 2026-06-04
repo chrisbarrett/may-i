@@ -14,4 +14,4 @@ Error:
    ·                              ─────┬────
    ·                                   ╰── this matches a single value
    ╰────
-  help: Counts compare to numbers, not patterns. Check presence with (bound? #verbosity) until count comparisons are available.
+  help: The -v count compares to numbers, not patterns. Check presence with (bound? #verbosity) until count comparisons are available.

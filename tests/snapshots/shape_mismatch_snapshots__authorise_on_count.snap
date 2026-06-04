@@ -14,4 +14,4 @@ Error:
    ·                         ─────┬────
    ·                              ╰── this runs a command line
    ╰────
-  help: A count is not a command line — review the parser declaration.
+  help: A count is not a command line — review the (flag "v" (count #verbosity)) declaration.
