@@ -1,4 +1,4 @@
-use may_i_sexpr::cst::{CstNode, Shape, TriviaAnn};
+use may_i_sexpr::cst::{CstNode, Shape};
 
 /// Extract children from a node tagged with `tag`. Returns `None` if the node
 /// is not a list whose first element is an atom equal to `tag`.
@@ -18,66 +18,9 @@ pub(crate) fn rebuild_list(node: &CstNode, children: Vec<Box<CstNode>>) -> Box<C
     })
 }
 
-/// Recursively strip whitespace trivia from a node and its children, preserving
-/// comments.
-///
-/// The `pp` crate uses `has_source_trivia()` (non-zero span) to decide whether
-/// to preserve a node's original source layout or reflow it fresh.  When a
-/// rewrite rule *clones* a source node and places it in a new structural
-/// context, call `strip_whitespace_trivia` first so the renderer treats it as a
-/// constructed node and applies optimal layout (fill, broken, etc.) rather than
-/// locking it to the old source formatting.
-///
-/// Comments are preserved so that inline comments (e.g. `;; flags-only`) survive
-/// migration.  When comments remain, a sentinel span `Span::new(0, 1)` is used
-/// so that `has_source_trivia()` returns true and the pretty printer emits them.
-///
-/// **When to call:**  any time you clone a source-parsed node and embed it in a
-/// freshly-built list where its old whitespace decisions no longer apply.
-/// Freshly constructed nodes (built via `CstNode::atom`/`CstNode::list` with
-/// `Default::default()` annotations) already have zero spans, so
-/// `strip_whitespace_trivia` is not needed for them.
-pub(crate) fn strip_whitespace_trivia(node: &CstNode) -> CstNode {
-    use may_i_core::Trivia;
-
-    let mut stripped = node.clone();
-
-    let leading: Vec<Trivia> = stripped
-        .ann
-        .leading
-        .into_iter()
-        .filter(|t| matches!(t, Trivia::Comment { .. }))
-        .collect();
-    let trailing: Vec<Trivia> = stripped
-        .ann
-        .trailing
-        .into_iter()
-        .filter(|t| matches!(t, Trivia::Comment { .. }))
-        .collect();
-
-    let has_comments = !leading.is_empty() || !trailing.is_empty();
-    stripped.ann = TriviaAnn {
-        leading,
-        trailing,
-        span: if has_comments {
-            may_i_core::Span::new(0, 1) // sentinel: keeps has_source_trivia() true
-        } else {
-            may_i_core::Span::new(0, 0)
-        },
-    };
-
-    // Recursively strip children
-    match &mut stripped.shape {
-        Shape::List(children) | Shape::Vector(children) => {
-            for child in children.iter_mut() {
-                **child = strip_whitespace_trivia(child);
-            }
-        }
-        _ => {}
-    }
-
-    stripped
-}
+// The "reflow a source-parsed node for construction" rule now lives in the
+// rewrite-traversal seam as `may_i_sexpr::cst::reflow`, so the seam and the
+// passes share one implementation. Passes call it directly.
 
 /// Returns true if the atom is a capture marker used in legacy wrapper syntax.
 pub(crate) fn is_capture_marker(atom: &str) -> bool {
@@ -190,91 +133,9 @@ mod tests {
         assert_eq!(c("(and (or a b) c)"), 3);
     }
 
-    #[test]
-    fn strip_whitespace_trivia_preserves_comments() {
-        use may_i_core::Trivia;
-        use may_i_core::span::Span;
-
-        let ann = TriviaAnn {
-            leading: vec![
-                Trivia::Whitespace("\n  ".into()),
-                Trivia::Comment {
-                    text: ";; important".into(),
-                    has_newline: true,
-                },
-                Trivia::Whitespace("\n  ".into()),
-            ],
-            trailing: vec![
-                Trivia::Whitespace(" ".into()),
-                Trivia::Comment {
-                    text: ";; trailing".into(),
-                    has_newline: true,
-                },
-            ],
-            span: Span::new(10, 20),
-        };
-        let node = CstNode::atom("foo", ann);
-        let stripped = strip_whitespace_trivia(&node);
-
-        let leading_comments: Vec<_> = stripped
-            .ann
-            .leading
-            .iter()
-            .filter(|t| matches!(t, Trivia::Comment { .. }))
-            .collect();
-        assert_eq!(
-            leading_comments.len(),
-            1,
-            "leading comment should be preserved"
-        );
-
-        let trailing_comments: Vec<_> = stripped
-            .ann
-            .trailing
-            .iter()
-            .filter(|t| matches!(t, Trivia::Comment { .. }))
-            .collect();
-        assert_eq!(
-            trailing_comments.len(),
-            1,
-            "trailing comment should be preserved"
-        );
-
-        let leading_ws: Vec<_> = stripped
-            .ann
-            .leading
-            .iter()
-            .filter(|t| matches!(t, Trivia::Whitespace(_)))
-            .collect();
-        assert_eq!(leading_ws.len(), 0, "whitespace should be stripped");
-
-        assert!(
-            stripped.has_source_trivia(),
-            "node with comments should have source trivia"
-        );
-    }
-
-    #[test]
-    fn strip_whitespace_trivia_no_comments_zeroes_span() {
-        use may_i_core::Trivia;
-        use may_i_core::span::Span;
-
-        let ann = TriviaAnn {
-            leading: vec![Trivia::Whitespace("\n  ".into())],
-            trailing: vec![Trivia::Whitespace(" ".into())],
-            span: Span::new(10, 20),
-        };
-        let node = CstNode::atom("foo", ann);
-        let stripped = strip_whitespace_trivia(&node);
-
-        assert!(stripped.ann.leading.is_empty());
-        assert!(stripped.ann.trailing.is_empty());
-        assert!(
-            !stripped.has_source_trivia(),
-            "node without comments should not have source trivia"
-        );
-    }
-
+    // The reflow rule (whitespace stripping + comment preservation + sentinel
+    // span) now lives in the seam and is covered by `may_i_sexpr::cst::reflow`
+    // proptests; this test pins the end-to-end migration guarantee.
     #[test]
     fn migration_preserves_inline_comment() {
         let input = "(rule (command cargo) ;; flags-only, e.g. 'cargo --list'\n  (allow))";

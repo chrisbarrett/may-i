@@ -143,8 +143,12 @@ pub fn migration_rules() -> Vec<RewriteFn> {
 }
 
 /// Apply all migration rules to a CST until convergence.
+///
+/// Driven by the bottom-up rewrite-traversal seam: a single post-order sweep
+/// reaches every nested occurrence, so passes are authored as local rewrites
+/// (no internal recursion), and trivia preservation lives in the seam.
 pub fn migrate(node: Box<CstNode>) -> Box<CstNode> {
-    may_i_sexpr::cst::rewrite_until_convergence(node, &migration_rules())
+    may_i_sexpr::cst::rewrite_post_order(node, &migration_rules())
 }
 
 /// Migrate multiple top-level forms.

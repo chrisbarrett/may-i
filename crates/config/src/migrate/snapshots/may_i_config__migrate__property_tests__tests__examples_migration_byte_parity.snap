@@ -1,0 +1,105 @@
+---
+source: crates/config/src/migrate/property_tests.rs
+expression: rendered
+---
+════════ flag-parameter-demo.lisp ════════
+;;; Demo config exercising (flag …) and (parameter …) patterns.
+
+;; Allow non-recursive rm; ask for anything with -r/-R/--recursive.
+(rule "rm"
+  (when (and (not (flag "r"))
+       (not (flag "R"))
+       (not (flag "recursive")))
+       (allow "non-recursive delete")))
+
+;; Allow git push only without -f / --force.
+(rule "git"
+  (when (and (positional "push")
+       (not (flag ["f" "force"])))
+       (allow "non-force push")))
+
+;; curl: allow GET-style requests; ask for mutating verbs.
+(rule "curl"
+  (when (parameter ["X" "request"] (regex "^GET$"))
+       (allow "read-only request")))
+
+;; Recurse into bash -c VAL: the value is parsed as a command line and
+;; evaluated against the rule set.
+(rule "echo"
+  (allow))
+(rule "bash"
+  (parameter "c" (authorise)))
+
+════════ rm-every-positional-demo.lisp ════════
+;;; Demo: gate `rm -rf` on a list of values with (every? …).
+;;;
+;;; The parser binds every positional path to #paths as a list, then the
+;;; rule allows recursive deletion only when every path is a safe
+;;; temporary/cache location. This is the motivating case for the
+;;; binding shapes + quantifier surface.
+;;;
+;;; The predicate of (every? …) is the single-value pattern sublanguage
+;;; (literal / regex / or / and / not / wildcard), inlined here — it does
+;;; not take a (define …)d name.
+
+;; Parse rm GNU-style; collect all positionals into the #paths list.
+(parser "rm"
+  (style gnu)
+  (flags posix)
+  (positional #paths * *))
+
+(rule "rm"
+  (when (flag ["r" "recursive"])
+    (cond
+     ;; Deletion that reaches the filesystem root is never ok.
+     ((anywhere "/")
+      (deny "Recursive deletion from root"))
+     ;; Every target is a tmp/cache path — allow.
+     ((every? #paths
+              (or (regex "^/tmp/")
+                  (regex "^/var/tmp/")
+                  (regex "^/home/[^/]+/\\.cache/")))
+      (allow "Recursive delete of tmp/cache paths only"))
+     ;; Otherwise, get a human in the loop.
+     (else
+      (ask "Recursive deletion")))))
+
+════════ ssh-sudo-prod-demo.lisp ════════
+;;; Demo config — production-host policy through ssh + sudo wrappers.
+;;;
+;;; Both `ssh` and `sudo` are wrappers: their inner command is the real
+;;; risk. The prelude ships parsers for both — `sudo` as `(flags posix)
+;;; (rest #cmd)` and `ssh` as `(flags posix) (positional #host (regex
+;;; "^[^-].*")) (rest #cmd)` — so we only add the recursion rules.
+
+(rule "sudo"
+  (authorise #cmd))
+
+;; ssh — branch on the bound #host and recurse on the inner command.
+(rule "ssh"
+  (if (matches? #host (regex "(^|@).*prod.*"))
+    (deny "Production host — no direct recursion")
+    (authorise #cmd)))
+
+(define immutable
+  (fact? [:via "ssh"]))
+
+(rule "echo"
+  (allow "Local echo is always fine"))
+
+(rule "rm"
+  (when immutable
+       (deny "Production hosts are immutable")))
+
+(rule (or "touch" "mkdir" "cp" "mv" "tee" "chmod" "chown")
+  (when (and immutable
+       (fact? :via/sudo))
+       (deny "Production hosts are immutable, even through ssh + sudo")))
+
+(rule (or "journalctl" "cat" "less" "tail" "head" "grep" "rg")
+  (when immutable
+       (allow "Read-only inspection on production hosts is allowed")))
+
+(rule (or "rm" "touch" "mkdir" "cp" "mv" "tee" "chmod" "chown" "journalctl"
+          "cat" "less" "tail" "head" "grep" "rg")
+  (allow))

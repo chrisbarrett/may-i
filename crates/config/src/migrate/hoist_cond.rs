@@ -1,4 +1,3 @@
-use super::helpers::strip_whitespace_trivia;
 use may_i_sexpr::cst::CstNode;
 
 /// Find and extract a cond/if form nested within boolean combinators.
@@ -107,7 +106,7 @@ pub(crate) fn hoist_cond(node: &CstNode) -> Option<Box<CstNode>> {
     if case_source.is_tagged("cond") {
         let cond_children = case_source.as_list()?;
         for branch in &cond_children[1..] {
-            case_children.push(Box::new(strip_whitespace_trivia(branch)));
+            case_children.push(Box::new(may_i_sexpr::cst::reflow(branch)));
         }
     } else if case_source.is_tagged("if") {
         // Convert (if PRED THEN ELSE) to case branches

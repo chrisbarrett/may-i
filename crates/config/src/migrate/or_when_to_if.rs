@@ -1,4 +1,3 @@
-use super::helpers::strip_whitespace_trivia;
 use may_i_sexpr::cst::{CstNode, TriviaAnn};
 
 pub(crate) fn or_leading_when_to_if(node: &CstNode) -> Option<Box<CstNode>> {
@@ -24,20 +23,20 @@ pub(crate) fn or_leading_when_to_if(node: &CstNode) -> Option<Box<CstNode>> {
 
     let else_branch = if children.len() == 3 {
         // (or (when P E1) E2) → (if P E1 E2)
-        Box::new(strip_whitespace_trivia(&children[2]))
+        Box::new(may_i_sexpr::cst::reflow(&children[2]))
     } else {
         // (or (when P E1) E2 E3 ...) → (if P E1 (or E2 E3 ...))
         let mut rest = vec![Box::new(CstNode::atom("or", Default::default()))];
         for child in &children[2..] {
-            rest.push(Box::new(strip_whitespace_trivia(child)));
+            rest.push(Box::new(may_i_sexpr::cst::reflow(child)));
         }
         Box::new(CstNode::list(rest, Default::default()))
     };
 
     let if_children = vec![
         Box::new(CstNode::atom("if", TriviaAnn::default())),
-        Box::new(strip_whitespace_trivia(pred)),
-        Box::new(strip_whitespace_trivia(then_branch)),
+        Box::new(may_i_sexpr::cst::reflow(pred)),
+        Box::new(may_i_sexpr::cst::reflow(then_branch)),
         else_branch,
     ];
 

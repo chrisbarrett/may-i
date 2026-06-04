@@ -8,18 +8,11 @@
 use may_i_sexpr::cst::{CstNode, ShapeF, Trivia, TriviaAnn};
 
 pub(crate) fn positional_dotted_tail(node: &CstNode) -> Option<Box<CstNode>> {
-    let list = node.as_list()?;
-
-    // Recurse first.
-    let rewritten: Vec<(Box<CstNode>, bool)> = list
-        .iter()
-        .map(|child| match positional_dotted_tail(child) {
-            Some(new_child) => (new_child, true),
-            None => (child.clone(), false),
-        })
-        .collect();
-    let any_child_changed = rewritten.iter().any(|(_, c)| *c);
-    let children: Vec<Box<CstNode>> = rewritten.into_iter().map(|(n, _)| n).collect();
+    // Local rewrite: the seam reaches nested forms. The returned `(and …)`
+    // inherits the matched node's position trivia from the seam; the inner
+    // `(positional …)` / `(tail …)` children carry deliberate construction
+    // trivia, kept here.
+    let children = node.as_list()?;
 
     // Match `(positional ITEM… . CONT)` where CONT is `(authorise)` or
     // `(may-i *)` (legacy — covered by may_i_to_authorise upstream too,
@@ -83,25 +76,10 @@ pub(crate) fn positional_dotted_tail(node: &CstNode) -> Option<Box<CstNode>> {
                     positional_form,
                     tail_form_with_lead,
                 ],
-                TriviaAnn {
-                    leading: node.ann.leading.clone(),
-                    trailing: node.ann.trailing.clone(),
-                    span: node.ann.span,
-                },
+                TriviaAnn::default(),
             ));
             return Some(and_form);
         }
-    }
-
-    if any_child_changed {
-        return Some(Box::new(CstNode::list(
-            children,
-            TriviaAnn {
-                leading: node.ann.leading.clone(),
-                trailing: node.ann.trailing.clone(),
-                span: node.ann.span,
-            },
-        )));
     }
 
     None
@@ -143,13 +121,13 @@ fn is_may_i_star(node: &CstNode) -> bool {
 mod tests {
     use super::*;
 
+    // The pass is a local rewrite; nested occurrences are reached by the
+    // post-order seam, so drive it through the seam in tests.
     fn migrate_first(input: &str) -> String {
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let node = nodes.into_iter().next().unwrap();
-        match positional_dotted_tail(&node) {
-            Some(out) => out.serialize(),
-            None => node.serialize(),
-        }
+        let rules: [fn(&CstNode) -> Option<Box<CstNode>>; 1] = [positional_dotted_tail];
+        may_i_sexpr::cst::rewrite_post_order(node, &rules).serialize()
     }
 
     #[test]

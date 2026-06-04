@@ -15,46 +15,38 @@
 use may_i_sexpr::cst::{CstNode, TriviaAnn};
 
 pub(crate) fn may_i_to_authorise(node: &CstNode) -> Option<Box<CstNode>> {
+    // Local rewrite. The decision is parent-relative: a `(may-i *)` in a
+    // `(parameter …)` body becomes bare `(authorise)`, elsewhere it becomes
+    // `(tail (authorise))`. The seam visits children before parents, so a
+    // `(may-i *)` is first rewritten to `(tail (authorise))` as a bare form;
+    // when its `(parameter …)` parent is then offered, the parameter handler
+    // unwraps that back to bare `(authorise)`.
     let list = node.as_list()?;
     let head = list.first().and_then(|c| c.as_atom());
-    let in_parameter_body = head == Some("parameter");
 
-    let mut new_children: Vec<Box<CstNode>> = Vec::with_capacity(list.len());
-    let mut any_changed = false;
-    for (i, child) in list.iter().enumerate() {
-        // Parameter body slot: `(parameter NAME (may-i *) …)`. Rewrite the
-        // body slot to bare `(authorise)` (the host context), without
-        // recursing — the `(authorise)` form is the leaf.
-        if in_parameter_body && i >= 2 && is_may_i_star(child) {
-            new_children.push(make_authorise_form(child));
-            any_changed = true;
-            continue;
-        }
-        match may_i_to_authorise(child) {
-            Some(new_child) => {
-                new_children.push(new_child);
+    // Host context: a `(parameter NAME …)` body slot supplies the recursion
+    // operand. Accept both the legacy `(may-i *)` (when this pass runs ahead of
+    // the seam reaching the leaf) and the `(tail (authorise))` the seam has
+    // already produced for it bottom-up.
+    if head == Some("parameter") {
+        let mut new_children: Vec<Box<CstNode>> = Vec::with_capacity(list.len());
+        let mut any_changed = false;
+        for (i, child) in list.iter().enumerate() {
+            if i >= 2 && (is_may_i_star(child) || is_tail_authorise(child)) {
+                new_children.push(make_authorise_form(child));
                 any_changed = true;
+            } else {
+                new_children.push(child.clone());
             }
-            None => new_children.push(child.clone()),
         }
+        return any_changed.then(|| Box::new(CstNode::list(new_children, TriviaAnn::default())));
     }
 
-    // Bare `(may-i *)` — at this point we know it isn't sitting in a
-    // parameter body slot (that path was handled above). Rewrite to
-    // `(tail (authorise))` so a host context wraps the recursion.
+    // Bare `(may-i *)` anywhere else → `(tail (authorise))` so a host context
+    // wraps the recursion. Bare `(authorise)` at effect position is a
+    // config-load error.
     if head == Some("may-i") && list.len() == 2 && list[1].as_atom() == Some("*") {
         return Some(make_tail_authorise_form(node));
-    }
-
-    if any_changed {
-        return Some(Box::new(CstNode::list(
-            new_children,
-            TriviaAnn {
-                leading: node.ann.leading.clone(),
-                trailing: node.ann.trailing.clone(),
-                span: node.ann.span,
-            },
-        )));
     }
 
     None
@@ -67,6 +59,16 @@ fn is_may_i_star(node: &CstNode) -> bool {
     list.len() == 2
         && list.first().and_then(|c| c.as_atom()) == Some("may-i")
         && list[1].as_atom() == Some("*")
+}
+
+fn is_tail_authorise(node: &CstNode) -> bool {
+    let Some(list) = node.as_list() else {
+        return false;
+    };
+    list.len() == 2
+        && list.first().and_then(|c| c.as_atom()) == Some("tail")
+        && matches!(list[1].as_list(), Some(inner)
+            if inner.len() == 1 && inner[0].as_atom() == Some("authorise"))
 }
 
 fn make_authorise_form(source: &CstNode) -> Box<CstNode> {
@@ -115,13 +117,13 @@ fn make_tail_authorise_form(source: &CstNode) -> Box<CstNode> {
 mod tests {
     use super::*;
 
+    // The pass is parent-relative and local; nested occurrences are reached by
+    // the post-order seam, so drive it through the seam in tests.
     fn migrate_first(input: &str) -> String {
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let node = nodes.into_iter().next().unwrap();
-        match may_i_to_authorise(&node) {
-            Some(out) => out.serialize(),
-            None => node.serialize(),
-        }
+        let rules: [fn(&CstNode) -> Option<Box<CstNode>>; 1] = [may_i_to_authorise];
+        may_i_sexpr::cst::rewrite_post_order(node, &rules).serialize()
     }
 
     #[test]

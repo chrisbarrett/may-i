@@ -769,6 +769,7 @@ version = "0.1.0"
 dependencies = [
  "dirs",
  "glob",
+ "insta",
  "may-i-core",
  "may-i-engine",
  "may-i-sexpr",

@@ -1,4 +1,4 @@
-use super::helpers::{rebuild_list, strip_whitespace_trivia, tagged_list};
+use super::helpers::{rebuild_list, tagged_list};
 use may_i_sexpr::cst::CstNode;
 
 pub(crate) fn rule_inline_args(node: &CstNode) -> Option<Box<CstNode>> {
@@ -23,7 +23,7 @@ pub(crate) fn rule_inline_args(node: &CstNode) -> Option<Box<CstNode>> {
 
                 // For simple matchers, inline them with stripped trivia
                 // so pretty printer can use optimal layout
-                let inlined = strip_whitespace_trivia(matcher);
+                let inlined = may_i_sexpr::cst::reflow(matcher);
                 new_children.push(Box::new(inlined));
                 changed = true;
                 continue;

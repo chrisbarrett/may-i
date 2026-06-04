@@ -36,9 +36,10 @@ pub enum ShapeF<R> {
 /// This is a type alias for backward compatibility.
 pub type Shape = ShapeF<Box<CstNode>>;
 
-#[cfg(test)]
 impl<R> ShapeF<R> {
-    fn map<S>(self, f: impl FnMut(R) -> S) -> ShapeF<S> {
+    /// Map over the child slots of one structural layer (the functor `fmap`).
+    /// Atoms have no children, so they pass through unchanged.
+    pub(crate) fn map<S>(self, f: impl FnMut(R) -> S) -> ShapeF<S> {
         match self {
             ShapeF::Keyword(s) => ShapeF::Keyword(s),
             ShapeF::Symbol(s) => ShapeF::Symbol(s),
@@ -49,7 +50,8 @@ impl<R> ShapeF<R> {
         }
     }
 
-    fn map_ref<S>(&self, f: impl FnMut(&R) -> S) -> ShapeF<S> {
+    /// Borrowing variant of [`ShapeF::map`]: map over child slots by reference.
+    pub(crate) fn map_ref<S>(&self, f: impl FnMut(&R) -> S) -> ShapeF<S> {
         match self {
             ShapeF::Keyword(s) => ShapeF::Keyword(s.clone()),
             ShapeF::Symbol(s) => ShapeF::Symbol(s.clone()),
@@ -363,16 +365,21 @@ impl<A> CstNode<A> {
     }
 }
 
-#[cfg(test)]
 impl<A: Clone> CstNode<A> {
-    fn map<B>(self, f: &mut impl FnMut(A) -> B) -> CstNode<B> {
+    /// Map a function over every annotation in the tree (the `CstNode` functor
+    /// `fmap`), preserving structure. The seam uses this to re-annotate a
+    /// subtree's trivia in one pass instead of hand-rolled recursion.
+    pub(crate) fn map<B>(self, f: &mut impl FnMut(A) -> B) -> CstNode<B> {
         CstNode {
             ann: f(self.ann),
             shape: self.shape.map(|child| Box::new(child.map(f))),
         }
     }
 
-    fn fold<B>(&self, alg: &mut impl FnMut(&ShapeF<B>, &A) -> B) -> B {
+    /// Bottom-up catamorphism: fold each node after its children, threading the
+    /// folded children and the node's annotation through `alg`. The post-order
+    /// rewrite seam is built on this.
+    pub(crate) fn fold<B>(&self, alg: &mut impl FnMut(&ShapeF<B>, &A) -> B) -> B {
         let folded_shape = self.shape.map_ref(|child| child.fold(alg));
         alg(&folded_shape, &self.ann)
     }
@@ -739,6 +746,114 @@ where
     }
 
     current
+}
+
+/// Apply rewrite rules bottom-up (post-order) until convergence.
+///
+/// Unlike [`rewrite_until_convergence`] (which descends top-down via
+/// [`CstNode::transform`] and early-returns on the first match), this combinator
+/// visits every node *after* its children, rebuilds it from the rewritten
+/// children, then offers the rebuilt node to the rule set. A single sweep
+/// therefore reaches every occurrence — nested or top-level — so a rule body
+/// need only match the immediate shape it is given; it carries no recursion of
+/// its own.
+///
+/// Convergence uses the same restart discipline as
+/// [`rewrite_until_convergence`]: rules are tried in order, the first match
+/// wins at a node, and the whole tree is re-swept until no rule fires (bounded
+/// by `MAX_ITERS`).
+pub fn rewrite_post_order<F>(node: Box<CstNode<TriviaAnn>>, rules: &[F]) -> Box<CstNode<TriviaAnn>>
+where
+    F: Fn(&CstNode<TriviaAnn>) -> Option<Box<CstNode<TriviaAnn>>>,
+{
+    const MAX_ITERS: usize = 100;
+    let mut current = node;
+    for _ in 0..MAX_ITERS {
+        let mut changed = false;
+        // One bottom-up sweep. `fold` hands `alg` each node's already-rewritten
+        // children (the `ShapeF<Box<CstNode>>`) plus its annotation; we rebuild
+        // the node and offer it to the rule set. The first matching rule wins,
+        // and its replacement is re-swept on the next iteration.
+        let swept = current.fold(&mut |shape: &ShapeF<Box<CstNode<TriviaAnn>>>,
+                                       ann: &TriviaAnn| {
+            let rebuilt = Box::new(CstNode {
+                ann: ann.clone(),
+                shape: shape.clone(),
+            });
+            for rule in rules {
+                if let Some(replacement) = rule(&rebuilt) {
+                    changed = true;
+                    return graft_position_trivia(&rebuilt, replacement);
+                }
+            }
+            rebuilt
+        });
+        current = swept;
+        if !changed {
+            break;
+        }
+    }
+    current
+}
+
+/// Carry the original node's position trivia onto a rule's replacement.
+///
+/// Migration passes return a replacement for the node they matched; the form's
+/// leading/trailing trivia (its comments and placement among siblings) belong
+/// to the *position*, not the rewrite, so the seam re-grafts them here instead
+/// of every pass cloning `ann.leading` / `ann.trailing` by hand.
+///
+/// The graft only fills a replacement that is *freshly constructed* and carries
+/// no position trivia of its own (default annotation). A replacement that
+/// already carries source trivia — e.g. a node the pass lifted straight from
+/// source, or one that deliberately set its own placement — is left untouched.
+/// This makes the graft a no-op for passes that still self-manage trivia, so it
+/// can be introduced ahead of simplifying them.
+fn graft_position_trivia(
+    original: &CstNode<TriviaAnn>,
+    mut replacement: Box<CstNode<TriviaAnn>>,
+) -> Box<CstNode<TriviaAnn>> {
+    if !replacement.has_source_trivia()
+        && replacement.ann.leading.is_empty()
+        && replacement.ann.trailing.is_empty()
+    {
+        replacement.ann.leading = original.ann.leading.clone();
+        replacement.ann.trailing = original.ann.trailing.clone();
+        replacement.ann.span = original.ann.span;
+    }
+    replacement
+}
+
+/// Re-annotate a subtree for *construction*: drop whitespace trivia (keeping
+/// comments) and clear source spans so the pretty printer reflows the node with
+/// optimal layout instead of locking it to stale source formatting.
+///
+/// When a comment survives on a node, a sentinel span `Span::new(0, 1)` is set
+/// so [`CstNode::has_source_trivia`] stays true and the renderer still emits the
+/// comment. This is the trivia rule the migration seam applies when a pass lifts
+/// a source-parsed node into a freshly-built structural context; it lives here,
+/// not in each pass.
+pub fn reflow(node: &CstNode<TriviaAnn>) -> CstNode<TriviaAnn> {
+    node.clone().map(&mut |ann: TriviaAnn| {
+        let keep_comments = |trivia: Vec<Trivia>| -> Vec<Trivia> {
+            trivia
+                .into_iter()
+                .filter(|t| matches!(t, Trivia::Comment { .. }))
+                .collect()
+        };
+        let leading = keep_comments(ann.leading);
+        let trailing = keep_comments(ann.trailing);
+        let has_comments = !leading.is_empty() || !trailing.is_empty();
+        TriviaAnn {
+            leading,
+            trailing,
+            span: if has_comments {
+                Span::new(0, 1)
+            } else {
+                Span::new(0, 0)
+            },
+        }
+    })
 }
 
 #[cfg(test)]
@@ -2538,5 +2653,239 @@ mod proptests {
         assert!(pretty.contains("["));
         assert!(pretty.contains("]"));
         assert!(pretty.contains("a"));
+    }
+}
+
+#[cfg(test)]
+mod post_order_rewrite_tests {
+    use super::*;
+    use proptest::prelude::*;
+    use std::cell::RefCell;
+
+    type DynRule = Box<dyn Fn(&CstNode) -> Option<Box<CstNode>>>;
+
+    fn parse_one(input: &str) -> Box<CstNode> {
+        let (nodes, errors) = parse(input);
+        assert!(errors.is_empty(), "parse errors: {errors:?}");
+        nodes.into_iter().next().unwrap()
+    }
+
+    fn count_nodes(node: &CstNode) -> usize {
+        1 + match &node.shape {
+            ShapeF::List(cs) | ShapeF::Vector(cs) => cs.iter().map(|c| count_nodes(c)).sum(),
+            _ => 0,
+        }
+    }
+
+    /// Small s-expression source generator (atoms + nested lists).
+    fn small_sexpr(depth: u32) -> proptest::strategy::BoxedStrategy<String> {
+        let leaf = prop::string::string_regex("[a-z][a-z0-9-]{0,4}").unwrap();
+        if depth == 0 {
+            leaf.boxed()
+        } else {
+            let child = small_sexpr(depth - 1);
+            prop_oneof![
+                leaf,
+                prop::collection::vec(child, 0..4)
+                    .prop_map(|items| format!("({})", items.join(" "))),
+            ]
+            .boxed()
+        }
+    }
+
+    /// Local rule: unwrap `(old E)` → `E`. Matches only the immediate shape.
+    fn unwrap_old(n: &CstNode) -> Option<Box<CstNode>> {
+        let cs = n.as_list()?;
+        if cs.len() == 2 && cs[0].as_atom() == Some("old") {
+            Some(cs[1].clone())
+        } else {
+            None
+        }
+    }
+
+    // Post-order coverage: every node is offered to the pass set exactly once,
+    // and the root (whole tree) is offered last — children before parents.
+    #[test]
+    fn offers_every_node_in_post_order() {
+        let node = parse_one("(a (b c) d)");
+        let total = count_nodes(&node);
+        let visited = RefCell::new(Vec::<String>::new());
+        let rule = |n: &CstNode| -> Option<Box<CstNode>> {
+            visited.borrow_mut().push(n.serialize());
+            None
+        };
+        let _ = rewrite_post_order(node.clone(), std::slice::from_ref(&rule));
+        let v = visited.borrow();
+        assert_eq!(v.len(), total, "every node offered exactly once: {v:?}");
+        assert_eq!(
+            v.last().unwrap(),
+            &node.serialize(),
+            "root offered last (post-order): {v:?}"
+        );
+    }
+
+    // A local pass rewrites a nested occurrence without recursing itself.
+    #[test]
+    fn local_pass_rewrites_nested_occurrence() {
+        let node = parse_one("(outer (mid (old x)))");
+        let out = rewrite_post_order(node, std::slice::from_ref(&unwrap_old));
+        assert_eq!(out.serialize(), "(outer (mid x))");
+    }
+
+    // Convergence over interacting passes: one produces a form the other
+    // rewrites; the sweep iterates to the same fixed point.
+    #[test]
+    fn converges_over_interacting_passes() {
+        let retag = |from: &'static str, to: &'static str| -> DynRule {
+            Box::new(move |n: &CstNode| {
+                if n.is_tagged(from) {
+                    let mut cs = n.as_list()?.to_vec();
+                    *cs[0] = CstNode::atom(to, TriviaAnn::default());
+                    Some(Box::new(CstNode::list(cs, TriviaAnn::default())))
+                } else {
+                    None
+                }
+            })
+        };
+        let rules: Vec<DynRule> = vec![retag("a-marker", "b-marker"), retag("b-marker", "done")];
+        let out = rewrite_post_order(parse_one("(a-marker x)"), &rules);
+        assert_eq!(out.serialize(), "(done x)");
+    }
+
+    // Termination: an oscillating rule (ping↔pong) does not hang; the
+    // combinator returns within MAX_ITERS.
+    #[test]
+    fn oscillating_rule_terminates() {
+        let flip = |n: &CstNode| -> Option<Box<CstNode>> {
+            match n.as_atom() {
+                Some("ping") => Some(Box::new(CstNode::atom("pong", TriviaAnn::default()))),
+                Some("pong") => Some(Box::new(CstNode::atom("ping", TriviaAnn::default()))),
+                _ => None,
+            }
+        };
+        let out = rewrite_post_order(parse_one("ping"), std::slice::from_ref(&flip));
+        assert!(matches!(out.as_atom(), Some("ping") | Some("pong")));
+    }
+
+    fn is_comment(t: &Trivia) -> bool {
+        matches!(t, Trivia::Comment { .. })
+    }
+
+    fn count_comments(node: &CstNode) -> usize {
+        let here = node.ann.leading.iter().filter(|t| is_comment(t)).count()
+            + node.ann.trailing.iter().filter(|t| is_comment(t)).count();
+        here + match &node.shape {
+            ShapeF::List(cs) | ShapeF::Vector(cs) => cs.iter().map(|c| count_comments(c)).sum(),
+            _ => 0,
+        }
+    }
+
+    // reflow keeps every comment but discards whitespace trivia.
+    #[test]
+    fn reflow_keeps_comments_drops_whitespace() {
+        let node = parse_one("(foo ;; keep me\n  bar)");
+        let before = count_comments(&node);
+        assert!(before >= 1, "fixture should carry a comment");
+        let reflowed = reflow(&node);
+        assert_eq!(count_comments(&reflowed), before, "comments must survive");
+        // No whitespace trivia remains anywhere.
+        fn no_ws(n: &CstNode) {
+            assert!(n.ann.leading.iter().all(is_comment));
+            assert!(n.ann.trailing.iter().all(is_comment));
+            if let ShapeF::List(cs) | ShapeF::Vector(cs) = &n.shape {
+                cs.iter().for_each(|c| no_ws(c));
+            }
+        }
+        no_ws(&reflowed);
+    }
+
+    // A node that still carries a comment after reflow keeps source-trivia
+    // status via the sentinel span; a comment-free node reflows to zero span.
+    #[test]
+    fn reflow_span_sentinel_tracks_comments() {
+        let with_comment = reflow(&parse_one("(a) ;; trailing"));
+        // The list itself or a child carries the comment → sentinel span keeps
+        // has_source_trivia true somewhere; check the node bearing the comment.
+        let plain = reflow(&parse_one("(a b)"));
+        assert!(
+            !plain.has_source_trivia(),
+            "comment-free reflow → zero span (reflow)"
+        );
+        // Comment-bearing node uses the (0,1) sentinel.
+        fn find_commented(n: &CstNode) -> bool {
+            let here =
+                n.ann.leading.iter().any(is_comment) || n.ann.trailing.iter().any(is_comment);
+            if here {
+                assert_eq!(n.ann.span, Span::new(0, 1), "comment node → sentinel span");
+                return true;
+            }
+            match &n.shape {
+                ShapeF::List(cs) | ShapeF::Vector(cs) => cs.iter().any(|c| find_commented(c)),
+                _ => false,
+            }
+        }
+        assert!(find_commented(&with_comment), "a comment should remain");
+    }
+
+    // Seam graft: a pass that returns a freshly-constructed (default-ann)
+    // replacement keeps the original node's position trivia (leading comment),
+    // without the pass touching ann.leading/ann.trailing itself.
+    #[test]
+    fn seam_grafts_position_trivia_onto_fresh_replacement() {
+        let node = parse_one(";; doc comment\n(old x)");
+        assert!(count_comments(&node) >= 1);
+        // Local pass returns a *fresh* node (default ann, no trivia threading).
+        let rule = |n: &CstNode| -> Option<Box<CstNode>> {
+            if n.is_tagged("old") {
+                Some(Box::new(CstNode::atom("new", TriviaAnn::default())))
+            } else {
+                None
+            }
+        };
+        let out = rewrite_post_order(node, std::slice::from_ref(&rule));
+        assert_eq!(out.as_atom(), Some("new"));
+        assert!(
+            out.ann.leading.iter().any(is_comment),
+            "seam should graft the original node's leading comment onto the \
+             freshly-constructed replacement, got: {:?}",
+            out.ann.leading
+        );
+    }
+
+    proptest! {
+        // reflow is idempotent.
+        #[test]
+        fn reflow_is_idempotent(input in small_sexpr(3)) {
+            let (nodes, errors) = parse(&input);
+            prop_assume!(errors.is_empty() && !nodes.is_empty());
+            let once = reflow(&nodes[0]);
+            let twice = reflow(&once);
+            prop_assert_eq!(once.serialize(), twice.serialize());
+        }
+
+        // Idempotence on already-canonical input: when no rule fires anywhere,
+        // output is byte-identical to input.
+        #[test]
+        fn no_rule_fires_is_identity(input in small_sexpr(3)) {
+            let (nodes, errors) = parse(&input);
+            prop_assume!(errors.is_empty() && !nodes.is_empty());
+            let node = nodes.into_iter().next().unwrap();
+            let before = node.serialize();
+            let none: &[fn(&CstNode) -> Option<Box<CstNode>>] = &[];
+            let out = rewrite_post_order(node, none);
+            prop_assert_eq!(out.serialize(), before);
+        }
+
+        // The result of a terminating ruleset is a fixed point: re-running the
+        // combinator leaves it unchanged.
+        #[test]
+        fn result_is_a_fixed_point(input in small_sexpr(3)) {
+            let (nodes, errors) = parse(&input);
+            prop_assume!(errors.is_empty() && !nodes.is_empty());
+            let node = nodes.into_iter().next().unwrap();
+            let once = rewrite_post_order(node, std::slice::from_ref(&(unwrap_old as fn(&CstNode) -> Option<Box<CstNode>>)));
+            let twice = rewrite_post_order(once.clone(), std::slice::from_ref(&(unwrap_old as fn(&CstNode) -> Option<Box<CstNode>>)));
+            prop_assert_eq!(once.serialize(), twice.serialize());
+        }
     }
 }

@@ -7,48 +7,25 @@
 use may_i_sexpr::cst::{CstNode, ShapeF, Trivia, TriviaAnn};
 
 pub(crate) fn check_to_form(node: &CstNode) -> Option<Box<CstNode>> {
+    // Local rewrite: the seam visits children first (so a nested
+    // `(with-facts …)` is already lifted by the time the enclosing `(check …)`
+    // is offered) and grafts the original node's position trivia onto the
+    // replacement. This pass only rewrites the PLIST body of the immediate
+    // `check` / `with-facts` node.
     let list = node.as_list()?;
-
-    // Recurse first.
-    let rewritten: Vec<(Box<CstNode>, bool)> = list
-        .iter()
-        .map(|child| match check_to_form(child) {
-            Some(new_child) => (new_child, true),
-            None => (child.clone(), false),
-        })
-        .collect();
-    let any_child_changed = rewritten.iter().any(|(_, c)| *c);
-    let children: Vec<Box<CstNode>> = rewritten.into_iter().map(|(n, _)| n).collect();
-
-    let head = children.first().and_then(|c| c.as_atom());
-    if matches!(head, Some("check") | Some("with-facts")) {
-        let body_start = if head == Some("with-facts") { 2 } else { 1 };
-        if children.len() > body_start
-            && let Some(rewritten_body) = rewrite_body(&children[body_start..])
-        {
-            let mut new_children: Vec<Box<CstNode>> = Vec::new();
-            new_children.extend(children[..body_start].iter().cloned());
-            new_children.extend(rewritten_body);
-            return Some(Box::new(CstNode::list(
-                new_children,
-                TriviaAnn {
-                    leading: node.ann.leading.clone(),
-                    trailing: node.ann.trailing.clone(),
-                    span: node.ann.span,
-                },
-            )));
-        }
+    let head = list.first().and_then(|c| c.as_atom());
+    if !matches!(head, Some("check") | Some("with-facts")) {
+        return None;
     }
 
-    if any_child_changed {
-        return Some(Box::new(CstNode::list(
-            children,
-            TriviaAnn {
-                leading: node.ann.leading.clone(),
-                trailing: node.ann.trailing.clone(),
-                span: node.ann.span,
-            },
-        )));
+    let body_start = if head == Some("with-facts") { 2 } else { 1 };
+    if list.len() > body_start
+        && let Some(rewritten_body) = rewrite_body(&list[body_start..])
+    {
+        let mut new_children: Vec<Box<CstNode>> = Vec::new();
+        new_children.extend(list[..body_start].iter().cloned());
+        new_children.extend(rewritten_body);
+        return Some(Box::new(CstNode::list(new_children, TriviaAnn::default())));
     }
 
     None
@@ -118,13 +95,13 @@ fn decision_from_keyword(kw: &str) -> Option<&'static str> {
 mod tests {
     use super::*;
 
+    // The pass is a local rewrite; nested occurrences are reached by the
+    // post-order seam, so drive it through the seam in tests.
     fn migrate_first(input: &str) -> String {
         let (nodes, _) = may_i_sexpr::parse_cst(input);
         let node = nodes.into_iter().next().unwrap();
-        match check_to_form(&node) {
-            Some(out) => out.serialize(),
-            None => node.serialize(),
-        }
+        let rules: [fn(&CstNode) -> Option<Box<CstNode>>; 1] = [check_to_form];
+        may_i_sexpr::cst::rewrite_post_order(node, &rules).serialize()
     }
 
     #[test]
