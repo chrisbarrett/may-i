@@ -1,4 +1,4 @@
-use super::helpers::{rebuild_list, strip_whitespace_trivia, tagged_list};
+use super::helpers::{rebuild_list, tagged_list};
 use may_i_sexpr::cst::CstNode;
 
 pub(crate) fn rule_simplify_command(node: &CstNode) -> Option<Box<CstNode>> {
@@ -27,7 +27,7 @@ pub(crate) fn rule_simplify_command(node: &CstNode) -> Option<Box<CstNode>> {
 
     // Strip trivia so pretty printer can use optimal layout,
     // then restore the (command ...) node's leading/trailing trivia.
-    let mut new_cmd = strip_whitespace_trivia(cmd_value);
+    let mut new_cmd = may_i_sexpr::cst::reflow(cmd_value);
     new_cmd.ann.leading = second.ann.leading.clone();
     new_cmd.ann.trailing = second.ann.trailing.clone();
     new_children.push(Box::new(new_cmd));

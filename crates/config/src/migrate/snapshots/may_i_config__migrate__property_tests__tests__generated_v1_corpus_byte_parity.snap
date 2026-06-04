@@ -1,0 +1,477 @@
+---
+source: crates/config/src/migrate/property_tests.rs
+expression: rendered
+---
+── command_rule #0 ──
+IN : (rule (command (or "f-4ws5_-_" "r-72__" "ebj5z")) (ask))
+OUT: (rule (or "f-4ws5_-_" "r-72__" "ebj5z") (ask))
+
+── command_rule #1 ──
+IN : (rule (command "bu2t---a3-_") (cond ((and (fact? :in/ci) (fact? :in/ci)) (allow "l  x togqf as y")) ((and (fact? :tool/docker) (fact? :tool/docker)) (deny)) (else (deny "gxe   m g  anqs"))))
+OUT: (rule "bu2t---a3-_" (cond ((and (fact? :in/ci) (fact? :in/ci)) (allow "l  x togqf as y")) ((and (fact? :tool/docker) (fact? :tool/docker)) (deny)) (else (deny "gxe   m g  anqs"))))
+
+── command_rule #2 ──
+IN : (rule (command (or "eg_s6b_wl" "h_u_l_u-0")) (cond ((and (fact? :via/ssh) (fact? :nlwaon)) (allow "s")) ((not (fact? :eael)) (ask "x lehj")) (else (allow))))
+OUT: (rule (or "eg_s6b_wl" "h_u_l_u-0") (cond ((and (fact? :via/ssh) (fact? :nlwaon)) (allow "s")) ((not (fact? :eael)) (ask "x lehj")) (else (allow))))
+
+── command_rule #3 ──
+IN : (rule (command (or "obpi8_u4py" "n")) (if (not (fact? :tool/docker)) (ask) (deny)))
+OUT: (rule (or "obpi8_u4py" "n") (if (not (fact? :tool/docker)) (ask) (deny)))
+
+── command_rule #4 ──
+IN : (rule (command "y4-4ox-3") (ask "xao vaktv  bkm"))
+OUT: (rule "y4-4ox-3" (ask "xao vaktv  bkm"))
+
+── command_rule #5 ──
+IN : (rule (command "x-") (cond ((and (fact? :in/ci) (fact? :klrl)) (deny)) ((or (fact? :via/ssh) (fact? :in/ci)) (allow)) ((and (fact? :via/ssh) (fact? :in/ci)) (deny "wna zx lwx l"))))
+OUT: (rule "x-" (cond ((and (fact? :in/ci) (fact? :klrl)) (deny)) ((or (fact? :via/ssh) (fact? :in/ci)) (allow)) ((and (fact? :via/ssh) (fact? :in/ci)) (deny "wna zx lwx l"))))
+
+── command_rule #6 ──
+IN : (rule (command (or "q-99__o_-2-" "sj-__--_yi")) (ask "n hsg  w  r"))
+OUT: (rule (or "q-99__o_-2-" "sj-__--_yi") (ask "n hsg  w  r"))
+
+── command_rule #7 ──
+IN : (rule (command (or "q_mc-5r8-x4" "jw--0" "nw_5-_-_" "c_50_-to")) (if (fact? :via/ssh) (deny) (allow "w w   kw   id")))
+OUT: (rule (or "q_mc-5r8-x4" "jw--0" "nw_5-_-_" "c_50_-to") (if (fact? :via/ssh) (deny) (allow "w w   kw   id")))
+
+── command_rule #8 ──
+IN : (rule (command "toe_") (cond ((and (fact? :in/ci) (fact? :via/ssh)) (allow)) ((not (fact? :in/ci)) (deny)) ((fact? :in/ci) (ask)) ((fact? :in/ci) (allow "q b  zld h  l"))))
+OUT: (rule "toe_" (cond ((and (fact? :in/ci) (fact? :via/ssh)) (allow)) ((not (fact? :in/ci)) (deny)) ((fact? :in/ci) (ask)) ((fact? :in/ci) (allow "q b  zld h  l"))))
+
+── command_rule #9 ──
+IN : (rule (command (or "e99-x_" "w0" "l_90xdv7" "sp3a-m-e-_t")) (if (fact? :via/ssh) (allow "m   qmdczuyz xbhd") (allow)))
+OUT: (rule (or "e99-x_" "w0" "l_90xdv7" "sp3a-m-e-_t") (if (fact? :via/ssh) (allow "m   qmdczuyz xbhd") (allow)))
+
+── command_rule #10 ──
+IN : (rule (command (or "hm" "tzau-_84" "v5r" "x_z-b-z2")) (if (and (fact? :humivnsp) (fact? :via/ssh)) (deny "j") (deny)))
+OUT: (rule (or "hm" "tzau-_84" "v5r" "x_z-b-z2") (if (and (fact? :humivnsp) (fact? :via/ssh)) (deny "j") (deny)))
+
+── command_rule #11 ──
+IN : (rule (command "zx") (if (not (fact? :mkdgsrnn)) (ask) (allow "awdd    s qx   xsqk")))
+OUT: (rule "zx" (if (not (fact? :mkdgsrnn)) (ask) (allow "awdd    s qx   xsqk")))
+
+── command_rule #12 ──
+IN : (rule (command (or "v" "gd-" "lm--f66e")) (cond ((not (fact? :in/ci)) (allow)) ((fact? :in/ci) (ask "p  tb")) ((or (fact? :lb) (fact? :in/ci)) (ask))))
+OUT: (rule (or "v" "gd-" "lm--f66e") (cond ((not (fact? :in/ci)) (allow)) ((fact? :in/ci) (ask "p  tb")) ((or (fact? :lb) (fact? :in/ci)) (ask))))
+
+── command_rule #13 ──
+IN : (rule (command "o") (if (and (fact? :wch) (fact? :tool/docker)) (deny "dn l e t lhs e") (ask)))
+OUT: (rule "o" (if (and (fact? :wch) (fact? :tool/docker)) (deny "dn l e t lhs e") (ask)))
+
+── command_rule #14 ──
+IN : (rule (command (or "c-5" "m_r__" "r9_--j7_2" "iir0s__")) (ask))
+OUT: (rule (or "c-5" "m_r__" "r9_--j7_2" "iir0s__") (ask))
+
+── command_rule #15 ──
+IN : (rule (command "b") (if (and (fact? :hnwhwju) (fact? :tool/docker)) (allow) (allow)))
+OUT: (rule "b" (if (and (fact? :hnwhwju) (fact? :tool/docker)) (allow) (allow)))
+
+── defcontext #0 ──
+IN : (defcontext c-g_v-n (not (fact? :via/ssh)))
+OUT: (define c-g_v-n (not (fact? :via/ssh)))
+
+── defcontext #1 ──
+IN : (defcontext goj- (not (fact? :in/ci)))
+OUT: (define goj- (not (fact? :in/ci)))
+
+── defcontext #2 ──
+IN : (defcontext kc0--bwo (fact? :in/ci))
+OUT: (define kc0--bwo (fact? :in/ci))
+
+── defcontext #3 ──
+IN : (defcontext e3 (fact? :tool/docker))
+OUT: (define e3 (fact? :tool/docker))
+
+── defcontext #4 ──
+IN : (defcontext v8 (fact? :in/ci))
+OUT: (define v8 (fact? :in/ci))
+
+── defcontext #5 ──
+IN : (defcontext e-_-__ (not (fact? :via/ssh)))
+OUT: (define e-_-__ (not (fact? :via/ssh)))
+
+── defcontext #6 ──
+IN : (defcontext b-whf- (fact? :via/ssh))
+OUT: (define b-whf- (fact? :via/ssh))
+
+── defcontext #7 ──
+IN : (defcontext s4b__- (fact? :via/ssh))
+OUT: (define s4b__- (fact? :via/ssh))
+
+── defcontext #8 ──
+IN : (defcontext ei-0_2 (or (fact? :tool/docker) (fact? :via/ssh)))
+OUT: (define ei-0_2 (or (fact? :tool/docker) (fact? :via/ssh)))
+
+── defcontext #9 ──
+IN : (defcontext ge-_ (fact? :via/ssh))
+OUT: (define ge-_ (fact? :via/ssh))
+
+── defcontext #10 ──
+IN : (defcontext c1 (not (fact? :g)))
+OUT: (define c1 (not (fact? :g)))
+
+── defcontext #11 ──
+IN : (defcontext x-an__5_3 (fact? :in/ci))
+OUT: (define x-an__5_3 (fact? :in/ci))
+
+── defcontext #12 ──
+IN : (defcontext c-b_ (and (fact? :in/ci) (fact? :tr)))
+OUT: (define c-b_ (and (fact? :in/ci) (fact? :tr)))
+
+── defcontext #13 ──
+IN : (defcontext l6__- (not (fact? :ipfpasyo)))
+OUT: (define l6__- (not (fact? :ipfpasyo)))
+
+── defcontext #14 ──
+IN : (defcontext z (not (fact? :in/ci)))
+OUT: (define z (not (fact? :in/ci)))
+
+── defcontext #15 ──
+IN : (defcontext i-_345_v (fact? :tool/docker))
+OUT: (define i-_345_v (fact? :tool/docker))
+
+── rule_with_context #0 ──
+IN : (rule (command (or "f-4ws5_-_" "r-72__" "ebj5z")) (context (fact? :in/ci)) (ask "s m x h s s"))
+OUT: (rule (or "f-4ws5_-_" "r-72__" "ebj5z") (when (fact? :in/ci) (ask "s m x h s s")))
+
+── rule_with_context #1 ──
+IN : (rule (command (or "f_n8_" "kn8lxp_" "sw_-___i")) (context (or (fact? :via/ssh) (fact? :iyals))) (deny "x nki  xr  n"))
+OUT: (rule (or "f_n8_" "kn8lxp_" "sw_-___i") (when (or (fact? :via/ssh) (fact? :iyals)) (deny "x nki  xr  n")))
+
+── rule_with_context #2 ──
+IN : (rule (command "c3-z67-") (context (fact? :via/ssh)) (ask))
+OUT: (rule "c3-z67-" (when (fact? :via/ssh) (ask)))
+
+── rule_with_context #3 ──
+IN : (rule (command "x") (context (or (fact? :u) (fact? :in/ci))) (ask))
+OUT: (rule "x" (when (or (fact? :u) (fact? :in/ci)) (ask)))
+
+── rule_with_context #4 ──
+IN : (rule (command (or "b1" "r_4-__-9-" "w-japa0-")) (context (not (fact? :tool/docker))) (ask))
+OUT: (rule (or "b1" "r_4-__-9-" "w-japa0-") (when (not (fact? :tool/docker)) (ask)))
+
+── rule_with_context #5 ──
+IN : (rule (command (or "d2__-a_n_" "rn_")) (context (not (fact? :tool/docker))) (ask))
+OUT: (rule (or "d2__-a_n_" "rn_") (when (not (fact? :tool/docker)) (ask)))
+
+── rule_with_context #6 ──
+IN : (rule (command (or "g-zq" "o-i" "lu4pynb_" "t7_7x-87-y_")) (context (and (fact? :foj) (fact? :zkc))) (allow ""))
+OUT: (rule (or "g-zq" "o-i" "lu4pynb_" "t7_7x-87-y_") (when (and (fact? :foj) (fact? :zkc)) (allow "")))
+
+── rule_with_context #7 ──
+IN : (rule (command (or "h--s_" "a49v__t_88" "b__-_2s")) (context (fact? :kb)) (allow))
+OUT: (rule (or "h--s_" "a49v__t_88" "b__-_2s") (when (fact? :kb) (allow)))
+
+── rule_with_context #8 ──
+IN : (rule (command (or "mgp_q" "v35")) (context (not (fact? :via/ssh))) (ask))
+OUT: (rule (or "mgp_q" "v35") (when (not (fact? :via/ssh)) (ask)))
+
+── rule_with_context #9 ──
+IN : (rule (command "v--_22_p_") (context (and (fact? :tool/docker) (fact? :in/ci))) (ask))
+OUT: (rule "v--_22_p_" (when (and (fact? :tool/docker) (fact? :in/ci)) (ask)))
+
+── rule_with_context #10 ──
+IN : (rule (command "u--_--r-3") (context (fact? :aen)) (deny "wz   h"))
+OUT: (rule "u--_--r-3" (when (fact? :aen) (deny "wz   h")))
+
+── rule_with_context #11 ──
+IN : (rule (command (or "n__2e9s_-2_" "v-r8z-q-")) (context (not (fact? :in/ci))) (ask))
+OUT: (rule (or "n__2e9s_-2_" "v-r8z-q-") (when (not (fact? :in/ci)) (ask)))
+
+── rule_with_context #12 ──
+IN : (rule (command "o3") (context (and (fact? :c) (fact? :tool/docker))) (ask "y"))
+OUT: (rule "o3" (when (and (fact? :c) (fact? :tool/docker)) (ask "y")))
+
+── rule_with_context #13 ──
+IN : (rule (command (or "i" "hj_5_8r1-k" "yj-" "i9_ma--_n")) (context (fact? :abhahfsk)) (ask "c  i  j fiywl"))
+OUT: (rule (or "i" "hj_5_8r1-k" "yj-" "i9_ma--_n") (when (fact? :abhahfsk) (ask "c  i  j fiywl")))
+
+── rule_with_context #14 ──
+IN : (rule (command (or "xzl_" "s")) (context (or (fact? :tool/docker) (fact? :tool/docker))) (deny))
+OUT: (rule (or "xzl_" "s") (when (or (fact? :tool/docker) (fact? :tool/docker)) (deny)))
+
+── rule_with_context #15 ──
+IN : (rule (command (or "mt" "bd-y9rx")) (context (fact? :opczuyzl)) (allow))
+OUT: (rule (or "mt" "bd-y9rx") (when (fact? :opczuyzl) (allow)))
+
+── rule_with_args #0 ──
+IN : (rule (command (or "f-4ws5_-_" "r-72__" "ebj5z")) (args (positional "e3o")) (allow "mm  e cprc   bw"))
+OUT: (rule (or "f-4ws5_-_" "r-72__" "ebj5z") (when (positional "e3o") (allow "mm  e cprc   bw")))
+
+── rule_with_args #1 ──
+IN : (rule (command (or "ui-37--" "q--r-__-_z" "i_-n")) (args (positional "v9p_sw")) (allow))
+OUT: (rule (or "ui-37--" "q--r-__-_z" "i_-n") (when (positional "v9p_sw") (allow)))
+
+── rule_with_args #2 ──
+IN : (rule (command (or "s___-" "h_-l6l9-")) (args (positional "x-to__")) (ask))
+OUT: (rule (or "s___-" "h_-l6l9-") (when (positional "x-to__") (ask)))
+
+── rule_with_args #3 ──
+IN : (rule (command "f82_-8_-m04") (args (positional "a_")) (deny))
+OUT: (rule "f82_-8_-m04" (when (positional "a_") (deny)))
+
+── rule_with_args #4 ──
+IN : (rule (command "m_2-l-x_1-y") (args (positional "o")) (allow))
+OUT: (rule "m_2-l-x_1-y" (when (positional "o") (allow)))
+
+── rule_with_args #5 ──
+IN : (rule (command "m") (args (positional "tki--")) (allow "otd gxe   m"))
+OUT: (rule "m" (when (positional "tki--") (allow "otd gxe   m")))
+
+── rule_with_args #6 ──
+IN : (rule (command "e6x-an__5_3") (args (positional "i_8pbrg")) (ask))
+OUT: (rule "e6x-an__5_3" (when (positional "i_8pbrg") (ask)))
+
+── rule_with_args #7 ──
+IN : (rule (command (or "h8-" "p95-9-" "f-p")) (args (positional "w_3")) (allow))
+OUT: (rule (or "h8-" "p95-9-" "f-p") (when (positional "w_3") (allow)))
+
+── rule_with_args #8 ──
+IN : (rule (command "b1") (args (positional "r_4-__-")) (deny "nw b el"))
+OUT: (rule "b1" (when (positional "r_4-__-") (deny "nw b el")))
+
+── rule_with_args #9 ──
+IN : (rule (command "p_l-_") (args (positional "z_")) (allow "rgw yi y   iv y  e e"))
+OUT: (rule "p_l-_" (when (positional "z_") (allow "rgw yi y   iv y  e e")))
+
+── rule_with_args #10 ──
+IN : (rule (command "r2pn") (args (positional "e8_")) (deny))
+OUT: (rule "r2pn" (when (positional "e8_") (deny)))
+
+── rule_with_args #11 ──
+IN : (rule (command (or "e29t" "b_" "e30q__19" "zzqobpi8")) (args (positional "ku4pynb")) (allow "jgm"))
+OUT: (rule (or "e29t" "b_" "e30q__19" "zzqobpi8") (when (positional "ku4pynb") (allow "jgm")))
+
+── rule_with_args #12 ──
+IN : (rule (command (or "k_" "hw0jex0" "j" "b_2aod-__q")) (args (positional "x45-0n")) (ask))
+OUT: (rule (or "k_" "hw0jex0" "j" "b_2aod-__q") (when (positional "x45-0n") (ask)))
+
+── rule_with_args #13 ──
+IN : (rule (command (or "r_-d0k" "k----_4d" "wo____o-s__" "ofv7-f_8")) (args (positional "v")) (allow "pegpj"))
+OUT: (rule (or "r_-d0k" "k----_4d" "wo____o-s__" "ofv7-f_8") (when (positional "v") (allow "pegpj")))
+
+── rule_with_args #14 ──
+IN : (rule (command (or "c2--r-u" "g35ay3_cw-")) (args (positional "n___")) (allow))
+OUT: (rule (or "c2--r-u" "g35ay3_cw-") (when (positional "n___") (allow)))
+
+── rule_with_args #15 ──
+IN : (rule (command (or "f-_x" "i" "kc2-49__8" "i")) (args (positional "ny3")) (ask))
+OUT: (rule (or "f-_x" "i" "kc2-49__8" "i") (when (positional "ny3") (ask)))
+
+── compound_rule #0 ──
+IN : (rule (command (or "f-4ws5_-_" "r-72__" "ebj5z")) (context (fact? :via/ssh)) (args (positional "goj-")) (deny "hi    s"))
+OUT: (rule (or "f-4ws5_-_" "r-72__" "ebj5z") (when (and (positional "goj-") (fact? :via/ssh)) (deny "hi    s")))
+
+── compound_rule #1 ──
+IN : (rule (command "v-__-_zi3-n") (context (fact? :via/ssh)) (args (positional "uxp_")) (deny))
+OUT: (rule "v-__-_zi3-n" (when (and (positional "uxp_") (fact? :via/ssh)) (deny)))
+
+── compound_rule #2 ──
+IN : (rule (command (or "wb_-l" "q-9-x-t")) (context (fact? :via/ssh)) (args (positional "ewhf-a_")) (ask "pvv r     x  o  j"))
+OUT: (rule (or "wb_-l" "q-9-x-t") (when (and (positional "ewhf-a_") (fact? :via/ssh)) (ask "pvv r     x  o  j")))
+
+── compound_rule #3 ──
+IN : (rule (command "o") (context (fact? :b)) (args (positional "f_6_-_u1")) (allow "q  q pbrgis"))
+OUT: (rule "o" (when (and (positional "f_6_-_u1") (fact? :b)) (allow "q  q pbrgis")))
+
+── compound_rule #4 ──
+IN : (rule (command "am") (context (fact? :tool/docker)) (args (positional "t048-pwz")) (allow))
+OUT: (rule "am" (when (and (positional "t048-pwz") (fact? :tool/docker)) (allow)))
+
+── compound_rule #5 ──
+IN : (rule (command (or "w_3d" "b1")) (context (fact? :tool/docker)) (args (positional "qa0-_79_")) (deny))
+OUT: (rule (or "w_3d" "b1") (when (and (positional "qa0-_79_") (fact? :tool/docker)) (deny)))
+
+── compound_rule #6 ──
+IN : (rule (command "b5l-_on") (context (fact? :tool/docker)) (args (positional "f_a__o")) (deny "iv y"))
+OUT: (rule "b5l-_on" (when (and (positional "f_a__o") (fact? :tool/docker)) (deny "iv y")))
+
+── compound_rule #7 ──
+IN : (rule (command "lu4b9") (context (fact? :eheyeleh)) (args (positional "jf7y7")) (deny "thqms"))
+OUT: (rule "lu4b9" (when (and (positional "jf7y7") (fact? :eheyeleh)) (deny "thqms")))
+
+── compound_rule #8 ──
+IN : (rule (command "e_l_8") (context (fact? :via/ssh)) (args (positional "m")) (ask))
+OUT: (rule "e_l_8" (when (and (positional "m") (fact? :via/ssh)) (ask)))
+
+── compound_rule #9 ──
+IN : (rule (command (or "x45-0n_" "p9th1" "g_4-4ox-")) (context (fact? :tool/docker)) (args (positional "yr-_4d-b9")) (ask "ix    v"))
+OUT: (rule (or "x45-0n_" "p9th1" "g_4-4ox-") (when (and (positional "yr-_4d-b9") (fact? :tool/docker)) (ask "ix    v")))
+
+── compound_rule #10 ──
+IN : (rule (command (or "pa" "g21_")) (context (fact? :via/ssh)) (args (positional "t-f_-l_")) (allow "rc n"))
+OUT: (rule (or "pa" "g21_") (when (and (positional "t-f_-l_") (fact? :via/ssh)) (allow "rc n")))
+
+── compound_rule #11 ──
+IN : (rule (command (or "a_--4" "xp_t--_2" "g" "gd24-pz__")) (context (fact? :in/ci)) (args (positional "x2")) (deny))
+OUT: (rule (or "a_--4" "xp_t--_2" "g" "gd24-pz__") (when (and (positional "x2") (fact? :in/ci)) (deny)))
+
+── compound_rule #12 ──
+IN : (rule (command "gr9u-ds-gy4") (context (fact? :tool/docker)) (args (positional "u-3a6wna")) (ask "g   sj us  jyi  y"))
+OUT: (rule "gr9u-ds-gy4" (when (and (positional "u-3a6wna") (fact? :tool/docker)) (ask "g   sj us  jyi  y")))
+
+── compound_rule #13 ──
+IN : (rule (command (or "ee-7h-_7" "jeon__2e9s_" "e-_--r8z-q" "a")) (context (fact? :tool/docker)) (args (positional "avh-")) (deny))
+OUT: (rule (or "ee-7h-_7" "jeon__2e9s_" "e-_--r8z-q" "a") (when (and (positional "avh-") (fact? :tool/docker)) (deny)))
+
+── compound_rule #14 ──
+IN : (rule (command (or "a_f5-to3_0" "ug" "h-h_w_l0d-a")) (context (fact? :via/ssh)) (args (positional "u-")) (allow "v w   kw   idt"))
+OUT: (rule (or "a_f5-to3_0" "ug" "h-h_w_l0d-a") (when (and (positional "u-") (fact? :via/ssh)) (allow "v w   kw   idt")))
+
+── compound_rule #15 ──
+IN : (rule (command "srh") (context (fact? :chjd)) (args (positional "n_8r1")) (allow ""))
+OUT: (rule "srh" (when (and (positional "n_8r1") (fact? :chjd)) (allow "")))
+
+── wrapper #0 ──
+IN : (wrapper (or "f-4ws5_-_" "r-72__" "ebj5z") (positional "e3o" :command+args))
+OUT: (rule (or "f-4ws5_-_" "r-72__" "ebj5z") (when (positional "e3o") (tail (authorise))))
+
+── wrapper #1 ──
+IN : (wrapper (or "l-l_9xl" "ib--" "a4-_m18e7") (positional "c7p1-7" :command+args))
+OUT: (rule (or "l-l_9xl" "ib--" "a4-_m18e7") (when (positional "c7p1-7") (tail (authorise))))
+
+── wrapper #2 ──
+IN : (wrapper (or "b_1--37---4" "fr-__-_z" "i_-n" "v9p_sw_") (positional "tbp" "ry-2i" :command+args))
+OUT: (rule (or "b_1--37---4" "fr-__-_z" "i_-n" "v9p_sw_") (when (positional "tbp" "ry-2i") (tail (authorise))))
+
+── wrapper #3 ──
+IN : (wrapper "b-h_" (positional "r-s-9" :command+args))
+OUT: (rule "b-h_" (when (positional "r-s-9") (tail (authorise))))
+
+── wrapper #4 ──
+IN : (wrapper "rx-to__" (positional "f_" "r31d-" :command+args))
+OUT: (rule "rx-to__" (when (positional "f_" "r31d-") (tail (authorise))))
+
+── wrapper #5 ──
+IN : (wrapper "x_" (positional "e0_2nt8" "e_" :command+args))
+OUT: (rule "x_" (when (positional "e0_2nt8" "e_") (tail (authorise))))
+
+── wrapper #6 ──
+IN : (wrapper (or "m8_vv1r" "m9_2" "vl-x_1-y-") (positional :command+args))
+OUT: (rule (or "m8_vv1r" "m9_2" "vl-x_1-y-") (tail (authorise)))
+
+── wrapper #7 ──
+IN : (wrapper "x-_ki--_" (positional :command+args))
+OUT: (rule "x-_ki--_" (tail (authorise)))
+
+── wrapper #8 ──
+IN : (wrapper (or "p21-" "t-" "a6_-_u") (positional "vt_7" :command+args))
+OUT: (rule (or "p21-" "t-" "a6_-_u") (when (positional "vt_7") (tail (authorise))))
+
+── wrapper #9 ──
+IN : (wrapper (or "gw-a" "n__5_3-_") (positional "q-" :command+args))
+OUT: (rule (or "gw-a" "n__5_3-_") (when (positional "q-") (tail (authorise))))
+
+── wrapper #10 ──
+IN : (wrapper (or "wl__u_l_u" "i0x4_048-p" "wz5-9-f-pw") (positional :command+args))
+OUT: (rule (or "wl__u_l_u" "i0x4_048-p" "wz5-9-f-pw") (tail (authorise)))
+
+── wrapper #11 ──
+IN : (wrapper "t00" (positional :command+args))
+OUT: (rule "t00" (tail (authorise)))
+
+── wrapper #12 ──
+IN : (wrapper "t_4-__-9-w" (positional "e-_" "a" :command+args))
+OUT: (rule "t_4-__-9-w" (when (positional "e-_" "a") (tail (authorise))))
+
+── wrapper #13 ──
+IN : (wrapper "n-" (positional "m__8--_" :command+args))
+OUT: (rule "n-" (when (positional "m__8--_") (tail (authorise))))
+
+── wrapper #14 ──
+IN : (wrapper (or "b7v--_nw-__" "b--6") (positional :command+args))
+OUT: (rule (or "b7v--_nw-__" "b--6") (tail (authorise)))
+
+── wrapper #15 ──
+IN : (wrapper (or "z_" "c-0xz2ki-a-") (positional "b1" :command+args))
+OUT: (rule (or "z_" "c-0xz2ki-a-") (when (positional "b1") (tail (authorise))))
+
+── mixed_config #0 ──
+IN : (rule (command "i__") (context (fact? :via/ssh)) (deny "lm  e cprc   b"))
+OUT: (rule "i__" (when (fact? :via/ssh) (deny "lm  e cprc   b")))
+
+── mixed_config #1 ──
+IN : (rule (command (or "vi-37---4" "fr-__-_z")) (cond ((or (fact? :tool/docker) (fact? :smevpvve)) (allow "xr")) ((and (fact? :cula) (fact? :in/ci)) (deny)) ((or (fact? :tool/docker) (fact? :obfvuyk)) (allow))))
+OUT: (rule (or "vi-37---4" "fr-__-_z") (cond ((or (fact? :tool/docker) (fact? :smevpvve)) (allow "xr")) ((and (fact? :cula) (fact? :in/ci)) (deny)) ((or (fact? :tool/docker) (fact? :obfvuyk)) (allow))))
+
+── mixed_config #2 ──
+IN : (rule (command "g_") (context (not (fact? :re))) (ask))
+OUT: (rule "g_" (when (not (fact? :re)) (ask)))
+
+── mixed_config #3 ──
+IN : (rule (command "m0l-3b") (context (and (fact? :via/ssh) (fact? :via/ssh))) (deny))
+(defcontext p89t0-_ (fact? :neiysvsx))
+(rule (command "b7") (when (and (fact? :in/ci) (fact? :in/ci)) (allow "qr gy d l fupzuz")))
+OUT: (rule "m0l-3b" (when (and (fact? :via/ssh) (fact? :via/ssh)) (deny)))
+(define p89t0-_ (fact? :neiysvsx))
+(rule "b7" (when (and (fact? :in/ci) (fact? :in/ci)) (allow "qr gy d l fupzuz")))
+
+── mixed_config #4 ──
+IN : (defcontext yr-_4d-b9 (or (fact? :via/ssh) (fact? :hzwbct)))
+(rule (command (or "bh" "lq-l_8-" "mgp_q" "v35")) (cond ((or (fact? :via/ssh) (fact? :tool/docker)) (deny)) ((or (fact? :qwnaozx) (fact? :negb)) (allow)) ((fact? :via/ssh) (allow "sz")) ((not (fact? :in/ci)) (allow "v")) (else (allow))))
+OUT: (define yr-_4d-b9 (or (fact? :via/ssh) (fact? :hzwbct)))
+(rule (or "bh" "lq-l_8-" "mgp_q" "v35") (cond ((or (fact? :via/ssh) (fact? :tool/docker)) (deny)) ((or (fact? :qwnaozx) (fact? :negb)) (allow)) ((fact? :via/ssh) (allow "sz")) ((not (fact? :in/ci)) (allow "v")) (else (allow))))
+
+── mixed_config #5 ──
+IN : (rule (command (or "dto3_0u-4" "h9-" "hp37_-saxj")) (context (fact? :via/ssh)) (ask))
+(defcontext dy5_573 (and (fact? :rcfua) (fact? :via/ssh)))
+(rule (command "j_5_8r1-k-") (when (fact? :in/ci) (allow)))
+OUT: (rule (or "dto3_0u-4" "h9-" "hp37_-saxj") (when (fact? :via/ssh) (ask)))
+(define dy5_573 (and (fact? :rcfua) (fact? :via/ssh)))
+(rule "j_5_8r1-k-" (when (fact? :in/ci) (allow)))
+
+── mixed_config #6 ──
+IN : (rule (command (or "h0" "hf_-")) (context (or (fact? :tool/docker) (fact? :in/ci))) (ask))
+(rule (command (or "t_6_-" "o0" "s-b-t__9")) (when (and (fact? :in/ci) (fact? :tool/docker)) (deny "pczuyz")))
+OUT: (rule (or "h0" "hf_-") (when (or (fact? :tool/docker) (fact? :in/ci)) (ask)))
+(rule (or "t_6_-" "o0" "s-b-t__9") (when (and (fact? :in/ci) (fact? :tool/docker)) (deny "pczuyz")))
+
+── mixed_config #7 ──
+IN : (rule (command (or "m485" "rq_z")) (context (and (fact? :in/ci) (fact? :via/ssh))) (deny))
+(defcontext b-v38__ (and (fact? :via/ssh) (fact? :tool/docker)))
+(rule (command "c6-_") (context (or (fact? :tool/docker) (fact? :bpki))) (ask))
+OUT: (rule (or "m485" "rq_z") (when (and (fact? :in/ci) (fact? :via/ssh)) (deny)))
+(define b-v38__ (and (fact? :via/ssh) (fact? :tool/docker)))
+(rule "c6-_" (when (or (fact? :tool/docker) (fact? :bpki)) (ask)))
+
+── mixed_config #8 ──
+IN : (rule (command (or "d_-x20x_" "j_")) (when (or (fact? :in/ci) (fact? :a)) (ask "gxk")))
+OUT: (rule (or "d_-x20x_" "j_") (when (or (fact? :in/ci) (fact? :a)) (ask "gxk")))
+
+── mixed_config #9 ──
+IN : (defcontext rh2_-3_c- (and (fact? :in/ci) (fact? :krqxfljw)))
+OUT: (define rh2_-3_c- (and (fact? :in/ci) (fact? :krqxfljw)))
+
+── mixed_config #10 ──
+IN : (rule (command (or "t" "z_4_xb7")) (context (fact? :ig)) (ask "bwd cex oa o"))
+OUT: (rule (or "t" "z_4_xb7") (when (fact? :ig) (ask "bwd cex oa o")))
+
+── mixed_config #11 ──
+IN : (defcontext y (or (fact? :tool/docker) (fact? :in/ci)))
+(defcontext e_4-1 (or (fact? :tool/docker) (fact? :wjvdth)))
+(rule (command "b4") (context (or (fact? :tool/docker) (fact? :tool/docker))) (ask "f  t"))
+OUT: (define y (or (fact? :tool/docker) (fact? :in/ci)))
+(define e_4-1 (or (fact? :tool/docker) (fact? :wjvdth)))
+(rule "b4" (when (or (fact? :tool/docker) (fact? :tool/docker)) (ask "f  t")))
+
+── mixed_config #12 ──
+IN : (defcontext sj-4f--7v (or (fact? :tool/docker) (fact? :tool/docker)))
+OUT: (define sj-4f--7v (or (fact? :tool/docker) (fact? :tool/docker)))
+
+── mixed_config #13 ──
+IN : (rule (command (or "n9-_5w" "to92_5_1-t" "j84_b-_5e7-")) (context (or (fact? :in/ci) (fact? :tool/docker))) (allow "soyd"))
+(defcontext q1e-as (not (fact? :tool/docker)))
+OUT: (rule (or "n9-_5w" "to92_5_1-t" "j84_b-_5e7-") (when (or (fact? :in/ci) (fact? :tool/docker)) (allow "soyd")))
+(define q1e-as (not (fact? :tool/docker)))
+
+── mixed_config #14 ──
+IN : (defcontext t9_ (or (fact? :tool/docker) (fact? :tool/docker)))
+OUT: (define t9_ (or (fact? :tool/docker) (fact? :tool/docker)))
+
+── mixed_config #15 ──
+IN : (defcontext q3s1et (and (fact? :via/ssh) (fact? :tool/docker)))
+(rule (command (or "y04csu-v_35" "pw4syt-w-f-" "v" "h-9_04-9518")) (cond ((and (fact? :in/ci) (fact? :in/ci)) (allow)) ((and (fact? :tool/docker) (fact? :tool/docker)) (allow "ufso u  va    q")) ((fact? :hdwiv) (allow "fcd pgwnn x si")) ((fact? :tool/docker) (ask "vhr  ajhgaufli")) (else (allow "rj    e alb   s"))))
+(rule (command "wr6") (allow "vp h w u"))
+OUT: (define q3s1et (and (fact? :via/ssh) (fact? :tool/docker)))
+(rule (or "y04csu-v_35" "pw4syt-w-f-" "v" "h-9_04-9518") (cond ((and (fact? :in/ci) (fact? :in/ci)) (allow)) ((and (fact? :tool/docker) (fact? :tool/docker)) (allow "ufso u  va    q")) ((fact? :hdwiv) (allow "fcd pgwnn x si")) ((fact? :tool/docker) (ask "vhr  ajhgaufli")) (else (allow "rj    e alb   s"))))
+(rule "wr6" (allow "vp h w u"))

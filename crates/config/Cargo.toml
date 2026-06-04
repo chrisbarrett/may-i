@@ -19,6 +19,7 @@ thiserror = "2"
 may-i-engine = { path = "../engine" }
 may-i-core = { path = "../core", features = ["test-generators"] }
 may-i-sexpr = { path = "../sexpr", features = ["test-generators"] }
+insta = "1"
 proptest = "1"
 temp-env = "0.3"
 tempfile = "3"

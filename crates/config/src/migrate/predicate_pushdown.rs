@@ -1,4 +1,3 @@
-use super::helpers::strip_whitespace_trivia;
 use may_i_sexpr::cst::{CstNode, Shape, TriviaAnn};
 
 pub(crate) fn predicate_pushdown(node: &CstNode) -> Option<Box<CstNode>> {
@@ -26,15 +25,15 @@ pub(crate) fn predicate_pushdown(node: &CstNode) -> Option<Box<CstNode>> {
     let mut comb_children: Vec<Box<CstNode>> = Vec::new();
     comb_children.push(Box::new(CstNode::atom(tag, Default::default())));
     for child in &children[1..children.len() - 1] {
-        comb_children.push(Box::new(strip_whitespace_trivia(child)));
+        comb_children.push(Box::new(may_i_sexpr::cst::reflow(child)));
     }
-    comb_children.push(Box::new(strip_whitespace_trivia(inner_pred)));
+    comb_children.push(Box::new(may_i_sexpr::cst::reflow(inner_pred)));
     let combined_pred = Box::new(CstNode::list(comb_children, Default::default()));
 
     let result_children = vec![
         Box::new(CstNode::atom(wrapper_tag, TriviaAnn::default())),
         combined_pred,
-        Box::new(strip_whitespace_trivia(body)),
+        Box::new(may_i_sexpr::cst::reflow(body)),
     ];
 
     Some(Box::new(CstNode {

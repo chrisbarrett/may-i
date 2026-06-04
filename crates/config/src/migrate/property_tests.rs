@@ -558,4 +558,99 @@ mod tests {
             prop_assert_eq!(once_text, twice_text, "migration with defines is not idempotent");
         }
     }
+
+    // ── Byte-parity oracle (characterization snapshots) ───────────────
+    //
+    // These two snapshots pin the *exact serialized bytes* `migrate()`
+    // produces. They are the green bar for behaviour-preserving refactors
+    // of the traversal seam and the passes: any change to migration output
+    // — formatting, trivia, ordering — shows up as a snapshot diff.
+
+    /// Canonical example configs must migrate to themselves byte-for-byte
+    /// (migration is identity on already-canonical input). Reads the real
+    /// `examples/*.lisp` corpus.
+    #[test]
+    fn examples_migration_byte_parity_snapshot() {
+        use std::path::Path;
+
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
+        let mut paths: Vec<_> = std::fs::read_dir(&dir)
+            .expect("read examples dir")
+            .map(|e| e.expect("dir entry").path())
+            .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("lisp"))
+            .collect();
+        paths.sort();
+        assert!(!paths.is_empty(), "no example lisp files in {dir:?}");
+
+        let mut rendered = String::new();
+        for path in paths {
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            let src = std::fs::read_to_string(&path).expect("read example");
+            let (forms, errors) = may_i_sexpr::parse_cst(&src);
+            assert!(errors.is_empty(), "parse errors in {name}: {errors:?}");
+            let migrated = migrate_forms(forms);
+            let out: String = migrated.iter().map(|f| f.serialize()).collect();
+            rendered.push_str(&format!("════════ {name} ════════\n{out}\n"));
+        }
+        insta::assert_snapshot!("examples_migration_byte_parity", rendered);
+    }
+
+    /// A deterministic v1 corpus drawn from the `any_v1_*` generators with a
+    /// fixed RNG seed. Captures pre-refactor `migrate()` output as the
+    /// byte-identical baseline over generated (non-canonical) v1 forms.
+    #[test]
+    fn generated_v1_corpus_byte_parity_snapshot() {
+        use proptest::strategy::Strategy;
+        use proptest::test_runner::{Config, RngAlgorithm, TestRng, TestRunner};
+
+        // Each paired generator, projected to just its v1 forms.
+        let generators: Vec<(&str, BoxedStrategy<Vec<Box<may_i_sexpr::CstNode>>>)> = vec![
+            (
+                "command_rule",
+                any_v1_command_rule().prop_map(|(v1, _)| v1).boxed(),
+            ),
+            (
+                "defcontext",
+                any_v1_defcontext().prop_map(|(v1, _)| v1).boxed(),
+            ),
+            (
+                "rule_with_context",
+                any_v1_rule_with_context().prop_map(|(v1, _)| v1).boxed(),
+            ),
+            (
+                "rule_with_args",
+                any_v1_rule_with_args().prop_map(|(v1, _)| v1).boxed(),
+            ),
+            (
+                "compound_rule",
+                any_v1_compound_rule().prop_map(|(v1, _)| v1).boxed(),
+            ),
+            ("wrapper", any_v1_wrapper().prop_map(|(v1, _)| v1).boxed()),
+            (
+                "mixed_config",
+                any_v1_config().prop_map(|(v1, _)| v1).boxed(),
+            ),
+        ];
+
+        const SAMPLES: usize = 16;
+        let mut rendered = String::new();
+        for (name, strategy) in &generators {
+            // Fresh deterministic RNG per generator: adding or removing a
+            // generator can't shift another's samples.
+            let mut runner = TestRunner::new_with_rng(
+                Config::default(),
+                TestRng::deterministic_rng(RngAlgorithm::ChaCha),
+            );
+            for i in 0..SAMPLES {
+                let v1 = strategy.new_tree(&mut runner).expect("sample").current();
+                let input = serialize_forms_spaced(&v1);
+                let migrated = migrate_forms(v1);
+                let output = serialize_forms_spaced(&migrated);
+                rendered.push_str(&format!(
+                    "── {name} #{i} ──\nIN : {input}\nOUT: {output}\n\n"
+                ));
+            }
+        }
+        insta::assert_snapshot!("generated_v1_corpus_byte_parity", rendered);
+    }
 }

@@ -1,4 +1,4 @@
-use super::helpers::{strip_whitespace_trivia, tagged_list};
+use super::helpers::tagged_list;
 use may_i_sexpr::cst::{CstNode, Shape, TriviaAnn};
 
 pub(crate) fn cond_single_clause_to_if(node: &CstNode) -> Option<Box<CstNode>> {
@@ -77,7 +77,7 @@ pub(crate) fn cond_absorb_else(node: &CstNode) -> Option<Box<CstNode>> {
     let mut result_children: Vec<Box<CstNode>> = Vec::new();
     result_children.push(Box::new(CstNode::atom("cond", TriviaAnn::default())));
     for clause in &children[1..children.len() - 1] {
-        result_children.push(Box::new(strip_whitespace_trivia(clause)));
+        result_children.push(Box::new(may_i_sexpr::cst::reflow(clause)));
     }
 
     match inner_tag {
@@ -87,15 +87,15 @@ pub(crate) fn cond_absorb_else(node: &CstNode) -> Option<Box<CstNode>> {
             }
             result_children.push(Box::new(CstNode::list(
                 vec![
-                    Box::new(strip_whitespace_trivia(&inner_children[1])),
-                    Box::new(strip_whitespace_trivia(&inner_children[2])),
+                    Box::new(may_i_sexpr::cst::reflow(&inner_children[1])),
+                    Box::new(may_i_sexpr::cst::reflow(&inner_children[2])),
                 ],
                 Default::default(),
             )));
             result_children.push(Box::new(CstNode::list(
                 vec![
                     Box::new(CstNode::atom("else", Default::default())),
-                    Box::new(strip_whitespace_trivia(&inner_children[3])),
+                    Box::new(may_i_sexpr::cst::reflow(&inner_children[3])),
                 ],
                 Default::default(),
             )));
@@ -106,8 +106,8 @@ pub(crate) fn cond_absorb_else(node: &CstNode) -> Option<Box<CstNode>> {
             }
             result_children.push(Box::new(CstNode::list(
                 vec![
-                    Box::new(strip_whitespace_trivia(&inner_children[1])),
-                    Box::new(strip_whitespace_trivia(&inner_children[2])),
+                    Box::new(may_i_sexpr::cst::reflow(&inner_children[1])),
+                    Box::new(may_i_sexpr::cst::reflow(&inner_children[2])),
                 ],
                 Default::default(),
             )));
@@ -120,21 +120,21 @@ pub(crate) fn cond_absorb_else(node: &CstNode) -> Option<Box<CstNode>> {
             let negated_pred = CstNode::list(
                 vec![
                     Box::new(CstNode::atom("not", Default::default())),
-                    Box::new(strip_whitespace_trivia(&inner_children[1])),
+                    Box::new(may_i_sexpr::cst::reflow(&inner_children[1])),
                 ],
                 Default::default(),
             );
             result_children.push(Box::new(CstNode::list(
                 vec![
                     Box::new(negated_pred),
-                    Box::new(strip_whitespace_trivia(&inner_children[2])),
+                    Box::new(may_i_sexpr::cst::reflow(&inner_children[2])),
                 ],
                 Default::default(),
             )));
         }
         "cond" => {
             for clause in &inner_children[1..] {
-                result_children.push(Box::new(strip_whitespace_trivia(clause)));
+                result_children.push(Box::new(may_i_sexpr::cst::reflow(clause)));
             }
         }
         _ => return None,

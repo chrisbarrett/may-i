@@ -1,4 +1,4 @@
-use super::helpers::{rebuild_list, strip_whitespace_trivia, tagged_list};
+use super::helpers::{rebuild_list, tagged_list};
 use may_i_sexpr::cst::CstNode;
 
 pub(crate) fn rule_inline_context(node: &CstNode) -> Option<Box<CstNode>> {
@@ -19,11 +19,11 @@ pub(crate) fn rule_inline_context(node: &CstNode) -> Option<Box<CstNode>> {
             if ctx_children.len() == 2 {
                 // Strip trivia from cloned context expr so pretty printer
                 // can use optimal layout (fill layout for and/or/forbidden)
-                context_expr = Some(Box::new(strip_whitespace_trivia(&ctx_children[1])));
+                context_expr = Some(Box::new(may_i_sexpr::cst::reflow(&ctx_children[1])));
             }
         } else if child.is_tagged("effect") {
             // Strip trivia from effect node so pretty printer can use optimal layout
-            effect_expr = Some(Box::new(strip_whitespace_trivia(child)));
+            effect_expr = Some(Box::new(may_i_sexpr::cst::reflow(child)));
         } else if child.is_tagged("check") {
             check_forms.push(child.clone());
         } else {

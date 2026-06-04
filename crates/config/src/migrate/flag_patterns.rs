@@ -17,7 +17,7 @@
 
 #![allow(clippy::vec_box)]
 
-use super::helpers::{rebuild_list, strip_whitespace_trivia, tagged_list};
+use super::helpers::{rebuild_list, tagged_list};
 use may_i_sexpr::cst::{CstNode, Shape, TriviaAnn};
 
 pub(crate) fn rule_anywhere_to_flag(node: &CstNode) -> Option<Box<CstNode>> {
@@ -145,16 +145,13 @@ fn rewrite_positional_dot_to_parameter(node: &CstNode) -> Option<Box<CstNode>> {
             TriviaAnn::default(),
         ))
     } else {
-        Box::new(strip_whitespace_trivia(cont))
+        Box::new(may_i_sexpr::cst::reflow(cont))
     };
 
+    // Outer position trivia is grafted by the seam.
     Some(Box::new(CstNode::list(
         vec![parameter_tag, name_node, cont_clone],
-        TriviaAnn {
-            leading: node.ann.leading.clone(),
-            trailing: node.ann.trailing.clone(),
-            span: node.ann.span,
-        },
+        TriviaAnn::default(),
     )))
 }
 
@@ -235,7 +232,7 @@ fn build_anywhere(original_tag: &CstNode, items: &[Box<CstNode>]) -> Box<CstNode
     ));
     let mut children = vec![tag];
     for item in items {
-        children.push(Box::new(strip_whitespace_trivia(item)));
+        children.push(Box::new(may_i_sexpr::cst::reflow(item)));
     }
     Box::new(CstNode::list(children, TriviaAnn::default()))
 }
@@ -251,7 +248,7 @@ fn build_forbidden(original_tag: &CstNode, items: &[Box<CstNode>]) -> Box<CstNod
     ));
     let mut children = vec![tag];
     for item in items {
-        children.push(Box::new(strip_whitespace_trivia(item)));
+        children.push(Box::new(may_i_sexpr::cst::reflow(item)));
     }
     Box::new(CstNode::list(children, TriviaAnn::default()))
 }
@@ -287,14 +284,8 @@ fn combine_with_and_outer(node: &CstNode, mut clauses: Vec<Box<CstNode>>) -> Box
     let tag = Box::new(CstNode::atom("and", TriviaAnn::default()));
     let mut children = vec![tag];
     children.extend(clauses);
-    Box::new(CstNode::list(
-        children,
-        TriviaAnn {
-            leading: node.ann.leading.clone(),
-            trailing: node.ann.trailing.clone(),
-            span: node.ann.span,
-        },
-    ))
+    // Outer position trivia is grafted by the seam.
+    Box::new(CstNode::list(children, TriviaAnn::default()))
 }
 
 #[cfg(test)]

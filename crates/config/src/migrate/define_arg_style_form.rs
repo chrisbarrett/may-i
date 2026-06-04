@@ -8,21 +8,13 @@
 use may_i_sexpr::cst::{CstNode, ShapeF, TriviaAnn};
 
 pub(crate) fn define_arg_style_to_form(node: &CstNode) -> Option<Box<CstNode>> {
+    // Local rewrite: the seam reaches nested forms and grafts the matched
+    // node's position trivia onto the replacement.
     let list = node.as_list()?;
 
-    // Recurse first; allow nested forms to rewrite even if outer doesn't apply.
-    let rewritten: Vec<(Box<CstNode>, bool)> = list
-        .iter()
-        .map(|child| match define_arg_style_to_form(child) {
-            Some(new_child) => (new_child, true),
-            None => (child.clone(), false),
-        })
-        .collect();
-    let any_child_changed = rewritten.iter().any(|(_, c)| *c);
-    let children: Vec<Box<CstNode>> = rewritten.into_iter().map(|(n, _)| n).collect();
-
-    let is_define = matches!(children.first(), Some(c) if c.as_atom() == Some("define-arg-style"));
-    if is_define && children.len() == 3 {
+    let is_define = matches!(list.first(), Some(c) if c.as_atom() == Some("define-arg-style"));
+    if is_define && list.len() == 3 {
+        let children = list;
         // Body must be a list whose first element is a `:keyword`. If the body
         // is already form-list (first element is `(k v)`), skip.
         if let ShapeF::List(plist) = &children[2].shape
@@ -112,26 +104,8 @@ pub(crate) fn define_arg_style_to_form(node: &CstNode) -> Option<Box<CstNode>> {
             }
             let _ = body_span;
 
-            return Some(Box::new(CstNode::list(
-                new_children,
-                TriviaAnn {
-                    leading: node.ann.leading.clone(),
-                    trailing: node.ann.trailing.clone(),
-                    span: node.ann.span,
-                },
-            )));
+            return Some(Box::new(CstNode::list(new_children, TriviaAnn::default())));
         }
-    }
-
-    if any_child_changed {
-        return Some(Box::new(CstNode::list(
-            children,
-            TriviaAnn {
-                leading: node.ann.leading.clone(),
-                trailing: node.ann.trailing.clone(),
-                span: node.ann.span,
-            },
-        )));
     }
 
     None

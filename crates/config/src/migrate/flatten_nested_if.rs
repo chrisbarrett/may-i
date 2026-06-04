@@ -1,4 +1,4 @@
-use super::helpers::{strip_whitespace_trivia, tagged_list};
+use super::helpers::tagged_list;
 use may_i_sexpr::cst::{CstNode, TriviaAnn};
 
 pub(crate) fn flatten_nested_if(node: &CstNode) -> Option<Box<CstNode>> {
@@ -20,8 +20,8 @@ pub(crate) fn flatten_nested_if(node: &CstNode) -> Option<Box<CstNode>> {
     // First clause from the outer if
     cond_children.push(Box::new(CstNode::list(
         vec![
-            Box::new(strip_whitespace_trivia(pred)),
-            Box::new(strip_whitespace_trivia(then_branch)),
+            Box::new(may_i_sexpr::cst::reflow(pred)),
+            Box::new(may_i_sexpr::cst::reflow(then_branch)),
         ],
         Default::default(),
     )));
@@ -34,15 +34,15 @@ pub(crate) fn flatten_nested_if(node: &CstNode) -> Option<Box<CstNode>> {
             }
             cond_children.push(Box::new(CstNode::list(
                 vec![
-                    Box::new(strip_whitespace_trivia(&else_children[1])),
-                    Box::new(strip_whitespace_trivia(&else_children[2])),
+                    Box::new(may_i_sexpr::cst::reflow(&else_children[1])),
+                    Box::new(may_i_sexpr::cst::reflow(&else_children[2])),
                 ],
                 Default::default(),
             )));
             cond_children.push(Box::new(CstNode::list(
                 vec![
                     Box::new(CstNode::atom("else", Default::default())),
-                    Box::new(strip_whitespace_trivia(&else_children[3])),
+                    Box::new(may_i_sexpr::cst::reflow(&else_children[3])),
                 ],
                 Default::default(),
             )));
@@ -54,8 +54,8 @@ pub(crate) fn flatten_nested_if(node: &CstNode) -> Option<Box<CstNode>> {
             }
             cond_children.push(Box::new(CstNode::list(
                 vec![
-                    Box::new(strip_whitespace_trivia(&else_children[1])),
-                    Box::new(strip_whitespace_trivia(&else_children[2])),
+                    Box::new(may_i_sexpr::cst::reflow(&else_children[1])),
+                    Box::new(may_i_sexpr::cst::reflow(&else_children[2])),
                 ],
                 Default::default(),
             )));
@@ -68,14 +68,14 @@ pub(crate) fn flatten_nested_if(node: &CstNode) -> Option<Box<CstNode>> {
             let negated_pred = CstNode::list(
                 vec![
                     Box::new(CstNode::atom("not", Default::default())),
-                    Box::new(strip_whitespace_trivia(&else_children[1])),
+                    Box::new(may_i_sexpr::cst::reflow(&else_children[1])),
                 ],
                 Default::default(),
             );
             cond_children.push(Box::new(CstNode::list(
                 vec![
                     Box::new(negated_pred),
-                    Box::new(strip_whitespace_trivia(&else_children[2])),
+                    Box::new(may_i_sexpr::cst::reflow(&else_children[2])),
                 ],
                 Default::default(),
             )));
@@ -83,7 +83,7 @@ pub(crate) fn flatten_nested_if(node: &CstNode) -> Option<Box<CstNode>> {
         "cond" => {
             // Prepend our clause to existing cond clauses
             for clause in &else_children[1..] {
-                cond_children.push(Box::new(strip_whitespace_trivia(clause)));
+                cond_children.push(Box::new(may_i_sexpr::cst::reflow(clause)));
             }
         }
         _ => return None,
