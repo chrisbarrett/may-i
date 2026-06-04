@@ -158,6 +158,31 @@ semantics.
   branch → Mitigated by a single private emit method and spec scenarios pinning
   the `trust-block` source.
 
+## Rejected against history
+
+Two architectural alternatives were explored and rejected after studying the
+git history of the seams this change touches. Recorded so a future explorer
+does not re-suggest them.
+
+- **Unify the pipeline terminal outcome** (one `EvalOutcome` + a single
+  `finish()` that renders, to make the audit tap a single call site).
+  **Rejected** — `typed-pipeline-mode-entrypoints` (archived 2026-05-26)
+  deliberately *deleted* exactly that `EvalOutcome` enum + `render_eval_outcome`
+  dispatcher via a deletion-test pass, trading runtime mode-switching for
+  compile-time mode-to-body safety. The `command-pipeline` spec forbids both by
+  name. D5's per-method emit respects that decision; no outcome-unifying type is
+  introduced.
+- **Split observation out of `EvalFold` into a narrow `EvalObserver` seam** (so
+  `AuditFold` is ~2 methods and `ComposedFold` disappears). **Rejected** —
+  `restore-trace-system` (archived 2026-04-01) considered an observer/visitor
+  pattern and rejected it (SAX-vs-DOM: tree consumers can't rebuild structure
+  from a flat stream), choosing the zygomorphism fold. Audit is the *only* flat
+  consumer today (one adapter = hypothetical seam), and a parallel observer
+  threaded through every recursive eval call cuts against the deliberate
+  "two algebras, one fold, one traversal" design. The idiomatic fit is D2:
+  `AuditFold` over `PureFold`'s identity shape, composed via `ComposedFold`
+  (D2-A) with the collector-field fallback (D2-B) if the boilerplate bites.
+
 ## Migration Plan
 
 Purely additive. New optional form defaulting to `:off`; no existing config
