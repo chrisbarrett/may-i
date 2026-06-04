@@ -219,23 +219,51 @@ output for tooling consumers, but the rendered text SHALL prefer plain
 language.
 
 **Hints.** A hint SHALL be included when the mismatch has a
-single-step textual remedy that recovers the rule's apparent intent:
+single-step textual remedy that recovers the rule's apparent intent.
+Hint selection SHALL be driven by the **declaration kind** of the
+binding — `Parameter { name }`, `Flag { name }`, `Positional`, or
+`Rest` — in addition to the operator and the found shape. A hint
+SHALL NOT propose a rewrite that does not apply to the binding's
+declaration kind (e.g. SHALL NOT suggest a `(parameter NAME …)`
+rewrite for a binding declared by `(positional …)` or `(rest …)`).
 
-- `(every? #v …)` or `(some? #v …)` against a `Token`-shaped binding
-  declared as `(parameter NAME #v)` → hint to rewrite the parser
-  declaration as `(parameter NAME (set #v))`.
-- `(authorise #v)` against a `Collection Token`-shaped binding declared
-  as `(parameter NAME (set #v))` → hint to use `(some? #v PRED)` or
-  `(every? #v PRED)` if iteration was intended, or to rewrite the
-  parser declaration as `(parameter NAME (command #v))` if the
-  parameter was meant to bear a single command line.
+The required hint families are:
+
+- `(every?/some? #v …)` against a `Token`-shaped binding declared by
+  a `(parameter NAME #v)` → hint to rewrite the parser declaration as
+  `(parameter "NAME" (set #v))`.
+- `(every?/some? #v …)` against a `Token`-shaped binding declared by
+  a `(positional #v)` (no quantifier or `?`) → hint to widen the
+  quantifier, e.g. `(positional #v +)` for one-or-more or
+  `(positional #v *)` for zero-or-more.
+- `(every?/some? #v …)` against a `Count`-shaped binding declared by
+  `(flag "NAME" (count #v))` → hint that a count is not a list and
+  point at the count-presence check (`(bound? #v)`) until count
+  comparisons are surfaced.
+- `(every?/some? #v …)` against a `Command`-shaped binding declared
+  by a `(parameter NAME #v)` (single-occurrence command-bearing) →
+  hint that the parameter carries a command line; suggest
+  `(parameter "NAME" (set #v))` if the parameter is repeated.
+- `(every?/some? #v …)` against a `Command`-shaped binding declared
+  by `(rest #v)` → hint that rest captures the whole tail; suggest
+  recursing with `(authorise #v)` if iteration was not intended.
+- `(authorise #v)` against a `Collection Token`-shaped binding
+  declared by `(parameter NAME (set #v))` → hint with both arms:
+  `(every? #v PRED)` / `(some? #v PRED)` if iteration was intended,
+  or rewrite the parser declaration as
+  `(parameter "NAME" (command #v))` if the parameter was meant to
+  carry a single command line.
+- `(authorise #v)` against a `Collection Token`-shaped binding
+  declared by a `(positional #v *|+)` → hint with the iteration arm
+  only (`(every? #v PRED)` / `(some? #v PRED)`). SHALL NOT mention
+  `(parameter (command …))` because positionals have no parameter
+  name and no `(command …)` form.
 - `(matches? #v …)` against a `Count`-shaped binding → hint that
-  counts compare to numbers, not patterns; suggest `(>= #v N)` or the
-  equivalent when that surface lands (see the design doc for the
-  count-comparison forms; until then, the hint SHALL point at the
-  underlying `(flag NAME)` presence check).
-- `(authorise #v)` against a `Count`-shaped binding → hint that counts
-  are not command lines; suggest reviewing the parser declaration.
+  counts compare to numbers, not patterns; until count comparisons
+  surface, suggest `(bound? #v)`.
+- `(authorise #v)` against a `Count`-shaped binding → hint that
+  counts are not command lines; suggest reviewing the parser
+  declaration.
 
 When no single-step remedy is identifiable, the hint line SHALL be
 omitted rather than padded with generic advice.
@@ -262,6 +290,24 @@ Hint: To collect every -n occurrence into a list, change the parser
 declaration to:
 
     (parameter "n" (set #procs))
+```
+
+```
+-- LIST EXPECTED -------------------------------- config.lisp:6:17
+
+This `every?` is looking at every value in a list of values:
+
+    6 |   (when (every? #target (regex "^/tmp/"))
+                        ^^^^^^^
+
+But `#target` is a single value, declared here:
+
+    4 |   (positional #target *))
+                      ^^^^^^^
+
+Hint: To collect every positional, widen the quantifier:
+
+    (positional #target +)
 ```
 
 ```
@@ -319,14 +365,45 @@ parser declaration as:
 - **AND** each excerpt SHALL underline or otherwise mark the relevant
   span.
 
-#### Scenario: Hint proposes a single-step rewrite
+#### Scenario: Parameter hint suggests `(set …)`
 
 - **GIVEN** `(every? #v PRED)` applied to a binding declared as
   `(parameter "o" #v)`
 - **WHEN** the message is rendered
 - **THEN** the rendered text SHALL include a hint line
 - **AND** the hint SHALL propose rewriting the parser declaration to
-  `(parameter "o" (set #v))`.
+  `(parameter "o" (set #v))`
+- **AND** SHALL NOT propose any `(positional …)` rewrite.
+
+#### Scenario: Positional hint suggests widening the quantifier
+
+- **GIVEN** `(every? #target PRED)` applied to a binding declared as
+  `(positional #target *)` (single-token quantifier)
+- **WHEN** the message is rendered
+- **THEN** the rendered text SHALL include a hint line
+- **AND** the hint SHALL propose `(positional #target +)` (or
+  `(positional #target *)` for the zero-or-more variant)
+- **AND** SHALL NOT propose any `(parameter NAME (set …))` rewrite.
+
+#### Scenario: Positional collection routed away from `(command …)` arm
+
+- **GIVEN** `(authorise #paths)` applied to a binding declared as
+  `(positional #paths * +)` (collection-shaped positional)
+- **WHEN** the message is rendered
+- **THEN** the hint SHALL propose iteration (`(every? #paths PRED)`
+  or `(some? #paths PRED)`)
+- **AND** SHALL NOT propose `(parameter NAME (command #paths))`
+  because positionals carry no parameter name and no `(command …)`
+  form applies.
+
+#### Scenario: Rest hint avoids parameter-only suggestions
+
+- **GIVEN** a hypothetical mismatch where `(every? #rest PRED)` is
+  applied to a `Command`-shaped binding declared as `(rest #rest)`
+- **WHEN** the message is rendered
+- **THEN** the hint SHALL describe rest as the captured tail and
+  SHALL suggest `(authorise #rest)` for recursion
+- **AND** SHALL NOT propose any `(parameter NAME …)` rewrite.
 
 #### Scenario: Hint omitted when no single-step remedy is identifiable
 

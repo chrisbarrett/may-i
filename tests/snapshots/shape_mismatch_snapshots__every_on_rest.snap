@@ -1,0 +1,17 @@
+---
+source: tests/shape_mismatch_snapshots.rs
+expression: "render(\"(parser \\\"sudo\\\" (style gnu) (flags posix) (rest #rest))\\n\\\n         (rule \\\"sudo\\\" (when (every? #rest (regex \\\"rm\\\")) (allow)))\")"
+---
+  × found 1 value-usage problem(s) in the configuration
+
+Error: 
+  × `every?` needs a list of values
+   ╭─[config.lisp:1:48]
+ 1 │ (parser "sudo" (style gnu) (flags posix) (rest #rest))
+   ·                                                ──┬──
+   ·                                                  ╰── but `#rest` is a command line, declared here
+ 2 │ (rule "sudo" (when (every? #rest (regex "rm")) (allow)))
+   ·                            ──┬──
+   ·                              ╰── this looks at every value in a list
+   ╰────
+  help: (rest #rest) captures the whole command tail, not a list. To check that command, recurse with (authorise #rest).

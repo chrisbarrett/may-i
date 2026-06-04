@@ -10,7 +10,7 @@
 //! "shape" and "type" and the internal shape names never appear in
 //! rendered text — only the phrases from [`Shape::user_phrase`].
 
-use may_i_engine::shape::Shape;
+use may_i_engine::shape::{DeclKind, Shape};
 use may_i_engine::shape_check::{Operator, ShapeMismatch};
 use miette::{NamedSource, SourceSpan};
 
@@ -73,58 +73,81 @@ fn decl_label_for(m: &ShapeMismatch) -> String {
     )
 }
 
-/// Per-mismatch hint, keyed by `(operator, found shape)` (decision D6,
-/// task 6.4). Returns `None` when no single-step remedy is identifiable.
+/// Per-mismatch hint, keyed by `(operator, found shape, declaration
+/// kind)` (decision D2). Dispatching on the declaration kind keeps every
+/// proposed rewrite applicable to how the binding was actually declared:
+/// a `Positional`/`Rest` binding never sees a `(parameter NAME …)`
+/// suggestion. Returns `None` when no single-step remedy is identifiable.
 fn hint_for(m: &ShapeMismatch) -> Option<String> {
     let bind = m.binding.as_str();
-    let name = m.decl_name.as_deref();
-    match (m.operator, m.found) {
-        // `every?`/`some?` over a single value → collect into a list.
-        (Operator::Every | Operator::Some, Shape::Token) => Some(match name {
-            Some(n) => format!(
+    match (m.operator, m.found, &m.decl_kind) {
+        // `every?`/`some?` over a single value, declared by a parameter →
+        // collect occurrences into a list.
+        (Operator::Every | Operator::Some, Shape::Token, DeclKind::Parameter { name }) => {
+            Some(format!(
                 "To match every occurrence, collect them into a list: \
-                 declare the parser as (parameter \"{n}\" (set #{bind}))."
-            ),
-            None => format!(
-                "To match every occurrence, declare the parameter as a list: \
-                 (parameter NAME (set #{bind}))."
-            ),
-        }),
-        // `authorise` over a list → iterate, or mark it a command line.
-        (Operator::Authorise, Shape::CollectionToken) => Some(match name {
-            Some(n) => format!(
+                 declare the parser as (parameter \"{name}\" (set #{bind}))."
+            ))
+        }
+        // `every?`/`some?` over a single value, declared by a positional →
+        // widen the quantifier (the binding has no parameter to redeclare).
+        (Operator::Every | Operator::Some, Shape::Token, DeclKind::Positional) => Some(format!(
+            "To match every positional, widen the quantifier: \
+             (positional #{bind} +) for one-or-more or \
+             (positional #{bind} *) for zero-or-more."
+        )),
+        // `every?`/`some?` over a count → a count is not a list.
+        (Operator::Every | Operator::Some, Shape::Count, DeclKind::Flag { name }) => Some(format!(
+            "The -{name} count is not a list. {}",
+            count_presence_fallback(bind)
+        )),
+        // `every?`/`some?` over a command line carried by a parameter →
+        // declare it a list if the parameter repeats.
+        (Operator::Every | Operator::Some, Shape::Command, DeclKind::Parameter { name }) => {
+            Some(format!(
+                "This carries a command line, not a list. If -{name} repeats, \
+                 declare it (parameter \"{name}\" (set #{bind}))."
+            ))
+        }
+        // `every?`/`some?` over a command line captured by `(rest …)` →
+        // rest captures the whole tail; recurse with `authorise`.
+        (Operator::Every | Operator::Some, Shape::Command, DeclKind::Rest) => Some(format!(
+            "(rest #{bind}) captures the whole command tail, not a list. \
+             To check that command, recurse with (authorise #{bind})."
+        )),
+        // `authorise` over a list, declared by a parameter → iterate, or
+        // mark the parameter as carrying a single command line.
+        (Operator::Authorise, Shape::CollectionToken, DeclKind::Parameter { name }) => {
+            Some(format!(
                 "Did you mean to inspect each value? Try (some? #{bind} PRED) or \
-                 (every? #{bind} PRED). Or, if -{n} carries a single command line, \
-                 declare it (parameter \"{n}\" (command #{bind}))."
-            ),
-            None => format!(
-                "Did you mean to inspect each value? Try (some? #{bind} PRED) or \
-                 (every? #{bind} PRED); or declare the parameter (command #{bind})."
-            ),
-        }),
+                 (every? #{bind} PRED). Or, if -{name} carries a single command line, \
+                 declare it (parameter \"{name}\" (command #{bind}))."
+            ))
+        }
+        // `authorise` over a list, declared by a positional → iteration
+        // only; positionals have no parameter name and no `(command …)`.
+        (Operator::Authorise, Shape::CollectionToken, DeclKind::Positional) => Some(format!(
+            "Did you mean to inspect each value? Try (some? #{bind} PRED) or \
+             (every? #{bind} PRED)."
+        )),
         // `matches?` over a count → counts aren't patterns.
-        (Operator::Matches, Shape::Count) => Some(format!(
-            "Counts compare to numbers, not patterns. Check presence with \
-             (bound? #{bind}) until count comparisons are available."
+        (Operator::Matches, Shape::Count, DeclKind::Flag { name }) => Some(format!(
+            "The -{name} count compares to numbers, not patterns. {}",
+            count_presence_fallback(bind)
         )),
         // `authorise` over a count → counts aren't command lines.
-        (Operator::Authorise, Shape::Count) => {
-            Some("A count is not a command line — review the parser declaration.".to_string())
-        }
-        // `every?`/`some?` over a command line → declare it as a list if
-        // the parameter repeats.
-        (Operator::Every | Operator::Some, Shape::Command) => Some(match name {
-            Some(n) => format!(
-                "This carries a command line, not a list. If -{n} repeats, \
-                 declare it (parameter \"{n}\" (set #{bind}))."
-            ),
-            None => format!(
-                "This carries a command line, not a list. If it repeats, \
-                 declare the parameter (set #{bind})."
-            ),
-        }),
+        (Operator::Authorise, Shape::Count, DeclKind::Flag { name }) => Some(format!(
+            "A count is not a command line — review the (flag \"{name}\" (count #{bind})) \
+             declaration."
+        )),
         _ => None,
     }
+}
+
+/// Shared trailing guidance for count mismatches: counts have no list or
+/// pattern form yet, so every count hint falls back to a presence check.
+fn count_presence_fallback(bind: &str) -> String {
+    format!("Check presence with (bound? #{bind}) until count comparisons are available.")
 }
 
 fn to_source_span(span: may_i_core::Span) -> SourceSpan {
@@ -217,19 +240,70 @@ mod tests {
 
     #[test]
     fn hints_without_a_parameter_name() {
-        // A positional binding has no parameter NAME, exercising the
-        // name-less hint branches.
-        let out = render(
+        // Positional bindings carry no parameter NAME, so their hints must
+        // never propose a (parameter …) rewrite — they route to the
+        // declaration-kind that actually applies.
+
+        // every? over a single-token positional → widen the quantifier.
+        let widen = render(
+            "(parser \"rm\" (style gnu) (flags posix) (positional #ps *))\n\
+             (rule \"rm\" (when (every? #ps (regex \"^/tmp/\")) (allow)))",
+        );
+        assert!(widen.contains("(positional #ps"), "{widen}");
+        assert!(!widen.contains("(parameter"), "{widen}");
+
+        // authorise over a collection positional → iteration arm only.
+        let iterate = render(
             "(parser \"rm\" (style gnu) (flags posix) (positional #ps * *))\n\
              (rule \"rm\" (authorise #ps))",
         );
-        assert!(out.contains("`authorise` needs a command line"), "{out}");
-        assert!(out.contains("but `#ps` is a list of values"), "{out}");
-        // Name-less hint variant: no (parameter "NAME" …) rewrite.
         assert!(
-            out.contains("(every? #ps") || out.contains("(command #ps)"),
-            "{out}"
+            iterate.contains("`authorise` needs a command line"),
+            "{iterate}"
         );
+        assert!(
+            iterate.contains("but `#ps` is a list of values"),
+            "{iterate}"
+        );
+        assert!(iterate.contains("(every? #ps"), "{iterate}");
+        assert!(!iterate.contains("(parameter"), "{iterate}");
+        assert!(!iterate.contains("(command"), "{iterate}");
+    }
+
+    #[test]
+    fn positional_token_hint_widens_quantifier() {
+        // (every? …) over a single-token positional: the remedy is to
+        // widen the positional's quantifier, not to declare a parameter.
+        let out = render(
+            "(parser \"rm\" (style gnu) (flags posix) (positional #v *))\n\
+             (rule \"rm\" (when (every? #v (regex \"^/tmp/\")) (allow)))",
+        );
+        assert!(out.contains("(positional #"), "{out}");
+        assert!(!out.contains("(parameter"), "{out}");
+    }
+
+    #[test]
+    fn positional_collection_authorise_omits_command_arm() {
+        // authorise over a collection positional: iteration is the only
+        // applicable arm — no (command …) rewrite (positionals have none).
+        let out = render(
+            "(parser \"rm\" (style gnu) (flags posix) (positional #v * +))\n\
+             (rule \"rm\" (authorise #v))",
+        );
+        assert!(out.contains("(every? #"), "{out}");
+        assert!(!out.contains("(command"), "{out}");
+    }
+
+    #[test]
+    fn rest_iteration_hint_routes_to_authorise() {
+        // (every? …) over a (rest …) binding: rest captures the whole
+        // tail, so the remedy is to recurse with authorise.
+        let out = render(
+            "(parser \"sudo\" (style gnu) (flags posix) (rest #rest))\n\
+             (rule \"sudo\" (when (every? #rest (regex \"rm\")) (allow)))",
+        );
+        assert!(out.contains("(authorise #rest)"), "{out}");
+        assert!(!out.contains("(parameter"), "{out}");
     }
 
     #[test]

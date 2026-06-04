@@ -1,0 +1,17 @@
+---
+source: tests/shape_mismatch_snapshots.rs
+expression: "render(\"(parser \\\"rm\\\" (style gnu) (flags posix) (positional #paths * +))\\n\\\n         (rule \\\"rm\\\" (authorise #paths))\")"
+---
+  × found 1 value-usage problem(s) in the configuration
+
+Error: 
+  × `authorise` needs a command line
+   ╭─[config.lisp:1:52]
+ 1 │ (parser "rm" (style gnu) (flags posix) (positional #paths * +))
+   ·                                                    ───┬──
+   ·                                                       ╰── but `#paths` is a list of values, declared here
+ 2 │ (rule "rm" (authorise #paths))
+   ·                       ───┬──
+   ·                          ╰── this runs a command line
+   ╰────
+  help: Did you mean to inspect each value? Try (some? #paths PRED) or (every? #paths PRED).

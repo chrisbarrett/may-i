@@ -57,3 +57,35 @@ fn authorise_on_count() {
          (rule \"curl\" (authorise #verbosity))"
     ));
 }
+
+#[test]
+fn every_on_count() {
+    insta::assert_snapshot!(render(
+        "(parser \"curl\" (style gnu) (flags permute) (flag \"v\" (count #verbosity)))\n\
+         (rule \"curl\" (when (every? #verbosity (regex \"3\")) (ask)))"
+    ));
+}
+
+#[test]
+fn every_on_positional_token() {
+    insta::assert_snapshot!(render(
+        "(parser \"rm\" (style gnu) (flags posix) (positional #target *))\n\
+         (rule \"rm\" (when (every? #target (regex \"^/tmp/\")) (allow)))"
+    ));
+}
+
+#[test]
+fn authorise_on_positional_collection() {
+    insta::assert_snapshot!(render(
+        "(parser \"rm\" (style gnu) (flags posix) (positional #paths * +))\n\
+         (rule \"rm\" (authorise #paths))"
+    ));
+}
+
+#[test]
+fn every_on_rest() {
+    insta::assert_snapshot!(render(
+        "(parser \"sudo\" (style gnu) (flags posix) (rest #rest))\n\
+         (rule \"sudo\" (when (every? #rest (regex \"rm\")) (allow)))"
+    ));
+}

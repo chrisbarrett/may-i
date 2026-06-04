@@ -15,7 +15,7 @@ use std::collections::{HashMap, HashSet};
 use may_i_core::Span;
 use may_i_core::ast::{BindingName, Config, Effect, Predicate};
 
-use crate::shape::{Shape, ShapeEnv};
+use crate::shape::{DeclKind, Shape, ShapeEnv};
 
 /// A rule-body operator that consumes a `#var` binding, with the shapes
 /// it accepts.
@@ -70,9 +70,9 @@ pub struct ShapeMismatch {
     /// Source span of the parser declaration that assigned `found`
     /// (absent for synthetic parsers).
     pub decl_span: Option<Span>,
-    /// The declaring parameter/flag NAME, for rewrite hints (absent for
-    /// positional/rest bindings).
-    pub decl_name: Option<String>,
+    /// The kind of declaration that bound `binding`, for kind-aware
+    /// rewrite hints.
+    pub decl_kind: DeclKind,
 }
 
 /// Run the shape checker over every rule body in `config`. Returns the
@@ -230,7 +230,7 @@ fn check_use(
             found: decl.shape,
             use_span,
             decl_span: decl.decl_span,
-            decl_name: decl.decl_name.clone(),
+            decl_kind: decl.decl_kind.clone(),
         });
     }
 }
@@ -271,6 +271,22 @@ mod tests {
         assert_eq!(m.len(), 1, "{m:?}");
         assert_eq!(m[0].operator, Operator::Every);
         assert_eq!(m[0].found, Shape::Token);
+        assert_eq!(m[0].decl_kind, DeclKind::Parameter { name: "n".into() });
+    }
+
+    #[test]
+    fn mismatch_carries_positional_decl_kind() {
+        // every? over a single-token positional: the mismatch records the
+        // declaration kind, with no parameter name to offer.
+        let m = check(
+            r#"
+            (parser "rm" (style gnu) (flags posix) (positional #p (regex "^/tmp/")))
+            (rule "rm" (when (every? #p (regex "^/tmp/")) (allow)))
+            "#,
+        );
+        assert_eq!(m.len(), 1, "{m:?}");
+        assert_eq!(m[0].found, Shape::Token);
+        assert_eq!(m[0].decl_kind, DeclKind::Positional);
     }
 
     #[test]
