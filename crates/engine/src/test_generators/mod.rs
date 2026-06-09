@@ -187,6 +187,7 @@ pub fn any_config(size: usize) -> BoxedStrategy<Config> {
             checks: vec![],
             style_specs: vec![],
             parsers: vec![],
+            audit: Default::default(),
         })
         .boxed()
 }

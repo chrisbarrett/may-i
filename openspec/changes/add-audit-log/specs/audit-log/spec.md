@@ -165,8 +165,11 @@ can evolve.
 
 The system SHALL write an audit record with source `trust-block` when an
 evaluation is short-circuited by the Trust gate (a command blocked because a
-loaded rule awaits approval) and the threshold would record a denial. The trail
-MUST NOT silently omit commands blocked for want of approval.
+loaded rule awaits approval) and the Audit log is enabled (any non-`off`
+threshold). A Trust block carries an `ask` decision but is a security-relevant
+short-circuit, so it is recorded whenever auditing is on regardless of where
+`ask` sits relative to the threshold — the trail MUST NOT silently omit
+commands blocked for want of approval.
 
 #### Scenario: A trust block is recorded distinctly from a rule denial
 

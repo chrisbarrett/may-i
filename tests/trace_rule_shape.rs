@@ -25,7 +25,7 @@ fn render_trace(config_source: &str, command: &str) -> String {
     loaded.config.rules = resolved;
 
     let context = may_i_core::ContextFacts::default();
-    let (result, traces, colored_command) =
+    let (result, traces, colored_command, _audit) =
         evaluate_with_colorization(command, &loaded, &context).unwrap();
 
     let trust = InvocationTrust::with_loader(false, Box::new(|| None));

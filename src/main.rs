@@ -47,8 +47,45 @@ struct Cli {
     #[arg(long, global = true, value_name = "FILE")]
     config: Option<std::path::PathBuf>,
 
+    /// Audit log threshold: off, deny, ask, or all. Overrides the
+    /// `(audit (threshold …))` form and `MAYI_AUDIT_THRESHOLD`.
+    #[arg(long, global = true, value_name = "THRESHOLD")]
+    audit_threshold: Option<String>,
+
+    /// Audit log file path. Overrides the `(audit (file …))` form and
+    /// `MAYI_AUDIT_FILE`.
+    #[arg(long, global = true, value_name = "FILE")]
+    audit_file: Option<String>,
+
     #[command(subcommand)]
     command: Option<Command>,
+}
+
+/// Collect audit overrides from the CLI flags and `MAYI_AUDIT_*` environment
+/// variables. The env tier exists because hook mode is stdin-driven and
+/// cannot take flags.
+fn audit_overrides(cli: &Cli) -> may_i::audit::AuditOverrides {
+    fn non_empty(var: &str) -> Option<String> {
+        std::env::var(var).ok().filter(|s| !s.is_empty())
+    }
+    may_i::audit::AuditOverrides {
+        flag_threshold: cli.audit_threshold.clone(),
+        flag_file: cli.audit_file.clone(),
+        env_threshold: non_empty("MAYI_AUDIT_THRESHOLD"),
+        env_file: non_empty("MAYI_AUDIT_FILE"),
+    }
+}
+
+/// Resolve the effective audit config from the loaded form plus overrides and
+/// install it on the pipeline. An invalid flag/env threshold is a hard error.
+fn apply_audit_config(
+    pipeline: &mut may_i::pipeline::CommandPipeline,
+    overrides: &may_i::audit::AuditOverrides,
+) -> miette::Result<()> {
+    let effective = may_i::audit::resolve_audit_config(&pipeline.config().audit, overrides)
+        .map_err(|e| miette::miette!("{e}"))?;
+    pipeline.set_audit(effective);
+    Ok(())
 }
 
 #[derive(Subcommand)]
@@ -131,6 +168,7 @@ fn main() -> ExitCode {
 /// Main entry point for the CLI.
 fn run() -> miette::Result<ExitCode> {
     let cli = Cli::parse();
+    let audit_ov = audit_overrides(&cli);
 
     match cli.command {
         Some(Command::Eval { command, facts }) => {
@@ -153,6 +191,7 @@ fn run() -> miette::Result<ExitCode> {
             let resolved = resolve_eval_command(command, piped_stdin)?;
             let mut pipeline =
                 may_i::pipeline::CommandPipeline::load(cli.config.as_deref(), cli.json)?;
+            apply_audit_config(&mut pipeline, &audit_ov)?;
             may_i::cmd_eval::cmd_eval(&mut pipeline, &resolved, &facts)?
         }
         Some(Command::Check { verbose }) => {
@@ -182,6 +221,7 @@ fn run() -> miette::Result<ExitCode> {
             } else {
                 let mut pipeline =
                     may_i::pipeline::CommandPipeline::load(cli.config.as_deref(), cli.json)?;
+                apply_audit_config(&mut pipeline, &audit_ov)?;
                 cmd_hook::cmd_hook(&mut pipeline)?;
             }
         }

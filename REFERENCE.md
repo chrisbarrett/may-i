@@ -31,6 +31,7 @@ is `~/.config/may-i/config.lisp` by default.
 | `(load "PATH")`             | Include another config file.                      |
 | `(safe-env-vars NAMES…)`    | Allow specific env vars in shell expansion.       |
 | `(check …)`                 | Test cases for `may-i check`.                     |
+| `(audit …)`                 | Persist a JSONL trail of decisions (Audit log).   |
 
 A minimal config:
 
@@ -638,6 +639,92 @@ through static analysis. To allow others — typically common ones agents rely o
 ```lisp
 (safe-env-vars "HOME" "PWD" "USER" "SHELL" "EDITOR")
 ```
+
+## The Audit log: `(audit …)`
+
+The Audit log is an append-only JSONL trail of evaluation outcomes — one record
+per evaluation — for after-the-fact forensics: _which commands failed to parse,
+asked, or were denied?_ It changes no decision; it only records.
+
+```lisp
+(audit (threshold :ask))                  ; record asks and denials
+(audit (threshold :deny) (file "/var/log/may-i/audit.jsonl"))
+```
+
+The form takes two optional, head-keyed sub-forms (alist-style, like
+`(define-arg-style …)`):
+
+- `(threshold :off|:deny|:ask|:all)` — which outcomes to record, ordered by
+  strictness. `:off` (the default) disables the log; `:deny` records denials;
+  `:ask` records asks and denials; `:all` records allows, asks, and denials.
+  There is no separate enable/disable knob — `:off` is the disabled state.
+  **A command that fails to parse is always recorded** at any non-`:off`
+  threshold (its decision floors to `:ask`, and that is exactly the forensic
+  case you want).
+- `(file "PATH")` — where to write. Defaults to the location below.
+
+**Primary-config only.** `(audit …)` is honoured only from your primary config.
+An `(audit …)` form in a `(load …)`-ed or repo-local file is a hard load error:
+a loaded source must not be able to silence or redirect the trail.
+
+### Precedence and the environment
+
+Each setting resolves independently, highest to lowest:
+`--audit-* flag > MAYI_AUDIT_* env var > (audit …) form > default`. Overriding
+one field leaves the other untouched.
+
+| Setting     | Flag                  | Environment             |
+| :---------- | :-------------------- | :---------------------- |
+| threshold   | `--audit-threshold`   | `MAYI_AUDIT_THRESHOLD`  |
+| file        | `--audit-file`        | `MAYI_AUDIT_FILE`       |
+
+On the CLI and in the environment the threshold is a **bare string** (`ask`),
+not the keyword spelling (`:ask`). The environment tier exists because hook mode
+is stdin-driven and cannot take flags — set `MAYI_AUDIT_THRESHOLD` to configure
+auditing for the hook path.
+
+Only the `eval` and `hook` paths write records; `check` never does (it replays
+synthetic test commands and never blocks).
+
+### Record fields
+
+Each record is one line of JSON: a schema version (`v`), an RFC 3339 timestamp
+(`ts`), the invocation `mode` (`eval`/`hook`), the `harness` (when known), the
+verbatim `command`, the `decision`, the `reason`, the outcome `source`
+(`rule` / `trust-block` / `parse-floor`), `parse_ok`, the parse `diagnostic`
+(when it failed), the canonical-form hashes of the deciding `rules`, the
+`config` path, and `cwd` (when known). Query it with `jq`:
+
+```sh
+jq 'select(.decision == "deny") | .command' ~/.local/state/may-i/audit.jsonl
+```
+
+### Location, permissions, and rolling
+
+The default file is `$XDG_STATE_HOME/may-i/audit.jsonl`, falling back to
+`~/.local/state/may-i/audit.jsonl`. The directory is created `0700` and the
+file `0600`.
+
+> **The trail records verbatim commands** — treat it as a secret surface. It is
+> opt-in (`:off` by default), the `0600`/`0700` modes keep it owner-only, and
+> `(file "/dev/null")` is an escape hatch that records nowhere.
+
+`may-i` does not rotate the file. Delegate rolling to `logrotate` with
+`copytruncate` (each record is appended in a single `O_APPEND` write, so
+truncation never tears a line):
+
+```
+/home/you/.local/state/may-i/audit.jsonl {
+    weekly
+    rotate 8
+    copytruncate
+    compress
+}
+```
+
+> **NFS caveat.** The single-write append-atomicity guarantee holds on a local
+> filesystem. On NFS, concurrent writers may interleave; a local
+> `~/.local/state` path is the supported case.
 
 ## Tokenisation: when GNU isn't enough
 

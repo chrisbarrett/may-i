@@ -60,7 +60,7 @@ fn render_output(command: &str, facts: &[String]) -> Vec<u8> {
 
     let context = parse_facts(facts);
     let config = load_config();
-    let (result, traces, colored_command) =
+    let (result, traces, colored_command, _audit) =
         evaluate_with_colorization(command, &config, &context).unwrap();
     let config_path = fixture_dir().join("config.lisp");
 

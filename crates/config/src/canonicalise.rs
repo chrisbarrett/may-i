@@ -52,6 +52,7 @@ pub(crate) fn canonicalise_node(node: Box<CstNode>) -> Box<CstNode> {
             let reordered = match head.as_deref() {
                 Some("parser") => sort_parser_body(recursed),
                 Some("define-arg-style") => sort_define_arg_style_body(recursed),
+                Some("audit") => sort_audit_body(recursed),
                 Some("flag") => sort_flag_or_parameter_vec(recursed, 1),
                 Some("parameter") => sort_flag_or_parameter_vec(recursed, 1),
                 Some("after") => collapse_singleton_after(recursed),
@@ -157,6 +158,32 @@ fn sort_define_arg_style_body(children: Vec<Box<CstNode>>) -> Vec<Box<CstNode>> 
     let mut out = Vec::with_capacity(indexed.len() + 2);
     out.push(head);
     out.push(name);
+    out.extend(indexed.into_iter().map(|(_, n)| n));
+    out
+}
+
+/// `(audit (threshold …) (file …))`: head-keyed sub-forms, alphabetised by
+/// head atom (so `(file …)` precedes `(threshold …)`). The `audit` head stays
+/// first. Order-independent and not human-curated, so it sorts (CONTEXT.md,
+/// "Canonical-form ordering").
+fn sort_audit_body(children: Vec<Box<CstNode>>) -> Vec<Box<CstNode>> {
+    if children.len() < 3 {
+        // head + at most one sub-form — nothing to reorder.
+        return children;
+    }
+    let mut iter = children.into_iter();
+    let head = iter.next().expect("audit head");
+    let body: Vec<Box<CstNode>> = iter.collect();
+
+    let mut indexed: Vec<(usize, Box<CstNode>)> = body.into_iter().enumerate().collect();
+    indexed.sort_by(|(ai, a), (bi, b)| {
+        let ka = head_atom_or_empty(a);
+        let kb = head_atom_or_empty(b);
+        ka.cmp(&kb).then_with(|| ai.cmp(bi))
+    });
+
+    let mut out = Vec::with_capacity(indexed.len() + 1);
+    out.push(head);
     out.extend(indexed.into_iter().map(|(_, n)| n));
     out
 }
@@ -301,6 +328,27 @@ mod tests {
         let want =
             r#"(define-arg-style mystyle (long-prefix "--") (overrides gnu) (separators "="))"#;
         assert_eq!(out.trim(), want);
+    }
+
+    #[test]
+    fn audit_subforms_alphabetised() {
+        let src = r#"(audit (threshold :ask) (file "x.jsonl"))"#;
+        let (forms, errs) = parse_cst(src);
+        assert!(errs.is_empty(), "{errs:?}");
+        let canon = canonicalise_forms(forms);
+        let out = render_flat(&canon);
+        // `file` sorts before `threshold`.
+        let want = r#"(audit (file "x.jsonl") (threshold :ask))"#;
+        assert_eq!(out.trim(), want);
+    }
+
+    #[test]
+    fn audit_single_subform_unchanged() {
+        let src = r#"(audit (threshold :deny))"#;
+        let (forms, errs) = parse_cst(src);
+        assert!(errs.is_empty(), "{errs:?}");
+        let canon = canonicalise_forms(forms);
+        assert_eq!(render_flat(&canon).trim(), src);
     }
 
     #[test]

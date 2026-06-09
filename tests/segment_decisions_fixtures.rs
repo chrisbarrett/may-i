@@ -27,7 +27,7 @@ fn run(command: &str) -> (String, String) {
     );
     let loaded = may_i_config::load_and_resolve(Some(cfg.path())).expect("load config");
     let context = ContextFacts::default();
-    let (result, _traces, colored) =
+    let (result, _traces, colored, _audit) =
         evaluate_with_colorization(command, &loaded, &context).expect("evaluate_with_colorization");
     (result.decision.to_string(), colored)
 }

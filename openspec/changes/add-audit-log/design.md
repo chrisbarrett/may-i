@@ -196,5 +196,9 @@ removing the form/flags leaves all decisions unchanged.
   `null`. (Leaning yes.)
 - `cwd` provenance: read from context facts when present, omit when absent
   rather than emit an empty string.
-- Whether a single stderr breadcrumb on first audit-write failure is worth the
-  noise, or writing should fail entirely silently.
+- ~~Whether a single stderr breadcrumb on first audit-write failure is worth the
+  noise, or writing should fail entirely silently.~~ **Resolved: fail entirely
+  silently.** `append_best_effort` drops the error with no breadcrumb. In hook
+  mode stderr is fed back to the harness, so a breadcrumb would leak audit-only
+  noise into the agent's context for a non-decision concern; the trail being
+  best-effort means its failures must not surface at all.

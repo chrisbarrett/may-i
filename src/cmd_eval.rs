@@ -9,6 +9,7 @@ use may_i_engine as engine;
 use may_i_shell_parser as parser;
 
 use crate::annotation::{TraceEntry, TracingFold};
+use crate::audit::AuditTap;
 use crate::pipeline::{CommandPipeline, EvalOutcomeBody};
 use crate::runtime_facts::parse_cli_facts;
 
@@ -20,7 +21,7 @@ pub fn cmd_eval(
     let context_facts = parse_cli_facts(raw_facts)?;
 
     pipeline.run_eval(command, |ctx| {
-        let (result, mut traces, colored_command) =
+        let (result, mut traces, colored_command, audit_rules) =
             evaluate_with_colorization(command, ctx.loaded, &context_facts)?;
         if !result.parse_diagnostics.is_empty() {
             traces.push(TraceEntry::ParseDiagnostics {
@@ -31,24 +32,34 @@ pub fn cmd_eval(
             let err = crate::shell_parse_error::ShellParseError::from_diagnostic(diag, command);
             let _ = writeln!(std::io::stderr(), "{:?}", miette::Report::new(err));
         }
+        let audit = AuditTap::from_eval(&result, command, audit_rules, None);
         Ok(EvalOutcomeBody {
             command: command.to_string(),
             colored: colored_command,
             result,
             traces,
             display_path: ctx.display_path.clone(),
+            audit,
         })
     })
 }
 
 /// Evaluate a command using the unified pipeline, then colorize using segments
-/// for display purposes only.
+/// for display purposes only. Returns the engine result, the captured trace,
+/// the colourised echo, and the canonical-form hashes of the deciding rules
+/// (for the Audit log).
 pub fn evaluate_with_colorization(
     command: &str,
     loaded: &may_i_config::LoadResult,
     context: &may_i_core::ContextFacts,
-) -> miette::Result<(engine::EvalResult, Vec<TraceEntry>, String)> {
-    let mut fold = TracingFold::from_load_result(loaded);
+) -> miette::Result<(engine::EvalResult, Vec<TraceEntry>, String, Vec<String>)> {
+    // Eval needs both the Trace it renders and the audit capture: compose the
+    // two folds over one traversal. Projection runs through the TracingFold
+    // half, so the returned decision is unchanged.
+    let mut fold = engine::ComposedFold::new(
+        TracingFold::from_load_result(loaded),
+        engine::AuditFold::new(),
+    );
     let result =
         engine::eval::evaluate_command_with_fold(command, &loaded.config, context, &mut fold)
             .map_err(|e| miette::miette!("{e}"))?;
@@ -60,7 +71,9 @@ pub fn evaluate_with_colorization(
         colorize_segments(command, &segments, &result.segment_decisions)
     };
 
-    Ok((result, fold.traces, colored_command))
+    let (tracing, audit) = fold.into_parts();
+    let audit_rules = audit.into_deciding_hashes(result.decision);
+    Ok((result, tracing.traces, colored_command, audit_rules))
 }
 
 fn colorize_text(text: &str, decision: Decision) -> String {
