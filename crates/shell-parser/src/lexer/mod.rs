@@ -24,13 +24,16 @@ pub(super) enum Token {
     Else,
     Fi,
     For,
-    In,
     While,
     Until,
     Do,
     Done,
     Case,
     Esac,
+    // Note: `in` has no token. POSIX places it after an argument-position word
+    // (`for NAME in …`, `case WORD in`), so a command-position flag cannot
+    // recognise it; the lexer always emits it as a `Word` and `parse_for` /
+    // `parse_case` consume the literal where the grammar expects it.
     DoubleSemi,    // ;;
     SemiAmp,       // ;&
     DoubleSemiAmp, // ;;&
@@ -44,6 +47,15 @@ pub(super) struct Lexer {
     pub(super) pos: usize,
     pub(super) byte_pos: usize,
     pub(super) diagnostics: Vec<ParseDiagnostic>,
+    /// Whether the next word is in command-word position. POSIX recognises
+    /// reserved words only here; elsewhere a keyword spelling is a literal
+    /// argument. True at start of input, after a command separator/operator,
+    /// and after a list-introducing keyword. See `command_position_after`.
+    at_command_position: bool,
+    /// Set immediately after a `function` keyword: the word that follows is a
+    /// function name, and the construct that follows *it* (typically `{`) is
+    /// again in command position even though a name is not a separator.
+    expect_function_name: bool,
 }
 
 impl Lexer {
@@ -53,6 +65,8 @@ impl Lexer {
             pos: 0,
             byte_pos: 0,
             diagnostics: Vec::new(),
+            at_command_position: true,
+            expect_function_name: false,
         }
     }
 
@@ -123,6 +137,7 @@ impl Lexer {
         loop {
             self.skip_whitespace();
             let start = self.byte_pos;
+            let len_before = tokens.len();
             match self.peek() {
                 None => {
                     tokens.push((Token::Eof, start));
@@ -187,8 +202,41 @@ impl Lexer {
                     }
                 }
             }
+            // Update command-word position for the next token. A line
+            // continuation can push no token (`read_word_or_keyword` returns
+            // `None`); in that case the flag is left unchanged.
+            if tokens.len() > len_before {
+                let (tok, _) = &tokens[tokens.len() - 1];
+                self.at_command_position = self.command_position_after(tok);
+            }
         }
         tokens
+    }
+
+    /// Given the token just emitted, decide whether the *next* word is in
+    /// command-word position. Reserved words and separators/operators
+    /// introduce a new command; an ordinary `Word` (an argument) does not,
+    /// unless it is a leading assignment, which leaves the following command
+    /// word eligible.
+    fn command_position_after(&mut self, tok: &Token) -> bool {
+        let was_command_position = self.at_command_position;
+        let expecting_function_name = self.expect_function_name;
+        self.expect_function_name = false;
+        match tok {
+            Token::Function => {
+                self.expect_function_name = true;
+                true
+            }
+            Token::Eof | Token::Redirect(_) => false,
+            Token::Word(w) => {
+                // The body of `function NAME { … }` follows the name directly,
+                // so the word after the name is still command position.
+                expecting_function_name || (was_command_position && is_assignment_word(w))
+            }
+            // Separators, operators, and all reserved-word tokens allow a
+            // reserved word to follow.
+            _ => true,
+        }
     }
 
     fn try_read_redirect_or_process_sub(&mut self) -> Option<Token> {
@@ -450,8 +498,12 @@ impl Lexer {
             return None;
         }
 
-        // Check if this is a keyword (single literal part)
-        if parts.len() == 1
+        // Classify reserved words only in command-word position (POSIX
+        // 2.10.2). As an ordinary argument a keyword spelling is a literal
+        // `Word`. `in` is never classified here — see the `Token` enum note
+        // and `parse_for` / `parse_case`.
+        if self.at_command_position
+            && parts.len() == 1
             && let WordPart::Literal(ref s) = parts[0]
         {
             match s.as_str() {
@@ -461,7 +513,6 @@ impl Lexer {
                 "else" => return Some(Token::Else),
                 "fi" => return Some(Token::Fi),
                 "for" => return Some(Token::For),
-                "in" => return Some(Token::In),
                 "while" => return Some(Token::While),
                 "until" => return Some(Token::Until),
                 "do" => return Some(Token::Do),
@@ -488,6 +539,21 @@ pub(super) fn is_metachar(ch: char) -> bool {
         ch,
         ' ' | '\t' | '\n' | '|' | '&' | ';' | '(' | ')' | '<' | '>'
     )
+}
+
+/// Whether a word has the shape of a leading assignment (`NAME=value`). Used
+/// to keep command-word position across assignment prefixes (`FOO=1 cmd`).
+/// Mirrors the name validation in `parse::Parser::try_parse_assignment`.
+fn is_assignment_word(w: &Word) -> bool {
+    if let Some(WordPart::Literal(s)) = w.parts.first()
+        && let Some(eq) = s.find('=')
+    {
+        let name = &s[..eq];
+        return !name.is_empty()
+            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            && !name.chars().next().unwrap().is_ascii_digit();
+    }
+    false
 }
 
 fn is_word_char(ch: char) -> bool {

@@ -54,6 +54,9 @@ fn help_text(kind: &ParseDiagnosticKind, severity: Severity) -> String {
             );
         }
         ParseDiagnosticKind::EmptyCommand => "an empty command was parsed at this position",
+        ParseDiagnosticKind::UnexpectedToken => {
+            "the parser could not place this token in any command, so it was left unevaluated"
+        }
     };
     match severity {
         Severity::Error => format!("{base} — the command boundary may be ambiguous"),

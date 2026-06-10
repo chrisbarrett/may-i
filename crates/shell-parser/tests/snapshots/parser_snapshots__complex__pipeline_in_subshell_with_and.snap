@@ -57,6 +57,13 @@ And(
                         ),
                     ],
                 },
+                Word {
+                    parts: [
+                        Literal(
+                            "done",
+                        ),
+                    ],
+                },
             ],
             redirections: [],
         },
