@@ -29,8 +29,14 @@ pub enum ParseDiagnosticKind {
     UnterminatedCommandSubstitution,
     UnterminatedArithmetic,
     UnterminatedParameterExpansion,
-    MissingClosingKeyword { expected: &'static str },
+    MissingClosingKeyword {
+        expected: &'static str,
+    },
     EmptyCommand,
+    /// A token the grammar could not place (e.g. a reserved word outside any
+    /// construct, or an unbalanced delimiter). Emitted instead of silently
+    /// dropping the token so the decision floors to ask.
+    UnexpectedToken,
 }
 
 /// A diagnostic emitted during parsing.
@@ -122,6 +128,7 @@ impl ParseDiagnostic {
                 format!("missing closing keyword `{expected}`")
             }
             ParseDiagnosticKind::EmptyCommand => "empty command".to_string(),
+            ParseDiagnosticKind::UnexpectedToken => "unexpected token".to_string(),
         }
     }
 }

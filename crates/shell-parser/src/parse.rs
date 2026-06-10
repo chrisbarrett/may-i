@@ -69,6 +69,15 @@ impl Parser {
         }
     }
 
+    /// Whether the current token is a literal `Word` spelling exactly `lit`.
+    /// Used to recognise `in` in `for`/`case`, where the lexer (which gates
+    /// keywords on command-word position) emits it as an ordinary `Word`.
+    fn peek_word_is(&self, lit: &str) -> bool {
+        matches!(self.peek(), Token::Word(w)
+            if w.parts.len() == 1
+                && matches!(&w.parts[0], WordPart::Literal(s) if s == lit))
+    }
+
     pub(super) fn parse_complete(&mut self) -> Command {
         self.skip_newlines();
         if self.at_eof() {
@@ -79,7 +88,24 @@ impl Parser {
                 span: Span { start: 0, end: 0 },
             });
         }
-        self.parse_list()
+        let command = self.parse_list();
+        // No silent token loss: well-formed input is consumed up to EOF. A
+        // leftover token (e.g. a stray `done` with no opening `do`, or an
+        // unbalanced `)`) is one the grammar could not place. Surface an
+        // Error-severity diagnostic so the decision floors to ask rather than
+        // discarding the token. Backstops any position the command-word rule
+        // does not cover.
+        if !self.at_eof() {
+            self.diagnostics.push(ParseDiagnostic {
+                span: Span {
+                    start: self.current_offset(),
+                    end: self.current_offset(),
+                },
+                kind: ParseDiagnosticKind::UnexpectedToken,
+                severity: Severity::Error,
+            });
+        }
+        command
     }
 
     fn parse_list(&mut self) -> Command {
@@ -412,7 +438,7 @@ impl Parser {
         self.skip_newlines();
         let mut words = Vec::new();
 
-        if matches!(self.peek(), Token::In) {
+        if self.peek_word_is("in") {
             self.advance(); // skip 'in'
             while let Token::Word(w) = self.peek().clone() {
                 words.push(w.clone());
@@ -512,7 +538,9 @@ impl Parser {
         };
 
         self.skip_newlines();
-        self.expect(&Token::In);
+        if self.peek_word_is("in") {
+            self.advance(); // skip 'in'
+        }
         self.skip_newlines();
 
         let mut arms = Vec::new();
@@ -814,5 +842,153 @@ mod tests {
             spans,
             vec![Span { start: 0, end: 6 }, Span { start: 10, end: 18 }]
         );
+    }
+
+    // ── Command-position reserved-word recognition ──────────────────────
+
+    fn simple_words(input: &str) -> Vec<String> {
+        let cmd = parse_complete(input);
+        first_simple(&cmd)
+            .words
+            .iter()
+            .map(|w| w.to_str())
+            .collect()
+    }
+
+    fn has_error_diagnostic(input: &str) -> bool {
+        parse_diagnostics(input)
+            .iter()
+            .any(|d| d.severity == Severity::Error)
+    }
+
+    #[test]
+    fn keyword_spelling_as_trailing_arg_is_literal() {
+        assert_eq!(
+            simple_words("find . -name done"),
+            ["find", ".", "-name", "done"]
+        );
+        assert!(parse_diagnostics("find . -name done").is_empty());
+    }
+
+    #[test]
+    fn multiple_keyword_spelled_arguments_are_preserved() {
+        assert_eq!(
+            simple_words("echo do done fi"),
+            ["echo", "do", "done", "fi"]
+        );
+        assert!(parse_diagnostics("echo do done fi").is_empty());
+    }
+
+    #[test]
+    fn keyword_spelling_as_flag_value_is_literal() {
+        assert_eq!(
+            simple_words("kubectl get pods in default"),
+            ["kubectl", "get", "pods", "in", "default"]
+        );
+        assert!(parse_diagnostics("kubectl get pods in default").is_empty());
+    }
+
+    #[test]
+    fn keyword_spelling_mid_args_is_literal() {
+        assert_eq!(simple_words("grep -r fi src"), ["grep", "-r", "fi", "src"]);
+        assert_eq!(simple_words("ls then"), ["ls", "then"]);
+    }
+
+    #[test]
+    fn decision_sees_full_command_for_rm_rf_done() {
+        assert_eq!(simple_words("rm -rf done"), ["rm", "-rf", "done"]);
+        assert!(parse_diagnostics("rm -rf done").is_empty());
+    }
+
+    #[test]
+    fn assignment_prefix_keeps_command_word_eligible() {
+        // FOO=1 is an assignment prefix; do_thing is still the command word.
+        let cmd = parse_complete("FOO=1 do_thing");
+        let sc = first_simple(&cmd);
+        assert_eq!(sc.assignments.len(), 1);
+        assert_eq!(
+            sc.words.iter().map(|w| w.to_str()).collect::<Vec<_>>(),
+            ["do_thing"]
+        );
+    }
+
+    // ── Compound commands must parse identically ────────────────────────
+
+    #[test]
+    fn while_loop_still_parses() {
+        let cmd = parse_complete("while true; do echo hi; done");
+        assert!(matches!(
+            cmd,
+            Command::Loop {
+                kind: LoopKind::While,
+                ..
+            }
+        ));
+        assert!(parse_diagnostics("while true; do echo hi; done").is_empty());
+    }
+
+    #[test]
+    fn if_then_fi_still_parses() {
+        let cmd = parse_complete("if true; then echo a; fi");
+        assert!(matches!(cmd, Command::If { .. }));
+        assert!(parse_diagnostics("if true; then echo a; fi").is_empty());
+    }
+
+    #[test]
+    fn brace_group_still_parses() {
+        let cmd = parse_complete("{ echo a; }");
+        assert!(matches!(cmd, Command::BraceGroup(_)));
+        assert!(parse_diagnostics("{ echo a; }").is_empty());
+    }
+
+    #[test]
+    fn closing_brace_as_argument_is_literal() {
+        assert_eq!(simple_words("echo }"), ["echo", "}"]);
+    }
+
+    #[test]
+    fn function_no_parens_still_parses() {
+        let cmd = parse_complete("function greet { echo hello; }");
+        assert!(matches!(cmd, Command::FunctionDef { .. }));
+        assert!(parse_diagnostics("function greet { echo hello; }").is_empty());
+    }
+
+    // ── `in` resolved in the parser ─────────────────────────────────────
+
+    #[test]
+    fn for_loop_still_parses() {
+        let cmd = parse_complete("for x in a b; do echo $x; done");
+        match cmd {
+            Command::For { var, words, .. } => {
+                assert_eq!(var, "x");
+                assert_eq!(
+                    words.iter().map(|w| w.to_str()).collect::<Vec<_>>(),
+                    ["a", "b"]
+                );
+            }
+            other => panic!("expected For, got {other:?}"),
+        }
+        assert!(parse_diagnostics("for x in a b; do echo $x; done").is_empty());
+    }
+
+    #[test]
+    fn case_still_parses() {
+        let cmd = parse_complete("case $x in a) echo a;; *) echo other;; esac");
+        assert!(matches!(cmd, Command::Case { .. }));
+        assert!(parse_diagnostics("case $x in a) echo a;; *) echo other;; esac").is_empty());
+    }
+
+    // ── No silent token loss ────────────────────────────────────────────
+
+    #[test]
+    fn stray_done_floors_with_error_diagnostic() {
+        // A `done` with no opening `do` cannot be placed; rather than being
+        // silently dropped it must surface an Error-severity diagnostic.
+        assert!(has_error_diagnostic("done"));
+    }
+
+    #[test]
+    fn stray_closing_keyword_floors() {
+        assert!(has_error_diagnostic("echo hi; fi"));
     }
 }

@@ -859,6 +859,44 @@ mod tests {
     }
 
     #[test]
+    fn rule_sees_keyword_spelled_argument() {
+        use may_i_core::pattern::{ArgPattern, Expr};
+        // `rm` is denied when `done` appears anywhere in its arguments. If the
+        // lexer dropped `done` (the old reserved-word bug) the rule would not
+        // match and the decision would fall through to Ask. The deny proves
+        // the engine evaluated the full `rm -rf done` argv.
+        let rule = may_i_core::ast::Rule {
+            command_effect: spanned(Effect::CommandPattern(CommandPattern::Literal(
+                "rm".to_string(),
+            ))),
+            effect: spanned(Effect::And {
+                effects: vec![
+                    spanned(Effect::ArgPattern(ArgPattern::Anywhere(vec![
+                        Expr::Literal("done".to_string()),
+                    ]))),
+                    spanned(Effect::Terminal {
+                        decision: Decision::Deny,
+                        reason: Some("rm with done argument".to_string()),
+                    }),
+                ],
+            }),
+            checks: vec![],
+            span: Span::new(0, 0),
+            provenance: may_i_core::ast::Provenance::PrimaryConfig,
+        };
+        let config = config_with_rules(vec![rule]);
+
+        // `done` is a trailing argument — the rule matches and denies.
+        let result = evaluate_command("rm -rf done", &config, &empty_facts()).unwrap();
+        assert_eq!(result.decision, Decision::Deny);
+        assert!(result.parse_diagnostics.is_empty());
+
+        // Without `done`, the arg pattern fails and the rule does not apply.
+        let result = evaluate_command("rm -rf /tmp", &config, &empty_facts()).unwrap();
+        assert_eq!(result.decision, Decision::Ask);
+    }
+
+    #[test]
     fn recursion_depth_limit() {
         let config = config_with_rules(vec![allow_rule("echo"), allow_rule("rm")]);
         // Create deeply nested: $(echo $(echo $(echo ...$(rm /)...)))

@@ -1,6 +1,14 @@
 use proptest::prelude::*;
 
 use crate::ast::{Command, SimpleCommand};
+use crate::diagnostic::Severity;
+
+/// Reserved-word spellings plus a few ordinary identifiers. A generator
+/// pool for argument words that exercises the command-position rule.
+const RESERVED_AND_IDENTS: &[&str] = &[
+    "if", "then", "elif", "else", "fi", "for", "in", "while", "until", "do", "done", "case",
+    "esac", "function", "{", "}", "foo", "bar", "baz",
+];
 
 /// First simple command's command name as the lexer reports it.
 fn first_command_name(input: &str) -> Option<String> {
@@ -78,6 +86,50 @@ proptest! {
             "command name changed after `\\<NL>` insertion: base={:?} mutated={:?}",
             base,
             mutated
+        );
+    }
+
+    /// No silent token loss: a simple command whose arguments include
+    /// reserved-word spellings either preserves every word as a literal
+    /// argument, or — if a keyword landed where the grammar could not place
+    /// it — emits an Error-severity diagnostic. A word never just vanishes.
+    #[test]
+    fn prop_no_silent_token_loss(
+        args in proptest::collection::vec(
+            proptest::sample::select(RESERVED_AND_IDENTS),
+            0..6,
+        ),
+    ) {
+        // `cmd` is a fixed non-keyword: the input is always a simple command.
+        let mut input = String::from("cmd");
+        for a in &args {
+            input.push(' ');
+            input.push_str(a);
+        }
+
+        let result = crate::parse(&input);
+        let has_error = result
+            .diagnostics
+            .iter()
+            .any(|d| d.severity == Severity::Error);
+
+        if has_error {
+            // Divergence was surfaced (and floors the decision) — acceptable.
+            return Ok(());
+        }
+
+        // No error ⇒ every input word must survive verbatim in argv.
+        let words = match &result.command {
+            Command::Simple(sc) => sc.words.iter().map(|w| w.to_str()).collect::<Vec<_>>(),
+            other => panic!("expected Simple for input {input:?}, got {other:?}"),
+        };
+        let mut expected = vec![String::from("cmd")];
+        expected.extend(args.iter().map(|a| a.to_string()));
+        prop_assert_eq!(
+            words,
+            expected,
+            "word silently dropped without an Error diagnostic: input={:?}",
+            input
         );
     }
 }
