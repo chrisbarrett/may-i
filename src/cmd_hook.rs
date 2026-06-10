@@ -10,7 +10,8 @@ use may_i_core::{ContextFacts, Keyword};
 use may_i_engine as engine;
 use miette::Context;
 
-use may_i::pipeline::{CommandPipeline, HarnessProfile};
+use may_i::audit::AuditTap;
+use may_i::pipeline::{CommandPipeline, HarnessProfile, HookOutcomeBody};
 
 pub(crate) fn cmd_hook(pipeline: &mut CommandPipeline) -> miette::Result<()> {
     let mut input = String::new();
@@ -30,9 +31,19 @@ pub(crate) fn cmd_hook(pipeline: &mut CommandPipeline) -> miette::Result<()> {
 
     let profile = HarnessProfile::from_payload(&payload);
     let context = build_context(&payload, profile);
+    let cwd = payload
+        .get("cwd")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
     pipeline.run_hook(&command, profile, |ctx| {
-        engine::eval::evaluate_command(&command, ctx.config, &context)
-            .map_err(|e| miette::miette!("{e}"))
+        // Hook runs `AuditFold` alone — no trace-tree cost on the hot path.
+        let mut fold = engine::AuditFold::new();
+        let result =
+            engine::eval::evaluate_command_with_fold(&command, ctx.config, &context, &mut fold)
+                .map_err(|e| miette::miette!("{e}"))?;
+        let audit_rules = fold.into_deciding_hashes(result.decision);
+        let audit = AuditTap::from_eval(&result, &command, audit_rules, cwd.clone());
+        Ok(HookOutcomeBody { result, audit })
     })
 }
 

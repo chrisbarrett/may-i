@@ -177,6 +177,15 @@ mod tests {
             result: EvalResult::new(Decision::Allow, Some("safe".into())),
             traces: vec![],
             display_path: "/tmp/cfg.lisp".into(),
+            audit: crate::audit::AuditTap {
+                decision: Decision::Allow,
+                reason: Some("safe".into()),
+                source: crate::audit::AuditSource::Rule,
+                parse_ok: true,
+                diagnostic: None,
+                rules: vec![],
+                cwd: None,
+            },
         }
     }
 

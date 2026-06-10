@@ -1,5 +1,6 @@
 // Rule engine — evaluates against unified rule DSL with recursive evaluation
 
+pub mod audit_fold;
 pub mod check;
 pub mod eval;
 pub mod fold;
@@ -66,6 +67,7 @@ impl EvalResult {
 }
 
 // Re-export canonical evaluator items
+pub use audit_fold::{AuditFold, ComposedFold};
 pub use eval::{
     EvalContext, Evaluator, PredicateResult, evaluate, evaluate_command, evaluate_command_with_fold,
 };

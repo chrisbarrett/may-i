@@ -1062,6 +1062,80 @@ impl ResolvedParser {
     }
 }
 
+/// Which evaluation outcomes the Audit log records, ordered by strictness.
+///
+/// `Off` ⊂ `Deny` ⊂ `Ask` ⊂ `All`. `Off` is the disabled state (there is no
+/// separate enable/disable knob). Parse failures are always recorded at any
+/// non-`Off` threshold — see [`AuditThreshold::records`] and the emit gate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AuditThreshold {
+    /// The Audit log is disabled; nothing is recorded.
+    #[default]
+    Off,
+    /// Record denials only.
+    Deny,
+    /// Record asks and denials.
+    Ask,
+    /// Record allows, asks, and denials.
+    All,
+}
+
+impl AuditThreshold {
+    /// Parse the keyword spelling used by the `(audit (threshold …))` form
+    /// (e.g. `:ask`). Returns `None` for any value outside the closed set.
+    pub fn from_keyword(s: &str) -> Option<Self> {
+        match s {
+            ":off" => Some(AuditThreshold::Off),
+            ":deny" => Some(AuditThreshold::Deny),
+            ":ask" => Some(AuditThreshold::Ask),
+            ":all" => Some(AuditThreshold::All),
+            _ => None,
+        }
+    }
+
+    /// Parse the bare-string spelling used on the CLI / in the environment
+    /// (e.g. `ask`). The keyword spelling is the form's value syntax only.
+    pub fn from_bare(s: &str) -> Option<Self> {
+        match s {
+            "off" => Some(AuditThreshold::Off),
+            "deny" => Some(AuditThreshold::Deny),
+            "ask" => Some(AuditThreshold::Ask),
+            "all" => Some(AuditThreshold::All),
+            _ => None,
+        }
+    }
+
+    /// Whether an outcome with the given decision is recorded at this
+    /// threshold. Independent of the parse-failure floor, which the emit
+    /// gate applies separately (a parse failure is always recorded at any
+    /// non-`Off` threshold).
+    pub fn records(self, decision: Decision) -> bool {
+        match self {
+            AuditThreshold::Off => false,
+            AuditThreshold::Deny => decision == Decision::Deny,
+            AuditThreshold::Ask => decision >= Decision::Ask,
+            AuditThreshold::All => true,
+        }
+    }
+
+    /// Whether the Audit log is enabled at all.
+    pub fn is_off(self) -> bool {
+        matches!(self, AuditThreshold::Off)
+    }
+}
+
+/// Configuration for the Audit log, set by the primary-config-only
+/// `(audit …)` form and overridden per-field by `--audit-*` flags and
+/// `MAYI_AUDIT_*` environment variables. Defaults to disabled (`Off`) with
+/// no explicit file (the default location is resolved at write time).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct AuditConfig {
+    /// Which outcomes are recorded.
+    pub threshold: AuditThreshold,
+    /// An explicit audit file path, or `None` to use the default location.
+    pub file: Option<PathBuf>,
+}
+
 /// Top-level configuration for the unified rule DSL.
 #[derive(Debug, Clone, Default)]
 pub struct Config {
@@ -1085,6 +1159,10 @@ pub struct Config {
 
     /// Per-program parser declarations from `(parser PROGRAM …)` forms.
     pub parsers: Vec<Parser>,
+
+    /// Audit log configuration from the `(audit …)` form. Honoured only
+    /// from the primary config; defaults to disabled.
+    pub audit: AuditConfig,
 }
 
 impl Config {

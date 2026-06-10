@@ -12,11 +12,12 @@ use std::io;
 use std::path::Path;
 
 use may_i_config::LoadResult;
-use may_i_core::ast::Config;
+use may_i_core::ast::{AuditConfig, Config};
 use may_i_engine::EvalResult;
 use may_i_engine::check::CheckResult;
 
 use crate::annotation::TraceEntry;
+use crate::audit::{self, AuditMode, AuditRecord, AuditTap};
 use crate::cmd_check::TraceExtra;
 use crate::output::{self, Terminal};
 use crate::trust::{InvocationTrust, TrustBlock, TrustMode};
@@ -45,6 +46,14 @@ impl HarnessProfile {
             HarnessProfile::ClaudeCode
         }
     }
+
+    /// The harness name recorded in audit records.
+    pub fn name(self) -> &'static str {
+        match self {
+            HarnessProfile::ClaudeCode => "claude-code",
+            HarnessProfile::Codex => "codex",
+        }
+    }
 }
 
 /// Borrowed evaluation context handed to the closure in one of the
@@ -70,6 +79,16 @@ pub struct EvalOutcomeBody {
     pub result: EvalResult,
     pub traces: Vec<TraceEntry>,
     pub display_path: String,
+    /// Audit data captured during evaluation, emitted by `run_eval` after
+    /// rendering (gated by threshold). Not rendered.
+    pub audit: AuditTap,
+}
+
+/// Hook handler payload: the engine result plus the audit data captured by
+/// the same evaluation, emitted by `run_hook` after the JSON envelope.
+pub struct HookOutcomeBody {
+    pub result: EvalResult,
+    pub audit: AuditTap,
 }
 
 /// Check handler payload: per-check results carrying their traces, the
@@ -88,6 +107,9 @@ pub struct CommandPipeline {
     terminal: Terminal,
     json: bool,
     trust: InvocationTrust,
+    /// Effective audit settings (after flag/env/form resolution). Defaults
+    /// to disabled; the CLI sets it before driving an eval/hook.
+    audit: AuditConfig,
 }
 
 impl CommandPipeline {
@@ -118,6 +140,50 @@ impl CommandPipeline {
             terminal: Terminal::detect(),
             json,
             trust,
+            audit: AuditConfig::default(),
+        }
+    }
+
+    /// Set the effective audit configuration (after flag/env/form
+    /// resolution). Called by the CLI before driving an eval or hook.
+    pub fn set_audit(&mut self, audit: AuditConfig) {
+        self.audit = audit;
+    }
+
+    /// Build and emit one audit record for `tap`, gated by the effective
+    /// threshold. Best-effort: any write failure is swallowed and cannot
+    /// alter the decision, the rendered output, or the exit code. This is the
+    /// single emit seam for both the eval and hook terminal points.
+    fn emit_audit(&self, mode: AuditMode, harness: Option<&str>, command: &str, tap: &AuditTap) {
+        // A Trust-gate short-circuit carries an `ask` decision but is a
+        // security-relevant block: it is recorded whenever auditing is on, so
+        // the trail never silently omits a command blocked for approval.
+        let force_trust_block =
+            !self.audit.threshold.is_off() && tap.source == crate::audit::AuditSource::TrustBlock;
+        if !force_trust_block
+            && !audit::should_record(self.audit.threshold, tap.decision, tap.parse_ok)
+        {
+            return;
+        }
+        let record = AuditRecord::new(
+            audit::timestamp_now(),
+            mode,
+            harness.map(str::to_string),
+            command.to_string(),
+            tap.decision,
+            tap.reason.clone(),
+            tap.source,
+            tap.parse_ok,
+            tap.diagnostic.clone(),
+            tap.rules.clone(),
+            self.loaded.config_path.display().to_string(),
+            tap.cwd.clone(),
+        );
+        let Ok(line) = record.to_json_line() else {
+            return;
+        };
+        if let Some(path) = self.audit.file.clone().or_else(audit::default_audit_path) {
+            audit::append_best_effort(&path, &line);
         }
     }
 
@@ -203,6 +269,12 @@ impl CommandPipeline {
     {
         let trust_mode = TrustMode::for_eval(self.json);
         if let Err(block) = self.prelude_and_trust(command, trust_mode, true, true, !self.json) {
+            self.emit_audit(
+                AuditMode::Eval,
+                None,
+                command,
+                &AuditTap::trust_block(block.decision, block.reason.clone()),
+            );
             output::render_eval_trust_block(
                 &mut io::stdout(),
                 &mut io::stderr(),
@@ -226,6 +298,7 @@ impl CommandPipeline {
         };
 
         output::render_eval(&mut io::stdout(), &self.terminal, self.json, &body);
+        self.emit_audit(AuditMode::Eval, None, command, &body.audit);
         Ok(())
     }
 
@@ -266,15 +339,21 @@ impl CommandPipeline {
         closure: F,
     ) -> miette::Result<()>
     where
-        F: FnOnce(&EvalContext<'_>) -> miette::Result<EvalResult>,
+        F: FnOnce(&EvalContext<'_>) -> miette::Result<HookOutcomeBody>,
     {
         if let Err(block) = self.prelude_and_trust(command, TrustMode::Hook, false, true, false) {
+            self.emit_audit(
+                AuditMode::Hook,
+                Some(profile.name()),
+                command,
+                &AuditTap::trust_block(block.decision, block.reason.clone()),
+            );
             output::render_hook_trust_block(&mut io::stdout(), profile, &block);
             return Ok(());
         }
 
         let display_path = output::shorten_home(&self.loaded.config_path);
-        let result = {
+        let body = {
             let ctx = EvalContext {
                 config: &self.loaded.config,
                 loaded: &self.loaded,
@@ -285,7 +364,8 @@ impl CommandPipeline {
             closure(&ctx)?
         };
 
-        output::render_hook(&mut io::stdout(), profile, &result);
+        output::render_hook(&mut io::stdout(), profile, &body.result);
+        self.emit_audit(AuditMode::Hook, Some(profile.name()), command, &body.audit);
         Ok(())
     }
 }
@@ -304,11 +384,26 @@ mod tests {
     use may_i_core::span::Span;
     use may_i_engine::EvalResult;
 
-    use crate::pipeline::{CheckOutcomeBody, CommandPipeline, EvalOutcomeBody, HarnessProfile};
+    use crate::audit::{AuditSource, AuditTap};
+    use crate::pipeline::{
+        CheckOutcomeBody, CommandPipeline, EvalOutcomeBody, HarnessProfile, HookOutcomeBody,
+    };
     use crate::trust::{InvocationTrust, TrustMode, store::TrustStore};
 
     fn spanned<T>(value: T) -> Spanned<T> {
         Spanned::new(value, Span::new(0, 0))
+    }
+
+    fn sample_tap() -> AuditTap {
+        AuditTap {
+            decision: Decision::Allow,
+            reason: None,
+            source: AuditSource::Rule,
+            parse_ok: true,
+            diagnostic: None,
+            rules: vec![],
+            cwd: None,
+        }
     }
 
     fn loaded_rule(cmd: &str, path: &str) -> Rule {
@@ -409,13 +504,50 @@ mod tests {
         pipeline
             .run_hook("echo hi", HarnessProfile::ClaudeCode, |_ctx| {
                 invoked.set(true);
-                Ok(EvalResult::new(Decision::Allow, None))
+                Ok(HookOutcomeBody {
+                    result: EvalResult::new(Decision::Allow, None),
+                    audit: sample_tap(),
+                })
             })
             .expect("run hook");
         assert!(
             !invoked.get(),
             "Hook closure must NOT run when trust blocks"
         );
+    }
+
+    /// Spec: `audit-log` / `Trust-block outcomes are recorded` — a hook
+    /// blocked by the Trust gate emits a record with source `trust-block`,
+    /// distinct from a rule denial, when the threshold records denials.
+    #[test]
+    fn trust_block_emits_record_with_trust_block_source() {
+        use may_i_core::ast::{AuditConfig, AuditThreshold};
+
+        let dir = tempfile::tempdir().unwrap();
+        let audit_path = dir.path().join("audit.jsonl");
+
+        let loaded = loaded_result(vec![loaded_rule("echo", "/tmp/rules.lisp")]);
+        let trust = InvocationTrust::with_loader(true, Box::new(|| Some(empty_state())));
+        let mut pipeline = CommandPipeline::with_trust(loaded, true, trust);
+        pipeline.set_audit(AuditConfig {
+            threshold: AuditThreshold::Deny,
+            file: Some(audit_path.clone()),
+        });
+
+        pipeline
+            .run_hook("echo hi", HarnessProfile::ClaudeCode, |_ctx| {
+                Ok(HookOutcomeBody {
+                    result: EvalResult::new(Decision::Allow, None),
+                    audit: sample_tap(),
+                })
+            })
+            .expect("run hook");
+
+        let contents = std::fs::read_to_string(&audit_path).expect("audit file written");
+        let rec: serde_json::Value = serde_json::from_str(contents.trim()).unwrap();
+        assert_eq!(rec["source"], "trust-block");
+        assert_eq!(rec["mode"], "hook");
+        assert_eq!(rec["harness"], "claude-code");
     }
 
     /// Spec: `command-pipeline` / `Eval handler dispatches through run_eval`
@@ -435,6 +567,7 @@ mod tests {
                     result: EvalResult::new(Decision::Allow, None),
                     traces: vec![],
                     display_path: "/tmp/cfg.lisp".into(),
+                    audit: sample_tap(),
                 })
             })
             .expect("run eval");
@@ -464,6 +597,7 @@ mod tests {
                     result: EvalResult::new(Decision::Allow, None),
                     traces: vec![],
                     display_path: "/tmp/cfg.lisp".into(),
+                    audit: sample_tap(),
                 })
             })
             .expect("run_eval");

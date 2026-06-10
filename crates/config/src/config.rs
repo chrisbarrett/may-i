@@ -1,7 +1,7 @@
 // Config parser for the unified DSL.
 
 use may_i_core::Span;
-use may_i_core::ast::{Check, Config, Provenance, SecurityConfig};
+use may_i_core::ast::{AuditConfig, AuditThreshold, Check, Config, Provenance, SecurityConfig};
 use may_i_core::{ContextFacts, Decision, Keyword};
 use may_i_sexpr::{RawError, Sexpr};
 
@@ -69,6 +69,9 @@ pub fn parse_config_from_sexprs(forms: &[Sexpr]) -> Result<Config, RawError> {
                 let checks = parse_check(&list[1..], form.span())?;
                 config.checks.extend(checks);
             }
+            "audit" => {
+                config.audit = parse_audit_form(list, form.span())?;
+            }
             "define-arg-style" => {
                 let spec = crate::style::parse_style_definition(form)?;
                 push_style_spec(&mut config, spec);
@@ -92,7 +95,7 @@ pub fn parse_config_from_sexprs(forms: &[Sexpr]) -> Result<Config, RawError> {
                     list[0].span(),
                 )
                 .with_help(
-                    "valid top-level forms: rule, define, safe-env-vars, check, define-arg-style, parser",
+                    "valid top-level forms: rule, define, safe-env-vars, check, audit, define-arg-style, parser",
                 ));
             }
         }
@@ -179,6 +182,20 @@ pub(crate) fn parse_config_from_tagged_sexprs(
                 let checks = parse_check(&list[1..], form.span())?;
                 config.checks.extend(checks);
             }
+            "audit" => {
+                if !matches!(provenance, Provenance::PrimaryConfig) {
+                    return Err(RawError::new(
+                        "(audit …) is permitted only in the primary config",
+                        form.span(),
+                    )
+                    .with_help(
+                        "a loaded or repo-local file must not configure the Audit log; \
+                         set (audit …) in your primary config, or use the --audit-* flags \
+                         / MAYI_AUDIT_* environment variables",
+                    ));
+                }
+                config.audit = parse_audit_form(list, form.span())?;
+            }
             "define-arg-style" => {
                 let mut spec = crate::style::parse_style_definition(form)?;
                 spec.provenance = provenance.clone();
@@ -204,13 +221,91 @@ pub(crate) fn parse_config_from_tagged_sexprs(
                     list[0].span(),
                 )
                 .with_help(
-                    "valid top-level forms: rule, define, safe-env-vars, check, define-arg-style, parser",
+                    "valid top-level forms: rule, define, safe-env-vars, check, audit, define-arg-style, parser",
                 ));
             }
         }
     }
 
     Ok(config)
+}
+
+/// Parse an `(audit (threshold :KW) (file "PATH"))` form into an
+/// [`AuditConfig`]. The body is alist-style head-keyed sub-forms (like
+/// `(define-arg-style …)`), not a keyword plist; the threshold is a
+/// closed-set keyword value (like `(pun :allow)`). Both sub-forms are
+/// optional; an omitted threshold defaults to `:off`.
+fn parse_audit_form(list: &[Sexpr], _span: Span) -> Result<AuditConfig, RawError> {
+    let mut audit = AuditConfig::default();
+    let mut seen: std::collections::HashSet<&'static str> = std::collections::HashSet::new();
+
+    for sub in &list[1..] {
+        let sub_list = sub
+            .as_list()
+            .ok_or_else(|| RawError::new("audit body items must be lists", sub.span()))?;
+        if sub_list.is_empty() {
+            return Err(RawError::new("empty audit sub-form", sub.span()));
+        }
+        let tag = sub_list[0].as_atom().ok_or_else(|| {
+            RawError::new("audit sub-form tag must be an atom", sub_list[0].span())
+        })?;
+
+        let attr_name: &'static str = match tag {
+            "threshold" => "threshold",
+            "file" => "file",
+            other => {
+                return Err(RawError::new(
+                    format!("unknown audit sub-form: {other}"),
+                    sub.span(),
+                )
+                .with_help("valid audit sub-forms: (threshold :off|:deny|:ask|:all) (file \"PATH\")"));
+            }
+        };
+
+        if !seen.insert(attr_name) {
+            eprintln!(
+                "warning: duplicate (audit …) sub-form `{attr_name}` — last declaration wins"
+            );
+        }
+
+        match attr_name {
+            "threshold" => {
+                if sub_list.len() != 2 {
+                    return Err(RawError::new(
+                        "(threshold …) takes exactly one keyword",
+                        sub.span(),
+                    ));
+                }
+                let kw = sub_list[1].as_atom().ok_or_else(|| {
+                    RawError::new("(threshold …) value must be a keyword", sub_list[1].span())
+                })?;
+                audit.threshold = AuditThreshold::from_keyword(kw).ok_or_else(|| {
+                    RawError::new(
+                        format!(
+                            "invalid audit threshold {kw}: valid values are :off, :deny, :ask, :all"
+                        ),
+                        sub_list[1].span(),
+                    )
+                    .with_help("valid thresholds: :off, :deny, :ask, :all")
+                })?;
+            }
+            "file" => {
+                if sub_list.len() != 2 {
+                    return Err(RawError::new(
+                        "(file …) takes exactly one string",
+                        sub.span(),
+                    ));
+                }
+                let path = sub_list[1].as_atom_or_str().ok_or_else(|| {
+                    RawError::new("(file …) value must be a string", sub_list[1].span())
+                })?;
+                audit.file = Some(std::path::PathBuf::from(path));
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    Ok(audit)
 }
 
 /// Parse safe-env-vars form: (safe-env-vars "VAR1" "VAR2" ...)
@@ -762,6 +857,73 @@ mod tests {
         );
     }
 
+    // --- audit form ---
+
+    #[test]
+    fn parse_audit_form_sets_threshold_and_file() {
+        let config = parse_config(r#"(audit (threshold :ask) (file "x.jsonl"))"#).unwrap();
+        assert_eq!(config.audit.threshold, AuditThreshold::Ask);
+        assert_eq!(
+            config.audit.file.as_deref(),
+            Some(std::path::Path::new("x.jsonl"))
+        );
+    }
+
+    #[test]
+    fn audit_defaults_to_off_when_absent() {
+        let config = parse_config(r#"(rule "echo" (allow))"#).unwrap();
+        assert_eq!(config.audit.threshold, AuditThreshold::Off);
+        assert!(config.audit.file.is_none());
+    }
+
+    #[test]
+    fn audit_invalid_threshold_is_load_error() {
+        let err = parse_config(r#"(audit (threshold :loud))"#).expect_err("expected error");
+        let msg = format!("{err}");
+        assert!(msg.contains(":off"), "got: {msg}");
+        assert!(msg.contains(":deny"), "got: {msg}");
+        assert!(msg.contains(":ask"), "got: {msg}");
+        assert!(msg.contains(":all"), "got: {msg}");
+    }
+
+    #[test]
+    fn audit_unknown_subform_is_error() {
+        let err = parse_config(r#"(audit (wibble :ask))"#).expect_err("expected error");
+        assert!(format!("{err}").contains("unknown audit sub-form"));
+    }
+
+    #[test]
+    fn audit_form_with_loaded_provenance_is_rejected() {
+        let forms = vec![(
+            first_form(r#"(audit (threshold :off))"#),
+            Provenance::Loaded {
+                path: std::path::PathBuf::from("/tmp/loaded.lisp"),
+            },
+        )];
+        let err = parse_config_from_tagged_sexprs(&forms).expect_err("expected error");
+        assert!(
+            format!("{err}").contains("only in the primary config"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn audit_form_from_primary_provenance_is_accepted() {
+        let forms = vec![(
+            first_form(r#"(audit (threshold :deny))"#),
+            Provenance::PrimaryConfig,
+        )];
+        let config = parse_config_from_tagged_sexprs(&forms).unwrap();
+        assert_eq!(config.audit.threshold, AuditThreshold::Deny);
+    }
+
+    fn first_form(input: &str) -> Sexpr {
+        let (forms, errs) = may_i_sexpr::parse(input);
+        assert!(errs.is_empty(), "{errs:?}");
+        forms.into_iter().next().unwrap()
+    }
+
+    use may_i_core::ast::AuditThreshold;
     use may_i_sexpr::test_generators::any_canonical_config_cst;
     use proptest::prelude::*;
 

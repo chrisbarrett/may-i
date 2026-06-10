@@ -11,6 +11,26 @@ fn read_file(f: &NamedTempFile) -> String {
 }
 
 #[test]
+fn fmt_round_trips_audit_form_with_sorted_subforms() {
+    let cfg = write_config("(audit (threshold :ask) (file \"x.jsonl\"))\n");
+    may_i(&cfg)
+        .args(["fmt", &cfg.path().display().to_string()])
+        .assert()
+        .success();
+
+    let out = read_file(&cfg);
+    let file_pos = out.find(r#"(file "x.jsonl")"#).expect(&out);
+    let threshold_pos = out.find("(threshold :ask)").expect(&out);
+    assert!(file_pos < threshold_pos, "subforms not sorted: {out}");
+
+    // Idempotent: a second fmt --check is a clean no-op.
+    may_i(&cfg)
+        .args(["fmt", "--check", &cfg.path().display().to_string()])
+        .assert()
+        .success();
+}
+
+#[test]
 fn fmt_single_file_rewrites_in_place() {
     // Parser body order is canonicalised:
     //   style → flags → flag → parameter → positional → rest
