@@ -776,6 +776,63 @@ mod tests {
         assert_eq!(result.decision, Decision::Allow);
     }
 
+    #[test]
+    fn process_substitution_argument_inner_command_evaluated() {
+        let config = config_with_rules(vec![allow_rule("cat"), deny_rule("rm")]);
+        let result = evaluate_command("cat <(rm -rf /danger)", &config, &empty_facts()).unwrap();
+        assert_eq!(result.decision, Decision::Deny);
+    }
+
+    #[test]
+    fn process_substitution_redirect_target_inner_command_evaluated() {
+        let config = config_with_rules(vec![deny_rule("rm")]);
+        let result = evaluate_command(
+            "while read x; do :; done < <(rm -rf /danger)",
+            &config,
+            &empty_facts(),
+        )
+        .unwrap();
+        assert_eq!(result.decision, Decision::Deny);
+    }
+
+    #[test]
+    fn process_substitution_redirect_does_not_drop_trailing_command() {
+        let config = config_with_rules(vec![deny_rule("rm")]);
+        let result = evaluate_command(
+            "f() { while read x; do :; done < <(find .); rm -rf /danger; }",
+            &config,
+            &empty_facts(),
+        )
+        .unwrap();
+        assert_eq!(result.decision, Decision::Deny);
+    }
+
+    #[test]
+    fn output_process_substitution_inner_command_evaluated() {
+        let config = config_with_rules(vec![allow_rule("tee"), deny_rule("rm")]);
+        let result = evaluate_command("tee >(rm x)", &config, &empty_facts()).unwrap();
+        assert_eq!(result.decision, Decision::Deny);
+    }
+
+    #[test]
+    fn unplaceable_procsub_input_floors_to_ask_without_dropping_tokens() {
+        // A stray `)` after a process substitution cannot be placed in the
+        // grammar. The backstop (D3): an Error-severity diagnostic is emitted
+        // and floors the decision to :ask, even though every named command is
+        // allowed — rather than silently dropping the unplaceable token.
+        let config = config_with_rules(vec![allow_rule("cat"), allow_rule("echo")]);
+        let result = evaluate_command("cat <(echo hi) )", &config, &empty_facts()).unwrap();
+        assert_eq!(result.decision, Decision::Ask);
+        assert!(
+            result
+                .parse_diagnostics
+                .iter()
+                .any(|d| d.severity == may_i_shell_parser::Severity::Error),
+            "expected an Error-severity diagnostic, got: {:?}",
+            result.parse_diagnostics
+        );
+    }
+
     // -- Recursion depth limit --
 
     // -- Parse diagnostics --

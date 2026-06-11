@@ -1252,3 +1252,76 @@ fn parse_param_expansion_hash_special() {
         panic!("Expected simple command");
     }
 }
+
+// -- Process-substitution redirect target does not desync compounds --
+
+fn command_names(input: &str) -> Vec<String> {
+    crate::extract_simple_commands(&parse(input).into_command())
+        .iter()
+        .filter_map(|sc| sc.command_name().map(str::to_string))
+        .collect()
+}
+
+#[test]
+fn procsub_redirect_in_function_body_keeps_trailing_command() {
+    let input = "f() { while read x; do :; done < <(find .); rm -rf /danger; }";
+    let result = parse(input);
+    assert!(
+        !result.diagnostics.iter().any(|d| matches!(
+            d.kind,
+            crate::diagnostic::ParseDiagnosticKind::MissingClosingKeyword { .. }
+        )),
+        "unexpected MissingClosingKeyword: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        command_names(input).iter().any(|c| c == "rm"),
+        "trailing `rm` was dropped; got {:?}",
+        command_names(input)
+    );
+}
+
+#[test]
+fn procsub_herestring_in_function_body_keeps_trailing_command() {
+    // `<<< <(cmd)` — herestring whose word is a process substitution. The
+    // target reader must consume the whole `<( … )` here too, or the stray
+    // procsub word desyncs the enclosing group exactly like the `< <(…)`
+    // case.
+    let input = "f() { while read x; do :; done <<< <(find .); rm x; }";
+    let result = parse(input);
+    assert!(
+        !result.diagnostics.iter().any(|d| matches!(
+            d.kind,
+            crate::diagnostic::ParseDiagnosticKind::MissingClosingKeyword { .. }
+        )),
+        "unexpected MissingClosingKeyword: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        command_names(input).iter().any(|c| c == "rm"),
+        "trailing `rm` was dropped; got {:?}",
+        command_names(input)
+    );
+}
+
+#[test]
+fn procsub_redirect_in_subshell_keeps_trailing_command() {
+    let input = "( while read x; do :; done < <(find .); rm x )";
+    assert!(
+        command_names(input).iter().any(|c| c == "rm"),
+        "trailing `rm` was dropped; got {:?}",
+        command_names(input)
+    );
+}
+
+#[test]
+fn command_substitution_redirect_target_keeps_trailing_command() {
+    // Regression guard: the `$( … )` redirect-target case already parses
+    // correctly and must keep its trailing `rm`.
+    let input = "f() { while read x; do :; done < \"$(echo f)\"; rm x; }";
+    assert!(
+        command_names(input).iter().any(|c| c == "rm"),
+        "trailing `rm` was dropped; got {:?}",
+        command_names(input)
+    );
+}
