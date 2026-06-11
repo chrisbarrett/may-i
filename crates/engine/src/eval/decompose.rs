@@ -112,8 +112,21 @@ fn push_embedded_units_from_redirect_targets(
         _ => &[],
     };
     for redirection in redirections {
-        if let RedirectionTarget::File(word) = &redirection.target {
-            push_embedded_units_from_word(word, diagnostics, units);
+        match &redirection.target {
+            RedirectionTarget::File(word) => {
+                push_embedded_units_from_word(word, diagnostics, units);
+            }
+            // An unquoted heredoc body is expanded by bash, so the parser
+            // extracts its embedded command/arithmetic substitutions;
+            // each becomes its own evaluation unit, exactly as for `$(…)`
+            // in argument position. Quoted bodies carry no substitutions.
+            RedirectionTarget::Heredoc { substitutions, .. } => {
+                let word = may_i_shell_parser::Word {
+                    parts: substitutions.clone(),
+                };
+                push_embedded_units_from_word(&word, diagnostics, units);
+            }
+            RedirectionTarget::Fd(_) => {}
         }
     }
     for child in cmd.children() {

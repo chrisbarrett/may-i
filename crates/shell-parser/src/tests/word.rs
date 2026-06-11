@@ -716,7 +716,7 @@ fn backslash_newline_inside_quoted_heredoc_is_literal() {
     };
     assert_eq!(sc.command_name(), Some("cat"));
     assert_eq!(sc.redirections.len(), 1);
-    let RedirectionTarget::Heredoc(body) = &sc.redirections[0].target else {
+    let RedirectionTarget::Heredoc { body, .. } = &sc.redirections[0].target else {
         panic!("expected heredoc body");
     };
     assert!(

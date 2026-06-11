@@ -559,7 +559,7 @@ fn hash_mid_word_with_heredoc() {
             assert_eq!(sc.command_name(), Some("a#cat"));
             assert_eq!(sc.redirections.len(), 1);
             match &sc.redirections[0].target {
-                RedirectionTarget::Heredoc(body) => {
+                RedirectionTarget::Heredoc { body, .. } => {
                     assert_eq!(body, "body\n");
                 }
                 other => panic!("Expected heredoc target, got {other:?}"),

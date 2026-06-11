@@ -1,5 +1,161 @@
 use super::ast::*;
-use super::diagnostic::ParseDiagnostic;
+use super::diagnostic::{ParseDiagnostic, ParseDiagnosticKind, Severity, Span};
+
+/// Scan the byte region `input[start..end]` (an unquoted heredoc body)
+/// for the expansions bash performs there that embed a command: command
+/// substitution (`$(…)`, `` `…` ``) and arithmetic (`$((…))`). Returns
+/// the found substitutions with inner-spans into `input`.
+///
+/// Bash quoting rules inside a heredoc body differ from word context:
+/// quote characters are NOT special (a `'$(cmd)'` in the body still
+/// runs), while a backslash escapes `$`, `` ` ``, and `\`. Process
+/// substitution and globs are not performed in a body, so they are not
+/// extracted. An unterminated substitution swallows the rest of the body
+/// in real bash; it is not extracted — an Error-severity diagnostic is
+/// emitted instead, and the parse-error floor owns the outcome.
+fn scan_heredoc_substitutions(
+    input: &str,
+    start: usize,
+    end: usize,
+    diagnostics: &mut Vec<ParseDiagnostic>,
+) -> Vec<WordPart> {
+    let bytes = input.as_bytes();
+    let mut out = Vec::new();
+    let mut i = start;
+    while i < end {
+        match bytes[i] {
+            b'\\' => {
+                // Backslash escapes the next character (in particular a
+                // `$` or backtick sigil). Skipping one byte past a
+                // multi-byte char is safe: continuation bytes match no
+                // ASCII sigil, and slicing only happens at sigils.
+                i += 2;
+            }
+            b'$' if i + 1 < end && bytes[i + 1] == b'(' => {
+                if i + 2 < end && bytes[i + 2] == b'(' {
+                    // Arithmetic $((…)) — find the closing `))`.
+                    let body_start = i + 3;
+                    match find_double_paren_close(bytes, body_start, end) {
+                        Some(close) => {
+                            out.push(WordPart::Arithmetic {
+                                source: input[body_start..close].to_string(),
+                                span: Span {
+                                    start: body_start,
+                                    end: close,
+                                },
+                            });
+                            i = close + 2;
+                        }
+                        None => {
+                            diagnostics.push(ParseDiagnostic {
+                                span: Span { start: i, end },
+                                kind: ParseDiagnosticKind::UnterminatedArithmetic,
+                                severity: Severity::Error,
+                            });
+                            return out;
+                        }
+                    }
+                } else {
+                    // Command substitution $(…) — balanced parens, same
+                    // fidelity as the word lexer's reader.
+                    let body_start = i + 2;
+                    match find_balanced_paren_close(bytes, body_start, end) {
+                        Some(close) => {
+                            out.push(WordPart::CommandSubstitution {
+                                source: input[body_start..close].to_string(),
+                                span: Span {
+                                    start: body_start,
+                                    end: close,
+                                },
+                            });
+                            i = close + 1;
+                        }
+                        None => {
+                            diagnostics.push(ParseDiagnostic {
+                                span: Span { start: i, end },
+                                kind: ParseDiagnosticKind::UnterminatedCommandSubstitution,
+                                severity: Severity::Error,
+                            });
+                            return out;
+                        }
+                    }
+                }
+            }
+            b'`' => {
+                let body_start = i + 1;
+                let mut j = body_start;
+                let mut close = None;
+                while j < end {
+                    match bytes[j] {
+                        b'\\' => j += 2,
+                        b'`' => {
+                            close = Some(j);
+                            break;
+                        }
+                        _ => j += 1,
+                    }
+                }
+                match close {
+                    Some(close) => {
+                        out.push(WordPart::Backtick {
+                            source: input[body_start..close].to_string(),
+                            span: Span {
+                                start: body_start,
+                                end: close,
+                            },
+                        });
+                        i = close + 1;
+                    }
+                    None => {
+                        diagnostics.push(ParseDiagnostic {
+                            span: Span { start: i, end },
+                            kind: ParseDiagnosticKind::UnterminatedBacktick,
+                            severity: Severity::Error,
+                        });
+                        return out;
+                    }
+                }
+            }
+            _ => i += 1,
+        }
+    }
+    out
+}
+
+/// Index of the `)` that closes a `$(`-opened region starting at `from`,
+/// counting nested parens. `None` when the region ends first.
+fn find_balanced_paren_close(bytes: &[u8], from: usize, end: usize) -> Option<usize> {
+    let mut depth = 1usize;
+    let mut i = from;
+    while i < end {
+        match bytes[i] {
+            b'\\' => i += 1,
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Index of the first `)` of the `))` that closes a `$((`-opened region
+/// starting at `from`. `None` when the region ends first.
+fn find_double_paren_close(bytes: &[u8], from: usize, end: usize) -> Option<usize> {
+    let mut i = from;
+    while i + 1 < end {
+        if bytes[i] == b')' && bytes[i + 1] == b')' {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
+}
 
 mod param_expansion;
 mod string_readers;
@@ -44,6 +200,9 @@ pub(super) enum Token {
 
 pub(super) struct Lexer {
     pub(super) input: Vec<char>,
+    /// The original input text, kept for byte-addressed region scans
+    /// (heredoc bodies) whose spans must index the source string.
+    input_str: String,
     pub(super) pos: usize,
     pub(super) byte_pos: usize,
     pub(super) diagnostics: Vec<ParseDiagnostic>,
@@ -62,6 +221,7 @@ impl Lexer {
     pub(super) fn new(input: &str) -> Self {
         Lexer {
             input: input.chars().collect(),
+            input_str: input.to_string(),
             pos: 0,
             byte_pos: 0,
             diagnostics: Vec::new(),
@@ -367,7 +527,7 @@ impl Lexer {
             RedirectionKind::Heredoc | RedirectionKind::HeredocStrip => {
                 self.skip_whitespace();
                 let strip = matches!(kind, RedirectionKind::HeredocStrip);
-                let delim = self.read_heredoc_delimiter();
+                let (delim, quoted) = self.read_heredoc_delimiter();
 
                 // Scan forward line-by-line to collect the heredoc body
                 // Move past the current line (skip to the newline after the delimiter word)
@@ -378,11 +538,19 @@ impl Lexer {
                     }
                 }
 
+                // Byte region of the raw body in the original input — the
+                // substitution scan needs spans that index the source, not
+                // the tab-stripped copy.
+                let body_start = self.byte_pos;
+                let body_end;
+
                 let mut body = String::new();
                 loop {
                     if self.peek().is_none() {
+                        body_end = self.byte_pos;
                         break; // EOF before delimiter — graceful degradation
                     }
+                    let line_start = self.byte_pos;
                     // Read one line
                     let mut line = String::new();
                     while let Some(ch) = self.peek() {
@@ -400,6 +568,7 @@ impl Lexer {
                         line.clone()
                     };
                     if compare == delim {
+                        body_end = line_start;
                         break;
                     }
 
@@ -412,7 +581,26 @@ impl Lexer {
                     body.push('\n');
                 }
 
-                RedirectionTarget::Heredoc(body)
+                // An unquoted body is live — bash performs parameter,
+                // command, and arithmetic expansion in it — so extract the
+                // embedded commands for evaluation. A quoted body is
+                // inviolable and stays opaque.
+                let substitutions = if quoted {
+                    Vec::new()
+                } else {
+                    scan_heredoc_substitutions(
+                        &self.input_str,
+                        body_start,
+                        body_end,
+                        &mut self.diagnostics,
+                    )
+                };
+
+                RedirectionTarget::Heredoc {
+                    body,
+                    quoted,
+                    substitutions,
+                }
             }
             // Input/Output/Append/Clobber and Herestring all take a word
             // target and share the process-substitution handling below.
@@ -449,25 +637,29 @@ impl Lexer {
 
     /// Read a heredoc delimiter, handling quoted (`'EOF'`, `"EOF"`) and
     /// backslash-escaped (`\EOF`) forms by stripping the quoting.
-    fn read_heredoc_delimiter(&mut self) -> String {
+    /// Read a heredoc delimiter, returning `(delimiter, quoted)`. Any
+    /// quoting of the delimiter (`'EOF'`, `"EOF"`, `\EOF`) suppresses
+    /// expansion in the body, so the flag is recorded rather than
+    /// discarded.
+    fn read_heredoc_delimiter(&mut self) -> (String, bool) {
         match self.peek() {
             Some('\'') => {
                 self.advance();
                 let s = self.read_until_char('\'');
                 self.advance(); // skip closing quote
-                s
+                (s, true)
             }
             Some('"') => {
                 self.advance();
                 let s = self.read_until_char('"');
                 self.advance(); // skip closing quote
-                s
+                (s, true)
             }
             Some('\\') => {
                 self.advance(); // skip leading backslash
-                self.read_plain_word_text()
+                (self.read_plain_word_text(), true)
             }
-            _ => self.read_plain_word_text(),
+            _ => (self.read_plain_word_text(), false),
         }
     }
 

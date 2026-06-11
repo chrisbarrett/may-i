@@ -203,3 +203,55 @@ proptest! {
         });
     }
 }
+
+/// Heredoc-substitution properties: an embedded command reachable via an
+/// unquoted heredoc body is always extracted; a quoted body never yields
+/// substitutions, whatever it contains.
+fn first_heredoc_substitutions(input: &str) -> Option<Vec<crate::ast::WordPart>> {
+    fn walk(cmd: &Command) -> Option<Vec<crate::ast::WordPart>> {
+        if let Command::Simple(sc) = cmd {
+            for r in &sc.redirections {
+                if let crate::ast::RedirectionTarget::Heredoc { substitutions, .. } = &r.target {
+                    return Some(substitutions.clone());
+                }
+            }
+        }
+        cmd.children().iter().find_map(|c| walk(c))
+    }
+    walk(&crate::parse(input).command)
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 256, max_shrink_iters: 50, .. ProptestConfig::default() })]
+
+    #[test]
+    fn prop_unquoted_heredoc_substitution_never_escapes(
+        cmd in "[a-z][a-z0-9 ./-]{0,12}",
+        before in "[a-zA-Z0-9 .]{0,8}",
+        after in "[a-zA-Z0-9 .]{0,8}",
+    ) {
+        let input = format!("cat <<XEOF\n{before}$({cmd}){after}\nXEOF\n");
+        let subs = first_heredoc_substitutions(&input)
+            .expect("heredoc target present");
+        prop_assert!(
+            subs.iter().any(|p| matches!(
+                p,
+                crate::ast::WordPart::CommandSubstitution { source, .. } if source == &cmd
+            )),
+            "embedded command {cmd:?} escaped extraction for {input:?}: {subs:?}"
+        );
+    }
+
+    #[test]
+    fn prop_quoted_heredoc_body_yields_no_substitutions(
+        body in "[a-zA-Z0-9 $()`{}*?~\\\\-]{0,24}",
+    ) {
+        let input = format!("cat <<'XEOF'\n{body}\nXEOF\n");
+        let subs = first_heredoc_substitutions(&input)
+            .expect("heredoc target present");
+        prop_assert!(
+            subs.is_empty(),
+            "quoted body yielded substitutions for {input:?}: {subs:?}"
+        );
+    }
+}

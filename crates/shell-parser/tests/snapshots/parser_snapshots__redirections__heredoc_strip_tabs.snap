@@ -1,5 +1,6 @@
 ---
-source: tests/parser_snapshots.rs
+source: crates/shell-parser/tests/parser_snapshots.rs
+assertion_line: 240
 expression: "parse(\"cat <<-EOF\\n\\thello\\n\\tworld\\n\\tEOF\")"
 ---
 Simple(
@@ -18,9 +19,11 @@ Simple(
             Redirection {
                 fd: None,
                 kind: HeredocStrip,
-                target: Heredoc(
-                    "hello\nworld\n",
-                ),
+                target: Heredoc {
+                    body: "hello\nworld\n",
+                    quoted: false,
+                    substitutions: [],
+                },
             },
         ],
     },

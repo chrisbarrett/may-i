@@ -36,8 +36,19 @@ fn check_cat_heredoc(sc: &SimpleCommand) -> Option<String> {
         match (&redir.kind, &redir.target) {
             (
                 RedirectionKind::Heredoc | RedirectionKind::HeredocStrip,
-                RedirectionTarget::Heredoc(text),
+                RedirectionTarget::Heredoc {
+                    body: text, quoted, ..
+                },
             ) => {
+                // Only a quoted heredoc is static: an unquoted body is
+                // subject to parameter/command/arithmetic expansion, so
+                // its parse-time text is not the runtime output and
+                // folding it would hide embedded commands from
+                // evaluation. Bail unless the unquoted body provably
+                // contains no expansion syntax at all.
+                if !quoted && (text.contains('$') || text.contains('`') || text.contains('\\')) {
+                    return None;
+                }
                 // Parser heredoc bodies always end with '\n', so the
                 // previous body (if any) already has a trailing newline
                 // and no explicit separator is needed.

@@ -840,6 +840,7 @@ fn named_predicate_missing_returns_unresolved_error() {
 }
 
 mod expansion;
+mod heredoc;
 mod properties;
 pub(crate) mod strategies;
 
