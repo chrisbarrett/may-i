@@ -24,6 +24,14 @@ fn kind_from_form(form: SubstitutionForm) -> Option<EmbeddedKind> {
     }
 }
 
+/// Expansion provenance of one argv token. `None` when the token's source
+/// word is literal (its text is its runtime value); `Some(display)` when
+/// the word is expansion-bearing, where `display` is the source-faithful
+/// rendering (`/tmp/$HOME`, not the flattened `/tmp/HOME`) used in floor
+/// reasons. The security model forbids such a token from satisfying a
+/// non-wildcard matcher toward `:allow`.
+pub(crate) type Expansion = Option<String>;
+
 /// A unit of evaluation extracted from an AST.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(clippy::enum_variant_names)]
@@ -32,6 +40,8 @@ pub(crate) enum EvalUnit {
     SimpleCommand {
         command: String,
         args: Vec<String>,
+        /// Per-token expansion provenance, aligned with `args`.
+        arg_expansions: Vec<Expansion>,
         span: Span,
     },
     /// An embedded command found in a word part (substitution).
@@ -140,9 +150,14 @@ fn decompose_simple_command(
     } else {
         let command = first_word.to_str();
         let args: Vec<String> = sc.words[1..].iter().map(|w| w.to_str()).collect();
+        let arg_expansions: Vec<Expansion> = sc.words[1..]
+            .iter()
+            .map(|w| w.is_expansion_bearing().then(|| w.display_source()))
+            .collect();
         units.push(EvalUnit::SimpleCommand {
             command,
             args,
+            arg_expansions,
             span: sc_span,
         });
     }
@@ -198,6 +213,7 @@ mod tests {
             EvalUnit::SimpleCommand {
                 command: "echo".into(),
                 args: vec!["hello".into(), "world".into()],
+                arg_expansions: vec![None, None],
                 span: (0, 16),
             }
         );

@@ -2,65 +2,157 @@ use may_i_core::ContextFacts;
 use may_i_core::ast::Effect;
 use may_i_core::pattern::PositionalArg;
 
+use super::decompose::Expansion;
+
+/// Outcome of matching positional patterns against args.
+pub(crate) struct PositionalMatch {
+    pub(crate) matched: bool,
+    /// Number of args consumed.
+    pub(crate) consumed: usize,
+    /// Facts captured from `Expr::Bind` expressions along the
+    /// successful match path.
+    pub(crate) facts: ContextFacts,
+    /// Display texts of expansion-bearing args that a non-wildcard
+    /// pattern element matched along the successful path. Such a match
+    /// is not provable for the runtime value, so it cannot contribute
+    /// to `:allow` (the rule evaluator floors on these).
+    pub(crate) unresolved: Vec<String>,
+}
+
 /// Match positional patterns against args, capturing bound facts.
-/// Returns (matched, consumed_count, bound_facts) where consumed_count is the
-/// number of args consumed and bound_facts contains any facts captured from
-/// Expr::Bind expressions in the patterns.
+/// `expansions` is per-arg expansion provenance aligned with `args`.
 ///
 /// Uses backtracking for Optional/ZeroOrMore/OneOrMore quantifiers: tries the
 /// greedy match first, then progressively shorter matches if subsequent
 /// patterns fail.
 pub(crate) fn match_positional_patterns(
     args: &[&str],
+    expansions: &[&Expansion],
     patterns: &[PositionalArg],
-) -> (bool, usize, ContextFacts) {
-    match_positional_recursive(args, patterns, 0, 0, ContextFacts::default())
+) -> PositionalMatch {
+    debug_assert_eq!(args.len(), expansions.len());
+    match_positional_recursive(
+        args,
+        expansions,
+        patterns,
+        0,
+        0,
+        ContextFacts::default(),
+        Vec::new(),
+    )
 }
 
+/// Positional match with all-literal expansion provenance, returning the
+/// tuple shape the pre-provenance tests asserted on. Test-only adapter.
+#[cfg(test)]
+pub(crate) fn match_pos_lit(
+    args: &[&str],
+    patterns: &[PositionalArg],
+) -> (bool, usize, ContextFacts) {
+    const NONE_EXP: Expansion = None;
+    let exps: Vec<&Expansion> = vec![&NONE_EXP; args.len()];
+    let m = match_positional_patterns(args, &exps, patterns);
+    (m.matched, m.consumed, m.facts)
+}
+
+/// Display text of `expansions[i]` when the match of `pattern` against
+/// that arg is unprovable: the arg is expansion-bearing and the pattern
+/// constrains the value (anything but a bare wildcard).
+fn unprovable_match<'a, E: std::fmt::Debug + may_i_core::ToDoc>(
+    pattern: &may_i_core::pattern::Expr<E>,
+    expansions: &[&'a Expansion],
+    i: usize,
+) -> Option<&'a str> {
+    if pattern.matches_any_value() {
+        return None;
+    }
+    expansions[i].as_deref()
+}
+
+#[allow(clippy::too_many_arguments)]
 fn match_positional_recursive(
     args: &[&str],
+    expansions: &[&Expansion],
     patterns: &[PositionalArg],
     pat_idx: usize,
     arg_idx: usize,
     facts: ContextFacts,
-) -> (bool, usize, ContextFacts) {
+    unresolved: Vec<String>,
+) -> PositionalMatch {
     // All patterns consumed → success
     if pat_idx >= patterns.len() {
-        return (true, arg_idx, facts);
+        return PositionalMatch {
+            matched: true,
+            consumed: arg_idx,
+            facts,
+            unresolved,
+        };
     }
 
     let pattern = &patterns[pat_idx];
+    let no_match = |facts: ContextFacts, unresolved: Vec<String>| PositionalMatch {
+        matched: false,
+        consumed: arg_idx,
+        facts,
+        unresolved,
+    };
 
     match &pattern.quantifier {
         may_i_core::Quantifier::One => {
             if arg_idx >= args.len() {
-                return (false, arg_idx, facts);
+                return no_match(facts, unresolved);
             }
             let (matched, f) = match_expr_with_binding(&pattern.pattern, args[arg_idx]);
             if !matched {
-                return (false, arg_idx, facts);
+                return no_match(facts, unresolved);
             }
-            match_positional_recursive(args, patterns, pat_idx + 1, arg_idx + 1, facts.merge(&f))
+            let mut unresolved = unresolved;
+            if let Some(w) = unprovable_match(&pattern.pattern, expansions, arg_idx) {
+                unresolved.push(w.to_string());
+            }
+            match_positional_recursive(
+                args,
+                expansions,
+                patterns,
+                pat_idx + 1,
+                arg_idx + 1,
+                facts.merge(&f),
+                unresolved,
+            )
         }
         may_i_core::Quantifier::Optional => {
             // Try consuming one arg first (greedy), then try skipping
             if arg_idx < args.len() {
                 let (matched, f) = match_expr_with_binding(&pattern.pattern, args[arg_idx]);
                 if matched {
+                    let mut u = unresolved.clone();
+                    if let Some(w) = unprovable_match(&pattern.pattern, expansions, arg_idx) {
+                        u.push(w.to_string());
+                    }
                     let result = match_positional_recursive(
                         args,
+                        expansions,
                         patterns,
                         pat_idx + 1,
                         arg_idx + 1,
                         facts.merge(&f),
+                        u,
                     );
-                    if result.0 {
+                    if result.matched {
                         return result;
                     }
                 }
             }
             // Skip (consume zero)
-            match_positional_recursive(args, patterns, pat_idx + 1, arg_idx, facts)
+            match_positional_recursive(
+                args,
+                expansions,
+                patterns,
+                pat_idx + 1,
+                arg_idx,
+                facts,
+                unresolved,
+            )
         }
         may_i_core::Quantifier::ZeroOrMore => {
             // Count maximum matching args
@@ -76,25 +168,36 @@ fn match_positional_recursive(
             // Try from greedy (max) down to 0, backtracking
             for consume in (0..=max_consume).rev() {
                 let mut f = facts.clone();
+                let mut u = unresolved.clone();
                 for i in 0..consume {
                     let (_, fi) = match_expr_with_binding(&pattern.pattern, args[arg_idx + i]);
                     f = f.merge(&fi);
+                    if let Some(w) = unprovable_match(&pattern.pattern, expansions, arg_idx + i) {
+                        u.push(w.to_string());
+                    }
                 }
-                let result =
-                    match_positional_recursive(args, patterns, pat_idx + 1, arg_idx + consume, f);
-                if result.0 {
+                let result = match_positional_recursive(
+                    args,
+                    expansions,
+                    patterns,
+                    pat_idx + 1,
+                    arg_idx + consume,
+                    f,
+                    u,
+                );
+                if result.matched {
                     return result;
                 }
             }
-            (false, arg_idx, facts)
+            no_match(facts, unresolved)
         }
         may_i_core::Quantifier::OneOrMore => {
             if arg_idx >= args.len() {
-                return (false, arg_idx, facts);
+                return no_match(facts, unresolved);
             }
             let (first_matched, _) = match_expr_with_binding(&pattern.pattern, args[arg_idx]);
             if !first_matched {
-                return (false, arg_idx, facts);
+                return no_match(facts, unresolved);
             }
             // Count maximum matching args (starting from 1)
             let mut max_consume = 1;
@@ -109,17 +212,28 @@ fn match_positional_recursive(
             // Try from greedy (max) down to 1, backtracking
             for consume in (1..=max_consume).rev() {
                 let mut f = facts.clone();
+                let mut u = unresolved.clone();
                 for i in 0..consume {
                     let (_, fi) = match_expr_with_binding(&pattern.pattern, args[arg_idx + i]);
                     f = f.merge(&fi);
+                    if let Some(w) = unprovable_match(&pattern.pattern, expansions, arg_idx + i) {
+                        u.push(w.to_string());
+                    }
                 }
-                let result =
-                    match_positional_recursive(args, patterns, pat_idx + 1, arg_idx + consume, f);
-                if result.0 {
+                let result = match_positional_recursive(
+                    args,
+                    expansions,
+                    patterns,
+                    pat_idx + 1,
+                    arg_idx + consume,
+                    f,
+                    u,
+                );
+                if result.matched {
                     return result;
                 }
             }
-            (false, arg_idx, facts)
+            no_match(facts, unresolved)
         }
     }
 }
@@ -367,10 +481,14 @@ mod tests {
     use may_i_core::test_generators::{any_match_string, any_positional_arg};
     use proptest::prelude::*;
 
-    /// Build string args owned, then borrow for matching.
+    /// Build string args owned, then borrow for matching (no expansion
+    /// provenance — all tokens literal).
     fn match_owned(args: &[String], patterns: &[PositionalArg]) -> (bool, usize, ContextFacts) {
+        const NONE_EXP: Expansion = None;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        match_positional_patterns(&refs, patterns)
+        let exps: Vec<&Expansion> = vec![&NONE_EXP; refs.len()];
+        let m = match_positional_patterns(&refs, &exps, patterns);
+        (m.matched, m.consumed, m.facts)
     }
 
     proptest! {

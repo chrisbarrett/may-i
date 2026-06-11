@@ -9,6 +9,34 @@
 
 use may_i_core::ast::{BindingName, FlagsMode, ResolvedParser};
 
+use super::decompose::Expansion;
+
+/// A captured token paired with its expansion provenance. `expansion` is
+/// `None` for a token whose source word was literal; `Some(display)` when
+/// the word was expansion-bearing (the display text names the word in
+/// floor reasons). The provenance is recorded at capture time from the
+/// originating word — it cannot be re-derived from `text`, where a
+/// captured `\$` and a live `$` are indistinguishable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BoundToken {
+    pub(crate) text: String,
+    pub(crate) expansion: Expansion,
+}
+
+impl BoundToken {
+    pub(crate) fn new(text: impl Into<String>, expansion: Expansion) -> Self {
+        Self {
+            text: text.into(),
+            expansion,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn literal(text: impl Into<String>) -> Self {
+        Self::new(text, None)
+    }
+}
+
 /// Value of a parser-bound name.
 ///
 /// `Token` is a single string (default for `(parameter NAME #var)` and
@@ -20,8 +48,8 @@ use may_i_core::ast::{BindingName, FlagsMode, ResolvedParser};
 /// semantics of `(tail (after …))`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum BindingValue {
-    Token(String),
-    Tokens(Vec<String>),
+    Token(BoundToken),
+    Tokens(Vec<BoundToken>),
     /// Occurrence count of a `(flag NAME (count #v))` binding. Always
     /// "bound" (decision: `(bound? #count)` is true even for `0`).
     Count(u32),
@@ -29,12 +57,24 @@ pub(crate) enum BindingValue {
 }
 
 impl BindingValue {
+    /// A single-token binding with no expansion provenance (test helper).
+    #[cfg(test)]
+    pub(crate) fn token(text: impl Into<String>) -> Self {
+        BindingValue::Token(BoundToken::literal(text))
+    }
+
+    /// A token-list binding with no expansion provenance (test helper).
+    #[cfg(test)]
+    pub(crate) fn tokens<I: IntoIterator<Item = S>, S: Into<String>>(items: I) -> Self {
+        BindingValue::Tokens(items.into_iter().map(BoundToken::literal).collect())
+    }
+
     /// True iff the value is `Unbound` or carries no tokens. A `Count`
     /// is never empty — a counted flag binds even when it counts zero.
     pub(crate) fn is_empty(&self) -> bool {
         match self {
             BindingValue::Unbound => true,
-            BindingValue::Token(s) => s.is_empty(),
+            BindingValue::Token(t) => t.text.is_empty(),
             BindingValue::Tokens(v) => v.is_empty(),
             BindingValue::Count(_) => false,
         }
@@ -45,10 +85,26 @@ impl BindingValue {
     /// `Count` renders its integer; `Unbound` yields `None`.
     pub(crate) fn as_joined(&self) -> Option<String> {
         match self {
-            BindingValue::Token(s) => Some(s.clone()),
-            BindingValue::Tokens(v) if !v.is_empty() => Some(v.join(" ")),
+            BindingValue::Token(t) => Some(t.text.clone()),
+            BindingValue::Tokens(v) if !v.is_empty() => Some(
+                v.iter()
+                    .map(|t| t.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            ),
             BindingValue::Count(n) => Some(n.to_string()),
             BindingValue::Tokens(_) | BindingValue::Unbound => None,
+        }
+    }
+
+    /// Display text of the first expansion-bearing captured token, if any.
+    /// `Some` means the binding's string coercion under-determines the
+    /// runtime value, so a non-wildcard match against it cannot be proven.
+    pub(crate) fn first_expansion(&self) -> Option<&str> {
+        match self {
+            BindingValue::Token(t) => t.expansion.as_deref(),
+            BindingValue::Tokens(v) => v.iter().find_map(|t| t.expansion.as_deref()),
+            BindingValue::Count(_) | BindingValue::Unbound => None,
         }
     }
 
@@ -56,7 +112,7 @@ impl BindingValue {
     /// `Tokens` yields its slice; every other shape yields an empty
     /// slice (quantifiers only run against `Collection Token` bindings,
     /// enforced by the shape checker).
-    pub(crate) fn as_collection(&self) -> &[String] {
+    pub(crate) fn as_collection(&self) -> &[BoundToken] {
         match self {
             BindingValue::Tokens(v) => v,
             _ => &[],
@@ -116,7 +172,12 @@ impl Bindings {
 /// environment (which needs to outlive the argv for recursion); the
 /// allocation is one `Vec` per evaluation and shows up in flame graphs
 /// as negligible.
-pub(crate) fn parse_argv(parser: &ResolvedParser, argv: &[String]) -> (Vec<String>, Bindings) {
+pub(crate) fn parse_argv(
+    parser: &ResolvedParser,
+    argv: &[String],
+    expansions: &[Expansion],
+) -> (Vec<String>, Bindings) {
+    debug_assert_eq!(argv.len(), expansions.len());
     let mut bindings = Bindings::new();
 
     // Boundary: outer vs tail per flags_mode.
@@ -133,11 +194,15 @@ pub(crate) fn parse_argv(parser: &ResolvedParser, argv: &[String]) -> (Vec<Strin
     //   collects what's left of the residual.
     let argv_split = super::entry::split_outer_tail(argv, parser);
     let (outer, tail_slice) = (argv_split.outer, argv_split.tail);
+    // The outer scope is always a prefix of argv and the tail a suffix,
+    // so the expansion slices align by length.
+    let outer_exp = &expansions[..outer.len()];
+    let tail_exp = tail_slice.map(|t| &expansions[argv.len() - t.len()..]);
 
     // Parameter bindings: walk the outer slice (which is everything
     // under `permute` and pre-boundary otherwise) for declared
     // parameters with bindings.
-    collect_parameter_bindings(outer, parser, &mut bindings);
+    collect_parameter_bindings(outer, outer_exp, parser, &mut bindings);
 
     // Counted flags: `(flag NAME (count #v))` binds #v to the number of
     // recognised occurrences across the flag-bearing region.
@@ -147,9 +212,11 @@ pub(crate) fn parse_argv(parser: &ResolvedParser, argv: &[String]) -> (Vec<Strin
     // differs by mode. Under posix it's the tail slice (everything
     // after the outer-flags region); under permute and until it's
     // the residual of the outer slice after flag/parameter peeling.
-    let mut positional_region: Vec<String> = match &parser.flags_mode {
-        FlagsMode::Posix => tail_slice.map(<[String]>::to_vec).unwrap_or_default(),
-        FlagsMode::Permute | FlagsMode::Until(_) => positional_args_owned(outer, parser),
+    let mut positional_region: Vec<BoundToken> = match &parser.flags_mode {
+        FlagsMode::Posix => tail_slice
+            .map(|t| bound_tokens(t, tail_exp.unwrap_or(&[])))
+            .unwrap_or_default(),
+        FlagsMode::Permute | FlagsMode::Until(_) => positional_tokens(outer, outer_exp, parser),
     };
 
     // Declared positionals consume from the front of the positional
@@ -169,7 +236,9 @@ pub(crate) fn parse_argv(parser: &ResolvedParser, argv: &[String]) -> (Vec<Strin
     if let Some(rest_name) = &parser.rest {
         let value = match &parser.flags_mode {
             FlagsMode::Until(_) => match tail_slice {
-                Some(tail) if !tail.is_empty() => BindingValue::Tokens(tail.to_vec()),
+                Some(tail) if !tail.is_empty() => {
+                    BindingValue::Tokens(bound_tokens(tail, tail_exp.unwrap_or(&[])))
+                }
                 _ => BindingValue::Unbound,
             },
             FlagsMode::Posix | FlagsMode::Permute => {
@@ -197,24 +266,42 @@ pub(crate) fn parse_argv(parser: &ResolvedParser, argv: &[String]) -> (Vec<Strin
         FlagsMode::Permute => {
             let mut out = split.consumed;
             out.extend(split.remaining);
-            out
+            out.into_iter().map(|t| t.text).collect()
         }
-        FlagsMode::Posix => split.consumed,
-        FlagsMode::Until(_) => positional_args_owned(outer, parser),
+        FlagsMode::Posix => split.consumed.into_iter().map(|t| t.text).collect(),
+        FlagsMode::Until(_) => positional_tokens(outer, outer_exp, parser)
+            .into_iter()
+            .map(|t| t.text)
+            .collect(),
     };
 
     (residual, bindings)
 }
 
+/// Pair a token slice with its aligned expansion slice.
+fn bound_tokens(tokens: &[String], expansions: &[Expansion]) -> Vec<BoundToken> {
+    debug_assert_eq!(tokens.len(), expansions.len());
+    tokens
+        .iter()
+        .zip(expansions)
+        .map(|(t, e)| BoundToken::new(t.clone(), e.clone()))
+        .collect()
+}
+
 /// Walk `outer` and pair every declared `(parameter X #var)` with its
 /// captured value. Mirrors the seek logic in `effects::find_parameter_value_*`
 /// but is binding-aware.
-fn collect_parameter_bindings(outer: &[String], parser: &ResolvedParser, bindings: &mut Bindings) {
+fn collect_parameter_bindings(
+    outer: &[String],
+    outer_exp: &[Expansion],
+    parser: &ResolvedParser,
+    bindings: &mut Bindings,
+) {
     for decl in &parser.parameters {
         let Some(binding_name) = decl.binding.clone() else {
             continue;
         };
-        let value = capture_parameter_value(outer, decl, parser);
+        let value = capture_parameter_value(outer, outer_exp, decl, parser);
         bindings.insert(binding_name, value);
     }
 }
@@ -225,6 +312,7 @@ fn collect_parameter_bindings(outer: &[String], parser: &ResolvedParser, binding
 /// wins for multi-occurrence captures.
 fn capture_parameter_value(
     outer: &[String],
+    outer_exp: &[Expansion],
     decl: &may_i_core::ast::ParameterDecl,
     parser: &ResolvedParser,
 ) -> BindingValue {
@@ -253,21 +341,23 @@ fn capture_parameter_value(
         })
         .collect();
 
-    let mut last_single: Option<String> = None;
-    let mut last_many: Option<Vec<String>> = None;
+    let mut last_single: Option<BoundToken> = None;
+    let mut last_many: Option<Vec<BoundToken>> = None;
     // Every single-token occurrence in source order, for `(set …)`.
-    let mut all_singles: Vec<String> = Vec::new();
+    let mut all_singles: Vec<BoundToken> = Vec::new();
 
     let mut i = 0;
     while i < outer.len() {
         let arg = &outer[i];
         // Inline form: `--namespace=value` — extract the value directly.
+        // The value inherits the whole token's expansion provenance.
         if let Some(value) = inline_probes
             .iter()
             .find_map(|p| arg.strip_prefix(p).map(str::to_owned))
         {
-            all_singles.push(value.clone());
-            last_single = Some(value);
+            let tok = BoundToken::new(value, outer_exp[i].clone());
+            all_singles.push(tok.clone());
+            last_single = Some(tok);
             i += 1;
             continue;
         }
@@ -280,8 +370,9 @@ fn capture_parameter_value(
         match &decl.capture {
             Capture::Single => {
                 if space_separated && i + 1 < outer.len() {
-                    all_singles.push(outer[i + 1].clone());
-                    last_single = Some(outer[i + 1].clone());
+                    let tok = BoundToken::new(outer[i + 1].clone(), outer_exp[i + 1].clone());
+                    all_singles.push(tok.clone());
+                    last_single = Some(tok);
                     i += 2;
                 } else {
                     i += 1;
@@ -294,7 +385,7 @@ fn capture_parameter_value(
                     if terminator.is_match(&outer[j]) {
                         break;
                     }
-                    collected.push(outer[j].clone());
+                    collected.push(BoundToken::new(outer[j].clone(), outer_exp[j].clone()));
                     j += 1;
                 }
                 last_many = Some(collected);
@@ -304,8 +395,9 @@ fn capture_parameter_value(
             // as single-token captures.
             _ => {
                 if space_separated && i + 1 < outer.len() {
-                    all_singles.push(outer[i + 1].clone());
-                    last_single = Some(outer[i + 1].clone());
+                    let tok = BoundToken::new(outer[i + 1].clone(), outer_exp[i + 1].clone());
+                    all_singles.push(tok.clone());
+                    last_single = Some(tok);
                     i += 2;
                 } else {
                     i += 1;
@@ -397,18 +489,18 @@ struct PositionalSplit {
     /// Tokens consumed by `(positional …)` declarations, in source
     /// order. Remain visible to rule-body matchers — declared
     /// positionals don't hide their tokens, they only name them.
-    consumed: Vec<String>,
+    consumed: Vec<BoundToken>,
     /// Tokens that no positional declaration claimed. An `(rest …)`
     /// declaration binds these; under `permute` they also stay in
     /// the rule-visible residual.
-    remaining: Vec<String>,
+    remaining: Vec<BoundToken>,
 }
 
 /// Walk declared positionals against `region` in source order. Each
 /// declaration's quantifier drives how many tokens it claims; bindings
 /// for declarations carrying a `#var` are recorded.
 fn collect_positional_bindings(
-    region: Vec<String>,
+    region: Vec<BoundToken>,
     parser: &ResolvedParser,
     bindings: &mut Bindings,
 ) -> PositionalSplit {
@@ -420,7 +512,7 @@ fn collect_positional_bindings(
         };
     }
     let mut remaining = region;
-    let mut consumed: Vec<String> = Vec::new();
+    let mut consumed: Vec<BoundToken> = Vec::new();
     for decl in &parser.positionals {
         match decl.quantifier {
             Quantifier::One | Quantifier::Optional => {
@@ -451,16 +543,20 @@ fn collect_positional_bindings(
     }
 }
 
-/// Owned positional residual. Thin clone-adapter over the single
-/// borrowed tokeniser in `entry` — the binding environment stores owned
-/// `String`s in the `Bindings` map, so it cannot hold the borrowed slices
-/// `entry::parser_positional_args` returns. The outer/tail split likewise
-/// goes through `entry::split_outer_tail`; this module keeps no copy of the
-/// style-aware scanning logic.
-fn positional_args_owned(args: &[String], parser: &ResolvedParser) -> Vec<String> {
-    super::entry::parser_positional_args(args, parser)
-        .iter()
-        .map(|s| s.to_string())
+/// Owned positional residual with expansion provenance. Thin adapter over
+/// the single index-reporting tokeniser in `entry` — the binding
+/// environment stores owned tokens in the `Bindings` map, so it cannot
+/// hold the borrowed slices `entry::parser_positional_args` returns. The
+/// outer/tail split likewise goes through `entry::split_outer_tail`; this
+/// module keeps no copy of the style-aware scanning logic.
+fn positional_tokens(
+    args: &[String],
+    expansions: &[Expansion],
+    parser: &ResolvedParser,
+) -> Vec<BoundToken> {
+    super::entry::parser_positional_indices(args, parser)
+        .into_iter()
+        .map(|i| BoundToken::new(args[i].clone(), expansions[i].clone()))
         .collect()
 }
 
@@ -497,10 +593,24 @@ mod tests {
         parts.iter().map(|s| s.to_string()).collect()
     }
 
+    /// All-literal expansion provenance for a test argv.
+    fn none_exp(argv: &[String]) -> Vec<Expansion> {
+        vec![None; argv.len()]
+    }
+
+    /// Texts of a captured token list, for comparisons.
+    fn texts(v: &[BoundToken]) -> Vec<String> {
+        v.iter().map(|t| t.text.clone()).collect()
+    }
+
     #[test]
     fn permute_mode_no_rest_binding_yields_empty_environment() {
         let parser = parser_permute();
-        let (residual, bindings) = parse_argv(&parser, &argv(&["-a", "foo", "bar"]));
+        let (residual, bindings) = parse_argv(
+            &parser,
+            &argv(&["-a", "foo", "bar"]),
+            &none_exp(&argv(&["-a", "foo", "bar"])),
+        );
         assert_eq!(residual, vec!["foo", "bar"]);
         assert!(bindings.iter().next().is_none());
     }
@@ -508,12 +618,16 @@ mod tests {
     #[test]
     fn posix_mode_binds_rest_to_tokens_after_flags() {
         let parser = parser_posix_with_rest("cmd");
-        let (_residual, bindings) = parse_argv(&parser, &argv(&["-u", "rm", "-rf", "/tmp/x"]));
+        let (_residual, bindings) = parse_argv(
+            &parser,
+            &argv(&["-u", "rm", "-rf", "/tmp/x"]),
+            &none_exp(&argv(&["-u", "rm", "-rf", "/tmp/x"])),
+        );
         let cmd = BindingName::parse("cmd").unwrap();
         match bindings.get(&cmd) {
             BindingValue::Tokens(v) => {
                 assert_eq!(
-                    v,
+                    texts(&v),
                     vec!["rm".to_string(), "-rf".to_string(), "/tmp/x".to_string()]
                 )
             }
@@ -524,11 +638,16 @@ mod tests {
     #[test]
     fn until_mode_consumes_boundary_token() {
         let parser = parser_until(&["--"], "cmd");
-        let (_residual, bindings) =
-            parse_argv(&parser, &argv(&["mise", "exec", "--", "cargo", "test"]));
+        let (_residual, bindings) = parse_argv(
+            &parser,
+            &argv(&["mise", "exec", "--", "cargo", "test"]),
+            &none_exp(&argv(&["mise", "exec", "--", "cargo", "test"])),
+        );
         let cmd = BindingName::parse("cmd").unwrap();
         match bindings.get(&cmd) {
-            BindingValue::Tokens(v) => assert_eq!(v, vec!["cargo".to_string(), "test".to_string()]),
+            BindingValue::Tokens(v) => {
+                assert_eq!(texts(&v), vec!["cargo".to_string(), "test".to_string()])
+            }
             other => panic!("expected Tokens, got {other:?}"),
         }
     }
@@ -536,7 +655,11 @@ mod tests {
     #[test]
     fn until_mode_boundary_absent_yields_unbound() {
         let parser = parser_until(&["--"], "cmd");
-        let (_residual, bindings) = parse_argv(&parser, &argv(&["mise", "exec", "no-boundary"]));
+        let (_residual, bindings) = parse_argv(
+            &parser,
+            &argv(&["mise", "exec", "no-boundary"]),
+            &none_exp(&argv(&["mise", "exec", "no-boundary"])),
+        );
         let cmd = BindingName::parse("cmd").unwrap();
         assert_eq!(bindings.get(&cmd), BindingValue::Unbound);
     }
@@ -551,9 +674,13 @@ mod tests {
             capture: Capture::Single,
             binding: Some(BindingName::parse("c").unwrap()),
         });
-        let (_residual, bindings) = parse_argv(&parser, &argv(&["-c", "echo hi"]));
+        let (_residual, bindings) = parse_argv(
+            &parser,
+            &argv(&["-c", "echo hi"]),
+            &none_exp(&argv(&["-c", "echo hi"])),
+        );
         let c = BindingName::parse("c").unwrap();
-        assert_eq!(bindings.get(&c), BindingValue::Token("echo hi".into()));
+        assert_eq!(bindings.get(&c), BindingValue::token("echo hi"));
     }
 
     #[test]
@@ -566,7 +693,11 @@ mod tests {
             capture: Capture::Single,
             binding: None,
         });
-        let (_residual, bindings) = parse_argv(&parser, &argv(&["-c", "echo hi"]));
+        let (_residual, bindings) = parse_argv(
+            &parser,
+            &argv(&["-c", "echo hi"]),
+            &none_exp(&argv(&["-c", "echo hi"])),
+        );
         // No declared binding ⇒ no entry produced.
         assert!(bindings.iter().next().is_none());
     }
@@ -579,15 +710,79 @@ mod tests {
             pattern: may_i_core::pattern::Expr::Wildcard,
             quantifier: may_i_core::pattern::Quantifier::One,
         });
-        let (residual, bindings) = parse_argv(&parser, &argv(&["user@host", "ls"]));
+        let (residual, bindings) = parse_argv(
+            &parser,
+            &argv(&["user@host", "ls"]),
+            &none_exp(&argv(&["user@host", "ls"])),
+        );
         let host = BindingName::parse("host").unwrap();
-        assert_eq!(bindings.get(&host), BindingValue::Token("user@host".into()));
+        assert_eq!(bindings.get(&host), BindingValue::token("user@host"));
         let cmd = BindingName::parse("cmd").unwrap();
         match bindings.get(&cmd) {
-            BindingValue::Tokens(v) => assert_eq!(v, vec!["ls".to_string()]),
+            BindingValue::Tokens(v) => assert_eq!(texts(&v), vec!["ls".to_string()]),
             other => panic!("expected Tokens, got {other:?}"),
         }
         assert!(residual.contains(&"user@host".to_string()));
+    }
+
+    // ── expansion provenance is recorded at capture time ────────────
+
+    #[test]
+    fn parameter_capture_records_expansion_provenance() {
+        let mut parser = parser_permute();
+        parser.parameters.push(ParameterDecl {
+            names: vec!["c".into()],
+            treatment: ParameterTreatment::None,
+            shape_form: may_i_core::ast::ParamShapeForm::Unannotated,
+            capture: Capture::Single,
+            binding: Some(BindingName::parse("c").unwrap()),
+        });
+        let args = argv(&["-c", "X"]);
+        let exps = vec![None, Some("$X".to_string())];
+        let (_residual, bindings) = parse_argv(&parser, &args, &exps);
+        let c = BindingName::parse("c").unwrap();
+        assert_eq!(
+            bindings.get(&c),
+            BindingValue::Token(BoundToken::new("X", Some("$X".to_string())))
+        );
+        assert_eq!(bindings.get(&c).first_expansion(), Some("$X"));
+    }
+
+    #[test]
+    fn positional_capture_records_expansion_provenance() {
+        let mut parser = parser_permute();
+        parser.positionals.push(PositionalDecl {
+            binding: Some(BindingName::parse("paths").unwrap()),
+            pattern: may_i_core::pattern::Expr::Wildcard,
+            quantifier: may_i_core::pattern::Quantifier::OneOrMore,
+        });
+        let args = argv(&["/tmp/a", "/tmp/HOME"]);
+        let exps = vec![None, Some("/tmp/$HOME".to_string())];
+        let (_residual, bindings) = parse_argv(&parser, &args, &exps);
+        let paths = BindingName::parse("paths").unwrap();
+        match bindings.get(&paths) {
+            BindingValue::Tokens(v) => {
+                assert_eq!(v[0].expansion, None);
+                assert_eq!(v[1].expansion.as_deref(), Some("/tmp/$HOME"));
+            }
+            other => panic!("expected Tokens, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn literal_capture_records_no_provenance() {
+        let mut parser = parser_permute();
+        parser.parameters.push(ParameterDecl {
+            names: vec!["c".into()],
+            treatment: ParameterTreatment::None,
+            shape_form: may_i_core::ast::ParamShapeForm::Unannotated,
+            capture: Capture::Single,
+            binding: Some(BindingName::parse("c").unwrap()),
+        });
+        let args = argv(&["-c", "literal"]);
+        let (_residual, bindings) = parse_argv(&parser, &args, &none_exp(&args));
+        let c = BindingName::parse("c").unwrap();
+        assert_eq!(bindings.get(&c).first_expansion(), None);
     }
 
     // ── shape-typed-bindings: multi-occurrence parameter eval ───────
@@ -606,10 +801,14 @@ mod tests {
     fn set_parameter_collects_all_occurrences_in_order() {
         let mut parser = parser_permute();
         parser.parameters.push(set_param("o", "opts"));
-        let (_r, b) = parse_argv(&parser, &argv(&["-o", "A=1", "-o", "B=2", "host"]));
+        let (_r, b) = parse_argv(
+            &parser,
+            &argv(&["-o", "A=1", "-o", "B=2", "host"]),
+            &none_exp(&argv(&["-o", "A=1", "-o", "B=2", "host"])),
+        );
         assert_eq!(
             b.get(&BindingName::parse("opts").unwrap()),
-            BindingValue::Tokens(vec!["A=1".into(), "B=2".into()])
+            BindingValue::tokens(["A=1", "B=2"])
         );
     }
 
@@ -617,10 +816,14 @@ mod tests {
     fn set_parameter_preserves_duplicates() {
         let mut parser = parser_permute();
         parser.parameters.push(set_param("o", "opts"));
-        let (_r, b) = parse_argv(&parser, &argv(&["-o", "X", "-o", "X"]));
+        let (_r, b) = parse_argv(
+            &parser,
+            &argv(&["-o", "X", "-o", "X"]),
+            &none_exp(&argv(&["-o", "X", "-o", "X"])),
+        );
         assert_eq!(
             b.get(&BindingName::parse("opts").unwrap()),
-            BindingValue::Tokens(vec!["X".into(), "X".into()])
+            BindingValue::tokens(["X", "X"])
         );
     }
 
@@ -628,7 +831,7 @@ mod tests {
     fn set_parameter_absent_is_empty_collection_not_bound() {
         let mut parser = parser_permute();
         parser.parameters.push(set_param("o", "opts"));
-        let (_r, b) = parse_argv(&parser, &argv(&["host"]));
+        let (_r, b) = parse_argv(&parser, &argv(&["host"]), &none_exp(&argv(&["host"])));
         let opts = BindingName::parse("opts").unwrap();
         assert_eq!(b.get(&opts), BindingValue::Tokens(vec![]));
         assert!(!b.is_bound(&opts), "empty set is not bound");
@@ -645,10 +848,14 @@ mod tests {
                 capture: Capture::Single,
                 binding: Some(BindingName::parse("opt").unwrap()),
             });
-            let (_r, b) = parse_argv(&parser, &argv(&["-O", "0", "-O", "2", "file.c"]));
+            let (_r, b) = parse_argv(
+                &parser,
+                &argv(&["-O", "0", "-O", "2", "file.c"]),
+                &none_exp(&argv(&["-O", "0", "-O", "2", "file.c"])),
+            );
             assert_eq!(
                 b.get(&BindingName::parse("opt").unwrap()),
-                BindingValue::Token("2".into()),
+                BindingValue::token("2"),
                 "form {form:?}"
             );
         }
@@ -665,7 +872,11 @@ mod tests {
     fn count_flag_combined_short_cluster() {
         let mut parser = parser_permute();
         parser.flags.push(count_flag("v", "verbosity"));
-        let (_r, b) = parse_argv(&parser, &argv(&["-vvv", "https://example.com"]));
+        let (_r, b) = parse_argv(
+            &parser,
+            &argv(&["-vvv", "https://example.com"]),
+            &none_exp(&argv(&["-vvv", "https://example.com"])),
+        );
         assert_eq!(
             b.get(&BindingName::parse("verbosity").unwrap()),
             BindingValue::Count(3)
@@ -679,7 +890,11 @@ mod tests {
             names: vec!["r".into(), "recursive".into()],
             count_binding: Some(BindingName::parse("r").unwrap()),
         });
-        let (_r, b) = parse_argv(&parser, &argv(&["--recursive", "-r", "pattern"]));
+        let (_r, b) = parse_argv(
+            &parser,
+            &argv(&["--recursive", "-r", "pattern"]),
+            &none_exp(&argv(&["--recursive", "-r", "pattern"])),
+        );
         assert_eq!(
             b.get(&BindingName::parse("r").unwrap()),
             BindingValue::Count(2)
@@ -690,7 +905,11 @@ mod tests {
     fn count_flag_absent_is_zero_and_bound() {
         let mut parser = parser_permute();
         parser.flags.push(count_flag("v", "verbosity"));
-        let (_r, b) = parse_argv(&parser, &argv(&["https://example.com"]));
+        let (_r, b) = parse_argv(
+            &parser,
+            &argv(&["https://example.com"]),
+            &none_exp(&argv(&["https://example.com"])),
+        );
         let v = BindingName::parse("verbosity").unwrap();
         assert_eq!(b.get(&v), BindingValue::Count(0));
         assert!(b.is_bound(&v), "a count binds even at zero");
@@ -718,7 +937,7 @@ mod tests {
                 1 => FlagsMode::Permute,
                 _ => FlagsMode::Until(vec!["--".to_string()]),
             };
-            let _ = parse_argv(&parser, &args);
+            let _ = parse_argv(&parser, &args, &none_exp(&args));
         }
 
         /// Determinism: same (parser, argv) yields the same result on
@@ -728,8 +947,8 @@ mod tests {
             args in proptest::collection::vec("[a-zA-Z0-9_=:/.-]{0,10}", 0..12),
         ) {
             let parser = parser_posix_with_rest("cmd");
-            let (r1, b1) = parse_argv(&parser, &args);
-            let (r2, b2) = parse_argv(&parser, &args);
+            let (r1, b1) = parse_argv(&parser, &args, &none_exp(&args));
+            let (r2, b2) = parse_argv(&parser, &args, &none_exp(&args));
             proptest::prop_assert_eq!(r1, r2);
             let cmd = BindingName::parse("cmd").unwrap();
             proptest::prop_assert_eq!(b1.get(&cmd), b2.get(&cmd));
@@ -748,12 +967,12 @@ mod tests {
             args.push("BOUND".to_string());
             args.extend(suffix.iter().cloned());
 
-            let (residual, bindings) = parse_argv(&parser, &args);
+            let (residual, bindings) = parse_argv(&parser, &args, &none_exp(&args));
             proptest::prop_assert!(!residual.iter().any(|t| t == "BOUND"),
                 "boundary token leaked into residual: {residual:?}");
             let cmd = BindingName::parse("cmd").unwrap();
             if let BindingValue::Tokens(v) = bindings.get(&cmd) {
-                proptest::prop_assert!(!v.iter().any(|t| t == "BOUND"),
+                proptest::prop_assert!(!v.iter().any(|t| t.text == "BOUND"),
                     "boundary token leaked into rest binding: {v:?}");
             }
         }
@@ -771,9 +990,9 @@ mod tests {
                 args.push("-o".to_string());
                 args.push(v.clone());
             }
-            let (_r, b) = parse_argv(&parser, &args);
+            let (_r, b) = parse_argv(&parser, &args, &none_exp(&args));
             match b.get(&BindingName::parse("opts").unwrap()) {
-                BindingValue::Tokens(got) => proptest::prop_assert_eq!(got, vals),
+                BindingValue::Tokens(got) => proptest::prop_assert_eq!(texts(&got), vals),
                 other => proptest::prop_assert!(false, "expected Tokens, got {:?}", other),
             }
         }
@@ -786,7 +1005,7 @@ mod tests {
             parser.flags.push(count_flag("v", "n"));
             let mut args: Vec<String> = (0..k).map(|_| "-v".to_string()).collect();
             args.push("url".into());
-            let (_r, b) = parse_argv(&parser, &args);
+            let (_r, b) = parse_argv(&parser, &args, &none_exp(&args));
             proptest::prop_assert_eq!(
                 b.get(&BindingName::parse("n").unwrap()),
                 BindingValue::Count(k)
@@ -800,7 +1019,7 @@ mod tests {
             let mut parser = parser_permute();
             parser.flags.push(count_flag("v", "n"));
             let cluster = format!("-{}", "v".repeat(k as usize));
-            let (_r, b) = parse_argv(&parser, &argv(&[&cluster, "url"]));
+            let (_r, b) = parse_argv(&parser, &argv(&[&cluster, "url"]), &none_exp(&argv(&[&cluster, "url"])));
             proptest::prop_assert_eq!(
                 b.get(&BindingName::parse("n").unwrap()),
                 BindingValue::Count(k)
@@ -821,11 +1040,11 @@ mod tests {
             args.push(positional.clone());
             args.extend(tail.iter().cloned());
 
-            let (_residual, bindings) = parse_argv(&parser, &args);
+            let (_residual, bindings) = parse_argv(&parser, &args, &none_exp(&args));
             let cmd = BindingName::parse("cmd").unwrap();
             match bindings.get(&cmd) {
                 BindingValue::Tokens(v) => {
-                    proptest::prop_assert_eq!(v.first().map(String::as_str), Some(positional.as_str()));
+                    proptest::prop_assert_eq!(v.first().map(|t| t.text.as_str()), Some(positional.as_str()));
                 }
                 other => proptest::prop_assert!(false, "expected Tokens binding, got {:?}", other),
             }

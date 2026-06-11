@@ -312,6 +312,13 @@ pub trait EvalFold {
     /// Called when an embedded command (substitution) has been evaluated.
     /// Default implementation is a no-op.
     fn embedded_command(&mut self, _source: &str, _decision: Decision) {}
+
+    /// Called when a rule's `:allow` was floored to `:ask` because a
+    /// matcher it relied on tested an expansion-bearing word (the words'
+    /// source-faithful display texts are given). Folds that render a
+    /// trace use this to annotate the suppressed match rather than show
+    /// a silent no-match. Default implementation is a no-op.
+    fn unresolved_floor(&mut self, _words: &[String]) {}
 }
 
 /// Zero-overhead fold that simply returns evaluation results unchanged.

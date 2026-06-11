@@ -11,6 +11,11 @@ use super::effects::evaluate_effect_fold;
 
 /// Evaluate a command against config and context using PureFold.
 /// This is the main entry point for evaluation.
+///
+/// `args` are taken at face value (no expansion provenance): callers
+/// passing a pre-split argv assert each token is a literal. The shell
+/// entry point (`evaluate_command`) threads per-token provenance from
+/// the parsed words instead.
 #[must_use = "evaluation result contains the access decision"]
 pub fn evaluate(
     command: &str,
@@ -23,6 +28,7 @@ pub fn evaluate(
 }
 
 /// Evaluate a command against config and context using a custom fold.
+/// See [`evaluate`] for the literal-args caveat.
 #[must_use = "evaluation result contains the access decision"]
 pub fn evaluate_with_fold<F: EvalFold>(
     command: &str,
@@ -31,13 +37,16 @@ pub fn evaluate_with_fold<F: EvalFold>(
     facts: &ContextFacts,
     fold: &mut F,
 ) -> Result<EvalResult, EvalError> {
-    evaluate_at_depth(command, args, config, facts, fold, 0)
+    let expansions = vec![None; args.len()];
+    evaluate_at_depth(command, args, &expansions, config, facts, fold, 0)
 }
 
 /// Common implementation; entry-points just pick a starting depth.
+/// `arg_expansions` is per-token expansion provenance aligned with `args`.
 pub(crate) fn evaluate_at_depth<F: EvalFold>(
     command: &str,
     args: &[String],
+    arg_expansions: &[super::decompose::Expansion],
     config: &may_i_core::ast::Config,
     facts: &ContextFacts,
     fold: &mut F,
@@ -62,7 +71,7 @@ pub(crate) fn evaluate_at_depth<F: EvalFold>(
     {
         return Ok(EvalResult::new(Decision::Ask, Some(reason)));
     }
-    let expanded = tokenise(args, &parser);
+    let (expanded, expanded_expansions) = tokenise(args, arg_expansions, &parser);
     fold.record_parser(command, &parser);
     // Parser-level `(parameter X (authorise))` recursion. Run before
     // rule evaluation so `:via NAME` facts are in scope; the
@@ -74,9 +83,12 @@ pub(crate) fn evaluate_at_depth<F: EvalFold>(
         if decl.treatment != ParameterTreatment::Authorise {
             continue;
         }
-        let Some(value) =
-            super::effects::find_parameter_value_for_predicate(&expanded, &decl.names, &parser)
-        else {
+        let Some((value, value_expansion)) = super::effects::find_parameter_value_for_predicate(
+            &expanded,
+            &expanded_expansions,
+            &decl.names,
+            &parser,
+        ) else {
             continue;
         };
         let inner_facts_seed = recursion_facts.clone();
@@ -88,6 +100,16 @@ pub(crate) fn evaluate_at_depth<F: EvalFold>(
             depth + 1,
             None,
         )?;
+        // An expansion-bearing captured value re-parses as unfaithful
+        // text; its recursion result cannot prove an allow (asymmetric
+        // soundness — floor to ask, never widen).
+        let nested = match value_expansion {
+            Some(display) if nested.decision == Decision::Allow => EvalResult::new(
+                Decision::Ask,
+                Some(super::command::unresolved_expansion_reason(&[display])),
+            ),
+            _ => nested,
+        };
         if let Some(name) = decl.names.first()
             && let Ok(key) = may_i_core::Keyword::new(":via")
         {
@@ -100,6 +122,7 @@ pub(crate) fn evaluate_at_depth<F: EvalFold>(
     let mut ctx = EvalContext::with_parser(
         command,
         &expanded,
+        expanded_expansions,
         &recursion_facts,
         bindings,
         parser,
@@ -117,21 +140,32 @@ pub(crate) fn evaluate_at_depth<F: EvalFold>(
 
 /// Tokenise `args` under `parser`. Returns the expanded token stream
 /// that downstream `parser_positional_args` and flag-matching code
-/// walks. Style-aware: combined-shorts, first-token-bundle, and
+/// walks, paired with per-token expansion provenance: a derived token
+/// (e.g. `-a` split out of `-abc`) inherits its source token's
+/// provenance. Style-aware: combined-shorts, first-token-bundle, and
 /// prefix selection all come from `parser.style`.
-pub(crate) fn tokenise(args: &[String], parser: &ResolvedParser) -> Vec<String> {
+pub(crate) fn tokenise(
+    args: &[String],
+    expansions: &[super::decompose::Expansion],
+    parser: &ResolvedParser,
+) -> (Vec<String>, Vec<super::decompose::Expansion>) {
+    debug_assert_eq!(args.len(), expansions.len());
     let style = &parser.style;
-    if style.combined_shorts() {
+    let expanded = if style.combined_shorts() {
         if style.first_token_bundle() {
-            expand_legacy_bundle(args)
+            expand_legacy_bundle_pairs(args, expansions)
         } else {
-            expand_combined_shorts(args)
+            expand_combined_shorts_pairs(args, expansions)
         }
     } else if style.first_token_bundle() {
-        expand_first_token_bundle_only(args)
+        expand_first_token_bundle_only_pairs(args, expansions)
     } else {
-        args.to_vec()
-    }
+        args.iter()
+            .cloned()
+            .zip(expansions.iter().cloned())
+            .collect()
+    };
+    expanded.into_iter().unzip()
 }
 
 /// Pun-policy check. Returns Err when an undeclared bare token would
@@ -173,15 +207,20 @@ fn check_pun_error(args: &[String], parser: &ResolvedParser) -> Result<(), Strin
     Ok(())
 }
 
-fn expand_combined_shorts(args: &[String]) -> Vec<String> {
+type TokenPair = (String, super::decompose::Expansion);
+
+fn expand_combined_shorts_pairs(
+    args: &[String],
+    expansions: &[super::decompose::Expansion],
+) -> Vec<TokenPair> {
     let mut out = Vec::with_capacity(args.len());
-    for arg in args {
+    for (arg, exp) in args.iter().zip(expansions) {
         if is_combined_short_flag(arg) {
             for ch in arg[1..].chars() {
-                out.push(format!("-{ch}"));
+                out.push((format!("-{ch}"), exp.clone()));
             }
         } else {
-            out.push(arg.clone());
+            out.push((arg.clone(), exp.clone()));
         }
     }
     out
@@ -194,26 +233,29 @@ fn is_combined_short_flag(arg: &str) -> bool {
         && arg[1..].chars().all(|c| c.is_ascii_alphabetic())
 }
 
-fn expand_legacy_bundle(args: &[String]) -> Vec<String> {
+fn expand_legacy_bundle_pairs(
+    args: &[String],
+    expansions: &[super::decompose::Expansion],
+) -> Vec<TokenPair> {
     let mut out = Vec::with_capacity(args.len());
     let mut bundle_consumed = false;
-    for arg in args {
+    for (arg, exp) in args.iter().zip(expansions) {
         if !bundle_consumed
             && !arg.is_empty()
             && !arg.starts_with('-')
             && arg.chars().all(|c| c.is_ascii_alphabetic())
         {
             for ch in arg.chars() {
-                out.push(format!("-{ch}"));
+                out.push((format!("-{ch}"), exp.clone()));
             }
             bundle_consumed = true;
         } else if is_combined_short_flag(arg) {
             for ch in arg[1..].chars() {
-                out.push(format!("-{ch}"));
+                out.push((format!("-{ch}"), exp.clone()));
             }
             bundle_consumed = true;
         } else {
-            out.push(arg.clone());
+            out.push((arg.clone(), exp.clone()));
             bundle_consumed = true;
         }
     }
@@ -222,21 +264,24 @@ fn expand_legacy_bundle(args: &[String]) -> Vec<String> {
 
 /// Bundle the first non-dashed alpha token only; leave the rest
 /// untouched (no combined-shorts expansion afterwards).
-fn expand_first_token_bundle_only(args: &[String]) -> Vec<String> {
+fn expand_first_token_bundle_only_pairs(
+    args: &[String],
+    expansions: &[super::decompose::Expansion],
+) -> Vec<TokenPair> {
     let mut out = Vec::with_capacity(args.len());
     let mut consumed = false;
-    for arg in args {
+    for (arg, exp) in args.iter().zip(expansions) {
         if !consumed
             && !arg.is_empty()
             && !arg.starts_with('-')
             && arg.chars().all(|c| c.is_ascii_alphabetic())
         {
             for ch in arg.chars() {
-                out.push(format!("-{ch}"));
+                out.push((format!("-{ch}"), exp.clone()));
             }
             consumed = true;
         } else {
-            out.push(arg.clone());
+            out.push((arg.clone(), exp.clone()));
             consumed = true;
         }
     }
@@ -247,10 +292,22 @@ fn expand_first_token_bundle_only(args: &[String]) -> Vec<String> {
 /// stream, peeling off flags and parameter-value pairs per the
 /// parser's style and parameter declarations. Returns the residual
 /// positional tokens.
+#[cfg(test)]
 pub(crate) fn parser_positional_args<'a>(
     args: &'a [String],
     parser: &ResolvedParser,
 ) -> Vec<&'a str> {
+    parser_positional_indices(args, parser)
+        .into_iter()
+        .map(|i| args[i].as_str())
+        .collect()
+}
+
+/// Index-reporting form of [`parser_positional_args`]: returns the
+/// positions in `args` of the residual positional tokens, so callers can
+/// pair each token with side data aligned to the same argv (expansion
+/// provenance).
+pub(crate) fn parser_positional_indices(args: &[String], parser: &ResolvedParser) -> Vec<usize> {
     let style = &parser.style;
     let long_prefix = style.long_prefix();
     let short_prefix = style.short_prefix();
@@ -264,13 +321,13 @@ pub(crate) fn parser_positional_args<'a>(
     let mut out = Vec::new();
     let mut iter = args.iter().enumerate().peekable();
     let mut past_terminator = false;
-    while let Some((_, arg)) = iter.next() {
+    while let Some((i, arg)) = iter.next() {
         if past_terminator {
-            out.push(arg.as_str());
+            out.push(i);
             continue;
         }
         if arg == "--" {
-            out.push(arg.as_str());
+            out.push(i);
             past_terminator = true;
             continue;
         }
@@ -312,7 +369,7 @@ pub(crate) fn parser_positional_args<'a>(
         if long_prefix.is_empty() && short_prefix.is_empty() && is_kv {
             continue;
         }
-        out.push(arg.as_str());
+        out.push(i);
     }
     out
 }
@@ -479,6 +536,7 @@ impl<'a> Evaluator<'a> {
         let mut match_counter: usize = 0;
         let mut any_command_matched = false;
         for rule in self.rules.iter() {
+            ctx.unresolved.borrow_mut().clear();
             let out = self.evaluate_rule(fold, rule, ctx)?;
             let result = F::effect_result(&out);
 
@@ -486,7 +544,20 @@ impl<'a> Evaluator<'a> {
                 EffectResult::Decision(decision, reason) => {
                     let match_idx = match_counter;
                     match_counter += 1;
-                    matches.push((match_idx, *decision, reason.clone()));
+                    // Asymmetric soundness: an `:allow` that relied on a
+                    // match against an expansion-bearing word rests on a
+                    // constraint that is not provable for the runtime
+                    // value — floor it to `:ask`, naming the word(s).
+                    // `:ask`/`:deny` decisions stand (uncertainty only
+                    // ever tightens).
+                    let unresolved = ctx.unresolved.borrow();
+                    if *decision == Decision::Allow && !unresolved.is_empty() {
+                        let reason = super::command::unresolved_expansion_reason(&unresolved);
+                        fold.unresolved_floor(&unresolved);
+                        matches.push((match_idx, Decision::Ask, Some(reason)));
+                    } else {
+                        matches.push((match_idx, *decision, reason.clone()));
+                    }
                 }
                 EffectResult::Nil => {
                     if rule.command_effect.value.matches_command(ctx.command) {
@@ -656,6 +727,12 @@ mod tokenisation_properties {
         }
     }
 
+    /// Tokenise with all-literal expansion provenance, returning only
+    /// the token texts (the shape the pre-provenance tests asserted on).
+    fn tokenise_lit(args: &[String], parser: &ResolvedParser) -> Vec<String> {
+        tokenise(args, &vec![None; args.len()], parser).0
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig { cases: 256, max_shrink_iters: 50, .. ProptestConfig::default() })]
 
@@ -664,7 +741,7 @@ mod tokenisation_properties {
         #[test]
         fn parser_gnu_matches_legacy(args in argv()) {
             let parser = parser_with_style(Style::default_gnu());
-            let expanded = tokenise(&args, &parser);
+            let expanded = tokenise_lit(&args, &parser);
             let legacy = expand_gnu_legacy(&args);
             prop_assert_eq!(&expanded, &legacy);
             let pos = parser_positional_args(&expanded, &parser);
@@ -676,8 +753,8 @@ mod tokenisation_properties {
         #[test]
         fn parser_tokenise_deterministic(args in argv(), idx in 0usize..4) {
             let parser = parser_with_style(style_for_idx(idx));
-            let a = tokenise(&args, &parser);
-            let b = tokenise(&args, &parser);
+            let a = tokenise_lit(&args, &parser);
+            let b = tokenise_lit(&args, &parser);
             prop_assert_eq!(&a, &b);
             let pa = parser_positional_args(&a, &parser);
             let pb = parser_positional_args(&a, &parser);
@@ -688,7 +765,7 @@ mod tokenisation_properties {
         #[test]
         fn parser_single_dash_long_never_splits(args in argv()) {
             let parser = parser_with_style(style_single_dash_long());
-            let expanded = tokenise(&args, &parser);
+            let expanded = tokenise_lit(&args, &parser);
             prop_assert_eq!(expanded.len(), args.len());
             prop_assert_eq!(&expanded, &args);
         }
@@ -718,7 +795,7 @@ mod tokenisation_properties {
             let s = style_for_idx(idx);
             let p1 = parser_with_style(s.clone());
             let p2 = parser_with_style(s);
-            prop_assert_eq!(&tokenise(&args, &p1), &tokenise(&args, &p2));
+            prop_assert_eq!(&tokenise_lit(&args, &p1), &tokenise_lit(&args, &p2));
         }
     }
 

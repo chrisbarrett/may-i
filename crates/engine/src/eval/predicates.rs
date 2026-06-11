@@ -8,7 +8,6 @@ use crate::fold::{ChildResult, EvalFold, build_fact_detail};
 
 use super::context::{EvalContext, PredicateResult};
 use super::effects::{matcher_scope, scan_until_double_dash};
-use super::entry::parser_positional_args;
 use super::positional::match_positional_patterns;
 
 /// Evaluate a predicate against the context (non-generic, uses PureFold).
@@ -113,7 +112,16 @@ pub(crate) fn evaluate_predicate_fold<F: EvalFold>(
         } => {
             let value = ctx.parser_bindings.get(binding);
             let result = match value.as_joined() {
-                Some(s) if pattern.is_match(&s) => PredicateResult::Match,
+                Some(s) if pattern.is_match(&s) => {
+                    // A match against a capture with expansion-bearing
+                    // provenance is unprovable for the runtime value.
+                    if !pattern.matches_any_value()
+                        && let Some(display) = value.first_expansion()
+                    {
+                        ctx.record_unresolved(display);
+                    }
+                    PredicateResult::Match
+                }
                 _ => PredicateResult::NoMatch,
             };
             Ok(fold.predicate_matches(binding, pattern, result))
@@ -127,7 +135,16 @@ pub(crate) fn evaluate_predicate_fold<F: EvalFold>(
             let matched = value
                 .as_collection()
                 .iter()
-                .all(|tok| pattern.is_match(tok));
+                .all(|tok| pattern.is_match(&tok.text));
+            if matched && !pattern.matches_any_value() {
+                // The universal claim covers expansion-bearing elements
+                // it cannot prove; record them for the allow-floor.
+                for tok in value.as_collection() {
+                    if let Some(display) = &tok.expansion {
+                        ctx.record_unresolved(display);
+                    }
+                }
+            }
             let result = if matched {
                 PredicateResult::Match
             } else {
@@ -144,7 +161,25 @@ pub(crate) fn evaluate_predicate_fold<F: EvalFold>(
             let matched = value
                 .as_collection()
                 .iter()
-                .any(|tok| pattern.is_match(tok));
+                .any(|tok| pattern.is_match(&tok.text));
+            if matched && !pattern.matches_any_value() {
+                // Provable only if some literal element matches; when
+                // every matching element is expansion-bearing, record
+                // the first for the allow-floor.
+                let provable = value
+                    .as_collection()
+                    .iter()
+                    .any(|tok| tok.expansion.is_none() && pattern.is_match(&tok.text));
+                if !provable
+                    && let Some(display) = value
+                        .as_collection()
+                        .iter()
+                        .find(|tok| pattern.is_match(&tok.text))
+                        .and_then(|tok| tok.expansion.as_deref())
+                {
+                    ctx.record_unresolved(display);
+                }
+            }
             let result = if matched {
                 PredicateResult::Match
             } else {
@@ -180,9 +215,9 @@ fn collect_captures(pred: &Predicate, ctx: &EvalContext, out: &mut may_i_core::C
         } => {
             let value = ctx.parser_bindings.get(binding);
             let coll = value.as_collection();
-            if coll.iter().all(|t| pattern.is_match(t)) {
+            if coll.iter().all(|t| pattern.is_match(&t.text)) {
                 for t in coll {
-                    let (_m, f) = match_expr_with_binding(pattern, t);
+                    let (_m, f) = match_expr_with_binding(pattern, &t.text);
                     *out = out.merge(&f);
                 }
             }
@@ -192,7 +227,7 @@ fn collect_captures(pred: &Predicate, ctx: &EvalContext, out: &mut may_i_core::C
         } => {
             let value = ctx.parser_bindings.get(binding);
             for t in value.as_collection() {
-                let (matched, f) = match_expr_with_binding(pattern, t);
+                let (matched, f) = match_expr_with_binding(pattern, &t.text);
                 if matched {
                     *out = out.merge(&f);
                 }
@@ -270,11 +305,18 @@ pub(super) fn evaluate_arg_pattern_predicate(
             patterns,
             continuation: _,
         } => {
-            let pos_args: Vec<&str> = parser_positional_args(outer_args, &ctx.parser);
-            let (pat_matched, consumed, _) = match_positional_patterns(&pos_args, patterns);
+            let outer_exp = ctx.expansions_for_prefix(outer_args.len());
+            let pos_idx = super::entry::parser_positional_indices(outer_args, &ctx.parser);
+            let pos_args: Vec<&str> = pos_idx.iter().map(|&i| outer_args[i].as_str()).collect();
+            let pos_exp: Vec<&super::decompose::Expansion> =
+                pos_idx.iter().map(|&i| &outer_exp[i]).collect();
+            let m = match_positional_patterns(&pos_args, &pos_exp, patterns);
             let matched =
-                pat_matched && (*mode == MatchMode::Positional || consumed == pos_args.len());
+                m.matched && (*mode == MatchMode::Positional || m.consumed == pos_args.len());
             if matched {
+                for w in &m.unresolved {
+                    ctx.record_unresolved(w);
+                }
                 PredicateResult::Match
             } else {
                 PredicateResult::NoMatch
@@ -282,8 +324,9 @@ pub(super) fn evaluate_arg_pattern_predicate(
         }
         ArgPattern::Anywhere(exprs) => {
             let outer = scan_until_double_dash(outer_args);
+            let outer_exp = ctx.expansions_for_prefix(outer.len());
             for expr in exprs {
-                if outer.iter().any(|arg| expr.is_match(arg)) {
+                if super::effects::anywhere_match(expr, outer, outer_exp, ctx) {
                     return PredicateResult::Match;
                 }
             }
@@ -309,11 +352,21 @@ pub(super) fn evaluate_arg_pattern_predicate(
             // In predicate position, only the value-shape forms are
             // meaningful — `(may-i …)` returns a Decision, which has no
             // Match/NoMatch projection.
-            match super::effects::find_parameter_value_for_predicate(outer_args, names, &ctx.parser)
-            {
-                Some(value) => match form {
+            let outer_exp = ctx.expansions_for_prefix(outer_args.len());
+            match super::effects::find_parameter_value_for_predicate(
+                outer_args,
+                outer_exp,
+                names,
+                &ctx.parser,
+            ) {
+                Some((value, expansion)) => match form {
                     may_i_core::pattern::ParameterForm::Match(expr) => {
                         if expr.is_match(&value) {
+                            if !expr.matches_any_value()
+                                && let Some(display) = &expansion
+                            {
+                                ctx.record_unresolved(display);
+                            }
                             PredicateResult::Match
                         } else {
                             PredicateResult::NoMatch
@@ -425,10 +478,8 @@ mod quantifier_tests {
         toks: Vec<&str>,
     ) -> EvalContext<'a> {
         let mut ctx = EvalContext::new("rm", args, facts, HashMap::new());
-        ctx.parser_bindings.insert(
-            bn("opts"),
-            BindingValue::Tokens(toks.into_iter().map(String::from).collect()),
-        );
+        ctx.parser_bindings
+            .insert(bn("opts"), BindingValue::tokens(toks));
         ctx
     }
 

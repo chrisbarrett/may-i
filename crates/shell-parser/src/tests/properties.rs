@@ -133,3 +133,73 @@ proptest! {
         );
     }
 }
+
+/// Every word reachable in any parse of any input answers
+/// `is_expansion_bearing` without panicking (totality), and a word built
+/// solely from single-quoted text is never expansion-bearing — quoting
+/// suppresses every expansion the predicate detects.
+fn walk_words(cmd: &Command, f: &mut impl FnMut(&crate::ast::Word)) {
+    fn walk_sc(sc: &SimpleCommand, f: &mut impl FnMut(&crate::ast::Word)) {
+        for w in &sc.words {
+            f(w);
+        }
+        for a in &sc.assignments {
+            f(&a.value);
+        }
+        for r in &sc.redirections {
+            if let crate::ast::RedirectionTarget::File(w) = &r.target {
+                f(w);
+            }
+        }
+    }
+    if let Command::Simple(sc) = cmd {
+        walk_sc(sc, f);
+    }
+    for child in cmd.children() {
+        walk_words(child, f);
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 256, max_shrink_iters: 50, .. ProptestConfig::default() })]
+
+    #[test]
+    fn prop_is_expansion_bearing_total(input in any::<String>()) {
+        let result = crate::parse(&input);
+        walk_words(&result.command, &mut |w| {
+            let _ = w.is_expansion_bearing();
+        });
+    }
+
+    /// A single-quoted word is never expansion-bearing, whatever it
+    /// contains — `rm '<anything>'` names one literal file.
+    #[test]
+    fn prop_single_quoted_word_never_expansion_bearing(
+        body in "[a-zA-Z0-9 ${}*?\\[\\]~,()-]{0,20}",
+    ) {
+        let input = format!("rm '{body}'");
+        let result = crate::parse(&input);
+        prop_assert!(!result.has_errors(), "unexpected parse error for {input:?}");
+        walk_words(&result.command, &mut |w| {
+            assert!(
+                !w.is_expansion_bearing(),
+                "single-quoted arg flagged for input {input:?}: {w:?}"
+            );
+        });
+    }
+
+    /// Plain identifier-ish literals are never expansion-bearing.
+    #[test]
+    fn prop_plain_literal_never_expansion_bearing(
+        body in "[a-zA-Z0-9_./:-]{1,20}",
+    ) {
+        let input = format!("rm {body}");
+        let result = crate::parse(&input);
+        walk_words(&result.command, &mut |w| {
+            assert!(
+                !w.is_expansion_bearing(),
+                "literal arg flagged for input {input:?}: {w:?}"
+            );
+        });
+    }
+}

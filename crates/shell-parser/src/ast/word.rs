@@ -160,6 +160,68 @@ fn collect_dynamic_from(parts: &[WordPart], out: &mut Vec<String>) {
     }
 }
 
+/// Render a slice of word parts in source-faithful form: expansions keep
+/// their sigils (`$HOME`, `$(cmd)`, `{a,b}`) instead of flattening to the
+/// bare inner text. Quote characters themselves are not reproduced — the
+/// output names the word in a reason string, it does not round-trip.
+fn parts_to_display(parts: &[WordPart], out: &mut String) {
+    for part in parts {
+        match part {
+            WordPart::Literal(s)
+            | WordPart::SingleQuoted(s)
+            | WordPart::AnsiCQuoted(s)
+            | WordPart::Glob(s) => out.push_str(s),
+            WordPart::Parameter(name) => {
+                out.push('$');
+                out.push_str(name);
+            }
+            WordPart::ParameterExpansion(name) => {
+                out.push_str("${");
+                out.push_str(name);
+                out.push('}');
+            }
+            WordPart::ParameterExpansionOp { name, op } => {
+                out.push_str("${");
+                out.push_str(&format_param_op(name, op));
+                out.push('}');
+            }
+            WordPart::CommandSubstitution { source, .. } => {
+                out.push_str("$(");
+                out.push_str(source);
+                out.push(')');
+            }
+            WordPart::Backtick { source, .. } => {
+                out.push('`');
+                out.push_str(source);
+                out.push('`');
+            }
+            WordPart::Arithmetic { source, .. } => {
+                out.push_str("$((");
+                out.push_str(source);
+                out.push_str("))");
+            }
+            WordPart::BraceExpansion(items) => {
+                out.push('{');
+                out.push_str(&items.join(","));
+                out.push('}');
+            }
+            WordPart::ProcessSubstitution {
+                direction, command, ..
+            } => {
+                out.push(match direction {
+                    ProcessDirection::Input => '<',
+                    ProcessDirection::Output => '>',
+                });
+                out.push('(');
+                out.push_str(command);
+                out.push(')');
+            }
+            WordPart::DoubleQuoted(inner) => parts_to_display(inner, out),
+            WordPart::Opaque(label) => out.push_str(label),
+        }
+    }
+}
+
 /// Flatten a slice of word parts to a plain string.
 fn parts_to_str(parts: &[WordPart], out: &mut String) {
     for part in parts {
@@ -190,6 +252,32 @@ fn parts_to_str(parts: &[WordPart], out: &mut String) {
             }
         }
     }
+}
+
+/// Returns true if any part in the slice has a runtime value that is not
+/// provable from its source bytes: a dynamic shell construct (parameter,
+/// command, arithmetic, or process substitution — recursing into
+/// double-quoted regions, where bash still expands), or an unquoted glob
+/// or brace expansion (which the lexer only emits outside quotes).
+/// Quoted text and plain literals are excluded; `Opaque` is a trusted
+/// value by construction and is excluded too.
+fn is_expansion_bearing_in(parts: &[WordPart]) -> bool {
+    parts.iter().any(|part| match part {
+        WordPart::CommandSubstitution { .. }
+        | WordPart::Backtick { .. }
+        | WordPart::Parameter(_)
+        | WordPart::ParameterExpansion(_)
+        | WordPart::ParameterExpansionOp { .. }
+        | WordPart::Arithmetic { .. }
+        | WordPart::ProcessSubstitution { .. }
+        | WordPart::Glob(_)
+        | WordPart::BraceExpansion(_) => true,
+        WordPart::DoubleQuoted(inner) => is_expansion_bearing_in(inner),
+        WordPart::Literal(_)
+        | WordPart::SingleQuoted(_)
+        | WordPart::AnsiCQuoted(_)
+        | WordPart::Opaque(_) => false,
+    })
 }
 
 /// Returns true if any part in the slice is an Opaque value.
@@ -260,6 +348,16 @@ impl Word {
         out
     }
 
+    /// Render this word in source-faithful form for naming it in reason
+    /// strings: expansions keep their sigils (`/tmp/$HOME`, `$(cmd)`,
+    /// `{a,b}`) instead of flattening to the inner text the way
+    /// [`Word::to_str`] does.
+    pub fn display_source(&self) -> String {
+        let mut out = String::new();
+        parts_to_display(&self.parts, &mut out);
+        out
+    }
+
     /// Flatten this word to a plain string for matching purposes.
     pub fn to_str(&self) -> String {
         let mut out = String::new();
@@ -270,6 +368,23 @@ impl Word {
     /// Returns true if all parts are static (Literal/SingleQuoted/AnsiCQuoted).
     pub fn is_literal(&self) -> bool {
         !has_dynamic_in(&self.parts) && !has_opaque_in(&self.parts)
+    }
+
+    /// Returns true when this word's runtime value is not provable from its
+    /// source bytes — it carries a shell expansion (parameter, command,
+    /// arithmetic, or process substitution), an unquoted glob or brace
+    /// expansion, or an unquoted leading tilde. The security model forbids
+    /// such a word from satisfying a non-wildcard matcher toward `:allow`
+    /// (see the expansion-bearing-word requirement).
+    ///
+    /// A backslash-escaped `~` (`\~/x`) is indistinguishable from a live
+    /// leading tilde after lexing and is conservatively reported as
+    /// expansion-bearing — over-reporting only tightens decisions.
+    pub fn is_expansion_bearing(&self) -> bool {
+        if is_expansion_bearing_in(&self.parts) {
+            return true;
+        }
+        matches!(self.parts.first(), Some(WordPart::Literal(s)) if s.starts_with('~'))
     }
 }
 

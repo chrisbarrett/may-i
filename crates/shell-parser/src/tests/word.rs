@@ -724,3 +724,78 @@ fn backslash_newline_inside_quoted_heredoc_is_literal() {
         "heredoc body should preserve backslash-newline verbatim: {body:?}"
     );
 }
+
+// --- is_expansion_bearing (expansion-bearing-words-do-not-authorise) ---
+
+/// First argument word of a parsed simple command.
+fn first_arg(input: &str) -> Word {
+    let cmd = parse(input).into_command();
+    let Command::Simple(sc) = &cmd else {
+        panic!("expected simple command for {input:?}, got {cmd:?}");
+    };
+    sc.args()
+        .first()
+        .unwrap_or_else(|| panic!("no args in {input:?}"))
+        .clone()
+}
+
+#[test]
+fn expansion_bearing_dynamic_parts() {
+    for input in [
+        "rm /tmp/$HOME",
+        "rm /tmp/${HOME}",
+        "rm /tmp/$(whoami)",
+        "rm /tmp/`whoami`",
+        "rm /tmp/$((1+1))",
+        "rm <(cat x)",
+        "rm \"/tmp/$HOME\"",
+    ] {
+        assert!(
+            first_arg(input).is_expansion_bearing(),
+            "expected expansion-bearing arg for {input:?}"
+        );
+    }
+}
+
+#[test]
+fn expansion_bearing_unquoted_metacharacters() {
+    for input in [
+        "rm /tmp/*",
+        "rm /tmp/?",
+        "rm /tmp/[ab]",
+        "rm /tmp/{a,b}",
+        "rm ~/x",
+        "rm ~",
+    ] {
+        assert!(
+            first_arg(input).is_expansion_bearing(),
+            "expected expansion-bearing arg for {input:?}"
+        );
+    }
+}
+
+#[test]
+fn not_expansion_bearing_literals_and_quoted() {
+    for input in [
+        "rm /tmp/x",
+        "rm '/tmp/*'",
+        "rm \"/tmp/*\"",
+        "rm '/tmp/{a,b}'",
+        "rm '~/x'",
+        "rm '$HOME'",
+        "rm \\$HOME",
+        "rm /tmp/x~",
+        "rm a~b",
+    ] {
+        assert!(
+            !first_arg(input).is_expansion_bearing(),
+            "expected non-expansion-bearing arg for {input:?}"
+        );
+    }
+}
+
+#[test]
+fn expansion_bearing_mixed_literal_and_dynamic() {
+    assert!(first_arg("rm /tmp/a$X/b").is_expansion_bearing());
+    assert!(first_arg("kubectl dev-$ENV").is_expansion_bearing());
+}

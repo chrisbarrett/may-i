@@ -36,7 +36,7 @@ proptest! {
         let result_convenience = eval::evaluate(&cmd, &args, &config, &facts).unwrap();
 
         // Must expand flags to match the convenience wrapper's behavior.
-        let expanded = eval::entry::tokenise(&args, &may_i_core::ast::ResolvedParser::synthetic_gnu("any"));
+        let expanded = eval::entry::tokenise(&args, &vec![None; args.len()], &may_i_core::ast::ResolvedParser::synthetic_gnu("any")).0;
         let ctx = EvalContext::new(&cmd, &expanded, &facts, EvalContext::build_bindings(&config.defines));
         let evaluator = Evaluator::new(&config.rules);
         let result_fold = evaluator.evaluate(&mut PureFold, &ctx).unwrap();
@@ -101,7 +101,7 @@ proptest! {
         // With just the required arg, all optionals should be skipped.
         let args_owned = [required.clone()];
         let args: Vec<&str> = args_owned.iter().map(|s| s.as_str()).collect();
-        let (matched, consumed, _) = eval::match_positional_patterns(&args, &patterns);
+        let (matched, consumed, _) = eval::positional::match_pos_lit(&args, &patterns);
         prop_assert!(matched, "Required arg should match when optionals are skipped");
         prop_assert_eq!(consumed, 1, "Only the required arg should be consumed");
     }
@@ -128,7 +128,7 @@ proptest! {
         args_owned.push(suffix.clone());
         let args: Vec<&str> = args_owned.iter().map(|s| s.as_str()).collect();
 
-        let (matched, consumed, _) = eval::match_positional_patterns(&args, &patterns);
+        let (matched, consumed, _) = eval::positional::match_pos_lit(&args, &patterns);
         prop_assert!(matched,
             "Wildcard * should backtrack to let the literal suffix match");
         prop_assert_eq!(consumed, args_owned.len(),
@@ -152,7 +152,7 @@ proptest! {
         let args_owned: Vec<String> = (0..arg_count).map(|i| format!("p{i}")).collect();
         let args: Vec<&str> = args_owned.iter().map(|s| s.as_str()).collect();
 
-        let (matched, consumed, _) = eval::match_positional_patterns(&args, &patterns);
+        let (matched, consumed, _) = eval::positional::match_pos_lit(&args, &patterns);
         if arg_count >= pattern_count {
             prop_assert!(matched);
             prop_assert_eq!(consumed, pattern_count);
@@ -169,7 +169,7 @@ proptest! {
     ) {
         let combined = format!("-{}", flags.join(""));
         let args = vec![combined.clone()];
-        let expanded = eval::entry::tokenise(&args, &may_i_core::ast::ResolvedParser::synthetic_gnu("any"));
+        let expanded = eval::entry::tokenise(&args, &vec![None; args.len()], &may_i_core::ast::ResolvedParser::synthetic_gnu("any")).0;
 
         // Each flag should be present as -X
         for f in &flags {
@@ -193,7 +193,7 @@ proptest! {
         args.push(combined);
         args.extend(single_flags.clone());
 
-        let expanded = eval::entry::tokenise(&args, &may_i_core::ast::ResolvedParser::synthetic_gnu("any"));
+        let expanded = eval::entry::tokenise(&args, &vec![None; args.len()], &may_i_core::ast::ResolvedParser::synthetic_gnu("any")).0;
 
         // All non-flag args are preserved verbatim
         for nf in &nonflag_args {
@@ -219,7 +219,7 @@ proptest! {
         opt in "--[a-zA-Z]{1,10}",
     ) {
         let args = vec![opt.clone()];
-        let expanded = eval::entry::tokenise(&args, &may_i_core::ast::ResolvedParser::synthetic_gnu("any"));
+        let expanded = eval::entry::tokenise(&args, &vec![None; args.len()], &may_i_core::ast::ResolvedParser::synthetic_gnu("any")).0;
         prop_assert_eq!(expanded, args, "Long options should not be expanded");
     }
 

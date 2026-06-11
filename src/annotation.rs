@@ -51,6 +51,11 @@ pub enum TraceEntry {
     },
     /// An embedded command (substitution) was evaluated.
     EmbeddedCommand { source: String, decision: Decision },
+    /// A rule's `:allow` was floored to `:ask` because a matcher it
+    /// relied on tested an expansion-bearing word. Rendered as an
+    /// annotation under the preceding rule rather than a silent
+    /// no-match.
+    UnresolvedExpansion { words: Vec<String> },
     /// No matching rule — default ask.
     DefaultAsk { reason: String },
     /// Parse diagnostics were emitted.
@@ -1551,6 +1556,12 @@ impl EvalFold for TracingFold {
             decision,
         });
     }
+
+    fn unresolved_floor(&mut self, words: &[String]) {
+        self.traces.push(TraceEntry::UnresolvedExpansion {
+            words: words.to_vec(),
+        });
+    }
 }
 
 fn flatten_facts(facts: &ContextFacts) -> Vec<(String, String)> {
@@ -1566,6 +1577,9 @@ impl std::fmt::Debug for TraceEntry {
             Self::SegmentHeader { command, .. } => write!(f, "SegmentHeader({command})"),
             Self::Rule { line, .. } => write!(f, "Rule(line={line:?})"),
             Self::EmbeddedCommand { source, .. } => write!(f, "EmbeddedCommand({source})"),
+            Self::UnresolvedExpansion { words } => {
+                write!(f, "UnresolvedExpansion({})", words.join(", "))
+            }
             Self::DefaultAsk { reason } => write!(f, "DefaultAsk({reason})"),
             Self::ParseDiagnostics { .. } => write!(f, "ParseDiagnostics"),
             Self::Parser { command, .. } => write!(f, "Parser({command})"),

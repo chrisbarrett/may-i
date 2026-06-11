@@ -28,6 +28,22 @@ pub(super) fn escape_for_reason(s: &str) -> String {
     out
 }
 
+/// Reason for flooring an `:allow` that relied on a match against one or
+/// more expansion-bearing words. Names each word (source-faithful,
+/// control-escaped, deduplicated) on a single line.
+pub(super) fn unresolved_expansion_reason(words: &[String]) -> String {
+    let mut names: Vec<String> = words
+        .iter()
+        .map(|w| format!("`{}`", escape_for_reason(w)))
+        .collect();
+    names.sort();
+    names.dedup();
+    format!(
+        "unresolved shell expansion in {} cannot satisfy an allow rule",
+        names.join(", ")
+    )
+}
+
 /// Wrap an embedded-substitution's bubbled reason with an origin clause
 /// naming the outer command (when known) and the substitution form.
 ///
@@ -169,9 +185,20 @@ fn eval_units<F: EvalFold>(
     for unit in &units {
         let unit_span = unit.span();
         let result = match unit {
-            EvalUnit::SimpleCommand { command, args, .. } => {
-                evaluate_at_depth(command, args, config, &effective_facts, fold, depth)?
-            }
+            EvalUnit::SimpleCommand {
+                command,
+                args,
+                arg_expansions,
+                ..
+            } => evaluate_at_depth(
+                command,
+                args,
+                arg_expansions,
+                config,
+                &effective_facts,
+                fold,
+                depth,
+            )?,
             EvalUnit::EmbeddedCommand { source, span, kind } => {
                 let embedded_result = eval_units(
                     source,
@@ -320,12 +347,14 @@ pub(crate) fn evaluate_authorised_string<F: EvalFold>(
 ///   `(parameter "c" #cmd)`).
 pub(crate) fn evaluate_authorised_tokens<F: EvalFold>(
     tokens: &[String],
+    expansions: &[super::decompose::Expansion],
     config: Option<&Config>,
     facts: &ContextFacts,
     fold: &mut F,
     depth: usize,
     via_program: Option<&str>,
 ) -> Result<EvalResult, EvalError> {
+    debug_assert_eq!(tokens.len(), expansions.len());
     if depth >= DEFAULT_RECURSION_LIMIT {
         return Ok(EvalResult::new(
             Decision::Ask,
@@ -345,8 +374,19 @@ pub(crate) fn evaluate_authorised_tokens<F: EvalFold>(
     if tokens.len() == 1 {
         // One token = one outer-shell boundary. No structural
         // information to preserve; re-parsing the lone element as a
-        // command line is correct (it's how the user authored it).
-        return evaluate_authorised_string(&tokens[0], config, facts, fold, depth, via_program);
+        // command line is correct (it's how the user authored it) —
+        // unless the token is expansion-bearing, in which case its
+        // flattened text is unfaithful to what will run and cannot
+        // prove an allow.
+        let result =
+            evaluate_authorised_string(&tokens[0], config, facts, fold, depth, via_program)?;
+        return Ok(match &expansions[0] {
+            Some(display) if result.decision == Decision::Allow => EvalResult::new(
+                Decision::Ask,
+                Some(unresolved_expansion_reason(std::slice::from_ref(display))),
+            ),
+            _ => result,
+        });
     }
 
     let command = &tokens[0];
@@ -355,6 +395,17 @@ pub(crate) fn evaluate_authorised_tokens<F: EvalFold>(
             Decision::Ask,
             Some(format!(
                 "dynamic or malformed inner command name: {command:?}"
+            )),
+        ));
+    }
+    // An expansion-bearing command name flattens to a plausible-looking
+    // literal (`$X` → `X`); the runtime command is unknown.
+    if let Some(display) = &expansions[0] {
+        return Ok(EvalResult::new(
+            Decision::Ask,
+            Some(format!(
+                "dynamic inner command name: {}",
+                escape_for_reason(display)
             )),
         ));
     }
@@ -372,6 +423,7 @@ pub(crate) fn evaluate_authorised_tokens<F: EvalFold>(
     evaluate_at_depth(
         command,
         &tokens[1..],
+        &expansions[1..],
         effective_config,
         &effective_facts,
         fold,
@@ -1449,6 +1501,7 @@ mod tests {
             .unwrap();
             let from_tokens = evaluate_authorised_tokens(
                 &tokens,
+                &vec![None; tokens.len()],
                 Some(&config),
                 &empty_facts(),
                 &mut fold_t,
