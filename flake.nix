@@ -30,7 +30,7 @@
         "x86_64-linux"
       ];
 
-      perSystem = import ./builder.nix inputs;
+      perSystem = import ./nix/per-system.nix inputs;
 
       flake.overlays.default = final: prev: {
         may-i = self.packages.${prev.system}.default;
