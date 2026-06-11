@@ -92,8 +92,11 @@ untouched.
   recurse keeps the change local to evaluation.
 - Correlation: match the substitution `WordPart`'s span against the spans of
   Error-severity diagnostics already present in `ParseResult.diagnostics`. The
-  diagnostic span points at the opening construct, which lies within the
-  substitution's span.
+  diagnostic span runs from the opening sigil (`$(` / `` ` ``) to where parsing
+  ran off the end, so it *covers* the substitution's body span — which starts
+  just after the sigil and shares the same end. Suppress a substitution when an
+  `UnterminatedCommandSubstitution` / `UnterminatedBacktick` diagnostic's span
+  covers it (`diag.start <= sub.start && sub.end <= diag.end`).
 
 ### D4 — Let the existing floor own the reason
 
@@ -110,8 +113,10 @@ well-formed segment still outranks the `:ask` floor and keeps its own reason.
   single character `!` is consumed; `!foo` stays a command word (history
   expansion is off in non-interactive bash).
 - **Span correlation mis-fires on nested substitutions** → Restrict suppression
-  to the substitution whose span contains an Error diagnostic's start offset;
-  well-formed nested subs carry no Error diagnostic and are unaffected. The
+  to substitutions covered by an `UnterminatedCommandSubstitution` /
+  `UnterminatedBacktick` diagnostic's span (kind-filtered, so an unterminated
+  *double quote* that closes a well-formed inner sub does not suppress it);
+  well-formed nested subs carry no such diagnostic and are unaffected. The
   "Well-formed substitution still recurses" scenario fences this.
 - **Over-suppression hides a real embedded command** → Only substitutions with
   an Error-severity diagnostic are suppressed; well-formed ones recurse exactly

@@ -199,6 +199,19 @@ impl Parser {
     }
 
     fn parse_pipeline(&mut self) -> Command {
+        // POSIX grammar: `pipeline ::= ["!"] pipe_sequence`. A leading bare
+        // `!` negates the pipeline's exit status — it is a reserved word, not
+        // a program. `may-i` decides on command structure, not exit status,
+        // so negation is authorisation-transparent: consume the `!` and parse
+        // the inner pipeline unchanged (no `Negate` AST node). Only the exact
+        // single-char `!` at pipeline-start is negation; `!foo` stays a
+        // command word, and `!` as an argument is untouched because this
+        // function is only entered at pipeline-start position. A second `!`
+        // (`! ! cmd`) falls through to the command word, as documented.
+        if self.peek_word_is("!") {
+            self.advance();
+        }
+
         let mut commands = Vec::new();
         commands.push(self.parse_command());
 
@@ -976,6 +989,63 @@ mod tests {
         let cmd = parse_complete("case $x in a) echo a;; *) echo other;; esac");
         assert!(matches!(cmd, Command::Case { .. }));
         assert!(parse_diagnostics("case $x in a) echo a;; *) echo other;; esac").is_empty());
+    }
+
+    // ── Leading `!` is pipeline negation ────────────────────────────────
+
+    #[test]
+    fn leading_bang_consumed_as_negation() {
+        // `! kill -0 %1` is pipeline negation: the `!` is consumed and the
+        // inner pipeline parses exactly as the un-negated command would.
+        // `! ` and two leading spaces are both two bytes, so `kill` lands at
+        // the same offset and the ASTs — spans included — are identical.
+        assert_eq!(
+            parse_complete("! kill -0 %1"),
+            parse_complete("  kill -0 %1")
+        );
+    }
+
+    #[test]
+    fn leading_bang_not_a_command_word() {
+        assert_eq!(simple_words("! kill -0 %1"), ["kill", "-0", "%1"]);
+        assert!(parse_diagnostics("! kill -0 %1").is_empty());
+    }
+
+    #[test]
+    fn negation_inside_pipeline_branch() {
+        // Negation is recognised at each pipeline-start, including after
+        // `&&`. The right branch parses as `rm -rf /`, not a command `!`.
+        let cmd = parse_complete("echo a && ! rm -rf /");
+        match cmd {
+            Command::And(_, right) => {
+                assert_eq!(
+                    first_simple(&right)
+                        .words
+                        .iter()
+                        .map(|w| w.to_str())
+                        .collect::<Vec<_>>(),
+                    ["rm", "-rf", "/"]
+                );
+            }
+            other => panic!("expected And, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn bang_as_argument_is_literal() {
+        // `!` not at pipeline-start stays a literal argument.
+        assert_eq!(
+            simple_words("find . ! -name foo"),
+            ["find", ".", "!", "-name", "foo"]
+        );
+        assert_eq!(simple_words("[ ! -f x ]"), ["[", "!", "-f", "x", "]"]);
+        assert!(parse_diagnostics("find . ! -name foo").is_empty());
+    }
+
+    #[test]
+    fn bang_prefixed_word_is_not_negation() {
+        // Only the exact single-char `!` is negation; `!foo` is a command word.
+        assert_eq!(simple_words("!foo bar"), ["!foo", "bar"]);
     }
 
     // ── No silent token loss ────────────────────────────────────────────

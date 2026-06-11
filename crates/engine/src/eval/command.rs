@@ -7,7 +7,7 @@ use crate::{EvalError, EvalResult, SegmentDecision};
 
 use super::context::DEFAULT_RECURSION_LIMIT;
 use super::decompose::{EmbeddedKind, EvalUnit, decompose};
-use super::entry::{evaluate_at_depth, evaluate_with_fold};
+use super::entry::evaluate_at_depth;
 
 /// Escape control characters (e.g. newlines from `$'\n'` ANSI-C
 /// quoting) when interpolating a parsed command name into a reason
@@ -88,25 +88,37 @@ pub fn evaluate_command_with_fold<F: EvalFold>(
     facts: &ContextFacts,
     fold: &mut F,
 ) -> Result<EvalResult, EvalError> {
-    evaluate_command_inner(input, config, facts, fold, 0, DEFAULT_RECURSION_LIMIT, 0)
+    eval_units(input, config, facts, fold, 0, None, Some(0))
 }
 
-/// `outer_offset` is the byte offset of `input` within the outermost original
-/// command being evaluated — added to every emitted `SegmentDecision` so
-/// nested embedded recursions report ranges in outermost coordinates.
-fn evaluate_command_inner<F: EvalFold>(
+/// The single command-evaluation core: parse `input`, decompose it into
+/// `EvalUnit`s, evaluate each, aggregate the strictest decision
+/// (`Allow < Ask < Deny`), and floor at `:ask` on an Error-severity parse
+/// diagnostic. Both the top-level entry point and the `(authorise …)`
+/// recursion path go through here.
+///
+/// - `depth` is the recursion depth (for the limit guard and per-unit rule
+///   evaluation); top-level enters at 0.
+/// - `via` pushes a `:via NAME` fact seen by every unit and nested recursion
+///   (the `(authorise …)` carrier contract); top-level passes `None`.
+/// - `segments` is `Some(outer_offset)` to collect `SegmentDecision`s in
+///   outermost coordinates (top-level, for display), or `None` to skip
+///   collection (the authorise path, which has no display surface).
+fn eval_units<F: EvalFold>(
     input: &str,
     config: &Config,
     facts: &ContextFacts,
     fold: &mut F,
     depth: usize,
-    limit: usize,
-    outer_offset: usize,
+    via: Option<&str>,
+    segments: Option<usize>,
 ) -> Result<EvalResult, EvalError> {
-    if depth >= limit {
+    if depth >= DEFAULT_RECURSION_LIMIT {
         return Ok(EvalResult::new(
             Decision::Ask,
-            Some(format!("recursion depth limit ({limit}) exceeded")),
+            Some(format!(
+                "recursion depth limit ({DEFAULT_RECURSION_LIMIT}) exceeded"
+            )),
         ));
     }
 
@@ -117,10 +129,23 @@ fn evaluate_command_inner<F: EvalFold>(
         return Ok(EvalResult::new(Decision::Ask, Some(reason)));
     }
 
+    // Push the carrier's `:via` fact once, seen by every unit and every
+    // nested recursion below this frame.
+    let effective_facts = match via {
+        Some(name) => {
+            let mut f = facts.clone();
+            if let Ok(key) = Keyword::new(":via") {
+                f.insert_scalar(key, name);
+            }
+            f
+        }
+        None => facts.clone(),
+    };
+
     let parse_result = parser::parse(input);
     let diagnostics = parse_result.diagnostics.clone();
     let has_parse_errors = parse_result.has_errors();
-    let units = decompose(&parse_result.command, input);
+    let units = decompose(&parse_result.command, input, &diagnostics);
 
     if units.is_empty() {
         let reason = "empty command".to_string();
@@ -145,17 +170,17 @@ fn evaluate_command_inner<F: EvalFold>(
         let unit_span = unit.span();
         let result = match unit {
             EvalUnit::SimpleCommand { command, args, .. } => {
-                evaluate_with_fold(command, args, config, facts, fold)?
+                evaluate_at_depth(command, args, config, &effective_facts, fold, depth)?
             }
             EvalUnit::EmbeddedCommand { source, span, kind } => {
-                let embedded_result = evaluate_command_inner(
+                let embedded_result = eval_units(
                     source,
                     config,
-                    facts,
+                    &effective_facts,
                     fold,
                     depth + 1,
-                    limit,
-                    outer_offset + span.0,
+                    None,
+                    segments.map(|base| base + span.0),
                 )?;
                 fold.embedded_command(source, embedded_result.decision);
                 let annotated_reason = embedded_result
@@ -177,16 +202,18 @@ fn evaluate_command_inner<F: EvalFold>(
         // (one per unit). EmbeddedCommand units are carriers — they only
         // relay their child segments, otherwise the inner range would appear
         // twice (once as the embed unit, once as the child SimpleCommand).
-        if !matches!(unit, EvalUnit::EmbeddedCommand { .. }) {
-            segment_decisions.push(SegmentDecision {
-                start: outer_offset + unit_span.0,
-                end: outer_offset + unit_span.1,
-                decision: result.decision,
-            });
+        if let Some(base) = segments {
+            if !matches!(unit, EvalUnit::EmbeddedCommand { .. }) {
+                segment_decisions.push(SegmentDecision {
+                    start: base + unit_span.0,
+                    end: base + unit_span.1,
+                    decision: result.decision,
+                });
+            }
+            // Inner segments arrive in outermost coordinates already (offset
+            // applied during recursion).
+            segment_decisions.extend(result.segment_decisions);
         }
-        // Inner segments arrive in outermost coordinates already (offset
-        // applied during recursion).
-        segment_decisions.extend(result.segment_decisions);
 
         if result.decision >= aggregate_decision {
             aggregate_decision = result.decision;
@@ -245,77 +272,21 @@ pub(crate) fn evaluate_authorised_string<F: EvalFold>(
     depth: usize,
     via_program: Option<&str>,
 ) -> Result<EvalResult, EvalError> {
-    if depth >= DEFAULT_RECURSION_LIMIT {
-        return Ok(EvalResult::new(
-            Decision::Ask,
-            Some(format!(
-                "recursion depth limit ({DEFAULT_RECURSION_LIMIT}) exceeded"
-            )),
-        ));
-    }
-
-    let trimmed = input.trim();
-    if trimmed.is_empty() {
-        return Ok(EvalResult::new(
-            Decision::Ask,
-            Some("empty command".to_string()),
-        ));
-    }
-
-    let mut effective_facts = facts.clone();
-    if let Some(name) = via_program
-        && let Ok(key) = Keyword::new(":via")
-    {
-        effective_facts.insert_scalar(key, name);
-    }
-
-    let parse_result = parser::parse(input);
-    let has_parse_errors = parse_result.has_errors();
-    let units = decompose(&parse_result.command, input);
-
-    if units.is_empty() {
-        return Ok(EvalResult::new(
-            Decision::Ask,
-            Some("empty command".to_string()),
-        ));
-    }
-
     let default_config = Config::default();
     let effective_config = config.unwrap_or(&default_config);
-
-    let mut aggregate_decision = Decision::Allow;
-    let mut aggregate_reason: Option<String> = None;
-
-    for unit in &units {
-        let result = match unit {
-            EvalUnit::SimpleCommand { command, args, .. } => evaluate_at_depth(
-                command,
-                args,
-                effective_config,
-                &effective_facts,
-                fold,
-                depth,
-            )?,
-            EvalUnit::EmbeddedCommand { source, .. } => {
-                evaluate_authorised_string(source, config, &effective_facts, fold, depth + 1, None)?
-            }
-            EvalUnit::DynamicCommand { reason, .. } => {
-                EvalResult::new(Decision::Ask, Some(reason.clone()))
-            }
-        };
-
-        if result.decision >= aggregate_decision {
-            aggregate_decision = result.decision;
-            aggregate_reason = result.reason;
-        }
-    }
-
-    if has_parse_errors && aggregate_decision < Decision::Ask {
-        aggregate_decision = Decision::Ask;
-        aggregate_reason = Some(parse_error_reason(&parse_result.diagnostics, input));
-    }
-
-    Ok(EvalResult::new(aggregate_decision, aggregate_reason))
+    // The authorise path takes no segment sink (`None`) — it has no display
+    // surface — but otherwise goes through the same core as the top-level
+    // path, including `:via` injection, embedded-reason annotation, fold
+    // events, and the parse-error floor.
+    eval_units(
+        input,
+        effective_config,
+        facts,
+        fold,
+        depth,
+        via_program,
+        None,
+    )
 }
 
 /// Token-list sibling of [`evaluate_authorised_string`].
@@ -630,6 +601,67 @@ mod tests {
         );
     }
 
+    // -- Pipeline negation (`!`) --
+
+    #[test]
+    fn negated_pipeline_evaluates_inner_command() {
+        let config = config_with_rules(vec![deny_rule("kill")]);
+        let result = evaluate_command("! kill -0 %1", &config, &empty_facts()).unwrap();
+        assert_eq!(result.decision, Decision::Deny);
+        let reason = result.reason.as_deref().unwrap_or("");
+        assert!(reason.contains("kill"), "reason should name kill: {reason}");
+        assert!(!reason.contains('!'), "reason must not name `!`: {reason}");
+    }
+
+    #[test]
+    fn negation_does_not_change_decision() {
+        let config = config_with_rules(vec![deny_rule("rm")]);
+        let negated = evaluate_command("! rm -rf /", &config, &empty_facts()).unwrap();
+        let plain = evaluate_command("rm -rf /", &config, &empty_facts()).unwrap();
+        assert_eq!(negated.decision, Decision::Deny);
+        assert_eq!(negated.decision, plain.decision);
+    }
+
+    #[test]
+    fn negated_command_with_no_rule_names_real_command() {
+        let config = config_with_rules(vec![]);
+        let result = evaluate_command("! kubectl get pods", &config, &empty_facts()).unwrap();
+        assert_eq!(result.decision, Decision::Ask);
+        assert_eq!(
+            result.reason.as_deref(),
+            Some("No rule for command `kubectl`")
+        );
+    }
+
+    #[test]
+    fn bang_as_argument_is_literal_in_argv() {
+        use may_i_core::pattern::{ArgPattern, Expr};
+        // `find` denied when `!` appears anywhere in argv. The deny proves
+        // `!` reached `find`'s argv rather than being read as negation.
+        let rule = may_i_core::ast::Rule {
+            command_effect: spanned(Effect::CommandPattern(CommandPattern::Literal(
+                "find".to_string(),
+            ))),
+            effect: spanned(Effect::And {
+                effects: vec![
+                    spanned(Effect::ArgPattern(ArgPattern::Anywhere(vec![
+                        Expr::Literal("!".to_string()),
+                    ]))),
+                    spanned(Effect::Terminal {
+                        decision: Decision::Deny,
+                        reason: Some("find with ! arg".to_string()),
+                    }),
+                ],
+            }),
+            checks: vec![],
+            span: Span::new(0, 0),
+            provenance: may_i_core::ast::Provenance::PrimaryConfig,
+        };
+        let config = config_with_rules(vec![rule]);
+        let result = evaluate_command("find . ! -name foo", &config, &empty_facts()).unwrap();
+        assert_eq!(result.decision, Decision::Deny);
+    }
+
     // -- Dynamic command names --
 
     #[test]
@@ -840,6 +872,54 @@ mod tests {
         // Unterminated quote + denied command — deny > ask
         let result = evaluate_command(r#"rm "unterminated"#, &config, &empty_facts()).unwrap();
         assert_eq!(result.decision, Decision::Deny);
+    }
+
+    // -- Unterminated substitution is not recursed into --
+
+    #[test]
+    fn unterminated_command_substitution_not_recursed() {
+        let config = config_with_rules(vec![allow_rule("grep")]);
+        let result = evaluate_command(r#"grep -n "x$(y" file"#, &config, &empty_facts()).unwrap();
+        assert_eq!(result.decision, Decision::Ask);
+        let reason = result.reason.as_deref().unwrap_or("");
+        assert!(
+            reason.starts_with("parse error: unterminated command substitution"),
+            "reason: {reason}"
+        );
+        assert!(
+            !reason.contains("No rule for command"),
+            "reason must not fabricate a command from swallowed text: {reason}"
+        );
+    }
+
+    #[test]
+    fn well_formed_substitution_still_recurses() {
+        let config = config_with_rules(vec![allow_rule("echo"), deny_rule("rm")]);
+        let result = evaluate_command("echo $(rm -rf /)", &config, &empty_facts()).unwrap();
+        assert_eq!(result.decision, Decision::Deny);
+    }
+
+    /// Open Question (2.5): unterminated `${…}` / `$((…))` never produce an
+    /// embedded *command* unit (only `$( … )` / `` ` … ` `` / `<( … )` do),
+    /// so the suppression in `decompose` is a no-op for them. They still
+    /// floor to `:ask` with a `parse error: …` reason and never fabricate a
+    /// `No rule for command …` clause from the swallowed tail.
+    #[test]
+    fn unterminated_parameter_and_arithmetic_floor_without_fabrication() {
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        for input in [r#"echo ${x"#, r#"echo $((1+"#] {
+            let result = evaluate_command(input, &config, &empty_facts()).unwrap();
+            assert_eq!(result.decision, Decision::Ask, "input: {input}");
+            let reason = result.reason.as_deref().unwrap_or("");
+            assert!(
+                reason.starts_with("parse error: "),
+                "input {input}: reason: {reason}"
+            );
+            assert!(
+                !reason.contains("No rule for command"),
+                "input {input}: reason: {reason}"
+            );
+        }
     }
 
     #[test]
@@ -1123,6 +1203,43 @@ mod tests {
         crate::eval::tests::arb_shell_chars()
     }
 
+    /// Well-formed shell pipelines built from a fixed command/arg/operator
+    /// vocabulary. Used to property-test that a leading `!` is transparent:
+    /// these never carry parse errors, so reasons (which embed line/column
+    /// for parse errors) are stable under the 2-byte `! ` prefix shift.
+    fn arb_pipeline() -> impl Strategy<Value = String> {
+        let segment = (
+            prop::sample::select(vec!["echo", "rm", "cat", "ls"]),
+            prop::collection::vec(prop::sample::select(vec!["a", "-rf", "foo", "/tmp"]), 0..3),
+        )
+            .prop_map(|(cmd, args)| {
+                let mut s = cmd.to_string();
+                for a in args {
+                    s.push(' ');
+                    s.push_str(a);
+                }
+                s
+            });
+        (
+            segment.clone(),
+            prop::collection::vec(
+                (
+                    prop::sample::select(vec![" | ", " && ", " || ", " ; "]),
+                    segment,
+                ),
+                0..3,
+            ),
+        )
+            .prop_map(|(first, rest)| {
+                let mut s = first;
+                for (op, seg) in rest {
+                    s.push_str(op);
+                    s.push_str(&seg);
+                }
+                s
+            })
+    }
+
     fn top_level(decisions: &[crate::SegmentDecision]) -> Vec<&crate::SegmentDecision> {
         decisions
             .iter()
@@ -1139,6 +1256,19 @@ mod tests {
 
     proptest! {
         #![proptest_config(ProptestConfig { cases: 256, max_shrink_iters: 64, .. ProptestConfig::default() })]
+
+        /// `harden-shell-parse-fidelity`: a leading `!` is pipeline negation —
+        /// authorisation-transparent. For any well-formed pipeline `P`,
+        /// `! P` yields the same decision and the same reason (command-name
+        /// resolution) as `P`.
+        #[test]
+        fn prop_leading_negation_is_transparent(p in arb_pipeline()) {
+            let config = config_with_rules(vec![allow_rule("echo"), deny_rule("rm")]);
+            let plain = evaluate_command(&p, &config, &empty_facts()).unwrap();
+            let negated = evaluate_command(&format!("! {p}"), &config, &empty_facts()).unwrap();
+            prop_assert_eq!(plain.decision, negated.decision);
+            prop_assert_eq!(plain.reason, negated.reason);
+        }
 
         #[test]
         fn prop_top_level_segments_disjoint(input in arb_input()) {

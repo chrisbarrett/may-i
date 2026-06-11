@@ -588,6 +588,62 @@ fn extract_embedded_commands_nested_double_quote() {
     assert_eq!(w.extract_embedded_commands(), vec!["echo $(rm /)"]);
 }
 
+// -- extract_embedded: terminated flag --
+
+fn embedded(input: &str) -> Vec<(String, SubstitutionForm, bool)> {
+    let r = parse(input);
+    crate::extract_all_words(&r.command)
+        .iter()
+        .flat_map(|w| w.extract_embedded(&r.diagnostics))
+        .map(|e| (e.source.to_string(), e.form, e.terminated))
+        .collect()
+}
+
+#[test]
+fn extract_embedded_marks_terminated_command_substitution() {
+    let emb = embedded("echo $(date)");
+    assert_eq!(
+        emb,
+        vec![("date".to_string(), SubstitutionForm::Dollar, true)]
+    );
+}
+
+#[test]
+fn extract_embedded_marks_unterminated_command_substitution() {
+    let emb = embedded("echo $(date");
+    assert_eq!(emb.len(), 1);
+    assert_eq!(emb[0].1, SubstitutionForm::Dollar);
+    assert!(!emb[0].2, "unterminated $( must be flagged: {emb:?}");
+}
+
+#[test]
+fn extract_embedded_marks_terminated_backtick() {
+    let emb = embedded("echo `date`");
+    assert_eq!(
+        emb,
+        vec![("date".to_string(), SubstitutionForm::Backtick, true)]
+    );
+}
+
+#[test]
+fn extract_embedded_marks_unterminated_backtick() {
+    let emb = embedded("echo `date");
+    assert_eq!(emb.len(), 1);
+    assert_eq!(emb[0].1, SubstitutionForm::Backtick);
+    assert!(!emb[0].2, "unterminated backtick must be flagged: {emb:?}");
+}
+
+#[test]
+fn extract_embedded_well_formed_process_substitution_is_terminated() {
+    // Process substitution emits no unterminated diagnostic, so it is never
+    // suppressed — matching the pre-existing engine behaviour.
+    let emb = embedded("diff <(ls /a) <(ls /b)");
+    assert!(
+        emb.iter().all(|e| e.2),
+        "process subs should be terminated: {emb:?}"
+    );
+}
+
 // -- POSIX line continuation (`\<NL>`) --
 
 #[test]
