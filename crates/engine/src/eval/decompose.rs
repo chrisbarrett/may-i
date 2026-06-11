@@ -1,5 +1,6 @@
 use may_i_shell_parser::{
-    Command, ParseDiagnostic, SimpleCommand, SubstitutionForm, extract_simple_commands,
+    Command, ParseDiagnostic, RedirectionTarget, SimpleCommand, SubstitutionForm,
+    extract_simple_commands,
 };
 
 /// Byte range in the original input string covered by an `EvalUnit`.
@@ -76,7 +77,38 @@ pub(crate) fn decompose(
         decompose_simple_command(sc, input, diagnostics, &mut units);
     }
 
+    // Redirect targets carry their own embedded commands — a process
+    // substitution in redirect position (`… < <(rm)`) attaches to the
+    // enclosing `Redirected` wrapper, not to any simple command's words, so
+    // it is invisible to the word scan above. Walk the whole tree for
+    // redirect targets so those inner commands are evaluated too.
+    push_embedded_units_from_redirect_targets(cmd, diagnostics, &mut units);
+
     units
+}
+
+/// Walk the command tree and emit embedded units for every redirect-target
+/// word. Covers both a simple command's own redirections and the
+/// `Redirected` wrapper that carries a compound's redirections (where a
+/// `done < <(cmd)` process substitution lives).
+fn push_embedded_units_from_redirect_targets(
+    cmd: &Command,
+    diagnostics: &[ParseDiagnostic],
+    units: &mut Vec<EvalUnit>,
+) {
+    let redirections = match cmd {
+        Command::Simple(sc) => sc.redirections.as_slice(),
+        Command::Redirected { redirections, .. } => redirections.as_slice(),
+        _ => &[],
+    };
+    for redirection in redirections {
+        if let RedirectionTarget::File(word) = &redirection.target {
+            push_embedded_units_from_word(word, diagnostics, units);
+        }
+    }
+    for child in cmd.children() {
+        push_embedded_units_from_redirect_targets(child, diagnostics, units);
+    }
 }
 
 fn decompose_simple_command(
@@ -283,6 +315,52 @@ mod tests {
             EvalUnit::EmbeddedCommand { source, kind: Some(EmbeddedKind::Backtick), .. }
                 if source == "date"
         )));
+    }
+
+    #[test]
+    fn decompose_process_substitution_redirect_target() {
+        // `done < <(cmd)` — the procsub lives on the Redirected wrapper's
+        // redirection target, not in any simple command's words.
+        let units = decompose_input("while read x; do :; done < <(rm -rf /danger)");
+        assert!(
+            units.iter().any(|u| matches!(
+                u,
+                EvalUnit::EmbeddedCommand { source, kind: None, .. }
+                    if source == "rm -rf /danger"
+            )),
+            "expected embedded `rm` from redirect target, got: {units:?}"
+        );
+    }
+
+    #[test]
+    fn decompose_simple_command_procsub_redirect_target() {
+        // `cat < <(cmd)` — the redirection attaches to the simple command
+        // itself, exercising the walker's `Command::Simple` branch.
+        let units = decompose_input("cat < <(rm -rf /danger)");
+        assert!(
+            units.iter().any(|u| matches!(
+                u,
+                EvalUnit::EmbeddedCommand { source, kind: None, .. }
+                    if source == "rm -rf /danger"
+            )),
+            "expected embedded `rm` from redirect target, got: {units:?}"
+        );
+    }
+
+    #[test]
+    fn decompose_command_substitution_redirect_target() {
+        // A `$( … )` in a redirect target runs a command too (`cat < $(rm)`
+        // executes the `rm`); the redirect-target walk evaluates it with its
+        // `$(…)` kind so the reason can name the substitution form.
+        let units = decompose_input("cat < $(rm -rf /)");
+        assert!(
+            units.iter().any(|u| matches!(
+                u,
+                EvalUnit::EmbeddedCommand { source, kind: Some(EmbeddedKind::Dollar), .. }
+                    if source == "rm -rf /"
+            )),
+            "expected embedded `rm` from redirect target, got: {units:?}"
+        );
     }
 
     #[test]

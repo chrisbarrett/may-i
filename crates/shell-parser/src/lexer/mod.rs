@@ -241,36 +241,49 @@ impl Lexer {
 
     fn try_read_redirect_or_process_sub(&mut self) -> Option<Token> {
         // Check for process substitution <(cmd) or >(cmd)
-        let ch = self.peek()?;
-        if (ch == '<' || ch == '>') && self.peek_at(1) == Some('(') {
-            let direction = if ch == '<' {
-                ProcessDirection::Input
-            } else {
-                ProcessDirection::Output
-            };
-            self.advance(); // skip < or >
-            self.advance(); // skip (
-            let body_start = self.byte_pos;
-            let (cmd, found) = self.read_balanced_parens_checked();
-            let body_end = if found {
-                self.byte_pos - 1
-            } else {
-                self.byte_pos
-            };
-            let word = Word {
-                parts: vec![WordPart::ProcessSubstitution {
-                    direction,
-                    command: cmd,
-                    span: crate::diagnostic::Span {
-                        start: body_start,
-                        end: body_end,
-                    },
-                }],
-            };
-            return Some(Token::Word(word));
+        if self.at_process_substitution() {
+            let part = self.read_process_substitution();
+            return Some(Token::Word(Word { parts: vec![part] }));
         }
 
         self.read_redirection()
+    }
+
+    /// True when the cursor is at the `<`/`>` sigil of a process
+    /// substitution — i.e. `<(` or `>(` with the paren adjacent (no
+    /// space). `< (` (a redirect of a subshell) is *not* a process
+    /// substitution and returns false.
+    fn at_process_substitution(&self) -> bool {
+        matches!(self.peek(), Some('<') | Some('>')) && self.peek_at(1) == Some('(')
+    }
+
+    /// Read a `<( … )` / `>( … )` process substitution. The cursor must be
+    /// at the sigil (see [`Self::at_process_substitution`]). Terminates at
+    /// the matching `)` via a balanced-paren scan over the inner command, so
+    /// lexing resumes cleanly at the token after `)`.
+    fn read_process_substitution(&mut self) -> WordPart {
+        let direction = if self.peek() == Some('<') {
+            ProcessDirection::Input
+        } else {
+            ProcessDirection::Output
+        };
+        self.advance(); // skip < or >
+        self.advance(); // skip (
+        let body_start = self.byte_pos;
+        let (cmd, found) = self.read_balanced_parens_checked();
+        let body_end = if found {
+            self.byte_pos - 1
+        } else {
+            self.byte_pos
+        };
+        WordPart::ProcessSubstitution {
+            direction,
+            command: cmd,
+            span: crate::diagnostic::Span {
+                start: body_start,
+                end: body_end,
+            },
+        }
     }
 
     fn read_redirection(&mut self) -> Option<Token> {
@@ -401,13 +414,20 @@ impl Lexer {
 
                 RedirectionTarget::Heredoc(body)
             }
-            RedirectionKind::Herestring => {
-                self.skip_whitespace();
-                let word = self.read_word_value();
-                RedirectionTarget::File(word)
-            }
+            // Input/Output/Append/Clobber and Herestring all take a word
+            // target and share the process-substitution handling below.
             _ => {
                 self.skip_whitespace();
+                // A process-substitution target (`… < <(cmd)`): consume the
+                // whole `<( … )` as the target so the inner command is
+                // captured and lexing resumes after the matching `)`. Without
+                // this, `read_word_value` stops at the leading `<`, the target
+                // is empty, and the `<(cmd)` re-lexes as a stray word that
+                // desyncs the enclosing compound.
+                if self.at_process_substitution() {
+                    let part = self.read_process_substitution();
+                    return RedirectionTarget::File(Word { parts: vec![part] });
+                }
                 let word = self.read_word_value();
                 RedirectionTarget::File(word)
             }

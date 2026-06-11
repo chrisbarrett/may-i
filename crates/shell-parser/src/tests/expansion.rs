@@ -315,6 +315,153 @@ fn test_process_substitution_output() {
     }
 }
 
+#[test]
+fn test_process_substitution_argument_captures_inner_command() {
+    let cmd = parse("cat <(rm -rf /danger)").into_command();
+    match &cmd {
+        Command::Simple(sc) => {
+            assert_eq!(sc.words.len(), 2);
+            match &sc.words[1].parts[0] {
+                WordPart::ProcessSubstitution {
+                    direction, command, ..
+                } => {
+                    assert_eq!(*direction, ProcessDirection::Input);
+                    assert_eq!(command, "rm -rf /danger");
+                }
+                _ => panic!("Expected process substitution"),
+            }
+        }
+        _ => panic!("Expected simple command"),
+    }
+}
+
+#[test]
+fn test_process_substitution_nested_balances_parens() {
+    // The inner `$(date)` parens must not terminate the procsub early.
+    let cmd = parse("cat <(grep $(date) f)").into_command();
+    match &cmd {
+        Command::Simple(sc) => match &sc.words[1].parts[0] {
+            WordPart::ProcessSubstitution { command, .. } => {
+                assert_eq!(command, "grep $(date) f");
+            }
+            _ => panic!("Expected process substitution"),
+        },
+        _ => panic!("Expected simple command"),
+    }
+}
+
+#[test]
+fn test_output_process_substitution_as_redirect_target() {
+    // `exec > >(cmd)` — output redirect whose target is an output procsub.
+    let cmd = parse("exec > >(tee log)").into_command();
+    let sc = match &cmd {
+        Command::Simple(sc) => sc,
+        _ => panic!("Expected simple command, got {cmd:?}"),
+    };
+    assert_eq!(sc.redirections.len(), 1);
+    match &sc.redirections[0].target {
+        RedirectionTarget::File(w) => match &w.parts[0] {
+            WordPart::ProcessSubstitution {
+                direction, command, ..
+            } => {
+                assert_eq!(*direction, ProcessDirection::Output);
+                assert_eq!(command, "tee log");
+            }
+            other => panic!("Expected process substitution target, got {other:?}"),
+        },
+        other => panic!("Expected file target, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_fd_prefixed_redirect_to_process_substitution() {
+    // `cmd 2> >(tee err)` — fd prefix routes through the same target reader.
+    let cmd = parse("cmd 2> >(tee err)").into_command();
+    let sc = match &cmd {
+        Command::Simple(sc) => sc,
+        _ => panic!("Expected simple command, got {cmd:?}"),
+    };
+    assert_eq!(sc.redirections.len(), 1);
+    assert_eq!(sc.redirections[0].fd, Some(2));
+    match &sc.redirections[0].target {
+        RedirectionTarget::File(w) => assert!(
+            matches!(
+                &w.parts[0],
+                WordPart::ProcessSubstitution { command, .. } if command == "tee err"
+            ),
+            "Expected process substitution target, got {:?}",
+            w.parts
+        ),
+        other => panic!("Expected file target, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_redirect_of_subshell_is_not_process_substitution() {
+    // `< (` (space before the paren) is NOT a process substitution — it is
+    // a redirect whose target is a stray subshell. The parser must not
+    // fabricate a procsub; the unplaceable `(` surfaces as an Error so the
+    // decision floors to :ask.
+    let result = parse("cat < (find .)");
+    let has_procsub = crate::extract_simple_commands(&result.command)
+        .iter()
+        .flat_map(|sc| {
+            sc.words
+                .iter()
+                .chain(sc.redirections.iter().filter_map(|r| match &r.target {
+                    RedirectionTarget::File(w) => Some(w),
+                    _ => None,
+                }))
+        })
+        .any(|w| {
+            w.parts
+                .iter()
+                .any(|p| matches!(p, WordPart::ProcessSubstitution { .. }))
+        });
+    assert!(!has_procsub, "`< (` must not parse as process substitution");
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.severity == crate::diagnostic::Severity::Error),
+        "expected Error diagnostic for stray subshell target, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn test_process_substitution_redirect_target_captures_inner_command() {
+    let result = parse("while read x; do :; done < <(rm -rf /danger)");
+    // No Error-severity diagnostic: the procsub target parses cleanly.
+    assert!(
+        !result
+            .diagnostics
+            .iter()
+            .any(|d| d.severity == crate::diagnostic::Severity::Error),
+        "unexpected Error diagnostic: {:?}",
+        result.diagnostics
+    );
+    // The redirect target carries the process substitution's inner command.
+    let cmd = result.into_command();
+    let redirs = match &cmd {
+        Command::Redirected { redirections, .. } => redirections,
+        _ => panic!("Expected redirected command, got {cmd:?}"),
+    };
+    assert_eq!(redirs.len(), 1);
+    match &redirs[0].target {
+        RedirectionTarget::File(w) => match &w.parts[0] {
+            WordPart::ProcessSubstitution {
+                direction, command, ..
+            } => {
+                assert_eq!(*direction, ProcessDirection::Input);
+                assert_eq!(command, "rm -rf /danger");
+            }
+            other => panic!("Expected process substitution target, got {other:?}"),
+        },
+        other => panic!("Expected file target, got {other:?}"),
+    }
+}
+
 // --- Brace expansion ---
 
 #[test]
