@@ -20,4 +20,4 @@
 - [x] 4.1 `cargo fmt`; `cargo clippy --workspace --all-targets -- -D warnings`.
 - [x] 4.2 `cargo test --workspace` green; check in any new `proptest-regressions/`.
 - [x] 4.3 Re-run the confirmed bypasses against the built binary: the redirect and `LD_PRELOAD` cases now `:ask`.
-- [ ] 4.4 `cargo tarpaulin`; inspect `lcov.info` for uncovered branches in the new floors.
+- [x] 4.4 `cargo tarpaulin`; inspect `lcov.info` for uncovered branches in the new floors.

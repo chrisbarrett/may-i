@@ -272,3 +272,21 @@ mod properties {
         }
     }
 }
+
+#[test]
+fn structural_floors_raise_overlapping_segments() {
+    let result = decide(ECHO_GIT, "echo x > /tmp/out");
+    assert!(result.decision >= Decision::Ask);
+    assert!(
+        !result.segment_decisions.is_empty(),
+        "expected a segment for the echo command"
+    );
+    assert!(
+        result
+            .segment_decisions
+            .iter()
+            .all(|s| s.decision >= Decision::Ask),
+        "the floored command's segment must not display as allow: {:?}",
+        result.segment_decisions
+    );
+}

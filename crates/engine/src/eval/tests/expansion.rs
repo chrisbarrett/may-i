@@ -267,3 +267,63 @@ mod properties {
         }
     }
 }
+
+#[test]
+fn some_binding_floors_when_only_expansion_bearing_elements_match() {
+    let config = r#"
+(parser "rm" (style gnu) (flags posix) (positional #paths * *))
+(rule "rm" (when (some? #paths (regex "^/tmp/")) (allow "a tmp path present")))
+"#;
+    // A literal element matches → provable → allow stands.
+    let literal = decide(config, "rm /tmp/x /etc/y");
+    assert_eq!(literal.decision, Decision::Allow, "{:?}", literal.reason);
+
+    // Only an expansion-bearing element matches → unprovable → floors.
+    let expanded = decide(config, "rm /tmp/$HOME /etc/y");
+    assert!(
+        expanded.decision >= Decision::Ask,
+        "some? satisfied only by an expansion-bearing element floors: {:?} ({:?})",
+        expanded.decision,
+        expanded.reason
+    );
+}
+
+#[test]
+fn authorised_token_list_with_expansion_bearing_command_name_asks() {
+    // `ssh host $CMD` — the rest binding's first token is expansion-
+    // bearing; its flattened text (`CMD`) is not the runtime command.
+    let config = r#"
+(parser "ssh" (style gnu) (flags posix) (positional #host * ?) (rest #cmd))
+(rule "ssh" (when (bound? #cmd) (authorise #cmd)))
+(rule "CMD" (allow))
+(rule "echo" (allow))
+"#;
+    let literal = decide(config, "ssh host echo hi");
+    assert_eq!(literal.decision, Decision::Allow, "{:?}", literal.reason);
+
+    let expanded = decide(config, "ssh host $CMD hi");
+    assert!(
+        expanded.decision >= Decision::Ask,
+        "expansion-bearing inner command name must not resolve to a literal rule: {:?} ({:?})",
+        expanded.decision,
+        expanded.reason
+    );
+}
+
+#[test]
+fn authorised_single_token_expansion_cannot_allow() {
+    let config = r#"
+(parser "ssh" (style gnu) (flags posix) (positional #host * ?) (rest #cmd))
+(rule "ssh" (when (bound? #cmd) (authorise #cmd)))
+(rule "true" (allow))
+"#;
+    // Single rest token, expansion-bearing: flattened text re-parses as
+    // `true` (allowed) but the runtime command is unknown.
+    let result = decide(config, "ssh host true$X");
+    assert!(
+        result.decision >= Decision::Ask,
+        "single-token expansion-bearing recursion cannot allow: {:?} ({:?})",
+        result.decision,
+        result.reason
+    );
+}

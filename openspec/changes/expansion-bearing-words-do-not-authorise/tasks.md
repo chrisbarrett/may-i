@@ -31,4 +31,4 @@
 - [x] 6.1 `cargo fmt`; `cargo clippy --workspace --all-targets -- -D warnings`.
 - [x] 6.2 `cargo test --workspace` green; check in any new `proptest-regressions/`.
 - [x] 6.3 Re-run the confirmed bypasses against the built binary; all three now `:ask`.
-- [ ] 6.4 `cargo tarpaulin`; inspect `lcov.info` for uncovered branches in the new seam.
+- [x] 6.4 `cargo tarpaulin`; inspect `lcov.info` for uncovered branches in the new seam.
