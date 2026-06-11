@@ -22,6 +22,17 @@ pub struct EvalContext<'a> {
     pub command: &'a str,
     /// The arguments to the command.
     pub args: &'a [String],
+    /// Per-token expansion provenance, aligned with `args`. `None` marks a
+    /// literal token; `Some(display)` marks an expansion-bearing token and
+    /// carries its source-faithful rendering for floor reasons.
+    pub(crate) arg_expansions: Vec<super::decompose::Expansion>,
+    /// Display texts of expansion-bearing words that satisfied a
+    /// non-wildcard matcher during the current rule's evaluation. Shared
+    /// (single-threaded) across the derived contexts a rule body creates;
+    /// the rule evaluator drains it per rule and floors an `:allow`
+    /// decision that relied on any entry. See the expansion-bearing-word
+    /// requirement.
+    pub(crate) unresolved: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
     /// Context facts.
     pub facts: &'a ContextFacts,
     /// Named predicate bindings (define name → predicate body).
@@ -55,6 +66,7 @@ impl<'a> EvalContext<'a> {
         let parser = ResolvedParser::synthetic_gnu(command);
         Self {
             command,
+            arg_expansions: vec![None; args.len()],
             args,
             facts,
             bindings,
@@ -62,32 +74,53 @@ impl<'a> EvalContext<'a> {
             recursion_limit: DEFAULT_RECURSION_LIMIT,
             parser,
             parser_bindings: Bindings::new(),
+            unresolved: Default::default(),
             config: None,
         }
     }
 
     /// Create a new evaluation context with a fully-resolved parser
     /// and full-config access for parser lookups during recursion.
-    pub fn with_parser(
+    /// `arg_expansions` carries per-token expansion provenance aligned
+    /// with `args`.
+    pub(crate) fn with_parser(
         command: &'a str,
         args: &'a [String],
+        arg_expansions: Vec<super::decompose::Expansion>,
         facts: &'a ContextFacts,
         bindings: HashMap<&'a str, &'a Predicate>,
         parser: ResolvedParser,
         config: &'a Config,
     ) -> Self {
-        let (_residual, parser_bindings) = super::bindings::parse_argv(&parser, args);
+        debug_assert_eq!(args.len(), arg_expansions.len());
+        let (_residual, parser_bindings) =
+            super::bindings::parse_argv(&parser, args, &arg_expansions);
         Self {
             command,
             args,
+            arg_expansions,
             facts,
             bindings,
             recursion_depth: 0,
             recursion_limit: DEFAULT_RECURSION_LIMIT,
             parser,
             parser_bindings,
+            unresolved: Default::default(),
             config: Some(config),
         }
+    }
+
+    /// Record that `display` (an expansion-bearing word) satisfied a
+    /// non-wildcard matcher. The rule evaluator floors an `:allow`
+    /// decision that relied on any recorded entry.
+    pub(crate) fn record_unresolved(&self, display: &str) {
+        self.unresolved.borrow_mut().push(display.to_string());
+    }
+
+    /// Expansion provenance for a prefix slice of `self.args` (the
+    /// outer/matcher scope is always a prefix of the full argv).
+    pub(crate) fn expansions_for_prefix(&self, len: usize) -> &[super::decompose::Expansion] {
+        &self.arg_expansions[..len]
     }
 
     /// Build bindings from a slice of defines.

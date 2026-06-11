@@ -379,7 +379,7 @@ fn zero_or_more_wildcard_backtracks_for_required() {
         .map(String::from)
         .collect();
     let args: Vec<&str> = args_owned.iter().map(|s| s.as_str()).collect();
-    let (matched, consumed, _) = match_positional_patterns(&args, &patterns);
+    let (matched, consumed, _) = match_pos_lit(&args, &patterns);
     assert!(matched);
     assert_eq!(consumed, 4);
 }
@@ -408,7 +408,7 @@ fn one_or_more_wildcard_backtracks_for_required() {
         .map(String::from)
         .collect();
     let args: Vec<&str> = args_owned.iter().map(|s| s.as_str()).collect();
-    let (matched, consumed, _) = match_positional_patterns(&args, &patterns);
+    let (matched, consumed, _) = match_pos_lit(&args, &patterns);
     assert!(matched);
     assert_eq!(consumed, 3);
 }
@@ -434,7 +434,7 @@ fn one_or_more_wildcard_fails_when_only_required() {
 
     let args_owned = ["end".to_string()];
     let args: Vec<&str> = args_owned.iter().map(|s| s.as_str()).collect();
-    let (matched, _, _) = match_positional_patterns(&args, &patterns);
+    let (matched, _, _) = match_pos_lit(&args, &patterns);
     assert!(!matched);
 }
 
@@ -929,7 +929,9 @@ mod parser_engine_invariants {
                 let (s, e) = match unit {
                     EvalUnit::SimpleCommand { span, .. }
                     | EvalUnit::EmbeddedCommand { span, .. } => *span,
-                    EvalUnit::DynamicCommand { .. } => continue,
+                    EvalUnit::DynamicCommand { .. }
+                    | EvalUnit::EnvPrefix { .. }
+                    | EvalUnit::RedirectTarget { .. } => continue,
                 };
                 let strictly_inside =
                     s >= q_start && e <= q_end && (s > q_start || e < q_end);

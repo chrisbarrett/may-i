@@ -1,7 +1,6 @@
 use super::effects::{evaluate_effect, evaluate_effect_fold};
 use super::positional::{
     build_expr_match_detail, build_positional_element_details, match_expr_with_binding,
-    match_positional_patterns,
 };
 use super::predicates::{evaluate_predicate, match_fact_pattern};
 use super::*;
@@ -17,6 +16,8 @@ use crate::fold::{EvalFold, PureFold};
 fn kw(s: &str) -> Keyword {
     Keyword::new(s).unwrap()
 }
+
+use super::positional::match_pos_lit;
 
 fn dummy_context<'a>(
     command: &'a str,
@@ -210,6 +211,8 @@ fn context_depth_tracking() {
     let deep_ctx = EvalContext {
         command: ctx.command,
         args: ctx.args,
+        arg_expansions: ctx.arg_expansions.clone(),
+        unresolved: Default::default(),
         facts: ctx.facts,
         bindings: Default::default(),
         recursion_depth: 5, // Set to equal recursion_limit
@@ -377,7 +380,7 @@ fn match_positional_patterns_with_binding() {
     let arg1 = "git".to_string();
     let arg2 = "push".to_string();
     let args: Vec<&str> = vec![&arg1, &arg2];
-    let (matched, _, facts) = match_positional_patterns(&args, &patterns);
+    let (matched, _, facts) = match_pos_lit(&args, &patterns);
 
     assert!(matched);
     assert_eq!(facts.get_scalar(&kw(":cmd")), Some("git"));
@@ -409,7 +412,7 @@ fn match_positional_patterns_no_match_with_binding() {
     let arg1 = "server".to_string();
     let arg2 = "wrong".to_string();
     let args: Vec<&str> = vec![&arg1, &arg2];
-    let (matched, _, facts) = match_positional_patterns(&args, &patterns);
+    let (matched, _, facts) = match_pos_lit(&args, &patterns);
 
     assert!(!matched);
     // First arg was still bound before the failure
@@ -433,7 +436,7 @@ fn match_positional_patterns_optional_with_binding() {
 
     let arg1 = "value".to_string();
     let args: Vec<&str> = vec![&arg1];
-    let (matched, _, facts) = match_positional_patterns(&args, &patterns);
+    let (matched, _, facts) = match_pos_lit(&args, &patterns);
 
     assert!(matched);
     assert_eq!(facts.get_scalar(&kw(":opt")), Some("value"));
@@ -457,7 +460,7 @@ fn match_positional_patterns_one_or_more_with_binding() {
     let arg1 = "a".to_string();
     let arg2 = "b".to_string();
     let args: Vec<&str> = vec![&arg1, &arg2];
-    let (matched, _, facts) = match_positional_patterns(&args, &patterns);
+    let (matched, _, facts) = match_pos_lit(&args, &patterns);
 
     assert!(matched);
     // OneOrMore accumulates all matched values into the set
@@ -483,7 +486,7 @@ fn match_positional_patterns_zero_or_more_with_binding() {
     let arg1 = "a".to_string();
     let arg2 = "b".to_string();
     let args: Vec<&str> = vec![&arg1, &arg2];
-    let (matched, _, facts) = match_positional_patterns(&args, &patterns);
+    let (matched, _, facts) = match_pos_lit(&args, &patterns);
 
     assert!(matched);
     // ZeroOrMore accumulates all matched values into the set
@@ -518,7 +521,7 @@ fn match_positional_patterns_not_enough_args() {
 
     let arg1 = "only".to_string();
     let args: Vec<&str> = vec![&arg1];
-    let (matched, _, _) = match_positional_patterns(&args, &patterns);
+    let (matched, _, _) = match_pos_lit(&args, &patterns);
 
     assert!(!matched);
 }
@@ -536,7 +539,7 @@ fn match_positional_patterns_one_or_more_no_args() {
     }];
 
     let args: Vec<&str> = vec![];
-    let (matched, _, _) = match_positional_patterns(&args, &patterns);
+    let (matched, _, _) = match_pos_lit(&args, &patterns);
 
     assert!(!matched);
 }
@@ -567,7 +570,7 @@ fn match_positional_optional_patterns_skip_to_required() {
 
     let arg1 = "c".to_string();
     let args: Vec<&str> = vec![&arg1];
-    let (matched, consumed, _) = match_positional_patterns(&args, &patterns);
+    let (matched, consumed, _) = match_pos_lit(&args, &patterns);
     assert!(matched);
     assert_eq!(consumed, 1);
 }
@@ -594,7 +597,7 @@ fn match_positional_optional_then_required_both_present() {
     let arg1 = "a".to_string();
     let arg2 = "b".to_string();
     let args: Vec<&str> = vec![&arg1, &arg2];
-    let (matched, consumed, _) = match_positional_patterns(&args, &patterns);
+    let (matched, consumed, _) = match_pos_lit(&args, &patterns);
     assert!(matched);
     assert_eq!(consumed, 2);
 }
@@ -620,7 +623,7 @@ fn match_positional_optional_skipped_required_present() {
 
     let arg1 = "b".to_string();
     let args: Vec<&str> = vec![&arg1];
-    let (matched, consumed, _) = match_positional_patterns(&args, &patterns);
+    let (matched, consumed, _) = match_pos_lit(&args, &patterns);
     assert!(matched);
     assert_eq!(consumed, 1);
 }
@@ -646,7 +649,7 @@ fn match_positional_optional_present_required_missing() {
 
     let arg1 = "a".to_string();
     let args: Vec<&str> = vec![&arg1];
-    let (matched, _, _) = match_positional_patterns(&args, &patterns);
+    let (matched, _, _) = match_pos_lit(&args, &patterns);
     assert!(!matched);
 }
 
@@ -673,7 +676,7 @@ fn match_positional_zero_or_more_then_required() {
     let arg2 = "a".to_string();
     let arg3 = "b".to_string();
     let args: Vec<&str> = vec![&arg1, &arg2, &arg3];
-    let (matched, consumed, _) = match_positional_patterns(&args, &patterns);
+    let (matched, consumed, _) = match_pos_lit(&args, &patterns);
     assert!(matched);
     assert_eq!(consumed, 3);
 }
@@ -699,7 +702,7 @@ fn match_positional_zero_or_more_skipped_then_required() {
 
     let arg1 = "b".to_string();
     let args: Vec<&str> = vec![&arg1];
-    let (matched, consumed, _) = match_positional_patterns(&args, &patterns);
+    let (matched, consumed, _) = match_pos_lit(&args, &patterns);
     assert!(matched);
     assert_eq!(consumed, 1);
 }
@@ -836,7 +839,10 @@ fn named_predicate_missing_returns_unresolved_error() {
     );
 }
 
+mod expansion;
+mod heredoc;
 mod properties;
+mod redirects_env;
 pub(crate) mod strategies;
 
 pub(crate) use strategies::{arb_shell_chars, arb_with_heredoc, arb_with_single_quoted_region};

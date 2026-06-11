@@ -698,6 +698,10 @@ impl<A: EvalFold, B: EvalFold> EvalFold for ComposedFold<A, B> {
         self.a.embedded_command(source, decision);
         self.b.embedded_command(source, decision);
     }
+    fn unresolved_floor(&mut self, words: &[String]) {
+        self.a.unresolved_floor(words);
+        self.b.unresolved_floor(words);
+    }
 }
 
 #[cfg(test)]

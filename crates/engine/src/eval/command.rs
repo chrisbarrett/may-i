@@ -28,6 +28,22 @@ pub(super) fn escape_for_reason(s: &str) -> String {
     out
 }
 
+/// Reason for flooring an `:allow` that relied on a match against one or
+/// more expansion-bearing words. Names each word (source-faithful,
+/// control-escaped, deduplicated) on a single line.
+pub(super) fn unresolved_expansion_reason(words: &[String]) -> String {
+    let mut names: Vec<String> = words
+        .iter()
+        .map(|w| format!("`{}`", escape_for_reason(w)))
+        .collect();
+    names.sort();
+    names.dedup();
+    format!(
+        "unresolved shell expansion in {} cannot satisfy an allow rule",
+        names.join(", ")
+    )
+}
+
 /// Wrap an embedded-substitution's bubbled reason with an origin clause
 /// naming the outer command (when known) and the substitution form.
 ///
@@ -156,6 +172,14 @@ fn eval_units<F: EvalFold>(
     let mut aggregate_decision = Decision::Allow;
     let mut aggregate_reason: Option<String> = None;
     let mut segment_decisions: Vec<SegmentDecision> = Vec::new();
+    // Spans of structural floors (env prefixes, redirect targets) — they
+    // raise overlapping segments to at least `:ask` after the loop, like
+    // the parse-error floor, rather than owning segments of their own.
+    let mut floor_spans: Vec<super::decompose::Span> = Vec::new();
+    // Whether any unit produced a real decision. An argv of nothing but
+    // allowlisted env prefixes (`FOO=bar` alone) must not fall through to
+    // the initial `:allow`.
+    let mut any_decisive_unit = false;
 
     // Outer command name for embedded-substitution origin annotations.
     // None when the outer command's first word is itself dynamic (e.g.
@@ -169,9 +193,20 @@ fn eval_units<F: EvalFold>(
     for unit in &units {
         let unit_span = unit.span();
         let result = match unit {
-            EvalUnit::SimpleCommand { command, args, .. } => {
-                evaluate_at_depth(command, args, config, &effective_facts, fold, depth)?
-            }
+            EvalUnit::SimpleCommand {
+                command,
+                args,
+                arg_expansions,
+                ..
+            } => evaluate_at_depth(
+                command,
+                args,
+                arg_expansions,
+                config,
+                &effective_facts,
+                fold,
+                depth,
+            )?,
             EvalUnit::EmbeddedCommand { source, span, kind } => {
                 let embedded_result = eval_units(
                     source,
@@ -196,14 +231,55 @@ fn eval_units<F: EvalFold>(
                 let _out = fold.default_ask(reason);
                 EvalResult::new(Decision::Ask, Some(reason.clone()))
             }
+            // A prefix assigning a name in the effective safe-env-vars
+            // set passes through (the command evaluates as if
+            // unprefixed); any other name floors the segment, naming the
+            // variable.
+            EvalUnit::EnvPrefix { name, span } => {
+                if config.security.is_safe_env_var(name) {
+                    continue;
+                }
+                let reason = format!(
+                    "environment prefix `{}` is not in (safe-env-vars …)",
+                    escape_for_reason(name)
+                );
+                floor_spans.push(*span);
+                let _out = fold.default_ask(&reason);
+                EvalResult::new(Decision::Ask, Some(reason))
+            }
+            // A redirect to a non-standard file target is not silently
+            // ignored: it floors the segment, naming the operator and
+            // target. Plumbing (`/dev/null`, fd dups) never reaches here.
+            EvalUnit::RedirectTarget {
+                operator,
+                target,
+                span,
+            } => {
+                let reason = format!(
+                    "command carries a redirect (`{operator} {}`)",
+                    escape_for_reason(target)
+                );
+                floor_spans.push(*span);
+                let _out = fold.default_ask(&reason);
+                EvalResult::new(Decision::Ask, Some(reason))
+            }
         };
+        any_decisive_unit = true;
 
         // SimpleCommand and DynamicCommand carry their own segment entries
         // (one per unit). EmbeddedCommand units are carriers — they only
         // relay their child segments, otherwise the inner range would appear
         // twice (once as the embed unit, once as the child SimpleCommand).
+        // Floor units (EnvPrefix, RedirectTarget) share the enclosing
+        // command's span; they raise that segment after the loop instead
+        // of duplicating its range.
         if let Some(base) = segments {
-            if !matches!(unit, EvalUnit::EmbeddedCommand { .. }) {
+            if !matches!(
+                unit,
+                EvalUnit::EmbeddedCommand { .. }
+                    | EvalUnit::EnvPrefix { .. }
+                    | EvalUnit::RedirectTarget { .. }
+            ) {
                 segment_decisions.push(SegmentDecision {
                     start: base + unit_span.0,
                     end: base + unit_span.1,
@@ -218,6 +294,29 @@ fn eval_units<F: EvalFold>(
         if result.decision >= aggregate_decision {
             aggregate_decision = result.decision;
             aggregate_reason = result.reason;
+        }
+    }
+
+    // No unit produced a decision (e.g. nothing but allowlisted env
+    // prefixes): mirror the empty-units case rather than falling through
+    // to the initial `:allow`.
+    if !any_decisive_unit && aggregate_decision == Decision::Allow && aggregate_reason.is_none() {
+        let reason = "empty command".to_string();
+        let _out = fold.default_ask(&reason);
+        aggregate_decision = Decision::Ask;
+        aggregate_reason = Some(reason);
+    }
+
+    // Structural floors raise the segments they overlap so display
+    // colouring matches the aggregate.
+    if let Some(base) = segments {
+        for span in &floor_spans {
+            let (fs, fe) = (base + span.0, base + span.1);
+            for seg in &mut segment_decisions {
+                if seg.start < fe && fs < seg.end && seg.decision < Decision::Ask {
+                    seg.decision = Decision::Ask;
+                }
+            }
         }
     }
 
@@ -320,12 +419,14 @@ pub(crate) fn evaluate_authorised_string<F: EvalFold>(
 ///   `(parameter "c" #cmd)`).
 pub(crate) fn evaluate_authorised_tokens<F: EvalFold>(
     tokens: &[String],
+    expansions: &[super::decompose::Expansion],
     config: Option<&Config>,
     facts: &ContextFacts,
     fold: &mut F,
     depth: usize,
     via_program: Option<&str>,
 ) -> Result<EvalResult, EvalError> {
+    debug_assert_eq!(tokens.len(), expansions.len());
     if depth >= DEFAULT_RECURSION_LIMIT {
         return Ok(EvalResult::new(
             Decision::Ask,
@@ -345,8 +446,19 @@ pub(crate) fn evaluate_authorised_tokens<F: EvalFold>(
     if tokens.len() == 1 {
         // One token = one outer-shell boundary. No structural
         // information to preserve; re-parsing the lone element as a
-        // command line is correct (it's how the user authored it).
-        return evaluate_authorised_string(&tokens[0], config, facts, fold, depth, via_program);
+        // command line is correct (it's how the user authored it) —
+        // unless the token is expansion-bearing, in which case its
+        // flattened text is unfaithful to what will run and cannot
+        // prove an allow.
+        let result =
+            evaluate_authorised_string(&tokens[0], config, facts, fold, depth, via_program)?;
+        return Ok(match &expansions[0] {
+            Some(display) if result.decision == Decision::Allow => EvalResult::new(
+                Decision::Ask,
+                Some(unresolved_expansion_reason(std::slice::from_ref(display))),
+            ),
+            _ => result,
+        });
     }
 
     let command = &tokens[0];
@@ -355,6 +467,17 @@ pub(crate) fn evaluate_authorised_tokens<F: EvalFold>(
             Decision::Ask,
             Some(format!(
                 "dynamic or malformed inner command name: {command:?}"
+            )),
+        ));
+    }
+    // An expansion-bearing command name flattens to a plausible-looking
+    // literal (`$X` → `X`); the runtime command is unknown.
+    if let Some(display) = &expansions[0] {
+        return Ok(EvalResult::new(
+            Decision::Ask,
+            Some(format!(
+                "dynamic inner command name: {}",
+                escape_for_reason(display)
             )),
         ));
     }
@@ -372,6 +495,7 @@ pub(crate) fn evaluate_authorised_tokens<F: EvalFold>(
     evaluate_at_depth(
         command,
         &tokens[1..],
+        &expansions[1..],
         effective_config,
         &effective_facts,
         fold,
@@ -1449,6 +1573,7 @@ mod tests {
             .unwrap();
             let from_tokens = evaluate_authorised_tokens(
                 &tokens,
+                &vec![None; tokens.len()],
                 Some(&config),
                 &empty_facts(),
                 &mut fold_t,

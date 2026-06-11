@@ -133,3 +133,125 @@ proptest! {
         );
     }
 }
+
+/// Every word reachable in any parse of any input answers
+/// `is_expansion_bearing` without panicking (totality), and a word built
+/// solely from single-quoted text is never expansion-bearing — quoting
+/// suppresses every expansion the predicate detects.
+fn walk_words(cmd: &Command, f: &mut impl FnMut(&crate::ast::Word)) {
+    fn walk_sc(sc: &SimpleCommand, f: &mut impl FnMut(&crate::ast::Word)) {
+        for w in &sc.words {
+            f(w);
+        }
+        for a in &sc.assignments {
+            f(&a.value);
+        }
+        for r in &sc.redirections {
+            if let crate::ast::RedirectionTarget::File(w) = &r.target {
+                f(w);
+            }
+        }
+    }
+    if let Command::Simple(sc) = cmd {
+        walk_sc(sc, f);
+    }
+    for child in cmd.children() {
+        walk_words(child, f);
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 256, max_shrink_iters: 50, .. ProptestConfig::default() })]
+
+    #[test]
+    fn prop_is_expansion_bearing_total(input in any::<String>()) {
+        let result = crate::parse(&input);
+        walk_words(&result.command, &mut |w| {
+            let _ = w.is_expansion_bearing();
+        });
+    }
+
+    /// A single-quoted word is never expansion-bearing, whatever it
+    /// contains — `rm '<anything>'` names one literal file.
+    #[test]
+    fn prop_single_quoted_word_never_expansion_bearing(
+        body in "[a-zA-Z0-9 ${}*?\\[\\]~,()-]{0,20}",
+    ) {
+        let input = format!("rm '{body}'");
+        let result = crate::parse(&input);
+        prop_assert!(!result.has_errors(), "unexpected parse error for {input:?}");
+        walk_words(&result.command, &mut |w| {
+            assert!(
+                !w.is_expansion_bearing(),
+                "single-quoted arg flagged for input {input:?}: {w:?}"
+            );
+        });
+    }
+
+    /// Plain identifier-ish literals are never expansion-bearing.
+    #[test]
+    fn prop_plain_literal_never_expansion_bearing(
+        body in "[a-zA-Z0-9_./:-]{1,20}",
+    ) {
+        let input = format!("rm {body}");
+        let result = crate::parse(&input);
+        walk_words(&result.command, &mut |w| {
+            assert!(
+                !w.is_expansion_bearing(),
+                "literal arg flagged for input {input:?}: {w:?}"
+            );
+        });
+    }
+}
+
+/// Heredoc-substitution properties: an embedded command reachable via an
+/// unquoted heredoc body is always extracted; a quoted body never yields
+/// substitutions, whatever it contains.
+fn first_heredoc_substitutions(input: &str) -> Option<Vec<crate::ast::WordPart>> {
+    fn walk(cmd: &Command) -> Option<Vec<crate::ast::WordPart>> {
+        if let Command::Simple(sc) = cmd {
+            for r in &sc.redirections {
+                if let crate::ast::RedirectionTarget::Heredoc { substitutions, .. } = &r.target {
+                    return Some(substitutions.clone());
+                }
+            }
+        }
+        cmd.children().iter().find_map(|c| walk(c))
+    }
+    walk(&crate::parse(input).command)
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 256, max_shrink_iters: 50, .. ProptestConfig::default() })]
+
+    #[test]
+    fn prop_unquoted_heredoc_substitution_never_escapes(
+        cmd in "[a-z][a-z0-9 ./-]{0,12}",
+        before in "[a-zA-Z0-9 .]{0,8}",
+        after in "[a-zA-Z0-9 .]{0,8}",
+    ) {
+        let input = format!("cat <<XEOF\n{before}$({cmd}){after}\nXEOF\n");
+        let subs = first_heredoc_substitutions(&input)
+            .expect("heredoc target present");
+        prop_assert!(
+            subs.iter().any(|p| matches!(
+                p,
+                crate::ast::WordPart::CommandSubstitution { source, .. } if source == &cmd
+            )),
+            "embedded command {cmd:?} escaped extraction for {input:?}: {subs:?}"
+        );
+    }
+
+    #[test]
+    fn prop_quoted_heredoc_body_yields_no_substitutions(
+        body in "[a-zA-Z0-9 $()`{}*?~\\\\-]{0,24}",
+    ) {
+        let input = format!("cat <<'XEOF'\n{body}\nXEOF\n");
+        let subs = first_heredoc_substitutions(&input)
+            .expect("heredoc target present");
+        prop_assert!(
+            subs.is_empty(),
+            "quoted body yielded substitutions for {input:?}: {subs:?}"
+        );
+    }
+}

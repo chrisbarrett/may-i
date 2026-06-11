@@ -160,6 +160,9 @@ fn trace_to_layout(
             TraceEntry::EmbeddedCommand { source, decision } => {
                 builder.on_embedded_command(source, *decision);
             }
+            TraceEntry::UnresolvedExpansion { words } => {
+                builder.on_unresolved_expansion(words);
+            }
             TraceEntry::DefaultAsk { .. } => {
                 builder.on_default_ask();
             }
@@ -292,6 +295,17 @@ impl<'a> TraceLayoutBuilder<'a> {
         let label = format!("{} {}", "embedded:".dimmed(), source.italic());
         let label_visible = "embedded: ".len() + source.len();
         let right = colorize_right(&format!("→ {decision_str}"));
+        let mut row = ColRow::new(label, label_visible, right);
+        row.left_align = ColAlign::Right;
+        self.current_rows.push(row);
+        self.first = false;
+    }
+
+    fn on_unresolved_expansion(&mut self, words: &[String]) {
+        let joined = words.join(", ");
+        let label = format!("{} {}", "unresolved expansion:".dimmed(), joined.italic());
+        let label_visible = "unresolved expansion: ".len() + joined.len();
+        let right = colorize_right("→ :ask (floor)");
         let mut row = ColRow::new(label, label_visible, right);
         row.left_align = ColAlign::Right;
         self.current_rows.push(row);

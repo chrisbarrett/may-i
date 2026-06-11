@@ -84,6 +84,20 @@ impl<E: std::fmt::Debug + ToDoc> Expr<E> {
         matches!(self, Expr::Wildcard)
     }
 
+    /// True when this expression matches every possible value — the bare
+    /// wildcard `*`, possibly under a binding. Such an expression constrains
+    /// nothing, so a match against an expansion-bearing word is sound; any
+    /// other shape constrains the value and cannot be proven for a word
+    /// whose runtime value is unknown (see the expansion-bearing-word
+    /// requirement in the security model).
+    pub fn matches_any_value(&self) -> bool {
+        match self {
+            Expr::Wildcard => true,
+            Expr::Bind { expr, .. } => expr.matches_any_value(),
+            _ => false,
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn find_effect(&self, text: &str) -> Option<&E> {
         match self {

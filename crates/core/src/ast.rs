@@ -1289,10 +1289,26 @@ fn collect_parameter_names_in_effect(effect: &Effect, out: &mut Vec<String>) {
 /// Security configuration.
 #[derive(Debug, Clone, Default)]
 pub struct SecurityConfig {
-    /// Environment variables that are safe to log.
+    /// Environment-variable names that may appear in command prefix
+    /// position (`NAME=VALUE cmd`) without flooring the decision.
+    /// Declared by `(safe-env-vars …)` in the primary config.
     pub safe_env_vars: std::collections::HashSet<String>,
-    /// Whether any safe-env-vars entries came from a loaded file.
+    /// `(safe-env-vars …)` entries contributed by `(load …)`-included or
+    /// repo-local files. Subject to the `:safe-env-vars` trust scope: the
+    /// loader clears this set when the scope is unapproved, so entries
+    /// present here have passed trust.
+    pub loaded_safe_env_vars: std::collections::HashSet<String>,
+    /// Whether any safe-env-vars entries came from a loaded file (set at
+    /// parse time, before trust filtering — drives trust hashing).
     pub has_loaded_env_vars: bool,
+}
+
+impl SecurityConfig {
+    /// Whether `name` is in the effective safe-env-vars set (primary
+    /// entries plus trust-approved loaded entries).
+    pub fn is_safe_env_var(&self, name: &str) -> bool {
+        self.safe_env_vars.contains(name) || self.loaded_safe_env_vars.contains(name)
+    }
 }
 
 /// An embedded check for config validation.

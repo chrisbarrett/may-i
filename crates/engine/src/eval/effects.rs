@@ -31,12 +31,14 @@ fn eval_body_with_captures<F: EvalFold>(
     let derived = EvalContext {
         command: ctx.command,
         args: ctx.args,
+        arg_expansions: ctx.arg_expansions.clone(),
         facts: &merged,
         bindings: ctx.bindings.clone(),
         recursion_depth: ctx.recursion_depth,
         recursion_limit: ctx.recursion_limit,
         parser: ctx.parser.clone(),
         parser_bindings: ctx.parser_bindings.clone(),
+        unresolved: ctx.unresolved.clone(),
         config: ctx.config,
     };
     evaluate_effect_fold(fold, body, &derived, rules)
@@ -296,22 +298,39 @@ fn recurse_into_bound_command<F: EvalFold>(
     let _ = rules;
     fold.begin_recursive_eval();
     let eval_result = match value {
-        super::bindings::BindingValue::Token(s) => super::command::evaluate_authorised_string(
-            s,
-            ctx.config,
-            ctx.facts,
-            fold,
-            ctx.recursion_depth + 1,
-            Some(ctx.command),
-        )?,
-        super::bindings::BindingValue::Tokens(v) => super::command::evaluate_authorised_tokens(
-            v,
-            ctx.config,
-            ctx.facts,
-            fold,
-            ctx.recursion_depth + 1,
-            Some(ctx.command),
-        )?,
+        super::bindings::BindingValue::Token(t) => {
+            // A string binding re-parses as a command line. When the
+            // captured token was expansion-bearing, that text is
+            // unfaithful to what will run — record it so an inner
+            // `:allow` cannot stand. (The token-list path below threads
+            // per-token provenance into the inner evaluation instead.)
+            if let Some(display) = &t.expansion {
+                ctx.record_unresolved(display);
+            }
+            super::command::evaluate_authorised_string(
+                &t.text,
+                ctx.config,
+                ctx.facts,
+                fold,
+                ctx.recursion_depth + 1,
+                Some(ctx.command),
+            )?
+        }
+        super::bindings::BindingValue::Tokens(v) => {
+            let (texts, expansions): (Vec<String>, Vec<super::decompose::Expansion>) = v
+                .iter()
+                .map(|t| (t.text.clone(), t.expansion.clone()))
+                .unzip();
+            super::command::evaluate_authorised_tokens(
+                &texts,
+                &expansions,
+                ctx.config,
+                ctx.facts,
+                fold,
+                ctx.recursion_depth + 1,
+                Some(ctx.command),
+            )?
+        }
         super::bindings::BindingValue::Unbound => {
             // Caller checks `is_empty()` before dispatching; reaching
             // this arm means the surrounding contract is broken.
@@ -343,31 +362,42 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
             patterns,
             continuation,
         } => {
-            let pos_args: Vec<&str> = super::entry::parser_positional_args(outer_args, &ctx.parser);
+            let outer_exp = ctx.expansions_for_prefix(outer_args.len());
+            let pos_idx = super::entry::parser_positional_indices(outer_args, &ctx.parser);
+            let pos_args: Vec<&str> = pos_idx.iter().map(|&i| outer_args[i].as_str()).collect();
+            let pos_exp: Vec<&super::decompose::Expansion> =
+                pos_idx.iter().map(|&i| &outer_exp[i]).collect();
 
-            let (pat_matched, consumed, bound_facts) =
-                match_positional_patterns(&pos_args, patterns);
+            let m = match_positional_patterns(&pos_args, &pos_exp, patterns);
+            let (pat_matched, consumed, bound_facts) = (m.matched, m.consumed, m.facts);
             let matched =
                 pat_matched && (*mode == MatchMode::Positional || consumed == pos_args.len());
+            if matched {
+                for w in &m.unresolved {
+                    ctx.record_unresolved(w);
+                }
+            }
             let elements = build_positional_element_details(&pos_args, patterns, matched, consumed);
             if matched {
                 let effective_continuation = continuation
                     .as_deref()
                     .or_else(|| resolve_trailing_cond_effect(patterns, &pos_args, consumed));
                 if let Some(cont) = effective_continuation {
-                    let remaining_args: Vec<String> = match mode {
-                        MatchMode::Positional => {
-                            super::entry::parser_positional_args(outer_args, &ctx.parser)
-                                .into_iter()
-                                .skip(consumed)
-                                .map(|s| s.to_string())
-                                .collect()
-                        }
+                    let (remaining_args, remaining_exp): (
+                        Vec<String>,
+                        Vec<super::decompose::Expansion>,
+                    ) = match mode {
+                        MatchMode::Positional => pos_idx
+                            .iter()
+                            .skip(consumed)
+                            .map(|&i| (outer_args[i].clone(), outer_exp[i].clone()))
+                            .unzip(),
                         MatchMode::Exact => outer_args
                             .iter()
-                            .filter(|arg| arg.starts_with('-'))
-                            .map(|s| s.to_string())
-                            .collect(),
+                            .zip(outer_exp)
+                            .filter(|(arg, _)| arg.starts_with('-'))
+                            .map(|(arg, exp)| (arg.clone(), exp.clone()))
+                            .unzip(),
                     };
                     let cont_out = evaluate_effect_with_owned_args_fold(
                         fold,
@@ -375,6 +405,7 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                         ctx,
                         rules,
                         remaining_args,
+                        remaining_exp,
                         bound_facts,
                     )?;
                     let detail = ArgMatchDetail::new(ctx.args.to_vec(), true, elements);
@@ -395,10 +426,11 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
             // carrier-tail scope: outer_args excludes the tail, and
             // scan_until_double_dash further trims at `--`.
             let outer = scan_until_double_dash(outer_args);
+            let outer_exp = ctx.expansions_for_prefix(outer.len());
             let mut matched = false;
             let search_tokens: Vec<String> = exprs.iter().map(|e| format!("{e}")).collect();
             for expr in exprs {
-                if outer.iter().any(|arg| expr.is_match(arg)) {
+                if anywhere_match(expr, outer, outer_exp, ctx) {
                     matched = true;
                     break;
                 }
@@ -484,6 +516,10 @@ fn evaluate_tail_authorise_fold<F: EvalFold>(
         }
     };
     let owned: Vec<String> = tail_slice.to_vec();
+    // The tail is a suffix of the full argv, so its expansion slice
+    // aligns by length.
+    let tail_exp: Vec<super::decompose::Expansion> =
+        ctx.arg_expansions[ctx.args.len() - owned.len()..].to_vec();
     // `captured_value` is a trace-surface display string; the
     // recursion itself routes through `evaluate_authorised_tokens`
     // so the tail's token boundaries reach the inner parser intact.
@@ -502,6 +538,7 @@ fn evaluate_tail_authorise_fold<F: EvalFold>(
         fold.begin_recursive_eval();
         let eval_result = super::command::evaluate_authorised_tokens(
             &owned,
+            &tail_exp,
             ctx.config,
             ctx.facts,
             fold,
@@ -531,6 +568,46 @@ fn evaluate_tail_authorise_fold<F: EvalFold>(
 /// tail is exclusively addressable via `(tail (authorise))`.
 pub(super) fn matcher_scope<'a>(ctx: &'a EvalContext) -> &'a [String] {
     super::entry::split_outer_tail(ctx.args, &ctx.parser).outer
+}
+
+/// `(anywhere …)`-style match of one expression over a token slice,
+/// recording an unresolved word when the match is allow-unsound. The
+/// match is provable only when some *literal* token satisfies the
+/// expression; when every satisfying token is expansion-bearing (and the
+/// expression constrains the value), the textual match cannot be proven
+/// for the runtime value, so it is recorded for the rule evaluator's
+/// allow-floor. The match itself still reports true — firing toward
+/// `:ask`/`:deny` errs toward caution.
+pub(super) fn anywhere_match(
+    expr: &may_i_core::pattern::Expr<may_i_core::ast::Effect>,
+    args: &[String],
+    expansions: &[super::decompose::Expansion],
+    ctx: &EvalContext,
+) -> bool {
+    debug_assert_eq!(args.len(), expansions.len());
+    let mut first_unresolved: Option<&str> = None;
+    for (arg, exp) in args.iter().zip(expansions) {
+        if !expr.is_match(arg) {
+            continue;
+        }
+        match exp {
+            None => return true, // provable: a literal token matched
+            Some(display) => {
+                if first_unresolved.is_none() {
+                    first_unresolved = Some(display);
+                }
+            }
+        }
+    }
+    match first_unresolved {
+        Some(display) => {
+            if !expr.matches_any_value() {
+                ctx.record_unresolved(display);
+            }
+            true
+        }
+        None => false,
+    }
 }
 
 /// Slice of `args` up to (but not including) the first literal `--`
@@ -570,13 +647,15 @@ pub(super) fn flag_present_in_for_predicate(
     flag_present_in_with_parser(args, names, parser)
 }
 
-/// Predicate-position view of `find_parameter_value_with_parser`.
+/// Predicate-position view of `find_parameter_value_with_parser`,
+/// pairing the value with its source token's expansion provenance.
 pub(super) fn find_parameter_value_for_predicate(
     args: &[String],
+    expansions: &[super::decompose::Expansion],
     names: &[String],
     parser: &may_i_core::ast::ResolvedParser,
-) -> Option<String> {
-    find_parameter_value_with_parser(args, names, parser)
+) -> Option<(String, super::decompose::Expansion)> {
+    find_parameter_value_with_parser(args, expansions, names, parser)
 }
 
 fn find_flag_position_with_parser(
@@ -613,9 +692,11 @@ fn find_flag_position_with_parser(
 /// the inline form lacks the multi-token shape.
 fn find_parameter_value_with_parser(
     args: &[String],
+    expansions: &[super::decompose::Expansion],
     names: &[String],
     parser: &may_i_core::ast::ResolvedParser,
-) -> Option<String> {
+) -> Option<(String, super::decompose::Expansion)> {
+    debug_assert_eq!(args.len(), expansions.len());
     let tokens = tokens_for_names_with_parser(parser, names);
     let separators: Vec<String> = parser
         .style
@@ -640,17 +721,19 @@ fn find_parameter_value_with_parser(
         for tok in &tokens {
             if arg == tok {
                 if let Some(term) = &many_till_terminator {
-                    return collect_many_till(args, i + 1, term);
+                    return collect_many_till(args, expansions, i + 1, term);
                 }
-                return args.get(i + 1).cloned();
+                return args
+                    .get(i + 1)
+                    .map(|v| (v.clone(), expansions[i + 1].clone()));
             }
             if let Some(value) = equals_value(arg, tok) {
-                return Some(value.to_string());
+                return Some((value.to_string(), expansions[i].clone()));
             }
             for sep in &separators {
                 let prefix = format!("{tok}{sep}");
                 if let Some(rest) = arg.strip_prefix(&prefix) {
-                    return Some(rest.to_string());
+                    return Some((rest.to_string(), expansions[i].clone()));
                 }
             }
         }
@@ -668,14 +751,19 @@ fn find_parameter_value_with_parser(
 /// floors the rule body's decision to `:ask` via the existing combiner.
 fn collect_many_till(
     args: &[String],
+    expansions: &[super::decompose::Expansion],
     start: usize,
     terminator: &may_i_core::pattern::Expr<may_i_core::ast::Effect>,
-) -> Option<String> {
+) -> Option<(String, super::decompose::Expansion)> {
     let mut captured: Vec<String> = Vec::new();
+    let mut expansion: super::decompose::Expansion = None;
     let mut i = start;
     while i < args.len() {
         if terminator.is_match(&args[i]) {
-            return Some(captured.join(" "));
+            return Some((captured.join(" "), expansion));
+        }
+        if expansion.is_none() {
+            expansion = expansions[i].clone();
         }
         captured.push(args[i].clone());
         i += 1;
@@ -710,10 +798,17 @@ fn evaluate_parameter_fold<F: EvalFold>(
             may_i_core::ast::Capture::ManyTill { terminator } => Some(terminator.clone()),
             _ => None,
         });
+    let outer_exp = ctx.expansions_for_prefix(outer_args.len());
     if matches!(form, ParameterForm::Authorise)
         && let Some(terminator) = many_till
     {
-        let values = find_many_till_values_with_parser(outer_args, names, &ctx.parser, &terminator);
+        let values = find_many_till_values_with_parser(
+            outer_args,
+            outer_exp,
+            names,
+            &ctx.parser,
+            &terminator,
+        );
         return evaluate_multi_occurrence_authorise(
             fold,
             pattern,
@@ -724,13 +819,32 @@ fn evaluate_parameter_fold<F: EvalFold>(
         );
     }
 
-    let value = find_parameter_value_with_parser(outer_args, names, &ctx.parser);
-    let matched = value.is_some() && parameter_form_matches(form, value.as_deref().unwrap_or(""));
-    if let Some(value) = value
+    let captured = find_parameter_value_with_parser(outer_args, outer_exp, names, &ctx.parser);
+    let matched = match &captured {
+        Some((value, expansion)) => {
+            let m = parameter_form_matches(form, value);
+            if m && let Some(display) = expansion
+                && let ParameterForm::Match(expr) = form
+                && !expr.matches_any_value()
+            {
+                // The value's runtime form is unknown; the textual match
+                // cannot prove the constraint toward `:allow`.
+                ctx.record_unresolved(display);
+            }
+            m
+        }
+        None => false,
+    };
+    if let Some((value, expansion)) = captured
         && let ParameterForm::Authorise = form
     {
         // (parameter X (authorise)) single-token capture — recurse with the
-        // value parsed as a command line.
+        // value parsed as a command line. An expansion-bearing value
+        // re-parses as unfaithful text: record it so an inner `:allow`
+        // cannot stand.
+        if let Some(display) = &expansion {
+            ctx.record_unresolved(display);
+        }
         let _ = search_tokens;
         return recurse_into_inner_command(fold, pattern, &value, ctx, rules);
     }
@@ -797,11 +911,18 @@ fn recurse_into_inner_command<F: EvalFold>(
 fn evaluate_multi_occurrence_authorise<F: EvalFold>(
     fold: &mut F,
     pattern: &ArgPattern,
-    values: &[String],
+    values: &[(String, super::decompose::Expansion)],
     ctx: &EvalContext,
     rules: &[Rule],
     search_tokens: Vec<String>,
 ) -> Result<F::EffectOut, EvalError> {
+    // Any expansion-bearing occurrence re-parses as unfaithful text:
+    // record it so an inner `:allow` cannot stand.
+    for (_, expansion) in values {
+        if let Some(display) = expansion {
+            ctx.record_unresolved(display);
+        }
+    }
     if values.is_empty() {
         let detail = ArgMatchDetail {
             search_tokens,
@@ -813,12 +934,12 @@ fn evaluate_multi_occurrence_authorise<F: EvalFold>(
         return Ok(fold.effect_arg_match(pattern, ctx.args, false, detail));
     }
     if values.len() == 1 {
-        return recurse_into_inner_command(fold, pattern, &values[0], ctx, rules);
+        return recurse_into_inner_command(fold, pattern, &values[0].0, ctx, rules);
     }
 
     let mut winner_idx = 0;
     let mut winner_decision: Option<Decision> = None;
-    for (i, value) in values.iter().enumerate() {
+    for (i, (value, _)) in values.iter().enumerate() {
         let mut pure = PureFold;
         let result = recurse_into_inner_command(&mut pure, pattern, value, ctx, rules)?;
         if let EffectResult::Decision(decision, _) = result {
@@ -832,7 +953,7 @@ fn evaluate_multi_occurrence_authorise<F: EvalFold>(
             }
         }
     }
-    recurse_into_inner_command(fold, pattern, &values[winner_idx], ctx, rules)
+    recurse_into_inner_command(fold, pattern, &values[winner_idx].0, ctx, rules)
 }
 
 /// Walk the entire arg slice collecting every many-till occurrence's
@@ -842,10 +963,12 @@ fn evaluate_multi_occurrence_authorise<F: EvalFold>(
 /// dropped — the rule cannot match against an unbounded capture.
 fn find_many_till_values_with_parser(
     args: &[String],
+    expansions: &[super::decompose::Expansion],
     names: &[String],
     parser: &may_i_core::ast::ResolvedParser,
     terminator: &may_i_core::pattern::Expr<may_i_core::ast::Effect>,
-) -> Vec<String> {
+) -> Vec<(String, super::decompose::Expansion)> {
+    debug_assert_eq!(args.len(), expansions.len());
     let tokens = tokens_for_names_with_parser(parser, names);
     let separators: Vec<String> = parser
         .style
@@ -871,7 +994,8 @@ fn find_many_till_values_with_parser(
                     j += 1;
                 }
                 if j < args.len() {
-                    values.push(args[start..j].join(" "));
+                    let expansion = expansions[start..j].iter().find_map(|e| e.clone());
+                    values.push((args[start..j].join(" "), expansion));
                     i = j + 1;
                     consumed = true;
                 } else {
@@ -880,7 +1004,7 @@ fn find_many_till_values_with_parser(
                 break;
             }
             if let Some(value) = equals_value(arg, tok) {
-                values.push(value.to_string());
+                values.push((value.to_string(), expansions[i].clone()));
                 i += 1;
                 consumed = true;
                 break;
@@ -889,7 +1013,7 @@ fn find_many_till_values_with_parser(
             for sep in &separators {
                 let prefix = format!("{tok}{sep}");
                 if let Some(rest) = arg.strip_prefix(&prefix) {
-                    values.push(rest.to_string());
+                    values.push((rest.to_string(), expansions[i].clone()));
                     sep_inline = true;
                     break;
                 }
@@ -923,19 +1047,23 @@ fn evaluate_effect_with_owned_args_fold<F: EvalFold>(
     ctx: &EvalContext,
     rules: &[Rule],
     owned_args: Vec<String>,
+    owned_expansions: Vec<super::decompose::Expansion>,
     bound_facts: ContextFacts,
 ) -> Result<F::EffectOut, EvalError> {
     let merged_facts = ctx.facts.merge(&bound_facts);
-    let (_residual, inner_parser_bindings) = super::bindings::parse_argv(&ctx.parser, &owned_args);
+    let (_residual, inner_parser_bindings) =
+        super::bindings::parse_argv(&ctx.parser, &owned_args, &owned_expansions);
     let inner_ctx = EvalContext {
         command: ctx.command,
         args: &owned_args,
+        arg_expansions: owned_expansions,
         facts: &merged_facts,
         bindings: ctx.bindings.clone(),
         recursion_depth: ctx.recursion_depth,
         recursion_limit: ctx.recursion_limit,
         parser: ctx.parser.clone(),
         parser_bindings: inner_parser_bindings,
+        unresolved: ctx.unresolved.clone(),
         config: ctx.config,
     };
     evaluate_effect_fold(fold, effect, &inner_ctx, rules)

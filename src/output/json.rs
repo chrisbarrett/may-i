@@ -69,6 +69,10 @@ pub fn trace_to_json(entries: &[TraceEntry]) -> Vec<serde_json::Value> {
                 "source": source,
                 "decision": decision.to_string(),
             }),
+            TraceEntry::UnresolvedExpansion { words } => serde_json::json!({
+                "type": "unresolved_expansion",
+                "words": words,
+            }),
             TraceEntry::DefaultAsk { reason } => serde_json::json!({
                 "type": "default_ask",
                 "reason": reason,

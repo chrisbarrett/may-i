@@ -1,6 +1,6 @@
 ---
 source: crates/shell-parser/tests/parser_snapshots.rs
-assertion_line: 454
+assertion_line: 452
 expression: "parse(\"while read line; do echo $line; done <<EOF\\na\\nb\\nEOF\")"
 ---
 Redirected {
@@ -55,9 +55,11 @@ Redirected {
         Redirection {
             fd: None,
             kind: Heredoc,
-            target: Heredoc(
-                "a\nb\n",
-            ),
+            target: Heredoc {
+                body: "a\nb\n",
+                quoted: false,
+                substitutions: [],
+            },
         },
     ],
 }

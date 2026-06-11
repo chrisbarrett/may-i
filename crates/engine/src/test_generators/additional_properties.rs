@@ -44,7 +44,7 @@ proptest! {
         args in prop::collection::vec("[a-z]{1,5}", 0..8),
     ) {
         let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        let (matched, consumed, _facts) = crate::eval::match_positional_patterns(&arg_refs, &patterns);
+        let (matched, consumed, _facts) = crate::eval::positional::match_pos_lit(&arg_refs, &patterns);
         let unconsumed = args.len() - consumed;
         prop_assert_eq!(
             consumed + unconsumed, args.len(),
@@ -82,8 +82,8 @@ proptest! {
         args in prop::collection::vec("[a-z]{1,5}", 0..8),
     ) {
         let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        let (m1, c1, _f1) = crate::eval::match_positional_patterns(&arg_refs, &patterns);
-        let (m2, c2, _f2) = crate::eval::match_positional_patterns(&arg_refs, &patterns);
+        let (m1, c1, _f1) = crate::eval::positional::match_pos_lit(&arg_refs, &patterns);
+        let (m2, c2, _f2) = crate::eval::positional::match_pos_lit(&arg_refs, &patterns);
         prop_assert_eq!(m1, m2, "matching should be deterministic");
         prop_assert_eq!(c1, c2, "consumed count should be deterministic");
     }

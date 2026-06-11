@@ -229,5 +229,17 @@ pub enum RedirectionKind {
 pub enum RedirectionTarget {
     File(Word),
     Fd(i32),
-    Heredoc(String),
+    Heredoc {
+        body: String,
+        /// Whether the opening delimiter was quoted (`<<'EOF'`, `<<"EOF"`,
+        /// `<<\EOF`). A quoted delimiter suppresses every expansion in the
+        /// body; an unquoted one (`<<EOF`) leaves parameter, command, and
+        /// arithmetic expansion live.
+        quoted: bool,
+        /// Embedded command/arithmetic substitutions found in an unquoted
+        /// body, with inner-spans into the original input. Always empty for
+        /// a quoted heredoc. Process substitution is excluded — bash does
+        /// not perform it in heredoc bodies.
+        substitutions: Vec<WordPart>,
+    },
 }

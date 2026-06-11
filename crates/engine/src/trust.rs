@@ -363,10 +363,21 @@ pub fn compute_trust_views(config: &Config) -> Vec<TrustViewMeta> {
         }
     }
 
-    // Handle safe-env-vars trust scope.
-    if config.security.has_loaded_env_vars && !config.security.safe_env_vars.is_empty() {
-        let mut sorted_vars: Vec<&String> = config.security.safe_env_vars.iter().collect();
+    // Handle safe-env-vars trust scope. The hashed set is the union of
+    // primary and loaded entries (preserving the pre-split canonical
+    // form, where both parsed into one set).
+    if config.security.has_loaded_env_vars
+        && !(config.security.safe_env_vars.is_empty()
+            && config.security.loaded_safe_env_vars.is_empty())
+    {
+        let mut sorted_vars: Vec<&String> = config
+            .security
+            .safe_env_vars
+            .iter()
+            .chain(config.security.loaded_safe_env_vars.iter())
+            .collect();
         sorted_vars.sort();
+        sorted_vars.dedup();
         let canonical_form = sorted_vars
             .iter()
             .map(|v| format!("\"{}\"", v))

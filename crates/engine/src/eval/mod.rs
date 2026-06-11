@@ -27,8 +27,6 @@ pub use entry::{Evaluator, evaluate, evaluate_with_fold};
 #[cfg(test)]
 pub(crate) use effects::{evaluate_effect, evaluate_effect_fold};
 #[cfg(test)]
-pub(crate) use positional::match_positional_patterns;
-#[cfg(test)]
 pub(crate) use predicates::evaluate_predicate;
 
 #[cfg(test)]

@@ -1,7 +1,7 @@
 // Config parser for the unified DSL.
 
 use may_i_core::Span;
-use may_i_core::ast::{AuditConfig, AuditThreshold, Check, Config, Provenance, SecurityConfig};
+use may_i_core::ast::{AuditConfig, AuditThreshold, Check, Config, Provenance};
 use may_i_core::{ContextFacts, Decision, Keyword};
 use may_i_sexpr::{RawError, Sexpr};
 
@@ -63,7 +63,7 @@ pub fn parse_config_from_sexprs(forms: &[Sexpr]) -> Result<Config, RawError> {
                 config.defines.push(define);
             }
             "safe-env-vars" => {
-                parse_safe_env_vars(&list[1..], &mut config.security, form.span())?;
+                parse_safe_env_vars(&list[1..], &mut config.security.safe_env_vars, form.span())?;
             }
             "check" => {
                 let checks = parse_check(&list[1..], form.span())?;
@@ -173,9 +173,19 @@ pub(crate) fn parse_config_from_tagged_sexprs(
                 config.defines.push(define);
             }
             "safe-env-vars" => {
-                parse_safe_env_vars(&list[1..], &mut config.security, form.span())?;
                 if provenance.is_loaded() {
+                    parse_safe_env_vars(
+                        &list[1..],
+                        &mut config.security.loaded_safe_env_vars,
+                        form.span(),
+                    )?;
                     config.security.has_loaded_env_vars = true;
+                } else {
+                    parse_safe_env_vars(
+                        &list[1..],
+                        &mut config.security.safe_env_vars,
+                        form.span(),
+                    )?;
                 }
             }
             "check" => {
@@ -308,17 +318,19 @@ fn parse_audit_form(list: &[Sexpr], _span: Span) -> Result<AuditConfig, RawError
     Ok(audit)
 }
 
-/// Parse safe-env-vars form: (safe-env-vars "VAR1" "VAR2" ...)
+/// Parse safe-env-vars form: (safe-env-vars "VAR1" "VAR2" ...).
+/// Entries land in `target` — the primary set, or the trust-scoped
+/// loaded set when the form comes from a loaded file.
 fn parse_safe_env_vars(
     args: &[Sexpr],
-    security: &mut SecurityConfig,
+    target: &mut std::collections::HashSet<String>,
     _span: Span,
 ) -> Result<(), RawError> {
     for item in args {
         let s = item
             .as_atom_or_str()
             .ok_or_else(|| RawError::new("safe-env-vars entry must be a string", item.span()))?;
-        security.safe_env_vars.insert(s.to_string());
+        target.insert(s.to_string());
     }
     Ok(())
 }
