@@ -44,7 +44,14 @@ decomposing the AST into evaluation units, and running rules over each
 - Substitution termination reported by the parser; the engine stops doing
   byte-offset diagnostic correlation.
 - One parser-aware positional/tail tokenisation implementation.
-- No user-facing behaviour change; all existing tests stay green.
+- Groups 1 (parser termination) and 2 (tokeniser) are behaviour-neutral. The
+  pipeline collapse (group 3) is *unify-and-improve*: the authorise recursion
+  path gains the richness the top-level path already had (embedded-reason
+  annotation, `fold.embedded_command`/`fold.default_ask` events, populated
+  `parse_diagnostics`, and uniform depth threading). Decisions are unchanged;
+  trace/audit output for an `(authorise …)` carrier over a substitution or
+  dynamic inner becomes richer and any affected snapshot/audit tests are
+  re-blessed.
 
 **Non-Goals:**
 
@@ -59,28 +66,30 @@ decomposing the AST into evaluation units, and running rules over each
 
 ### D1 — One `eval_units` core; segments are an injected optional sink
 
-Extract a private core in `command.rs`:
+Extract a private core in `command.rs` that parses and decomposes `input`
+itself (so embedded recursion can re-enter it directly):
 
 ```rust
 fn eval_units<F: EvalFold>(
-    units: &[EvalUnit],
-    diagnostics: &[ParseDiagnostic],
     input: &str,
     config: &Config,
     facts: &ContextFacts,
     fold: &mut F,
     depth: usize,
     via: Option<&str>,
-    segments: Option<SegmentSink>,
+    segments: Option<usize>,
 ) -> Result<EvalResult, EvalError>
 ```
 
-It owns the unit loop, the strictest-wins lattice, embedded-reason annotation,
-and the parse-error floor (aggregate always; per-segment only when `segments`
-is `Some`). Embedded recursion re-enters `eval_units` with `via = None` and the
-sink re-based to the substitution offset. `SegmentSink` carries the byte-offset
-base and accumulates `SegmentDecision`s; `None` means "do not collect" (the
-authorise path).
+It owns parse + decompose + the unit loop, the strictest-wins lattice,
+embedded-reason annotation, fold events, and the parse-error floor (aggregate
+always; per-segment only when collecting). Embedded recursion re-enters
+`eval_units` with `via = None` and the offset re-based to the substitution.
+The segment sink is `segments: Option<usize>` — `Some(outer_offset)` collects
+`SegmentDecision`s in outermost coordinates (top-level, for display), `None`
+skips collection (the authorise path, which has no display surface). A dedicated
+`SegmentSink` struct proved unnecessary: the byte-offset base is the only state
+to thread, and the accumulator lives as a local `Vec` in the core.
 
 - `evaluate_command_inner` → `eval_units(.., via = None, segments = Some(sink @ outer_offset))`.
 - `evaluate_authorised_string` → `eval_units(.., via, segments = None)`, keeping
@@ -91,17 +100,21 @@ authorise path).
 decompose→loop skeleton — the part that forced two-call-site edits in
 `harden-shell-parse-fidelity` — duplicated.
 
-### D2 — Uniform depth threading
+### D2 — Uniform depth threading and uniform richness (unify-and-improve)
 
 The core always evaluates a `SimpleCommand` unit via
-`evaluate_at_depth(.., depth)`. Top-level enters at `depth = 0`, so its units
-are evaluated identically to today's `evaluate_with_fold` (which is
-`evaluate_at_depth(.., 0)`). The difference appears only for *deeply embedded*
-substitutions, where the rule-eval depth now matches the recursion depth
-instead of resetting to 0 — feeding the recursion-limit guard and any
-parser-level `(parameter (authorise))` recursion. This is the single
-behavioural reconciliation point and is fenced by the existing
-`recursion_depth_limit` test and the line-continuation span proptest.
+`evaluate_at_depth(.., depth)`, always annotates embedded reasons, always emits
+`fold.embedded_command`/`fold.default_ask` events, and always populates
+`parse_diagnostics`. Top-level enters at `depth = 0`; the authorise path threads
+its `depth`. Versus today this changes the authorise path in four ways — it
+gains annotation, fold events, populated diagnostics, and (for deeply embedded
+substitutions) rule-eval depth that matches recursion depth instead of resetting
+to 0. **Decisions are unchanged**; only trace/audit richness and niche
+substitution reasons change. The rich-vs-lean split that previously justified
+two functions is dissolved: the lean authorise path was an omission, not a
+contract. Fenced by `recursion_depth_limit`, `prop_authorised_matches_top_level`
+(decisions still agree), and the line-continuation span proptest; affected
+audit/trace snapshots are re-blessed.
 
 ### D3 — Parser reports `terminated`; engine reads the flag
 

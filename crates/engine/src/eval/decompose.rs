@@ -1,4 +1,6 @@
-use may_i_shell_parser::{Command, SimpleCommand, SubstitutionForm, extract_simple_commands};
+use may_i_shell_parser::{
+    Command, ParseDiagnostic, SimpleCommand, SubstitutionForm, extract_simple_commands,
+};
 
 /// Byte range in the original input string covered by an `EvalUnit`.
 pub(super) type Span = (usize, usize);
@@ -62,24 +64,33 @@ impl EvalUnit {
 /// - For all word parts across command name and arguments, extract embedded
 ///   commands (substitutions) as `EmbeddedCommand`, with spans located by
 ///   scanning the simple command's source slice in word-part order.
-pub(crate) fn decompose(cmd: &Command, input: &str) -> Vec<EvalUnit> {
+pub(crate) fn decompose(
+    cmd: &Command,
+    input: &str,
+    diagnostics: &[ParseDiagnostic],
+) -> Vec<EvalUnit> {
     let simple_commands = extract_simple_commands(cmd);
     let mut units = Vec::new();
 
     for sc in simple_commands {
-        decompose_simple_command(sc, input, &mut units);
+        decompose_simple_command(sc, input, diagnostics, &mut units);
     }
 
     units
 }
 
-fn decompose_simple_command(sc: &SimpleCommand, _input: &str, units: &mut Vec<EvalUnit>) {
+fn decompose_simple_command(
+    sc: &SimpleCommand,
+    _input: &str,
+    diagnostics: &[ParseDiagnostic],
+    units: &mut Vec<EvalUnit>,
+) {
     let sc_span = (sc.span.start, sc.span.end);
 
     // Check for assignment-only commands (no words)
     if sc.words.is_empty() {
         for assignment in &sc.assignments {
-            push_embedded_units_from_word(&assignment.value, units);
+            push_embedded_units_from_word(&assignment.value, diagnostics, units);
         }
         return;
     }
@@ -105,7 +116,7 @@ fn decompose_simple_command(sc: &SimpleCommand, _input: &str, units: &mut Vec<Ev
     }
 
     for word in &sc.words {
-        push_embedded_units_from_word(word, units);
+        push_embedded_units_from_word(word, diagnostics, units);
     }
 }
 
@@ -113,12 +124,26 @@ fn decompose_simple_command(sc: &SimpleCommand, _input: &str, units: &mut Vec<Ev
 /// each substitution's source-byte span directly from the AST. The parser's
 /// `WordPart` already carries the inner-span the engine needs, so no flat
 /// re-scan over the input is required.
-fn push_embedded_units_from_word(word: &may_i_shell_parser::Word, units: &mut Vec<EvalUnit>) {
-    for (source, ast_span, form) in word.extract_embedded_with_spans() {
+///
+/// A substitution the parser flags as unterminated is skipped: its "source"
+/// is the swallowed tail of the input, not a command, so recursing into it
+/// would fabricate a `No rule for command …` reason. The Error-severity
+/// diagnostic floor owns that outcome instead. Whether a substitution is
+/// terminated is the parser's judgement (`Embedded::terminated`) — the engine
+/// no longer correlates spans against diagnostics.
+fn push_embedded_units_from_word(
+    word: &may_i_shell_parser::Word,
+    diagnostics: &[ParseDiagnostic],
+    units: &mut Vec<EvalUnit>,
+) {
+    for embedded in word.extract_embedded(diagnostics) {
+        if !embedded.terminated {
+            continue;
+        }
         units.push(EvalUnit::EmbeddedCommand {
-            source: source.to_string(),
-            span: (ast_span.start, ast_span.end),
-            kind: kind_from_form(form),
+            source: embedded.source.to_string(),
+            span: (embedded.span.start, embedded.span.end),
+            kind: kind_from_form(embedded.form),
         });
     }
 }
@@ -128,8 +153,8 @@ mod tests {
     use may_i_shell_parser::parse;
 
     fn decompose_input(input: &str) -> Vec<EvalUnit> {
-        let cmd = parse(input).into_command();
-        decompose(&cmd, input)
+        let result = parse(input);
+        decompose(&result.command, input, &result.diagnostics)
     }
 
     #[test]

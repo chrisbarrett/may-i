@@ -131,11 +131,8 @@ pub(crate) fn parse_argv(parser: &ResolvedParser, argv: &[String]) -> (Vec<Strin
     // - `permute`: outer = whole argv; tail = none. Declared
     //   positionals consume from the positional residual; `(rest …)`
     //   collects what's left of the residual.
-    let (outer, tail_slice) = match &parser.flags_mode {
-        FlagsMode::Posix => split_after_flags(argv, parser),
-        FlagsMode::Until(boundary) => split_after_token(argv, boundary),
-        FlagsMode::Permute => (argv, None),
-    };
+    let argv_split = super::entry::split_outer_tail(argv, parser);
+    let (outer, tail_slice) = (argv_split.outer, argv_split.tail);
 
     // Parameter bindings: walk the outer slice (which is everything
     // under `permute` and pre-boundary otherwise) for declared
@@ -454,145 +451,17 @@ fn collect_positional_bindings(
     }
 }
 
-// ── Existing tokenisation logic, lifted into this module to keep the
-// `entry.rs` surface free of `Tail`-shaped helpers. The body is a
-// straight port from `entry::split_outer_tail` and
-// `entry::parser_positional_args`; the latter changes from a
-// slice-borrow return type to owned `String`s. ─────────────────────
-
-fn split_after_flags<'a>(
-    argv: &'a [String],
-    parser: &ResolvedParser,
-) -> (&'a [String], Option<&'a [String]>) {
-    let split_at = first_positional_index(argv, parser);
-    (&argv[..split_at], Some(&argv[split_at..]))
-}
-
-fn split_after_token<'a>(
-    argv: &'a [String],
-    boundary: &[String],
-) -> (&'a [String], Option<&'a [String]>) {
-    match argv.iter().position(|a| boundary.iter().any(|b| b == a)) {
-        Some(idx) => (&argv[..idx], Some(&argv[idx + 1..])),
-        None => (argv, None),
-    }
-}
-
-fn first_positional_index(args: &[String], parser: &ResolvedParser) -> usize {
-    let style = &parser.style;
-    let long_prefix = style.long_prefix();
-    let short_prefix = style.short_prefix();
-    let separators = style.separators();
-    let gnu_long_consumes_next =
-        long_prefix == "--" && short_prefix == "-" && separators.iter().any(|s| s == "=");
-
-    let mut i = 0;
-    while i < args.len() {
-        let arg = &args[i];
-        if arg == "--" {
-            return i;
-        }
-        let starts_long = !long_prefix.is_empty() && arg.starts_with(long_prefix);
-        let starts_short =
-            !short_prefix.is_empty() && arg.starts_with(short_prefix) && !starts_long;
-        if starts_long || starts_short {
-            let prefix = if starts_long {
-                long_prefix
-            } else {
-                short_prefix
-            };
-            let name_with_value = &arg[prefix.len()..];
-            let inline_handled = separators
-                .iter()
-                .filter(|s| s.as_str() != " ")
-                .any(|s| name_with_value.contains(s.as_str()));
-            if inline_handled {
-                i += 1;
-                continue;
-            }
-            let is_declared_param = parser.parameter_token_matches(arg);
-            let consumes_next = is_declared_param || (starts_long && gnu_long_consumes_next);
-            if consumes_next && separators.iter().any(|s| s.as_str() == " ") && i + 1 < args.len() {
-                i += 2;
-                continue;
-            }
-            i += 1;
-            continue;
-        }
-        let is_kv = separators.iter().filter(|s| !s.trim().is_empty()).any(|s| {
-            arg.find(s.as_str())
-                .map(|j| j > 0 && j < arg.len() - 1)
-                .unwrap_or(false)
-        });
-        if long_prefix.is_empty() && short_prefix.is_empty() && is_kv {
-            i += 1;
-            continue;
-        }
-        return i;
-    }
-    args.len()
-}
-
-/// Owned analog of `entry::parser_positional_args`. Walks the tokenised
-/// stream and returns the positional residual.
+/// Owned positional residual. Thin clone-adapter over the single
+/// borrowed tokeniser in `entry` — the binding environment stores owned
+/// `String`s in the `Bindings` map, so it cannot hold the borrowed slices
+/// `entry::parser_positional_args` returns. The outer/tail split likewise
+/// goes through `entry::split_outer_tail`; this module keeps no copy of the
+/// style-aware scanning logic.
 fn positional_args_owned(args: &[String], parser: &ResolvedParser) -> Vec<String> {
-    let style = &parser.style;
-    let long_prefix = style.long_prefix();
-    let short_prefix = style.short_prefix();
-    let separators = style.separators();
-    let gnu_long_consumes_next =
-        long_prefix == "--" && short_prefix == "-" && separators.iter().any(|s| s == "=");
-    let mut out = Vec::new();
-    let mut iter = args.iter().enumerate().peekable();
-    let mut past_terminator = false;
-    while let Some((_, arg)) = iter.next() {
-        if past_terminator {
-            out.push(arg.clone());
-            continue;
-        }
-        if arg == "--" {
-            out.push(arg.clone());
-            past_terminator = true;
-            continue;
-        }
-        let starts_long = !long_prefix.is_empty() && arg.starts_with(long_prefix);
-        let starts_short =
-            !short_prefix.is_empty() && arg.starts_with(short_prefix) && !starts_long;
-        if starts_long || starts_short {
-            let prefix = if starts_long {
-                long_prefix
-            } else {
-                short_prefix
-            };
-            let name_with_value = &arg[prefix.len()..];
-            let inline_handled = separators
-                .iter()
-                .filter(|s| s.as_str() != " ")
-                .any(|s| name_with_value.contains(s.as_str()));
-            if inline_handled {
-                continue;
-            }
-            let is_declared_param = parser.parameter_token_matches(arg);
-            let consumes_next = is_declared_param || (starts_long && gnu_long_consumes_next);
-            if consumes_next
-                && separators.iter().any(|s| s.as_str() == " ")
-                && iter.peek().is_some()
-            {
-                iter.next();
-            }
-            continue;
-        }
-        let is_kv = separators.iter().filter(|s| !s.trim().is_empty()).any(|s| {
-            arg.find(s.as_str())
-                .map(|i| i > 0 && i < arg.len() - 1)
-                .unwrap_or(false)
-        });
-        if long_prefix.is_empty() && short_prefix.is_empty() && is_kv {
-            continue;
-        }
-        out.push(arg.clone());
-    }
-    out
+    super::entry::parser_positional_args(args, parser)
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
 }
 
 #[cfg(test)]

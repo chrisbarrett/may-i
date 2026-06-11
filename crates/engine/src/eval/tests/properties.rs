@@ -904,7 +904,7 @@ mod parser_engine_invariants {
         #[test]
         fn prop_embedded_source_matches_span_slice(input in arb_shell_chars()) {
             let parse_result = may_i_shell_parser::parse(&input);
-            let units = decompose(&parse_result.command, &input);
+            let units = decompose(&parse_result.command, &input, &parse_result.diagnostics);
             for unit in &units {
                 if let EvalUnit::EmbeddedCommand { source, span, .. } = unit {
                     let (s, e) = *span;
@@ -924,7 +924,7 @@ mod parser_engine_invariants {
             (input, q_start, q_end) in arb_with_single_quoted_region()
         ) {
             let parse_result = may_i_shell_parser::parse(&input);
-            let units = decompose(&parse_result.command, &input);
+            let units = decompose(&parse_result.command, &input, &parse_result.diagnostics);
             for unit in &units {
                 let (s, e) = match unit {
                     EvalUnit::SimpleCommand { span, .. }
@@ -955,7 +955,7 @@ mod parser_engine_invariants {
         fn prop_recursive_segments_stay_within_parent_span(input in arb_shell_chars()) {
             let result = evaluate_command(&input, &empty_config(), &empty_facts()).unwrap();
             let parse_result = may_i_shell_parser::parse(&input);
-            let units = decompose(&parse_result.command, &input);
+            let units = decompose(&parse_result.command, &input, &parse_result.diagnostics);
             for unit in &units {
                 if let EvalUnit::EmbeddedCommand { span, .. } = unit {
                     let (p_s, p_e) = *span;
@@ -1144,7 +1144,7 @@ mod parser_engine_invariants {
     fn heredoc_body_inviolable_simple() {
         let input = "cat <<'EOF'\nrm -rf /\nEOF\n";
         let pr = may_i_shell_parser::parse(input);
-        let units = decompose(&pr.command, input);
+        let units = decompose(&pr.command, input, &pr.diagnostics);
         for unit in &units {
             if let EvalUnit::SimpleCommand { command, .. } = unit {
                 assert_ne!(
@@ -1164,7 +1164,7 @@ mod parser_engine_invariants {
     fn regression_2026_05_11_proptest_command() {
         let input = "git commit -m \"$(cat <<'EOF'\nFix overlapping segment spans for unclosed `(...)` substitutions.\n\n`prop_top_level_segments_disjoint` proptest now covers this.\nEOF\n)\"";
         let parse_result = may_i_shell_parser::parse(input);
-        let units = decompose(&parse_result.command, input);
+        let units = decompose(&parse_result.command, input, &parse_result.diagnostics);
         for unit in &units {
             if let EvalUnit::SimpleCommand { command, .. } = unit {
                 assert!(

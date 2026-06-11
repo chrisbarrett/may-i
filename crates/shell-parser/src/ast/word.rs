@@ -57,6 +57,48 @@ pub enum SubstitutionForm {
     Process,
 }
 
+/// An embedded substitution extracted from a [`Word`], paired with the
+/// information a downstream evaluator needs to recurse into it.
+///
+/// `terminated` answers the only question the engine actually has — *may I
+/// recurse into this substitution's source?* — so the byte-span ↔ diagnostic
+/// correlation that decides it stays inside this crate, beside the code that
+/// produces the spans. An unterminated `$( … )` / `` ` … ` `` swallows the
+/// rest of the input as its "body"; that text is not a command, and
+/// `terminated` is `false` for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Embedded<'a> {
+    pub source: &'a str,
+    pub span: crate::diagnostic::Span,
+    pub form: SubstitutionForm,
+    pub terminated: bool,
+}
+
+/// Whether the substitution body at `span` is unterminated, judged from the
+/// parser's own diagnostics. The lexer records an unterminated `$( … )` /
+/// `` ` … ` `` as an Error-severity diagnostic whose span runs from the
+/// opening sigil to where parsing ran off the end, so it *covers* the body
+/// span (which starts just after the sigil and shares the same end). The two
+/// kinds are the only ones that suppress recursion; a well-formed substitution
+/// — or a process substitution, which emits no such diagnostic — is
+/// terminated.
+fn span_is_unterminated(
+    span: crate::diagnostic::Span,
+    diagnostics: &[crate::diagnostic::ParseDiagnostic],
+) -> bool {
+    use crate::diagnostic::{ParseDiagnosticKind, Severity};
+    diagnostics.iter().any(|d| {
+        d.severity == Severity::Error
+            && matches!(
+                d.kind,
+                ParseDiagnosticKind::UnterminatedCommandSubstitution
+                    | ParseDiagnosticKind::UnterminatedBacktick
+            )
+            && d.span.start <= span.start
+            && span.end <= d.span.end
+    })
+}
+
 /// Like `collect_embedded_commands` but also returns each substitution's
 /// source-byte span and surface form. Used by the engine's `decompose`
 /// pass to emit `EvalUnit::EmbeddedCommand` units without re-scanning
@@ -183,15 +225,25 @@ impl Word {
         out
     }
 
-    /// Like `extract_embedded_commands` but returns each substitution paired
-    /// with its source-byte `Span` (inner-span semantics: excludes sigils)
-    /// and the surface form (`SubstitutionForm`) it was written in.
-    pub fn extract_embedded_with_spans(
-        &self,
-    ) -> Vec<(&str, crate::diagnostic::Span, SubstitutionForm)> {
-        let mut out = Vec::new();
-        collect_embedded_with_spans(&self.parts, &mut out);
-        out
+    /// Extract each embedded substitution as an [`Embedded`], pairing its
+    /// source, source-byte `Span` (inner-span semantics: excludes sigils),
+    /// surface form, and whether it is terminated. `diagnostics` are the
+    /// parser's own diagnostics for the same input; they are consulted only
+    /// to set `terminated`, never exposed.
+    pub fn extract_embedded<'a>(
+        &'a self,
+        diagnostics: &[crate::diagnostic::ParseDiagnostic],
+    ) -> Vec<Embedded<'a>> {
+        let mut raw = Vec::new();
+        collect_embedded_with_spans(&self.parts, &mut raw);
+        raw.into_iter()
+            .map(|(source, span, form)| Embedded {
+                source,
+                span,
+                form,
+                terminated: !span_is_unterminated(span, diagnostics),
+            })
+            .collect()
     }
 
     /// Returns true if this word contains dynamic shell constructs whose runtime
