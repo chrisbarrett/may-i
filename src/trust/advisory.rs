@@ -194,6 +194,8 @@ fn format_name_list<'a>(names: impl Iterator<Item = &'a str>, total: usize) -> S
 /// - Primary config rules always pass through.
 /// - Loaded rules included only if their hash is `Approved` in the catalog.
 /// - Blocked and pending loaded rules are excluded.
+/// - Loaded `(safe-env-vars …)` entries are cleared unless the
+///   `:safe-env-vars` scope is approved (inert until approved).
 pub(crate) fn filter_trusted_rules(config: &mut may_i_core::ast::Config, catalog: &TrustCatalog) {
     let approved: BTreeSet<&str> = catalog
         .iter()
@@ -208,6 +210,15 @@ pub(crate) fn filter_trusted_rules(config: &mut may_i_core::ast::Config, catalog
         let hash = hash_rule(&form);
         approved.contains(hash.as_str())
     });
+
+    if !config.security.loaded_safe_env_vars.is_empty() {
+        let scope_approved = catalog
+            .iter()
+            .any(|v| v.program() == ":safe-env-vars" && v.state() == TrustState::Approved);
+        if !scope_approved {
+            config.security.loaded_safe_env_vars.clear();
+        }
+    }
 }
 
 #[cfg(test)]
@@ -293,6 +304,52 @@ mod tests {
         let cat = build_catalog(&config, store);
         filter_trusted_rules(&mut config, &cat);
         assert_eq!(config.rules.len(), 1, "approved loaded rule should remain");
+    }
+
+    #[test]
+    fn filter_clears_unapproved_loaded_safe_env_vars() {
+        let mut config = make_config(vec![]);
+        config
+            .security
+            .loaded_safe_env_vars
+            .insert("FOO".to_string());
+        config.security.has_loaded_env_vars = true;
+        let cat = build_catalog(&config, TrustStore::default());
+        filter_trusted_rules(&mut config, &cat);
+        assert!(
+            config.security.loaded_safe_env_vars.is_empty(),
+            "unapproved loaded safe-env-vars must be inert"
+        );
+    }
+
+    #[test]
+    fn filter_keeps_approved_loaded_safe_env_vars() {
+        let mut config = make_config(vec![]);
+        config
+            .security
+            .loaded_safe_env_vars
+            .insert("FOO".to_string());
+        config.security.has_loaded_env_vars = true;
+
+        // Approve the :safe-env-vars scope under its canonical form/hash.
+        let views = may_i_engine::trust::compute_trust_views(&config);
+        let scope = views
+            .iter()
+            .find(|v| v.program == ":safe-env-vars")
+            .expect("safe-env-vars scope view present");
+        let mut store = TrustStore::default();
+        store.approve_rule(
+            scope.hash.clone(),
+            ":safe-env-vars".into(),
+            scope.canonical_form.clone(),
+        );
+
+        let cat = build_catalog(&config, store);
+        filter_trusted_rules(&mut config, &cat);
+        assert!(
+            config.security.loaded_safe_env_vars.contains("FOO"),
+            "approved loaded safe-env-vars participate"
+        );
     }
 
     #[test]

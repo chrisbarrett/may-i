@@ -479,10 +479,20 @@ fn merge_config(target: &mut may_i_core::ast::Config, extra: may_i_core::ast::Co
             target.parsers.push(parser);
         }
     }
-    for var in extra.security.safe_env_vars {
-        target.security.safe_env_vars.insert(var);
+    // A merged file's entries are loaded from the target's perspective,
+    // whichever set they parsed into — they stay under the
+    // `:safe-env-vars` trust scope.
+    let mut any_loaded = extra.security.has_loaded_env_vars;
+    for var in extra
+        .security
+        .safe_env_vars
+        .into_iter()
+        .chain(extra.security.loaded_safe_env_vars)
+    {
+        target.security.loaded_safe_env_vars.insert(var);
+        any_loaded = true;
     }
-    if extra.security.has_loaded_env_vars {
+    if any_loaded {
         target.security.has_loaded_env_vars = true;
     }
 }

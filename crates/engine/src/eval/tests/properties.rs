@@ -929,7 +929,9 @@ mod parser_engine_invariants {
                 let (s, e) = match unit {
                     EvalUnit::SimpleCommand { span, .. }
                     | EvalUnit::EmbeddedCommand { span, .. } => *span,
-                    EvalUnit::DynamicCommand { .. } => continue,
+                    EvalUnit::DynamicCommand { .. }
+                    | EvalUnit::EnvPrefix { .. }
+                    | EvalUnit::RedirectTarget { .. } => continue,
                 };
                 let strictly_inside =
                     s >= q_start && e <= q_end && (s > q_start || e < q_end);
