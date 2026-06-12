@@ -251,7 +251,7 @@ fn compound_command_sub_stays_dynamic() {
                 sc.words[1]
                     .parts
                     .iter()
-                    .any(|p| matches!(p, WordPart::CommandSubstitution { source: _, .. }))
+                    .any(|p| matches!(p, WordPart::CommandSubstitution { .. }))
             );
         }
         _ => panic!("Expected simple command"),
@@ -550,7 +550,7 @@ fn unclosed_arithmetic_at_eof() {
                 sc.words[1]
                     .parts
                     .iter()
-                    .any(|p| matches!(p, WordPart::Arithmetic { source: _, .. }))
+                    .any(|p| matches!(p, WordPart::Arithmetic { .. }))
             );
         }
         _ => panic!("Expected simple command"),
@@ -566,7 +566,7 @@ fn unclosed_command_sub_at_eof() {
                 sc.words[1]
                     .parts
                     .iter()
-                    .any(|p| matches!(p, WordPart::CommandSubstitution { source: _, .. }))
+                    .any(|p| matches!(p, WordPart::CommandSubstitution { .. }))
             );
         }
         _ => panic!("Expected simple command"),
