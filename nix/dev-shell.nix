@@ -2,7 +2,7 @@
 # fuzzing, snapshot, and pre-commit tooling.
 { build, checks }:
 let
-  inherit (build) pkgs craneLib rustToolchain;
+  inherit (build) pkgs craneLib;
 in
 craneLib.devShell {
   inherit checks;
@@ -18,10 +18,5 @@ craneLib.devShell {
 
   shellHook = ''
     prek install
-  ''
-  + pkgs.lib.optionalString pkgs.stdenv.isDarwin ''
-    # Workaround: rust-overlay symlinks rustfmt into a separate derivation
-    # that lacks librustc_driver. Point dyld at the combined toolchain's lib.
-    export DYLD_LIBRARY_PATH="${rustToolchain}/lib"
   '';
 }

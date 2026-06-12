@@ -1,3 +1,4 @@
 [toolchain]
-channel = "nightly"
+# Dated pin so local and CI clippy/rustfmt agree; bump deliberately.
+channel = "nightly-2026-06-12"
 components = ["rustfmt", "clippy", "rust-analyzer", "rust-src", "llvm-tools-preview"]
