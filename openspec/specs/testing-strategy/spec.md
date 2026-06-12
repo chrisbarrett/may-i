@@ -25,20 +25,23 @@ The repository SHALL define four verification tiers, each with a
 specific cadence and scope:
 
 - **pre-commit**: fast, scoped to affected crates. Includes `cargo
-  fmt --check`, affected `cargo build`, affected `cargo clippy`,
-  affected `cargo test`, and OpenSpec validation.
+  fmt --check`, affected `cargo clippy`, affected `cargo test`, and
+  OpenSpec validation. No separate `cargo build` step: clippy runs
+  the same compiler checks, and test forces full codegen.
 - **pre-push**: full-workspace, no instrumentation. Includes
-  `cargo build --workspace`, `cargo clippy --workspace --all-targets
-  -- -D warnings`, `cargo test --workspace`, and `nix build`.
-- **release**: full-workspace with instrumentation and fuzz. Runs
-  only via `scripts/release.sh`. Includes `cargo fmt --check`,
-  `cargo clippy --workspace --all-targets -- -D warnings`,
+  `cargo clippy --workspace --all-targets -- -D warnings` and
+  `cargo test --workspace`.
+- **release**: instrumentation and fuzz on top of CI. Runs only via
+  `scripts/release.sh`. Includes a CI-green gate on HEAD (which
+  proves fmt, clippy, and tests passed in CI for the same commit),
   `cargo tarpaulin` (with `run-types = ["Lib", "Tests", "Doctests"]`),
   `cargo +nightly fuzz run fuzz_evaluator -- -max_total_time=60`, and
   `nix build`.
-- **nightly**: slow, non-blocking. Runs `cargo tarpaulin` and a
-  longer fuzz pass (`-max_total_time=600`) against `main` on a
-  scheduled GitHub Actions workflow.
+- **nightly**: slow, non-blocking. Runs `cargo tarpaulin`, a longer
+  fuzz pass (`-max_total_time=600`), and `nix flake check` (package
+  build, clippy, fmt, nextest, cargo-audit against a freshly updated
+  advisory database) against `main` on a scheduled GitHub Actions
+  workflow.
 
 #### Scenario: Coverage gate runs at release tier only
 

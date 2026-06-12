@@ -8,9 +8,9 @@ bucket: contributor-internals
 
 Contributor-only. Defines the release-time verification gate: a single
 fail-before-mutate driver (`scripts/release.sh`) that runs the heavy
-verification suite (fmt-check, clippy, instrumented test run with coverage
-gate, time-boxed fuzz pass, nix build) before any mutation to the working
-tree, Git history, or remote. Covers preconditions enforced by the driver,
+verification suite (CI-green gate on HEAD, instrumented test run with
+coverage gate, time-boxed fuzz pass, nix build) before any mutation to the
+working tree, Git history, or remote. Covers preconditions enforced by the driver,
 the fuzz-target invocation, the slim release CI workflow, and the
 non-blocking nightly workflow that surfaces slow-burn regressions between
 releases. Companion to `testing-strategy`, which defines the four
@@ -39,10 +39,12 @@ documented or expected path.
 
 ### Requirement: Verification precedes mutation
 
-The release driver SHALL run the full verification suite (formatting
-check, clippy, instrumented test run with coverage gate, time-boxed
+The release driver SHALL run the full verification suite (CI-green
+gate on HEAD, instrumented test run with coverage gate, time-boxed
 fuzz pass, nix build) before performing any mutation to the working
-tree, Git history, or remote.
+tree, Git history, or remote. Formatting and lint checks are not
+re-run locally: the in-sync-with-origin precondition plus the
+CI-green gate prove they already passed in CI for the same commit.
 
 #### Scenario: Verification step fails
 
@@ -115,8 +117,10 @@ in `scripts/release.sh`.
 
 ### Requirement: Nightly workflow exercises slow verification non-blockingly
 
-A scheduled GitHub Actions workflow SHALL run `cargo tarpaulin` and a
-longer fuzz pass (`-max_total_time=600`) against `main` on a nightly
+A scheduled GitHub Actions workflow SHALL run `cargo tarpaulin`, a
+longer fuzz pass (`-max_total_time=600`), and `nix flake check`
+(package build, clippy, fmt, nextest, and cargo-audit against a
+freshly updated advisory database) against `main` on a nightly
 cadence. Failures SHALL NOT block contributor work or PR merges; they
 SHALL be surfaced as workflow-run failures visible in the Actions UI.
 

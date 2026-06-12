@@ -14,15 +14,6 @@ hooks = [
     stages = ["pre-commit"],
   },
   {
-    id = "cargo-build-affected",
-    name = "cargo build (affected)",
-    entry = "env RUSTFLAGS='-D warnings' cargo affected --staged build",
-    language = "system",
-    types = ["rust"],
-    pass_filenames = false,
-    stages = ["pre-commit"],
-  },
-  {
     id = "cargo-clippy-affected",
     name = "cargo clippy (affected)",
     entry = "cargo affected --verbose --staged clippy -- -D warnings",
@@ -59,16 +50,8 @@ hooks = [
     stages = ["pre-commit"],
   },
 
-  # Pre-push hooks (full verification)
-  {
-    id = "cargo-build-full",
-    name = "cargo build (full)",
-    entry = "env RUSTFLAGS='-D warnings' cargo build --workspace",
-    language = "system",
-    types = ["rust"],
-    pass_filenames = false,
-    stages = ["pre-push"],
-  },
+  # Pre-push hooks (full verification). No build hooks: clippy runs the
+  # same compiler checks, and test forces full codegen anyway.
   {
     id = "cargo-clippy-full",
     name = "cargo clippy (full)",
@@ -85,15 +68,6 @@ hooks = [
     language = "system",
     types = ["rust"],
     pass_filenames = false,
-    stages = ["pre-push"],
-  },
-  {
-    id = "nix-build",
-    name = "nix build",
-    entry = "nix build .#default --no-link",
-    language = "system",
-    pass_filenames = false,
-    always_run = true,
     stages = ["pre-push"],
   },
 ]

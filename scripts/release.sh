@@ -43,6 +43,9 @@ require_tooling() {
   if ! command -v cargo-fuzz >/dev/null 2>&1; then
     die "cargo-fuzz not found; install with: cargo install cargo-fuzz (or enter the nix devShell)"
   fi
+  if ! command -v gh >/dev/null 2>&1; then
+    die "gh not found; needed to verify CI status on HEAD"
+  fi
   detect_cargo_nightly
 }
 
@@ -69,12 +72,27 @@ require_tag_unused() {
   fi
 }
 
-verify() {
-  step "cargo fmt --all --check"
-  cargo fmt --all --check
+# HEAD == origin/main is a precondition, so green check runs on HEAD prove
+# fmt, clippy, and tests already passed in CI; no need to re-run them here.
+require_ci_green() {
+  local sha json
+  sha=$(git rev-parse HEAD)
+  json=$(gh api "repos/{owner}/{repo}/commits/$sha/check-runs")
+  if [[ $(jq '.total_count' <<<"$json") -eq 0 ]]; then
+    die "no CI check runs found for $sha; wait for CI to start, then retry"
+  fi
+  local not_green
+  not_green=$(jq -r '.check_runs[]
+    | select(.status != "completed" or (.conclusion | IN("success", "skipped", "neutral") | not))
+    | "  \(.name): \(.status) (\(.conclusion // "pending"))"' <<<"$json")
+  if [[ -n $not_green ]]; then
+    die "CI is not green for HEAD ($sha):"$'\n'"$not_green"
+  fi
+}
 
-  step "cargo clippy --workspace --all-targets -- -D warnings"
-  cargo clippy --workspace --all-targets -- -D warnings
+verify() {
+  step "CI green on HEAD"
+  require_ci_green
 
   step "cargo tarpaulin"
   cargo tarpaulin

@@ -16,9 +16,11 @@ jobs:
         with:
           ref: main
 
+      # Nightly required by #![feature(coverage_attribute)] in crates/core;
+      # rust-toolchain.toml governs the exact channel.
       - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
-          toolchain: "1.93.1"
+          toolchain: nightly
 
       - uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
         with:
@@ -68,3 +70,19 @@ jobs:
           path: |
             fuzz/artifacts/**
             fuzz/corpus/**
+
+  # Runs the flake checks (package build, clippy, fmt, nextest, cargo-audit).
+  # advisory-db is refreshed past the lock so audit sees current advisories.
+  flake:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: main
+
+      - uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3 # v31.10.6
+
+      - name: Refresh advisory database
+        run: nix flake update advisory-db
+
+      - run: nix flake check

@@ -15,15 +15,17 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+      # crates/core uses #![feature(coverage_attribute)], so the build
+      # requires nightly; rust-toolchain.toml governs the exact channel.
       - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
-          toolchain: "1.93.1"
+          toolchain: nightly
           components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
 
       - run: cargo fmt --check
 
-      - run: cargo clippy --workspace -- -D warnings
+      - run: cargo clippy --workspace --all-targets -- -D warnings
 
       - run: cargo test --workspace
