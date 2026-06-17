@@ -49,29 +49,7 @@ impl Lexer {
                     }
                 }
                 Some('`') => {
-                    let open_pos = self.byte_pos;
-                    self.advance();
-                    let body_start = self.byte_pos;
-                    let s = self.read_until_char('`');
-                    let body_end = self.byte_pos;
-                    if self.peek().is_none() {
-                        self.diagnostics.push(ParseDiagnostic {
-                            span: Span {
-                                start: open_pos,
-                                end: self.byte_pos,
-                            },
-                            kind: ParseDiagnosticKind::UnterminatedBacktick,
-                            severity: Severity::Error,
-                        });
-                    }
-                    self.advance(); // skip closing backtick
-                    parts.push(WordPart::Backtick {
-                        source: s,
-                        span: Span {
-                            start: body_start,
-                            end: body_end,
-                        },
-                    });
+                    parts.push(self.read_backtick());
                 }
                 Some('{') => {
                     // Check for brace expansion: {a,b,c}
@@ -235,6 +213,35 @@ impl Lexer {
             }
         }
         parts
+    }
+
+    /// Read a backtick substitution `` `cmd` ``, the opening backtick at the
+    /// cursor. Captures the body's source-byte span and records an
+    /// unterminated-backtick diagnostic when the closing backtick is missing.
+    pub(super) fn read_backtick(&mut self) -> WordPart {
+        let open_pos = self.byte_pos;
+        self.advance(); // skip opening backtick
+        let body_start = self.byte_pos;
+        let s = self.read_until_char('`');
+        let body_end = self.byte_pos;
+        if self.peek().is_none() {
+            self.diagnostics.push(ParseDiagnostic {
+                span: Span {
+                    start: open_pos,
+                    end: self.byte_pos,
+                },
+                kind: ParseDiagnosticKind::UnterminatedBacktick,
+                severity: Severity::Error,
+            });
+        }
+        self.advance(); // skip closing backtick (if present)
+        WordPart::Backtick {
+            source: s,
+            span: Span {
+                start: body_start,
+                end: body_end,
+            },
+        }
     }
 
     pub(super) fn read_dollar(&mut self) -> Option<WordPart> {

@@ -136,7 +136,58 @@ pub(crate) fn decompose(
     // redirect targets so those inner commands are evaluated too.
     push_embedded_units_from_redirect_targets(cmd, diagnostics, &mut units);
 
+    // Assignment values, `for` words, and `case` subject/pattern words are
+    // word positions no other pass owns. A substitution in any of them runs a
+    // command, so walk the whole tree for them too — otherwise the embedded
+    // command would never be gated. (Simple-command words and redirect targets
+    // keep their existing owners and are skipped here to avoid double-counting.)
+    push_embedded_units_from_structural_words(cmd, diagnostics, &mut units);
+
     units
+}
+
+/// Walk the command tree and emit embedded units for the word positions that
+/// neither `decompose_simple_command` (simple-command words + assignment-prefix
+/// values) nor `push_embedded_units_from_redirect_targets` (redirect targets)
+/// reaches:
+///
+/// - `Command::Assignment(a)` — the value of a bare assignment (`z=$(…)`),
+///   which `extract_simple_commands` skips entirely;
+/// - `Command::For { words, .. }` — each iteration word (`for x in $(…)`);
+/// - `Command::Case { word, arms, .. }` — the subject word and every arm
+///   pattern (`case $(…) in $(…)) …`).
+///
+/// Reuses `push_embedded_units_from_word`, so the parser-provided inner-span
+/// flows through unchanged and unterminated substitutions stay suppressed
+/// exactly as on the other paths. Ownership is partitioned: this pass touches
+/// only the positions above, so no substitution is counted twice.
+fn push_embedded_units_from_structural_words(
+    cmd: &Command,
+    diagnostics: &[ParseDiagnostic],
+    units: &mut Vec<EvalUnit>,
+) {
+    match cmd {
+        Command::Assignment(a) => {
+            push_embedded_units_from_word(&a.value, diagnostics, units);
+        }
+        Command::For { words, .. } => {
+            for word in words {
+                push_embedded_units_from_word(word, diagnostics, units);
+            }
+        }
+        Command::Case { word, arms, .. } => {
+            push_embedded_units_from_word(word, diagnostics, units);
+            for arm in arms {
+                for pattern in &arm.patterns {
+                    push_embedded_units_from_word(pattern, diagnostics, units);
+                }
+            }
+        }
+        _ => {}
+    }
+    for child in cmd.children() {
+        push_embedded_units_from_structural_words(child, diagnostics, units);
+    }
 }
 
 /// Walk the command tree and emit embedded units for every redirect-target
@@ -926,6 +977,131 @@ mod tests {
                     if source == "rm -rf /"
             )),
             "expected embedded `rm` from redirect target, got: {units:?}"
+        );
+    }
+
+    #[test]
+    fn decompose_substitution_in_bare_assignment_value() {
+        // `z=$(rm -rf /)` parses as a bare `Command::Assignment`, which
+        // `extract_simple_commands` skips entirely — the embedded `rm` is only
+        // reached by the structural-word walk.
+        let units = decompose_input("z=$(rm -rf /); echo done");
+        assert!(
+            units.iter().any(|u| matches!(
+                u,
+                EvalUnit::EmbeddedCommand { source, kind: Some(EmbeddedKind::Dollar), .. }
+                    if source == "rm -rf /"
+            )),
+            "expected embedded `rm` from bare assignment value, got: {units:?}"
+        );
+    }
+
+    #[test]
+    fn decompose_substitution_in_for_loop_words() {
+        let units = decompose_input("for x in $(rm -rf /); do :; done");
+        assert!(
+            units.iter().any(|u| matches!(
+                u,
+                EvalUnit::EmbeddedCommand { source, kind: Some(EmbeddedKind::Dollar), .. }
+                    if source == "rm -rf /"
+            )),
+            "expected embedded `rm` from for-loop words, got: {units:?}"
+        );
+    }
+
+    #[test]
+    fn decompose_substitution_in_case_subject() {
+        let units = decompose_input("case $(rm -rf /) in *) :;; esac");
+        assert!(
+            units.iter().any(|u| matches!(
+                u,
+                EvalUnit::EmbeddedCommand { source, kind: Some(EmbeddedKind::Dollar), .. }
+                    if source == "rm -rf /"
+            )),
+            "expected embedded `rm` from case subject, got: {units:?}"
+        );
+    }
+
+    #[test]
+    fn decompose_substitution_in_case_pattern() {
+        let units = decompose_input("case $x in $(rm -rf /)) :;; esac");
+        assert!(
+            units.iter().any(|u| matches!(
+                u,
+                EvalUnit::EmbeddedCommand { source, kind: Some(EmbeddedKind::Dollar), .. }
+                    if source == "rm -rf /"
+            )),
+            "expected embedded `rm` from case pattern, got: {units:?}"
+        );
+    }
+
+    #[test]
+    fn decompose_substitution_in_param_expansion_default() {
+        // `${x:-$(rm)}` — bash expands the default value, so the embedded `rm`
+        // runs. The lexer used to flatten the operand to an opaque string.
+        let units = decompose_input("echo ${x:-$(rm -rf /)}");
+        assert!(
+            units.iter().any(|u| matches!(
+                u,
+                EvalUnit::EmbeddedCommand { source, kind: Some(EmbeddedKind::Dollar), .. }
+                    if source == "rm -rf /"
+            )),
+            "expected embedded `rm` from param-expansion default value, got: {units:?}"
+        );
+    }
+
+    #[test]
+    fn decompose_substitution_in_param_expansion_strip_prefix() {
+        let units = decompose_input("echo ${x#$(rm -rf /)}");
+        assert!(
+            units.iter().any(|u| matches!(
+                u,
+                EvalUnit::EmbeddedCommand { source, kind: Some(EmbeddedKind::Dollar), .. }
+                    if source == "rm -rf /"
+            )),
+            "expected embedded `rm` from param-expansion strip-prefix pattern, got: {units:?}"
+        );
+    }
+
+    #[test]
+    fn decompose_substitution_in_param_expansion_replace() {
+        // Both pattern and replacement operands are expanded.
+        let units = decompose_input("echo ${x/$(rm -rf /a)/$(rm -rf /b)}");
+        let sources: Vec<&str> = units
+            .iter()
+            .filter_map(|u| match u {
+                EvalUnit::EmbeddedCommand { source, .. } => Some(source.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            sources.contains(&"rm -rf /a") && sources.contains(&"rm -rf /b"),
+            "expected embedded `rm` from both replace operands, got: {sources:?}"
+        );
+    }
+
+    #[test]
+    fn decompose_backtick_in_param_expansion_default() {
+        let units = decompose_input("echo ${x:-`rm -rf /`}");
+        assert!(
+            units.iter().any(|u| matches!(
+                u,
+                EvalUnit::EmbeddedCommand { source, kind: Some(EmbeddedKind::Backtick), .. }
+                    if source == "rm -rf /"
+            )),
+            "expected embedded backtick `rm` from param-expansion default value, got: {units:?}"
+        );
+    }
+
+    #[test]
+    fn decompose_arithmetic_in_param_expansion_is_not_embedded() {
+        // Arithmetic runs no command, so an operand `$(( … ))` yields no unit.
+        let units = decompose_input("echo ${x:-$((1 + 2))}");
+        assert!(
+            !units
+                .iter()
+                .any(|u| matches!(u, EvalUnit::EmbeddedCommand { .. })),
+            "arithmetic in a param-expansion operand must not be an embedded command: {units:?}"
         );
     }
 

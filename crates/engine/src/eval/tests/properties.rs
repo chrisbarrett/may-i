@@ -1072,6 +1072,137 @@ mod parser_engine_invariants {
                 Ok(())
             })?;
         }
+
+        /// Spec: § Embedded command substitutions are evaluated in every word
+        /// position.
+        ///
+        /// Coverage invariant (design D2): for every command, backtick, and
+        /// process substitution the parser finds anywhere in the input,
+        /// `decompose` produces a matching `EmbeddedCommand` unit — and no
+        /// substitution yields two. Arithmetic `$(( … ))` runs no command and
+        /// produces none. The generator places the substitution in simple-
+        /// command words, bare assignment values, `for` iteration words, and
+        /// `case` subject/pattern positions, so a future word position cannot
+        /// silently reintroduce the gap.
+        #[test]
+        fn prop_every_substitution_yields_embedded_unit(
+            inner in prop::sample::select(vec!["rm -rf /", "date", "ls /a", "true"]),
+            form in 0u8..4,
+            ctx in 0u8..7,
+        ) {
+            // 0 dollar, 1 backtick, 2 process-sub, 3 arithmetic. Process
+            // substitution is only well-formed in command-word position, so
+            // pin its context to the simple-command argument.
+            let ctx = if form == 2 { 0 } else { ctx };
+            let sub = match form {
+                0 => format!("$({inner})"),
+                1 => format!("`{inner}`"),
+                2 => format!("<({inner})"),
+                _ => "$(( 1 + 2 ))".to_string(),
+            };
+            let input = match ctx {
+                0 => format!("echo {sub}"),
+                1 => format!("z={sub}"),
+                2 => format!("for x in {sub}; do :; done"),
+                3 => format!("case {sub} in *) :;; esac"),
+                4 => format!("case $x in {sub}) :;; esac"),
+                // Parameter-expansion operands: default value and strip-prefix
+                // pattern. Bash expands both, so a substitution there runs.
+                5 => format!("echo ${{x:-{sub}}}"),
+                _ => format!("echo ${{x#{sub}}}"),
+            };
+
+            let pr = may_i_shell_parser::parse(&input);
+            prop_assume!(!pr.has_errors());
+
+            let mut words = Vec::new();
+            collect_all_words(&pr.command, &mut words);
+            let mut ast_spans = Vec::new();
+            for w in words {
+                collect_cmd_substitution_spans(w, &mut ast_spans);
+            }
+            ast_spans.sort_unstable();
+
+            let mut embedded_spans: Vec<(usize, usize)> =
+                decompose(&pr.command, &input, &pr.diagnostics)
+                    .iter()
+                    .filter_map(|u| match u {
+                        EvalUnit::EmbeddedCommand { span, .. } => Some(*span),
+                        _ => None,
+                    })
+                    .collect();
+            embedded_spans.sort_unstable();
+
+            // Sorted, NOT deduped: a double-counted substitution would make the
+            // embedded side longer than the AST side and fail here.
+            prop_assert_eq!(
+                &ast_spans, &embedded_spans,
+                "substitution coverage mismatch for input {:?}: \
+                 AST command/backtick/process spans {:?} vs embedded-unit spans {:?}",
+                input, ast_spans, embedded_spans
+            );
+        }
+    }
+
+    /// Collect every word the AST exposes across the whole command tree —
+    /// simple-command words, assignment-prefix and bare-assignment values,
+    /// redirect-target files, `for` iteration words, and `case` subject/pattern
+    /// words. Mirrors the union of every word source `decompose` scans.
+    fn collect_all_words<'a>(
+        cmd: &'a may_i_shell_parser::Command,
+        out: &mut Vec<&'a may_i_shell_parser::Word>,
+    ) {
+        use may_i_shell_parser::{Command, RedirectionTarget};
+        match cmd {
+            Command::Simple(sc) => {
+                out.extend(&sc.words);
+                out.extend(sc.assignments.iter().map(|a| &a.value));
+                for r in &sc.redirections {
+                    if let RedirectionTarget::File(w) = &r.target {
+                        out.push(w);
+                    }
+                }
+            }
+            Command::Assignment(a) => out.push(&a.value),
+            Command::For { words, .. } => out.extend(words),
+            Command::Case { word, arms, .. } => {
+                out.push(word);
+                for arm in arms {
+                    out.extend(&arm.patterns);
+                }
+            }
+            _ => {}
+        }
+        for child in cmd.children() {
+            collect_all_words(child, out);
+        }
+    }
+
+    /// Byte spans of every command/backtick/process substitution in `word`
+    /// (recursing through double-quoted parts). Arithmetic is excluded — it runs
+    /// no command and must not be represented by an embedded-command unit.
+    fn collect_cmd_substitution_spans(
+        word: &may_i_shell_parser::Word,
+        out: &mut Vec<(usize, usize)>,
+    ) {
+        use may_i_shell_parser::WordPart;
+        fn walk(parts: &[WordPart], out: &mut Vec<(usize, usize)>) {
+            for part in parts {
+                match part {
+                    WordPart::CommandSubstitution { span, .. }
+                    | WordPart::Backtick { span, .. }
+                    | WordPart::ProcessSubstitution { span, .. } => {
+                        out.push((span.start, span.end))
+                    }
+                    WordPart::DoubleQuoted(inner) => walk(inner, out),
+                    // Substitutions captured out of parameter-expansion operands
+                    // live in the op's `embedded` parts, not inline in the word.
+                    WordPart::ParameterExpansionOp { embedded, .. } => walk(embedded, out),
+                    _ => {}
+                }
+            }
+        }
+        walk(&word.parts, out);
     }
 
     /// Visit every `WordPart` in a parsed command, recursing through

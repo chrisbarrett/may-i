@@ -10,6 +10,7 @@ fn resolve_param_length() {
         parts: vec![WordPart::ParameterExpansionOp {
             name: "VAR".into(),
             op: ParameterOperator::Length,
+            embedded: Vec::new(),
         }],
     };
     let resolved = w.resolve(&env);
@@ -27,6 +28,7 @@ fn resolve_param_strip_prefix() {
                 longest: true,
                 pattern: "*/".into(),
             },
+            embedded: Vec::new(),
         }],
     };
     let resolved = w.resolve(&env);
@@ -44,6 +46,7 @@ fn resolve_param_strip_suffix() {
                 longest: false,
                 pattern: ".*".into(),
             },
+            embedded: Vec::new(),
         }],
     };
     let resolved = w.resolve(&env);
@@ -61,6 +64,7 @@ fn resolve_param_replace() {
                 pattern: "world".into(),
                 replacement: "rust".into(),
             },
+            embedded: Vec::new(),
         }],
     };
     let resolved = w.resolve(&env);
@@ -77,6 +81,7 @@ fn resolve_param_default_colon_empty() {
                 colon: true,
                 value: "fallback".into(),
             },
+            embedded: Vec::new(),
         }],
     };
     let resolved = w.resolve(&env);
@@ -93,6 +98,7 @@ fn resolve_param_default_colon_set() {
                 colon: true,
                 value: "fallback".into(),
             },
+            embedded: Vec::new(),
         }],
     };
     let resolved = w.resolve(&env);
@@ -109,6 +115,7 @@ fn resolve_param_alternative_colon_set() {
                 colon: true,
                 value: "alt".into(),
             },
+            embedded: Vec::new(),
         }],
     };
     let resolved = w.resolve(&env);
@@ -125,6 +132,7 @@ fn resolve_param_alternative_colon_empty() {
                 colon: true,
                 value: "alt".into(),
             },
+            embedded: Vec::new(),
         }],
     };
     let resolved = w.resolve(&env);
@@ -141,6 +149,7 @@ fn resolve_param_substring() {
                 offset: "6".into(),
                 length: Some("5".into()),
             },
+            embedded: Vec::new(),
         }],
     };
     let resolved = w.resolve(&env);
@@ -157,6 +166,7 @@ fn resolve_param_substring_no_length() {
                 offset: "6".into(),
                 length: None,
             },
+            embedded: Vec::new(),
         }],
     };
     let resolved = w.resolve(&env);
@@ -170,6 +180,7 @@ fn resolve_param_uppercase_all() {
         parts: vec![WordPart::ParameterExpansionOp {
             name: "VAR".into(),
             op: ParameterOperator::Uppercase { all: true },
+            embedded: Vec::new(),
         }],
     };
     let resolved = w.resolve(&env);
@@ -183,6 +194,7 @@ fn resolve_param_uppercase_first() {
         parts: vec![WordPart::ParameterExpansionOp {
             name: "VAR".into(),
             op: ParameterOperator::Uppercase { all: false },
+            embedded: Vec::new(),
         }],
     };
     let resolved = w.resolve(&env);
@@ -196,6 +208,7 @@ fn resolve_param_lowercase_all() {
         parts: vec![WordPart::ParameterExpansionOp {
             name: "VAR".into(),
             op: ParameterOperator::Lowercase { all: true },
+            embedded: Vec::new(),
         }],
     };
     let resolved = w.resolve(&env);
@@ -212,6 +225,7 @@ fn resolve_param_error_set() {
                 colon: true,
                 message: "oops".into(),
             },
+            embedded: Vec::new(),
         }],
     };
     let resolved = w.resolve(&env);
@@ -228,6 +242,7 @@ fn resolve_param_assign_set() {
                 colon: true,
                 value: "default".into(),
             },
+            embedded: Vec::new(),
         }],
     };
     let resolved = w.resolve(&env);
@@ -244,6 +259,7 @@ fn resolve_param_unresolved_stays_dynamic() {
                 longest: true,
                 pattern: "*/".into(),
             },
+            embedded: Vec::new(),
         }],
     };
     let resolved = w.resolve(&env);
@@ -262,6 +278,7 @@ fn resolve_param_op_in_double_quotes() {
                     longest: true,
                     pattern: "*/".into(),
                 },
+                embedded: Vec::new(),
             },
         ])],
     };
@@ -282,6 +299,7 @@ fn resolve_param_default_no_colon_set() {
                 colon: false,
                 value: "fallback".into(),
             },
+            embedded: Vec::new(),
         }],
     };
     let resolved = w.resolve(&env);
@@ -300,6 +318,7 @@ fn resolve_param_alternative_no_colon_set() {
                 colon: false,
                 value: "alt".into(),
             },
+            embedded: Vec::new(),
         }],
     };
     let resolved = w.resolve(&env);
@@ -319,6 +338,7 @@ fn resolve_param_substring_negative_offset() {
                 offset: "-5".into(),
                 length: None,
             },
+            embedded: Vec::new(),
         }],
     };
     let resolved = w.resolve(&env);
@@ -334,6 +354,7 @@ fn resolve_param_uppercase_first_char() {
         parts: vec![WordPart::ParameterExpansionOp {
             name: "VAR".into(),
             op: ParameterOperator::Uppercase { all: false },
+            embedded: Vec::new(),
         }],
     };
     let resolved = w.resolve(&env);
@@ -347,6 +368,7 @@ fn resolve_param_uppercase_first_empty() {
         parts: vec![WordPart::ParameterExpansionOp {
             name: "VAR".into(),
             op: ParameterOperator::Uppercase { all: false },
+            embedded: Vec::new(),
         }],
     };
     let resolved = w.resolve(&env);
@@ -362,6 +384,7 @@ fn resolve_param_lowercase_first() {
         parts: vec![WordPart::ParameterExpansionOp {
             name: "VAR".into(),
             op: ParameterOperator::Lowercase { all: false },
+            embedded: Vec::new(),
         }],
     };
     let resolved = w.resolve(&env);
@@ -375,6 +398,7 @@ fn resolve_param_lowercase_first_empty() {
         parts: vec![WordPart::ParameterExpansionOp {
             name: "VAR".into(),
             op: ParameterOperator::Lowercase { all: false },
+            embedded: Vec::new(),
         }],
     };
     let resolved = w.resolve(&env);

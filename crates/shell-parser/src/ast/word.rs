@@ -42,6 +42,10 @@ fn collect_embedded_commands<'a>(parts: &'a [WordPart], out: &mut Vec<&'a str>) 
             }
             WordPart::ProcessSubstitution { command, .. } => out.push(command),
             WordPart::DoubleQuoted(inner) => collect_embedded_commands(inner, out),
+            // Substitutions captured out of parameter-expansion operands.
+            WordPart::ParameterExpansionOp { embedded, .. } => {
+                collect_embedded_commands(embedded, out)
+            }
             _ => {}
         }
     }
@@ -119,6 +123,11 @@ fn collect_embedded_with_spans<'a>(
                 out.push((command, *span, SubstitutionForm::Process))
             }
             WordPart::DoubleQuoted(inner) => collect_embedded_with_spans(inner, out),
+            // Substitutions captured out of parameter-expansion operands carry
+            // their own spans, so they surface exactly like inline ones.
+            WordPart::ParameterExpansionOp { embedded, .. } => {
+                collect_embedded_with_spans(embedded, out)
+            }
             _ => {}
         }
     }
@@ -148,7 +157,7 @@ fn collect_dynamic_from(parts: &[WordPart], out: &mut Vec<String>) {
                 };
                 out.push(format!("{sigil}({})", abbreviate(command)));
             }
-            WordPart::ParameterExpansionOp { name, op } => {
+            WordPart::ParameterExpansionOp { name, op, .. } => {
                 out.push(format!("${{{}}}", format_param_op(name, op)));
             }
             WordPart::DoubleQuoted(inner) => {
@@ -180,7 +189,7 @@ fn parts_to_display(parts: &[WordPart], out: &mut String) {
                 out.push_str(name);
                 out.push('}');
             }
-            WordPart::ParameterExpansionOp { name, op } => {
+            WordPart::ParameterExpansionOp { name, op, .. } => {
                 out.push_str("${");
                 out.push_str(&format_param_op(name, op));
                 out.push('}');
@@ -235,7 +244,7 @@ fn parts_to_str(parts: &[WordPart], out: &mut String) {
             WordPart::CommandSubstitution { source, .. }
             | WordPart::Backtick { source, .. }
             | WordPart::Arithmetic { source, .. } => out.push_str(source),
-            WordPart::ParameterExpansionOp { name, op } => {
+            WordPart::ParameterExpansionOp { name, op, .. } => {
                 out.push_str(&format_param_op(name, op));
             }
             WordPart::DoubleQuoted(inner) => {
@@ -406,7 +415,9 @@ fn resolve_parts(
                     part.clone()
                 }
             }
-            WordPart::ParameterExpansionOp { name, op } => resolve_param_op(name, op, env),
+            WordPart::ParameterExpansionOp {
+                name, op, embedded, ..
+            } => resolve_param_op(name, op, embedded, env),
             WordPart::DoubleQuoted(inner) => WordPart::DoubleQuoted(resolve_parts(inner, env)),
             _ => part.clone(),
         })

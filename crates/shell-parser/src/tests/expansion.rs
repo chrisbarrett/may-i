@@ -783,6 +783,7 @@ fn parse_param_length() {
                 vec![WordPart::ParameterExpansionOp {
                     name: "VAR".into(),
                     op: ParameterOperator::Length,
+                    embedded: Vec::new(),
                 },]
             );
         }
@@ -803,6 +804,7 @@ fn parse_param_strip_prefix_short() {
                         longest: false,
                         pattern: "*/".into(),
                     },
+                    embedded: Vec::new(),
                 },]
             );
         }
@@ -823,6 +825,7 @@ fn parse_param_strip_prefix_long() {
                         longest: true,
                         pattern: "*/".into(),
                     },
+                    embedded: Vec::new(),
                 },]
             );
         }
@@ -843,6 +846,7 @@ fn parse_param_strip_suffix_short() {
                         longest: false,
                         pattern: ".*".into(),
                     },
+                    embedded: Vec::new(),
                 },]
             );
         }
@@ -863,6 +867,7 @@ fn parse_param_strip_suffix_long() {
                         longest: true,
                         pattern: ".*".into(),
                     },
+                    embedded: Vec::new(),
                 },]
             );
         }
@@ -884,6 +889,7 @@ fn parse_param_replace_first() {
                         pattern: "foo".into(),
                         replacement: "bar".into(),
                     },
+                    embedded: Vec::new(),
                 },]
             );
         }
@@ -905,6 +911,7 @@ fn parse_param_replace_all() {
                         pattern: "foo".into(),
                         replacement: "bar".into(),
                     },
+                    embedded: Vec::new(),
                 },]
             );
         }
@@ -926,6 +933,7 @@ fn parse_param_replace_empty_replacement() {
                         pattern: "foo".into(),
                         replacement: String::new(),
                     },
+                    embedded: Vec::new(),
                 },]
             );
         }
@@ -946,6 +954,7 @@ fn parse_param_default_colon() {
                         colon: true,
                         value: "fallback".into(),
                     },
+                    embedded: Vec::new(),
                 },]
             );
         }
@@ -966,6 +975,7 @@ fn parse_param_default_no_colon() {
                         colon: false,
                         value: "fallback".into(),
                     },
+                    embedded: Vec::new(),
                 },]
             );
         }
@@ -986,6 +996,7 @@ fn parse_param_alternative_colon() {
                         colon: true,
                         value: "set".into(),
                     },
+                    embedded: Vec::new(),
                 },]
             );
         }
@@ -1006,6 +1017,7 @@ fn parse_param_error_colon() {
                         colon: true,
                         message: "not set".into(),
                     },
+                    embedded: Vec::new(),
                 },]
             );
         }
@@ -1026,6 +1038,7 @@ fn parse_param_assign_colon() {
                         colon: true,
                         value: "default".into(),
                     },
+                    embedded: Vec::new(),
                 },]
             );
         }
@@ -1046,6 +1059,7 @@ fn parse_param_substring() {
                         offset: "2".into(),
                         length: Some("5".into()),
                     },
+                    embedded: Vec::new(),
                 },]
             );
         }
@@ -1066,6 +1080,7 @@ fn parse_param_substring_no_length() {
                         offset: "3".into(),
                         length: None,
                     },
+                    embedded: Vec::new(),
                 },]
             );
         }
@@ -1083,6 +1098,7 @@ fn parse_param_uppercase_first() {
                 vec![WordPart::ParameterExpansionOp {
                     name: "VAR".into(),
                     op: ParameterOperator::Uppercase { all: false },
+                    embedded: Vec::new(),
                 },]
             );
         }
@@ -1100,6 +1116,7 @@ fn parse_param_uppercase_all() {
                 vec![WordPart::ParameterExpansionOp {
                     name: "VAR".into(),
                     op: ParameterOperator::Uppercase { all: true },
+                    embedded: Vec::new(),
                 },]
             );
         }
@@ -1117,6 +1134,7 @@ fn parse_param_lowercase_first() {
                 vec![WordPart::ParameterExpansionOp {
                     name: "VAR".into(),
                     op: ParameterOperator::Lowercase { all: false },
+                    embedded: Vec::new(),
                 },]
             );
         }
@@ -1134,6 +1152,7 @@ fn parse_param_lowercase_all() {
                 vec![WordPart::ParameterExpansionOp {
                     name: "VAR".into(),
                     op: ParameterOperator::Lowercase { all: true },
+                    embedded: Vec::new(),
                 },]
             );
         }
@@ -1169,6 +1188,7 @@ fn parse_param_op_in_double_quotes() {
                             longest: true,
                             pattern: "*/".into(),
                         },
+                        embedded: Vec::new(),
                     },
                 ]),]
             );
@@ -1192,6 +1212,7 @@ fn parse_param_expansion_no_colon_default() {
                     colon: false,
                     value: "fallback".into()
                 },
+                embedded: Vec::new(),
             }]
         );
     } else {
@@ -1211,6 +1232,7 @@ fn parse_param_expansion_no_colon_alternative() {
                     colon: false,
                     value: "alt".into()
                 },
+                embedded: Vec::new(),
             }]
         );
     } else {
@@ -1230,6 +1252,7 @@ fn parse_param_expansion_no_colon_error() {
                     colon: false,
                     message: "msg".into()
                 },
+                embedded: Vec::new(),
             }]
         );
     } else {
@@ -1249,6 +1272,7 @@ fn parse_param_expansion_no_colon_assign() {
                     colon: false,
                     value: "val".into()
                 },
+                embedded: Vec::new(),
             }]
         );
     } else {
@@ -1265,6 +1289,7 @@ fn parse_param_expansion_uppercase_single() {
             vec![WordPart::ParameterExpansionOp {
                 name: "VAR".into(),
                 op: ParameterOperator::Uppercase { all: false },
+                embedded: Vec::new(),
             }]
         );
     } else {
@@ -1281,6 +1306,7 @@ fn parse_param_expansion_uppercase_all() {
             vec![WordPart::ParameterExpansionOp {
                 name: "VAR".into(),
                 op: ParameterOperator::Uppercase { all: true },
+                embedded: Vec::new(),
             }]
         );
     } else {
@@ -1297,6 +1323,7 @@ fn parse_param_expansion_lowercase_single() {
             vec![WordPart::ParameterExpansionOp {
                 name: "VAR".into(),
                 op: ParameterOperator::Lowercase { all: false },
+                embedded: Vec::new(),
             }]
         );
     } else {
@@ -1313,6 +1340,7 @@ fn parse_param_expansion_lowercase_all() {
             vec![WordPart::ParameterExpansionOp {
                 name: "VAR".into(),
                 op: ParameterOperator::Lowercase { all: true },
+                embedded: Vec::new(),
             }]
         );
     } else {

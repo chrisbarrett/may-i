@@ -51,7 +51,13 @@ fn resolved_command_name_is_gated_by_its_rule() {
 
 #[test]
 fn assignment_from_a_substitution_stays_dynamic() {
-    let result = decide("", "BIN=$(which terragrunt); $BIN apply");
+    // `which` is allowed so the embedded substitution in the assignment value
+    // (now correctly gated — it runs a command) does not itself floor; the
+    // remaining floor must come from the dynamic `$BIN` command name.
+    let result = decide(
+        r#"(rule "which" (allow))"#,
+        "BIN=$(which terragrunt); $BIN apply",
+    );
     assert!(
         result.decision >= Decision::Ask,
         "expected at least ask, got {:?} ({:?})",

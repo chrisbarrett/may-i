@@ -18,6 +18,7 @@ impl Lexer {
                 return Some(WordPart::ParameterExpansionOp {
                     name,
                     op: ParameterOperator::Length,
+                    embedded: Vec::new(),
                 });
             }
             // Not a length operator; restore and fall through to flat parsing
@@ -47,11 +48,12 @@ impl Lexer {
                 } else {
                     false
                 };
-                let pattern = self.read_until_char('}');
+                let (pattern, embedded) = self.read_operand(&['}']);
                 self.advance(); // skip }
                 Some(WordPart::ParameterExpansionOp {
                     name,
                     op: ParameterOperator::StripPrefix { longest, pattern },
+                    embedded,
                 })
             }
             Some('%') => {
@@ -62,11 +64,12 @@ impl Lexer {
                 } else {
                     false
                 };
-                let pattern = self.read_until_char('}');
+                let (pattern, embedded) = self.read_operand(&['}']);
                 self.advance(); // skip }
                 Some(WordPart::ParameterExpansionOp {
                     name,
                     op: ParameterOperator::StripSuffix { longest, pattern },
+                    embedded,
                 })
             }
             Some('/') => {
@@ -77,10 +80,12 @@ impl Lexer {
                 } else {
                     false
                 };
-                let pattern = self.read_until_either('/', '}');
+                let (pattern, mut embedded) = self.read_operand(&['/', '}']);
                 let replacement = if self.peek() == Some('/') {
                     self.advance(); // skip separator /
-                    self.read_until_char('}')
+                    let (replacement, more) = self.read_operand(&['}']);
+                    embedded.extend(more);
+                    replacement
                 } else {
                     String::new()
                 };
@@ -92,6 +97,7 @@ impl Lexer {
                         pattern,
                         replacement,
                     },
+                    embedded,
                 })
             }
             Some(':') => {
@@ -99,25 +105,27 @@ impl Lexer {
                 match self.peek() {
                     Some('-') => {
                         self.advance();
-                        let value = self.read_until_char('}');
+                        let (value, embedded) = self.read_operand(&['}']);
                         self.advance();
                         Some(WordPart::ParameterExpansionOp {
                             name,
                             op: ParameterOperator::Default { colon: true, value },
+                            embedded,
                         })
                     }
                     Some('+') => {
                         self.advance();
-                        let value = self.read_until_char('}');
+                        let (value, embedded) = self.read_operand(&['}']);
                         self.advance();
                         Some(WordPart::ParameterExpansionOp {
                             name,
                             op: ParameterOperator::Alternative { colon: true, value },
+                            embedded,
                         })
                     }
                     Some('?') => {
                         self.advance();
-                        let message = self.read_until_char('}');
+                        let (message, embedded) = self.read_operand(&['}']);
                         self.advance();
                         Some(WordPart::ParameterExpansionOp {
                             name,
@@ -125,23 +133,27 @@ impl Lexer {
                                 colon: true,
                                 message,
                             },
+                            embedded,
                         })
                     }
                     Some('=') => {
                         self.advance();
-                        let value = self.read_until_char('}');
+                        let (value, embedded) = self.read_operand(&['}']);
                         self.advance();
                         Some(WordPart::ParameterExpansionOp {
                             name,
                             op: ParameterOperator::Assign { colon: true, value },
+                            embedded,
                         })
                     }
                     _ => {
                         // Substring: ${VAR:offset} or ${VAR:offset:length}
-                        let offset = self.read_until_either(':', '}');
+                        let (offset, mut embedded) = self.read_operand(&[':', '}']);
                         let length = if self.peek() == Some(':') {
                             self.advance();
-                            Some(self.read_until_char('}'))
+                            let (length, more) = self.read_operand(&['}']);
+                            embedded.extend(more);
+                            Some(length)
                         } else {
                             None
                         };
@@ -149,13 +161,14 @@ impl Lexer {
                         Some(WordPart::ParameterExpansionOp {
                             name,
                             op: ParameterOperator::Substring { offset, length },
+                            embedded,
                         })
                     }
                 }
             }
             Some('-') => {
                 self.advance();
-                let value = self.read_until_char('}');
+                let (value, embedded) = self.read_operand(&['}']);
                 self.advance();
                 Some(WordPart::ParameterExpansionOp {
                     name,
@@ -163,11 +176,12 @@ impl Lexer {
                         colon: false,
                         value,
                     },
+                    embedded,
                 })
             }
             Some('+') => {
                 self.advance();
-                let value = self.read_until_char('}');
+                let (value, embedded) = self.read_operand(&['}']);
                 self.advance();
                 Some(WordPart::ParameterExpansionOp {
                     name,
@@ -175,11 +189,12 @@ impl Lexer {
                         colon: false,
                         value,
                     },
+                    embedded,
                 })
             }
             Some('?') => {
                 self.advance();
-                let message = self.read_until_char('}');
+                let (message, embedded) = self.read_operand(&['}']);
                 self.advance();
                 Some(WordPart::ParameterExpansionOp {
                     name,
@@ -187,11 +202,12 @@ impl Lexer {
                         colon: false,
                         message,
                     },
+                    embedded,
                 })
             }
             Some('=') => {
                 self.advance();
-                let value = self.read_until_char('}');
+                let (value, embedded) = self.read_operand(&['}']);
                 self.advance();
                 Some(WordPart::ParameterExpansionOp {
                     name,
@@ -199,6 +215,7 @@ impl Lexer {
                         colon: false,
                         value,
                     },
+                    embedded,
                 })
             }
             Some('^') => {
@@ -209,12 +226,12 @@ impl Lexer {
                 } else {
                     false
                 };
-                // Skip to closing }
-                self.read_until_char('}');
+                let (_pattern, embedded) = self.read_operand(&['}']);
                 self.advance();
                 Some(WordPart::ParameterExpansionOp {
                     name,
                     op: ParameterOperator::Uppercase { all },
+                    embedded,
                 })
             }
             Some(',') => {
@@ -225,12 +242,12 @@ impl Lexer {
                 } else {
                     false
                 };
-                // Skip to closing }
-                self.read_until_char('}');
+                let (_pattern, embedded) = self.read_operand(&['}']);
                 self.advance();
                 Some(WordPart::ParameterExpansionOp {
                     name,
                     op: ParameterOperator::Lowercase { all },
+                    embedded,
                 })
             }
             _ => {
@@ -240,6 +257,52 @@ impl Lexer {
                 Some(WordPart::ParameterExpansion(format!("{name}{rest}")))
             }
         }
+    }
+
+    /// Read a parameter-expansion operator operand up to (not including) one of
+    /// `stops` or EOF, capturing the command (`$( … )`) and backtick
+    /// substitutions inside it as structured parts with absolute source-byte
+    /// spans. The returned `String` is byte-identical to what `read_until_char`
+    /// would have produced, so resolution and display are unaffected; the
+    /// captured parts let the engine gate the substitutions the operand runs.
+    ///
+    /// Arithmetic `$(( … ))` runs no command, so it is copied verbatim like
+    /// ordinary text and produces no part — matching the rest of the lexer.
+    pub(super) fn read_operand(&mut self, stops: &[char]) -> (String, Vec<WordPart>) {
+        let mut text = String::new();
+        let mut embedded = Vec::new();
+        while let Some(ch) = self.peek() {
+            if stops.contains(&ch) {
+                break;
+            }
+            // `$(` is a command substitution (arithmetic `$((` runs nothing and
+            // is left to the verbatim copy below). Delegate to the shared
+            // readers so spans and balanced-paren / closing handling match every
+            // other path, then append the exact source consumed so `text` stays
+            // identical to a flat read.
+            if ch == '$' && self.peek_at(1) == Some('(') && self.peek_at(2) != Some('(') {
+                let before = self.pos;
+                if let Some(part) = self.read_dollar() {
+                    text.extend(self.input[before..self.pos].iter());
+                    // `read_dollar` may fold a static `$(cat <<heredoc)` to a
+                    // Literal; only a real substitution is gateable.
+                    if matches!(part, WordPart::CommandSubstitution { .. }) {
+                        embedded.push(part);
+                    }
+                    continue;
+                }
+            }
+            if ch == '`' {
+                let before = self.pos;
+                let part = self.read_backtick();
+                text.extend(self.input[before..self.pos].iter());
+                embedded.push(part);
+                continue;
+            }
+            text.push(ch);
+            self.advance();
+        }
+        (text, embedded)
     }
 
     /// Read a shell identifier (alphanumeric + underscore).
@@ -254,18 +317,5 @@ impl Lexer {
             }
         }
         name
-    }
-
-    /// Read until either `a` or `b` is found (or EOF). Does not consume the delimiter.
-    pub(super) fn read_until_either(&mut self, a: char, b: char) -> String {
-        let mut s = String::new();
-        while let Some(ch) = self.peek() {
-            if ch == a || ch == b {
-                break;
-            }
-            s.push(ch);
-            self.advance();
-        }
-        s
     }
 }
