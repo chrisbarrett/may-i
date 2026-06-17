@@ -171,6 +171,10 @@ fn eval_units<F: EvalFold>(
 
     let mut aggregate_decision = Decision::Allow;
     let mut aggregate_reason: Option<String> = None;
+    // Lowest-priority reason from internal calls (script-local functions),
+    // surfaced only when no decisive unit produced one. See the aggregate
+    // loop below.
+    let mut internal_call_reason: Option<String> = None;
     let mut segment_decisions: Vec<SegmentDecision> = Vec::new();
     // Spans of structural floors (env prefixes, redirect targets) — they
     // raise overlapping segments to at least `:ask` after the loop, like
@@ -230,6 +234,19 @@ fn eval_units<F: EvalFold>(
             EvalUnit::DynamicCommand { reason, .. } => {
                 let _out = fold.default_ask(reason);
                 EvalResult::new(Decision::Ask, Some(reason.clone()))
+            }
+            // A call to a function this command defines is internal: the body
+            // was authorised once at its definition, so the call itself runs
+            // nothing but dispatch. Resolve to :allow with a traceable reason
+            // and never emit `No rule for command …`. As an :allow it never
+            // raises the aggregate (Allow is the floor).
+            EvalUnit::LocalFunctionCall { name, .. } => {
+                fold.local_function_call(name);
+                let reason = format!(
+                    "internal call to script-local function `{}` — body authorised at its definition",
+                    escape_for_reason(name)
+                );
+                EvalResult::new(Decision::Allow, Some(reason))
             }
             // A prefix assigning a name in the effective safe-env-vars
             // set passes through (the command evaluates as if
@@ -291,7 +308,15 @@ fn eval_units<F: EvalFold>(
             segment_decisions.extend(result.segment_decisions);
         }
 
-        if result.decision >= aggregate_decision {
+        // An internal call (`:allow`) contributes nothing to the aggregate:
+        // it never raises the decision and must not clobber a rule- or
+        // floor-derived reason. Its explanation is held as a fallback,
+        // surfaced only when no other unit produced a reason (an all-internal
+        // command), so the trace and audit record attribute the allow rather
+        // than showing an empty reason.
+        if matches!(unit, EvalUnit::LocalFunctionCall { .. }) {
+            internal_call_reason = internal_call_reason.or(result.reason);
+        } else if result.decision >= aggregate_decision {
             aggregate_decision = result.decision;
             aggregate_reason = result.reason;
         }
@@ -305,6 +330,12 @@ fn eval_units<F: EvalFold>(
         let _out = fold.default_ask(&reason);
         aggregate_decision = Decision::Ask;
         aggregate_reason = Some(reason);
+    }
+
+    // An all-internal `:allow` (every unit a call to a script-local function)
+    // surfaces the internal-call explanation rather than an empty reason.
+    if aggregate_decision == Decision::Allow && aggregate_reason.is_none() {
+        aggregate_reason = internal_call_reason;
     }
 
     // Structural floors raise the segments they overlap so display
@@ -571,6 +602,21 @@ mod tests {
         }
     }
 
+    fn allow_rule_with_reason(cmd: &str, reason: &str) -> may_i_core::ast::Rule {
+        may_i_core::ast::Rule {
+            command_effect: spanned(Effect::CommandPattern(CommandPattern::Literal(
+                cmd.to_string(),
+            ))),
+            effect: spanned(Effect::Terminal {
+                decision: Decision::Allow,
+                reason: Some(reason.to_string()),
+            }),
+            checks: vec![],
+            span: Span::new(0, 0),
+            provenance: may_i_core::ast::Provenance::PrimaryConfig,
+        }
+    }
+
     fn deny_rule(cmd: &str) -> may_i_core::ast::Rule {
         may_i_core::ast::Rule {
             command_effect: spanned(Effect::CommandPattern(CommandPattern::Literal(
@@ -604,6 +650,151 @@ mod tests {
         let config = config_with_rules(vec![]);
         let result = evaluate_command("rm -rf /", &config, &empty_facts()).unwrap();
         assert_eq!(result.decision, Decision::Ask);
+    }
+
+    // -- Calls to script-local functions (internal calls) --
+
+    #[test]
+    fn local_function_call_does_not_ask() {
+        // Spec: a call to a defined function resolves to :allow and is never
+        // reported as `No rule for command …`.
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        let result = evaluate_command(
+            "materialise() { echo hi; }; materialise foo",
+            &config,
+            &empty_facts(),
+        )
+        .unwrap();
+        assert_eq!(result.decision, Decision::Allow);
+        let reason = result.reason.as_deref().unwrap_or("");
+        assert!(
+            !reason.contains("No rule for command `materialise`"),
+            "internal call must not report a missing rule: {reason}"
+        );
+    }
+
+    #[test]
+    fn local_function_body_is_still_authorised() {
+        // Spec: the body's dangerous command produces its own decision; the
+        // call site contributes no `No rule for command …`.
+        let config = config_with_rules(vec![]);
+        let result = evaluate_command(
+            "cleanup() { rm -rf \"$wt\"; }; cleanup",
+            &config,
+            &empty_facts(),
+        )
+        .unwrap();
+        assert_eq!(result.decision, Decision::Ask);
+        let reason = result.reason.as_deref().unwrap_or("");
+        assert!(
+            reason.contains("`rm`"),
+            "decision should come from the body's rm: {reason}"
+        );
+        assert!(
+            !reason.contains("No rule for command `cleanup`"),
+            "the cleanup call must not report a missing rule: {reason}"
+        );
+    }
+
+    #[test]
+    fn local_function_forward_reference_is_internal() {
+        // Spec: a body calling a sibling defined later is internal (set-based,
+        // order-insensitive).
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        let result = evaluate_command(
+            "outer() { inner; }; inner() { echo hi; }; outer",
+            &config,
+            &empty_facts(),
+        )
+        .unwrap();
+        assert_eq!(result.decision, Decision::Allow);
+        let reason = result.reason.as_deref().unwrap_or("");
+        assert!(
+            !reason.contains("No rule for command `inner`"),
+            "forward-referenced call must be internal: {reason}"
+        );
+    }
+
+    #[test]
+    fn internal_call_does_not_clobber_rule_reason() {
+        // A trailing internal call must not overwrite a more informative
+        // allow reason from a real rule (it contributes nothing to the
+        // aggregate).
+        let config = config_with_rules(vec![allow_rule_with_reason("echo", "echo ok")]);
+        let result =
+            evaluate_command("echo hi; f() { echo bye; }; f", &config, &empty_facts()).unwrap();
+        assert_eq!(result.decision, Decision::Allow);
+        assert_eq!(result.reason.as_deref(), Some("echo ok"));
+    }
+
+    #[test]
+    fn all_internal_allow_carries_explanatory_reason() {
+        // A command that is nothing but internal calls (mutual recursion)
+        // resolves to :allow and surfaces the internal-call reason rather
+        // than an empty one, so the audit record can attribute the allow.
+        let config = config_with_rules(vec![]);
+        let result =
+            evaluate_command("a() { b; }; b() { a; }; a", &config, &empty_facts()).unwrap();
+        assert_eq!(result.decision, Decision::Allow);
+        let reason = result.reason.as_deref().unwrap_or("");
+        assert!(
+            reason.contains("internal call to script-local function"),
+            "all-internal allow should carry an explanatory reason: {reason:?}"
+        );
+    }
+
+    #[test]
+    fn non_defined_unknown_command_still_asks() {
+        // Spec: a name not defined as a function is unaffected.
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        let result = evaluate_command(
+            "materialise() { echo hi; }; kubectl get pods",
+            &config,
+            &empty_facts(),
+        )
+        .unwrap();
+        assert_eq!(result.decision, Decision::Ask);
+        assert_eq!(
+            result.reason.as_deref(),
+            Some("No rule for command `kubectl`")
+        );
+    }
+
+    // -- Liveness: closed bypasses (D2) --
+
+    #[test]
+    fn top_level_call_before_definition_is_external() {
+        // `rm` is called before it is defined; the external rm runs, so the
+        // call must ask — not resolve internal.
+        let config = config_with_rules(vec![allow_rule("true")]);
+        let result =
+            evaluate_command("rm -rf /tmp/x; rm() { true; }", &config, &empty_facts()).unwrap();
+        assert_eq!(result.decision, Decision::Ask);
+        assert_eq!(result.reason.as_deref(), Some("No rule for command `rm`"));
+    }
+
+    #[test]
+    fn call_after_unset_f_is_external() {
+        let config = config_with_rules(vec![allow_rule("true"), allow_rule("unset")]);
+        let result = evaluate_command(
+            "rm() { true; }; unset -f rm; rm -rf /tmp/x",
+            &config,
+            &empty_facts(),
+        )
+        .unwrap();
+        assert_eq!(result.decision, Decision::Ask);
+        assert_eq!(result.reason.as_deref(), Some("No rule for command `rm`"));
+    }
+
+    #[test]
+    fn body_forward_reference_invoked_before_definition_is_external() {
+        // `g` is invoked before `f` is defined, so the body's `f` runs the
+        // external f. Only the top-level `g` call is internal.
+        let config = config_with_rules(vec![allow_rule("true")]);
+        let result =
+            evaluate_command("g() { f; }; g; f() { true; }", &config, &empty_facts()).unwrap();
+        assert_eq!(result.decision, Decision::Ask);
+        assert_eq!(result.reason.as_deref(), Some("No rule for command `f`"));
     }
 
     // -- Compound commands --

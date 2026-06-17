@@ -58,6 +58,9 @@ pub enum TraceEntry {
     UnresolvedExpansion { words: Vec<String> },
     /// No matching rule — default ask.
     DefaultAsk { reason: String },
+    /// A call to a script-local function, resolved to `:allow` as an
+    /// internal call (the body was authorised at its definition).
+    LocalFunctionCall { name: String },
     /// Parse diagnostics were emitted.
     ParseDiagnostics {
         diagnostics: Vec<may_i_shell_parser::ParseDiagnostic>,
@@ -1557,6 +1560,12 @@ impl EvalFold for TracingFold {
         });
     }
 
+    fn local_function_call(&mut self, name: &str) {
+        self.traces.push(TraceEntry::LocalFunctionCall {
+            name: name.to_string(),
+        });
+    }
+
     fn unresolved_floor(&mut self, words: &[String]) {
         self.traces.push(TraceEntry::UnresolvedExpansion {
             words: words.to_vec(),
@@ -1581,6 +1590,7 @@ impl std::fmt::Debug for TraceEntry {
                 write!(f, "UnresolvedExpansion({})", words.join(", "))
             }
             Self::DefaultAsk { reason } => write!(f, "DefaultAsk({reason})"),
+            Self::LocalFunctionCall { name } => write!(f, "LocalFunctionCall({name})"),
             Self::ParseDiagnostics { .. } => write!(f, "ParseDiagnostics"),
             Self::Parser { command, .. } => write!(f, "Parser({command})"),
         }

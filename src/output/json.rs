@@ -77,6 +77,10 @@ pub fn trace_to_json(entries: &[TraceEntry]) -> Vec<serde_json::Value> {
                 "type": "default_ask",
                 "reason": reason,
             }),
+            TraceEntry::LocalFunctionCall { name } => serde_json::json!({
+                "type": "local_function_call",
+                "name": name,
+            }),
             TraceEntry::ParseDiagnostics { diagnostics } => serde_json::json!({
                 "type": "parse_diagnostics",
                 "diagnostics": diagnostics.iter().map(|d| serde_json::json!({
@@ -335,6 +339,16 @@ mod tests {
         }];
         let json = trace_to_json(&entries);
         assert_eq!(json[0]["type"], "default_ask");
+    }
+
+    #[test]
+    fn trace_to_json_local_function_call() {
+        let entries = vec![TraceEntry::LocalFunctionCall {
+            name: "materialise".into(),
+        }];
+        let json = trace_to_json(&entries);
+        assert_eq!(json[0]["type"], "local_function_call");
+        assert_eq!(json[0]["name"], "materialise");
     }
 
     #[test]

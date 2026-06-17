@@ -313,6 +313,12 @@ pub trait EvalFold {
     /// Default implementation is a no-op.
     fn embedded_command(&mut self, _source: &str, _decision: Decision) {}
 
+    /// Called when a call to a script-local function resolved to `:allow`
+    /// as an internal call (its body was authorised at its definition).
+    /// Folds that render a trace use this to show an intelligible line
+    /// rather than dropping the unit silently. Default is a no-op.
+    fn local_function_call(&mut self, _name: &str) {}
+
     /// Called when a rule's `:allow` was floored to `:ask` because a
     /// matcher it relied on tested an expansion-bearing word (the words'
     /// source-faithful display texts are given). Folds that render a
