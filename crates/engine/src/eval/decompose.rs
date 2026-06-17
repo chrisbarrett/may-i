@@ -1,7 +1,8 @@
 use may_i_shell_parser::{
     Command, ParseDiagnostic, Redirection, RedirectionKind, RedirectionTarget, SimpleCommand,
-    SubstitutionForm, extract_simple_commands,
+    SubstitutionForm, Word, WordPart, constant_env, extract_simple_commands,
 };
+use std::collections::HashMap;
 
 /// Byte range in the original input string covered by an `EvalUnit`.
 pub(super) type Span = (usize, usize);
@@ -100,8 +101,13 @@ pub(crate) fn decompose(
     let simple_commands = extract_simple_commands(cmd);
     let mut units = Vec::new();
 
+    // Variables the command provably assigns a constant value. Used to resolve
+    // a variable command name (`$BIN`) to its literal before declaring it
+    // dynamic. Empty for commands with no qualifying assignment.
+    let const_env = constant_env(cmd);
+
     for sc in simple_commands {
-        decompose_simple_command(sc, input, diagnostics, &mut units);
+        decompose_simple_command(sc, input, diagnostics, &const_env, &mut units);
     }
 
     // Redirect targets carry their own embedded commands — a process
@@ -222,6 +228,7 @@ fn decompose_simple_command(
     sc: &SimpleCommand,
     _input: &str,
     diagnostics: &[ParseDiagnostic],
+    const_env: &HashMap<String, String>,
     units: &mut Vec<EvalUnit>,
 ) {
     let sc_span = (sc.span.start, sc.span.end);
@@ -245,7 +252,17 @@ fn decompose_simple_command(
 
     let first_word = &sc.words[0];
 
-    if first_word.is_dynamic() {
+    // A dynamic first word that is a lone variable expansion (`$BIN`,
+    // `${BIN}`, `"$BIN"`) is resolved against the command's provably-constant
+    // env. On success it is evaluated as that literal command name; otherwise
+    // it falls through to `DynamicCommand` exactly as before. Argument words
+    // are never resolved here.
+    let resolved_command = first_word
+        .is_dynamic()
+        .then(|| resolve_command_name(first_word, const_env))
+        .flatten();
+
+    if first_word.is_dynamic() && resolved_command.is_none() {
         units.push(EvalUnit::DynamicCommand {
             reason: format!(
                 "dynamic command name: {}",
@@ -254,7 +271,7 @@ fn decompose_simple_command(
             span: sc_span,
         });
     } else {
-        let command = first_word.to_str();
+        let command = resolved_command.unwrap_or_else(|| first_word.to_str());
         let args: Vec<String> = sc.words[1..].iter().map(|w| w.to_str()).collect();
         let arg_expansions: Vec<Expansion> = sc.words[1..]
             .iter()
@@ -271,6 +288,41 @@ fn decompose_simple_command(
     for word in &sc.words {
         push_embedded_units_from_word(word, diagnostics, units);
     }
+}
+
+/// Resolve a first word that is a lone variable expansion to its literal
+/// value in `const_env`. Returns `Some(command)` only when the word is exactly
+/// one `$VAR`/`${VAR}` (optionally wrapped in a single pair of double quotes)
+/// and that variable resolves to a non-empty literal. Anything else — a mixed
+/// word, an operator expansion, or an unresolved variable — returns `None` so
+/// the caller keeps the command dynamic.
+fn resolve_command_name(first_word: &Word, const_env: &HashMap<String, String>) -> Option<String> {
+    lone_variable_part(first_word)?;
+    let resolved = first_word.resolve(const_env);
+    if !resolved.is_literal() {
+        return None;
+    }
+    let command = resolved.to_str();
+    (!command.is_empty()).then_some(command)
+}
+
+/// The single inner part of a word that consists of exactly one plain variable
+/// expansion, unwrapping a lone double-quote layer (`"$BIN"`). Returns `None`
+/// for multi-part words and for operator expansions (`${BIN:-x}`).
+fn lone_variable_part(word: &Word) -> Option<()> {
+    let part = match word.parts.as_slice() {
+        [WordPart::DoubleQuoted(inner)] => match inner.as_slice() {
+            [p] => p,
+            _ => return None,
+        },
+        [p] => p,
+        _ => return None,
+    };
+    matches!(
+        part,
+        WordPart::Parameter(_) | WordPart::ParameterExpansion(_)
+    )
+    .then_some(())
 }
 
 /// Emit one `EvalUnit::EmbeddedCommand` per substitution in `word`, reading
@@ -580,5 +632,47 @@ mod tests {
         let units = decompose_input("\"echo\" hello");
         assert_eq!(units.len(), 1);
         assert!(matches!(&units[0], EvalUnit::SimpleCommand { command, .. } if command == "echo"));
+    }
+
+    #[test]
+    fn decompose_resolves_constant_command_name() {
+        let units = decompose_input("BIN=./x; $BIN run");
+        assert!(
+            units.iter().any(|u| matches!(
+                u,
+                EvalUnit::SimpleCommand { command, args, .. }
+                    if command == "./x" && args == &["run".to_string()]
+            )),
+            "expected resolved SimpleCommand, got: {units:?}"
+        );
+        assert!(
+            !units
+                .iter()
+                .any(|u| matches!(u, EvalUnit::DynamicCommand { .. })),
+            "resolved command must not stay dynamic: {units:?}"
+        );
+    }
+
+    #[test]
+    fn decompose_resolves_braced_constant_command_name() {
+        let units = decompose_input("BIN=./x; ${BIN} run");
+        assert!(
+            units.iter().any(|u| matches!(
+                u,
+                EvalUnit::SimpleCommand { command, .. } if command == "./x"
+            )),
+            "expected resolved SimpleCommand, got: {units:?}"
+        );
+    }
+
+    #[test]
+    fn decompose_unresolved_variable_command_name_stays_dynamic() {
+        let units = decompose_input("$BIN run");
+        assert!(
+            units
+                .iter()
+                .any(|u| matches!(u, EvalUnit::DynamicCommand { .. })),
+            "expected DynamicCommand, got: {units:?}"
+        );
     }
 }

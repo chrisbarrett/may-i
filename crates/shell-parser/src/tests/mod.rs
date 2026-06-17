@@ -1,3 +1,4 @@
+mod const_env;
 mod expansion;
 mod glob;
 mod helpers;

@@ -55,10 +55,11 @@ branch/loop/function" as "not provable".
 ### D2 — Resolve the first word in decompose before declaring it dynamic
 
 In `decompose`, when the first word is dynamic and consists of a single variable
-expansion (`$VAR` / `${VAR}`), resolve it against the D1 env via
-`resolve_param_op`. On success, emit `SimpleCommand { command: <resolved>, … }`;
-otherwise fall through to `DynamicCommand` exactly as today. Argument words are
-untouched.
+expansion (`$VAR` / `${VAR}`, including a lone double-quoted form `"$VAR"` as in
+the motivating loop), resolve it against the D1 env via `resolve_param_op`. On
+success, emit `SimpleCommand { command: <resolved>, … }`; otherwise fall through
+to `DynamicCommand` exactly as today. A mixed word (`/opt/$VAR/x`) or an operator
+expansion (`${VAR:-x}`) stays dynamic. Argument words are untouched.
 
 ### D3 — Conservative by construction; resolution only narrows asks
 
