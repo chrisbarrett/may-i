@@ -335,6 +335,7 @@ fn dynamic_parts_unresolved_length() {
         parts: vec![WordPart::ParameterExpansionOp {
             name: "UNSET".into(),
             op: ParameterOperator::Length,
+            embedded: Vec::new(),
         }],
     };
     assert!(w.has_dynamic_parts());
@@ -404,6 +405,7 @@ fn is_dynamic_parameter_expansion_op_true() {
         parts: vec![WordPart::ParameterExpansionOp {
             name: "CMD".into(),
             op: ParameterOperator::Length,
+            embedded: Vec::new(),
         }],
     };
     assert!(w.is_dynamic());

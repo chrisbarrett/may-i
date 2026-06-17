@@ -840,6 +840,7 @@ fn named_predicate_missing_returns_unresolved_error() {
 }
 
 mod const_command_names;
+mod embedded_word_positions;
 mod expansion;
 mod heredoc;
 mod properties;

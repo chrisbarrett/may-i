@@ -21,6 +21,7 @@ Simple(
                             colon: true,
                             value: "alternate",
                         },
+                        embedded: [],
                     },
                 ],
             },

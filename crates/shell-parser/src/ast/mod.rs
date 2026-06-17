@@ -125,6 +125,14 @@ pub enum WordPart {
     ParameterExpansionOp {
         name: String,
         op: ParameterOperator,
+        /// Command and backtick substitutions lexed out of the operator's
+        /// expandable operands (`${x:-$(cmd)}`, `${x#$(cmd)}`, …). Bash runs
+        /// these, so they are captured here as structured parts — each carrying
+        /// its source-byte span — for the engine to gate. The `op` fields keep
+        /// the verbatim operand text for resolution and display; this field is
+        /// purely additive and is empty for operands with no substitution.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        embedded: Vec<WordPart>,
     },
     CommandSubstitution {
         source: String,

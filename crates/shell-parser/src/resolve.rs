@@ -6,14 +6,18 @@ use super::glob::{glob_replace, glob_strip_prefix, glob_strip_suffix};
 pub(crate) fn resolve_param_op(
     name: &str,
     op: &ParameterOperator,
+    embedded: &[WordPart],
     env: &std::collections::HashMap<String, String>,
 ) -> WordPart {
     let val = match env.get(name) {
         Some(v) => v.as_str(),
         None => {
+            // Unresolved: keep the operand substitutions so a later extraction
+            // of the resolved word still sees them.
             return WordPart::ParameterExpansionOp {
                 name: name.to_string(),
                 op: op.clone(),
+                embedded: embedded.to_vec(),
             };
         }
     };
@@ -133,7 +137,7 @@ mod prop_tests {
                 colon: true,
                 value: default_val.clone(),
             };
-            let result = resolve_param_op("VAR", &op, &env);
+            let result = resolve_param_op("VAR", &op, &[], &env);
 
             if value.is_empty() {
                 // Empty value should return default
@@ -157,7 +161,7 @@ mod prop_tests {
                 value: default_val.clone(),
             };
             // Variable is set (even if empty), so should return empty value
-            let result = resolve_param_op("VAR", &op, &env);
+            let result = resolve_param_op("VAR", &op, &[], &env);
             assert_eq!(result, WordPart::Literal("".to_string()));
         }
     }
@@ -176,7 +180,7 @@ mod prop_tests {
             let mut env = std::collections::HashMap::new();
             env.insert("VAR".to_string(), value.clone());
 
-            let result = resolve_param_op("VAR", &op, &env);
+            let result = resolve_param_op("VAR", &op, &[], &env);
             let expected = value.strip_prefix(pattern).unwrap_or(&value);
             assert_eq!(result, WordPart::Literal(expected.to_string()));
         }
@@ -196,7 +200,7 @@ mod prop_tests {
             let mut env = std::collections::HashMap::new();
             env.insert("VAR".to_string(), value.clone());
 
-            let result = resolve_param_op("VAR", &op, &env);
+            let result = resolve_param_op("VAR", &op, &[], &env);
             // With longest=true and pattern *, entire string should be stripped
             assert_eq!(result, WordPart::Literal("".to_string()));
         }
@@ -216,7 +220,7 @@ mod prop_tests {
             let mut env = std::collections::HashMap::new();
             env.insert("VAR".to_string(), value.clone());
 
-            let result = resolve_param_op("VAR", &op, &env);
+            let result = resolve_param_op("VAR", &op, &[], &env);
             let expected = value.strip_suffix(pattern).unwrap_or(&value);
             assert_eq!(result, WordPart::Literal(expected.to_string()));
         }
@@ -236,7 +240,7 @@ mod prop_tests {
             let mut env = std::collections::HashMap::new();
             env.insert("VAR".to_string(), value.clone());
 
-            let result = resolve_param_op("VAR", &op, &env);
+            let result = resolve_param_op("VAR", &op, &[], &env);
             // With longest=true and pattern *, entire string should be stripped
             assert_eq!(result, WordPart::Literal("".to_string()));
         }
@@ -255,7 +259,7 @@ mod prop_tests {
             let mut env = std::collections::HashMap::new();
             env.insert("VAR".to_string(), value.clone());
 
-            let result = resolve_param_op("VAR", &op, &env);
+            let result = resolve_param_op("VAR", &op, &[], &env);
             let expected = value.replacen("a", &replacement, 1);
             assert_eq!(result, WordPart::Literal(expected));
         }
@@ -274,7 +278,7 @@ mod prop_tests {
             let mut env = std::collections::HashMap::new();
             env.insert("VAR".to_string(), value.clone());
 
-            let result = resolve_param_op("VAR", &op, &env);
+            let result = resolve_param_op("VAR", &op, &[], &env);
             let expected = value.replace("a", &replacement);
             assert_eq!(result, WordPart::Literal(expected));
         }
@@ -293,7 +297,7 @@ mod prop_tests {
             let mut env = std::collections::HashMap::new();
             env.insert("VAR".to_string(), value.clone());
 
-            let result = resolve_param_op("VAR", &op, &env);
+            let result = resolve_param_op("VAR", &op, &[], &env);
             let chars: Vec<char> = value.chars().collect();
             let start = offset.min(chars.len());
             let expected: String = chars[start..].iter().collect();
@@ -314,7 +318,7 @@ mod prop_tests {
             let mut env = std::collections::HashMap::new();
             env.insert("VAR".to_string(), value.clone());
 
-            let result = resolve_param_op("VAR", &op, &env);
+            let result = resolve_param_op("VAR", &op, &[], &env);
             let chars: Vec<char> = value.chars().collect();
             let start = (chars.len() as isize + offset).max(0) as usize;
             let expected: String = chars[start..].iter().collect();
@@ -336,7 +340,7 @@ mod prop_tests {
             let mut env = std::collections::HashMap::new();
             env.insert("VAR".to_string(), value.clone());
 
-            let result = resolve_param_op("VAR", &op, &env);
+            let result = resolve_param_op("VAR", &op, &[], &env);
             let chars: Vec<char> = value.chars().collect();
             let start = offset.min(chars.len());
             let end = (start + length).min(chars.len());
@@ -356,13 +360,13 @@ mod prop_tests {
             env.insert("VAR".to_string(), value.clone());
 
             // Upper then lower should give lowercase
-            let upper_result = resolve_param_op("VAR", &upper_op, &env);
+            let upper_result = resolve_param_op("VAR", &upper_op, &[], &env);
             let upper_str = match &upper_result {
                 WordPart::Literal(s) => s.clone(),
                 _ => panic!("Expected Literal"),
             };
             env.insert("VAR2".to_string(), upper_str);
-            let lower_result = resolve_param_op("VAR2", &lower_op, &env);
+            let lower_result = resolve_param_op("VAR2", &lower_op, &[], &env);
             let lower_str = match &lower_result {
                 WordPart::Literal(s) => s.clone(),
                 _ => panic!("Expected Literal"),

@@ -21,6 +21,7 @@ Simple(
                             longest: true,
                             pattern: ".*",
                         },
+                        embedded: [],
                     },
                 ],
             },
