@@ -521,3 +521,265 @@ doubt, the command name stays dynamic.
 - **WHEN** the input is `B=echo; B=rm; $B x`
 - **THEN** `$B` SHALL remain a dynamic command (more than one assignment)
 
+
+### Requirement: Unquoted heredoc bodies are evaluated for embedded commands
+
+The evaluator SHALL extract and evaluate embedded commands (command
+substitution `$(…)`/`` `…` ``, arithmetic `$((…))`) found
+in the body of an **unquoted** heredoc (`<<EOF` — i.e. one whose opening
+delimiter is neither single-quoted, double-quoted, nor backslash-escaped),
+because real bash performs expansion in such a body. Each embedded command SHALL
+become its own evaluation unit and SHALL be aggregated strictest-wins with the
+rest of the command. An embedded command in an unquoted heredoc body MUST NOT be
+dropped from evaluation.
+
+Process substitution (`<(…)`, `>(…)`) SHALL NOT be extracted from a heredoc
+body: bash performs only parameter, command, and arithmetic expansion there, so
+`<(…)` in a heredoc body is literal text that never executes. Extracting it
+would evaluate (and potentially deny) text that never runs — heredoc bodies
+commonly carry example code and documentation.
+
+This complements "Quoted heredoc bodies are inviolable": a quoted heredoc
+(`<<'EOF'`, `<<"EOF"`, `<<\EOF`) suppresses expansion and its body SHALL remain
+inert; only the unquoted form is evaluated. The distinguishing signal is the
+delimiter's quoting, which the lexer records.
+
+#### Scenario: Command substitution in an unquoted heredoc body is evaluated
+
+- **WHEN** the input is `cat <<EOF` / `$(rm --force)` / `EOF`
+- **AND** a rule denies `rm --force`
+- **THEN** the inner `rm --force` SHALL be evaluated and the decision SHALL be
+  `:deny`
+- **AND** the `rm` SHALL NOT be absent from evaluation
+
+#### Scenario: Quoted heredoc body stays inert
+
+- **WHEN** the input is `cat <<'EOF'` / `$(rm --force)` / `EOF`
+- **AND** a rule denies `rm --force`
+- **THEN** no `EvalUnit` SHALL be emitted for the body `$(rm --force)` (the
+  quoted heredoc suppresses expansion; existing inviolability is preserved)
+
+#### Scenario: Backslash-escaped delimiter is inert
+
+- **WHEN** the input is `cat <<\EOF` / `$(rm --force)` / `EOF`
+- **THEN** the body SHALL remain inert (backslash-escaped delimiter suppresses
+  expansion, like the single-quoted form)
+
+#### Scenario: Process substitution in a heredoc body stays literal
+
+- **WHEN** the input is `cat <<EOF` / `<(rm --force)` / `EOF`
+- **AND** a rule denies `rm --force`
+- **THEN** no `EvalUnit` SHALL be emitted for `<(rm --force)` (bash does not
+  perform process substitution in heredoc bodies; the text is inert)
+
+#### Scenario: Unterminated substitution in an unquoted heredoc body is not recursed into
+
+- **WHEN** the input is an unquoted heredoc whose body contains `$(rm --force`
+  (unterminated)
+- **THEN** the unterminated substitution SHALL NOT be extracted as an embedded
+  command
+- **AND** the Error-severity floor SHALL own the outcome (decision at least
+  `:ask`), per "Unterminated substitutions are not recursed into"
+
+### Requirement: Match and parse imprecision never widens toward allow
+
+The evaluator SHALL treat every imprecision in parsing a command or matching a
+Pattern as moving the decision only toward `:ask`/`:deny`, never toward
+`:allow`. Formally: for any command `cmd` and config `C`, if the engine is
+uncertain whether a matcher's constraint holds for the value that will run
+(because the source under-determines that value), the matcher SHALL NOT report
+the match as contributing to `:allow`. An uncertain matcher that could only have
+tightened the decision (a `(forbidden …)`, a `(not (flag …))`, the test arm of
+an `unless`) MAY still fire, because firing it errs toward caution.
+
+This is the security model's load-bearing invariant: `may-i` authorises before
+execution, so an authorisation (`:allow`) MUST rest on a constraint that holds
+for the runtime value, while a refusal (`:ask`/`:deny`) is sound under
+uncertainty. The Error-severity parse floor (see "Error-severity diagnostics
+floor decision at ask") and the expansion-bearing-word rule below are both
+instances of this invariant.
+
+#### Scenario: Uncertainty floors an otherwise-allow segment to ask
+
+- **WHEN** a segment would evaluate to `:allow` only because a matcher reported a
+  match it could not prove for the runtime value
+- **THEN** the segment's decision SHALL be at least `:ask`
+
+#### Scenario: Uncertainty does not relax a deny
+
+- **WHEN** a segment evaluates to `:deny`
+- **AND** some matcher in the same segment was uncertain
+- **THEN** the decision SHALL remain `:deny` (uncertainty never relaxes)
+
+### Requirement: Expansion-bearing words do not satisfy an allow constraint
+
+A non-wildcard matcher tested against an expansion-bearing word SHALL NOT report
+a match that contributes to `:allow`; the enclosing segment SHALL floor to at
+least `:ask`.
+
+A word is **expansion-bearing** when any of its parts is a parameter expansion
+(`$x`, `${…}`), a command substitution (`$(…)`, `` `…` ``), an arithmetic
+expansion (`$((…))`), a process substitution (`<(…)`, `>(…)`), an unquoted glob
+metacharacter (`*`, `?`, `[`), an unquoted brace expansion (`{a,b}`), or an
+unquoted leading tilde (`~`) — i.e. a word whose runtime value is not provable
+from its source bytes.
+
+When a rule-body matcher tests a **non-wildcard** expression against an
+expansion-bearing word, the matcher SHALL NOT report a match that contributes to
+`:allow`. The enclosing segment's decision SHALL floor to at least `:ask`, with a
+reason naming the unresolved word. The matchers in scope are `(positional …)`,
+`(exact …)`, `(anywhere …)`, the value form of `(parameter X FORM)`, the value
+form of `(flag X)`, each element tested by `(every? #var …)` / `(some? #var …)`,
+and `(matches? #var PAT)`.
+
+A **non-wildcard** expression is any single-token Pattern other than the
+wildcard atom `*`: a string literal, `(regex …)`, or an `(or …)`/`(and …)`/`(not
+…)` composed of such. The wildcard atom `*` matches "any value" and SHALL remain
+sound against an expansion-bearing word (it constrains nothing). `(bound? #var)`
+SHALL be unaffected (it tests presence, not value). A word with no expansion
+part SHALL be unaffected: a pure literal is matched as written, and a literal
+that defeats the author's regex (e.g. `/tmp/../etc` against `^/tmp/`) is the
+regex's own semantics, outside this requirement.
+
+#### Scenario: Parameter expansion in a positional defeats an allow guard
+
+- **GIVEN** `(parser "rm" (style gnu) (flags posix) (positional #paths (regex "^/tmp/") *))` and `(rule "rm" (when (every? #paths (regex "^/tmp/")) (allow "tmp only")))`
+- **WHEN** evaluating `rm /tmp/$HOME`
+- **THEN** the `(regex "^/tmp/")` element test against `/tmp/$HOME` SHALL NOT
+  contribute to `:allow`
+- **AND** the decision SHALL be at least `:ask`
+- **AND** the reason SHALL name the unresolved word `/tmp/$HOME`
+
+#### Scenario: Glob in a matched positional floors to ask
+
+- **GIVEN** the configuration above
+- **WHEN** evaluating `rm /tmp/*`
+- **THEN** the decision SHALL be at least `:ask` (the glob's runtime targets are
+  not provable from the source)
+
+#### Scenario: Brace expansion in a matched positional floors to ask
+
+- **GIVEN** the configuration above
+- **WHEN** evaluating `rm /tmp/{a,../etc}`
+- **THEN** the decision SHALL be at least `:ask`
+
+#### Scenario: Wildcard matcher is unaffected by expansion
+
+- **GIVEN** `(rule "rm" (when (positional *) (allow "any single arg")))`
+- **WHEN** evaluating `rm $HOME`
+- **THEN** the wildcard `*` SHALL match `$HOME` and the decision SHALL be
+  `:allow` (matching "any value" is sound regardless of expansion)
+
+#### Scenario: Pure-literal word is matched as written
+
+- **GIVEN** `(rule "rm" (when (positional "/tmp/x") (allow)))`
+- **WHEN** evaluating `rm /tmp/x`
+- **THEN** the decision SHALL be `:allow` (no expansion part; literal match)
+
+#### Scenario: Expansion in a deny matcher still fires
+
+- **GIVEN** `(rule "rm" (when (anywhere (regex "secret")) (deny "no secrets")))`
+- **WHEN** evaluating `rm secret$X`
+- **THEN** `(anywhere (regex "secret"))` MAY match and the decision SHALL be
+  `:deny` (firing a deny under expansion errs toward caution)
+
+#### Scenario: Expansion in a flag value floors an allow
+
+- **GIVEN** `(rule "kubectl" (when (parameter ["n" "namespace"] (regex "^dev-")) (allow "dev namespaces")))`
+- **WHEN** evaluating `kubectl -n dev-$ENV get pods`
+- **THEN** the `(regex "^dev-")` test against the expansion-bearing value
+  `dev-$ENV` SHALL NOT contribute to `:allow`
+- **AND** the decision SHALL be at least `:ask`
+
+### Requirement: Redirect targets are not silently ignored
+
+A command carrying a redirection to a file target SHALL NOT be evaluated as if
+the redirection were absent. The redirection forms in scope are `>`, `>>`, `<`,
+`<>`, `&>`, `>|`, and fd duplication to a path. A command with a redirect to a
+non-standard file target SHALL floor to at least `:ask`, with a reason naming
+the redirect operator and target.
+
+Redirections to `/dev/null` and to standard fd numbers (`2>&1`, `>&2`) are
+standard plumbing and SHALL NOT floor on their own.
+
+This change provides no way to opt a redirect out of the floor: `may-i`
+classifies by command, and constraining *where* a redirect points is the job of
+sandboxing layers beneath it. A capability-style opt-in (a rule declaring that
+its command may carry redirects) is deferred to a separate proposal; when it
+lands, an expansion-bearing target SHALL be handled per "Match and parse
+imprecision never widens toward allow" (it cannot satisfy an opt-in toward
+`:allow`).
+
+#### Scenario: Write redirect to a file floors an otherwise-allow command
+
+- **GIVEN** `(rule "echo" (allow))`
+- **WHEN** evaluating `echo x > /home/u/.ssh/authorized_keys`
+- **THEN** the decision SHALL be at least `:ask`
+- **AND** the reason SHALL name the redirect target
+
+#### Scenario: Standard plumbing does not floor
+
+- **GIVEN** `(rule "echo" (allow))`
+- **WHEN** evaluating `echo x 2>&1` or `echo x > /dev/null`
+- **THEN** the decision SHALL be `:allow`
+
+#### Scenario: Expansion-bearing redirect target floors
+
+- **WHEN** evaluating `echo x > /tmp/$NAME` under `(rule "echo" (allow))`
+- **THEN** the decision SHALL be at least `:ask` (the target is both a
+  non-standard file target and expansion-bearing; either alone floors)
+
+### Requirement: Environment-assignment prefixes gate the decision
+
+The evaluator SHALL NOT discard a simple command's `NAME=VALUE` environment-
+assignment prefixes. A prefix assigning a `NAME` that is not in the effective
+`safe-env-vars` set SHALL floor the enclosing segment to at least `:ask`, with a
+reason naming the variable.
+Prefixes assigning only names in `safe-env-vars` SHALL pass through and the
+command SHALL be evaluated as if unprefixed.
+
+The rationale is that prefix-position assignments to names such as `LD_PRELOAD`,
+`BASH_ENV`, `ENV`, `IFS`, `PATH`, and `SHELLOPTS` change what executes; treating
+the command as unprefixed authorises a materially different command.
+
+#### Scenario: Dangerous env prefix floors an allowed command
+
+- **GIVEN** `(rule "git" (allow))` and no `safe-env-vars` entry for `LD_PRELOAD`
+- **WHEN** evaluating `LD_PRELOAD=/evil.so git status`
+- **THEN** the decision SHALL be at least `:ask`
+- **AND** the reason SHALL name `LD_PRELOAD`
+
+#### Scenario: Allowlisted env prefix passes through
+
+- **GIVEN** `(rule "git" (allow))` and `(safe-env-vars "GIT_PAGER")` in the primary config
+- **WHEN** evaluating `GIT_PAGER=cat git status`
+- **THEN** the decision SHALL be `:allow` (the command evaluates as `git status`)
+
+#### Scenario: Mixed prefixes floor if any name is not allowlisted
+
+- **GIVEN** `(rule "git" (allow))` and `(safe-env-vars "GIT_PAGER")`
+- **WHEN** evaluating `GIT_PAGER=cat LD_PRELOAD=/evil.so git status`
+- **THEN** the decision SHALL be at least `:ask` (the non-allowlisted
+  `LD_PRELOAD` floors regardless of the allowlisted `GIT_PAGER`)
+
+### Requirement: The effective safe-env-vars set is primary-config-governed
+
+The `(safe-env-vars STR…)` form SHALL declare environment-variable names that
+may appear in command prefix position without flooring. Like `(audit …)`, it
+SHALL be honoured only from the primary config; a `(safe-env-vars …)` form in a
+`(load …)`-included or repo-local file SHALL be subject to the trust scope
+defined in `trust-hashing` (its merged set hashed under the `:safe-env-vars`
+scope and inert until approved). When no `(safe-env-vars …)` form is present, the
+effective set SHALL be empty and every env prefix SHALL floor.
+
+#### Scenario: Loaded safe-env-vars is inert until approved
+
+- **WHEN** a `(load …)`-included file contributes `(safe-env-vars "FOO")` and the
+  `:safe-env-vars` scope has no trust approval
+- **THEN** the `FOO` entry SHALL NOT be in the effective set
+- **AND** a `FOO=bar cmd` prefix SHALL floor to `:ask`
+
+#### Scenario: Empty set floors every prefix
+
+- **WHEN** no `(safe-env-vars …)` form is configured
+- **THEN** any `NAME=VALUE` prefix SHALL floor the segment to at least `:ask`
