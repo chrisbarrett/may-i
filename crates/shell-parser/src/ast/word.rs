@@ -388,12 +388,10 @@ impl Word {
     }
 }
 
-// ── Test-only resolution helpers ─────────────────────────────────────
+// ── Resolution helpers ───────────────────────────────────────────────
 
-#[cfg(test)]
 use crate::resolve::resolve_param_op;
 
-#[cfg(test)]
 fn resolve_parts(
     parts: &[WordPart],
     env: &std::collections::HashMap<String, String>,
@@ -415,8 +413,11 @@ fn resolve_parts(
         .collect()
 }
 
-#[cfg(test)]
 impl Word {
+    /// Resolve this word's parameter expansions against `env`, replacing any
+    /// part whose variable is present with its literal value and leaving the
+    /// rest untouched. A word all of whose dynamic parts resolve becomes a
+    /// literal; partially-resolved words stay dynamic.
     pub fn resolve(&self, env: &std::collections::HashMap<String, String>) -> Word {
         Word {
             parts: resolve_parts(&self.parts, env),

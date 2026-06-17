@@ -1,10 +1,9 @@
 mod ast;
+mod const_env;
 mod diagnostic;
-#[cfg(test)]
 mod glob;
 mod lexer;
 mod parse;
-#[cfg(test)]
 pub(crate) mod resolve;
 mod segment;
 
@@ -12,6 +11,7 @@ mod segment;
 mod tests;
 
 pub use ast::*;
+pub use const_env::constant_env;
 pub use diagnostic::*;
 use parse::Parser;
 pub use segment::{Segment, segment};
