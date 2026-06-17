@@ -76,6 +76,32 @@ fn collect_simple_commands<'a>(cmd: &'a Command, out: &mut Vec<&'a SimpleCommand
     }
 }
 
+/// Collect the names of every function the command defines, anywhere in the
+/// tree — both `name() { … }` and `function name { … }` forms, including
+/// definitions nested inside another function's body. A sibling of
+/// [`extract_simple_commands`]; used to recognise calls to script-local
+/// functions as internal rather than as unknown external programs.
+pub fn defined_function_names(cmd: &Command) -> std::collections::HashSet<String> {
+    let mut names = std::collections::HashSet::new();
+    collect_function_names(cmd, &mut names);
+    names
+}
+
+fn collect_function_names(cmd: &Command, out: &mut std::collections::HashSet<String>) {
+    if let Command::FunctionDef { name, .. } = cmd {
+        // A malformed `function () { … }` parses with an empty name. An empty
+        // name must never enter the set: a quoted-empty first word (`"" arg`)
+        // stringifies to `""` and would otherwise be misclassified as an
+        // internal call. A real definition always has a non-empty name.
+        if !name.is_empty() {
+            out.insert(name.clone());
+        }
+    }
+    for child in cmd.children() {
+        collect_function_names(child, out);
+    }
+}
+
 #[cfg(test)]
 pub(crate) fn extract_all_words(cmd: &Command) -> Vec<&Word> {
     let mut result = Vec::new();

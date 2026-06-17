@@ -18,17 +18,20 @@ body), every call asks, drowning the real signal.
 
 **Goals:**
 
-- A call to a function the same command defines is internal: `:allow`, never
-  `No rule for command …`, and visible as such in the trace.
+- A call to a function the same command defines, **when that function is live at
+  the call site**, is internal: `:allow`, never `No rule for command …`, and
+  visible as such in the trace.
 - Function bodies stay authorised exactly as today.
-- Zero new analysis burden: no dataflow, no argument binding, no call-graph.
+- A bounded, **sound** liveness analysis: never classify a call internal unless
+  the function is provably live there (a false-internal is a security bypass — an
+  ungated external runs). No argument binding, no interprocedural call-graph.
 
 **Non-Goals:**
 
 - Connecting call-site arguments to body parameters (`$1`, `$@`). Bodies are
   authorised as written, with their own dynamic-ness.
-- Control-flow analysis of definition order (conditional defs, `unset -f`,
-  redefinition). Out of scope — see D2.
+- Path-sensitive analysis of conditional definitions and full interprocedural
+  call-graph precision. Conservatively approximated to `:ask` — see D2.
 - Dynamic command names (`"$TGBIN" stack generate`) and the `done < <(…)`
   brace-group parse warning observed in the same scripts. Separate concerns.
 
@@ -37,49 +40,77 @@ body), every call asks, drowning the real signal.
 ### D1 — A `LocalFunctionCall` eval unit, classified in `decompose`
 
 Add a collector to `crates/shell-parser` that returns the set of `FunctionDef`
-names in a parsed command (sibling to `extract_simple_commands`). In
-`decompose`, thread that set in; when a simple command's resolved (non-dynamic)
-first word is in the set, emit `EvalUnit::LocalFunctionCall { name, span }`
-instead of `EvalUnit::SimpleCommand`. `command.rs` evaluates that unit as
-`:allow` with a traceable reason (e.g. *"internal call to script-local function
-`materialise` — body authorised at its definition"*); it contributes nothing to
-the aggregate.
+names in a parsed command (sibling to `extract_simple_commands`). A liveness
+classifier (D2) consumes it and decides, per call site, whether the call is a
+**live** local-function call; `decompose` emits `EvalUnit::LocalFunctionCall {
+name, span }` for those (keyed by the simple command's span) instead of
+`EvalUnit::SimpleCommand`. `command.rs` evaluates that unit as `:allow` with a
+traceable reason (e.g. *"internal call to script-local function `materialise` —
+body authorised at its definition"*); it contributes nothing to the aggregate
+(never raises the decision, fills the reason only as a last resort).
 
-- *Why a distinct unit over silently dropping the call:* the trace and the
-  forthcoming audit log should explain why a call did not ask. A dedicated unit
-  renders an intelligible line; dropping it would look like a coverage hole.
+- *Why a distinct unit over silently dropping the call:* the trace and the audit
+  log should explain why a call did not ask. A dedicated unit renders an
+  intelligible line; dropping it would look like a coverage hole.
 - Embedded substitutions in the call's arguments are still extracted and
   evaluated (a `local_fn "$(rm -rf /)"` argument must not escape) — only the
-  command-name resolution changes.
+  command-name classification changes.
 
-### D2 — Set-based recognition, order-insensitive (P1)
+### D2 — Liveness-aware recognition (revises the original set-based choice)
 
-A name defined as a function *anywhere* in the command makes all calls to it
-internal. The alternative — source-order precedence (a call is internal only if
-a definition appears textually before it) — was rejected:
+A call is classified internal only when the named function is **provably live**
+at that call site. The analysis is a small abstract interpreter over the parsed
+command, in two tiers — because bash executes top-level statements **in order**
+but runs a function body only when the function is *called*:
 
-- Bodies routinely **forward-reference** sibling functions; at runtime every
-  top-level definition has executed before any function is called, so a body
-  calling a sibling defined later is correct. Source-order would false-ask on
-  exactly the mutual-recursion / helper-defined-below patterns this change
-  exists to fix.
-- The only case set-based gets "wrong" is a call that precedes its definition
-  *and* shadows a real command — exotic, and bounded because the body is
-  authorised regardless. Documented as accepted imprecision.
+- **Tier 1 — top-level calls (order-sensitive).** Walk the top-level spine
+  (`;` `&&` `||` `|` `&`) left to right maintaining a `live` set: a top-level
+  `name() { … }` adds `name`; a statically-resolved `unset -f name` removes it.
+  A top-level call is internal iff its resolved name is in `live` at that point.
+- **Tier 2 — body calls (establishment-based).** A call inside a function body
+  is internal iff its name is defined unconditionally at top level *before the
+  activation point* and never unset. The **activation point** is the source
+  position of the earliest top-level call to any defined-function name; every
+  body runs at or after it, so functions established before it are guaranteed
+  live inside any body. This keeps **mutual recursion** and
+  **helper-defined-below** working while refusing the
+  forward-reference-invoked-before-definition case.
 
-True flow analysis (conditional definitions, `unset -f`) is effectively
-undecidable cheaply and buys nothing for agent-generated scripts; explicitly not
-attempted.
+Direction of safety: a false *internal* is a bypass (an ungated external runs); a
+false *external* is only a spurious `:ask`. So the analysis is **conservative** —
+anything it cannot prove live falls back to the external/ask path:
+
+- definitions inside `if`/`while`/`case`/subshell/brace-group do not establish
+  internal status (conditionally reached / scoped);
+- a dynamic `unset -f "$x"` clears the whole live set (could remove anything);
+- a dynamic call head (`"$f"`) is never matched (already `DynamicCommand`).
+
+This closes the bypasses the original set-based rule accepted:
+`rm -rf /; rm(){ :; }` (Tier 1: `rm` not yet live → ask),
+`rm(){ :; }; unset -f rm; rm -rf /` (Tier 1: unset removed `rm` → ask), and the
+narrow body residual `g(){ f; }; g; f(){ … }` (Tier 2: `f` defined after the
+activation point → not established → ask).
+
+True interprocedural precision (every invocation site of every function) is not
+attempted; the activation-point approximation is sound and covers the realistic
+"define a cluster, then call it" shape.
+
+Implementation: the classifier returns the set of simple-command **spans** that
+are live internal calls; `decompose` consults it. A shared `resolved_command_name`
+helper keeps the classifier and the `SimpleCommand`/`LocalFunctionCall`
+branch in agreement on name resolution (including `$BIN` constant resolution).
 
 ## Risks / Trade-offs
 
-- **Shadowing a real command** (`git() { … }; git push`) → the call is now
-  internal and skips any `git` rule. Bounded: the wrapper body is authorised, so
-  whatever it actually runs is still gated. Acceptable; note in the spec/trace.
-- **Pre-definition call to a name that is also an external program** → treated as
-  internal, external not gated. Exotic; accepted per D2.
+- **Shadowing a live function over a real command** (`git() { … }; git push`) →
+  the call is internal and skips any `git` rule. This is **runtime-correct** bash
+  shadowing: the function is live, so the body is what actually runs, and the
+  body is authorised. Accepted; noted in the spec/trace.
+- **Conservative spurious asks** → a function defined only inside a conditional,
+  or called before it is provably live, asks instead of resolving internal. Safe
+  by construction (false-external), and rare in agent-generated scripts.
 - **Name resolution on dynamic call heads** → only non-dynamic first words are
-  matched against the set; `"$f" args` stays a dynamic command and asks as today.
+  classified; `"$f" args` stays a dynamic command and asks as today.
 
 ## Open Questions
 

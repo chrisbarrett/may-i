@@ -166,6 +166,9 @@ fn trace_to_layout(
             TraceEntry::DefaultAsk { .. } => {
                 builder.on_default_ask();
             }
+            TraceEntry::LocalFunctionCall { name } => {
+                builder.on_local_function_call(name);
+            }
             TraceEntry::Parser {
                 command,
                 style,
@@ -316,6 +319,16 @@ impl<'a> TraceLayoutBuilder<'a> {
         let label = "No matching rule".italic().yellow().to_string();
         let label_visible = "No matching rule".len();
         let mut row = ColRow::new(label, label_visible, colorize_right("→ :ask (default)"));
+        row.left_align = ColAlign::Right;
+        self.current_rows.push(row);
+        self.first = false;
+    }
+
+    fn on_local_function_call(&mut self, name: &str) {
+        let label = format!("{} {}", "internal call:".dimmed(), name.italic());
+        let label_visible = "internal call: ".len() + name.len();
+        let right = colorize_right("→ :allow (internal)");
+        let mut row = ColRow::new(label, label_visible, right);
         row.left_align = ColAlign::Right;
         self.current_rows.push(row);
         self.first = false;
@@ -479,6 +492,24 @@ mod tests {
         let output = String::from_utf8(buf).unwrap();
         let stripped = strip_ansi(&output);
         assert!(stripped.contains("No matching rule"));
+    }
+
+    #[test]
+    fn trace_to_layout_with_local_function_call() {
+        let term = Terminal::new(80);
+        let entries = vec![TraceEntry::LocalFunctionCall {
+            name: "materialise".into(),
+        }];
+        let layout = trace_to_layout(&entries, "materialise foo", 0, &term);
+        let mut buf = Vec::new();
+        write_layout(&mut buf, &layout, &term);
+        let output = String::from_utf8(buf).unwrap();
+        let stripped = strip_ansi(&output);
+        assert!(
+            stripped.contains("internal call: materialise"),
+            "{stripped}"
+        );
+        assert!(stripped.contains(":allow (internal)"), "{stripped}");
     }
 
     #[test]

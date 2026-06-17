@@ -642,6 +642,44 @@ fn test_extract_simple_commands_from_function() {
     assert_eq!(scs[0].command_name(), Some("echo"));
 }
 
+// --- defined_function_names ---
+
+#[test]
+fn test_defined_function_names_collects_both_forms() {
+    let cmd = parse("materialise() { echo hi; }; function run_seeds { echo go; }").into_command();
+    let names = defined_function_names(&cmd);
+    assert_eq!(names.len(), 2);
+    assert!(names.contains("materialise"));
+    assert!(names.contains("run_seeds"));
+}
+
+#[test]
+fn test_defined_function_names_empty_when_none() {
+    let cmd = parse("echo hi; ls -l").into_command();
+    let names = defined_function_names(&cmd);
+    assert!(names.is_empty());
+}
+
+#[test]
+fn test_defined_function_names_excludes_empty_name() {
+    // A malformed `function () { … }` parses with an empty name; it must not
+    // enter the set, else a quoted-empty first word would match as internal.
+    let cmd = parse("function () { rm -rf /; }").into_command();
+    let names = defined_function_names(&cmd);
+    assert!(
+        !names.contains(""),
+        "empty name must be excluded: {names:?}"
+    );
+}
+
+#[test]
+fn test_defined_function_names_includes_nested_defs() {
+    let cmd = parse("outer() { inner() { echo hi; }; }").into_command();
+    let names = defined_function_names(&cmd);
+    assert!(names.contains("outer"));
+    assert!(names.contains("inner"));
+}
+
 #[test]
 fn test_extract_simple_commands_from_background() {
     let cmd = parse("sleep 10 &").into_command();

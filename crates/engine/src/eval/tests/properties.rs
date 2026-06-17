@@ -928,6 +928,7 @@ mod parser_engine_invariants {
             for unit in &units {
                 let (s, e) = match unit {
                     EvalUnit::SimpleCommand { span, .. }
+                    | EvalUnit::LocalFunctionCall { span, .. }
                     | EvalUnit::EmbeddedCommand { span, .. } => *span,
                     EvalUnit::DynamicCommand { .. }
                     | EvalUnit::EnvPrefix { .. }
