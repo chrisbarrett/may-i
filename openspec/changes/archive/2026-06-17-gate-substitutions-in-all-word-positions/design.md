@@ -67,6 +67,41 @@ Reuse `push_embedded_units_from_word`, so the parser-provided inner-span flows
 through unchanged and unterminated substitutions stay suppressed exactly as
 today (the diagnostic floor owns those).
 
+### D3 — Capture parameter-expansion operand substitutions in the lexer
+
+A `$( … )` / backtick inside a parameter-expansion operator operand
+(`${x:-$(rm)}`, `${x#$(rm)}`, `${x/$(rm)/y}`) runs a command, but the lexer read
+those operands with `read_until_char` and stored them as opaque `String`s, so no
+`WordPart` — and therefore no extraction pass — ever saw the substitution. This
+is the *same* bypass class as the word positions above, in the one remaining
+sub-position, and the coverage proptest (D2) would not have caught it because
+the operand text never became structured parts.
+
+Fix it where the bytes are still positioned: the lexer. A new operand reader
+captures `$( … )` (not arithmetic `$((` — runs no command) and backtick
+substitutions as real `WordPart`s with absolute source-byte spans, via the same
+`read_dollar` / backtick readers every other path uses, while still returning
+the verbatim operand string for resolution and display. They are stored in a new
+`embedded: Vec<WordPart>` field on `WordPart::ParameterExpansionOp`.
+
+`collect_embedded_commands` / `collect_embedded_with_spans` (the parser's single
+source of truth for "what is an embedded command") recurse into that field, so
+`Word::extract_embedded` surfaces operand substitutions exactly like any other —
+**the engine needs no change**: every word position already routes through
+`push_embedded_units_from_word`, which now sees the operand substitutions too.
+This generalises the existing mechanism rather than special-casing param
+expansion in the engine.
+
+- *Why a parser field over an engine re-scan:* the engine deleted its flat
+  input re-scan (`find_substitution_spans`); the WordPart span is the one source
+  of truth for span↔source coherence. Only the lexer, mid-scan, knows the
+  operand's absolute byte positions, so it is the only place that can mint a
+  coherent span.
+- *Why keep the operand `String` too:* `resolve_param_op` does string operations
+  (default/strip/replace) on the operand value and `to_str`/`display_source`
+  flatten it; both still want the verbatim text. The `embedded` field is purely
+  additive — extraction reads it, resolution/display ignore it.
+
 - *Why a dedicated word source over re-running `extract_simple_commands`-style
   recursion:* the units must carry the substitution's own inner-span for segment
   colouring; the existing helper already does this and is the one source of

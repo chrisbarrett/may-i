@@ -26,7 +26,9 @@ command extraction.
   and redirect targets:
   - values of bare `Command::Assignment` nodes (`z=$(…)`),
   - `for` loop iteration words (`for x in $(…)`),
-  - `case` subject and pattern words (`case $(…) in $(…)) …`).
+  - `case` subject and pattern words (`case $(…) in $(…)) …`),
+  - parameter-expansion operands (`${x:-$(…)}`, `${x#$(…)}`, `${x/$(…)/…}`),
+    which bash expands and the lexer previously flattened to an opaque string.
 - Add a coverage **invariant** (property test): every command/backtick/process
   substitution present in the input yields an `EmbeddedCommand` evaluation unit,
   so a future word position cannot silently reintroduce the gap.
@@ -50,8 +52,15 @@ command extraction.
   (sibling to `push_embedded_units_from_redirect_targets`) to cover assignment
   values, `For` words, and `Case` words; keep span/coordinate handling identical
   to the existing paths so nested-segment colouring stays correct.
+- `crates/shell-parser` — the lexer flattens parameter-expansion operands
+  (`${x:-…}` value, `${x/…/…}` pattern/replacement, …) to opaque strings, so a
+  substitution there is invisible to extraction. Capture the `$( … )` / backtick
+  substitutions in those operands as structured `WordPart`s carrying their
+  source-byte span (a new `embedded` field on `WordPart::ParameterExpansionOp`),
+  so the engine's existing `extract_embedded` gates them with no engine change.
 - Tests: `crates/engine` decompose units + a cross-cutting property test
-  asserting substitution-coverage across arbitrary inputs.
+  asserting substitution-coverage across arbitrary inputs; `crates/shell-parser`
+  unit tests that operand substitutions surface with correct spans.
 - No DSL, config, trust-hash, or migration surface change. Pre-existing bug,
   independent of `recognise-local-function-calls`. Out of scope: opaque-string
   commands (`eval`/`trap`/`source`/`bash -c`) — these gate by their own name and
