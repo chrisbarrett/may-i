@@ -123,6 +123,14 @@ impl<'a> EvalContext<'a> {
         &self.arg_expansions[..len]
     }
 
+    /// The positional-matcher step budget from the config, or the default when
+    /// no config is attached (test contexts).
+    pub(crate) fn matcher_budget(&self) -> u64 {
+        self.config
+            .map(|c| c.matcher_budget.steps())
+            .unwrap_or_else(|| may_i_core::MatcherBudget::default().steps())
+    }
+
     /// Build bindings from a slice of defines.
     pub fn build_bindings(defines: &[Define]) -> HashMap<&str, &Predicate> {
         defines

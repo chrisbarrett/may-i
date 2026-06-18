@@ -1163,6 +1163,33 @@ pub struct Config {
     /// Audit log configuration from the `(audit …)` form. Honoured only
     /// from the primary config; defaults to disabled.
     pub audit: AuditConfig,
+
+    /// Step budget for the positional matcher. Bounds backtracking over
+    /// nested sequence-group quantifiers so a pathological Pattern cannot hang
+    /// evaluation. No surface syntax exposes it yet; it carries a high default
+    /// (`MatcherBudget::default`).
+    pub matcher_budget: MatcherBudget,
+}
+
+/// Step budget for the positional matcher. A high default such that only
+/// pathological nested-quantifier Patterns reach it; exceeding it yields
+/// no-match (the decision floors to `:ask`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MatcherBudget(pub u64);
+
+impl MatcherBudget {
+    /// The raw step count.
+    pub fn steps(self) -> u64 {
+        self.0
+    }
+}
+
+impl Default for MatcherBudget {
+    fn default() -> Self {
+        // Validated against the proptest corpus: legitimate deep rules use far
+        // fewer steps, while pathological nests hit it in well under a second.
+        MatcherBudget(100_000)
+    }
 }
 
 impl Config {
@@ -1363,6 +1390,18 @@ mod tests {
     use super::*;
     use crate::pattern::{ArgPattern, CommandPattern, MatchMode};
     use crate::span::Span;
+
+    /// Task 4.1: the matcher step budget is a config-structure field with a
+    /// high default and no surface syntax.
+    #[test]
+    fn config_carries_matcher_budget_with_high_default() {
+        assert_eq!(MatcherBudget::default().steps(), 100_000);
+        assert_eq!(
+            Config::default().matcher_budget,
+            MatcherBudget::default(),
+            "default config uses the default matcher budget"
+        );
+    }
 
     // ── BindingName smart-constructor tests (task 2.7) ─────────────
 

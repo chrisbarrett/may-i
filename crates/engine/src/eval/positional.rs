@@ -1,13 +1,24 @@
 use may_i_core::ContextFacts;
 use may_i_core::ast::Effect;
-use may_i_core::pattern::PositionalArg;
+use may_i_core::pattern::{PosTerm, PosTermView, Quantifier};
 
 use super::decompose::Expansion;
+
+/// Default positional-matcher step budget when no config value is supplied
+/// (test adapters and recursion entry points). High enough that only
+/// pathological nested-quantifier Patterns reach it; see the termination
+/// invariant in `parser-engine-invariants`.
+#[cfg(test)]
+pub(crate) const DEFAULT_STEP_BUDGET: u64 = 100_000;
 
 /// Per-element record of how a pattern element fared on the match's
 /// winning (backtracking) path. Used to annotate traces against the
 /// argument each element was actually tested with — a forward greedy
 /// walk cannot reproduce this for quantifiers that give args back.
+///
+/// One record is produced per *top-level* term. A sequence group records a
+/// single summary element (tested at its entry cursor, `consumed` = the args
+/// the whole group claimed); its inner elements are not surfaced separately.
 #[derive(Debug, Clone)]
 pub(crate) struct ElementMatch {
     /// Index into the positional args of the value at the cursor when this
@@ -19,6 +30,81 @@ pub(crate) struct ElementMatch {
     /// Whether this element matched (false for the element a failed match
     /// stopped on).
     pub(crate) matched: bool,
+}
+
+/// Fused evidence of a successful element/sequence match along a path: the
+/// facts bound by `Expr::Bind`, plus the provenance (display texts) of every
+/// constrained match performed against an expansion-bearing arg.
+///
+/// `match_token` is the *only* constructor, and it always computes
+/// `unresolved` from `pattern.matches_any_value()` and the arg's expansion.
+/// `and` merges *both* fields. A successful path therefore cannot exist
+/// without its provenance: the unsound matched-without-provenance state is
+/// unconstructible, so forgetting to thread provenance on a new group path
+/// turns into "produced no evidence, so the path cannot succeed" rather than
+/// a silent soundness hole. (design.md D4.)
+#[derive(Clone, Default)]
+pub(crate) struct MatchEvidence {
+    facts: ContextFacts,
+    unresolved: Vec<String>,
+}
+
+impl MatchEvidence {
+    /// The empty evidence: no facts, no unresolved provenance. The identity of
+    /// `and`.
+    pub(crate) fn empty() -> Self {
+        Self::default()
+    }
+
+    /// Combine two pieces of evidence: union the facts, concatenate the
+    /// unresolved provenance. Total (never fails) and associative.
+    pub(crate) fn and(mut self, other: Self) -> Self {
+        self.facts = self.facts.merge(&other.facts);
+        self.unresolved.extend(other.unresolved);
+        self
+    }
+
+    fn into_parts(self) -> (ContextFacts, Vec<String>) {
+        (self.facts, self.unresolved)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_parts(facts: ContextFacts, unresolved: Vec<String>) -> Self {
+        Self { facts, unresolved }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn unresolved(&self) -> &[String] {
+        &self.unresolved
+    }
+
+    #[cfg(test)]
+    pub(crate) fn facts(&self) -> &ContextFacts {
+        &self.facts
+    }
+}
+
+/// Evidence of matching `pattern` against `token`, or `None` if it does not
+/// match. The sole way to obtain element-match evidence — see
+/// [`MatchEvidence`].
+pub(crate) fn match_token<E: std::fmt::Debug + may_i_core::ToDoc>(
+    pattern: &may_i_core::pattern::Expr<E>,
+    token: &str,
+    expansion: &Expansion,
+) -> Option<MatchEvidence> {
+    let (matched, facts) = match_expr_with_binding(pattern, token);
+    if !matched {
+        return None;
+    }
+    let mut unresolved = Vec::new();
+    // A constrained (non-wildcard) match against an expansion-bearing arg is
+    // not provable for the runtime value; record it so the decision floors.
+    if !pattern.matches_any_value()
+        && let Some(word) = expansion.as_deref()
+    {
+        unresolved.push(word.to_string());
+    }
+    Some(MatchEvidence { facts, unresolved })
 }
 
 /// Outcome of matching positional patterns against args.
@@ -35,284 +121,334 @@ pub(crate) struct PositionalMatch {
     /// to `:allow` (the rule evaluator floors on these).
     pub(crate) unresolved: Vec<String>,
     /// Per-element trace along the returned path (in pattern order). For a
-    /// successful match this covers every element; for a failed match it
-    /// covers the prefix up to and including the element that failed.
+    /// successful match this covers every top-level term; for a failed match
+    /// it covers the prefix up to and including the term that failed.
     pub(crate) elements: Vec<ElementMatch>,
 }
 
-/// Match positional patterns against args, capturing bound facts.
-/// `expansions` is per-arg expansion provenance aligned with `args`.
+/// Match positional patterns against args, capturing bound facts. Uses the
+/// default step budget; production callers thread the config budget via
+/// [`match_positional_patterns_budgeted`].
 ///
-/// Uses backtracking for Optional/ZeroOrMore/OneOrMore quantifiers: tries the
-/// greedy match first, then progressively shorter matches if subsequent
-/// patterns fail.
+/// `expansions` is per-arg expansion provenance aligned with `args`.
+#[cfg(test)]
 pub(crate) fn match_positional_patterns(
     args: &[&str],
     expansions: &[&Expansion],
-    patterns: &[PositionalArg],
+    patterns: &[PosTerm],
+) -> PositionalMatch {
+    match_positional_patterns_budgeted(args, expansions, patterns, DEFAULT_STEP_BUDGET)
+}
+
+/// Match positional patterns against args with an explicit step budget.
+///
+/// Uses backtracking for the `?`/`*`/`+` quantifiers and for sequence groups:
+/// tries greedy matches first, then progressively shorter ones if subsequent
+/// patterns fail. Matching is guaranteed to terminate: a `+`/`*` iteration
+/// that consumes zero args stops the repetition (nullable guard), and every
+/// recursive step decrements `budget` — on exhaustion the attempt returns
+/// no-match rather than continue.
+pub(crate) fn match_positional_patterns_budgeted(
+    args: &[&str],
+    expansions: &[&Expansion],
+    patterns: &[PosTerm],
+    budget: u64,
 ) -> PositionalMatch {
     debug_assert_eq!(args.len(), expansions.len());
+    let mut budget = budget;
     match_positional_recursive(
         args,
         expansions,
         patterns,
         0,
         0,
-        ContextFacts::default(),
-        Vec::new(),
+        MatchEvidence::empty(),
+        &mut budget,
     )
 }
 
 /// Positional match with all-literal expansion provenance, returning the
 /// tuple shape the pre-provenance tests asserted on. Test-only adapter.
 #[cfg(test)]
-pub(crate) fn match_pos_lit(
-    args: &[&str],
-    patterns: &[PositionalArg],
-) -> (bool, usize, ContextFacts) {
+pub(crate) fn match_pos_lit(args: &[&str], patterns: &[PosTerm]) -> (bool, usize, ContextFacts) {
     const NONE_EXP: Expansion = None;
     let exps: Vec<&Expansion> = vec![&NONE_EXP; args.len()];
     let m = match_positional_patterns(args, &exps, patterns);
     (m.matched, m.consumed, m.facts)
 }
 
-/// Display text of `expansions[i]` when the match of `pattern` against
-/// that arg is unprovable: the arg is expansion-bearing and the pattern
-/// constrains the value (anything but a bare wildcard).
-fn unprovable_match<'a, E: std::fmt::Debug + may_i_core::ToDoc>(
-    pattern: &may_i_core::pattern::Expr<E>,
-    expansions: &[&'a Expansion],
-    i: usize,
-) -> Option<&'a str> {
-    if pattern.matches_any_value() {
-        return None;
-    }
-    expansions[i].as_deref()
-}
-
-#[allow(clippy::too_many_arguments)]
+/// Top-level backtracking driver. Each top-level term yields exactly one
+/// `ElementMatch`. For each term we enumerate its consumption candidates
+/// (greedy-first) and recurse on the remaining terms; the first candidate that
+/// leads to an overall match wins.
 fn match_positional_recursive(
     args: &[&str],
     expansions: &[&Expansion],
-    patterns: &[PositionalArg],
+    patterns: &[PosTerm],
     pat_idx: usize,
     arg_idx: usize,
-    facts: ContextFacts,
-    unresolved: Vec<String>,
+    evidence: MatchEvidence,
+    budget: &mut u64,
 ) -> PositionalMatch {
-    // Index of the value at the cursor, or None when past the end.
     let tested_at = |i: usize| if i < args.len() { Some(i) } else { None };
-    // Prepend this element's record to a child result built deeper in the
-    // pattern, so the returned trace is in pattern order along the path taken.
     let with_element = |mut child: PositionalMatch, el: ElementMatch| {
         child.elements.insert(0, el);
         child
     };
-
-    // All patterns consumed → success
-    if pat_idx >= patterns.len() {
-        return PositionalMatch {
+    let succeed = |evidence: MatchEvidence| {
+        let (facts, unresolved) = evidence.into_parts();
+        PositionalMatch {
             matched: true,
             consumed: arg_idx,
             facts,
             unresolved,
             elements: Vec::new(),
-        };
-    }
-
-    let pattern = &patterns[pat_idx];
-    let no_match = |facts: ContextFacts, unresolved: Vec<String>| PositionalMatch {
-        matched: false,
-        consumed: arg_idx,
-        facts,
-        unresolved,
-        elements: vec![ElementMatch {
-            tested: tested_at(arg_idx),
-            consumed: 0,
+        }
+    };
+    let no_match = |evidence: MatchEvidence, matched_element: bool| {
+        let (facts, unresolved) = evidence.into_parts();
+        PositionalMatch {
             matched: false,
-        }],
+            consumed: arg_idx,
+            facts,
+            unresolved,
+            elements: vec![ElementMatch {
+                tested: tested_at(arg_idx),
+                consumed: 0,
+                matched: matched_element,
+            }],
+        }
     };
 
-    match &pattern.quantifier {
-        may_i_core::Quantifier::One => {
-            if arg_idx >= args.len() {
-                return no_match(facts, unresolved);
-            }
-            let (matched, f) = match_expr_with_binding(&pattern.pattern, args[arg_idx]);
-            if !matched {
-                return no_match(facts, unresolved);
-            }
-            let mut unresolved = unresolved;
-            if let Some(w) = unprovable_match(&pattern.pattern, expansions, arg_idx) {
-                unresolved.push(w.to_string());
-            }
-            let child = match_positional_recursive(
-                args,
-                expansions,
-                patterns,
-                pat_idx + 1,
-                arg_idx + 1,
-                facts.merge(&f),
-                unresolved,
-            );
-            with_element(
-                child,
-                ElementMatch {
-                    tested: Some(arg_idx),
-                    consumed: 1,
-                    matched: true,
-                },
-            )
+    // Budget exhaustion: return no-match (the decision floors to :ask).
+    if *budget == 0 {
+        return no_match(evidence, false);
+    }
+    *budget -= 1;
+
+    // All terms consumed → success.
+    if pat_idx >= patterns.len() {
+        return succeed(evidence);
+    }
+
+    let term = &patterns[pat_idx];
+    let candidates = term_candidates(args, expansions, term, arg_idx, budget);
+
+    let mut last = None;
+    for (consumed, step_ev) in candidates {
+        let child = match_positional_recursive(
+            args,
+            expansions,
+            patterns,
+            pat_idx + 1,
+            arg_idx + consumed,
+            evidence.clone().and(step_ev),
+            budget,
+        );
+        let el = ElementMatch {
+            tested: tested_at(arg_idx),
+            consumed,
+            matched: true,
+        };
+        if child.matched {
+            return with_element(child, el);
         }
-        may_i_core::Quantifier::Optional => {
-            // Try consuming one arg first (greedy), then try skipping
-            if arg_idx < args.len() {
-                let (matched, f) = match_expr_with_binding(&pattern.pattern, args[arg_idx]);
-                if matched {
-                    let mut u = unresolved.clone();
-                    if let Some(w) = unprovable_match(&pattern.pattern, expansions, arg_idx) {
-                        u.push(w.to_string());
-                    }
-                    let result = match_positional_recursive(
-                        args,
-                        expansions,
-                        patterns,
-                        pat_idx + 1,
-                        arg_idx + 1,
-                        facts.merge(&f),
-                        u,
-                    );
-                    if result.matched {
-                        return with_element(
-                            result,
-                            ElementMatch {
-                                tested: Some(arg_idx),
-                                consumed: 1,
-                                matched: true,
-                            },
-                        );
-                    }
-                }
-            }
-            // Skip (consume zero): the optional was still tested at the cursor.
-            let child = match_positional_recursive(
-                args,
-                expansions,
-                patterns,
-                pat_idx + 1,
-                arg_idx,
-                facts,
-                unresolved,
-            );
-            with_element(
-                child,
-                ElementMatch {
-                    tested: tested_at(arg_idx),
-                    consumed: 0,
-                    matched: true,
-                },
-            )
-        }
-        may_i_core::Quantifier::ZeroOrMore => {
-            // Count maximum matching args
-            let mut max_consume = 0;
-            while arg_idx + max_consume < args.len() {
-                let (matched, _) =
-                    match_expr_with_binding(&pattern.pattern, args[arg_idx + max_consume]);
-                if !matched {
-                    break;
-                }
-                max_consume += 1;
-            }
-            // Try from greedy (max) down to 0, backtracking
-            let mut last = None;
-            for consume in (0..=max_consume).rev() {
-                let mut f = facts.clone();
-                let mut u = unresolved.clone();
-                for i in 0..consume {
-                    let (_, fi) = match_expr_with_binding(&pattern.pattern, args[arg_idx + i]);
-                    f = f.merge(&fi);
-                    if let Some(w) = unprovable_match(&pattern.pattern, expansions, arg_idx + i) {
-                        u.push(w.to_string());
-                    }
-                }
-                let result = match_positional_recursive(
-                    args,
-                    expansions,
-                    patterns,
-                    pat_idx + 1,
-                    arg_idx + consume,
-                    f,
-                    u,
-                );
-                let el = ElementMatch {
-                    tested: tested_at(arg_idx),
-                    consumed: consume,
-                    matched: true,
-                };
-                if result.matched {
-                    return with_element(result, el);
-                }
-                last = Some((result, el));
-            }
-            // No consume count led to an overall match. Keep the last (zero-
-            // consume) child's downstream failure under this satisfiable `*`.
-            let (child, el) = last.expect("range 0..=max always yields consume 0");
-            with_element(child, el)
-        }
-        may_i_core::Quantifier::OneOrMore => {
-            if arg_idx >= args.len() {
-                return no_match(facts, unresolved);
-            }
-            let (first_matched, _) = match_expr_with_binding(&pattern.pattern, args[arg_idx]);
-            if !first_matched {
-                return no_match(facts, unresolved);
-            }
-            // Count maximum matching args (starting from 1)
-            let mut max_consume = 1;
-            while arg_idx + max_consume < args.len() {
-                let (matched, _) =
-                    match_expr_with_binding(&pattern.pattern, args[arg_idx + max_consume]);
-                if !matched {
-                    break;
-                }
-                max_consume += 1;
-            }
-            // Try from greedy (max) down to 1, backtracking
-            let mut last = None;
-            for consume in (1..=max_consume).rev() {
-                let mut f = facts.clone();
-                let mut u = unresolved.clone();
-                for i in 0..consume {
-                    let (_, fi) = match_expr_with_binding(&pattern.pattern, args[arg_idx + i]);
-                    f = f.merge(&fi);
-                    if let Some(w) = unprovable_match(&pattern.pattern, expansions, arg_idx + i) {
-                        u.push(w.to_string());
-                    }
-                }
-                let result = match_positional_recursive(
-                    args,
-                    expansions,
-                    patterns,
-                    pat_idx + 1,
-                    arg_idx + consume,
-                    f,
-                    u,
-                );
-                let el = ElementMatch {
-                    tested: Some(arg_idx),
-                    consumed: consume,
-                    matched: true,
-                };
-                if result.matched {
-                    return with_element(result, el);
-                }
-                last = Some((result, el));
-            }
-            let (child, el) = last.expect("range 1..=max always yields consume 1");
-            with_element(child, el)
+        last = Some((child, el));
+    }
+
+    match last {
+        // A satisfiable quantifier/group consumed its minimum but downstream
+        // failed: keep that child's failure under this (matched) element.
+        Some((child, el)) => with_element(child, el),
+        // The term could not match at all at this position.
+        None => no_match(evidence, false),
+    }
+}
+
+/// Consumption candidates for one term at `start`, greedy-first: each entry is
+/// `(args consumed, evidence)`. The driver tries them in order.
+fn term_candidates(
+    args: &[&str],
+    expansions: &[&Expansion],
+    term: &PosTerm,
+    start: usize,
+    budget: &mut u64,
+) -> Vec<(usize, MatchEvidence)> {
+    match term.view() {
+        PosTermView::Single {
+            quantifier,
+            pattern,
+        } => single_candidates(args, expansions, pattern, quantifier, start),
+        PosTermView::Group { quantifier, seq } => {
+            group_candidates(args, expansions, seq, quantifier, start, budget)
         }
     }
+}
+
+/// Candidates for a single quantified pattern. Each consumed token must match
+/// `pattern`; evidence accumulates left to right.
+fn single_candidates<E: std::fmt::Debug + may_i_core::ToDoc>(
+    args: &[&str],
+    expansions: &[&Expansion],
+    pattern: &may_i_core::pattern::Expr<E>,
+    quantifier: Quantifier,
+    start: usize,
+) -> Vec<(usize, MatchEvidence)> {
+    // cumulative[k] = evidence of matching the first k tokens from `start`.
+    let mut cumulative = vec![MatchEvidence::empty()];
+    let mut acc = MatchEvidence::empty();
+    let mut max = 0;
+    while start + max < args.len() {
+        match match_token(pattern, args[start + max], expansions[start + max]) {
+            Some(ev) => {
+                acc = acc.and(ev);
+                cumulative.push(acc.clone());
+                max += 1;
+            }
+            None => break,
+        }
+    }
+
+    let take = |k: usize| (k, cumulative[k].clone());
+    match quantifier {
+        Quantifier::One => {
+            if max >= 1 {
+                vec![take(1)]
+            } else {
+                vec![]
+            }
+        }
+        Quantifier::Optional => {
+            let mut v = Vec::new();
+            if max >= 1 {
+                v.push(take(1));
+            }
+            v.push((0, MatchEvidence::empty()));
+            v
+        }
+        Quantifier::ZeroOrMore => (0..=max).rev().map(take).collect(),
+        Quantifier::OneOrMore => {
+            if max >= 1 {
+                (1..=max).rev().map(take).collect()
+            } else {
+                vec![]
+            }
+        }
+    }
+}
+
+/// Candidates for a sequence group: repeat the sub-sequence per the
+/// quantifier, greedy-first. `(consumed, evidence)` where `consumed` is the
+/// number of args the whole group claimed from `start`.
+fn group_candidates(
+    args: &[&str],
+    expansions: &[&Expansion],
+    seq: &[PosTerm],
+    quantifier: Quantifier,
+    start: usize,
+    budget: &mut u64,
+) -> Vec<(usize, MatchEvidence)> {
+    let (min_reps, max_reps): (usize, usize) = match quantifier {
+        Quantifier::One => (1, 1),
+        Quantifier::Optional => (0, 1),
+        Quantifier::OneOrMore => (1, usize::MAX),
+        Quantifier::ZeroOrMore => (0, usize::MAX),
+    };
+    let mut out = Vec::new();
+    repeat_group(
+        args,
+        expansions,
+        seq,
+        start,
+        start,
+        0,
+        min_reps,
+        max_reps,
+        budget,
+        MatchEvidence::empty(),
+        &mut out,
+    );
+    out
+}
+
+/// Recursively enumerate the ways a sequence group repeats, greedy-first.
+/// `pos` is the current cursor; `reps` is occurrences matched so far; results
+/// (consumed-from-`start`, evidence) are appended to `out`.
+#[allow(clippy::too_many_arguments)]
+fn repeat_group(
+    args: &[&str],
+    expansions: &[&Expansion],
+    seq: &[PosTerm],
+    start: usize,
+    pos: usize,
+    reps: usize,
+    min_reps: usize,
+    max_reps: usize,
+    budget: &mut u64,
+    acc: MatchEvidence,
+    out: &mut Vec<(usize, MatchEvidence)>,
+) {
+    if *budget == 0 {
+        return;
+    }
+    *budget -= 1;
+
+    // Greedy: try to consume one more occurrence first.
+    if reps < max_reps {
+        for (end, occ_ev) in seq_ends(args, expansions, seq, 0, pos, budget) {
+            // Nullable-iteration guard: a zero-consuming occurrence cannot
+            // extend the repetition (would loop forever).
+            if end == pos {
+                continue;
+            }
+            repeat_group(
+                args,
+                expansions,
+                seq,
+                start,
+                end,
+                reps + 1,
+                min_reps,
+                max_reps,
+                budget,
+                acc.clone().and(occ_ev),
+                out,
+            );
+        }
+    }
+
+    // Then stop here, if we have enough occurrences.
+    if reps >= min_reps {
+        out.push((pos - start, acc));
+    }
+}
+
+/// Enumerate the ways the sub-sequence `seq[ti..]` matches a contiguous prefix
+/// of args from `pos`, greedy-first. Each entry is `(end position, evidence)`.
+fn seq_ends(
+    args: &[&str],
+    expansions: &[&Expansion],
+    seq: &[PosTerm],
+    ti: usize,
+    pos: usize,
+    budget: &mut u64,
+) -> Vec<(usize, MatchEvidence)> {
+    if *budget == 0 {
+        return Vec::new();
+    }
+    *budget -= 1;
+
+    if ti >= seq.len() {
+        return vec![(pos, MatchEvidence::empty())];
+    }
+
+    let mut out = Vec::new();
+    for (consumed, ev) in term_candidates(args, expansions, &seq[ti], pos, budget) {
+        for (end, tail_ev) in seq_ends(args, expansions, seq, ti + 1, pos + consumed, budget) {
+            out.push((end, ev.clone().and(tail_ev)));
+        }
+    }
+    out
 }
 
 /// Match a single expression against a value, capturing bound facts.
@@ -383,9 +519,14 @@ pub(crate) fn match_expr_with_binding<E: std::fmt::Debug + may_i_core::ToDoc>(
 /// matcher recorded along its winning path. Each detail carries the argument
 /// the element was tested against, the args it consumed, and any binding /
 /// expression match info for annotation purposes.
+///
+/// Group terms have no single pattern expression, so they surface as a summary
+/// detail (the consumed args, no binding, no per-expression match kind); their
+/// inner structure is not re-walked (design.md open question, resolved to the
+/// summary form).
 pub(crate) fn build_positional_element_details(
     args: &[&str],
-    patterns: &[PositionalArg],
+    patterns: &[PosTerm],
     elements: &[ElementMatch],
 ) -> Vec<crate::fold::PositionalElementDetail> {
     use may_i_core::pattern::Expr;
@@ -393,7 +534,7 @@ pub(crate) fn build_positional_element_details(
     let mut details = Vec::new();
 
     for (pat_idx, element) in elements.iter().enumerate() {
-        let pattern = &patterns[pat_idx];
+        let term = &patterns[pat_idx];
         let element_matched = element.matched;
         let tested_arg = element.tested.map(|i| args[i].to_string());
 
@@ -403,7 +544,20 @@ pub(crate) fn build_positional_element_details(
             .map(|i| args[start + i].to_string())
             .collect();
 
-        let binding = if let Expr::Bind { key, expr: inner } = &pattern.pattern
+        // Group terms have no single pattern; emit a bare summary detail.
+        let PosTermView::Single { pattern, .. } = term.view() else {
+            details.push(crate::fold::PositionalElementDetail {
+                pattern_index: pat_idx,
+                consumed_args,
+                tested_arg,
+                binding: None,
+                match_kind: crate::fold::PositionalMatchKind::None,
+                matched: element_matched,
+            });
+            continue;
+        };
+
+        let binding = if let Expr::Bind { key, expr: inner } = pattern
             && !consumed_args.is_empty()
         {
             let value = consumed_args.first().map(|v| v.to_string());
@@ -424,7 +578,7 @@ pub(crate) fn build_positional_element_details(
         // consumed nothing yet was still compared against `tested_arg`, and
         // that comparison is exactly what the trace needs to show.
         let probe = tested_arg.as_deref();
-        let match_kind = if let Expr::Cond(branches) = &pattern.pattern
+        let match_kind = if let Expr::Cond(branches) = pattern
             && let Some(value) = probe
         {
             branches
@@ -435,7 +589,7 @@ pub(crate) fn build_positional_element_details(
         } else if binding.is_none()
             && let Some(value) = probe
         {
-            build_expr_match_detail(&pattern.pattern, value)
+            build_expr_match_detail(pattern, value)
                 .map(crate::fold::PositionalMatchKind::Expr)
                 .unwrap_or(crate::fold::PositionalMatchKind::None)
         } else {
@@ -495,11 +649,11 @@ fn find_cond_branch_effect<'a>(
     None
 }
 
-/// If the last positional pattern is an `Expr::Cond`, find the matching branch's
-/// effect for the last consumed arg. Returns None if the last pattern isn't a Cond
-/// or no branch matched.
+/// If the last positional term is a `Single` whose pattern is an `Expr::Cond`,
+/// find the matching branch's effect for the last consumed arg. Returns None
+/// if the last term isn't such a Cond or no branch matched.
 pub(super) fn resolve_trailing_cond_effect<'a>(
-    patterns: &'a [may_i_core::pattern::PositionalArg],
+    patterns: &'a [PosTerm],
     positional_args: &[&str],
     consumed: usize,
 ) -> Option<&'a Effect> {
@@ -507,7 +661,11 @@ pub(super) fn resolve_trailing_cond_effect<'a>(
         return None;
     }
     let last_pattern = patterns.last()?;
-    if let may_i_core::pattern::Expr::Cond(branches) = &last_pattern.pattern {
+    if let PosTermView::Single {
+        pattern: may_i_core::pattern::Expr::Cond(branches),
+        ..
+    } = last_pattern.view()
+    {
         let last_arg = positional_args.get(consumed - 1)?;
         find_cond_branch_effect(branches, last_arg)
     } else {
@@ -518,13 +676,13 @@ pub(super) fn resolve_trailing_cond_effect<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use may_i_core::pattern::{Expr, PositionalArg, Quantifier};
-    use may_i_core::test_generators::{any_match_string, any_positional_arg};
+    use may_i_core::pattern::{Expr, PosTerm, Quantifier};
+    use may_i_core::test_generators::{any_match_string, any_pos_term};
     use proptest::prelude::*;
 
     /// Build string args owned, then borrow for matching (no expansion
     /// provenance — all tokens literal).
-    fn match_owned(args: &[String], patterns: &[PositionalArg]) -> (bool, usize, ContextFacts) {
+    fn match_owned(args: &[String], patterns: &[PosTerm]) -> (bool, usize, ContextFacts) {
         const NONE_EXP: Expansion = None;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let exps: Vec<&Expansion> = vec![&NONE_EXP; refs.len()];
@@ -532,14 +690,190 @@ mod tests {
         (m.matched, m.consumed, m.facts)
     }
 
-    fn match_full(args: &[&str], patterns: &[PositionalArg]) -> PositionalMatch {
+    fn match_full(args: &[&str], patterns: &[PosTerm]) -> PositionalMatch {
         const NONE_EXP: Expansion = None;
         let exps: Vec<&Expansion> = vec![&NONE_EXP; args.len()];
         match_positional_patterns(args, &exps, patterns)
     }
 
+    /// Match with explicit per-arg expansion provenance.
+    fn match_with_exp(args: &[&str], exps: &[&Expansion], patterns: &[PosTerm]) -> PositionalMatch {
+        match_positional_patterns(args, exps, patterns)
+    }
+
     fn lit(s: &str) -> Expr {
         Expr::Literal(s.into())
+    }
+
+    fn group(q: Quantifier, seq: Vec<PosTerm>) -> PosTerm {
+        PosTerm::group(q, seq).expect("non-empty group")
+    }
+
+    /// The motivating Pattern `(? "run" (? "--")) *`.
+    fn run_dashdash_then_star() -> Vec<PosTerm> {
+        vec![
+            group(
+                Quantifier::Optional,
+                vec![
+                    PosTerm::one(lit("run")),
+                    PosTerm::single(Quantifier::Optional, lit("--")),
+                ],
+            ),
+            PosTerm::single(Quantifier::ZeroOrMore, Expr::Wildcard),
+        ]
+    }
+
+    // --- Task 3.1: the four (? "run" (? "--")) * scenarios ---
+
+    #[test]
+    fn optional_group_skipped() {
+        let (matched, _, _) = match_owned(&["state".into()], &run_dashdash_then_star());
+        assert!(matched);
+    }
+
+    #[test]
+    fn optional_group_partial_inner() {
+        let m = match_full(&["run", "state"], &run_dashdash_then_star());
+        assert!(m.matched);
+        // The group consumed `run`; the `*` consumed `state`.
+        assert_eq!(m.elements[0].consumed, 1);
+    }
+
+    #[test]
+    fn optional_group_full_inner() {
+        let m = match_full(&["run", "--", "state"], &run_dashdash_then_star());
+        assert!(m.matched);
+        assert_eq!(m.elements[0].consumed, 2);
+    }
+
+    #[test]
+    fn sequence_group_requires_leading_element() {
+        // `-- state`: the group's leading `run` is absent, so the group
+        // consumes zero and the `*` swallows everything.
+        let m = match_full(&["--", "state"], &run_dashdash_then_star());
+        assert!(m.matched);
+        assert_eq!(m.elements[0].consumed, 0);
+    }
+
+    // --- Task 3.2: repeated groups ---
+
+    #[test]
+    fn one_or_more_group_repeats() {
+        // (+ "--opt" *) over `--opt a --opt b` → two occurrences.
+        let patterns = vec![group(
+            Quantifier::OneOrMore,
+            vec![
+                PosTerm::one(lit("--opt")),
+                PosTerm::single(Quantifier::ZeroOrMore, Expr::Wildcard),
+            ],
+        )];
+        let (matched, consumed, _) = match_owned(
+            &["--opt".into(), "a".into(), "--opt".into(), "b".into()],
+            &patterns,
+        );
+        assert!(matched);
+        assert_eq!(consumed, 4);
+    }
+
+    #[test]
+    fn zero_or_more_group_repeats() {
+        let patterns = vec![group(
+            Quantifier::ZeroOrMore,
+            vec![
+                PosTerm::one(lit("--opt")),
+                PosTerm::single(Quantifier::ZeroOrMore, Expr::Wildcard),
+            ],
+        )];
+        let (matched, consumed, _) = match_owned(
+            &["--opt".into(), "a".into(), "--opt".into(), "b".into()],
+            &patterns,
+        );
+        assert!(matched);
+        assert_eq!(consumed, 4);
+    }
+
+    // --- Task 3.6: nullable-iteration guard ---
+
+    #[test]
+    fn nullable_group_terminates() {
+        // (* (? "x")) against args that never match: must terminate, not loop.
+        let patterns = vec![group(
+            Quantifier::ZeroOrMore,
+            vec![PosTerm::single(Quantifier::Optional, lit("x"))],
+        )];
+        let (matched, _, _) = match_owned(&["y".into(), "z".into()], &patterns);
+        assert!(matched); // `*` of an optional matches zero occurrences fine.
+    }
+
+    // --- Task 3.7: step budget floors to no-match ---
+
+    #[test]
+    fn budget_exhaustion_returns_no_match() {
+        // A pathological nested repetition over many args. With a tiny budget
+        // the matcher must give up (no-match), never falsely succeed-allow.
+        let patterns = vec![group(
+            Quantifier::ZeroOrMore,
+            vec![group(
+                Quantifier::ZeroOrMore,
+                vec![PosTerm::single(Quantifier::ZeroOrMore, Expr::Wildcard)],
+            )],
+        )];
+        let args: Vec<String> = (0..12).map(|i| format!("a{i}")).collect();
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        const NONE_EXP: Expansion = None;
+        let exps: Vec<&Expansion> = vec![&NONE_EXP; refs.len()];
+        // Tiny budget: matching cannot complete.
+        let m = match_positional_patterns_budgeted(&refs, &exps, &patterns, 50);
+        assert!(!m.matched, "budget exhaustion must return no-match");
+    }
+
+    // --- Task 3.8: provenance for constrained matches inside a repeated group ---
+
+    #[test]
+    fn constrained_match_in_repeated_group_records_provenance() {
+        // (+ "--opt") over an expansion-bearing arg whose display is "$OPT".
+        let patterns = vec![group(
+            Quantifier::OneOrMore,
+            vec![PosTerm::one(lit("--opt"))],
+        )];
+        let exp: Expansion = Some("$OPT".to_string());
+        let m = match_with_exp(&["--opt"], &[&exp], &patterns);
+        assert!(m.matched);
+        assert_eq!(m.unresolved, vec!["$OPT".to_string()]);
+    }
+
+    /// Task 5.1: a rule-body `Expr::Bind` inside a repeated group accumulates
+    /// into `ContextFacts` by set-union across occurrences (no correlation),
+    /// exactly as the flat repeating quantifier does.
+    #[test]
+    fn bind_in_repeated_group_set_unions() {
+        use may_i_core::Keyword;
+        // (+ [:item *]) over `a b` → :item = {a, b}.
+        let bind = Expr::Bind {
+            key: Keyword::new(":item").unwrap(),
+            expr: Box::new(Expr::Wildcard),
+        };
+        let patterns = vec![group(Quantifier::OneOrMore, vec![PosTerm::one(bind)])];
+        let (matched, consumed, facts) = match_owned(&["a".into(), "b".into()], &patterns);
+        assert!(matched);
+        assert_eq!(consumed, 2);
+        let key = Keyword::new(":item").unwrap();
+        assert!(facts.contains(&key, "a"));
+        assert!(facts.contains(&key, "b"));
+    }
+
+    #[test]
+    fn wildcard_match_in_repeated_group_records_no_provenance() {
+        // (+ *) over an expansion-bearing arg: a bare wildcard constrains
+        // nothing, so no provenance is recorded.
+        let patterns = vec![group(
+            Quantifier::OneOrMore,
+            vec![PosTerm::one(Expr::Wildcard)],
+        )];
+        let exp: Expansion = Some("$ANY".to_string());
+        let m = match_with_exp(&["whatever"], &[&exp], &patterns);
+        assert!(m.matched);
+        assert!(m.unresolved.is_empty());
     }
 
     /// When a `*` must give back an argument so a following required element
@@ -549,8 +883,8 @@ mod tests {
     #[test]
     fn element_trace_follows_the_backtracked_path() {
         let patterns = vec![
-            PositionalArg::with_quantifier(lit("a"), Quantifier::ZeroOrMore),
-            PositionalArg::one(lit("a")),
+            PosTerm::single(Quantifier::ZeroOrMore, lit("a")),
+            PosTerm::one(lit("a")),
         ];
         let m = match_full(&["a"], &patterns);
         assert!(m.matched);
@@ -562,14 +896,61 @@ mod tests {
         assert_eq!(consumed, vec![0, 1]);
     }
 
+    /// A `One` group (match the sub-sequence exactly once, required) has no
+    /// surface syntax — the parser never produces it and the generators
+    /// exclude it — so this covers `group_candidates`' `One` arm directly.
+    #[test]
+    fn one_group_matches_sub_sequence_once() {
+        let patterns = vec![group(
+            Quantifier::One,
+            vec![PosTerm::one(lit("a")), PosTerm::one(lit("b"))],
+        )];
+        let (matched, consumed, _) = match_owned(&["a".into(), "b".into()], &patterns);
+        assert!(matched);
+        assert_eq!(consumed, 2);
+        // Required: a partial sub-sequence does not match.
+        let (m2, _, _) = match_owned(&["a".into()], &patterns);
+        assert!(!m2);
+    }
+
+    /// `resolve_trailing_cond_effect` returns the matching branch's effect when
+    /// the last term is a `Single` carrying an `Expr::Cond`, and `None` when
+    /// nothing was consumed.
+    #[test]
+    fn trailing_cond_effect_resolution() {
+        use may_i_core::Decision;
+        use may_i_core::ast::Effect;
+        use may_i_core::pattern::ExprBranch;
+
+        let cond = Expr::Cond(vec![ExprBranch {
+            test: lit("status"),
+            effect: Effect::Terminal {
+                decision: Decision::Allow,
+                reason: Some("read-only".into()),
+            },
+        }]);
+        let patterns = vec![PosTerm::one(lit("git")), PosTerm::one(cond)];
+
+        let resolved = resolve_trailing_cond_effect(&patterns, &["git", "status"], 2);
+        assert!(matches!(
+            resolved,
+            Some(Effect::Terminal {
+                decision: Decision::Allow,
+                ..
+            })
+        ));
+
+        // No branch matches → None.
+        assert!(resolve_trailing_cond_effect(&patterns, &["git", "push"], 2).is_none());
+        // Nothing consumed → None.
+        assert!(resolve_trailing_cond_effect(&patterns, &[], 0).is_none());
+    }
+
     /// A failed match records the prefix up to and including the element that
     /// failed, and nothing after it.
     #[test]
     fn element_trace_stops_at_the_failing_element() {
-        let patterns = vec![
-            PositionalArg::one(lit("checkout")),
-            PositionalArg::one(lit("--")),
-        ];
+        let patterns = vec![PosTerm::one(lit("checkout")), PosTerm::one(lit("--"))];
         let m = match_full(&["status"], &patterns);
         assert!(!m.matched);
         // Only the first element was reached; it was tested against "status".
@@ -581,10 +962,38 @@ mod tests {
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(256))]
 
+        /// Task 3.4: `and` is total and associative over arbitrary evidence.
+        #[test]
+        fn match_evidence_and_is_associative(
+            fa in may_i_core::test_generators::any_context_facts(),
+            ua in prop::collection::vec(any_match_string(), 0..4),
+            fb in may_i_core::test_generators::any_context_facts(),
+            ub in prop::collection::vec(any_match_string(), 0..4),
+            fc in may_i_core::test_generators::any_context_facts(),
+            uc in prop::collection::vec(any_match_string(), 0..4),
+        ) {
+            let a = || MatchEvidence::from_parts(fa.clone(), ua.clone());
+            let b = || MatchEvidence::from_parts(fb.clone(), ub.clone());
+            let c = || MatchEvidence::from_parts(fc.clone(), uc.clone());
+
+            let left = a().and(b()).and(c());
+            let right = a().and(b().and(c()));
+
+            // unresolved: list concatenation is associative.
+            prop_assert_eq!(left.unresolved(), right.unresolved());
+            // facts: merge is associative (same keys present, same values).
+            for (k, v) in left.facts().iter() {
+                prop_assert_eq!(right.facts().get(k), Some(v));
+            }
+            for (k, v) in right.facts().iter() {
+                prop_assert_eq!(left.facts().get(k), Some(v));
+            }
+        }
+
         /// matched + unconsumed = original arg count.
         #[test]
         fn matched_plus_unconsumed_eq_total(
-            patterns in prop::collection::vec(any_positional_arg(1), 0..4),
+            patterns in prop::collection::vec(any_pos_term(1), 0..4),
             args in prop::collection::vec(any_match_string(), 0..8),
         ) {
             let (matched, consumed, _) = match_owned(&args, &patterns);
@@ -604,9 +1013,9 @@ mod tests {
         ) {
             // Pattern: (*)* — a ZeroOrMore wildcard followed by nothing.
             // Should consume all args.
-            let patterns = vec![PositionalArg::with_quantifier(
-                Expr::Wildcard,
+            let patterns = vec![PosTerm::single(
                 Quantifier::ZeroOrMore,
+                Expr::Wildcard,
             )];
             let (matched, consumed, _) = match_owned(&args, &patterns);
             prop_assert!(matched, "wildcard ZeroOrMore should match anything");
@@ -615,10 +1024,11 @@ mod tests {
                 args.len(), consumed);
         }
 
-        /// Matching is deterministic: same inputs → same output.
+        /// Matching always terminates (within the budget) and is deterministic:
+        /// same inputs → same output. Generated patterns include nested groups.
         #[test]
         fn matching_is_deterministic(
-            patterns in prop::collection::vec(any_positional_arg(1), 0..4),
+            patterns in prop::collection::vec(any_pos_term(2), 0..4),
             args in prop::collection::vec(any_match_string(), 0..6),
         ) {
             let r1 = match_owned(&args, &patterns);

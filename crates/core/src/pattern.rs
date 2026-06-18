@@ -231,38 +231,174 @@ impl CommandPattern {
     }
 }
 
-/// A positional argument with quantifier.
+/// A positional term: either a single quantified pattern, or a quantified
+/// sequence group whose sub-sequence is the quantified unit. Groups nest, so
+/// a term forms a tree.
+///
+/// `(? "run" (? "--"))` is a `Group` with `Optional` quantifier over the
+/// sub-sequence `["run", (? "--")]`; the inner `(? "--")` is a `Single`.
+///
+/// Invariant: a `Group`'s sub-sequence is non-empty — a quantifier head must
+/// wrap at least one sub-pattern. The representation is private and the smart
+/// constructors enforce this, so an empty group is unconstructible.
 #[derive(Debug, Clone)]
-pub struct PositionalArg {
-    pub quantifier: Quantifier,
-    pub pattern: Expr<Effect>,
-    /// Optional recursive evaluation target for remaining args.
-    pub recursive: bool,
+pub struct PosTerm {
+    repr: PosTermRepr,
 }
 
-impl PositionalArg {
-    /// Create a single required positional argument.
-    pub fn one(expr: Expr<Effect>) -> Self {
+#[derive(Debug, Clone)]
+enum PosTermRepr {
+    Single {
+        quantifier: Quantifier,
+        pattern: Expr<Effect>,
+    },
+    Group {
+        quantifier: Quantifier,
+        seq: Vec<PosTerm>,
+    },
+}
+
+/// Borrowed view of a [`PosTerm`], for matching and rendering. The owned
+/// representation stays private; consumers dispatch on this.
+pub enum PosTermView<'a> {
+    Single {
+        quantifier: Quantifier,
+        pattern: &'a Expr<Effect>,
+    },
+    Group {
+        quantifier: Quantifier,
+        seq: &'a [PosTerm],
+    },
+}
+
+impl PosTerm {
+    /// A single required term (`Quantifier::One`).
+    pub fn one(pattern: Expr<Effect>) -> Self {
+        Self::single(Quantifier::One, pattern)
+    }
+
+    /// A single quantified term wrapping one pattern.
+    pub fn single(quantifier: Quantifier, pattern: Expr<Effect>) -> Self {
         Self {
-            quantifier: Quantifier::One,
-            pattern: expr,
-            recursive: false,
+            repr: PosTermRepr::Single {
+                quantifier,
+                pattern,
+            },
         }
     }
 
-    /// Create a positional argument with custom quantifier.
-    pub fn with_quantifier(expr: Expr<Effect>, quantifier: Quantifier) -> Self {
-        Self {
-            quantifier,
-            pattern: expr,
-            recursive: false,
+    /// A single quantified term, pattern-first (builder ergonomics). Same as
+    /// [`PosTerm::single`] with the arguments swapped.
+    pub fn with_quantifier(pattern: Expr<Effect>, quantifier: Quantifier) -> Self {
+        Self::single(quantifier, pattern)
+    }
+
+    /// A quantified sequence group. Returns `None` when `seq` is empty: a
+    /// quantifier head must wrap at least one sub-pattern.
+    pub fn group(quantifier: Quantifier, seq: Vec<PosTerm>) -> Option<Self> {
+        if seq.is_empty() {
+            None
+        } else {
+            Some(Self {
+                repr: PosTermRepr::Group { quantifier, seq },
+            })
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn recursive(mut self) -> Self {
-        self.recursive = true;
-        self
+    /// The term's quantifier (`One` for a bare required pattern).
+    pub fn quantifier(&self) -> Quantifier {
+        match &self.repr {
+            PosTermRepr::Single { quantifier, .. } | PosTermRepr::Group { quantifier, .. } => {
+                *quantifier
+            }
+        }
+    }
+
+    /// If this is a bare required pattern (`Single` with `Quantifier::One`),
+    /// take its inner expression; otherwise return `self` unchanged. The parser
+    /// uses this to collapse a single-sub-pattern quantifier head into a
+    /// `Single` term, while a single *quantified* sub-pattern stays a group.
+    pub fn into_bare_pattern(self) -> Result<Expr<Effect>, Self> {
+        match self.repr {
+            PosTermRepr::Single {
+                quantifier: Quantifier::One,
+                pattern,
+            } => Ok(pattern),
+            repr => Err(Self { repr }),
+        }
+    }
+
+    /// Borrowed view for dispatch.
+    pub fn view(&self) -> PosTermView<'_> {
+        match &self.repr {
+            PosTermRepr::Single {
+                quantifier,
+                pattern,
+            } => PosTermView::Single {
+                quantifier: *quantifier,
+                pattern,
+            },
+            PosTermRepr::Group { quantifier, seq } => PosTermView::Group {
+                quantifier: *quantifier,
+                seq,
+            },
+        }
+    }
+
+    /// Render to a `Doc`: `(Q elem …)` for groups and quantified singles, the
+    /// bare pattern doc for a `One` single. Nested groups recurse.
+    pub fn to_doc(&self) -> Doc {
+        match &self.repr {
+            PosTermRepr::Single {
+                quantifier: Quantifier::One,
+                pattern,
+            } => pattern.to_doc(),
+            PosTermRepr::Single {
+                quantifier,
+                pattern,
+            } => Doc::list(vec![
+                Doc::atom(quantifier_glyph(*quantifier)),
+                pattern.to_doc(),
+            ]),
+            PosTermRepr::Group { quantifier, seq } => {
+                let mut cs = vec![Doc::atom(quantifier_glyph(*quantifier))];
+                cs.extend(seq.iter().map(PosTerm::to_doc));
+                Doc::list(cs)
+            }
+        }
+    }
+}
+
+/// The head glyph for a quantifier in surface syntax. `One` has no glyph (a
+/// bare pattern); callers must not render it as a head.
+fn quantifier_glyph(q: Quantifier) -> &'static str {
+    match q {
+        Quantifier::One => "",
+        Quantifier::Optional => "?",
+        Quantifier::OneOrMore => "+",
+        Quantifier::ZeroOrMore => "*",
+    }
+}
+
+impl std::fmt::Display for PosTerm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.view() {
+            PosTermView::Single {
+                quantifier: Quantifier::One,
+                pattern,
+            } => write!(f, "{pattern}"),
+            PosTermView::Single {
+                quantifier,
+                pattern,
+            } => write!(f, "({} {pattern})", quantifier_glyph(quantifier)),
+            PosTermView::Group { quantifier, seq } => {
+                write!(f, "({}", quantifier_glyph(quantifier))?;
+                for term in seq {
+                    write!(f, " {term}")?;
+                }
+                write!(f, ")")
+            }
+        }
     }
 }
 
@@ -282,7 +418,7 @@ pub enum ArgPattern {
     /// Syntax: `(positional PATTERN ... [. EFFECT])` or `(exact PATTERN ... [. EFFECT])`
     Ordered {
         mode: MatchMode,
-        patterns: Vec<PositionalArg>,
+        patterns: Vec<PosTerm>,
         /// Optional continuation effect evaluated with remaining args.
         continuation: Option<Box<crate::ast::Effect>>,
     },
@@ -331,7 +467,7 @@ impl ArgPattern {
     pub fn positional(exprs: Vec<Expr<Effect>>) -> Self {
         ArgPattern::Ordered {
             mode: MatchMode::Positional,
-            patterns: exprs.into_iter().map(PositionalArg::one).collect(),
+            patterns: exprs.into_iter().map(PosTerm::one).collect(),
             continuation: None,
         }
     }
@@ -343,7 +479,7 @@ impl ArgPattern {
     ) -> Self {
         ArgPattern::Ordered {
             mode: MatchMode::Positional,
-            patterns: exprs.into_iter().map(PositionalArg::one).collect(),
+            patterns: exprs.into_iter().map(PosTerm::one).collect(),
             continuation: Some(Box::new(continuation)),
         }
     }
@@ -352,7 +488,7 @@ impl ArgPattern {
     pub(crate) fn exact(exprs: Vec<Expr<Effect>>) -> Self {
         ArgPattern::Ordered {
             mode: MatchMode::Exact,
-            patterns: exprs.into_iter().map(PositionalArg::one).collect(),
+            patterns: exprs.into_iter().map(PosTerm::one).collect(),
             continuation: None,
         }
     }
@@ -364,7 +500,7 @@ impl ArgPattern {
     ) -> Self {
         ArgPattern::Ordered {
             mode: MatchMode::Exact,
-            patterns: exprs.into_iter().map(PositionalArg::one).collect(),
+            patterns: exprs.into_iter().map(PosTerm::one).collect(),
             continuation: Some(Box::new(continuation)),
         }
     }
@@ -423,22 +559,70 @@ mod tests {
     }
 
     #[test]
-    fn positional_arg_one_creates_required() {
-        let arg = PositionalArg::one(Expr::Literal("test".into()));
-        assert!(matches!(arg.quantifier, Quantifier::One));
-        assert!(!arg.recursive);
+    fn pos_term_one_creates_required_single() {
+        let arg = PosTerm::one(Expr::Literal("test".into()));
+        assert!(matches!(arg.quantifier(), Quantifier::One));
+        assert!(matches!(arg.view(), PosTermView::Single { .. }));
     }
 
     #[test]
-    fn positional_arg_with_quantifier_sets_correctly() {
-        let arg = PositionalArg::with_quantifier(Expr::Wildcard, Quantifier::Optional);
-        assert!(matches!(arg.quantifier, Quantifier::Optional));
+    fn pos_term_single_sets_quantifier() {
+        let arg = PosTerm::single(Quantifier::Optional, Expr::Wildcard);
+        assert!(matches!(arg.quantifier(), Quantifier::Optional));
+    }
+
+    /// Task 1.1: `(? "run" (? "--"))` constructs as a nested Group/Single term.
+    #[test]
+    fn pos_term_nested_group_constructs() {
+        let inner = PosTerm::single(Quantifier::Optional, Expr::Literal("--".into()));
+        let group = PosTerm::group(
+            Quantifier::Optional,
+            vec![PosTerm::one(Expr::Literal("run".into())), inner],
+        )
+        .expect("non-empty group");
+
+        match group.view() {
+            PosTermView::Group {
+                quantifier: Quantifier::Optional,
+                seq,
+            } => {
+                assert_eq!(seq.len(), 2);
+                assert!(matches!(
+                    seq[0].view(),
+                    PosTermView::Single {
+                        quantifier: Quantifier::One,
+                        pattern: Expr::Literal(s),
+                    } if s == "run"
+                ));
+                assert!(matches!(
+                    seq[1].view(),
+                    PosTermView::Single {
+                        quantifier: Quantifier::Optional,
+                        ..
+                    }
+                ));
+            }
+            _ => panic!("expected group"),
+        }
     }
 
     #[test]
-    fn positional_arg_recursive_marks_correctly() {
-        let arg = PositionalArg::one(Expr::Wildcard).recursive();
-        assert!(arg.recursive);
+    fn pos_term_empty_group_is_unconstructible() {
+        assert!(PosTerm::group(Quantifier::Optional, vec![]).is_none());
+    }
+
+    /// Task 1.4: rendering nests groups under their head glyph.
+    #[test]
+    fn pos_term_to_doc_renders_nested_group() {
+        let group = PosTerm::group(
+            Quantifier::Optional,
+            vec![
+                PosTerm::one(Expr::Literal("run".into())),
+                PosTerm::single(Quantifier::Optional, Expr::Literal("--".into())),
+            ],
+        )
+        .expect("non-empty group");
+        assert_eq!(group.to_string(), r#"(? "run" (? "--"))"#);
     }
 
     #[test]

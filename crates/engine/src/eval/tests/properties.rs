@@ -120,7 +120,7 @@ fn command_pattern_nested_or() {
 #[test]
 fn evaluate_fallback_reason_command_matched_but_args_failed() {
     use may_i_core::ast::{Config, Rule, Spanned};
-    use may_i_core::pattern::{ArgPattern, CommandPattern, Expr, PositionalArg, Quantifier};
+    use may_i_core::pattern::{ArgPattern, CommandPattern, Expr, PosTerm, Quantifier};
     use may_i_core::span::Span;
 
     let s = Span::new(0, 1);
@@ -133,11 +133,10 @@ fn evaluate_fallback_reason_command_matched_but_args_failed() {
         Spanned::new(
             Effect::ArgPattern(ArgPattern::Ordered {
                 mode: MatchMode::Positional,
-                patterns: vec![PositionalArg {
-                    quantifier: Quantifier::One,
-                    pattern: Expr::Literal("specific-arg".into()),
-                    recursive: false,
-                }],
+                patterns: vec![PosTerm::single(
+                    Quantifier::One,
+                    Expr::Literal("specific-arg".into()),
+                )],
                 continuation: None,
             }),
             s,
@@ -195,7 +194,7 @@ fn evaluate_rule_nil_short_circuits() {
 #[test]
 fn evaluate_rule_predicate_allow_continues() {
     use may_i_core::ast::{Rule, Spanned};
-    use may_i_core::pattern::{ArgPattern, CommandPattern, Expr, PositionalArg, Quantifier};
+    use may_i_core::pattern::{ArgPattern, CommandPattern, Expr, PosTerm, Quantifier};
     use may_i_core::span::Span;
 
     let s = Span::new(0, 1);
@@ -212,11 +211,10 @@ fn evaluate_rule_predicate_allow_continues() {
                     Spanned::new(
                         Effect::ArgPattern(ArgPattern::Ordered {
                             mode: MatchMode::Positional,
-                            patterns: vec![PositionalArg {
-                                quantifier: Quantifier::One,
-                                pattern: Expr::Literal("ok".into()),
-                                recursive: false,
-                            }],
+                            patterns: vec![PosTerm::single(
+                                Quantifier::One,
+                                Expr::Literal("ok".into()),
+                            )],
                             continuation: None,
                         }),
                         s,
@@ -249,16 +247,15 @@ fn evaluate_rule_predicate_allow_continues() {
 #[test]
 fn build_positional_element_details_with_bind() {
     use may_i_core::Keyword;
-    use may_i_core::pattern::{Expr, PositionalArg, Quantifier};
+    use may_i_core::pattern::{Expr, PosTerm, Quantifier};
 
-    let patterns = vec![PositionalArg {
-        quantifier: Quantifier::One,
-        pattern: Expr::Bind {
+    let patterns = vec![PosTerm::single(
+        Quantifier::One,
+        Expr::Bind {
             key: Keyword::new(":host").unwrap(),
             expr: Box::new(Expr::Wildcard),
         },
-        recursive: false,
-    }];
+    )];
 
     let arg = "prod-01".to_string();
     let args: Vec<&str> = vec![&arg];
@@ -278,11 +275,11 @@ fn build_positional_element_details_with_bind() {
 
 #[test]
 fn build_positional_element_details_with_cond_branch_index() {
-    use may_i_core::pattern::{Expr, ExprBranch, PositionalArg, Quantifier};
+    use may_i_core::pattern::{Expr, ExprBranch, PosTerm, Quantifier};
 
-    let patterns = vec![PositionalArg {
-        quantifier: Quantifier::One,
-        pattern: Expr::Cond(vec![
+    let patterns = vec![PosTerm::single(
+        Quantifier::One,
+        Expr::Cond(vec![
             ExprBranch {
                 test: Expr::Literal("a".into()),
                 effect: Effect::Terminal {
@@ -298,8 +295,7 @@ fn build_positional_element_details_with_cond_branch_index() {
                 },
             },
         ]),
-        recursive: false,
-    }];
+    )];
 
     let arg = "b".to_string();
     let args: Vec<&str> = vec![&arg];
@@ -367,21 +363,13 @@ fn match_fact_pattern_nested_combinators() {
 
 #[test]
 fn zero_or_more_wildcard_backtracks_for_required() {
-    use may_i_core::pattern::PositionalArg;
+    use may_i_core::pattern::PosTerm;
     use may_i_core::{Expr, Quantifier};
 
     // (* *) "end" — wildcard * greedily consumes all, must backtrack for "end"
     let patterns = vec![
-        PositionalArg {
-            quantifier: Quantifier::ZeroOrMore,
-            pattern: Expr::Wildcard,
-            recursive: false,
-        },
-        PositionalArg {
-            quantifier: Quantifier::One,
-            pattern: Expr::Literal("end".to_string()),
-            recursive: false,
-        },
+        PosTerm::single(Quantifier::ZeroOrMore, Expr::Wildcard),
+        PosTerm::single(Quantifier::One, Expr::Literal("end".to_string())),
     ];
 
     let args_owned: Vec<String> = vec!["a", "b", "c", "end"]
@@ -396,21 +384,13 @@ fn zero_or_more_wildcard_backtracks_for_required() {
 
 #[test]
 fn one_or_more_wildcard_backtracks_for_required() {
-    use may_i_core::pattern::PositionalArg;
+    use may_i_core::pattern::PosTerm;
     use may_i_core::{Expr, Quantifier};
 
     // (+ *) "end" — must consume at least 1, then backtrack for "end"
     let patterns = vec![
-        PositionalArg {
-            quantifier: Quantifier::OneOrMore,
-            pattern: Expr::Wildcard,
-            recursive: false,
-        },
-        PositionalArg {
-            quantifier: Quantifier::One,
-            pattern: Expr::Literal("end".to_string()),
-            recursive: false,
-        },
+        PosTerm::single(Quantifier::OneOrMore, Expr::Wildcard),
+        PosTerm::single(Quantifier::One, Expr::Literal("end".to_string())),
     ];
 
     let args_owned: Vec<String> = vec!["x", "y", "end"]
@@ -425,21 +405,13 @@ fn one_or_more_wildcard_backtracks_for_required() {
 
 #[test]
 fn one_or_more_wildcard_fails_when_only_required() {
-    use may_i_core::pattern::PositionalArg;
+    use may_i_core::pattern::PosTerm;
     use may_i_core::{Expr, Quantifier};
 
     // (+ *) "end" with args ["end"] — can't consume 1+ AND have "end" left
     let patterns = vec![
-        PositionalArg {
-            quantifier: Quantifier::OneOrMore,
-            pattern: Expr::Wildcard,
-            recursive: false,
-        },
-        PositionalArg {
-            quantifier: Quantifier::One,
-            pattern: Expr::Literal("end".to_string()),
-            recursive: false,
-        },
+        PosTerm::single(Quantifier::OneOrMore, Expr::Wildcard),
+        PosTerm::single(Quantifier::One, Expr::Literal("end".to_string())),
     ];
 
     let args_owned = ["end".to_string()];

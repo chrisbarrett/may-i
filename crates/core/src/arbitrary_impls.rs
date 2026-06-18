@@ -11,7 +11,7 @@ use crate::ast::{
 };
 use crate::context::ContextFacts;
 use crate::pattern::{
-    ArgPattern, CommandPattern, Expr, ExprBranch, MatchMode, PositionalArg, Quantifier,
+    ArgPattern, CommandPattern, Expr, ExprBranch, MatchMode, PosTerm, Quantifier,
 };
 use crate::predicates::{FactPattern, FactQuery};
 use crate::primitives::{Decision, Keyword};
@@ -217,13 +217,20 @@ impl<'a> Arbitrary<'a> for ExprBranch<Effect> {
     }
 }
 
-impl<'a> Arbitrary<'a> for PositionalArg {
+impl<'a> Arbitrary<'a> for PosTerm {
     fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
-        Ok(PositionalArg {
-            quantifier: Quantifier::arbitrary(u)?,
-            pattern: Expr::arbitrary(u)?,
-            recursive: u.arbitrary()?,
-        })
+        let quantifier = Quantifier::arbitrary(u)?;
+        // Bound group nesting: only branch into a group when the entropy budget
+        // is healthy, and require a non-empty sub-sequence.
+        if u.arbitrary()? && !u.is_empty() {
+            let count = u.int_in_range(1..=3)?;
+            let seq = (0..count)
+                .map(|_| PosTerm::arbitrary(u))
+                .collect::<arbitrary::Result<Vec<_>>>()?;
+            Ok(PosTerm::group(quantifier, seq).expect("count >= 1"))
+        } else {
+            Ok(PosTerm::single(quantifier, Expr::arbitrary(u)?))
+        }
     }
 }
 
@@ -233,7 +240,7 @@ impl<'a> Arbitrary<'a> for ArgPattern {
             0 => {
                 let count = u.int_in_range(0..=3)?;
                 let patterns = (0..count)
-                    .map(|_| PositionalArg::arbitrary(u))
+                    .map(|_| PosTerm::arbitrary(u))
                     .collect::<arbitrary::Result<Vec<_>>>()?;
                 Ok(ArgPattern::Ordered {
                     mode: MatchMode::Positional,
@@ -244,7 +251,7 @@ impl<'a> Arbitrary<'a> for ArgPattern {
             1 => {
                 let count = u.int_in_range(0..=3)?;
                 let patterns = (0..count)
-                    .map(|_| PositionalArg::arbitrary(u))
+                    .map(|_| PosTerm::arbitrary(u))
                     .collect::<arbitrary::Result<Vec<_>>>()?;
                 Ok(ArgPattern::Ordered {
                     mode: MatchMode::Exact,
@@ -412,6 +419,7 @@ impl<'a> Arbitrary<'a> for Config {
             style_specs: vec![],
             parsers: vec![],
             audit: Default::default(),
+            matcher_budget: Default::default(),
         })
     }
 }

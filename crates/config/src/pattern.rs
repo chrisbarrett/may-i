@@ -3,7 +3,7 @@
 
 use may_i_core::Quantifier;
 use may_i_core::ast::Effect;
-use may_i_core::pattern::{ArgPattern, MatchMode, ParameterForm, PositionalArg};
+use may_i_core::pattern::{ArgPattern, MatchMode, ParameterForm, PosTerm};
 use may_i_core::pattern::{Expr, ExprBranch};
 use may_i_core::primitives::Keyword;
 use may_i_sexpr::{RawError, Sexpr};
@@ -420,7 +420,7 @@ fn parse_positional_form(
     exact: bool,
 ) -> Result<ArgPattern, RawError> {
     // Check for dot syntax: patterns before dot, continuation effect after
-    let mut patterns: Vec<PositionalArg> = Vec::new();
+    let mut patterns: Vec<PosTerm> = Vec::new();
     let continuation: Option<may_i_core::ast::Effect> = None;
     let mut i = 0;
 
@@ -456,69 +456,83 @@ fn parse_positional_form(
     }
 }
 
-/// Parse a positional argument (with optional quantifier).
+/// Parse a positional term (a quantified pattern or sequence group).
 ///
 /// Syntax:
-/// - `PATTERN` - single required argument
-/// - `(? PATTERN)` - optional (0 or 1)
-/// - `(+ PATTERN)` - one or more
-/// - `(* PATTERN)` - zero or more
-pub(crate) fn parse_positional_arg(sexpr: &Sexpr) -> Result<PositionalArg, RawError> {
+/// - `PATTERN` — single required term
+/// - `(? PATTERN …)` — optional (0 or 1) over a sub-sequence
+/// - `(+ PATTERN …)` — one or more over a sub-sequence
+/// - `(* PATTERN …)` — zero or more over a sub-sequence
+///
+/// A quantifier head takes **one or more** sub-patterns. With a single bare
+/// sub-pattern it is a `Single`; with more than one — or a single *quantified*
+/// sub-pattern — it is an implicit-sequence `Group`. Sub-patterns may
+/// themselves be quantifier forms, so groups nest.
+pub(crate) fn parse_positional_arg(sexpr: &Sexpr) -> Result<PosTerm, RawError> {
     match sexpr {
         Sexpr::List(list, _) if !list.is_empty() => {
             let tag = list[0]
                 .as_atom()
                 .ok_or_else(|| RawError::new("quantifier tag must be an atom", list[0].span()))?;
 
-            match tag {
-                "?" => {
-                    if list.len() != 2 {
-                        return Err(RawError::new(
-                            "? must have exactly one pattern",
-                            sexpr.span(),
-                        ));
-                    }
-                    let expr = parse_expr(&list[1])?;
-                    Ok(PositionalArg::with_quantifier(expr, Quantifier::Optional))
-                }
-                "+" => {
-                    if list.len() != 2 {
-                        return Err(RawError::new(
-                            "+ must have exactly one pattern",
-                            sexpr.span(),
-                        ));
-                    }
-                    let expr = parse_expr(&list[1])?;
-                    Ok(PositionalArg::with_quantifier(expr, Quantifier::OneOrMore))
-                }
-                "*" => {
-                    if list.len() != 2 {
-                        return Err(RawError::new(
-                            "* must have exactly one pattern",
-                            sexpr.span(),
-                        ));
-                    }
-                    let expr = parse_expr(&list[1])?;
-                    Ok(PositionalArg::with_quantifier(expr, Quantifier::ZeroOrMore))
-                }
+            let quantifier = match tag {
+                "?" => Quantifier::Optional,
+                "+" => Quantifier::OneOrMore,
+                "*" => Quantifier::ZeroOrMore,
                 _ => {
-                    // Not a quantifier form, treat as a list expression
-                    let expr = parse_expr(sexpr)?;
-                    Ok(PositionalArg::one(expr))
+                    // Not a quantifier form; treat the whole list as an expression.
+                    return Ok(PosTerm::one(parse_expr(sexpr)?));
                 }
-            }
+            };
+            parse_quantified(tag, quantifier, &list[1..], sexpr.span())
         }
-        _ => {
-            // Simple expression
-            let expr = parse_expr(sexpr)?;
-            Ok(PositionalArg::one(expr))
+        _ => Ok(PosTerm::one(parse_expr(sexpr)?)),
+    }
+}
+
+/// Parse the body of a quantifier head into a `PosTerm`. The body must be
+/// non-empty. A lone bare sub-pattern collapses into a `Single`; anything else
+/// becomes an implicit-sequence `Group`.
+fn parse_quantified(
+    tag: &str,
+    quantifier: Quantifier,
+    body: &[Sexpr],
+    span: may_i_core::Span,
+) -> Result<PosTerm, RawError> {
+    if body.is_empty() {
+        return Err(RawError::new(
+            format!("{tag} must have at least one pattern"),
+            span,
+        ));
+    }
+
+    let mut seq: Vec<PosTerm> = Vec::with_capacity(body.len());
+    for element in body {
+        seq.push(parse_positional_arg(element)?);
+    }
+
+    if seq.len() == 1 {
+        match seq.pop().expect("len == 1").into_bare_pattern() {
+            Ok(pattern) => return Ok(PosTerm::single(quantifier, pattern)),
+            Err(term) => seq.push(term),
         }
     }
+
+    Ok(PosTerm::group(quantifier, seq).expect("body is non-empty"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use may_i_core::pattern::PosTermView;
+
+    /// Borrow the inner expression of a `Single` term; panic on a group.
+    fn single_pattern(term: &PosTerm) -> &Expr<Effect> {
+        match term.view() {
+            PosTermView::Single { pattern, .. } => pattern,
+            PosTermView::Group { .. } => panic!("expected single term, got group"),
+        }
+    }
 
     fn parse_arg(input: &str) -> Result<ArgPattern, RawError> {
         let (forms, errors) = may_i_sexpr::parse(input);
@@ -705,9 +719,9 @@ mod tests {
                 ..
             } => {
                 assert_eq!(pargs.len(), 3);
-                assert!(matches!(pargs[0].quantifier, Quantifier::One));
-                assert!(matches!(pargs[1].quantifier, Quantifier::Optional));
-                assert!(matches!(pargs[2].quantifier, Quantifier::OneOrMore));
+                assert!(matches!(pargs[0].quantifier(), Quantifier::One));
+                assert!(matches!(pargs[1].quantifier(), Quantifier::Optional));
+                assert!(matches!(pargs[2].quantifier(), Quantifier::OneOrMore));
             }
             _ => panic!("expected Positional"),
         }
@@ -766,7 +780,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(pargs.len(), 1);
-                assert!(matches!(pargs[0].pattern, Expr::Or(_)));
+                assert!(matches!(single_pattern(&pargs[0]), Expr::Or(_)));
             }
             _ => panic!("expected Positional"),
         }
@@ -782,7 +796,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(pargs.len(), 1);
-                assert!(matches!(pargs[0].pattern, Expr::And(_)));
+                assert!(matches!(single_pattern(&pargs[0]), Expr::And(_)));
             }
             _ => panic!("expected Positional"),
         }
@@ -798,7 +812,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(pargs.len(), 1);
-                assert!(matches!(pargs[0].pattern, Expr::Not(_)));
+                assert!(matches!(single_pattern(&pargs[0]), Expr::Not(_)));
             }
             _ => panic!("expected Positional"),
         }
@@ -814,7 +828,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(pargs.len(), 1);
-                assert!(matches!(pargs[0].quantifier, Quantifier::Optional));
+                assert!(matches!(pargs[0].quantifier(), Quantifier::Optional));
             }
             _ => panic!("expected Positional"),
         }
@@ -830,7 +844,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(pargs.len(), 1);
-                assert!(matches!(pargs[0].quantifier, Quantifier::ZeroOrMore));
+                assert!(matches!(pargs[0].quantifier(), Quantifier::ZeroOrMore));
             }
             _ => panic!("expected Positional"),
         }
@@ -846,7 +860,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(pargs.len(), 1);
-                assert!(matches!(pargs[0].quantifier, Quantifier::OneOrMore));
+                assert!(matches!(pargs[0].quantifier(), Quantifier::OneOrMore));
             }
             _ => panic!("expected Positional"),
         }
@@ -897,7 +911,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(pargs.len(), 1);
-                match &pargs[0].pattern {
+                match single_pattern(&pargs[0]) {
                     Expr::Bind { key, expr } => {
                         assert_eq!(key.as_str(), ":ssh/host");
                         assert!(matches!(expr.as_ref(), Expr::Wildcard));
@@ -921,7 +935,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(pargs.len(), 1);
-                match &pargs[0].pattern {
+                match single_pattern(&pargs[0]) {
                     Expr::Bind { key, expr } => {
                         assert_eq!(key.as_str(), ":ssh/host");
                         assert!(matches!(expr.as_ref(), Expr::Wildcard));
@@ -945,7 +959,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(pargs.len(), 1);
-                match &pargs[0].pattern {
+                match single_pattern(&pargs[0]) {
                     Expr::Bind { key, expr } => {
                         assert_eq!(key.as_str(), ":env");
                         assert!(matches!(expr.as_ref(), Expr::Literal(s) if s == "prod"));
@@ -968,7 +982,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(pargs.len(), 1);
-                match &pargs[0].pattern {
+                match single_pattern(&pargs[0]) {
                     Expr::Bind { key, expr } => {
                         assert_eq!(key.as_str(), ":ssh/host");
                         assert!(matches!(expr.as_ref(), Expr::Regex(_)));
@@ -1073,7 +1087,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(pargs.len(), 1);
-                assert!(matches!(pargs[0].pattern, Expr::Cond(_)));
+                assert!(matches!(single_pattern(&pargs[0]), Expr::Cond(_)));
             }
             _ => panic!("expected Positional"),
         }
@@ -1089,7 +1103,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(pargs.len(), 1);
-                assert!(matches!(pargs[0].pattern, Expr::Cond(_)));
+                assert!(matches!(single_pattern(&pargs[0]), Expr::Cond(_)));
             }
             _ => panic!("expected Positional"),
         }
@@ -1105,7 +1119,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(pargs.len(), 1);
-                assert!(matches!(pargs[0].pattern, Expr::Cond(_)));
+                assert!(matches!(single_pattern(&pargs[0]), Expr::Cond(_)));
             }
             _ => panic!("expected Positional"),
         }
@@ -1121,7 +1135,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(pargs.len(), 1);
-                assert!(matches!(pargs[0].pattern, Expr::Cond(_)));
+                assert!(matches!(single_pattern(&pargs[0]), Expr::Cond(_)));
             }
             _ => panic!("expected Positional"),
         }
@@ -1167,24 +1181,80 @@ mod tests {
         assert!(format!("{err}").contains("unless must have exactly 2 arguments"));
     }
 
-    // --- Quantifier arity error paths ---
+    // --- Quantifier sequence groups (implicit-seq) ---
 
+    /// A quantifier head with more than one sub-pattern is now an implicit
+    /// sequence group, not an arity error.
     #[test]
-    fn parse_optional_quantifier_wrong_arity_error() {
-        let err = parse_arg(r#"(positional (? "a" "b"))"#).expect_err("expected error");
-        assert!(format!("{err}").contains("? must have exactly one pattern"));
+    fn parse_optional_quantifier_multi_pattern_is_group() {
+        let pattern = parse_arg(r#"(positional (? "a" "b"))"#).unwrap();
+        let ArgPattern::Ordered { patterns, .. } = pattern else {
+            panic!("expected Ordered");
+        };
+        assert_eq!(patterns.len(), 1);
+        match patterns[0].view() {
+            PosTermView::Group {
+                quantifier: Quantifier::Optional,
+                seq,
+            } => assert_eq!(seq.len(), 2),
+            _ => panic!("expected optional group"),
+        }
     }
 
+    /// Task 2.1: `(? "run" (? "--"))` parses to a nested group; the trailing
+    /// `(? "--")` is a `Single` element inside the group.
     #[test]
-    fn parse_one_or_more_quantifier_wrong_arity_error() {
-        let err = parse_arg(r#"(positional (+ "a" "b"))"#).expect_err("expected error");
-        assert!(format!("{err}").contains("+ must have exactly one pattern"));
+    fn parse_nested_sequence_group() {
+        let pattern = parse_arg(r#"(positional (? "run" (? "--")))"#).unwrap();
+        let ArgPattern::Ordered { patterns, .. } = pattern else {
+            panic!("expected Ordered");
+        };
+        assert_eq!(patterns.len(), 1);
+        let PosTermView::Group {
+            quantifier: Quantifier::Optional,
+            seq,
+        } = patterns[0].view()
+        else {
+            panic!("expected optional group");
+        };
+        assert_eq!(seq.len(), 2);
+        assert!(matches!(
+            seq[0].view(),
+            PosTermView::Single {
+                quantifier: Quantifier::One,
+                pattern: Expr::Literal(s),
+            } if s == "run"
+        ));
+        assert!(matches!(
+            seq[1].view(),
+            PosTermView::Single {
+                quantifier: Quantifier::Optional,
+                pattern: Expr::Literal(s),
+            } if s == "--"
+        ));
     }
 
+    /// Task 2.1: a single bare sub-pattern still parses to a `Single`.
     #[test]
-    fn parse_zero_or_more_quantifier_wrong_arity_error() {
-        let err = parse_arg(r#"(positional (* "a" "b"))"#).expect_err("expected error");
-        assert!(format!("{err}").contains("* must have exactly one pattern"));
+    fn parse_single_sub_pattern_stays_single() {
+        let pattern = parse_arg(r#"(positional (? "x"))"#).unwrap();
+        let ArgPattern::Ordered { patterns, .. } = pattern else {
+            panic!("expected Ordered");
+        };
+        assert!(matches!(
+            patterns[0].view(),
+            PosTermView::Single {
+                quantifier: Quantifier::Optional,
+                ..
+            }
+        ));
+    }
+
+    /// Task 2.1: an empty quantifier body is rejected.
+    #[test]
+    fn parse_empty_quantifier_body_error() {
+        let err = parse_arg(r#"(positional (?))"#).expect_err("expected error");
+        assert!(format!("{err}").contains("? must have at least one pattern"));
     }
 
     // --- contains_bind coverage for Cond variant ---
@@ -1211,8 +1281,98 @@ mod tests {
         }
     }
 
+    /// Structural equality for `PosTerm`, used by the roundtrip proptest.
+    fn pos_term_eq(a: &PosTerm, b: &PosTerm) -> bool {
+        match (a.view(), b.view()) {
+            (
+                PosTermView::Single {
+                    quantifier: qa,
+                    pattern: pa,
+                },
+                PosTermView::Single {
+                    quantifier: qb,
+                    pattern: pb,
+                },
+            ) => qa == qb && expr_eq(pa, pb),
+            (
+                PosTermView::Group {
+                    quantifier: qa,
+                    seq: sa,
+                },
+                PosTermView::Group {
+                    quantifier: qb,
+                    seq: sb,
+                },
+            ) => {
+                qa == qb
+                    && sa.len() == sb.len()
+                    && sa.iter().zip(sb).all(|(x, y)| pos_term_eq(x, y))
+            }
+            _ => false,
+        }
+    }
+
+    /// Generate canonical `PosTerm`s over roundtrip-safe (simple) expressions:
+    /// a single quantified term, or a group with **two or more** elements so
+    /// it cannot collapse to a `Single` on reparse.
+    fn any_canonical_pos_term(depth: u32) -> proptest::prelude::BoxedStrategy<PosTerm> {
+        use may_i_core::test_generators::{any_group_quantifier, any_quantifier, any_simple_expr};
+        use proptest::prelude::*;
+
+        let single = (any_quantifier(), any_simple_expr(2))
+            .prop_map(|(q, e)| PosTerm::single(q, e))
+            .boxed();
+        if depth == 0 {
+            return single;
+        }
+        prop_oneof![
+            3 => single.clone(),
+            1 => (
+                any_group_quantifier(),
+                prop::collection::vec(any_canonical_pos_term(depth - 1), 2..4),
+            )
+                .prop_map(|(q, seq)| PosTerm::group(q, seq).expect("len >= 2")),
+        ]
+        .boxed()
+    }
+
+    /// Task 7.2 / patterns spec: a nested sequence group survives the
+    /// Display → parse roundtrip structurally.
+    #[test]
+    fn nested_sequence_group_roundtrips() {
+        let term = PosTerm::group(
+            Quantifier::Optional,
+            vec![
+                PosTerm::one(Expr::Literal("run".into())),
+                PosTerm::single(Quantifier::Optional, Expr::Literal("--".into())),
+            ],
+        )
+        .unwrap();
+        let text = term.to_string();
+        let (forms, errors) = may_i_sexpr::parse(&text);
+        assert!(errors.is_empty(), "parse errors: {errors:?}");
+        let reparsed = parse_positional_arg(&forms[0]).unwrap();
+        assert!(pos_term_eq(&term, &reparsed), "text: {text}");
+    }
+
     proptest::proptest! {
         #![proptest_config(proptest::prelude::ProptestConfig { cases: 256, max_shrink_iters: 50, .. proptest::prelude::ProptestConfig::default() })]
+
+        /// Task 7.2: arbitrary canonical positional terms (incl. nested groups)
+        /// roundtrip through Display → parse.
+        #[test]
+        fn pos_term_display_parse_roundtrip(term in any_canonical_pos_term(3)) {
+            let text = term.to_string();
+            let (forms, errors) = may_i_sexpr::parse(&text);
+            proptest::prop_assert!(errors.is_empty(), "sexpr parse failed: {:?}\ntext: {}", errors, text);
+            proptest::prop_assert_eq!(forms.len(), 1, "expected 1 form, got {}\ntext: {}", forms.len(), text);
+
+            let reparsed = parse_positional_arg(&forms[0]);
+            proptest::prop_assert!(reparsed.is_ok(), "parse failed: {:?}\ntext: {}", reparsed.err(), text);
+            let reparsed = reparsed.unwrap();
+            proptest::prop_assert!(pos_term_eq(&term, &reparsed),
+                "roundtrip mismatch:\n  text: {}\n  reparsed: {:?}", text, reparsed);
+        }
 
         #[test]
         fn expr_display_parse_roundtrip(expr in may_i_core::test_generators::any_simple_expr(3)) {

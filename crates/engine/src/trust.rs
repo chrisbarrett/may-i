@@ -9,7 +9,9 @@ use std::path::PathBuf;
 use may_i_core::Decision;
 use may_i_core::ast::{Config, Define, Effect, Predicate, Rule};
 use may_i_core::doc::DocF;
-use may_i_core::pattern::{ArgPattern, CommandPattern, Expr, MatchMode, PositionalArg, Quantifier};
+use may_i_core::pattern::{
+    ArgPattern, CommandPattern, Expr, MatchMode, PosTerm, PosTermView, Quantifier,
+};
 use may_i_core::primitives::ToDoc;
 use sha2::{Digest, Sha256};
 
@@ -236,7 +238,7 @@ fn canonical_arg_pattern(pat: &ArgPattern) -> String {
                 MatchMode::Positional => "positional",
                 MatchMode::Exact => "exact",
             };
-            let mut parts: Vec<String> = patterns.iter().map(canonical_positional_arg).collect();
+            let mut parts: Vec<String> = patterns.iter().map(canonical_pos_term).collect();
             if let Some(cont) = continuation {
                 parts.push(format!(". {}", canonical_effect(cont)));
             }
@@ -282,18 +284,32 @@ fn canonical_flag_names(names: &[String]) -> String {
     }
 }
 
-fn canonical_positional_arg(arg: &PositionalArg) -> String {
-    let inner = canonical_expr(&arg.pattern);
-    let wrapped = match arg.quantifier {
-        Quantifier::One => inner,
-        Quantifier::Optional => format!("(? {inner})"),
-        Quantifier::OneOrMore => format!("(+ {inner})"),
-        Quantifier::ZeroOrMore => format!("(* {inner})"),
-    };
-    if arg.recursive {
-        format!("(... {wrapped})")
-    } else {
-        wrapped
+/// Canonical s-expression for a positional term. A `Single` with
+/// `Quantifier::One` is the bare pattern; other singles wrap as `(Q expr)`;
+/// a group wraps its sub-sequence as `(Q elem …)`. Group-free configs render
+/// exactly as before, so existing trust hashes are unchanged.
+fn canonical_pos_term(term: &PosTerm) -> String {
+    fn glyph(q: Quantifier) -> &'static str {
+        match q {
+            Quantifier::One => "",
+            Quantifier::Optional => "?",
+            Quantifier::OneOrMore => "+",
+            Quantifier::ZeroOrMore => "*",
+        }
+    }
+    match term.view() {
+        PosTermView::Single {
+            quantifier: Quantifier::One,
+            pattern,
+        } => canonical_expr(pattern),
+        PosTermView::Single {
+            quantifier,
+            pattern,
+        } => format!("({} {})", glyph(quantifier), canonical_expr(pattern)),
+        PosTermView::Group { quantifier, seq } => {
+            let inner: Vec<String> = seq.iter().map(canonical_pos_term).collect();
+            format!("({} {})", glyph(quantifier), inner.join(" "))
+        }
     }
 }
 
@@ -879,6 +895,39 @@ mod tests {
         let env1 = h1.iter().find(|r| r.program == ":safe-env-vars").unwrap();
         let env2 = h2.iter().find(|r| r.program == ":safe-env-vars").unwrap();
         assert_ne!(env1.hash, env2.hash, "adding env var should change hash");
+    }
+}
+
+#[cfg(test)]
+mod sequence_group_canonical {
+    use super::*;
+    use may_i_config::parse_config;
+
+    /// Task 6.3/6.4: a sequence-group quantifier serialises canonically as
+    /// `(Q elem …)` with nested groups.
+    #[test]
+    fn group_serialises_canonically() {
+        let config = parse_config(r#"(rule "tool" (positional (? "run" (? "--"))))"#)
+            .expect("config parses");
+        let canonical = canonical_rule(&config.rules[0]);
+        assert_eq!(
+            canonical,
+            r#"(rule "tool" (positional (? "run" (? "--"))))"#
+        );
+    }
+
+    /// A group-free config's canonical form (and therefore hash) is unchanged
+    /// by the migration to `PosTerm`: single quantified terms still render as
+    /// the bare pattern / `(Q expr)` exactly as before.
+    #[test]
+    fn group_free_canonical_unchanged() {
+        let config = parse_config(r#"(rule "git" (positional "push" (? "origin") (* *)))"#)
+            .expect("config parses");
+        let canonical = canonical_rule(&config.rules[0]);
+        assert_eq!(
+            canonical,
+            r#"(rule "git" (positional "push" (? "origin") (* *)))"#
+        );
     }
 }
 

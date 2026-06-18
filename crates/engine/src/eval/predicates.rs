@@ -8,7 +8,6 @@ use crate::fold::{ChildResult, EvalFold, build_fact_detail};
 
 use super::context::{EvalContext, PredicateResult};
 use super::effects::{matcher_scope, scan_until_double_dash};
-use super::positional::match_positional_patterns;
 
 /// Evaluate a predicate against the context (non-generic, uses PureFold).
 #[cfg(test)]
@@ -315,7 +314,12 @@ pub(super) fn evaluate_arg_pattern_predicate(
         let pos_args: Vec<&str> = pos_idx.iter().map(|&i| outer_args[i].as_str()).collect();
         let pos_exp: Vec<&super::decompose::Expansion> =
             pos_idx.iter().map(|&i| &outer_exp[i]).collect();
-        let m = match_positional_patterns(&pos_args, &pos_exp, patterns);
+        let m = super::positional::match_positional_patterns_budgeted(
+            &pos_args,
+            &pos_exp,
+            patterns,
+            ctx.matcher_budget(),
+        );
         let matched = m.matched && (*mode == MatchMode::Positional || m.consumed == pos_args.len());
         let elements =
             super::positional::build_positional_element_details(&pos_args, patterns, &m.elements);
