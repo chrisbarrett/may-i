@@ -125,10 +125,12 @@ Two reasons the argv layer is excluded:
 
 ### D7 — Subject stays as addressing, not folded into the expression
 
-`(env NAME EXPR)` and `(redirect (target PAT) EXPR)` keep the subject (the
-variable name / redirect target) as positional addressing; EXPR is purely
-fact-conditioned. This matches the `safe-env-vars` shape and keeps EXPR free of
-operand-matching.
+`(env NAME EXPR)` and `(redirect PAT EXPR)` keep the subject (the variable name /
+redirect target) as positional addressing; EXPR is purely fact-conditioned. This
+matches the `safe-env-vars` shape and keeps EXPR free of operand-matching. The
+redirect target is the bare first operand — no `(target …)` wrapper — giving both
+forms the same `(HEAD SUBJECT DECISION)` shape; an omitted PAT matches any write
+target.
 
 - *Alternative — fold the subject into the expression* as a `(name PAT)` /
   `(target PAT)` predicate: `(env (when (and (name (glob "AWS_*")) (fact? :ci))
@@ -137,24 +139,33 @@ operand-matching.
   "facts only" line. Deferred; revisit if pattern-addressed env names are
   wanted.
 
-### D5 — Provisional syntax; trust scopes per axis
+### D5 — Settled syntax; trust scopes per axis
 
-Forms are provisional (parallel to how `rules-grant-redirect-capability` left
-spelling open):
+Both forms are bare top-level forms — `(env …)` and `(redirect …)` — with no
+umbrella head, consistent with the existing top-level policy forms `(audit …)`,
+`(safe-env-vars …)`, `(rule …)`, `(parser …)`. "Capability" is the prose /
+glossary term for the category, not a DSL head. Both share the shape
+`(HEAD SUBJECT DECISION)`:
 
 ```lisp
-(env      "LD_PRELOAD" (deny))
-(env      "AWS_TOKEN"  (ask "secret — confirm before it enters a command"))
-(env      "GIT_PAGER"  (allow))
-(redirect (target (glob "/tmp/**")) (allow))
+(env      "LD_PRELOAD"   (deny))
+(env      "AWS_TOKEN"    (ask "secret — confirm before it enters a command"))
+(env      "GIT_PAGER"    (allow))
+(redirect (glob "/tmp/**") (allow))
+(redirect (allow))                      ; SUBJECT omitted → any write target
 ```
 
-Trust scopes generalize `:safe-env-vars` into `:env` and `:redirect` (granular
-approval). Open questions for the spelling: `(env NAME DECISION)` vs an
-explicit `(capability …)` head; whether `(redirect …)` should also accept a
-`(operator …)` filter or stay write-only-by-construction. The DSL uses
-alist-style option sub-forms elsewhere (`dsl-option-form-alist-style`), which
-the `(target …)` sub-form follows.
+The redirect SUBJECT is the bare target matcher (no `(target …)` wrapper); the
+DECISION is a fact-conditioned expression (D6). Trust scopes generalize
+`:safe-env-vars` into `:env` and `:redirect` (granular approval).
+
+- *Rejected — an explicit `(capability (env …))` head.* It would break the
+  headless precedent of `(audit …)`/`(safe-env-vars …)`; the category word lives
+  in prose, not the syntax.
+- *Rejected — `(effect …)`* as the category term: retired user vocabulary.
+- *Deferred — a `(redirect … (operator …))` filter.* Read vs write is settled by
+  construction (only writes floor; see the redirect requirement), so no operator
+  filter is needed now.
 
 ## Risks
 

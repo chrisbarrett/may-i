@@ -44,7 +44,7 @@ capability toward `:allow`, so it floors regardless of any matching capability.
 
 #### Scenario: Expansion-bearing write target floors despite a capability
 
-- **GIVEN** `(rule "echo" (allow))` and `(redirect (target (glob "/tmp/**")) (allow))`
+- **GIVEN** `(rule "echo" (allow))` and `(redirect (glob "/tmp/**") (allow))`
 - **WHEN** evaluating `echo x > /tmp/$NAME`
 - **THEN** the decision SHALL be at least `:ask` (the target is expansion-bearing
   and cannot satisfy the capability toward `:allow`)
@@ -150,18 +150,20 @@ any argv word of a command:
 
 ### Requirement: A redirect-write capability lifts the redirect floor
 
-The `(redirect (target PATTERN) DECISION)` capability SHALL govern write
-redirections by their target, where PATTERN is any Pattern matcher (`"lit"`,
-`(regex …)`, `(glob …)`, `(or …)`, …). A write redirection whose non-standard
-target matches PATTERN SHALL contribute the capability's decision to the segment
-meet instead of the default floor; an `(allow)` therefore releases the floor.
+The `(redirect PATTERN DECISION)` capability SHALL govern write redirections by
+their target. PATTERN is the target matcher directly — any Pattern (`"lit"`,
+`(regex …)`, `(glob …)`, `(or …)`, …) — with no enclosing `(target …)`
+sub-form; when PATTERN is omitted (`(redirect DECISION)`), the capability SHALL
+apply to any write target. A write redirection whose non-standard target matches
+PATTERN SHALL contribute the capability's decision to the segment meet instead
+of the default floor; an `(allow)` therefore releases the floor.
 Like the env capability, it SHALL be primary-config-governed and trust-scoped.
 An expansion-bearing target SHALL NOT match a capability toward `:allow` (per
 "Match and parse imprecision never widens toward allow").
 
 #### Scenario: Capability allows a write to a matching target
 
-- **GIVEN** `(rule "tee" (allow))` and `(redirect (target (glob "/tmp/**")) (allow))`
+- **GIVEN** `(rule "tee" (allow))` and `(redirect (glob "/tmp/**") (allow))`
 - **WHEN** evaluating `echo x | tee /tmp/out.txt`
 - **THEN** the decision SHALL be `:allow` (the write target matches the capability)
 

@@ -3,12 +3,12 @@
 ## 1. Capability config surface
 
 - [ ] 1.1 Write failing parse tests: `(env "X" (allow|ask|deny))` and
-  `(redirect (target PAT) (allow))` parse into `SecurityConfig`; a bare/invalid
-  decision is a parse error naming the form.
+  `(redirect PAT (allow))` (and arity-1 `(redirect (allow))` = any target) parse
+  into `SecurityConfig`; a bare/invalid decision is a parse error naming the form.
 - [ ] 1.2 Parse `(env NAME DECISION)` into a name→decision map on
   `SecurityConfig`, split by provenance (primary vs loaded) like `safe_env_vars`.
-- [ ] 1.3 Parse `(redirect (target PAT) DECISION)` into a list of
-  (target-Pattern, decision), same provenance split.
+- [ ] 1.3 Parse `(redirect PAT DECISION)` (PAT optional → any target) into a
+  list of (target-Pattern, decision), same provenance split.
 - [ ] 1.4 Keep `(safe-env-vars …)` as a parsed alias that lowers to
   `(env NAME (allow))`; assert old configs still load.
 - [ ] 1.5 Parse the capability DECISION position as a full `Effect` expression

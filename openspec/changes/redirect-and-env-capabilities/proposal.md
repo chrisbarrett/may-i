@@ -1,7 +1,8 @@
 > [!NOTE]
-> Supersedes the `rules-grant-redirect-capability` draft. Syntax is
-> provisional — the form names and spelling are open design questions (see
-> design.md D5). The model is what this proposal commits to.
+> Supersedes the `rules-grant-redirect-capability` draft. Forms are bare
+> top-level `(env …)` / `(redirect …)` (no umbrella head), sharing the shape
+> `(HEAD SUBJECT DECISION)`; "capability" is the prose term, not a DSL head
+> (design.md D5).
 
 ## Why
 
@@ -45,7 +46,7 @@ it; the redirect opt-out is another; secret-read taint is the third.
   the target:
 
   ```lisp
-  (redirect (target (glob "/tmp/**" "/dev/null")) (allow))
+  (redirect (glob "/tmp/**" "/dev/null") (allow))
   ```
 
   An expansion-bearing target cannot satisfy it toward `:allow` (per the
@@ -112,8 +113,8 @@ it; the redirect opt-out is another; secret-read taint is the third.
 
 ## Impact
 
-- `crates/config` — parse `(env NAME DECISION)` and `(redirect (target PAT)
-  DECISION)` into `SecurityConfig`; keep `(safe-env-vars …)` as a parsed alias
+- `crates/config` — parse `(env NAME DECISION)` and `(redirect PAT DECISION)`
+  into `SecurityConfig`; keep `(safe-env-vars …)` as a parsed alias
   that lowers to `(env NAME (allow))` until migrated out.
 - `crates/engine/src/eval/decompose.rs` — split the `RedirectTarget` unit into
   write vs read; stop emitting read floors; emit a taint unit when an argv
