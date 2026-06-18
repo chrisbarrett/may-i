@@ -27,7 +27,7 @@ Trace
                                 …                                    │
                                 "clone"))                            │ "reset" = "clone" → no
                 (positional "checkout"                               │ "reset" = "checkout" → no
-                            "--")                                    │ "reset" = "--" → no
+                            "--")                                    │
                 (positional "worktree"))                             │ "reset" = "worktree" → no
                …)                                                    │
           (ask                                                       │ → :ask "git mutation requires approval in non-writing agents"

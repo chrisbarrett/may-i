@@ -493,74 +493,6 @@ fn distribute_positional_comparisons(node: TraceNode, actual_arg: &str) -> Trace
     }
 }
 
-/// Extract positional arguments from an args slice, skipping flags and
-/// stopping at `--`. Used by the producer to determine the "actual arg"
-/// against which positional patterns compare.
-fn extract_positional_args(args: &[String]) -> Vec<&str> {
-    let mut result = Vec::new();
-    let mut iter = args.iter().peekable();
-    let mut past_terminator = false;
-
-    while let Some(arg) = iter.next() {
-        if past_terminator {
-            result.push(arg.as_str());
-        } else if arg == "--" {
-            result.push(arg.as_str());
-            past_terminator = true;
-        } else if arg.starts_with("--") {
-            if !arg.contains('=') {
-                iter.next();
-            }
-        } else if arg.starts_with('-') {
-            // Short flag — skip
-        } else {
-            result.push(arg.as_str());
-        }
-    }
-    result
-}
-
-/// Apply positional distribution to a `(positional|exact)` argv-match node
-/// when the args have at least one positional value.
-fn distribute_positional_at_top(node: TraceNode, args: &[String]) -> TraceNode {
-    let head = node
-        .children()
-        .first()
-        .and_then(|c| c.label())
-        .map(|s| s.to_string());
-    if !matches!(head.as_deref(), Some("positional") | Some("exact")) {
-        return node;
-    }
-    let positional_args = extract_positional_args(args);
-    let Some(first_arg) = positional_args.first().copied() else {
-        return node;
-    };
-    let role = node.role().clone();
-    let evidence = node.evidence().cloned();
-    let layout = node.layout();
-    let dimmed = node.dimmed();
-    let first_arg = first_arg.to_string();
-    let mut children = node.into_children().expect("positional is a list");
-    let new_children: Vec<TraceNode> = children
-        .drain(..)
-        .enumerate()
-        .map(|(i, c)| {
-            if i == 0 {
-                c
-            } else {
-                distribute_positional_comparisons(c, &first_arg)
-            }
-        })
-        .collect();
-    let mut out = TraceNode::plain_list(new_children)
-        .with_role_and_evidence(role, evidence)
-        .with_layout(layout);
-    if dimmed {
-        out = out.with_dimmed_self();
-    }
-    out
-}
-
 /// Truncate a long unannotated list down to head + keep + ellipsis + last.
 /// Producer-side replacement for the renderer's `truncate_unevaluated` pass.
 fn truncate_unevaluated(node: TraceNode, keep: usize) -> TraceNode {
@@ -745,7 +677,11 @@ fn annotate_pattern_element(node: TraceNode, detail: &PositionalElementDetail) -
         return rebuilt;
     }
 
-    if let PositionalMatchKind::Expr(expr_match) = &detail.match_kind {
+    // Regex elements carry their own match detail (pattern + actual value).
+    if let PositionalMatchKind::Expr(
+        expr_match @ may_i_engine::fold::ExprMatchDetail::Regex { .. },
+    ) = &detail.match_kind
+    {
         return annotate_expr_match(node, expr_match);
     }
 
@@ -774,6 +710,13 @@ fn annotate_pattern_element(node: TraceNode, detail: &PositionalElementDetail) -
             }
             return rebuilt;
         }
+    }
+
+    // Literal / `or`-branch leaves: annotate against the argument the matcher
+    // tested this element with. `cond` leaves (handled by the trailing-cond
+    // pass) and unreached elements (no `tested_arg`) are left as-is.
+    if let Some(arg) = &detail.tested_arg {
+        return distribute_positional_comparisons(node, arg);
     }
 
     node
@@ -998,7 +941,7 @@ impl EvalFold for TracingFold {
     fn effect_arg_match(
         &mut self,
         pattern: &ArgPattern,
-        args: &[String],
+        _args: &[String],
         matched: bool,
         detail: ArgMatchDetail,
     ) -> Self::EffectOut {
@@ -1039,8 +982,6 @@ impl EvalFold for TracingFold {
             children[1] = inner.with_role_and_evidence(Role::ArgMatch, inner_inverted_evidence);
         }
 
-        // Apply positional distribution at the top if appropriate.
-        node = distribute_positional_at_top(node, args);
         node = apply_structural_passes(node);
 
         let result = if matched {
@@ -1196,7 +1137,7 @@ impl EvalFold for TracingFold {
     fn effect_arg_continuation(
         &mut self,
         pattern: &ArgPattern,
-        args: &[String],
+        _args: &[String],
         detail: ArgMatchDetail,
         continuation: Self::EffectOut,
     ) -> Self::EffectOut {
@@ -1222,7 +1163,6 @@ impl EvalFold for TracingFold {
             })
         };
         node = node.with_role_and_evidence(Role::ArgMatch, evidence_for_node);
-        node = distribute_positional_at_top(node, args);
 
         let mut children = node.into_children().unwrap_or_default();
 
@@ -1344,6 +1284,7 @@ impl EvalFold for TracingFold {
         pattern: &ArgPattern,
         args: &[String],
         result: PredicateResult,
+        positional_elements: Vec<PositionalElementDetail>,
     ) -> Self::PredicateOut {
         let matched = result == PredicateResult::Match;
         let node = from_pattern_doc(arg_pattern_to_doc(pattern));
@@ -1353,11 +1294,11 @@ impl EvalFold for TracingFold {
             matched,
         });
         let node = node.with_role_and_evidence(Role::ArgMatch, evidence);
-        // Truncate long unannotated child lists BEFORE distributing
-        // positional evidence — otherwise the per-token evidence makes
-        // every literal atom "annotated" and suppresses truncation.
+        // Truncate long unannotated child lists BEFORE annotating positional
+        // evidence — otherwise the per-token evidence makes every literal atom
+        // "annotated" and suppresses truncation.
         let node = truncate_unevaluated(node, 2);
-        let node = distribute_positional_at_top(node, args);
+        let node = annotate_positional_elements(node, &positional_elements);
         (result, apply_structural_passes(node))
     }
 
@@ -1602,10 +1543,226 @@ mod tests {
     use super::*;
     use may_i_core::Span;
     use may_i_core::ast::{Config, Spanned};
+    use may_i_core::pattern::{Expr, PositionalArg};
     use may_i_engine::eval::evaluate_with_fold;
     use may_i_engine::fold::PureFold;
     use may_i_engine::test_generators::*;
     use proptest::prelude::*;
+
+    /// Walk a trace node, collecting every positional-match annotation as
+    /// `(pattern_text, actual, matched)`.
+    fn collect_positional_evidence(node: &TraceNode) -> Vec<(String, String, bool)> {
+        let mut out = Vec::new();
+        if let Some(Evidence::Positional {
+            actual,
+            pattern_text,
+            matched,
+        }) = node.evidence()
+        {
+            out.push((pattern_text.clone(), actual.clone(), *matched));
+        }
+        for child in node.children() {
+            out.extend(collect_positional_evidence(child));
+        }
+        out
+    }
+
+    fn positional_evidence_for(
+        cfg: &Config,
+        cmd: &str,
+        args: &[String],
+    ) -> Vec<(String, String, bool)> {
+        let facts = ContextFacts::default();
+        let mut fold = TracingFold::new();
+        evaluate_with_fold(cmd, args, cfg, &facts, &mut fold).unwrap();
+        fold.traces
+            .iter()
+            .filter_map(|e| match e {
+                TraceEntry::Rule { node, .. } => Some(collect_positional_evidence(node)),
+                _ => None,
+            })
+            .flatten()
+            .collect()
+    }
+
+    /// A multi-element positional must annotate each element against the
+    /// positional argument at its own position — not always the first.
+    #[test]
+    fn multi_element_positional_annotates_each_element_against_its_own_arg() {
+        let body = Effect::ArgPattern(ArgPattern::Ordered {
+            mode: MatchMode::Positional,
+            patterns: vec![
+                PositionalArg::one(Expr::Literal("source-file".into())),
+                PositionalArg::one(Expr::Or(vec![
+                    Expr::Literal("a".into()),
+                    Expr::Literal("b".into()),
+                ])),
+            ],
+            continuation: Some(Box::new(terminal(Decision::Allow, "ok"))),
+        });
+        let cfg = make_config(vec![make_rule(
+            CommandPattern::Literal("tmux".into()),
+            body,
+        )]);
+
+        let evidence = positional_evidence_for(&cfg, "tmux", &["source-file".into(), "b".into()]);
+
+        // The `or` branches test the SECOND positional arg ("b"), not the first.
+        let branch_b = evidence
+            .iter()
+            .find(|(pat, _, _)| pat == "\"b\"")
+            .expect("an `or` branch for \"b\" should be annotated");
+        assert_eq!(
+            branch_b.1, "b",
+            "second positional element must be tested against argv's second \
+             positional (\"b\"), got actual={:?}",
+            branch_b.1
+        );
+        assert!(branch_b.2, "\"b\" = \"b\" should match");
+    }
+
+    /// With optional elements, a skipped optional still leaves the cursor in
+    /// place, so a later element is tested against the argument the matcher
+    /// actually compared it with — not its ordinal position.
+    #[test]
+    fn optional_positional_elements_track_the_match_cursor() {
+        // `(positional (? "affected") (? (or "watch" "run")) (? "--") (allow))`
+        let body = Effect::ArgPattern(ArgPattern::Ordered {
+            mode: MatchMode::Positional,
+            patterns: vec![
+                PositionalArg::with_quantifier(
+                    Expr::Literal("affected".into()),
+                    may_i_core::Quantifier::Optional,
+                ),
+                PositionalArg::with_quantifier(
+                    Expr::Or(vec![
+                        Expr::Literal("watch".into()),
+                        Expr::Literal("run".into()),
+                    ]),
+                    may_i_core::Quantifier::Optional,
+                ),
+                PositionalArg::with_quantifier(
+                    Expr::Literal("--".into()),
+                    may_i_core::Quantifier::Optional,
+                ),
+            ],
+            continuation: Some(Box::new(terminal(Decision::Allow, "ok"))),
+        });
+        let cfg = make_config(vec![make_rule(
+            CommandPattern::Literal("cargo".into()),
+            body,
+        )]);
+
+        // `cargo run -- test`: the leading `(? "affected")` skips, so `(or …)`
+        // is tested against "run" (matches) and `(? "--")` against "--".
+        let evidence =
+            positional_evidence_for(&cfg, "cargo", &["run".into(), "--".into(), "test".into()]);
+
+        let affected = evidence
+            .iter()
+            .find(|(p, _, _)| p == "\"affected\"")
+            .unwrap();
+        assert_eq!(
+            affected.1, "run",
+            "skipped optional is tested at the cursor"
+        );
+        assert!(!affected.2);
+
+        let run_branch = evidence.iter().find(|(p, _, _)| p == "\"run\"").unwrap();
+        assert_eq!(
+            run_branch.1, "run",
+            "`(or …)` tests the same arg the skipped optional left"
+        );
+        assert!(run_branch.2, "\"run\" = \"run\" should match");
+
+        let dashdash = evidence.iter().find(|(p, _, _)| p == "\"--\"").unwrap();
+        assert_eq!(
+            dashdash.1, "--",
+            "`(? \"--\")` tests the next arg after `run` was consumed"
+        );
+        assert!(dashdash.2);
+    }
+
+    /// End-to-end: when the matcher backtracks a `*` so a following required
+    /// element can match, the trace annotates that required element against
+    /// the argument it actually matched — a greedy renderer walk would mark it
+    /// unannotated. (Reviewer finding: greedy vs backtracking divergence.)
+    #[test]
+    fn backtracked_required_element_is_annotated_against_its_real_arg() {
+        // `(positional (* "a") "a" (allow))` against `a`.
+        let body = Effect::ArgPattern(ArgPattern::Ordered {
+            mode: MatchMode::Positional,
+            patterns: vec![
+                PositionalArg::with_quantifier(
+                    Expr::Literal("a".into()),
+                    may_i_core::Quantifier::ZeroOrMore,
+                ),
+                PositionalArg::one(Expr::Literal("a".into())),
+            ],
+            continuation: Some(Box::new(terminal(Decision::Allow, "ok"))),
+        });
+        let cfg = make_config(vec![make_rule(CommandPattern::Literal("cmd".into()), body)]);
+
+        let evidence = positional_evidence_for(&cfg, "cmd", &["a".into()]);
+
+        // The required literal `a` (second element) was tested against arg 0,
+        // which the `*` gave back, and matched.
+        let required = evidence
+            .iter()
+            .find(|(pat, actual, matched)| pat == "\"a\"" && actual == "a" && *matched)
+            .expect("backtracked required `a` element must be annotated, matched against \"a\"");
+        assert_eq!(required.1, "a");
+    }
+
+    proptest! {
+        /// For an all-`One` positional pattern of plain literals, the k-th
+        /// rendered positional element is annotated against argv's k-th
+        /// positional argument.
+        #[test]
+        fn positional_elements_annotate_against_their_own_position(
+            patterns in prop::collection::vec("[a-z]{1,5}", 1..4),
+            args in prop::collection::vec("[a-z]{1,5}", 1..5),
+        ) {
+            let body = Effect::ArgPattern(ArgPattern::Ordered {
+                mode: MatchMode::Positional,
+                patterns: patterns
+                    .iter()
+                    .map(|p| PositionalArg::one(Expr::Literal(p.clone())))
+                    .collect(),
+                continuation: Some(Box::new(terminal(Decision::Allow, "ok"))),
+            });
+            let cfg = make_config(vec![make_rule(
+                CommandPattern::Literal("cmd".into()),
+                body,
+            )]);
+
+            let evidence = positional_evidence_for(&cfg, "cmd", &args);
+
+            // All-`One` literals: the matcher walks left to right, testing
+            // element k against arg k, and stops at the first mismatch (which
+            // is itself tested) or when it runs out of arguments. Annotation
+            // covers exactly that reached prefix.
+            let mut expected_len = 0;
+            for (k, pat) in patterns.iter().enumerate() {
+                match args.get(k) {
+                    None => break,
+                    Some(a) => {
+                        expected_len += 1;
+                        if a != pat {
+                            break;
+                        }
+                    }
+                }
+            }
+            prop_assert_eq!(evidence.len(), expected_len);
+            for (k, (_pat, actual, matched)) in evidence.iter().enumerate() {
+                prop_assert_eq!(actual, &args[k],
+                    "element {} must test argv positional {}", k, k);
+                prop_assert_eq!(*matched, args[k] == patterns[k],
+                    "element {} match verdict must reflect its own argument", k);
+            }
+        }
+    }
 
     fn dummy_span() -> Span {
         Span::new(0, 0)

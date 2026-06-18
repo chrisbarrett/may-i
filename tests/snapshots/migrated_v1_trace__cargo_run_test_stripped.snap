@@ -13,7 +13,7 @@ Trace
           (positional (? "affected")     │ "run" = "affected" → no
                       (? (or "watch"     │ "run" = "watch" → no
                              "run" "r")) │ "run" = "run" → yes
-                      (? "--")           │ "run" = "--" → no
+                      (? "--")           │ "--" = "--" → yes
                       (cond              │
                        ((or "install"    │
                             "uninstall") │

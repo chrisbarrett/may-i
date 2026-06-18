@@ -16,7 +16,9 @@ use may_i_core::pattern::{ArgPattern, CommandPattern, Expr};
 use may_i_core::{ContextFacts, Decision, FactQuery};
 
 use crate::eval::PredicateResult;
-use crate::fold::{ArgMatchDetail, ChildResult, EvalFold, FactDetail, PureFold};
+use crate::fold::{
+    ArgMatchDetail, ChildResult, EvalFold, FactDetail, PositionalElementDetail, PureFold,
+};
 use crate::trust::{canonical_rule, hash_rule};
 
 /// Captures the canonical-form hashes of the deciding rules during an
@@ -198,8 +200,10 @@ impl EvalFold for AuditFold {
         pattern: &ArgPattern,
         args: &[String],
         result: PredicateResult,
+        positional_elements: Vec<PositionalElementDetail>,
     ) -> PredicateResult {
-        self.inner.predicate_arg(pattern, args, result)
+        self.inner
+            .predicate_arg(pattern, args, result, positional_elements)
     }
     fn predicate_and(
         &mut self,
@@ -556,10 +560,13 @@ impl<A: EvalFold, B: EvalFold> EvalFold for ComposedFold<A, B> {
         pattern: &ArgPattern,
         args: &[String],
         result: PredicateResult,
+        positional_elements: Vec<PositionalElementDetail>,
     ) -> Self::PredicateOut {
         (
-            self.a.predicate_arg(pattern, args, result),
-            self.b.predicate_arg(pattern, args, result),
+            self.a
+                .predicate_arg(pattern, args, result, positional_elements.clone()),
+            self.b
+                .predicate_arg(pattern, args, result, positional_elements),
         )
     }
     fn predicate_and(

@@ -11,9 +11,9 @@ Trace
         (if (exact)                      │
             …                            │
           (positional (? "affected")     │ "affected" = "affected" → yes
-                      (? (or "watch"     │ "affected" = "watch" → no
-                             "run" "r")) │ "affected" = "run" → no
-                      (? "--")           │ "affected" = "--" → no
+                      (? (or "watch"     │ "build" = "watch" → no
+                             "run" "r")) │ "build" = "run" → no
+                      (? "--")           │ "build" = "--" → no
                       (cond              │
                        ((or "install"    │
                             "uninstall") │

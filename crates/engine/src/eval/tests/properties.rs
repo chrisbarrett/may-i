@@ -262,7 +262,12 @@ fn build_positional_element_details_with_bind() {
 
     let arg = "prod-01".to_string();
     let args: Vec<&str> = vec![&arg];
-    let details = build_positional_element_details(&args, &patterns, true, 1);
+    let elements = vec![crate::eval::positional::ElementMatch {
+        tested: Some(0),
+        consumed: 1,
+        matched: true,
+    }];
+    let details = build_positional_element_details(&args, &patterns, &elements);
     assert_eq!(details.len(), 1);
     let detail = &details[0];
     assert!(detail.binding.is_some());
@@ -298,7 +303,12 @@ fn build_positional_element_details_with_cond_branch_index() {
 
     let arg = "b".to_string();
     let args: Vec<&str> = vec![&arg];
-    let details = build_positional_element_details(&args, &patterns, true, 1);
+    let elements = vec![crate::eval::positional::ElementMatch {
+        tested: Some(0),
+        consumed: 1,
+        matched: true,
+    }];
+    let details = build_positional_element_details(&args, &patterns, &elements);
     assert_eq!(details.len(), 1);
     assert!(matches!(
         details[0].match_kind,
@@ -692,6 +702,7 @@ fn cond_short_circuits_predicates_after_first_match() {
             _: &ArgPattern,
             _: &[String],
             result: PredicateResult,
+            _: Vec<crate::fold::PositionalElementDetail>,
         ) -> PredicateResult {
             result
         }

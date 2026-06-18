@@ -57,6 +57,11 @@ pub struct PositionalElementDetail {
     pub pattern_index: usize,
     /// The arg values consumed by this pattern element.
     pub consumed_args: Vec<String>,
+    /// The positional argument this element was tested against on the
+    /// matcher's winning path — the value at the cursor when the element was
+    /// evaluated, whether or not it was consumed (a skipped optional is still
+    /// tested). `None` when the cursor was past the end of the arguments.
+    pub tested_arg: Option<String>,
     /// If this was a Bind expression, the key and bound value.
     pub binding: Option<BindDetail>,
     /// Kind-specific match detail (expr match, cond branch, or none).
@@ -215,6 +220,7 @@ pub trait EvalFold {
         pattern: &ArgPattern,
         args: &[String],
         result: PredicateResult,
+        positional_elements: Vec<PositionalElementDetail>,
     ) -> Self::PredicateOut;
     fn predicate_and(
         &mut self,
@@ -460,6 +466,7 @@ impl EvalFold for PureFold {
         _pattern: &ArgPattern,
         _args: &[String],
         result: PredicateResult,
+        _positional_elements: Vec<PositionalElementDetail>,
     ) -> PredicateResult {
         result
     }

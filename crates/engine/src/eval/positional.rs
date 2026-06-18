@@ -4,6 +4,23 @@ use may_i_core::pattern::PositionalArg;
 
 use super::decompose::Expansion;
 
+/// Per-element record of how a pattern element fared on the match's
+/// winning (backtracking) path. Used to annotate traces against the
+/// argument each element was actually tested with — a forward greedy
+/// walk cannot reproduce this for quantifiers that give args back.
+#[derive(Debug, Clone)]
+pub(crate) struct ElementMatch {
+    /// Index into the positional args of the value at the cursor when this
+    /// element was evaluated — the value it was tested against. `None` when
+    /// the cursor was already past the end of the arguments.
+    pub(crate) tested: Option<usize>,
+    /// Number of args this element consumed on the winning path.
+    pub(crate) consumed: usize,
+    /// Whether this element matched (false for the element a failed match
+    /// stopped on).
+    pub(crate) matched: bool,
+}
+
 /// Outcome of matching positional patterns against args.
 pub(crate) struct PositionalMatch {
     pub(crate) matched: bool,
@@ -17,6 +34,10 @@ pub(crate) struct PositionalMatch {
     /// is not provable for the runtime value, so it cannot contribute
     /// to `:allow` (the rule evaluator floors on these).
     pub(crate) unresolved: Vec<String>,
+    /// Per-element trace along the returned path (in pattern order). For a
+    /// successful match this covers every element; for a failed match it
+    /// covers the prefix up to and including the element that failed.
+    pub(crate) elements: Vec<ElementMatch>,
 }
 
 /// Match positional patterns against args, capturing bound facts.
@@ -79,6 +100,15 @@ fn match_positional_recursive(
     facts: ContextFacts,
     unresolved: Vec<String>,
 ) -> PositionalMatch {
+    // Index of the value at the cursor, or None when past the end.
+    let tested_at = |i: usize| if i < args.len() { Some(i) } else { None };
+    // Prepend this element's record to a child result built deeper in the
+    // pattern, so the returned trace is in pattern order along the path taken.
+    let with_element = |mut child: PositionalMatch, el: ElementMatch| {
+        child.elements.insert(0, el);
+        child
+    };
+
     // All patterns consumed → success
     if pat_idx >= patterns.len() {
         return PositionalMatch {
@@ -86,6 +116,7 @@ fn match_positional_recursive(
             consumed: arg_idx,
             facts,
             unresolved,
+            elements: Vec::new(),
         };
     }
 
@@ -95,6 +126,11 @@ fn match_positional_recursive(
         consumed: arg_idx,
         facts,
         unresolved,
+        elements: vec![ElementMatch {
+            tested: tested_at(arg_idx),
+            consumed: 0,
+            matched: false,
+        }],
     };
 
     match &pattern.quantifier {
@@ -110,7 +146,7 @@ fn match_positional_recursive(
             if let Some(w) = unprovable_match(&pattern.pattern, expansions, arg_idx) {
                 unresolved.push(w.to_string());
             }
-            match_positional_recursive(
+            let child = match_positional_recursive(
                 args,
                 expansions,
                 patterns,
@@ -118,6 +154,14 @@ fn match_positional_recursive(
                 arg_idx + 1,
                 facts.merge(&f),
                 unresolved,
+            );
+            with_element(
+                child,
+                ElementMatch {
+                    tested: Some(arg_idx),
+                    consumed: 1,
+                    matched: true,
+                },
             )
         }
         may_i_core::Quantifier::Optional => {
@@ -139,12 +183,19 @@ fn match_positional_recursive(
                         u,
                     );
                     if result.matched {
-                        return result;
+                        return with_element(
+                            result,
+                            ElementMatch {
+                                tested: Some(arg_idx),
+                                consumed: 1,
+                                matched: true,
+                            },
+                        );
                     }
                 }
             }
-            // Skip (consume zero)
-            match_positional_recursive(
+            // Skip (consume zero): the optional was still tested at the cursor.
+            let child = match_positional_recursive(
                 args,
                 expansions,
                 patterns,
@@ -152,6 +203,14 @@ fn match_positional_recursive(
                 arg_idx,
                 facts,
                 unresolved,
+            );
+            with_element(
+                child,
+                ElementMatch {
+                    tested: tested_at(arg_idx),
+                    consumed: 0,
+                    matched: true,
+                },
             )
         }
         may_i_core::Quantifier::ZeroOrMore => {
@@ -166,6 +225,7 @@ fn match_positional_recursive(
                 max_consume += 1;
             }
             // Try from greedy (max) down to 0, backtracking
+            let mut last = None;
             for consume in (0..=max_consume).rev() {
                 let mut f = facts.clone();
                 let mut u = unresolved.clone();
@@ -185,11 +245,20 @@ fn match_positional_recursive(
                     f,
                     u,
                 );
+                let el = ElementMatch {
+                    tested: tested_at(arg_idx),
+                    consumed: consume,
+                    matched: true,
+                };
                 if result.matched {
-                    return result;
+                    return with_element(result, el);
                 }
+                last = Some((result, el));
             }
-            no_match(facts, unresolved)
+            // No consume count led to an overall match. Keep the last (zero-
+            // consume) child's downstream failure under this satisfiable `*`.
+            let (child, el) = last.expect("range 0..=max always yields consume 0");
+            with_element(child, el)
         }
         may_i_core::Quantifier::OneOrMore => {
             if arg_idx >= args.len() {
@@ -210,6 +279,7 @@ fn match_positional_recursive(
                 max_consume += 1;
             }
             // Try from greedy (max) down to 1, backtracking
+            let mut last = None;
             for consume in (1..=max_consume).rev() {
                 let mut f = facts.clone();
                 let mut u = unresolved.clone();
@@ -229,11 +299,18 @@ fn match_positional_recursive(
                     f,
                     u,
                 );
+                let el = ElementMatch {
+                    tested: Some(arg_idx),
+                    consumed: consume,
+                    matched: true,
+                };
                 if result.matched {
-                    return result;
+                    return with_element(result, el);
                 }
+                last = Some((result, el));
             }
-            no_match(facts, unresolved)
+            let (child, el) = last.expect("range 1..=max always yields consume 1");
+            with_element(child, el)
         }
     }
 }
@@ -302,67 +379,28 @@ pub(crate) fn match_expr_with_binding<E: std::fmt::Debug + may_i_core::ToDoc>(
     (matched, facts)
 }
 
-/// Build per-element match details for positional patterns.
-/// Re-walks the patterns against the matched args to capture binding and
+/// Build per-element match details for positional patterns from the trace the
+/// matcher recorded along its winning path. Each detail carries the argument
+/// the element was tested against, the args it consumed, and any binding /
 /// expression match info for annotation purposes.
 pub(crate) fn build_positional_element_details(
     args: &[&str],
     patterns: &[PositionalArg],
-    matched: bool,
-    consumed: usize,
+    elements: &[ElementMatch],
 ) -> Vec<crate::fold::PositionalElementDetail> {
     use may_i_core::pattern::Expr;
 
-    if !matched {
-        return vec![];
-    }
-
     let mut details = Vec::new();
-    let mut arg_idx = 0;
 
-    for (pat_idx, pattern) in patterns.iter().enumerate() {
-        // Determine how many args this pattern consumed.
-        // For One quantifier: exactly 1 if matched
-        // For others: we need to re-match to find out
-        let (consume_count, element_matched) = match &pattern.quantifier {
-            may_i_core::Quantifier::One => {
-                if arg_idx < consumed {
-                    (1, true)
-                } else {
-                    (0, false)
-                }
-            }
-            may_i_core::Quantifier::Optional => {
-                if arg_idx < consumed {
-                    let (m, _) = match_expr_with_binding(&pattern.pattern, args[arg_idx]);
-                    if m { (1, true) } else { (0, true) }
-                } else {
-                    (0, true)
-                }
-            }
-            may_i_core::Quantifier::ZeroOrMore | may_i_core::Quantifier::OneOrMore => {
-                let mut count = 0;
-                let mut idx = arg_idx;
-                while idx < consumed {
-                    let (m, _) = match_expr_with_binding(&pattern.pattern, args[idx]);
-                    if m {
-                        count += 1;
-                        idx += 1;
-                    } else {
-                        break;
-                    }
-                }
-                // Check if remaining patterns can match remaining args
-                // (simplified: for the detail pass, just consume greedily)
-                (
-                    count,
-                    count > 0 || matches!(pattern.quantifier, may_i_core::Quantifier::ZeroOrMore),
-                )
-            }
-        };
+    for (pat_idx, element) in elements.iter().enumerate() {
+        let pattern = &patterns[pat_idx];
+        let element_matched = element.matched;
+        let tested_arg = element.tested.map(|i| args[i].to_string());
 
-        let consumed_args: Vec<String> = (0..consume_count)
-            .map(|i| args[arg_idx + i].to_string())
+        // Consumed args start at the cursor (`tested`) and run for `consumed`.
+        let start = element.tested.unwrap_or(0);
+        let consumed_args: Vec<String> = (0..element.consumed)
+            .map(|i| args[start + i].to_string())
             .collect();
 
         let binding = if let Expr::Bind { key, expr: inner } = &pattern.pattern
@@ -403,12 +441,11 @@ pub(crate) fn build_positional_element_details(
         details.push(crate::fold::PositionalElementDetail {
             pattern_index: pat_idx,
             consumed_args,
+            tested_arg,
             binding,
             match_kind,
             matched: element_matched,
         });
-
-        arg_idx += consume_count;
     }
 
     details
@@ -489,6 +526,52 @@ mod tests {
         let exps: Vec<&Expansion> = vec![&NONE_EXP; refs.len()];
         let m = match_positional_patterns(&refs, &exps, patterns);
         (m.matched, m.consumed, m.facts)
+    }
+
+    fn match_full(args: &[&str], patterns: &[PositionalArg]) -> PositionalMatch {
+        const NONE_EXP: Expansion = None;
+        let exps: Vec<&Expansion> = vec![&NONE_EXP; args.len()];
+        match_positional_patterns(args, &exps, patterns)
+    }
+
+    fn lit(s: &str) -> Expr {
+        Expr::Literal(s.into())
+    }
+
+    /// When a `*` must give back an argument so a following required element
+    /// can match, the per-element trace reflects the WINNING (backtracked)
+    /// path: the required element is recorded as tested at the arg it actually
+    /// matched, not the one the greedy `*` first swallowed.
+    #[test]
+    fn element_trace_follows_the_backtracked_path() {
+        let patterns = vec![
+            PositionalArg::with_quantifier(lit("a"), Quantifier::ZeroOrMore),
+            PositionalArg::one(lit("a")),
+        ];
+        let m = match_full(&["a"], &patterns);
+        assert!(m.matched);
+        assert_eq!(m.consumed, 1);
+        let tested: Vec<Option<usize>> = m.elements.iter().map(|e| e.tested).collect();
+        let consumed: Vec<usize> = m.elements.iter().map(|e| e.consumed).collect();
+        // `*` gave back its greedy match (consumed 0), the required `a` took arg 0.
+        assert_eq!(tested, vec![Some(0), Some(0)]);
+        assert_eq!(consumed, vec![0, 1]);
+    }
+
+    /// A failed match records the prefix up to and including the element that
+    /// failed, and nothing after it.
+    #[test]
+    fn element_trace_stops_at_the_failing_element() {
+        let patterns = vec![
+            PositionalArg::one(lit("checkout")),
+            PositionalArg::one(lit("--")),
+        ];
+        let m = match_full(&["status"], &patterns);
+        assert!(!m.matched);
+        // Only the first element was reached; it was tested against "status".
+        assert_eq!(m.elements.len(), 1);
+        assert_eq!(m.elements[0].tested, Some(0));
+        assert!(!m.elements[0].matched);
     }
 
     proptest! {

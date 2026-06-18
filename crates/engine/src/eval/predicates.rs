@@ -34,8 +34,8 @@ pub(crate) fn evaluate_predicate_fold<F: EvalFold>(
             Ok(fold.predicate_fact(query, result, detail))
         }
         Predicate::Arg(pattern) => {
-            let result = evaluate_arg_pattern_predicate(pattern, ctx);
-            Ok(fold.predicate_arg(pattern, ctx.args, result))
+            let (result, elements) = evaluate_arg_pattern_predicate(pattern, ctx);
+            Ok(fold.predicate_arg(pattern, ctx.args, result, elements))
         }
         Predicate::And(predicates) => {
             let mut children = Vec::new();
@@ -293,41 +293,51 @@ pub(crate) fn match_fact_pattern(pattern: &FactPattern, value: &str) -> bool {
     }
 }
 
-/// Evaluate an arg pattern as a predicate (returns Match/NoMatch).
+/// Evaluate an arg pattern as a predicate, returning the Match/NoMatch verdict
+/// and — for `(positional …)` / `(exact …)` — the per-element match detail for
+/// annotation (empty for other pattern kinds).
 pub(super) fn evaluate_arg_pattern_predicate(
     pattern: &ArgPattern,
     ctx: &EvalContext,
-) -> PredicateResult {
+) -> (PredicateResult, Vec<crate::fold::PositionalElementDetail>) {
     let outer_args = matcher_scope(ctx);
-    match pattern {
-        ArgPattern::Ordered {
-            mode,
-            patterns,
-            continuation: _,
-        } => {
-            let outer_exp = ctx.expansions_for_prefix(outer_args.len());
-            let pos_idx = super::entry::parser_positional_indices(outer_args, &ctx.parser);
-            let pos_args: Vec<&str> = pos_idx.iter().map(|&i| outer_args[i].as_str()).collect();
-            let pos_exp: Vec<&super::decompose::Expansion> =
-                pos_idx.iter().map(|&i| &outer_exp[i]).collect();
-            let m = match_positional_patterns(&pos_args, &pos_exp, patterns);
-            let matched =
-                m.matched && (*mode == MatchMode::Positional || m.consumed == pos_args.len());
-            if matched {
-                for w in &m.unresolved {
-                    ctx.record_unresolved(w);
-                }
-                PredicateResult::Match
-            } else {
-                PredicateResult::NoMatch
+
+    // Ordered patterns carry per-element detail; handle them up front so the
+    // single match drives both the verdict and the annotation.
+    if let ArgPattern::Ordered {
+        mode,
+        patterns,
+        continuation: _,
+    } = pattern
+    {
+        let outer_exp = ctx.expansions_for_prefix(outer_args.len());
+        let pos_idx = super::entry::parser_positional_indices(outer_args, &ctx.parser);
+        let pos_args: Vec<&str> = pos_idx.iter().map(|&i| outer_args[i].as_str()).collect();
+        let pos_exp: Vec<&super::decompose::Expansion> =
+            pos_idx.iter().map(|&i| &outer_exp[i]).collect();
+        let m = match_positional_patterns(&pos_args, &pos_exp, patterns);
+        let matched = m.matched && (*mode == MatchMode::Positional || m.consumed == pos_args.len());
+        let elements =
+            super::positional::build_positional_element_details(&pos_args, patterns, &m.elements);
+        let result = if matched {
+            for w in &m.unresolved {
+                ctx.record_unresolved(w);
             }
-        }
+            PredicateResult::Match
+        } else {
+            PredicateResult::NoMatch
+        };
+        return (result, elements);
+    }
+
+    let result = match pattern {
+        ArgPattern::Ordered { .. } => unreachable!("Ordered handled above"),
         ArgPattern::Anywhere(exprs) => {
             let outer = scan_until_double_dash(outer_args);
             let outer_exp = ctx.expansions_for_prefix(outer.len());
             for expr in exprs {
                 if super::effects::anywhere_match(expr, outer, outer_exp, ctx) {
-                    return PredicateResult::Match;
+                    return (PredicateResult::Match, vec![]);
                 }
             }
             PredicateResult::NoMatch
@@ -336,7 +346,7 @@ pub(super) fn evaluate_arg_pattern_predicate(
             let outer = scan_until_double_dash(outer_args);
             for expr in exprs {
                 if outer.iter().any(|arg| expr.is_match(arg)) {
-                    return PredicateResult::NoMatch;
+                    return (PredicateResult::NoMatch, vec![]);
                 }
             }
             PredicateResult::Match
@@ -380,7 +390,8 @@ pub(super) fn evaluate_arg_pattern_predicate(
         // (tail (authorise)) yields a Decision via recursion — it has no
         // Match/NoMatch projection in predicate position.
         ArgPattern::Tail => PredicateResult::NoMatch,
-    }
+    };
+    (result, vec![])
 }
 
 #[cfg(test)]

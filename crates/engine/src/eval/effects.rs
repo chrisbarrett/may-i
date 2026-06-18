@@ -377,7 +377,7 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
                     ctx.record_unresolved(w);
                 }
             }
-            let elements = build_positional_element_details(&pos_args, patterns, matched, consumed);
+            let elements = build_positional_element_details(&pos_args, patterns, &m.elements);
             if matched {
                 let effective_continuation = continuation
                     .as_deref()

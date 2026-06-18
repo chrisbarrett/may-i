@@ -28,7 +28,7 @@ expression: normalised
                                 [2m…[0m                                    [2m│[0m
                                 [32m"clone"[0m[2m)[0m[2m)[0m                            [2m│[0m [2m"checkout" = "clone" [0m[2m→[0m [33mno[0m
                    [2m([0m[34mpositional[0m [32m"checkout"[0m                            [2m│[0m [2m"checkout" = "checkout" [0m[2m→[0m [1;32myes[0m
-                               [32m"--"[0m[2m)[0m                                 [2m│[0m [2m"checkout" = "--" [0m[2m→[0m [33mno[0m
+                               [32m"--"[0m[2m)[0m                                 [2m│[0m [2m"--" = "--" [0m[2m→[0m [1;32myes[0m
                    [2m…[0m[2m)[0m                                                [2m│[0m
                [2m([0mplan-mode                                            [2m│[0m [2mplan-mode [0m[2m→[0m [1;32myes[0m
                 [2m([0mor                                                  [2m│[0m

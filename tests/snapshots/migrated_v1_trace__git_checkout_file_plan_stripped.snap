@@ -28,7 +28,7 @@ Trace
                                 …                                    │
                                 "clone"))                            │ "checkout" = "clone" → no
                    (positional "checkout"                            │ "checkout" = "checkout" → yes
-                               "--")                                 │ "checkout" = "--" → no
+                               "--")                                 │ "--" = "--" → yes
                    …)                                                │
                (plan-mode                                            │ plan-mode → yes
                 (or                                                  │
