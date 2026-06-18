@@ -16,6 +16,11 @@ as user-facing unless its bucket is `contributor-internals`. A delta that
 only removes requirements (`## REMOVED Requirements`) or makes structural
 edits SHALL NOT trigger the requirement.
 
+The requirement applies once the change has a `tasks.md`. A change with a
+user-facing delta but no `tasks.md` (a proposal-stage change, not yet
+apply-ready under `applyRequires`) SHALL NOT be flagged; the gate fires
+when `tasks.md` is authored.
+
 This requirement is enforced by `scripts/validate-change-doc-sync.sh`, a
 sibling of `scripts/validate-spec-frontmatter.sh`, wired into prek scoped
 to `^openspec/changes/`.
@@ -47,3 +52,9 @@ to `^openspec/changes/`.
 - **GIVEN** a change whose user-facing delta contains only `## REMOVED Requirements`
 - **WHEN** the validator runs
 - **THEN** it SHALL pass even with no REFERENCE.md task
+
+#### Scenario: Proposal-stage change with no tasks.md is not flagged
+
+- **GIVEN** a change with a user-facing `## ADDED Requirements` delta but no `tasks.md`
+- **WHEN** the validator runs
+- **THEN** it SHALL pass, deferring the gate until `tasks.md` is authored

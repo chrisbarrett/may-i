@@ -48,6 +48,7 @@
 ## 8. Docs & rules fixture
 
 - [ ] 8.1 Update the `CONTEXT.md` Quantifier glossary entry to describe sequence groups and note the implicit-seq / set-union-bind / modifiers-get-own-head decisions.
+- [ ] 8.1a Update `REFERENCE.md` (the shipped manual via `may-i reference`) for the implicit-sequence form: the quantifier table (REFERENCE.md:166-174) and the `(positional …)` section — `(? A B …)` matches the whole sub-sequence; `+`/`*` repeat it. Consideration task per the doc-sync gate (`scripts/validate-change-doc-sync.sh`); resolves by edit — this change alters user-facing quantifier semantics, so REFERENCE.md must change, not "verified no change".
 - [ ] 8.2 Tighten the live terragrunt rule to `(? "run" (? "--"))` form in `home/config/programs/may-i/rules/terragrunt-terraform-tofu.lisp` (closing handoff follow-up #1); verify `may-i eval "terragrunt run -- state pull"` → `allow` and the bogus `terragrunt -- <verb>` no longer matches the read-only branch.
 
 ## 9. Verification

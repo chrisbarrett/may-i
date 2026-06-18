@@ -49,6 +49,15 @@ hooks = [
     pass_filenames = false,
     stages = ["pre-commit"],
   },
+  {
+    id = "validate-change-doc-sync",
+    name = "validate change doc-sync (REFERENCE.md gate)",
+    entry = "scripts/validate-change-doc-sync.sh",
+    language = "system",
+    files = "^openspec/changes/",
+    pass_filenames = false,
+    stages = ["pre-commit"],
+  },
 
   # Pre-push hooks (full verification). No build hooks: clippy runs the
   # same compiler checks, and test forces full codegen anyway.

@@ -90,15 +90,18 @@ for delta in openspec/changes/<name>/specs/*/spec.md:
         user_facing = (bucket != contributor-internals)   # conservative default
     if user_facing: trigger = true
 
-if trigger and tasks.md has no line matching REFERENCE.md:
+if not trigger:           pass
+if no tasks.md:           pass    # proposal stage — see D6
+if tasks.md has no line matching REFERENCE.md:
     fail with guidance
 ```
 
 For a new capability with no stable spec, audience is unknown; defaulting
 to user-facing over-prompts at worst, and the cost of over-prompting is a
 one-line "verified, no change" note — cheap and safe. The new-capability
-bucket is read from the change's `proposal.md` Capabilities section or the
-delta's own optional frontmatter; absent both, default user-facing.
+bucket is read from the delta's own optional frontmatter if present;
+absent that, default user-facing. (`proposal.md` is not parsed — keeping
+the trigger deterministic and dependency-free.)
 
 ### D5: Steering reminder in config.yaml so agents emit the task
 
@@ -107,6 +110,17 @@ gets a bullet so generated `tasks.md` carries the task by construction,
 not only after a failed hook. This mirrors the existing split documented
 in `spec-conventions` Purpose: the spec + script *enforce*; `config.yaml`
 *steers* generation.
+
+### D6: Gate begins at tasks-authoring time, not before
+
+A change with a user-facing delta but **no `tasks.md`** passes. Discovered
+during implementation: `rules-grant-redirect-capability` is proposal-stage
+(user-facing delta, no tasks artifact yet) and the first draft blocked it.
+Gating a change that has not authored tasks is over-eager — it cannot be
+applied or archived anyway (openspec `applyRequires=[tasks]`), and the
+omission this gate guards is specifically a *tasks.md* omission. The gate
+fires the moment `tasks.md` exists. The motivating case
+(`quantifier-sequence-groups`) has a `tasks.md`, so D6 does not weaken it.
 
 ## Risks / Trade-offs
 
