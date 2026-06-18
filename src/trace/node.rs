@@ -286,26 +286,6 @@ impl TraceNode {
         }
     }
 
-    /// Regex match site.
-    pub fn regex_match_atom(
-        label: impl Into<String>,
-        pattern: String,
-        actual: String,
-        matched: bool,
-    ) -> Self {
-        Self {
-            body: Body::Atom(label.into()),
-            role: Role::RegexMatch,
-            evidence: Some(Evidence::Regex {
-                pattern,
-                actual,
-                matched,
-            }),
-            dimmed: false,
-            layout: Layout::Auto,
-        }
-    }
-
     /// Positional argv match (literal vs actual).
     pub fn positional_atom(
         label: impl Into<String>,

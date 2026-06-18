@@ -34,6 +34,10 @@ left unannotated.
 - **THEN** the `checkout` element reads `"status" = "checkout" → no`
 - **AND** the `"--"` element is left unannotated — the match never reached it
 
+#### Scenario: A failed regex element still shows its comparison
+- **WHEN** `(positional (regex "^foo"))` is tested against positional args `["bar"]`
+- **THEN** the element renders `(regex "^foo")` on the left and `"bar" ~ (regex "^foo") → no` on the right — a failed (or skipped-optional) element is annotated against the value it was tested with, not left blank because it consumed nothing
+
 #### Scenario: A backtracked quantifier annotates the following element against its real argument
 - **WHEN** `(positional (* "a") "a")` is tested against positional args `["a"]`
 - **THEN** the matcher gives the `"a"` back from `(* "a")` so the required `"a"` matches arg 0

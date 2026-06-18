@@ -1,0 +1,10 @@
+---
+source: src/annotation.rs
+assertion_line: 1706
+expression: "render_text_for(&regex_positional_rule(), \"cmd\", &[\"food\".into()])"
+---
+                     command │ cmd
+                      parser │ gnu  flags permute
+(rule "cmd"                  │
+  (positional (regex "^foo") │ "food" ~ (regex "^foo") → yes
+              (allow "ok"))) │ → :allow "ok"

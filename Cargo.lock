@@ -751,6 +751,7 @@ dependencies = [
  "miette",
  "predicates",
  "proptest",
+ "regex",
  "serde",
  "serde_json",
  "sha2",

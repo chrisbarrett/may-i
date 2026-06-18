@@ -1,0 +1,10 @@
+---
+source: src/annotation.rs
+assertion_line: 1711
+expression: "render_text_for(&regex_positional_rule(), \"cmd\", &[\"bar\".into()])"
+---
+                       command │ cmd
+                        parser │ gnu  flags permute
+(rule "cmd"                    │
+  (positional (regex "^foo"))) │ "bar" ~ (regex "^foo") → no
+              No matching rule │ → :ask (default)

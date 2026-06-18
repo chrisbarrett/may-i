@@ -17,4 +17,13 @@
 - [x] 5. Tests: optional-skip cursor, backtracked `(* "a") "a"`, all-`One`
   proptest. Updated `traces` spec scenarios. Regenerated/audited
   `migrated_v1_trace` snapshots (no change from the committed correct values).
-- [x] 6. `cargo fmt`, `cargo clippy`, `cargo test`, `openspec validate` clean.
+- [x] 6. Key `match_kind` off the tested value so failed / skipped-optional
+  elements carry their comparison; attach regex evidence to the source node
+  (preserving the `(regex "…")` left column) instead of an empty atom; remove
+  the now-dead `regex_match_atom`. Tests: regex positional matched/failed, regex
+  inside a skipped optional, full render-text (both columns).
+- [x] 7. Coverage for the regression class: an invariant proptest over mixed
+  literal/regex `One` patterns (every tested element carries evidence; verdict
+  matches its own test) and insta snapshots of a `(regex …)` positional rendered
+  matched and failed (two-column layout).
+- [x] 8. `cargo fmt`, `cargo clippy`, `cargo test`, `openspec validate` clean.

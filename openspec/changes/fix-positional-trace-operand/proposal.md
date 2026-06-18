@@ -38,6 +38,12 @@ trace is the thing a user is reading to understand a floor or a no-match.
   `tested_arg`, removing the renderer-side `tested_args_for` cursor walk and the
   `extract_positional_args` flag stripper — both of which duplicated, and could
   drift from, the engine's matching.
+- Element match detail (`match_kind`) SHALL be keyed off the tested value, not
+  the consumed value, so an element that failed or a skipped optional — which
+  consumed nothing — still carries its comparison. A regex element SHALL render
+  its `(regex "…")` source on the left with the `~`-comparison on the right in
+  both the matched and failed cases (the renderer attaches evidence to the
+  source node instead of collapsing it to an empty atom).
 - Add the operand-fidelity contract to the `traces` spec as new scenarios under
   "Argument match annotations show evidence".
 

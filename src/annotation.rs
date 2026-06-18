@@ -730,12 +730,22 @@ fn annotate_expr_match(node: TraceNode, detail: &may_i_engine::fold::ExprMatchDe
             actual,
             matched,
         } => {
-            let label = node.label().map(|s| s.to_string()).unwrap_or_default();
+            // Preserve the rendered source — atom (`"x"`) or `(regex "…")`
+            // list — as the left column; just attach the match evidence. An
+            // atom keeps its label; a list keeps its structure (rather than
+            // collapsing to an empty atom).
             let layout = node.layout();
             let dimmed = node.dimmed();
-            let mut rebuilt =
-                TraceNode::regex_match_atom(label, pattern.clone(), actual.clone(), *matched)
-                    .with_layout(layout);
+            let mut rebuilt = node
+                .with_role_and_evidence(
+                    Role::RegexMatch,
+                    Some(Evidence::Regex {
+                        pattern: pattern.clone(),
+                        actual: actual.clone(),
+                        matched: *matched,
+                    }),
+                )
+                .with_layout(layout);
             if dimmed {
                 rebuilt = rebuilt.with_dimmed_self();
             }
@@ -1583,6 +1593,193 @@ mod tests {
             })
             .flatten()
             .collect()
+    }
+
+    /// Collect every regex-match annotation as `(pattern, actual, matched)`.
+    fn collect_regex_evidence(node: &TraceNode) -> Vec<(String, String, bool)> {
+        let mut out = Vec::new();
+        if let Some(Evidence::Regex {
+            pattern,
+            actual,
+            matched,
+        }) = node.evidence()
+        {
+            out.push((pattern.clone(), actual.clone(), *matched));
+        }
+        for child in node.children() {
+            out.extend(collect_regex_evidence(child));
+        }
+        out
+    }
+
+    fn regex_evidence_for(cfg: &Config, cmd: &str, args: &[String]) -> Vec<(String, String, bool)> {
+        let facts = ContextFacts::default();
+        let mut fold = TracingFold::new();
+        evaluate_with_fold(cmd, args, cfg, &facts, &mut fold).unwrap();
+        fold.traces
+            .iter()
+            .filter_map(|e| match e {
+                TraceEntry::Rule { node, .. } => Some(collect_regex_evidence(node)),
+                _ => None,
+            })
+            .flatten()
+            .collect()
+    }
+
+    fn regex_positional_rule() -> Config {
+        // `(positional (regex "^foo") (allow))`
+        let body = Effect::ArgPattern(ArgPattern::Ordered {
+            mode: MatchMode::Positional,
+            patterns: vec![PositionalArg::one(Expr::Regex(
+                regex::Regex::new("^foo").unwrap(),
+            ))],
+            continuation: Some(Box::new(terminal(Decision::Allow, "ok"))),
+        });
+        make_config(vec![make_rule(CommandPattern::Literal("cmd".into()), body)])
+    }
+
+    /// A regex positional element is annotated whether it matches or fails.
+    #[test]
+    fn regex_positional_element_is_annotated_when_it_matches() {
+        let ev = regex_evidence_for(&regex_positional_rule(), "cmd", &["food".into()]);
+        assert_eq!(ev, vec![("^foo".to_string(), "food".to_string(), true)]);
+    }
+
+    #[test]
+    fn regex_positional_element_is_annotated_when_it_fails() {
+        let ev = regex_evidence_for(&regex_positional_rule(), "cmd", &["bar".into()]);
+        assert_eq!(
+            ev,
+            vec![("^foo".to_string(), "bar".to_string(), false)],
+            "a failed regex positional element must still show its comparison"
+        );
+    }
+
+    fn render_text_for(cfg: &Config, cmd: &str, args: &[String]) -> String {
+        let facts = ContextFacts::default();
+        let mut fold = TracingFold::new();
+        evaluate_with_fold(cmd, args, cfg, &facts, &mut fold).unwrap();
+        let term = crate::output::Terminal::new(120);
+        let mut buf = Vec::new();
+        crate::output::render_trace(&mut buf, &fold.traces, cmd, "", &term);
+        crate::output::strip_ansi(&String::from_utf8(buf).unwrap())
+    }
+
+    /// A regex inside an optional is annotated even when the optional skips it.
+    #[test]
+    fn regex_inside_skipped_optional_is_annotated() {
+        let body = Effect::ArgPattern(ArgPattern::Ordered {
+            mode: MatchMode::Positional,
+            patterns: vec![PositionalArg::with_quantifier(
+                Expr::Regex(regex::Regex::new("^foo").unwrap()),
+                may_i_core::Quantifier::Optional,
+            )],
+            continuation: Some(Box::new(terminal(Decision::Allow, "ok"))),
+        });
+        let cfg = make_config(vec![make_rule(CommandPattern::Literal("cmd".into()), body)]);
+
+        let ev = regex_evidence_for(&cfg, "cmd", &["bar".into()]);
+        assert_eq!(
+            ev,
+            vec![("^foo".to_string(), "bar".to_string(), false)],
+            "a `(? (regex …))` tested and skipped must still show its comparison"
+        );
+    }
+
+    /// The failed regex element renders its source on the left and the
+    /// comparison on the right — neither column is blank.
+    #[test]
+    fn failed_regex_positional_renders_both_columns() {
+        let out = render_text_for(&regex_positional_rule(), "cmd", &["bar".into()]);
+        assert!(
+            out.contains("(regex \"^foo\")"),
+            "left column keeps the regex source:\n{out}"
+        );
+        assert!(
+            out.contains("\"bar\" ~ (regex \"^foo\")"),
+            "right column shows the comparison:\n{out}"
+        );
+    }
+
+    #[test]
+    fn snapshot_regex_positional_matched() {
+        insta::assert_snapshot!(render_text_for(
+            &regex_positional_rule(),
+            "cmd",
+            &["food".into()]
+        ));
+    }
+
+    #[test]
+    fn snapshot_regex_positional_failed() {
+        insta::assert_snapshot!(render_text_for(
+            &regex_positional_rule(),
+            "cmd",
+            &["bar".into()]
+        ));
+    }
+
+    /// Build a positional pattern of `One` elements, each either a literal or a
+    /// regex `^tok$`, from `(is_regex, tok)` specs.
+    fn one_pattern_rule(specs: &[(bool, String)]) -> Config {
+        let patterns = specs
+            .iter()
+            .map(|(is_regex, tok)| {
+                let expr = if *is_regex {
+                    Expr::Regex(regex::Regex::new(&format!("^{tok}$")).unwrap())
+                } else {
+                    Expr::Literal(tok.clone())
+                };
+                PositionalArg::one(expr)
+            })
+            .collect();
+        let body = Effect::ArgPattern(ArgPattern::Ordered {
+            mode: MatchMode::Positional,
+            patterns,
+            continuation: Some(Box::new(terminal(Decision::Allow, "ok"))),
+        });
+        make_config(vec![make_rule(CommandPattern::Literal("cmd".into()), body)])
+    }
+
+    proptest! {
+        /// No positional element the matcher tested is left without a
+        /// right-column comparison, regardless of literal/regex kind or
+        /// match/fail — and each verdict reflects the element's own test.
+        #[test]
+        fn every_tested_positional_element_carries_evidence(
+            specs in prop::collection::vec((any::<bool>(), "[a-z]{1,3}"), 1..4),
+            args in prop::collection::vec("[a-z]{1,3}", 0..5),
+        ) {
+            let cfg = one_pattern_rule(&specs);
+            let pos = positional_evidence_for(&cfg, "cmd", &args);
+            let rx = regex_evidence_for(&cfg, "cmd", &args);
+
+            // All-`One`: element k is tested against arg k; the matcher stops
+            // after the first element that fails (which is itself tested).
+            for (k, (is_regex, tok)) in specs.iter().enumerate() {
+                let Some(arg) = args.get(k) else { break };
+                let expected = if *is_regex {
+                    let pattern = format!("^{tok}$");
+                    let expected = regex::Regex::new(&pattern).unwrap().is_match(arg);
+                    prop_assert!(
+                        rx.iter().any(|(p, a, m)| p == &pattern && a == arg && *m == expected),
+                        "regex element {k} tested against {arg:?} must carry evidence ({pattern} -> {expected}); got {rx:?}"
+                    );
+                    expected
+                } else {
+                    let expected = tok == arg;
+                    prop_assert!(
+                        pos.iter().any(|(_, a, m)| a == arg && *m == expected),
+                        "literal element {k} tested against {arg:?} must carry evidence (==\"{tok}\" -> {expected}); got {pos:?}"
+                    );
+                    expected
+                };
+                // The matcher stops at the first element that does not match.
+                if !expected {
+                    break;
+                }
+            }
+        }
     }
 
     /// A multi-element positional must annotate each element against the

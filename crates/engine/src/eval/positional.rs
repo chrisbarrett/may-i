@@ -419,19 +419,23 @@ pub(crate) fn build_positional_element_details(
             None
         };
 
+        // Key the match detail off the value the element was tested against,
+        // not what it consumed: an element that failed (or a skipped optional)
+        // consumed nothing yet was still compared against `tested_arg`, and
+        // that comparison is exactly what the trace needs to show.
+        let probe = tested_arg.as_deref();
         let match_kind = if let Expr::Cond(branches) = &pattern.pattern
-            && !consumed_args.is_empty()
+            && let Some(value) = probe
         {
-            let value = &consumed_args[0];
             branches
                 .iter()
                 .position(|b| match_expr_with_binding(&b.test, value).0)
                 .map(crate::fold::PositionalMatchKind::CondBranch)
                 .unwrap_or(crate::fold::PositionalMatchKind::None)
-        } else if binding.is_none() && !consumed_args.is_empty() {
-            consumed_args
-                .first()
-                .and_then(|v| build_expr_match_detail(&pattern.pattern, v))
+        } else if binding.is_none()
+            && let Some(value) = probe
+        {
+            build_expr_match_detail(&pattern.pattern, value)
                 .map(crate::fold::PositionalMatchKind::Expr)
                 .unwrap_or(crate::fold::PositionalMatchKind::None)
         } else {
