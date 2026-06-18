@@ -11,10 +11,14 @@ Defines the Pattern sublanguage used in rule bodies (see `CONTEXT.md` for the *P
 ## Requirements
 
 ### Requirement: Pattern serialization roundtrips through the parser
-A Pattern serialized to its s-expression form SHALL parse back to a structurally equivalent Pattern.
+A Pattern serialized to its s-expression form SHALL parse back to a structurally equivalent Pattern. This SHALL hold for quantifier Patterns carrying a sequence of sub-patterns, including nested groups.
 
 #### Scenario: Arbitrary pattern roundtrip
 - **WHEN** a randomly generated Pattern is converted to an s-expression string and parsed back
+- **THEN** the result SHALL be structurally equivalent to the original Pattern
+
+#### Scenario: Nested sequence-group roundtrip
+- **WHEN** the Pattern `(? "run" (? "--"))` is converted to an s-expression string and parsed back
 - **THEN** the result SHALL be structurally equivalent to the original Pattern
 
 ### Requirement: `(flag X)` matches flag presence
@@ -236,9 +240,43 @@ When the number of available positional args is less than the number of patterns
 - **WHEN** matching the positional patterns `"remote" "add"` against the args `remote`
 - **THEN** it SHALL NOT match
 
+### Requirement: Quantifiers accept a sequence of sub-patterns
+
+A quantifier head (`?`, `+`, `*`) SHALL accept one **or more** sub-patterns.
+With a single sub-pattern the meaning is unchanged. With more than one
+sub-pattern the sub-patterns form an **implicit sequence**: the quantified
+unit is the whole sub-sequence, matched left to right against consecutive
+positional args. A sub-pattern MAY itself be a quantifier form, so groups
+nest.
+
+`(? A B …)` SHALL match either zero args (the group is skipped) or the
+full sub-sequence `A B …` in order. `(+ A B …)` and `(* A B …)` SHALL
+repeat the whole sub-sequence (see the one-or-more and zero-or-more
+requirements).
+
+#### Scenario: Optional sequence group skipped
+
+- **WHEN** matching the positional patterns `(? "run" (? "--")) *` against the args `state`
+- **THEN** matching SHALL succeed with the group consuming zero args.
+
+#### Scenario: Optional sequence group, partial inner
+
+- **WHEN** matching the positional patterns `(? "run" (? "--")) *` against the args `run state`
+- **THEN** matching SHALL succeed with the group consuming `run`.
+
+#### Scenario: Optional sequence group, full inner
+
+- **WHEN** matching the positional patterns `(? "run" (? "--")) *` against the args `run -- state`
+- **THEN** matching SHALL succeed with the group consuming `run --`.
+
+#### Scenario: Sequence group requires its leading element
+
+- **WHEN** matching the positional patterns `(? "run" (? "--")) *` against the args `-- state`
+- **THEN** the group SHALL NOT match `--` (its leading `run` is absent), and the group SHALL consume zero args.
+
 ### Requirement: Optional quantifier matches with or without arg
 
-A pattern wrapped in `(? PAT)` (the optional quantifier) SHALL match even when the arg at that position is absent. When the arg is present, it MUST match `PAT`.
+A Pattern wrapped in `(? PAT …)` (the optional quantifier) SHALL match even when the arg at that position is absent. When matched, the sub-sequence `PAT …` MUST match consecutive args in order. A single-sub-pattern `(? PAT)` is the special case of a one-element sequence.
 
 #### Scenario: Optional positional present
 
@@ -257,7 +295,7 @@ A pattern wrapped in `(? PAT)` (the optional quantifier) SHALL match even when t
 
 ### Requirement: One-or-more quantifier requires at least one match
 
-A pattern wrapped in `(+ PAT)` (the one-or-more quantifier) SHALL require at least one arg at the pattern's position. All remaining args from that position onward MUST match `PAT`.
+A Pattern wrapped in `(+ PAT …)` (the one-or-more quantifier) SHALL require at least one full occurrence of the sub-sequence `PAT …` at the pattern's position, and SHALL match as many consecutive occurrences as possible, backtracking so that following patterns can match. With a single sub-pattern this reduces to the historical "one or more args each matching `PAT`" behaviour.
 
 #### Scenario: One-or-more wildcard with one arg
 
@@ -274,9 +312,14 @@ A pattern wrapped in `(+ PAT)` (the one-or-more quantifier) SHALL require at lea
 - **WHEN** matching the positional patterns `"cmd" (+ *)` against the args `cmd`
 - **THEN** matching SHALL NOT succeed.
 
+#### Scenario: One-or-more sequence group repeats
+
+- **WHEN** matching the positional pattern `(+ "--opt" *)` against the args `--opt a --opt b`
+- **THEN** matching SHALL succeed, consuming two occurrences of the sub-sequence.
+
 ### Requirement: Zero-or-more quantifier matches any count
 
-A pattern wrapped in `(* PAT)` (the zero-or-more quantifier) SHALL match zero or more remaining args from that position. All remaining args MUST match `PAT`.
+A Pattern wrapped in `(* PAT …)` (the zero-or-more quantifier) SHALL match zero or more consecutive occurrences of the sub-sequence `PAT …` from that position, backtracking so that following patterns can match. With a single sub-pattern this reduces to the historical "zero or more args each matching `PAT`" behaviour.
 
 #### Scenario: Zero-or-more wildcard with no args
 
@@ -287,6 +330,11 @@ A pattern wrapped in `(* PAT)` (the zero-or-more quantifier) SHALL match zero or
 
 - **WHEN** matching the positional pattern `(* *)` against the args `a b c`
 - **THEN** matching SHALL succeed.
+
+#### Scenario: Zero-or-more sequence group repeats
+
+- **WHEN** matching the positional pattern `(* "--opt" *)` against the args `--opt a --opt b`
+- **THEN** matching SHALL succeed, consuming two occurrences of the sub-sequence.
 
 ### Requirement: Bind is valid in positional, exact, and anywhere but not forbidden
 A `[:k …]` bind pattern SHALL be accepted by the parser inside `(positional …)`, `(exact …)`, and `(anywhere …)` patterns. The parser SHALL reject a bind inside `(forbidden …)` patterns with a clear error.
