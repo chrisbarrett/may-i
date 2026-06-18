@@ -93,6 +93,50 @@ approvals carry over (per migration-system Class A). The read-floor relaxation
 Open: whether to retain `(safe-env-vars …)` as permanent sugar or remove it
 after a migration window. Pre-1.0, leaning remove (one way to spell it).
 
+### D6 — Capability decision is the fact-conditioned subset of the rule-body language
+
+The DECISION position is not a bare terminal but an expression in a restricted
+subset of the existing `Effect`/`Predicate` AST (`crates/core/src/ast.rs`):
+
+| keep | drop |
+| --- | --- |
+| `Effect::Terminal` (allow/ask/deny) | `Effect::CommandPattern` |
+| `Effect::And/Or/Not` | `Effect::ArgPattern` (positional/flag/parameter/anywhere/exact/forbidden) |
+| `Effect::When/Unless/If/Cond` | `Effect::Authorise` |
+| `Predicate::Fact` | `Predicate::Arg` |
+| `Predicate::And/Or/Not` | `Predicate::Bound/Matches/Every/Some` |
+| `Predicate::Named` → resolves to fact-only | |
+
+Reuse, not reinvention: the same evaluator runs the expression with an empty
+binding environment and the active facts. A **load-time validation pass** (in the
+spirit of `crates/engine/src/shape.rs`) rejects the dropped variants in
+capability position with a diagnostic. The bare `(env NAME (allow))` is the
+degenerate terminal case.
+
+Two reasons the argv layer is excluded:
+
+1. **No referent.** A capability is command-agnostic; argv matchers and `#var`
+   bindings presuppose a parser declaration for a specific command, which a
+   capability does not have.
+2. **Soundness.** Facts are exact runtime context (no parse/expansion
+   imprecision), so a fact-conditioned `(allow)` is sound toward `:allow`. The
+   excluded argv layer is exactly the expansion-bearing, imprecise one. The
+   capability language is the sound-toward-allow subset by construction.
+
+### D7 — Subject stays as addressing, not folded into the expression
+
+`(env NAME EXPR)` and `(redirect (target PAT) EXPR)` keep the subject (the
+variable name / redirect target) as positional addressing; EXPR is purely
+fact-conditioned. This matches the `safe-env-vars` shape and keeps EXPR free of
+operand-matching.
+
+- *Alternative — fold the subject into the expression* as a `(name PAT)` /
+  `(target PAT)` predicate: `(env (when (and (name (glob "AWS_*")) (fact? :ci))
+  (deny)))`. More uniform and lets one form address many names by pattern, but
+  it adds operand-matching predicates to the expression language and blurs the
+  "facts only" line. Deferred; revisit if pattern-addressed env names are
+  wanted.
+
 ### D5 — Provisional syntax; trust scopes per axis
 
 Forms are provisional (parallel to how `rules-grant-redirect-capability` left

@@ -66,6 +66,24 @@ it; the redirect opt-out is another; secret-read taint is the third.
     do not put `$NAME` in argv and are unaffected).
   - `(safe-env-vars …)` migrates to `(env NAME (allow))` (see design.md D4).
 
+- **Capability decisions are fact-conditioned expressions.** The DECISION
+  position accepts not just a terminal but the fact-conditioned subset of the
+  rule-body language — `(if …)`/`(when …)`/`(cond …)`, `(and|or|not …)`, and
+  `(fact? …)` — so a capability can depend on runtime context:
+
+  ```lisp
+  (env "AWS_TOKEN" (if (fact? :ci) (deny "no secrets in CI logs") (ask)))
+  ```
+
+  Argv analysis and parser-binding constructs (`(positional …)`, `(flag …)`,
+  `(authorise …)`, `(matches? #var)`, …) are rejected at load time: a capability
+  is command-agnostic, so it has no argv referent. This reuses the existing
+  `Effect`/`Predicate` evaluator with a load-time validation and a facts-only,
+  empty-binding evaluation context. The exclusion is also what keeps the
+  asymmetric-soundness invariant intact — facts are exact, so a fact-conditioned
+  `(allow)` is sound, whereas the excluded argv layer is the expansion-bearing,
+  imprecise one.
+
 - **Trust.** A capability changes what is authorised (a grant widens; a taint
   narrows but a config could lift it), so capabilities are primary-config-
   governed and trust-scoped, exactly as `safe-env-vars` is today.

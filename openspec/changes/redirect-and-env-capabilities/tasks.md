@@ -11,6 +11,12 @@
   (target-Pattern, decision), same provenance split.
 - [ ] 1.4 Keep `(safe-env-vars …)` as a parsed alias that lowers to
   `(env NAME (allow))`; assert old configs still load.
+- [ ] 1.5 Parse the capability DECISION position as a full `Effect` expression
+  (reuse the rule-body parser), not just a terminal.
+- [ ] 1.6 Write failing validation tests, then add a load-time check rejecting
+  argv/binding constructs in capability position (`CommandPattern`, `ArgPattern`,
+  `Authorise`, `Bound`, `Matches`, `Every`, `Some`, and a `Named` resolving to
+  any of those), with a diagnostic naming the offending form.
 
 ## 2. Decompose: write/read split and secret taint
 
@@ -37,6 +43,10 @@
 - [ ] 3.4 Resolve a write `RedirectTarget` against the redirect capabilities,
   applying the asymmetric-soundness check to expansion-bearing targets before any
   capability can lift the floor.
+- [ ] 3.5 Evaluate the capability DECISION expression against the active facts
+  with an empty binding environment (reuse the `Effect` evaluator); contribute
+  its resulting decision to the segment meet. Cover fact conditionals selecting
+  different decisions under different facts.
 
 ## 4. Trust scope generalization
 
@@ -60,8 +70,10 @@
   over a shell-language effect, combined into the segment meet; generalize
   **Decision** from "the answer a rule gives" to "the answer a rule or capability
   gives", noting `:allow` is the lattice bottom so a capability never widens past
-  a command's own decision. Record the env read/write asymmetry and the
-  structural-not-dataflow boundary under Relationships / Flagged ambiguities.
+  a command's own decision. Note its decision is the fact-conditioned subset of
+  the rule-body language (facts + conditionals, no argv analysis). Record the env
+  read/write asymmetry and the structural-not-dataflow boundary under
+  Relationships / Flagged ambiguities.
 - [ ] 6.2 REFERENCE.md (`may-i reference`): document `(env …)` and `(redirect …)`
   and the `safe-env-vars` migration, or record "verified, no surface change" if
   deferred. (Doc-sync gate — user-facing capability.)

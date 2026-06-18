@@ -65,6 +65,11 @@ unit produced — it only releases a floor another unit would otherwise impose. 
 capability contributing `:deny` SHALL force the segment to `:deny`; one
 contributing `:ask` SHALL floor the segment to at least `:ask`.
 
+A capability's decision MAY be a single terminal (`(allow|ask|deny)`) or be
+computed by a fact-conditioned expression (see "A capability decision is a
+fact-conditioned expression"); in either case the resulting decision is what the
+capability contributes to the meet.
+
 #### Scenario: Capability-allow does not authorise a non-allowed command
 
 - **GIVEN** no rule matches `quux` and `(env "FOO" (allow))`
@@ -165,6 +170,55 @@ An expansion-bearing target SHALL NOT match a capability toward `:allow` (per
 - **GIVEN** the configuration above
 - **WHEN** evaluating `echo x | tee /etc/hosts`
 - **THEN** the decision SHALL be at least `:ask` (the target does not match)
+
+### Requirement: A capability decision is a fact-conditioned expression
+
+A capability's DECISION position SHALL accept any expression in the
+fact-conditioned subset of the rule-body language: the terminals
+`(allow|ask|deny REASON?)`, the combinators `(and …)`, `(or …)`, `(not …)`, and
+the conditionals `(if …)`, `(when …)`, `(unless …)`, `(cond …)`, with `(fact?
+…)` — and `(and|or|not …)` compositions of fact tests, and `(define …)`d names
+resolving to them — as the only permitted predicates.
+
+A capability expression SHALL NOT use argv analysis or parser-binding
+constructs: a bare command pattern, `(positional …)`, `(flag …)`,
+`(parameter …)`, `(anywhere …)`, `(exact …)`, `(forbidden …)`, `(authorise …)`,
+`(bound? …)`, `(matches? …)`, `(every? …)`, or `(some? …)`. A capability is
+command-agnostic — it has no parser declaration and no argv referent — so these
+SHALL be rejected at load time with a diagnostic naming the offending form.
+
+The expression SHALL evaluate against the active facts with an empty binding
+environment; the decision it yields is the capability's contribution to the
+segment meet. Because facts are exact runtime context — carrying no parse or
+expansion imprecision — a fact-conditioned `(allow)` is sound toward `:allow`,
+preserving "Match and parse imprecision never widens toward allow". This is why
+the language admits facts but excludes the expansion-bearing argv layer.
+
+#### Scenario: A fact conditional selects the decision
+
+- **GIVEN** `(rule "curl" (allow))` and `(env "AWS_TOKEN" (if (fact? :ci) (deny) (ask)))`
+- **WHEN** evaluating `curl https://x/?t=$AWS_TOKEN` with the fact `:ci` present
+- **THEN** the decision SHALL be `:deny`
+
+#### Scenario: The same capability under different facts
+
+- **GIVEN** the configuration above
+- **WHEN** evaluating the same command with no `:ci` fact
+- **THEN** the decision SHALL be `:ask`
+
+#### Scenario: Argv analysis in a capability is a load error
+
+- **GIVEN** a config containing `(env "X" (when (positional "y") (deny)))`
+- **WHEN** the config is loaded
+- **THEN** loading SHALL fail with a diagnostic that `(positional …)` is not
+  permitted in a capability (no argv referent)
+
+#### Scenario: Fact-conditioned allow is sound
+
+- **GIVEN** `(rule "git" (allow))` and `(env "GIT_PAGER" (when (fact? :ci) (allow)))`
+- **WHEN** evaluating `GIT_PAGER=cat git status` with the fact `:ci` present
+- **THEN** the decision SHALL be `:allow` (facts are exact; no expansion floor
+  applies to a fact test)
 
 ## REMOVED Requirements
 
