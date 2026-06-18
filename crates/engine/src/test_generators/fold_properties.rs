@@ -88,15 +88,15 @@ proptest! {
         required in "[a-z]{1,5}",
         optional_vals in prop::collection::vec("[a-z]{1,5}", 1..3),
     ) {
-        use may_i_core::pattern::{PositionalArg, Expr};
+        use may_i_core::pattern::{PosTerm, Expr};
 
-        let mut patterns: Vec<PositionalArg> = optional_vals.iter()
-            .map(|v| PositionalArg::with_quantifier(
+        let mut patterns: Vec<PosTerm> = optional_vals.iter()
+            .map(|v| PosTerm::with_quantifier(
                 Expr::Literal(v.clone()),
                 may_i_core::Quantifier::Optional,
             ))
             .collect();
-        patterns.push(PositionalArg::one(Expr::Literal(required.clone())));
+        patterns.push(PosTerm::one(Expr::Literal(required.clone())));
 
         // With just the required arg, all optionals should be skipped.
         let args_owned = [required.clone()];
@@ -112,14 +112,14 @@ proptest! {
         prefix_count in 0usize..4,
         suffix in "[a-z]{1,5}",
     ) {
-        use may_i_core::pattern::{PositionalArg, Expr};
+        use may_i_core::pattern::{PosTerm, Expr};
 
         let patterns = vec![
-            PositionalArg::with_quantifier(
+            PosTerm::with_quantifier(
                 Expr::Wildcard,
                 may_i_core::Quantifier::ZeroOrMore,
             ),
-            PositionalArg::one(Expr::Literal(suffix.clone())),
+            PosTerm::one(Expr::Literal(suffix.clone())),
         ];
 
         let mut args_owned: Vec<String> = (0..prefix_count)
@@ -141,11 +141,11 @@ proptest! {
         pattern_count in 1usize..4,
         arg_count in 0usize..6,
     ) {
-        use may_i_core::pattern::{PositionalArg, Expr};
+        use may_i_core::pattern::{PosTerm, Expr};
 
         // Build `pattern_count` required literal patterns.
-        let patterns: Vec<PositionalArg> = (0..pattern_count)
-            .map(|i| PositionalArg::one(Expr::Literal(format!("p{i}"))))
+        let patterns: Vec<PosTerm> = (0..pattern_count)
+            .map(|i| PosTerm::one(Expr::Literal(format!("p{i}"))))
             .collect();
 
         // Build args: first `arg_count` matching, then stop.

@@ -354,27 +354,25 @@ fn match_expr_with_binding_bind_no_match() {
 
 #[test]
 fn match_positional_patterns_with_binding() {
-    use may_i_core::pattern::PositionalArg;
+    use may_i_core::pattern::PosTerm;
     use may_i_core::{Expr, Keyword, Quantifier};
 
     // Test positional patterns with fact binding
     let patterns = vec![
-        PositionalArg {
-            quantifier: Quantifier::One,
-            pattern: Expr::Bind {
+        PosTerm::single(
+            Quantifier::One,
+            Expr::Bind {
                 key: Keyword::new(":cmd").unwrap(),
                 expr: Box::new(Expr::Wildcard),
             },
-            recursive: false,
-        },
-        PositionalArg {
-            quantifier: Quantifier::One,
-            pattern: Expr::Bind {
+        ),
+        PosTerm::single(
+            Quantifier::One,
+            Expr::Bind {
                 key: Keyword::new(":subcmd").unwrap(),
                 expr: Box::new(Expr::Wildcard),
             },
-            recursive: false,
-        },
+        ),
     ];
 
     let arg1 = "git".to_string();
@@ -389,24 +387,19 @@ fn match_positional_patterns_with_binding() {
 
 #[test]
 fn match_positional_patterns_no_match_with_binding() {
-    use may_i_core::pattern::PositionalArg;
+    use may_i_core::pattern::PosTerm;
     use may_i_core::{Expr, Keyword, Quantifier};
 
     // Test that facts are still captured even when pattern fails later
     let patterns = vec![
-        PositionalArg {
-            quantifier: Quantifier::One,
-            pattern: Expr::Bind {
+        PosTerm::single(
+            Quantifier::One,
+            Expr::Bind {
                 key: Keyword::new(":host").unwrap(),
                 expr: Box::new(Expr::Wildcard),
             },
-            recursive: false,
-        },
-        PositionalArg {
-            quantifier: Quantifier::One,
-            pattern: Expr::Literal("required".to_string()),
-            recursive: false,
-        },
+        ),
+        PosTerm::single(Quantifier::One, Expr::Literal("required".to_string())),
     ];
 
     let arg1 = "server".to_string();
@@ -421,18 +414,17 @@ fn match_positional_patterns_no_match_with_binding() {
 
 #[test]
 fn match_positional_patterns_optional_with_binding() {
-    use may_i_core::pattern::PositionalArg;
+    use may_i_core::pattern::PosTerm;
     use may_i_core::{Expr, Keyword, Quantifier};
 
     // Test optional pattern with binding - arg present and matches
-    let patterns = vec![PositionalArg {
-        quantifier: Quantifier::Optional,
-        pattern: Expr::Bind {
+    let patterns = vec![PosTerm::single(
+        Quantifier::Optional,
+        Expr::Bind {
             key: Keyword::new(":opt").unwrap(),
             expr: Box::new(Expr::Wildcard),
         },
-        recursive: false,
-    }];
+    )];
 
     let arg1 = "value".to_string();
     let args: Vec<&str> = vec![&arg1];
@@ -444,18 +436,17 @@ fn match_positional_patterns_optional_with_binding() {
 
 #[test]
 fn match_positional_patterns_one_or_more_with_binding() {
-    use may_i_core::pattern::PositionalArg;
+    use may_i_core::pattern::PosTerm;
     use may_i_core::{Expr, Keyword, Quantifier};
 
     // Test OneOrMore pattern with binding
-    let patterns = vec![PositionalArg {
-        quantifier: Quantifier::OneOrMore,
-        pattern: Expr::Bind {
+    let patterns = vec![PosTerm::single(
+        Quantifier::OneOrMore,
+        Expr::Bind {
             key: Keyword::new(":items").unwrap(),
             expr: Box::new(Expr::Wildcard),
         },
-        recursive: false,
-    }];
+    )];
 
     let arg1 = "a".to_string();
     let arg2 = "b".to_string();
@@ -470,18 +461,17 @@ fn match_positional_patterns_one_or_more_with_binding() {
 
 #[test]
 fn match_positional_patterns_zero_or_more_with_binding() {
-    use may_i_core::pattern::PositionalArg;
+    use may_i_core::pattern::PosTerm;
     use may_i_core::{Expr, Keyword, Quantifier};
 
     // Test ZeroOrMore pattern with binding - matches all remaining
-    let patterns = vec![PositionalArg {
-        quantifier: Quantifier::ZeroOrMore,
-        pattern: Expr::Bind {
+    let patterns = vec![PosTerm::single(
+        Quantifier::ZeroOrMore,
+        Expr::Bind {
             key: Keyword::new(":rest").unwrap(),
             expr: Box::new(Expr::Wildcard),
         },
-        recursive: false,
-    }];
+    )];
 
     let arg1 = "a".to_string();
     let arg2 = "b".to_string();
@@ -496,27 +486,25 @@ fn match_positional_patterns_zero_or_more_with_binding() {
 
 #[test]
 fn match_positional_patterns_not_enough_args() {
-    use may_i_core::pattern::PositionalArg;
+    use may_i_core::pattern::PosTerm;
     use may_i_core::{Expr, Keyword, Quantifier};
 
     // Test pattern with more patterns than args
     let patterns = vec![
-        PositionalArg {
-            quantifier: Quantifier::One,
-            pattern: Expr::Bind {
+        PosTerm::single(
+            Quantifier::One,
+            Expr::Bind {
                 key: Keyword::new(":first").unwrap(),
                 expr: Box::new(Expr::Wildcard),
             },
-            recursive: false,
-        },
-        PositionalArg {
-            quantifier: Quantifier::One,
-            pattern: Expr::Bind {
+        ),
+        PosTerm::single(
+            Quantifier::One,
+            Expr::Bind {
                 key: Keyword::new(":second").unwrap(),
                 expr: Box::new(Expr::Wildcard),
             },
-            recursive: false,
-        },
+        ),
     ];
 
     let arg1 = "only".to_string();
@@ -528,15 +516,11 @@ fn match_positional_patterns_not_enough_args() {
 
 #[test]
 fn match_positional_patterns_one_or_more_no_args() {
-    use may_i_core::pattern::PositionalArg;
+    use may_i_core::pattern::PosTerm;
     use may_i_core::{Expr, Quantifier};
 
     // Test OneOrMore fails with no args
-    let patterns = vec![PositionalArg {
-        quantifier: Quantifier::OneOrMore,
-        pattern: Expr::Wildcard,
-        recursive: false,
-    }];
+    let patterns = vec![PosTerm::single(Quantifier::OneOrMore, Expr::Wildcard)];
 
     let args: Vec<&str> = vec![];
     let (matched, _, _) = match_pos_lit(&args, &patterns);
@@ -546,26 +530,14 @@ fn match_positional_patterns_one_or_more_no_args() {
 
 #[test]
 fn match_positional_optional_patterns_skip_to_required() {
-    use may_i_core::pattern::PositionalArg;
+    use may_i_core::pattern::PosTerm;
     use may_i_core::{Expr, Quantifier};
 
     // (? "a") (? "b") "c" with args ["c"] -> match, consumed=1
     let patterns = vec![
-        PositionalArg {
-            quantifier: Quantifier::Optional,
-            pattern: Expr::Literal("a".to_string()),
-            recursive: false,
-        },
-        PositionalArg {
-            quantifier: Quantifier::Optional,
-            pattern: Expr::Literal("b".to_string()),
-            recursive: false,
-        },
-        PositionalArg {
-            quantifier: Quantifier::One,
-            pattern: Expr::Literal("c".to_string()),
-            recursive: false,
-        },
+        PosTerm::single(Quantifier::Optional, Expr::Literal("a".to_string())),
+        PosTerm::single(Quantifier::Optional, Expr::Literal("b".to_string())),
+        PosTerm::single(Quantifier::One, Expr::Literal("c".to_string())),
     ];
 
     let arg1 = "c".to_string();
@@ -577,21 +549,13 @@ fn match_positional_optional_patterns_skip_to_required() {
 
 #[test]
 fn match_positional_optional_then_required_both_present() {
-    use may_i_core::pattern::PositionalArg;
+    use may_i_core::pattern::PosTerm;
     use may_i_core::{Expr, Quantifier};
 
     // (? "a") "b" with args ["a", "b"] -> match, consumed=2
     let patterns = vec![
-        PositionalArg {
-            quantifier: Quantifier::Optional,
-            pattern: Expr::Literal("a".to_string()),
-            recursive: false,
-        },
-        PositionalArg {
-            quantifier: Quantifier::One,
-            pattern: Expr::Literal("b".to_string()),
-            recursive: false,
-        },
+        PosTerm::single(Quantifier::Optional, Expr::Literal("a".to_string())),
+        PosTerm::single(Quantifier::One, Expr::Literal("b".to_string())),
     ];
 
     let arg1 = "a".to_string();
@@ -604,21 +568,13 @@ fn match_positional_optional_then_required_both_present() {
 
 #[test]
 fn match_positional_optional_skipped_required_present() {
-    use may_i_core::pattern::PositionalArg;
+    use may_i_core::pattern::PosTerm;
     use may_i_core::{Expr, Quantifier};
 
     // (? "a") "b" with args ["b"] -> match, consumed=1
     let patterns = vec![
-        PositionalArg {
-            quantifier: Quantifier::Optional,
-            pattern: Expr::Literal("a".to_string()),
-            recursive: false,
-        },
-        PositionalArg {
-            quantifier: Quantifier::One,
-            pattern: Expr::Literal("b".to_string()),
-            recursive: false,
-        },
+        PosTerm::single(Quantifier::Optional, Expr::Literal("a".to_string())),
+        PosTerm::single(Quantifier::One, Expr::Literal("b".to_string())),
     ];
 
     let arg1 = "b".to_string();
@@ -630,21 +586,13 @@ fn match_positional_optional_skipped_required_present() {
 
 #[test]
 fn match_positional_optional_present_required_missing() {
-    use may_i_core::pattern::PositionalArg;
+    use may_i_core::pattern::PosTerm;
     use may_i_core::{Expr, Quantifier};
 
     // (? "a") "b" with args ["a"] -> no match (required "b" missing)
     let patterns = vec![
-        PositionalArg {
-            quantifier: Quantifier::Optional,
-            pattern: Expr::Literal("a".to_string()),
-            recursive: false,
-        },
-        PositionalArg {
-            quantifier: Quantifier::One,
-            pattern: Expr::Literal("b".to_string()),
-            recursive: false,
-        },
+        PosTerm::single(Quantifier::Optional, Expr::Literal("a".to_string())),
+        PosTerm::single(Quantifier::One, Expr::Literal("b".to_string())),
     ];
 
     let arg1 = "a".to_string();
@@ -655,21 +603,13 @@ fn match_positional_optional_present_required_missing() {
 
 #[test]
 fn match_positional_zero_or_more_then_required() {
-    use may_i_core::pattern::PositionalArg;
+    use may_i_core::pattern::PosTerm;
     use may_i_core::{Expr, Quantifier};
 
     // (* "a") "b" with args ["a", "a", "b"] -> match, consumed=3
     let patterns = vec![
-        PositionalArg {
-            quantifier: Quantifier::ZeroOrMore,
-            pattern: Expr::Literal("a".to_string()),
-            recursive: false,
-        },
-        PositionalArg {
-            quantifier: Quantifier::One,
-            pattern: Expr::Literal("b".to_string()),
-            recursive: false,
-        },
+        PosTerm::single(Quantifier::ZeroOrMore, Expr::Literal("a".to_string())),
+        PosTerm::single(Quantifier::One, Expr::Literal("b".to_string())),
     ];
 
     let arg1 = "a".to_string();
@@ -683,21 +623,13 @@ fn match_positional_zero_or_more_then_required() {
 
 #[test]
 fn match_positional_zero_or_more_skipped_then_required() {
-    use may_i_core::pattern::PositionalArg;
+    use may_i_core::pattern::PosTerm;
     use may_i_core::{Expr, Quantifier};
 
     // (* "a") "b" with args ["b"] -> match, consumed=1
     let patterns = vec![
-        PositionalArg {
-            quantifier: Quantifier::ZeroOrMore,
-            pattern: Expr::Literal("a".to_string()),
-            recursive: false,
-        },
-        PositionalArg {
-            quantifier: Quantifier::One,
-            pattern: Expr::Literal("b".to_string()),
-            recursive: false,
-        },
+        PosTerm::single(Quantifier::ZeroOrMore, Expr::Literal("a".to_string())),
+        PosTerm::single(Quantifier::One, Expr::Literal("b".to_string())),
     ];
 
     let arg1 = "b".to_string();

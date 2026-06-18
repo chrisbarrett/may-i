@@ -63,11 +63,10 @@ fn empty_args_with_positional_pattern() {
 
     let pattern = may_i_core::pattern::ArgPattern::Ordered {
         mode: MatchMode::Positional,
-        patterns: vec![may_i_core::pattern::PositionalArg {
-            quantifier: may_i_core::Quantifier::One,
-            pattern: may_i_core::pattern::Expr::Wildcard,
-            recursive: false,
-        }],
+        patterns: vec![may_i_core::pattern::PosTerm::single(
+            may_i_core::Quantifier::One,
+            may_i_core::pattern::Expr::Wildcard,
+        )],
         continuation: None,
     };
     let effect = Effect::ArgPattern(pattern);

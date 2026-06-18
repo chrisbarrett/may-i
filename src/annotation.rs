@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 
 use may_i_core::ast::{Effect, EffectResult, FlagsMode, Rule};
 use may_i_core::doc::Doc;
-use may_i_core::pattern::{ArgPattern, CommandPattern, MatchMode, Quantifier};
+use may_i_core::pattern::{ArgPattern, CommandPattern, MatchMode};
 use may_i_core::primitives::ToDoc;
 use may_i_core::{ContextFacts, Decision, FactQuery};
 
@@ -129,14 +129,9 @@ fn command_pattern_to_doc(pattern: &CommandPattern) -> Doc<()> {
     }
 }
 
-fn positional_arg_to_doc(p: &may_i_core::pattern::PositionalArg) -> Doc<()> {
-    let inner = p.pattern.to_doc();
-    match p.quantifier {
-        Quantifier::One => inner,
-        Quantifier::Optional => Doc::list(vec![Doc::atom("?"), inner]),
-        Quantifier::OneOrMore => Doc::list(vec![Doc::atom("+"), inner]),
-        Quantifier::ZeroOrMore => Doc::list(vec![Doc::atom("*"), inner]),
-    }
+fn positional_arg_to_doc(p: &may_i_core::pattern::PosTerm) -> Doc<()> {
+    // `PosTerm::to_doc` already renders `(Q elem …)` with nested groups.
+    p.to_doc()
 }
 
 fn capture_source(pattern: &ArgPattern) -> CaptureSource {
@@ -1553,7 +1548,7 @@ mod tests {
     use super::*;
     use may_i_core::Span;
     use may_i_core::ast::{Config, Spanned};
-    use may_i_core::pattern::{Expr, PositionalArg};
+    use may_i_core::pattern::{Expr, PosTerm};
     use may_i_engine::eval::evaluate_with_fold;
     use may_i_engine::fold::PureFold;
     use may_i_engine::test_generators::*;
@@ -1630,7 +1625,7 @@ mod tests {
         // `(positional (regex "^foo") (allow))`
         let body = Effect::ArgPattern(ArgPattern::Ordered {
             mode: MatchMode::Positional,
-            patterns: vec![PositionalArg::one(Expr::Regex(
+            patterns: vec![PosTerm::one(Expr::Regex(
                 regex::Regex::new("^foo").unwrap(),
             ))],
             continuation: Some(Box::new(terminal(Decision::Allow, "ok"))),
@@ -1670,7 +1665,7 @@ mod tests {
     fn regex_inside_skipped_optional_is_annotated() {
         let body = Effect::ArgPattern(ArgPattern::Ordered {
             mode: MatchMode::Positional,
-            patterns: vec![PositionalArg::with_quantifier(
+            patterns: vec![PosTerm::with_quantifier(
                 Expr::Regex(regex::Regex::new("^foo").unwrap()),
                 may_i_core::Quantifier::Optional,
             )],
@@ -1730,7 +1725,7 @@ mod tests {
                 } else {
                     Expr::Literal(tok.clone())
                 };
-                PositionalArg::one(expr)
+                PosTerm::one(expr)
             })
             .collect();
         let body = Effect::ArgPattern(ArgPattern::Ordered {
@@ -1789,8 +1784,8 @@ mod tests {
         let body = Effect::ArgPattern(ArgPattern::Ordered {
             mode: MatchMode::Positional,
             patterns: vec![
-                PositionalArg::one(Expr::Literal("source-file".into())),
-                PositionalArg::one(Expr::Or(vec![
+                PosTerm::one(Expr::Literal("source-file".into())),
+                PosTerm::one(Expr::Or(vec![
                     Expr::Literal("a".into()),
                     Expr::Literal("b".into()),
                 ])),
@@ -1827,18 +1822,18 @@ mod tests {
         let body = Effect::ArgPattern(ArgPattern::Ordered {
             mode: MatchMode::Positional,
             patterns: vec![
-                PositionalArg::with_quantifier(
+                PosTerm::with_quantifier(
                     Expr::Literal("affected".into()),
                     may_i_core::Quantifier::Optional,
                 ),
-                PositionalArg::with_quantifier(
+                PosTerm::with_quantifier(
                     Expr::Or(vec![
                         Expr::Literal("watch".into()),
                         Expr::Literal("run".into()),
                     ]),
                     may_i_core::Quantifier::Optional,
                 ),
-                PositionalArg::with_quantifier(
+                PosTerm::with_quantifier(
                     Expr::Literal("--".into()),
                     may_i_core::Quantifier::Optional,
                 ),
@@ -1890,11 +1885,11 @@ mod tests {
         let body = Effect::ArgPattern(ArgPattern::Ordered {
             mode: MatchMode::Positional,
             patterns: vec![
-                PositionalArg::with_quantifier(
+                PosTerm::with_quantifier(
                     Expr::Literal("a".into()),
                     may_i_core::Quantifier::ZeroOrMore,
                 ),
-                PositionalArg::one(Expr::Literal("a".into())),
+                PosTerm::one(Expr::Literal("a".into())),
             ],
             continuation: Some(Box::new(terminal(Decision::Allow, "ok"))),
         });
@@ -1924,7 +1919,7 @@ mod tests {
                 mode: MatchMode::Positional,
                 patterns: patterns
                     .iter()
-                    .map(|p| PositionalArg::one(Expr::Literal(p.clone())))
+                    .map(|p| PosTerm::one(Expr::Literal(p.clone())))
                     .collect(),
                 continuation: Some(Box::new(terminal(Decision::Allow, "ok"))),
             });

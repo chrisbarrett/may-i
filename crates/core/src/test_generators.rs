@@ -8,7 +8,7 @@ use proptest::prelude::*;
 
 use crate::ast::Effect;
 use crate::context::ContextFacts;
-use crate::pattern::{ArgPattern, CommandPattern, Expr, MatchMode, PositionalArg, Quantifier};
+use crate::pattern::{ArgPattern, CommandPattern, Expr, MatchMode, PosTerm, Quantifier};
 use crate::predicates::{FactPattern, FactQuery};
 use crate::primitives::{Decision, Keyword};
 
@@ -51,6 +51,16 @@ pub fn any_context_facts() -> impl Strategy<Value = ContextFacts> {
 pub fn any_quantifier() -> impl Strategy<Value = Quantifier> {
     prop_oneof![
         Just(Quantifier::One),
+        Just(Quantifier::Optional),
+        Just(Quantifier::OneOrMore),
+        Just(Quantifier::ZeroOrMore),
+    ]
+}
+
+/// Generate quantifiers that can head a sequence group: `?`, `+`, `*`. A group
+/// never carries `One` — there is no `( A B )` surface syntax for it.
+pub fn any_group_quantifier() -> impl Strategy<Value = Quantifier> {
+    prop_oneof![
         Just(Quantifier::Optional),
         Just(Quantifier::OneOrMore),
         Just(Quantifier::ZeroOrMore),
@@ -140,15 +150,36 @@ pub fn any_simple_expr(depth: u32) -> BoxedStrategy<Expr<Effect>> {
     }
 }
 
-/// Generate PositionalArg values.
-pub fn any_positional_arg(depth: u32) -> BoxedStrategy<PositionalArg> {
-    (any_quantifier(), any_expr(depth), proptest::bool::ANY)
-        .prop_map(|(quantifier, pattern, recursive)| PositionalArg {
-            quantifier,
-            pattern,
-            recursive,
-        })
+/// Generate `PosTerm` values: single quantified patterns and nested sequence
+/// groups. `depth` caps both the inner-expression depth and the group nesting
+/// depth. Under a repeating quantifier (`+`/`*`) the generator prefers a
+/// non-nullable leading element so repetitions consume input and the matcher's
+/// nullable guard is exercised rather than the suite burning the step budget.
+pub fn any_pos_term(depth: u32) -> BoxedStrategy<PosTerm> {
+    let single = (any_quantifier(), any_expr(depth.min(2)))
+        .prop_map(|(quantifier, pattern)| PosTerm::single(quantifier, pattern))
+        .boxed();
+
+    if depth == 0 {
+        single
+    } else {
+        prop_oneof![
+            3 => single.clone(),
+            1 => (
+                any_group_quantifier(),
+                // A non-nullable leading element (required literal/wildcard),
+                // then 0-2 further terms one level shallower.
+                any_expr(depth.min(2)),
+                prop::collection::vec(any_pos_term(depth - 1), 0..2),
+            )
+                .prop_map(|(quantifier, head, rest)| {
+                    let mut seq = vec![PosTerm::one(head)];
+                    seq.extend(rest);
+                    PosTerm::group(quantifier, seq).expect("seq is non-empty")
+                }),
+        ]
         .boxed()
+    }
 }
 
 /// Generate recursive CommandPattern trees with depth limiting.
@@ -175,14 +206,14 @@ pub fn any_match_string() -> impl Strategy<Value = String> {
 pub fn any_arg_pattern(depth: u32) -> BoxedStrategy<ArgPattern> {
     let expr_depth = depth.min(2);
     prop_oneof![
-        prop::collection::vec(any_positional_arg(expr_depth), 0..4).prop_map(|patterns| {
+        prop::collection::vec(any_pos_term(expr_depth), 0..4).prop_map(|patterns| {
             ArgPattern::Ordered {
                 mode: MatchMode::Positional,
                 patterns,
                 continuation: None,
             }
         }),
-        prop::collection::vec(any_positional_arg(expr_depth), 0..4).prop_map(|patterns| {
+        prop::collection::vec(any_pos_term(expr_depth), 0..4).prop_map(|patterns| {
             ArgPattern::Ordered {
                 mode: MatchMode::Exact,
                 patterns,

@@ -30,6 +30,30 @@ fn fmt_round_trips_audit_form_with_sorted_subforms() {
         .success();
 }
 
+/// Task 6.1: a config containing a sequence-group quantifier formats stably
+/// across two passes (the second `fmt --check` is a clean no-op).
+#[test]
+fn fmt_is_idempotent_on_sequence_group() {
+    let cfg = write_config("(rule \"tool\" (positional (? \"run\" (? \"--\")) (* *)))\n");
+    may_i(&cfg)
+        .args(["fmt", &cfg.path().display().to_string()])
+        .assert()
+        .success();
+
+    let after_first = read_file(&cfg);
+    assert!(
+        after_first.contains(r#"(? "run" (? "--"))"#),
+        "group form not preserved: {after_first}"
+    );
+
+    // Second pass must be a no-op.
+    may_i(&cfg)
+        .args(["fmt", "--check", &cfg.path().display().to_string()])
+        .assert()
+        .success();
+    assert_eq!(after_first, read_file(&cfg), "fmt is not idempotent");
+}
+
 #[test]
 fn fmt_single_file_rewrites_in_place() {
     // Parser body order is canonicalised:

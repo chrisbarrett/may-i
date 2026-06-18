@@ -166,12 +166,30 @@ consumed. Patterns are matched in order.
 Quantifiers wrap individual patterns so a `(positional …)` can match
 variable-length argv:
 
-| Quantifier | Meaning                |
-| :--------- | :--------------------- |
-| `EXPR`     | Exactly one (default). |
-| `(? EXPR)` | Zero or one.           |
-| `(+ EXPR)` | One or more.           |
-| `(* EXPR)` | Zero or more.          |
+| Quantifier  | Meaning                |
+| :---------- | :--------------------- |
+| `EXPR`      | Exactly one (default). |
+| `(? EXPR…)` | Zero or one.           |
+| `(+ EXPR…)` | One or more.           |
+| `(* EXPR…)` | Zero or more.          |
+
+A quantifier head may wrap **more than one** sub-pattern. Several sub-patterns
+form an implicit **sequence**: the whole sub-sequence is the quantified unit,
+matched against consecutive positional args, and `+`/`*` repeat the whole
+sub-sequence. Sub-patterns may themselves be quantifiers, so sequences nest.
+
+```lisp
+;; Optional `run`, then (only after run) an optional `--`:
+;;   matches «», «run», or «run --» — but never a bare «--».
+(rule "terragrunt"
+  (and (positional (? "run" (? "--")) (or "state" "output")) (allow)))
+
+;; Repeat a whole option/value sub-sequence:
+(positional (+ "--opt" *))   ; matches «--opt a --opt b»
+```
+
+A binding inside a repeated group collects every matched value into a set (it
+does not pair values across occurrences).
 
 ### `(exact PAT…)`
 

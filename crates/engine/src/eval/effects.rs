@@ -7,9 +7,7 @@ use crate::fold::PureFold;
 use crate::fold::{ArgMatchDetail, ChildResult, EvalFold};
 
 use super::context::{EvalContext, PredicateResult};
-use super::positional::{
-    build_positional_element_details, match_positional_patterns, resolve_trailing_cond_effect,
-};
+use super::positional::{build_positional_element_details, resolve_trailing_cond_effect};
 use super::predicates::{captured_facts, evaluate_predicate_fold};
 
 /// Evaluate `body` after `predicate` matched, threading any facts the
@@ -368,7 +366,12 @@ fn evaluate_arg_pattern_effect_fold<F: EvalFold>(
             let pos_exp: Vec<&super::decompose::Expansion> =
                 pos_idx.iter().map(|&i| &outer_exp[i]).collect();
 
-            let m = match_positional_patterns(&pos_args, &pos_exp, patterns);
+            let m = super::positional::match_positional_patterns_budgeted(
+                &pos_args,
+                &pos_exp,
+                patterns,
+                ctx.matcher_budget(),
+            );
             let (pat_matched, consumed, bound_facts) = (m.matched, m.consumed, m.facts);
             let matched =
                 pat_matched && (*mode == MatchMode::Positional || consumed == pos_args.len());

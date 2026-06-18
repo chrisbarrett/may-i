@@ -27,14 +27,14 @@ proptest! {
     fn positional_match_conserves_arg_count(
         patterns in prop::collection::vec(
             prop_oneof![
-                "[a-z]{1,5}".prop_map(|s| may_i_core::pattern::PositionalArg::one(
+                "[a-z]{1,5}".prop_map(|s| may_i_core::pattern::PosTerm::one(
                     may_i_core::pattern::Expr::Literal(s)
                 )),
-                Just(may_i_core::pattern::PositionalArg::with_quantifier(
+                Just(may_i_core::pattern::PosTerm::with_quantifier(
                     may_i_core::pattern::Expr::Wildcard,
                     may_i_core::Quantifier::Optional,
                 )),
-                Just(may_i_core::pattern::PositionalArg::with_quantifier(
+                Just(may_i_core::pattern::PosTerm::with_quantifier(
                     may_i_core::pattern::Expr::Wildcard,
                     may_i_core::Quantifier::ZeroOrMore,
                 )),
@@ -65,14 +65,14 @@ proptest! {
     fn positional_match_is_deterministic(
         patterns in prop::collection::vec(
             prop_oneof![
-                "[a-z]{1,5}".prop_map(|s| may_i_core::pattern::PositionalArg::one(
+                "[a-z]{1,5}".prop_map(|s| may_i_core::pattern::PosTerm::one(
                     may_i_core::pattern::Expr::Literal(s)
                 )),
-                Just(may_i_core::pattern::PositionalArg::with_quantifier(
+                Just(may_i_core::pattern::PosTerm::with_quantifier(
                     may_i_core::pattern::Expr::Wildcard,
                     may_i_core::Quantifier::Optional,
                 )),
-                Just(may_i_core::pattern::PositionalArg::with_quantifier(
+                Just(may_i_core::pattern::PosTerm::with_quantifier(
                     may_i_core::pattern::Expr::Wildcard,
                     may_i_core::Quantifier::ZeroOrMore,
                 )),
