@@ -211,13 +211,20 @@ pub(crate) fn filter_trusted_rules(config: &mut may_i_core::ast::Config, catalog
         approved.contains(hash.as_str())
     });
 
-    if !config.security.loaded_safe_env_vars.is_empty() {
-        let scope_approved = catalog
+    let scope_approved = |program: &str| {
+        catalog
             .iter()
-            .any(|v| v.program() == ":safe-env-vars" && v.state() == TrustState::Approved);
-        if !scope_approved {
-            config.security.loaded_safe_env_vars.clear();
-        }
+            .any(|v| v.program() == program && v.state() == TrustState::Approved)
+    };
+
+    if !config.security.loaded_safe_env_vars.is_empty() && !scope_approved(":safe-env-vars") {
+        config.security.loaded_safe_env_vars.clear();
+    }
+    if !config.security.loaded_env_caps.is_empty() && !scope_approved(":env") {
+        config.security.loaded_env_caps.clear();
+    }
+    if !config.security.loaded_redirect_caps.is_empty() && !scope_approved(":redirect") {
+        config.security.loaded_redirect_caps.clear();
     }
 }
 
@@ -349,6 +356,134 @@ mod tests {
         assert!(
             config.security.loaded_safe_env_vars.contains("FOO"),
             "approved loaded safe-env-vars participate"
+        );
+    }
+
+    fn deny_env_cap(name: &str) -> may_i_core::ast::EnvCapability {
+        may_i_core::ast::EnvCapability {
+            name: name.into(),
+            decision: spanned(Effect::Terminal {
+                decision: Decision::Deny,
+                reason: None,
+            }),
+        }
+    }
+
+    fn allow_redirect_cap() -> may_i_core::ast::RedirectCapability {
+        may_i_core::ast::RedirectCapability {
+            pattern: None,
+            decision: spanned(Effect::Terminal {
+                decision: Decision::Allow,
+                reason: None,
+            }),
+        }
+    }
+
+    #[test]
+    fn filter_clears_unapproved_loaded_env_caps() {
+        let mut config = make_config(vec![]);
+        config
+            .security
+            .loaded_env_caps
+            .push(deny_env_cap("AWS_TOKEN"));
+        config.security.has_loaded_env_caps = true;
+        let cat = build_catalog(&config, TrustStore::default());
+        filter_trusted_rules(&mut config, &cat);
+        assert!(
+            config.security.loaded_env_caps.is_empty(),
+            "unapproved loaded (env …) capability must be inert"
+        );
+    }
+
+    #[test]
+    fn filter_keeps_approved_loaded_env_caps() {
+        let mut config = make_config(vec![]);
+        config
+            .security
+            .loaded_env_caps
+            .push(deny_env_cap("AWS_TOKEN"));
+        config.security.has_loaded_env_caps = true;
+
+        let views = may_i_engine::trust::compute_trust_views(&config);
+        let scope = views
+            .iter()
+            .find(|v| v.program == ":env")
+            .expect(":env scope view present");
+        let mut store = TrustStore::default();
+        store.approve_rule(
+            scope.hash.clone(),
+            ":env".into(),
+            scope.canonical_form.clone(),
+        );
+
+        let cat = build_catalog(&config, store);
+        filter_trusted_rules(&mut config, &cat);
+        assert_eq!(
+            config.security.loaded_env_caps.len(),
+            1,
+            "approved loaded (env …) capability participates"
+        );
+    }
+
+    #[test]
+    fn filter_clears_unapproved_loaded_redirect_caps() {
+        let mut config = make_config(vec![]);
+        config
+            .security
+            .loaded_redirect_caps
+            .push(allow_redirect_cap());
+        config.security.has_loaded_redirect_caps = true;
+        let cat = build_catalog(&config, TrustStore::default());
+        filter_trusted_rules(&mut config, &cat);
+        assert!(
+            config.security.loaded_redirect_caps.is_empty(),
+            "unapproved loaded (redirect …) capability must be inert"
+        );
+    }
+
+    #[test]
+    fn filter_keeps_approved_loaded_redirect_caps() {
+        let mut config = make_config(vec![]);
+        config
+            .security
+            .loaded_redirect_caps
+            .push(allow_redirect_cap());
+        config.security.has_loaded_redirect_caps = true;
+
+        let views = may_i_engine::trust::compute_trust_views(&config);
+        let scope = views
+            .iter()
+            .find(|v| v.program == ":redirect")
+            .expect(":redirect scope view present");
+        let mut store = TrustStore::default();
+        store.approve_rule(
+            scope.hash.clone(),
+            ":redirect".into(),
+            scope.canonical_form.clone(),
+        );
+
+        let cat = build_catalog(&config, store);
+        filter_trusted_rules(&mut config, &cat);
+        assert_eq!(
+            config.security.loaded_redirect_caps.len(),
+            1,
+            "approved loaded (redirect …) capability participates"
+        );
+    }
+
+    #[test]
+    fn filter_keeps_primary_capabilities_unconditionally() {
+        // A primary-config capability is always effective — never gated.
+        let mut config = make_config(vec![]);
+        config.security.env_caps.push(deny_env_cap("LD_PRELOAD"));
+        config.security.redirect_caps.push(allow_redirect_cap());
+        let cat = build_catalog(&config, TrustStore::default());
+        filter_trusted_rules(&mut config, &cat);
+        assert_eq!(config.security.env_caps.len(), 1, "primary env cap kept");
+        assert_eq!(
+            config.security.redirect_caps.len(),
+            1,
+            "primary redirect cap kept"
         );
     }
 

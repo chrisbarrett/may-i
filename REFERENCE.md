@@ -30,6 +30,8 @@ is `~/.config/may-i/config.lisp` by default.
 | `(define-arg-style NAME …)` | Custom flag-syntax style.                         |
 | `(load "PATH")`             | Include another config file.                      |
 | `(safe-env-vars NAMES…)`    | Allow specific env vars in shell expansion.       |
+| `(env NAME DECISION)`       | Govern an env var: lift the write floor, or taint it. |
+| `(redirect PAT? DECISION)`  | Govern write-redirect targets (lift the floor, or tighten). |
 | `(check …)`                 | Test cases for `may-i check`.                     |
 | `(audit …)`                 | Persist a JSONL trail of decisions (Audit log).   |
 
@@ -648,15 +650,78 @@ may-i check
 Paths resolve relative to the file containing the `(load …)` form. Loaded files
 can themselves load others. Circular loads are detected and rejected.
 
-## Trusting environment variables
+## Capabilities: `(env …)` and `(redirect …)`
 
-By default the shell parser only expands variables whose values it can recover
-through static analysis. To allow others — typically common ones agents rely on
-— list them in `(safe-env-vars …)`:
+A **capability** attaches a decision to a feature of the *shell language* — a
+redirect-write target or an environment variable — instead of to a command. It
+contributes that decision to the same strictest-wins combination as the
+command's own rule, so it governs an O(1) shell concern without annotating
+every rule. Because `:allow` is the lattice bottom, a capability `allow` only
+*releases a floor* another unit imposed; it never authorises a command its rule
+didn't already allow. A capability `deny`/`ask` actively tightens.
+
+Capabilities are honoured only from the primary config; in a `(load …)`-ed or
+repo-local file they are inert until you approve their trust scope (`:env` /
+`:redirect`) with `may-i trust`.
+
+### Trusting environment variables: `(env NAME DECISION)`
+
+Environment use splits into two positions, with opposite defaults:
+
+- **Write** — a `NAME=VALUE cmd` prefix — defaults to `:ask`, because a prefix
+  like `LD_PRELOAD=…` changes what executes. `(env NAME (allow))` lifts that
+  floor (it is exactly a `(safe-env-vars NAME)` entry); `(env NAME (ask|deny))`
+  tightens it.
+- **Read** — a `$NAME` expansion in a command argument — defaults to `:allow`.
+  `(env NAME (ask|deny))` *taints* the name: whenever `$NAME` appears in argv,
+  it contributes `:ask`/`:deny`. This is structural secret-exfiltration defence
+  — it fires on the token in the parsed command, never tracing the value to a
+  sink. A program that reads its secret from its *own* environment (`aws`,
+  `gh`) never puts `$NAME` in argv, so it is unaffected. `(env NAME (allow))`
+  has no effect in read position.
 
 ```lisp
-(safe-env-vars "HOME" "PWD" "USER" "SHELL" "EDITOR")
+(safe-env-vars "HOME" "PWD" "USER" "SHELL" "EDITOR")   ; allowlist sugar
+
+(env "GIT_PAGER"  (allow))                ; same as adding it to safe-env-vars
+(env "LD_PRELOAD" (deny  "code injection via the loader"))
+(env "AWS_TOKEN"  (ask   "secret — confirm before it enters a command"))
+(env "AWS_TOKEN"  (if (fact? :ci) (deny "no secrets in CI logs") (ask)))
+
+(env (or "AWS_TOKEN" "GH_TOKEN" "NPM_TOKEN") (deny))   ; one decision, many names
 ```
+
+The subject is a single name or an `(or NAME…)` set that applies the same
+decision to every listed name — handy for tainting a family of secrets at once.
+
+`(safe-env-vars "A" "B")` is exactly `(env "A" (allow)) (env "B" (allow))`;
+`may-i migrate` rewrites the former to the latter, and because both lower to
+the same allowlist the migration preserves your trust approval (Class A).
+
+The DECISION accepts the fact-conditioned subset of the rule-body language —
+the decision verbs, `(and|or|not …)`, `(if|when|unless|cond …)`, and
+`(fact? …)`. Argv matchers (`(positional …)`, `(flag …)`, `(authorise …)`, …)
+are rejected at load time: a capability is command-agnostic and has no argv to
+match against.
+
+### Trusting redirect targets: `(redirect PAT? DECISION)`
+
+A **write** redirection to a non-standard file target (`> f`, `>> f`, `>| f`)
+floors to `:ask` by default — the write is invisible to the command's rule.
+`(redirect PAT DECISION)` governs such targets by matching `PAT` (any Pattern:
+`"lit"`, `(regex …)`, `(or …)`, …) against the target; an omitted pattern
+matches any target. Read redirections (`<`, `<<<`, here-docs) perform no write
+and never floor.
+
+```lisp
+(redirect (regex "^/tmp/") (allow))       ; writes under /tmp don't prompt
+(redirect "/etc/hosts"     (deny))        ; never write the hosts file
+(redirect (allow))                        ; any write target is fine
+```
+
+An expansion-bearing target (`> /tmp/$NAME`) can never satisfy a capability
+toward `:allow` — its runtime value is unknown — so it floors regardless of a
+matching `(allow)`.
 
 ## The Audit log: `(audit …)`
 

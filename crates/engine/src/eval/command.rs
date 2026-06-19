@@ -1,13 +1,102 @@
-use may_i_core::ast::Config;
+use may_i_core::ast::{Config, Effect, EffectResult};
 use may_i_core::{ContextFacts, Decision, Keyword};
 use may_i_shell_parser as parser;
 
 use crate::fold::{EvalFold, PureFold};
 use crate::{EvalError, EvalResult, SegmentDecision};
 
-use super::context::DEFAULT_RECURSION_LIMIT;
+use super::context::{DEFAULT_RECURSION_LIMIT, EvalContext};
 use super::decompose::{EmbeddedKind, EvalUnit, decompose};
+use super::effects::evaluate_effect_fold;
 use super::entry::evaluate_at_depth;
+
+/// Evaluate a capability's fact-conditioned decision expression against
+/// the active facts with an empty binding environment (design D6). Reuses
+/// the rule-body `Effect` evaluator; a `Nil` result (e.g. a `(when …)`
+/// whose predicate did not match) yields `None`, meaning "no contribution".
+/// Argv/binding constructs are rejected at load time, so the empty
+/// command/args context never affects a well-formed capability.
+fn capability_decision(
+    decision: &Effect,
+    config: &Config,
+    facts: &ContextFacts,
+) -> Option<(Decision, Option<String>)> {
+    let no_args: [String; 0] = [];
+    let bindings = EvalContext::build_bindings(&config.defines);
+    let ctx = EvalContext::new("", &no_args, facts, bindings);
+    let mut pure = PureFold;
+    match evaluate_effect_fold(&mut pure, decision, &ctx, &config.rules) {
+        Ok(EffectResult::Decision(d, r)) => Some((d, r)),
+        Ok(EffectResult::Nil) | Err(_) => None,
+    }
+}
+
+/// Meet two `(decision, reason)` contributions strictest-wins, keeping the
+/// reason of the strictest. Ties keep the incumbent.
+fn meet_decision(
+    acc: Option<(Decision, Option<String>)>,
+    next: (Decision, Option<String>),
+) -> Option<(Decision, Option<String>)> {
+    Some(match acc {
+        Some((prev, prev_reason)) if prev >= next.0 => (prev, prev_reason),
+        _ => next,
+    })
+}
+
+/// Fold the decisions of every `(env NAME …)` capability governing `name`
+/// (primary then loaded) strictest-wins, returning the meet decision and the
+/// reason of the strictest contributor. `None` means no capability governed
+/// `name` (or every governing one evaluated to `Nil`). Folding — rather than
+/// taking the first match — keeps a later `(env NAME (deny))` from being
+/// silently shadowed by an earlier `(env NAME (ask))` (review W1).
+fn fold_env_capabilities(
+    config: &Config,
+    facts: &ContextFacts,
+    name: &str,
+) -> Option<(Decision, Option<String>)> {
+    let mut acc = None;
+    for cap in config.security.env_capabilities(name) {
+        if let Some(decision) = capability_decision(&cap.decision.value, config, facts) {
+            acc = meet_decision(acc, decision);
+        }
+    }
+    acc
+}
+
+/// Resolve the decision a write-redirect target contributes to the meet,
+/// with the reason of the strictest matching capability.
+///
+/// Folds every redirect-write capability whose pattern matches `target`
+/// (strictest wins). With no matching capability the target floors to `:ask`
+/// (the default). An expansion-bearing target can never reach `:allow`
+/// (asymmetric soundness), so it is raised to at least `:ask` regardless of a
+/// matching `allow` — and its reason is dropped so the call site uses the
+/// generic redirect reason.
+fn resolve_redirect_decision(
+    config: &Config,
+    facts: &ContextFacts,
+    target: &str,
+    expansion_bearing: bool,
+) -> (Decision, Option<String>) {
+    let mut acc = None;
+    for cap in config.security.redirect_capabilities() {
+        let matches = cap.pattern.as_ref().is_none_or(|pat| pat.is_match(target));
+        if !matches {
+            continue;
+        }
+        if let Some(decision) = capability_decision(&cap.decision.value, config, facts) {
+            acc = meet_decision(acc, decision);
+        }
+    }
+    // A matched capability whose decision evaluated to Nil contributes no
+    // release, so it falls back to the default floor.
+    let (decision, reason) = acc.unwrap_or((Decision::Ask, None));
+    if expansion_bearing && decision < Decision::Ask {
+        (Decision::Ask, None)
+    } else {
+        (decision, reason)
+    }
+}
 
 /// Escape control characters (e.g. newlines from `$'\n'` ANSI-C
 /// quoting) when interpolating a parsed command name into a reason
@@ -161,7 +250,8 @@ fn eval_units<F: EvalFold>(
     let parse_result = parser::parse(input);
     let diagnostics = parse_result.diagnostics.clone();
     let has_parse_errors = parse_result.has_errors();
-    let units = decompose(&parse_result.command, input, &diagnostics);
+    let tainted_env = config.security.env_capability_names();
+    let units = decompose(&parse_result.command, input, &diagnostics, &tainted_env);
 
     if units.is_empty() {
         let reason = "empty command".to_string();
@@ -248,37 +338,94 @@ fn eval_units<F: EvalFold>(
                 );
                 EvalResult::new(Decision::Allow, Some(reason))
             }
-            // A prefix assigning a name in the effective safe-env-vars
-            // set passes through (the command evaluates as if
-            // unprefixed); any other name floors the segment, naming the
-            // variable.
+            // A `NAME=VALUE` prefix. An unconditional-allow name (the
+            // safe-env-vars allowlist) passes through. Otherwise an
+            // `(env NAME …)` capability decides: an `allow` releases the
+            // floor; an `ask`/`deny` (or fact-conditional yielding one)
+            // contributes that decision. With no capability the prefix
+            // floors to `:ask`, naming the variable.
             EvalUnit::EnvPrefix { name, span } => {
-                if config.security.is_safe_env_var(name) {
-                    continue;
+                // The safe-env-vars allowlist contributes an implicit
+                // write-allow; every `(env NAME …)` capability contributes
+                // its decision. They meet strictest-wins, so a `(deny)` wins
+                // over the allowlist and over an earlier `(ask)` (review W1).
+                let mut decision = config
+                    .security
+                    .is_safe_env_var(name)
+                    .then_some((Decision::Allow, None));
+                if let Some(cap) = fold_env_capabilities(config, &effective_facts, name) {
+                    decision = meet_decision(decision, cap);
                 }
-                let reason = format!(
-                    "environment prefix `{}` is not in (safe-env-vars …)",
-                    escape_for_reason(name)
-                );
-                floor_spans.push(*span);
-                let _out = fold.default_ask(&reason);
-                EvalResult::new(Decision::Ask, Some(reason))
+                match decision {
+                    Some((Decision::Allow, _)) => continue,
+                    Some((decision, reason)) => {
+                        let reason = reason.unwrap_or_else(|| {
+                            format!(
+                                "environment prefix `{}` is governed by an (env …) capability",
+                                escape_for_reason(name)
+                            )
+                        });
+                        floor_spans.push(*span);
+                        let _out = fold.default_ask(&reason);
+                        EvalResult::new(decision, Some(reason))
+                    }
+                    None => {
+                        let reason = format!(
+                            "environment prefix `{}` is not in (safe-env-vars …)",
+                            escape_for_reason(name)
+                        );
+                        floor_spans.push(*span);
+                        let _out = fold.default_ask(&reason);
+                        EvalResult::new(Decision::Ask, Some(reason))
+                    }
+                }
             }
-            // A redirect to a non-standard file target is not silently
-            // ignored: it floors the segment, naming the operator and
-            // target. Plumbing (`/dev/null`, fd dups) never reaches here.
+            // A write redirection to a non-standard file target. A
+            // matching redirect-write capability may lift the floor (an
+            // `allow`) or tighten it (`ask`/`deny`); with no match it
+            // floors to `:ask`. Plumbing (`/dev/null`, fd dups) and read
+            // redirections never reach here.
             EvalUnit::RedirectTarget {
                 operator,
                 target,
+                expansion_bearing,
                 span,
             } => {
-                let reason = format!(
-                    "command carries a redirect (`{operator} {}`)",
-                    escape_for_reason(target)
-                );
+                let (decision, cap_reason) =
+                    resolve_redirect_decision(config, &effective_facts, target, *expansion_bearing);
+                if decision == Decision::Allow {
+                    continue;
+                }
+                let reason = cap_reason.unwrap_or_else(|| {
+                    format!(
+                        "command carries a redirect (`{operator} {}`)",
+                        escape_for_reason(target)
+                    )
+                });
                 floor_spans.push(*span);
                 let _out = fold.default_ask(&reason);
-                EvalResult::new(Decision::Ask, Some(reason))
+                EvalResult::new(decision, Some(reason))
+            }
+            // A tainted env name read into an argv word. The `(env …)`
+            // capability's decision resolved against the active facts is
+            // contributed; an `allow` (the read-benign default) or a
+            // `Nil`-conditional contributes nothing.
+            EvalUnit::EnvRead { name, span } => {
+                let cap_decision = fold_env_capabilities(config, &effective_facts, name);
+                match cap_decision {
+                    Some((decision, reason)) if decision > Decision::Allow => {
+                        let reason = reason.unwrap_or_else(|| {
+                            format!(
+                                "environment variable `{}` is read into a command argument",
+                                escape_for_reason(name)
+                            )
+                        });
+                        floor_spans.push(*span);
+                        let _out = fold.default_ask(&reason);
+                        EvalResult::new(decision, Some(reason))
+                    }
+                    _ => continue,
+                }
             }
         };
         any_decisive_unit = true;
@@ -296,6 +443,7 @@ fn eval_units<F: EvalFold>(
                 EvalUnit::EmbeddedCommand { .. }
                     | EvalUnit::EnvPrefix { .. }
                     | EvalUnit::RedirectTarget { .. }
+                    | EvalUnit::EnvRead { .. }
             ) {
                 segment_decisions.push(SegmentDecision {
                     start: base + unit_span.0,

@@ -410,6 +410,65 @@ pub fn compute_trust_views(config: &Config) -> Vec<TrustViewMeta> {
         });
     }
 
+    // `:env` capability trust scope — the ask/deny/conditional `(env …)`
+    // forms (an unconditional `(env NAME (allow))` lowers to safe-env-vars
+    // instead). Hash the union of primary + loaded, gated on any loaded.
+    if config.security.has_loaded_env_caps {
+        let mut forms: Vec<String> = config
+            .security
+            .env_caps
+            .iter()
+            .chain(config.security.loaded_env_caps.iter())
+            .map(|c| {
+                format!(
+                    "(env \"{}\" {})",
+                    c.name,
+                    canonical_effect(&c.decision.value)
+                )
+            })
+            .collect();
+        forms.sort();
+        forms.dedup();
+        let form = forms.join(" ");
+        let hash = sha256_hex(&form);
+        views.push(TrustViewMeta {
+            hash,
+            canonical_form: form,
+            program: ":env".to_string(),
+            source_file: None,
+            position: 0,
+        });
+    }
+
+    // `:redirect` capability trust scope.
+    if config.security.has_loaded_redirect_caps {
+        let mut forms: Vec<String> = config
+            .security
+            .redirect_caps
+            .iter()
+            .chain(config.security.loaded_redirect_caps.iter())
+            .map(|c| match &c.pattern {
+                Some(pat) => format!(
+                    "(redirect {} {})",
+                    canonical_expr(pat),
+                    canonical_effect(&c.decision.value)
+                ),
+                None => format!("(redirect {})", canonical_effect(&c.decision.value)),
+            })
+            .collect();
+        forms.sort();
+        forms.dedup();
+        let form = forms.join(" ");
+        let hash = sha256_hex(&form);
+        views.push(TrustViewMeta {
+            hash,
+            canonical_form: form,
+            program: ":redirect".to_string(),
+            source_file: None,
+            position: 0,
+        });
+    }
+
     views
 }
 
