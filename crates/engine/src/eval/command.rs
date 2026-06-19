@@ -6,7 +6,7 @@ use crate::fold::{EvalFold, PureFold};
 use crate::{EvalError, EvalResult, SegmentDecision};
 
 use super::context::{DEFAULT_RECURSION_LIMIT, EvalContext};
-use super::decompose::{EmbeddedKind, EvalUnit, decompose};
+use super::decompose::{EmbeddedKind, EvalUnit, SubstitutionOrigin, decompose};
 use super::effects::evaluate_effect_fold;
 use super::entry::evaluate_at_depth;
 
@@ -133,8 +133,16 @@ pub(super) fn unresolved_expansion_reason(words: &[String]) -> String {
     )
 }
 
-/// Wrap an embedded-substitution's bubbled reason with an origin clause
-/// naming the outer command (when known) and the substitution form.
+/// Wrap an embedded-substitution's bubbled reason with an origin clause naming
+/// the substitution form and the syntactic position that lexically owns it
+/// (carried on the unit as a [`SubstitutionOrigin`], computed at the decompose
+/// pass that emitted it).
+///
+/// The owner is described by kind: `` in `c` `` for a simple-command word,
+/// `` in assignment to `v` `` for an assignment value, `` in `for` list ``,
+/// `` in `case` subject ``, or `in redirect target`. A dynamic command name
+/// (`SimpleCommand(None)`) and a process substitution (`kind == None`) carry no
+/// nameable owner and fall back to the generic `(embedded substitution)` form.
 ///
 /// Idempotent on already-annotated reasons: if `inner` already contains
 /// ` substitution in ` the original is returned unchanged so that nested
@@ -142,21 +150,37 @@ pub(super) fn unresolved_expansion_reason(words: &[String]) -> String {
 fn annotate_embedded_reason(
     inner: &str,
     kind: Option<EmbeddedKind>,
-    outer: Option<&str>,
+    origin: &SubstitutionOrigin,
 ) -> String {
-    if inner.contains(" substitution in ") {
+    // Already-annotated reasons are returned unchanged. Both the named clause
+    // (`… substitution in …`) and the generic fallback (`… (embedded
+    // substitution)`) are recognised, so a substitution bubbling through two
+    // embedding layers — e.g. a nested process substitution, which always takes
+    // the generic path — does not accumulate a second suffix.
+    if inner.contains(" substitution in ") || inner.ends_with(" (embedded substitution)") {
         return inner.to_string();
     }
-    let suffix = match (kind, outer) {
-        (Some(EmbeddedKind::Backtick), Some(name)) => {
-            format!(" (backtick substitution in `{}`)", escape_for_reason(name))
-        }
-        (Some(EmbeddedKind::Dollar), Some(name)) => {
-            format!(" ($(...) substitution in `{}`)", escape_for_reason(name))
-        }
-        _ => " (embedded substitution)".to_string(),
+    let generic = || format!("{inner} (embedded substitution)");
+    let form = match kind {
+        Some(EmbeddedKind::Backtick) => "backtick",
+        Some(EmbeddedKind::Dollar) => "$(...)",
+        // Process substitution carries no named form — keep the generic clause.
+        None => return generic(),
     };
-    format!("{inner}{suffix}")
+    let location = match origin {
+        SubstitutionOrigin::SimpleCommand(Some(name)) => {
+            format!("in `{}`", escape_for_reason(name))
+        }
+        // A dynamic command name cannot be named; fall back to generic.
+        SubstitutionOrigin::SimpleCommand(None) => return generic(),
+        SubstitutionOrigin::Assignment(name) => {
+            format!("in assignment to `{}`", escape_for_reason(name))
+        }
+        SubstitutionOrigin::ForList => "in `for` list".to_string(),
+        SubstitutionOrigin::CaseSubject => "in `case` subject".to_string(),
+        SubstitutionOrigin::RedirectTarget => "in redirect target".to_string(),
+    };
+    format!("{inner} ({form} substitution {location})")
 }
 
 /// Format the first `Error`-severity diagnostic for the engine's
@@ -275,15 +299,6 @@ fn eval_units<F: EvalFold>(
     // the initial `:allow`.
     let mut any_decisive_unit = false;
 
-    // Outer command name for embedded-substitution origin annotations.
-    // None when the outer command's first word is itself dynamic (e.g.
-    // `$(which python) --version`) — the annotation then falls back to
-    // a generic "embedded substitution" form.
-    let outer_command_name: Option<String> = units.iter().find_map(|u| match u {
-        EvalUnit::SimpleCommand { command, .. } => Some(command.clone()),
-        _ => None,
-    });
-
     for unit in &units {
         let unit_span = unit.span();
         let result = match unit {
@@ -301,7 +316,12 @@ fn eval_units<F: EvalFold>(
                 fold,
                 depth,
             )?,
-            EvalUnit::EmbeddedCommand { source, span, kind } => {
+            EvalUnit::EmbeddedCommand {
+                source,
+                span,
+                kind,
+                origin,
+            } => {
                 let embedded_result = eval_units(
                     source,
                     config,
@@ -315,7 +335,7 @@ fn eval_units<F: EvalFold>(
                 let annotated_reason = embedded_result
                     .reason
                     .as_deref()
-                    .map(|r| annotate_embedded_reason(r, *kind, outer_command_name.as_deref()));
+                    .map(|r| annotate_embedded_reason(r, *kind, origin));
                 EvalResult {
                     reason: annotated_reason,
                     ..embedded_result
@@ -1044,6 +1064,152 @@ mod tests {
         assert_eq!(
             count, 1,
             "expected exactly one ` substitution in ` clause, got {count}: {reason}"
+        );
+    }
+
+    // -- Substitution-origin attribution (per syntactic owner) --
+
+    #[test]
+    fn annotate_embedded_reason_per_origin() {
+        use super::super::decompose::SubstitutionOrigin::*;
+        let dollar =
+            |o| annotate_embedded_reason("No rule for command `x`", Some(EmbeddedKind::Dollar), &o);
+        assert_eq!(
+            dollar(SimpleCommand(Some("grep".into()))),
+            "No rule for command `x` ($(...) substitution in `grep`)"
+        );
+        assert_eq!(
+            dollar(Assignment("dest".into())),
+            "No rule for command `x` ($(...) substitution in assignment to `dest`)"
+        );
+        assert_eq!(
+            dollar(ForList),
+            "No rule for command `x` ($(...) substitution in `for` list)"
+        );
+        assert_eq!(
+            dollar(CaseSubject),
+            "No rule for command `x` ($(...) substitution in `case` subject)"
+        );
+        assert_eq!(
+            dollar(RedirectTarget),
+            "No rule for command `x` ($(...) substitution in redirect target)"
+        );
+        // A dynamic command name has no nameable owner → generic fallback.
+        assert_eq!(
+            dollar(SimpleCommand(None)),
+            "No rule for command `x` (embedded substitution)"
+        );
+        // Backtick form keeps the per-owner clause.
+        assert_eq!(
+            annotate_embedded_reason(
+                "No rule for command `x`",
+                Some(EmbeddedKind::Backtick),
+                &Assignment("v".into())
+            ),
+            "No rule for command `x` (backtick substitution in assignment to `v`)"
+        );
+        // Process substitution (kind None) is never named, regardless of owner.
+        assert_eq!(
+            annotate_embedded_reason("No rule for command `x`", None, &RedirectTarget),
+            "No rule for command `x` (embedded substitution)"
+        );
+        // Idempotent: an already-annotated reason is returned unchanged.
+        let once = dollar(ForList);
+        assert_eq!(
+            annotate_embedded_reason(
+                &once,
+                Some(EmbeddedKind::Dollar),
+                &SimpleCommand(Some("y".into()))
+            ),
+            once
+        );
+        // Idempotent on the generic clause too — a process substitution bubbling
+        // through two layers must not double-wrap into `… (embedded
+        // substitution) (embedded substitution)`.
+        let generic_once =
+            annotate_embedded_reason("No rule for command `x`", None, &RedirectTarget);
+        assert_eq!(
+            annotate_embedded_reason(&generic_once, None, &RedirectTarget),
+            generic_once
+        );
+    }
+
+    #[test]
+    fn motivating_substitution_origin_names_assignment_not_set() {
+        // Regression for the cross-attribution bug: the substitution lives in
+        // the assignment to `dest` inside `main`'s body, not in the unrelated
+        // leading `set`.
+        let config = config_with_rules(vec![]);
+        let result = evaluate_command(
+            "set -euo pipefail; main() { dest=$(resolve); }; main",
+            &config,
+            &empty_facts(),
+        )
+        .unwrap();
+        assert_eq!(result.decision, Decision::Ask);
+        let reason = result.reason.as_deref().unwrap_or("");
+        assert!(
+            reason.contains("assignment to `dest`"),
+            "reason should name the assignment to `dest`: {reason}"
+        );
+        assert!(
+            !reason.contains("in `set`"),
+            "reason must not attribute the substitution to `set`: {reason}"
+        );
+    }
+
+    #[test]
+    fn substitution_in_assignment_names_assignment_target() {
+        let config = config_with_rules(vec![]);
+        let result = evaluate_command("dest=$(badcmd)", &config, &empty_facts()).unwrap();
+        assert_eq!(result.decision, Decision::Ask);
+        assert_eq!(
+            result.reason.as_deref(),
+            Some("No rule for command `badcmd` ($(...) substitution in assignment to `dest`)")
+        );
+    }
+
+    #[test]
+    fn substitution_in_simple_command_names_that_command() {
+        let config = config_with_rules(vec![allow_rule("grep")]);
+        let result = evaluate_command(r#"grep "$(badcmd)" file"#, &config, &empty_facts()).unwrap();
+        assert_eq!(result.decision, Decision::Ask);
+        assert_eq!(
+            result.reason.as_deref(),
+            Some("No rule for command `badcmd` ($(...) substitution in `grep`)")
+        );
+    }
+
+    #[test]
+    fn substitution_in_redirect_target_describes_the_redirect() {
+        // `badcmd` is denied so the substitution's annotated reason wins over
+        // the redirect-write floor (`:ask`), surfacing the per-owner clause.
+        let config = config_with_rules(vec![allow_rule("cat"), deny_rule("badcmd")]);
+        let result = evaluate_command(r#"cat > "$(badcmd)""#, &config, &empty_facts()).unwrap();
+        assert_eq!(result.decision, Decision::Deny);
+        let reason = result.reason.as_deref().unwrap_or("");
+        assert!(
+            reason.contains("substitution in redirect target"),
+            "reason should describe the redirect target: {reason}"
+        );
+        assert!(
+            !reason.contains("`cat`"),
+            "reason must not attribute the substitution to `cat`: {reason}"
+        );
+    }
+
+    #[test]
+    fn substitution_in_redirect_target_no_rule_does_not_cross_attribute() {
+        // The literal spec scenario: `cat > "$(badcmd)"` with no rule for
+        // badcmd. The redirect-write floor dominates, but its reason still
+        // describes the redirect target and names no unrelated command.
+        let config = config_with_rules(vec![allow_rule("cat")]);
+        let result = evaluate_command(r#"cat > "$(badcmd)""#, &config, &empty_facts()).unwrap();
+        assert_eq!(result.decision, Decision::Ask);
+        let reason = result.reason.as_deref().unwrap_or("");
+        assert!(
+            reason.contains("redirect"),
+            "reason should describe the redirect target: {reason}"
         );
     }
 

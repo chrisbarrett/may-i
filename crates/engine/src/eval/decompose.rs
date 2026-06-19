@@ -26,6 +26,28 @@ fn kind_from_form(form: SubstitutionForm) -> Option<EmbeddedKind> {
     }
 }
 
+/// The syntactic position that lexically contains a substitution, carried on
+/// [`EvalUnit::EmbeddedCommand`] so a bubbled-up `:ask`/`:deny` reason can name
+/// the position that actually ran the substitution rather than guessing a
+/// global first command. Set by the decompose pass that emits the unit, from
+/// the AST node that pass already holds — attribution at the site of ownership,
+/// so it cannot cross-attribute by construction.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SubstitutionOrigin {
+    /// A word of a simple command. `Some(name)` names the command; `None` when
+    /// the command name is itself dynamic (`$(which python) --version`) and so
+    /// cannot be named.
+    SimpleCommand(Option<String>),
+    /// An assignment value (`dest=$(…)`), naming the assignment target.
+    Assignment(String),
+    /// A `for` loop iteration word (`for x in $(…)`).
+    ForList,
+    /// A `case` subject or arm pattern (`case $(…) in …`).
+    CaseSubject,
+    /// A redirect target word (`cat > "$(…)"`) or heredoc-body substitution.
+    RedirectTarget,
+}
+
 /// Expansion provenance of one argv token. `None` when the token's source
 /// word is literal (its text is its runtime value); `Some(display)` when
 /// the word is expansion-bearing, where `display` is the source-faithful
@@ -51,6 +73,9 @@ pub(crate) enum EvalUnit {
         source: String,
         span: Span,
         kind: Option<EmbeddedKind>,
+        /// The syntactic position that lexically owns this substitution, used to
+        /// attribute a bubbled-up reason to the owning command/assignment/etc.
+        origin: SubstitutionOrigin,
     },
     /// A command with a dynamic name that cannot be resolved.
     DynamicCommand { reason: String, span: Span },
@@ -194,21 +219,41 @@ fn push_embedded_units_from_structural_words(
     };
     match cmd {
         Command::Assignment(a) => {
-            push_embedded_units_from_word(&a.value, diagnostics, units);
+            push_embedded_units_from_word(
+                &a.value,
+                &SubstitutionOrigin::Assignment(a.name.clone()),
+                diagnostics,
+                units,
+            );
             taint(&a.value, units);
         }
         Command::For { words, .. } => {
             for word in words {
-                push_embedded_units_from_word(word, diagnostics, units);
+                push_embedded_units_from_word(
+                    word,
+                    &SubstitutionOrigin::ForList,
+                    diagnostics,
+                    units,
+                );
                 taint(word, units);
             }
         }
         Command::Case { word, arms, .. } => {
-            push_embedded_units_from_word(word, diagnostics, units);
+            push_embedded_units_from_word(
+                word,
+                &SubstitutionOrigin::CaseSubject,
+                diagnostics,
+                units,
+            );
             taint(word, units);
             for arm in arms {
                 for pattern in &arm.patterns {
-                    push_embedded_units_from_word(pattern, diagnostics, units);
+                    push_embedded_units_from_word(
+                        pattern,
+                        &SubstitutionOrigin::CaseSubject,
+                        diagnostics,
+                        units,
+                    );
                     taint(pattern, units);
                 }
             }
@@ -247,7 +292,12 @@ fn push_embedded_units_from_redirect_targets(
     for redirection in redirections {
         match &redirection.target {
             RedirectionTarget::File(word) => {
-                push_embedded_units_from_word(word, diagnostics, units);
+                push_embedded_units_from_word(
+                    word,
+                    &SubstitutionOrigin::RedirectTarget,
+                    diagnostics,
+                    units,
+                );
                 push_redirect_floor(redirection, word, span, units);
                 // Bash expands the target word — a here-string's data feed
                 // (`<<< word`), a write target's pathname (`> /tmp/$SECRET`),
@@ -274,7 +324,12 @@ fn push_embedded_units_from_redirect_targets(
                 let word = may_i_shell_parser::Word {
                     parts: substitutions.clone(),
                 };
-                push_embedded_units_from_word(&word, diagnostics, units);
+                push_embedded_units_from_word(
+                    &word,
+                    &SubstitutionOrigin::RedirectTarget,
+                    diagnostics,
+                    units,
+                );
                 if !quoted {
                     let mut names = Vec::new();
                     scan_parameter_refs(body, &mut names);
@@ -603,7 +658,12 @@ fn decompose_simple_command(
             name: assignment.name.clone(),
             span: sc_span,
         });
-        push_embedded_units_from_word(&assignment.value, diagnostics, units);
+        push_embedded_units_from_word(
+            &assignment.value,
+            &SubstitutionOrigin::Assignment(assignment.name.clone()),
+            diagnostics,
+            units,
+        );
     }
 
     if sc.words.is_empty() {
@@ -622,7 +682,21 @@ fn decompose_simple_command(
         .then(|| resolve_command_name(first_word, const_env))
         .flatten();
 
-    if first_word.is_dynamic() && resolved_command.is_none() {
+    let dynamic_unresolved = first_word.is_dynamic() && resolved_command.is_none();
+    // The owning command name for substitutions in this command's words. `None`
+    // when the command name is itself dynamic, so the origin stays unnamed
+    // rather than guessing.
+    let origin_command = SubstitutionOrigin::SimpleCommand(if dynamic_unresolved {
+        None
+    } else {
+        Some(
+            resolved_command
+                .clone()
+                .unwrap_or_else(|| first_word.to_str()),
+        )
+    });
+
+    if dynamic_unresolved {
         units.push(EvalUnit::DynamicCommand {
             reason: format!(
                 "dynamic command name: {}",
@@ -656,7 +730,7 @@ fn decompose_simple_command(
     }
 
     for word in &sc.words {
-        push_embedded_units_from_word(word, diagnostics, units);
+        push_embedded_units_from_word(word, &origin_command, diagnostics, units);
     }
 
     // Secret-read taint for the read sites this simple command owns: every
@@ -1088,6 +1162,7 @@ fn remove_possible_unsets(
 /// no longer correlates spans against diagnostics.
 fn push_embedded_units_from_word(
     word: &may_i_shell_parser::Word,
+    origin: &SubstitutionOrigin,
     diagnostics: &[ParseDiagnostic],
     units: &mut Vec<EvalUnit>,
 ) {
@@ -1099,6 +1174,7 @@ fn push_embedded_units_from_word(
             source: embedded.source.to_string(),
             span: (embedded.span.start, embedded.span.end),
             kind: kind_from_form(embedded.form),
+            origin: origin.clone(),
         });
     }
 }
@@ -1899,6 +1975,85 @@ mod tests {
                 .iter()
                 .any(|u| matches!(u, EvalUnit::DynamicCommand { .. })),
             "expected DynamicCommand, got: {units:?}"
+        );
+    }
+
+    fn embedded_origin(input: &str) -> Option<SubstitutionOrigin> {
+        decompose_input(input).iter().find_map(|u| match u {
+            EvalUnit::EmbeddedCommand { origin, .. } => Some(origin.clone()),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn decompose_embedded_command_carries_substitution_origin() {
+        // Bare assignment → assignment-target origin.
+        assert_eq!(
+            embedded_origin("dest=$(x)"),
+            Some(SubstitutionOrigin::Assignment("dest".into()))
+        );
+        // Simple-command word → simple-command origin naming the command.
+        assert_eq!(
+            embedded_origin(r#"grep "$(x)" f"#),
+            Some(SubstitutionOrigin::SimpleCommand(Some("grep".into())))
+        );
+        // Redirect target → redirect-target origin.
+        assert_eq!(
+            embedded_origin(r#"cat > "$(x)""#),
+            Some(SubstitutionOrigin::RedirectTarget)
+        );
+        // The motivating script: the substitution is owned by the assignment to
+        // `dest` inside `main`'s body, NOT by the unrelated leading `set`.
+        assert_eq!(
+            embedded_origin("set -euo pipefail; main() { dest=$(x); }; main"),
+            Some(SubstitutionOrigin::Assignment("dest".into()))
+        );
+    }
+
+    #[test]
+    fn decompose_embedded_origin_assignment_prefix() {
+        // `FOO=$(x) grep` routes through `decompose_simple_command`'s
+        // assignment-prefix branch, distinct from the bare `Command::Assignment`
+        // path — the two must agree on the assignment-target origin.
+        assert_eq!(
+            embedded_origin("FOO=$(x) grep f"),
+            Some(SubstitutionOrigin::Assignment("FOO".into()))
+        );
+    }
+
+    #[test]
+    fn decompose_embedded_origin_heredoc_body() {
+        // A substitution in an unquoted heredoc body is owned by the
+        // redirect-targets pass and tagged `RedirectTarget`.
+        assert_eq!(
+            embedded_origin("cat <<EOF\n$(x)\nEOF\n"),
+            Some(SubstitutionOrigin::RedirectTarget)
+        );
+    }
+
+    #[test]
+    fn decompose_embedded_origin_for_list_and_case() {
+        assert_eq!(
+            embedded_origin("for x in $(x); do :; done"),
+            Some(SubstitutionOrigin::ForList)
+        );
+        assert_eq!(
+            embedded_origin("case $(x) in *) :;; esac"),
+            Some(SubstitutionOrigin::CaseSubject)
+        );
+        assert_eq!(
+            embedded_origin("case $y in $(x)) :;; esac"),
+            Some(SubstitutionOrigin::CaseSubject)
+        );
+    }
+
+    #[test]
+    fn decompose_embedded_origin_dynamic_command_name_is_unnamed() {
+        // `$(which python)` is the command-name word; the command is dynamic, so
+        // the simple-command origin carries no name.
+        assert_eq!(
+            embedded_origin("$(which python) --version"),
+            Some(SubstitutionOrigin::SimpleCommand(None))
         );
     }
 }
