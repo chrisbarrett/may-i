@@ -7,6 +7,7 @@
 
 use may_i_config::parse_config;
 use may_i_core::{ContextFacts, Decision};
+use proptest::prelude::*;
 
 use crate::eval::evaluate_command;
 
@@ -40,4 +41,101 @@ fn constant_variables_resolve_a_mixed_argument_word() {
         !reason.contains("unresolved shell expansion"),
         "resolved argument must not floor as unresolved: {reason:?}"
     );
+}
+
+#[test]
+fn partially_resolved_argument_word_still_floors() {
+    // Only `BUCKET` is constant; `KEY` has no qualifying assignment, so the
+    // whole word stays expansion-bearing (all-or-nothing) and floors the allow.
+    // The regex matches the literal `s3://` prefix that survives flattening, so
+    // the matcher attempts the word and then floors on its unresolved part.
+    let config = r#"(rule "aws" (when (anywhere (regex "^s3://")) (allow "s3 url")))"#;
+    let result = decide(config, r#"BUCKET=b; aws s3 cp "s3://$BUCKET/$KEY" /tmp/x"#);
+    assert!(
+        result.decision >= Decision::Ask,
+        "partially-resolved word must floor: {:?} ({:?})",
+        result.decision,
+        result.reason
+    );
+    let reason = result.reason.as_deref().unwrap_or("");
+    assert!(
+        reason.contains("unresolved shell expansion"),
+        "expected an unresolved-expansion floor: {reason:?}"
+    );
+}
+
+#[test]
+fn resolved_argument_is_gated_by_a_deny_rule() {
+    // `P=/etc/shadow; cat "$P"` resolves the argument to `/etc/shadow`, so a
+    // deny keyed on that real value fires — resolution tightens soundly (D3).
+    let config = r#"(rule "cat" (when (anywhere "/etc/shadow") (deny "no shadow")))"#;
+    let result = decide(config, r#"P=/etc/shadow; cat "$P""#);
+    assert_eq!(
+        result.decision,
+        Decision::Deny,
+        "resolved argument must be gated by the deny: {:?}",
+        result.reason
+    );
+}
+
+#[test]
+fn argument_from_a_substitution_stays_unresolved() {
+    // `T=$(mktemp)` is not provably constant, so `$T` stays expansion-bearing.
+    let config = r#"(rule "rm" (when (anywhere (regex ".")) (allow "any")))"#;
+    let result = decide(config, r#"T=$(mktemp); rm "$T""#);
+    assert!(
+        result.decision >= Decision::Ask,
+        "substitution-derived argument must floor: {:?} ({:?})",
+        result.decision,
+        result.reason
+    );
+}
+
+#[test]
+fn argument_used_before_its_assignment_stays_unresolved() {
+    // `rm "$T"; T=/tmp/x` — at the use site `T` is the inherited environment,
+    // not `/tmp/x` (D2 on the argument path), so the word stays unresolved and
+    // the allow keyed on the literal `/tmp/x` must not fire. (Contrast the
+    // straight-line `T=/tmp/x; rm "$T"`, which would resolve and allow.)
+    let config = r#"(rule "rm" (when (anywhere "/tmp/x") (allow "tmp x")))"#;
+    let used_before = decide(config, r#"rm "$T"; T=/tmp/x"#);
+    assert!(
+        used_before.decision >= Decision::Ask,
+        "use-before-assignment argument must not resolve to allow: {:?} ({:?})",
+        used_before.decision,
+        used_before.reason
+    );
+
+    // Sanity: the assign-then-use form does resolve and allow, isolating the
+    // ordering as the cause.
+    let assign_first = decide(config, r#"T=/tmp/x; rm "$T""#);
+    assert_eq!(
+        assign_first.decision,
+        Decision::Allow,
+        "assign-then-use must resolve and allow: {:?}",
+        assign_first.reason
+    );
+}
+
+proptest! {
+    /// Metamorphic: for a provably-constant argument, the decision and reason
+    /// equal those of the same command with the resolved literal written
+    /// directly in place of the `$VAR` (D3 — resolution reproduces the literal).
+    #[test]
+    fn prop_resolved_argument_equals_literal_argument(
+        value in "[a-z][a-z0-9/_.-]{0,12}",
+        config_decision in prop_oneof![Just("allow"), Just("ask"), Just("deny")],
+    ) {
+        // A rule that keys on the exact resolved value, so resolution is what
+        // makes (or fails to make) the match.
+        let config = format!(
+            r#"(rule "tool" (when (anywhere "{value}") ({config_decision} "r")))"#
+        );
+
+        let resolved = decide(&config, &format!("A={value}; tool {value}_static $A"));
+        let literal = decide(&config, &format!("tool {value}_static {value}"));
+
+        prop_assert_eq!(resolved.decision, literal.decision);
+        prop_assert_eq!(resolved.reason, literal.reason);
+    }
 }
