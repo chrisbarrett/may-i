@@ -242,6 +242,54 @@ fn warn_about_wrapper_rules(config: &may_i_core::ast::Config) {
 mod tests {
     use super::*;
 
+    /// `(safe-env-vars "A" "B")` migrates to `(env "A" (allow)) (env "B"
+    /// (allow))` and the migrated text re-parses cleanly.
+    #[test]
+    fn safe_env_vars_migrates_to_env_allow_forms() {
+        let (forms, errors) = parse_cst(r#"(safe-env-vars "A" "B")"#);
+        assert!(errors.is_empty(), "{errors:?}");
+        let migrated = migrate_forms(forms);
+        let text = migrated
+            .iter()
+            .map(|f| f.serialize())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(text, "(env \"A\" (allow))\n(env \"B\" (allow))");
+        // Re-parses cleanly and lowers to the same allowlist.
+        let config = may_i_config::parse_config(&text).expect("migrated config parses");
+        assert!(config.security.safe_env_vars.contains("A"));
+        assert!(config.security.safe_env_vars.contains("B"));
+        assert!(config.security.env_caps.is_empty());
+    }
+
+    /// Class A: the `:safe-env-vars` trust scope hashes identically before
+    /// and after the migration, so a prior approval carries over without a
+    /// rehash. Both spellings lower to the same allowlist and therefore the
+    /// same canonical `(safe-env-vars …)` form.
+    #[test]
+    fn safe_env_vars_migration_preserves_trust_hash() {
+        use may_i_engine::trust::compute_trust_views;
+
+        let scope_hash = |src: &str| -> String {
+            let mut config = may_i_config::parse_config(src).expect("parses");
+            // The trust scope only materialises when entries are loaded.
+            config.security.has_loaded_env_vars = true;
+            let views = compute_trust_views(&config);
+            views
+                .iter()
+                .find(|v| v.program == ":safe-env-vars")
+                .map(|v| v.hash.clone())
+                .expect(":safe-env-vars scope view present")
+        };
+
+        let before = scope_hash(r#"(safe-env-vars "A" "B")"#);
+        let after = scope_hash(r#"(env "A" (allow)) (env "B" (allow))"#);
+        assert_eq!(
+            before, after,
+            "migration must preserve the :safe-env-vars trust hash (Class A)"
+        );
+    }
+
     #[test]
     fn test_generate_diff_with_changes() {
         let original = "(rule (command git) (effect :allow))\n";

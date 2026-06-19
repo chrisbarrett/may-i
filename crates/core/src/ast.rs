@@ -1313,14 +1313,44 @@ fn collect_parameter_names_in_effect(effect: &Effect, out: &mut Vec<String>) {
     }
 }
 
+/// An environment-variable capability: `(env NAME DECISION)`. Governs
+/// uses of the variable `NAME` both in write position (a `NAME=VALUE`
+/// prefix) and in read position (a `$NAME` expansion in argv). `DECISION`
+/// is a fact-conditioned expression (see the capability-decision spec).
+///
+/// An *unconditional* `(env NAME (allow))` is lowered into
+/// [`SecurityConfig::safe_env_vars`] instead of becoming an `EnvCapability`
+/// — it is exactly the historic `(safe-env-vars NAME)` allowlist entry, so
+/// the two spellings share one representation and one trust scope.
+#[derive(Debug, Clone)]
+pub struct EnvCapability {
+    /// The environment-variable name this capability governs.
+    pub name: String,
+    /// The fact-conditioned decision contributed to the segment meet.
+    pub decision: Spanned<Effect>,
+}
+
+/// A redirect-write capability: `(redirect PATTERN? DECISION)`. Governs
+/// write redirections by their target. `pattern` is the target matcher
+/// (any [`Expr`]); `None` matches any write target.
+#[derive(Debug, Clone)]
+pub struct RedirectCapability {
+    /// Target matcher, or `None` for "any write target".
+    pub pattern: Option<crate::pattern::Expr<Effect>>,
+    /// The fact-conditioned decision contributed to the segment meet.
+    pub decision: Spanned<Effect>,
+}
+
 /// Security configuration.
 #[derive(Debug, Clone, Default)]
 pub struct SecurityConfig {
     /// Environment-variable names that may appear in command prefix
     /// position (`NAME=VALUE cmd`) without flooring the decision.
-    /// Declared by `(safe-env-vars …)` in the primary config.
+    /// Declared by `(safe-env-vars …)` or by an unconditional
+    /// `(env NAME (allow))` in the primary config (the two lower to the
+    /// same allowlist entry).
     pub safe_env_vars: std::collections::HashSet<String>,
-    /// `(safe-env-vars …)` entries contributed by `(load …)`-included or
+    /// Allowlist entries contributed by `(load …)`-included or
     /// repo-local files. Subject to the `:safe-env-vars` trust scope: the
     /// loader clears this set when the scope is unapproved, so entries
     /// present here have passed trust.
@@ -1328,13 +1358,68 @@ pub struct SecurityConfig {
     /// Whether any safe-env-vars entries came from a loaded file (set at
     /// parse time, before trust filtering — drives trust hashing).
     pub has_loaded_env_vars: bool,
+    /// `(env NAME DECISION)` capabilities from the primary config whose
+    /// decision is not an unconditional `(allow)` (ask/deny/conditional).
+    pub env_caps: Vec<EnvCapability>,
+    /// `(env …)` capabilities contributed by loaded files. Subject to the
+    /// `:env` trust scope; cleared when that scope is unapproved.
+    pub loaded_env_caps: Vec<EnvCapability>,
+    /// Whether any `(env …)` capability came from a loaded file.
+    pub has_loaded_env_caps: bool,
+    /// `(redirect …)` capabilities from the primary config.
+    pub redirect_caps: Vec<RedirectCapability>,
+    /// `(redirect …)` capabilities contributed by loaded files. Subject to
+    /// the `:redirect` trust scope; cleared when that scope is unapproved.
+    pub loaded_redirect_caps: Vec<RedirectCapability>,
+    /// Whether any `(redirect …)` capability came from a loaded file.
+    pub has_loaded_redirect_caps: bool,
 }
 
 impl SecurityConfig {
-    /// Whether `name` is in the effective safe-env-vars set (primary
-    /// entries plus trust-approved loaded entries).
+    /// Whether `name` is in the effective safe-env-vars allowlist (primary
+    /// entries plus trust-approved loaded entries) — an unconditional
+    /// env-write allow.
     pub fn is_safe_env_var(&self, name: &str) -> bool {
         self.safe_env_vars.contains(name) || self.loaded_safe_env_vars.contains(name)
+    }
+
+    /// Every effective `(env NAME …)` capability governing `name` (primary
+    /// then loaded), in declaration order. There may be more than one — two
+    /// `(env "X" …)` forms, or a primary and a loaded one — and the caller
+    /// meets their decisions strictest-wins, so none is silently shadowed.
+    pub fn env_capabilities<'a>(
+        &'a self,
+        name: &'a str,
+    ) -> impl Iterator<Item = &'a EnvCapability> + 'a {
+        self.env_caps
+            .iter()
+            .chain(self.loaded_env_caps.iter())
+            .filter(move |c| c.name == name)
+    }
+
+    /// Names governed by an `(env …)` capability (effective primary +
+    /// loaded). These are the names whose `$NAME` expansions are candidates
+    /// for secret-read taint; the read decision is resolved at eval time
+    /// against the active facts.
+    ///
+    /// Deliberately excludes [`Self::safe_env_vars`]: those are unconditional
+    /// env-*write* allows, which are read-inert (an allow contributes nothing
+    /// in read position), so they are never taint candidates. The exclusion is
+    /// sound only while that invariant holds — every name reaching
+    /// `safe_env_vars` must be a read-inert write-allow.
+    pub fn env_capability_names(&self) -> std::collections::HashSet<String> {
+        self.env_caps
+            .iter()
+            .chain(self.loaded_env_caps.iter())
+            .map(|c| c.name.clone())
+            .collect()
+    }
+
+    /// All effective redirect-write capabilities (primary then loaded).
+    pub fn redirect_capabilities(&self) -> impl Iterator<Item = &RedirectCapability> {
+        self.redirect_caps
+            .iter()
+            .chain(self.loaded_redirect_caps.iter())
     }
 }
 

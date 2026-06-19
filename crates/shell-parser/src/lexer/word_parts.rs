@@ -312,6 +312,44 @@ impl Lexer {
                     }
                 }
             }
+            Some('[') => {
+                // Deprecated arithmetic expansion `$[expr]` — semantically
+                // identical to `$((expr))`; bash dereferences identifiers in
+                // `expr`. Model it as `Arithmetic` so every consumer
+                // (expansion-soundness, secret-read taint) treats it uniformly.
+                self.advance(); // skip [
+                let body_start = self.byte_pos;
+                let mut expr = String::new();
+                let mut found = false;
+                while let Some(c) = self.peek() {
+                    if c == ']' {
+                        found = true;
+                        break;
+                    }
+                    expr.push(c);
+                    self.advance();
+                }
+                let body_end = self.byte_pos;
+                if found {
+                    self.advance(); // skip ]
+                } else {
+                    self.diagnostics.push(ParseDiagnostic {
+                        span: Span {
+                            start: dollar_pos,
+                            end: self.byte_pos,
+                        },
+                        kind: ParseDiagnosticKind::UnterminatedArithmetic,
+                        severity: Severity::Error,
+                    });
+                }
+                Some(WordPart::Arithmetic {
+                    source: expr,
+                    span: Span {
+                        start: body_start,
+                        end: body_end,
+                    },
+                })
+            }
             Some('{') => {
                 self.advance(); // skip {
                 let result = self.read_parameter_expansion();

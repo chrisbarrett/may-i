@@ -21,7 +21,8 @@ If a change doesn't fit one of these, question whether it belongs.
 | Term      | Definition                                                                                                                                                                                                                                                                | Example                                                            |
 | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
 | Rule      | Pattern + decision for one top-level command.                                                                                                                                                                                                                             | `(rule <command> <expr>)`                                          |
-| Decision  | The answer a rule gives. Spelled with the verbs `(allow REASON?)`, `(ask REASON?)`, `(deny REASON?)`. _Avoid_: "verdict", "effect".                                                                                                                                       | `(allow)`, `(ask "review")`, `(deny "danger")`                     |
+| Decision  | The answer a rule **or capability** gives. Spelled with the verbs `(allow REASON?)`, `(ask REASON?)`, `(deny REASON?)`. Combined strictest-wins under `:allow < :ask < :deny`; `:allow` is the lattice bottom, so a contributor (rule or capability) yielding `:allow` never widens past what another unit already earned. _Avoid_: "verdict", "effect".                                                                                                                                       | `(allow)`, `(ask "review")`, `(deny "danger")`                     |
+| Capability | A config-level decision attached to a shell-language **effect** — a redirect-write target (`(redirect PAT? DECISION)`) or an environment variable (`(env NAME DECISION)`) — rather than to a command. It contributes its decision to the same strictest-wins meet as the command's rule, independently of which command runs. Because `:allow` is the lattice bottom, a capability `allow` only *releases a floor*; a capability `deny`/`ask` actively tightens. `(safe-env-vars …)` is one instance (env-write allowlist). The DECISION is the fact-conditioned subset of the rule-body language (facts + `(if/when/unless/cond/and/or/not …)`; no argv analysis). Primary-config-governed and trust-scoped (`:env`, `:redirect`). | `(env "LD_PRELOAD" (deny))`, `(redirect (regex "^/tmp/") (allow))` |
 | Reason    | Optional explanatory string passed to a decision verb. Shown in traces and prompts.                                                                                                                                                                                       | `"Confirm recursive deletion"`                                     |
 | Fact      | Keyed runtime context. See below.                                                                                                                                                                                                                                         | `:via`, `[:env "prod"]`                                            |
 | Pattern   | Anything that matches part of a command. Includes argv matchers (`(flag …)`, `(positional …)`, …) and the smaller matchers used inside them (`"lit"`, `*`, `(regex …)`, `(or …)`, …). One name, one mental model. See below.                                              |                                                                    |
@@ -53,11 +54,52 @@ Two distinct combination layers:
 - **Across rules** (top-level): the strictest decision wins under
   `:allow < :ask < :deny`. Tied reasons are deduplicated, sorted, and
   joined with `"; "` so the result does not depend on rule order.
+  **Capabilities** join this same meet: each segment's decision is the
+  strictest of its command rule plus every capability (redirect-write,
+  env-write, env-read taint) that applies. Because `:allow` is the lattice
+  bottom, a capability `allow` only releases a floor another unit imposed —
+  it can never authorise a command the command rule did not already allow.
 - **Inside a rule body** (`and`, `or`, `not`): matching, not strictness.
   A child either yields a decision or yields _no match_. `and`
   short-circuits on the first no-match and otherwise returns the last
   child's decision; `or` returns the first child's decision; `not`
   flips no-match ↔ `allow` and preserves `ask`/`deny`.
+
+### Capability
+
+A **capability** attaches a decision to an _effect the shell offers_, not to
+a command: writing a redirect target (`(redirect PAT? DECISION)`), setting an
+environment variable, or reading a secret one into argv (`(env NAME DECISION)`).
+It contributes to the strictest-wins meet alongside the command's rule, so a
+capability is O(1) policy for an O(rules) shell concern.
+
+The env axis is **asymmetric by threat model**, and the asymmetry is
+deliberate:
+
+- **Write** (`NAME=VALUE` prefix) defaults to suspect (`:ask`): a prefix like
+  `LD_PRELOAD=…` changes what executes. `(env NAME (allow))` lifts that floor
+  (it _is_ `(safe-env-vars NAME)`); `(env NAME (ask|deny))` tightens.
+- **Read** (`$NAME` in an argv word) defaults to benign (`:allow`).
+  `(env NAME (ask|deny))` taints the name: its appearance as a parameter
+  expansion in argv contributes `:ask`/`:deny` — secret-exfiltration defence.
+  `(env NAME (allow))` is **silently write-only**; it does nothing in read
+  position (an allow cannot make an unprovable expansion provable).
+
+Secret-read enforcement is **structural, not dataflow**: it fires on the
+parameter-expansion token may-i already sees in the parsed command and never
+traces the value to a sink. A legitimate consumer that reads its secret from
+its _own_ environment (`aws`, `gh`, `docker login`) never puts `$NAME` in
+argv, so it is unaffected; only an explicit expansion-into-argv — the
+exfiltration shape — is caught.
+
+A capability's DECISION is the **fact-conditioned subset** of the rule-body
+language: the decision verbs, `(and|or|not …)`, `(if|when|unless|cond …)`, and
+`(fact? …)` (and `(define …)`d names resolving to those). Argv analysis and
+parser bindings (`(positional …)`, `(flag …)`, `(authorise …)`, `(matches? …)`,
+…) are rejected at load time — a capability is command-agnostic, so it has no
+argv referent, and excluding the expansion-bearing argv layer is what keeps a
+fact-conditioned `(allow)` sound toward `:allow`. Capabilities are
+primary-config-governed and trust-scoped exactly as `(safe-env-vars …)` is.
 
 ### Fact
 

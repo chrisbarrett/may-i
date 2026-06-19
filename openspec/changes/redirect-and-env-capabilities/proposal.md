@@ -2,7 +2,7 @@
 > Supersedes the `rules-grant-redirect-capability` draft. Forms are bare
 > top-level `(env …)` / `(redirect …)` (no umbrella head), sharing the shape
 > `(HEAD SUBJECT DECISION)`; "capability" is the prose term, not a DSL head
-> (design.md D5).
+> (design.md D7).
 
 ## Why
 
@@ -10,8 +10,9 @@ v0.9.0 made three pieces of shell structure visible to policy — redirect
 targets, env-assignment prefixes, expansion-bearing words — and floored each to
 `:ask`. Two follow-on problems surfaced in use:
 
-1. **The redirect floor has no opt-out.** `tee out.txt`, `cmd >> log`,
-   `sort < f` ask forever, even under fully trusted commands. The deferred fix
+1. **The redirect floor has no opt-out.** `cmd > out.txt`, `cmd >> log`
+   ask forever, even under fully trusted commands (and `sort < f` asked on a
+   read that performs no write). The deferred fix
    (`rules-grant-redirect-capability`) bolted `(redirects :allow)` onto every
    command rule. That is the wrong shape: a redirect is a feature of the *shell
    language*, orthogonal to which command runs. Annotating it per rule is
@@ -46,7 +47,7 @@ it; the redirect opt-out is another; secret-read taint is the third.
   the target:
 
   ```lisp
-  (redirect (glob "/tmp/**" "/dev/null") (allow))
+  (redirect (or (regex "^/tmp/") "/dev/null") (allow))
   ```
 
   An expansion-bearing target cannot satisfy it toward `:allow` (per the

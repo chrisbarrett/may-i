@@ -40,6 +40,7 @@ mod parser_style_form;
 mod positional_dotted_tail;
 mod predicate_pushdown;
 mod rename_has_to_fact;
+mod safe_env_vars_to_env;
 mod simplify_command;
 mod strip_redundant_boundary;
 mod wrapper_to_rule;
@@ -152,8 +153,21 @@ pub fn migrate(node: Box<CstNode>) -> Box<CstNode> {
 }
 
 /// Migrate multiple top-level forms.
+///
+/// Most forms migrate one-to-one via [`migrate`]. The exception is
+/// `(safe-env-vars …)`, which expands one-to-many into `(env NAME (allow))`
+/// forms (see [`safe_env_vars_to_env`]) — a rewrite that cannot be a
+/// node-level [`RewriteFn`].
 pub fn migrate_forms(forms: Vec<Box<CstNode>>) -> Vec<Box<CstNode>> {
-    forms.into_iter().map(migrate).collect()
+    forms
+        .into_iter()
+        .flat_map(
+            |form| match safe_env_vars_to_env::expand_safe_env_vars(&form) {
+                Some(expanded) => expanded,
+                None => vec![migrate(form)],
+            },
+        )
+        .collect()
 }
 
 /// Validate that migrated output can be parsed with the canonical parser.
@@ -294,8 +308,14 @@ pub fn analyze_migration(source: &str) -> MigrationAnalysis {
     // Analyze each form
     for form in &forms {
         let original = form.serialize();
-        let migrated_form = migrate(form.clone());
-        let migrated = migrated_form.serialize();
+        let migrated = match safe_env_vars_to_env::expand_safe_env_vars(form) {
+            Some(expanded) => expanded
+                .iter()
+                .map(|f| f.serialize())
+                .collect::<Vec<_>>()
+                .join(" "),
+            None => migrate(form.clone()).serialize(),
+        };
 
         if original != migrated {
             // Form changed - create a diff

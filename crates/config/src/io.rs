@@ -495,6 +495,34 @@ fn merge_config(target: &mut may_i_core::ast::Config, extra: may_i_core::ast::Co
     if any_loaded {
         target.security.has_loaded_env_vars = true;
     }
+    // `(env …)` and `(redirect …)` capabilities from a merged file are
+    // loaded from the target's perspective, whichever set they parsed into;
+    // they stay under their per-axis trust scope (`:env` / `:redirect`).
+    let any_env_cap = extra.security.has_loaded_env_caps || !extra.security.env_caps.is_empty();
+    target
+        .security
+        .loaded_env_caps
+        .extend(extra.security.env_caps);
+    target
+        .security
+        .loaded_env_caps
+        .extend(extra.security.loaded_env_caps);
+    if any_env_cap {
+        target.security.has_loaded_env_caps = true;
+    }
+    let any_redirect_cap =
+        extra.security.has_loaded_redirect_caps || !extra.security.redirect_caps.is_empty();
+    target
+        .security
+        .loaded_redirect_caps
+        .extend(extra.security.redirect_caps);
+    target
+        .security
+        .loaded_redirect_caps
+        .extend(extra.security.loaded_redirect_caps);
+    if any_redirect_cap {
+        target.security.has_loaded_redirect_caps = true;
+    }
 }
 
 /// Discover the repository root containing `cwd`, if any.

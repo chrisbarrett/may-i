@@ -887,7 +887,7 @@ mod parser_engine_invariants {
         #[test]
         fn prop_embedded_source_matches_span_slice(input in arb_shell_chars()) {
             let parse_result = may_i_shell_parser::parse(&input);
-            let units = decompose(&parse_result.command, &input, &parse_result.diagnostics);
+            let units = decompose(&parse_result.command, &input, &parse_result.diagnostics, &std::collections::HashSet::new());
             for unit in &units {
                 if let EvalUnit::EmbeddedCommand { source, span, .. } = unit {
                     let (s, e) = *span;
@@ -907,7 +907,7 @@ mod parser_engine_invariants {
             (input, q_start, q_end) in arb_with_single_quoted_region()
         ) {
             let parse_result = may_i_shell_parser::parse(&input);
-            let units = decompose(&parse_result.command, &input, &parse_result.diagnostics);
+            let units = decompose(&parse_result.command, &input, &parse_result.diagnostics, &std::collections::HashSet::new());
             for unit in &units {
                 let (s, e) = match unit {
                     EvalUnit::SimpleCommand { span, .. }
@@ -915,7 +915,8 @@ mod parser_engine_invariants {
                     | EvalUnit::EmbeddedCommand { span, .. } => *span,
                     EvalUnit::DynamicCommand { .. }
                     | EvalUnit::EnvPrefix { .. }
-                    | EvalUnit::RedirectTarget { .. } => continue,
+                    | EvalUnit::RedirectTarget { .. }
+                    | EvalUnit::EnvRead { .. } => continue,
                 };
                 let strictly_inside =
                     s >= q_start && e <= q_end && (s > q_start || e < q_end);
@@ -941,7 +942,7 @@ mod parser_engine_invariants {
         fn prop_recursive_segments_stay_within_parent_span(input in arb_shell_chars()) {
             let result = evaluate_command(&input, &empty_config(), &empty_facts()).unwrap();
             let parse_result = may_i_shell_parser::parse(&input);
-            let units = decompose(&parse_result.command, &input, &parse_result.diagnostics);
+            let units = decompose(&parse_result.command, &input, &parse_result.diagnostics, &std::collections::HashSet::new());
             for unit in &units {
                 if let EvalUnit::EmbeddedCommand { span, .. } = unit {
                     let (p_s, p_e) = *span;
@@ -1107,7 +1108,7 @@ mod parser_engine_invariants {
             ast_spans.sort_unstable();
 
             let mut embedded_spans: Vec<(usize, usize)> =
-                decompose(&pr.command, &input, &pr.diagnostics)
+                decompose(&pr.command, &input, &pr.diagnostics, &std::collections::HashSet::new())
                     .iter()
                     .filter_map(|u| match u {
                         EvalUnit::EmbeddedCommand { span, .. } => Some(*span),
@@ -1261,7 +1262,12 @@ mod parser_engine_invariants {
     fn heredoc_body_inviolable_simple() {
         let input = "cat <<'EOF'\nrm -rf /\nEOF\n";
         let pr = may_i_shell_parser::parse(input);
-        let units = decompose(&pr.command, input, &pr.diagnostics);
+        let units = decompose(
+            &pr.command,
+            input,
+            &pr.diagnostics,
+            &std::collections::HashSet::new(),
+        );
         for unit in &units {
             if let EvalUnit::SimpleCommand { command, .. } = unit {
                 assert_ne!(
@@ -1281,7 +1287,12 @@ mod parser_engine_invariants {
     fn regression_2026_05_11_proptest_command() {
         let input = "git commit -m \"$(cat <<'EOF'\nFix overlapping segment spans for unclosed `(...)` substitutions.\n\n`prop_top_level_segments_disjoint` proptest now covers this.\nEOF\n)\"";
         let parse_result = may_i_shell_parser::parse(input);
-        let units = decompose(&parse_result.command, input, &parse_result.diagnostics);
+        let units = decompose(
+            &parse_result.command,
+            input,
+            &parse_result.diagnostics,
+            &std::collections::HashSet::new(),
+        );
         for unit in &units {
             if let EvalUnit::SimpleCommand { command, .. } = unit {
                 assert!(
@@ -1298,6 +1309,18 @@ mod parser_engine_invariants {
     //
     //   Spec: § All cross-boundary invariants SHALL be continuously verified.
     //     — established by removing every `#[ignore]` from this module.
+    //   Spec: § Positional matching terminates within a step budget.
+    //     — established by `eval::positional::tests::nullable_group_terminates`
+    //       and `budget_exhaustion_returns_no_match` (the nullable-iteration
+    //       guard and the step-budget no-match), plus
+    //       `ast::tests::config_carries_matcher_budget_with_high_default` (the
+    //       config-structure budget with a high default and no surface syntax).
+    //   Spec: § Constrained matches against expansion-bearing args stay unprovable under groups.
+    //     — established by
+    //       `eval::positional::tests::constrained_match_in_repeated_group_records_provenance`
+    //       and `wildcard_match_in_repeated_group_records_no_provenance` (a
+    //       constrained match against an expansion-bearing arg carries its
+    //       provenance along the winning path; a bare wildcard does not).
     //   Spec: § WordPart spans are derivable from the AST alone.
     //     — established by the engine reading spans from the AST in
     //       `decompose.rs::push_embedded_units_from_word` and the deletion of
