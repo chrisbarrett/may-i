@@ -220,16 +220,19 @@ fn match_positional_recursive(
         }
     };
 
+    // All terms consumed → success. Checked before the budget guard so that a
+    // budget that runs out exactly at the base case still succeeds, rather than
+    // emitting a phantom no-match element for a non-existent term (which would
+    // push `elements.len()` past `patterns.len()`).
+    if pat_idx >= patterns.len() {
+        return succeed(evidence);
+    }
+
     // Budget exhaustion: return no-match (the decision floors to :ask).
     if *budget == 0 {
         return no_match(evidence, false);
     }
     *budget -= 1;
-
-    // All terms consumed → success.
-    if pat_idx >= patterns.len() {
-        return succeed(evidence);
-    }
 
     let term = &patterns[pat_idx];
     let candidates = term_candidates(args, expansions, term, arg_idx, budget);
@@ -809,22 +812,71 @@ mod tests {
 
     #[test]
     fn budget_exhaustion_returns_no_match() {
-        // A pathological nested repetition over many args. With a tiny budget
-        // the matcher must give up (no-match), never falsely succeed-allow.
-        let patterns = vec![group(
-            Quantifier::ZeroOrMore,
-            vec![group(
-                Quantifier::ZeroOrMore,
-                vec![PosTerm::single(Quantifier::ZeroOrMore, Expr::Wildcard)],
-            )],
-        )];
-        let args: Vec<String> = (0..12).map(|i| format!("a{i}")).collect();
-        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        // A catastrophic nested repetition over a GENUINELY non-matching input:
+        // (* (* (+ "a"))) "b" with no "b" present. The matcher must terminate and
+        // floor to no-match at every budget — never hang, never falsely allow.
         const NONE_EXP: Expansion = None;
+        let patterns = vec![
+            group(
+                Quantifier::ZeroOrMore,
+                vec![group(
+                    Quantifier::ZeroOrMore,
+                    vec![PosTerm::single(Quantifier::OneOrMore, lit("a"))],
+                )],
+            ),
+            PosTerm::one(lit("b")),
+        ];
+        let args: Vec<String> = (0..12).map(|_| "a".to_string()).collect();
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let exps: Vec<&Expansion> = vec![&NONE_EXP; refs.len()];
-        // Tiny budget: matching cannot complete.
-        let m = match_positional_patterns_budgeted(&refs, &exps, &patterns, 50);
-        assert!(!m.matched, "budget exhaustion must return no-match");
+        for budget in [10u64, 50, 1000, 100_000] {
+            let m = match_positional_patterns_budgeted(&refs, &exps, &patterns, budget);
+            assert!(
+                !m.matched,
+                "non-matching catastrophic input must floor to no-match (budget {budget})"
+            );
+        }
+    }
+
+    #[test]
+    fn tiny_budget_floors_satisfiable_match_to_no_match() {
+        // Same pattern + args; budget is the only variable. A budget too small to
+        // reach the second mandatory term floors to no-match (conservative); an
+        // adequate budget finds the match.
+        const NONE_EXP: Expansion = None;
+        let patterns = vec![PosTerm::one(lit("a")), PosTerm::one(lit("b"))];
+        let args = ["a", "b"];
+        let exps: Vec<&Expansion> = vec![&NONE_EXP; args.len()];
+
+        let floored = match_positional_patterns_budgeted(&args, &exps, &patterns, 1);
+        assert!(!floored.matched, "budget 1 cannot reach the second term");
+
+        let adequate = match_positional_patterns_budgeted(&args, &exps, &patterns, 100);
+        assert!(adequate.matched, "adequate budget matches");
+    }
+
+    #[test]
+    fn budget_exhaustion_at_base_case_yields_no_phantom_element() {
+        // Regression (fuzz crash-14657a19): with budget exactly 1, the matcher
+        // decrements at pat_idx 0, then hits the all-terms-consumed base case at
+        // pat_idx 1 with budget 0. The base case must win there — emitting a
+        // phantom no-match element for a non-existent term used to push
+        // `elements.len()` past `patterns.len()`, panicking the trace builder.
+        let patterns = vec![PosTerm::one(lit("a"))];
+        let args = ["a"];
+        const NONE_EXP: Expansion = None;
+        let exps: Vec<&Expansion> = vec![&NONE_EXP; args.len()];
+
+        let m = match_positional_patterns_budgeted(&args, &exps, &patterns, 1);
+
+        assert!(
+            m.elements.len() <= patterns.len(),
+            "each term yields at most one element: got {} elements for {} patterns",
+            m.elements.len(),
+            patterns.len()
+        );
+        // Must not panic (this is the crash the fuzzer found).
+        let _ = build_positional_element_details(&args, &patterns, &m.elements);
     }
 
     // --- Task 3.8: provenance for constrained matches inside a repeated group ---
