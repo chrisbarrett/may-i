@@ -72,4 +72,4 @@ rules:
     - Each task is a `- [ ]` checkbox under a numbered `## N. <group>` heading; the apply phase parses this format.
     - Group by dependency order — earliest tasks first.
     - Verification tasks (running validators, running tests, confirming output) go in a final group, not interspersed.
-    - If the change adds or modifies a requirement for a user-facing capability (its stable spec declares `audience: user`), include a task naming `REFERENCE.md` — the shipped manual (`may-i reference`). It is a consideration task: edit REFERENCE.md or record "verified, no surface change". Enforced by `scripts/validate-change-doc-sync.sh`.
+    - 'If the change adds or modifies a requirement for a user-facing capability (its stable spec declares `audience: user`), include a task naming `REFERENCE.md` — the shipped manual (`may-i reference`). It is a consideration task: edit REFERENCE.md or record "verified, no surface change". Enforced by `scripts/validate-change-doc-sync.sh`.'
