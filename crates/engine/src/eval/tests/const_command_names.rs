@@ -103,6 +103,25 @@ fn reassignment_makes_the_value_not_provable() {
     );
 }
 
+#[test]
+fn use_before_the_assignment_stays_dynamic() {
+    // At the `$B` use site the assignment `B=rm` has not yet executed, so the
+    // value is the inherited environment, not `rm`. The command name must stay
+    // dynamic (D2 — use-order-awareness on the command-name path).
+    let result = decide("", "$B x; B=rm");
+    assert!(
+        result.decision >= Decision::Ask,
+        "expected at least ask, got {:?} ({:?})",
+        result.decision,
+        result.reason
+    );
+    let reason = result.reason.as_deref().unwrap_or("");
+    assert!(
+        reason.contains("dynamic command name") || reason.contains("$B"),
+        "use-before-assignment command name must stay dynamic: {reason:?}"
+    );
+}
+
 // -- Task 3.2: guard — a literal command name is untouched --
 
 #[test]

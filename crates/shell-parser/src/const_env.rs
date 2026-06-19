@@ -1,5 +1,5 @@
 use crate::ast::{Command, SimpleCommand, Word, WordPart};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Build the set of variables whose value is *provably constant* for the whole
 /// command. A variable qualifies only when it has exactly one straight-line,
@@ -14,7 +14,12 @@ use std::collections::HashMap;
 /// callers fall back to treating its uses as dynamic.
 pub fn constant_env(cmd: &Command) -> HashMap<String, String> {
     let mut occ: HashMap<String, Occurrence> = HashMap::new();
-    collect(cmd, false, &mut occ);
+    // Names that have already been *read* (appeared as a parameter expansion in
+    // some word) on the straight-line spine seen so far. A constant assignment
+    // to a name already in this set is disqualified: at the earlier use site the
+    // value was the inherited environment, not the later assignment (D2).
+    let mut used: HashSet<String> = HashSet::new();
+    collect(cmd, false, &mut occ, &mut used);
     occ.into_iter()
         .filter_map(|(name, o)| match o {
             Occurrence::Constant(value) => Some((name, value)),
@@ -46,35 +51,56 @@ fn record_disqualified(occ: &mut HashMap<String, Occurrence>, name: &str) {
     occ.insert(name.to_string(), Occurrence::Disqualified);
 }
 
-fn collect(cmd: &Command, nested: bool, occ: &mut HashMap<String, Occurrence>) {
+fn collect(
+    cmd: &Command,
+    nested: bool,
+    occ: &mut HashMap<String, Occurrence>,
+    used: &mut HashSet<String>,
+) {
     match cmd {
-        Command::Assignment(a) => record_assignment(&a.name, &a.value, nested, occ),
-        Command::Simple(sc) => collect_simple(sc, nested, occ),
+        Command::Assignment(a) => record_assignment(&a.name, &a.value, nested, occ, used),
+        Command::Simple(sc) => collect_simple(sc, nested, occ, used),
         Command::For { var, body, .. } => {
             // The loop variable is rebound on each iteration — never constant.
             record_disqualified(occ, var);
-            collect(body, true, occ);
+            collect(body, true, occ, used);
         }
         // Straight-line composition keeps the current nesting level.
         Command::Sequence(cmds) => {
             for c in cmds {
-                collect(c, nested, occ);
+                collect(c, nested, occ, used);
             }
         }
-        Command::Redirected { command, .. } => collect(command, nested, occ),
+        Command::Redirected { command, .. } => collect(command, nested, occ, used),
         // Everything else (pipelines, subshells, brace groups, conditionals,
         // loops, function bodies, `&&`/`||`, background) is conditional or
         // runs in a subshell: assignments within may not execute, may execute
         // out of order, or may not persist. Treat their contents as nested.
         other => {
             for child in other.children() {
-                collect(child, true, occ);
+                collect(child, true, occ, used);
             }
         }
     }
 }
 
-fn collect_simple(sc: &SimpleCommand, nested: bool, occ: &mut HashMap<String, Occurrence>) {
+fn collect_simple(
+    sc: &SimpleCommand,
+    nested: bool,
+    occ: &mut HashMap<String, Occurrence>,
+    used: &mut HashSet<String>,
+) {
+    // Record the names this command reads *before* any assignment it performs,
+    // so a name read here cannot be established as constant by a later
+    // assignment on the spine (D2). Both the assignment values and the argv
+    // words are read at this point in source order.
+    for a in &sc.assignments {
+        mark_used(&a.value, used);
+    }
+    for word in &sc.words {
+        mark_used(word, used);
+    }
+
     // A prefix assignment (`VAR=lit cmd`) binds only the invoked command's
     // environment and does not persist, so it can never be the constant
     // binding for a later use. Recording it as an occurrence also disqualifies
@@ -87,7 +113,7 @@ fn collect_simple(sc: &SimpleCommand, nested: bool, occ: &mut HashMap<String, Oc
         Some("export") => {
             for word in sc.words.iter().skip(1) {
                 if let Some((name, value)) = parse_assignment_word(word) {
-                    record_assignment(&name, &value, nested, occ);
+                    record_assignment(&name, &value, nested, occ, used);
                 }
                 // A bare `export FOO` re-exports an existing value without
                 // rebinding it, so it is left alone.
@@ -109,10 +135,43 @@ fn record_assignment(
     value: &Word,
     nested: bool,
     occ: &mut HashMap<String, Occurrence>,
+    used: &mut HashSet<String>,
 ) {
     match literal_value(value) {
-        Some(v) if !nested => record_constant(occ, name, v),
+        // A name read earlier on the spine takes its value from the inherited
+        // environment at that use, not from this assignment (D2): disqualify.
+        Some(v) if !nested && !used.contains(name) => record_constant(occ, name, v),
         _ => record_disqualified(occ, name),
+    }
+}
+
+/// Record every variable name this word *reads* as a parameter expansion —
+/// `$NAME`, `${NAME}`, and `${NAME…}` operator forms — recursing through
+/// double quotes. These are exactly the names `Word::resolve` would substitute,
+/// so they are the reads that the use-order check (D2) must order against
+/// assignments. Command/arithmetic substitutions are not tracked here: their
+/// inner reads run in a subshell context the analysis already treats as
+/// unprovable.
+fn mark_used(word: &Word, used: &mut HashSet<String>) {
+    mark_used_parts(&word.parts, used);
+}
+
+fn mark_used_parts(parts: &[WordPart], used: &mut HashSet<String>) {
+    for part in parts {
+        match part {
+            WordPart::Parameter(name) | WordPart::ParameterExpansion(name) => {
+                used.insert(name.clone());
+            }
+            WordPart::ParameterExpansionOp { name, embedded, .. } => {
+                used.insert(name.clone());
+                // Substitutions lexed out of the operator's operands
+                // (`${x:-$(cmd)}`) run in a subshell, but any structured reads
+                // they carry are still reads on this spine.
+                mark_used_parts(embedded, used);
+            }
+            WordPart::DoubleQuoted(inner) => mark_used_parts(inner, used),
+            _ => {}
+        }
     }
 }
 
