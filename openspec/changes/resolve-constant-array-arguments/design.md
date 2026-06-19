@@ -26,8 +26,11 @@ N values, shifting positional indices for downstream matchers.
 **Non-Goals:**
 
 - `${arr[*]}` / unquoted `${arr[@]}` value resolution (IFS- and glob-dependent).
-- Associative arrays `${m[key]}` value resolution (parse-only from the prior
-  change).
+- Associative arrays entirely: `${m[key]}`, `"${m[@]}"`, `${m[*]}`, `${#m[@]}`
+  all stay unresolved. Associative element order is unspecified in bash, so
+  resolving `"${m[@]}"` to any order would be unsound; the resolver uses the
+  array kind recorded by `model-bash-arrays` to exclude associative arrays. Only
+  indexed arrays are resolved here.
 - Transitive scalar-from-element (`x=${arr[0]}; … "$x"`) — like the scalar
   change's transitive non-goal, the RHS is not a pure literal.
 - Namerefs / `${!ref[@]}` indirection.

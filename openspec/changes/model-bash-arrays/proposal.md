@@ -25,6 +25,10 @@ literal case silently truncates whatever follows. This change makes the parser
 - Represent a subscripted parameter expansion `${name[subscript]}`,
   `${name[@]}`, `${name[*]}`, `${#name[@]}` with the array name and subscript
   distinguished — not concatenated into the parameter name.
+- Track each array's **kind** — indexed (`declare -a`, `name=(…)`) vs associative
+  (`declare -A`) — in the AST. Associative element order is unspecified in bash,
+  so a later resolver must be able to tell the two apart to stay sound; capturing
+  the kind here unblocks that without modelling associative values yet.
 - No resolution or value analysis yet: a subscripted expansion remains an
   unresolved expansion and floors an `:allow` exactly as an unknown scalar does.
   The behavioural win is fidelity — the trailing command is evaluated, and the
@@ -42,8 +46,9 @@ Bucket: `parsing` (argv tokenisation and the shell AST the evaluator sees).
 
 - `shell-command-security-model`: require array-literal assignments and
   subscripted parameter expansions to be parsed into a faithful representation
-  without emitting an error or discarding following commands, so no portion of a
-  command containing an array is dropped from evaluation.
+  (including the array's indexed-vs-associative kind) without emitting an error or
+  discarding following commands, so no portion of a command containing an array is
+  dropped from evaluation.
 
 ## Impact
 

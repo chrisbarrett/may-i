@@ -24,6 +24,9 @@
       unresolved in v1.
 - [ ] 2.4 Leave `${arr[*]}`, unquoted `${arr[@]}`, dynamic index, and any mutated
       or non-literal array expansion-bearing (unresolved).
+- [ ] 2.5 Gate resolution on the array kind from `model-bash-arrays`: resolve
+      indexed arrays only; leave associative `${m[key]}`, `"${m[@]}"`, `${m[*]}`,
+      `${#m[@]}` unresolved (unspecified element order → unsound to resolve).
 
 ## 3. Boundary and matcher scenarios
 
@@ -34,6 +37,8 @@
 - [ ] 3.3 Test: `${#arr[@]}` resolves to the count.
 - [ ] 3.4 Test: `[*]`, unquoted `[@]`, mutated array, and non-literal element all
       stay flagged and floor an `:allow`.
+- [ ] 3.6 Test: an associative `declare -A m=([a]=1 [b]=2); cmd "${m[@]}"` stays
+      unresolved (kind-gated, unspecified order).
 - [ ] 3.5 Metamorphic proptest: a resolved `"${arr[@]}"` classifies identically to
       its element literals written inline in the command.
 

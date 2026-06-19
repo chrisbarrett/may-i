@@ -50,3 +50,23 @@ as an unknown scalar expansion does.
 - **AND** a rule would allow `aws s3 cp` only for a constrained source
 - **THEN** the subscripted expansion SHALL be treated as unresolved and the
   `:allow` SHALL floor to `:ask` (no value resolution in this change)
+
+### Requirement: Array kind is recorded in the parsed representation
+
+The parser SHALL record whether an array is **indexed** (`declare -a`, `local -a`,
+or a bare `name=(…)` assignment) or **associative** (`declare -A`). Associative
+arrays have unspecified element order in bash, so a later resolver must
+distinguish the two kinds to avoid resolving an order-dependent expansion
+unsoundly. This change records the kind; it does not resolve associative values.
+
+#### Scenario: Indexed and associative declarations are distinguished
+
+- **WHEN** the input declares `declare -a idx=(a b c)` and
+  `declare -A assoc=([k]=v)`
+- **THEN** the parsed representation SHALL mark `idx` as indexed and `assoc` as
+  associative
+
+#### Scenario: Bare assignment is indexed
+
+- **WHEN** the input is `arr=(a b c)`
+- **THEN** the parsed array SHALL be marked indexed

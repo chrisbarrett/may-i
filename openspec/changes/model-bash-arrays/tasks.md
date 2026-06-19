@@ -4,8 +4,12 @@
       array assignment and `echo done`, with no Error diagnostic. Confirm red
       (today it errors and drops `echo done`).
 - [ ] 1.2 Introduce the array assignment value form (scalar-or-array enum on
-      `Assignment`, or a sibling node) and a subscripted parameter `WordPart`
+      `Assignment`, or a sibling node) carrying array `kind`
+      (`Indexed`/`Associative`), and a subscripted parameter `WordPart`
       (`name` + subscript `Index(Word)`/`All`/`Star`).
+- [ ] 1.4 Failing test: `declare -a idx=(a b c)` parses as indexed and
+      `declare -A assoc=([k]=v)` as associative; a bare `arr=(a b c)` is indexed.
+      Confirm the kind is recorded and red first.
 - [ ] 1.3 Update every consumer of `Assignment.value` to match the scalar arm;
       handle the new array arm where assignment values are walked.
 

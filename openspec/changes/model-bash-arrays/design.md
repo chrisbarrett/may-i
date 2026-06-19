@@ -30,20 +30,28 @@ previously-dropped trailing command is now evaluated.
 
 - Resolving array values, `[@]` word-count expansion, or `${#arr[@]}` length
   computation — the follow-up `resolve-constant-array-arguments`.
-- Associative-array *value* semantics; v1 need only parse `declare -A` forms
-  without truncating (modelled coarsely or diagnosed, never silently dropped).
+- Associative-array *value* modelling (the key→value map); v1 records that an
+  array is associative and parses `declare -A m=([k]=v)` without truncating, but
+  does not structure the key→value pairs.
 - Namerefs / `${!ref}` indirection.
 
 ## Decisions
 
-### D1 — Assignment value becomes scalar-or-array
+### D1 — Assignment value becomes scalar-or-array, carrying array kind
 
 Replace `Assignment.value: Word` with a value enum, e.g.
-`AssignmentValue::Scalar(Word)` | `AssignmentValue::Array(Vec<Word>)`, or add a
-sibling `Command`/assignment node for the array form. Prefer the enum so all
-assignment-handling code (including `constant_env`) sees one assignment type and
-matches on its value kind. Every existing consumer of `.value` must be updated to
-match the scalar arm; the array arm is new.
+`AssignmentValue::Scalar(Word)` | `AssignmentValue::Array { kind, elements: Vec<Word> }`,
+or add a sibling `Command`/assignment node for the array form. `kind` is
+`Indexed` | `Associative`, set from `declare -A` (associative) vs `declare -a` /
+bare `name=(…)` (indexed). Prefer the enum so all assignment-handling code
+(including `constant_env`) sees one assignment type and matches on its value kind.
+Every existing consumer of `.value` must be updated to match the scalar arm; the
+array arm is new.
+
+The kind matters for soundness downstream: a quoted `"${assoc[@]}"` has
+unspecified element order in bash, so the resolver in the follow-up change must
+refuse to resolve it. Recording the kind here is what lets it tell indexed
+(order-defined) from associative (order-undefined) apart.
 
 ### D2 — Subscripted parameter reference in `WordPart`
 
