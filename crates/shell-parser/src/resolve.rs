@@ -9,18 +9,30 @@ pub(crate) fn resolve_param_op(
     embedded: &[WordPart],
     env: &std::collections::HashMap<String, String>,
 ) -> WordPart {
+    let unresolved = || WordPart::ParameterExpansionOp {
+        name: name.to_string(),
+        op: op.clone(),
+        embedded: embedded.to_vec(),
+    };
+
     let val = match env.get(name) {
         Some(v) => v.as_str(),
-        None => {
-            // Unresolved: keep the operand substitutions so a later extraction
-            // of the resolved word still sees them.
-            return WordPart::ParameterExpansionOp {
-                name: name.to_string(),
-                op: op.clone(),
-                embedded: embedded.to_vec(),
-            };
-        }
+        // Unresolved: keep the operand substitutions so a later extraction
+        // of the resolved word still sees them.
+        None => return unresolved(),
     };
+
+    // An operand string that bash would itself expand (a nested `$VAR`, a
+    // command substitution, or — for operands that become part of the output —
+    // a glob or leading tilde) would make our resolved literal diverge from the
+    // string bash actually produces. Resolving such a word and clearing its
+    // expansion-bearing flag could wrongly satisfy an `:allow` (it did, before
+    // arguments resolved operator forms). When any operand is expandable, stay
+    // unresolved so the word remains expansion-bearing and floors, matching the
+    // change's all-or-nothing / when-in-doubt-stay-dynamic stance.
+    if !op_operands_are_inert(op) {
+        return unresolved();
+    }
 
     let result = match op {
         ParameterOperator::Length => val.len().to_string(),
@@ -110,6 +122,74 @@ pub(crate) fn resolve_param_op(
         }
     };
     WordPart::Literal(result)
+}
+
+/// Whether every operand of `op` is inert — safe to resolve to a literal
+/// because bash would not further expand it in a way that diverges from our
+/// computed result.
+///
+/// Two operand roles:
+/// - **pattern** (strip/replace match pattern): bash treats glob metachars as
+///   pattern syntax against the value, which `glob_*` already mirrors, so they
+///   are inert here; only a nested expansion (`$`/`` ` ``) would diverge.
+/// - **output** (default/alternative/assign value, error message, replacement):
+///   becomes part of the produced word, so bash additionally globs and tilde-
+///   expands it — any glob metachar or leading tilde is *not* inert.
+///
+/// Substring offset/length are arithmetic operands; a nested expansion there
+/// would change the numeric result, so they are checked as patterns too.
+fn op_operands_are_inert(op: &ParameterOperator) -> bool {
+    match op {
+        ParameterOperator::Length
+        | ParameterOperator::Uppercase { .. }
+        | ParameterOperator::Lowercase { .. } => true,
+        ParameterOperator::StripPrefix { pattern, .. }
+        | ParameterOperator::StripSuffix { pattern, .. } => pattern_is_inert(pattern),
+        ParameterOperator::Replace {
+            pattern,
+            replacement,
+            ..
+        } => pattern_is_inert(pattern) && output_is_inert(replacement),
+        ParameterOperator::Default { value, .. }
+        | ParameterOperator::Alternative { value, .. }
+        | ParameterOperator::Assign { value, .. } => output_is_inert(value),
+        ParameterOperator::Error { message, .. } => output_is_inert(message),
+        ParameterOperator::Substring { offset, length } => {
+            pattern_is_inert(offset) && length.as_deref().is_none_or(pattern_is_inert)
+        }
+    }
+}
+
+/// A match-pattern operand is inert unless it carries a nested expansion
+/// (`$VAR`, `${…}`, `$(…)`, or backtick). Glob metachars are intended pattern
+/// syntax and are handled by the `glob_*` helpers.
+fn pattern_is_inert(s: &str) -> bool {
+    !contains_expansion_sigil(s)
+}
+
+/// An output operand (one that becomes part of the produced word) is inert
+/// only when bash would pass it through verbatim: no nested expansion, no glob
+/// metachar, and no leading tilde.
+fn output_is_inert(s: &str) -> bool {
+    !contains_expansion_sigil(s)
+        && !s.bytes().any(|b| matches!(b, b'*' | b'?' | b'['))
+        && !s.starts_with('~')
+}
+
+/// Whether an unescaped `$` or backtick appears, signalling a nested parameter,
+/// command, or arithmetic expansion the lexer left as verbatim operand text.
+/// A backslash before the sigil escapes it (bash does not expand `\$`).
+fn contains_expansion_sigil(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => i += 2, // skip the escaped byte
+            b'$' | b'`' => return true,
+            _ => i += 1,
+        }
+    }
+    false
 }
 
 #[cfg(test)]

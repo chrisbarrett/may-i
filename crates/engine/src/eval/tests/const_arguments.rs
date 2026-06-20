@@ -139,3 +139,64 @@ proptest! {
         prop_assert_eq!(resolved.reason, literal.reason);
     }
 }
+
+// A `${VAR…}` operator word resolves only when every operand is inert; an
+// operand bash would itself expand (nested `$`/backtick, or a glob/tilde in an
+// operand that becomes part of the output) keeps the word expansion-bearing so
+// our resolved literal can never diverge from bash and satisfy an `:allow`.
+
+#[test]
+fn operator_operand_nested_expansion_in_strip_pattern_floors() {
+    // bash: Y=axb; X=a; cat "${Y#$X}" strips leading `a` -> runs `cat xb`.
+    // may-i must NOT resolve to `axb` (literal `$X` strip) and allow.
+    let config = r#"(rule "cat" (when (anywhere "axb") (allow "lit")))"#;
+    let result = decide(config, r#"Y=axb; X=a; cat "${Y#$X}""#);
+    assert!(
+        result.decision >= Decision::Ask,
+        "nested expansion in strip pattern must floor: {:?} ({:?})",
+        result.decision,
+        result.reason
+    );
+}
+
+#[test]
+fn operator_operand_nested_expansion_in_replacement_floors() {
+    // bash: Y=cat; R=dog; echo "${Y/cat/$R}" -> `dog`. may-i must not resolve
+    // to the literal `$R` and allow on the wrong value.
+    let config = r#"(rule "echo" (when (anywhere "$R") (allow "lit")))"#;
+    let result = decide(config, r#"Y=cat; R=dog; echo "${Y/cat/$R}""#);
+    assert!(
+        result.decision >= Decision::Ask,
+        "nested expansion in replacement must floor: {:?} ({:?})",
+        result.decision,
+        result.reason
+    );
+}
+
+#[test]
+fn operator_operand_glob_in_default_value_floors() {
+    // ${A:+/tmp/*} emits operand text /tmp/* which bash globs at runtime.
+    let config = r#"(rule "tool" (when (anywhere "/tmp/*") (allow "lit")))"#;
+    let result = decide(config, r#"A=x; tool ${A:+/tmp/*}"#);
+    assert!(
+        result.decision >= Decision::Ask,
+        "glob in output operand must floor: {:?} ({:?})",
+        result.decision,
+        result.reason
+    );
+}
+
+#[test]
+fn inert_operator_operand_still_resolves() {
+    // Guard against over-conservatism: an operator whose operands are all inert
+    // (plain literals) still resolves so the allow narrows as intended.
+    // Y=name.txt; strip the `.txt` suffix -> `name`.
+    let config = r#"(rule "cat" (when (anywhere "name") (allow "ok")))"#;
+    let result = decide(config, r#"Y=name.txt; cat "${Y%.txt}""#);
+    assert_eq!(
+        result.decision,
+        Decision::Allow,
+        "inert operator operand should still resolve and allow: {:?}",
+        result.reason
+    );
+}

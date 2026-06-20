@@ -61,10 +61,26 @@ so this change closes it.
 Where `args`/`arg_expansions` are built (`decompose.rs:644-648`), resolve each
 argument word against the existing `const_env`:
 
-- If `word.resolve(const_env).is_literal()` → push the resolved literal into
-  `args` and set that word's `arg_expansions` entry to `None` (provable).
+- If `!word.resolve(const_env).is_expansion_bearing()` → push the resolved value
+  into `args` and set that word's `arg_expansions` entry to `None` (provable).
 - Otherwise → keep `w.to_str()` and the existing
   `is_expansion_bearing().then(display_source)` entry (unchanged behaviour).
+
+The guard is `!is_expansion_bearing()`, **not** `is_literal()`: `is_literal()`
+returns true for an unquoted glob/brace word (`/tmp/a*`, `{a,b}`), which is
+expansion-bearing and must stay flagged — clearing it would let a glob word
+satisfy an `:allow`, which D3 forbids. The expansion-bearing check is the honest
+"every part is proven" test (it also keeps a leading-tilde word flagged).
+
+Symmetrically, `const_env` resolution itself must not launder an expandable
+value into a literal: `resolve_param_op` resolves a `${VAR…}` operator form only
+when **all** its operands are inert (no nested `$`/backtick, and — for operands
+that become part of the produced word — no glob metachar or leading tilde). An
+operator word with an expandable operand (`${A:+/tmp/*}`, `${Y#$X}`,
+`${Y/cat/$R}`) stays expansion-bearing and floors. This guard lives in
+`crates/shell-parser/src/resolve.rs` (`op_operands_are_inert`) and is newly
+load-bearing because arguments resolve operator forms that the command-name path
+(lone-variable-only) never reached.
 
 All-or-nothing per word mirrors the command-name precedent and keeps the
 `arg_expansions` flag honest: a word is cleared only when *every* part is proven.

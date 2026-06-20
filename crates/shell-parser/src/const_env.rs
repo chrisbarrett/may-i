@@ -145,13 +145,21 @@ fn record_assignment(
     }
 }
 
-/// Record every variable name this word *reads* as a parameter expansion —
-/// `$NAME`, `${NAME}`, and `${NAME…}` operator forms — recursing through
-/// double quotes. These are exactly the names `Word::resolve` would substitute,
-/// so they are the reads that the use-order check (D2) must order against
-/// assignments. Command/arithmetic substitutions are not tracked here: their
-/// inner reads run in a subshell context the analysis already treats as
-/// unprovable.
+/// Record the variable name each parameter expansion in this word *reads* —
+/// the `$NAME`/`${NAME}`/`${NAME…}` head — recursing through double quotes and
+/// the structured substitutions captured out of operator operands. These are
+/// the reads `Word::resolve` resolves directly, and are the ones the use-order
+/// check (D2) must order against assignments.
+///
+/// Two read positions are deliberately *not* tracked, and both are sound:
+/// command/arithmetic substitution bodies (`$(…)`, `$((…))`) run in a subshell
+/// the analysis already treats as unprovable; and a bare `$VAR` left as verbatim
+/// text inside an operator operand (`${X:-$VAR}`) is not resolved by
+/// `resolve_param_op` either (operands with such reads stay unresolved, see
+/// `op_operands_are_inert`), so a later constant binding of that name is never
+/// actually read into this word. The only ordering that can produce a wrong
+/// resolution — a name read *before* its sole assignment, at the resolved use —
+/// is always a tracked head read, so D2 catches it.
 fn mark_used(word: &Word, used: &mut HashSet<String>) {
     mark_used_parts(&word.parts, used);
 }
