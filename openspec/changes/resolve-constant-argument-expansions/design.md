@@ -72,15 +72,29 @@ expansion-bearing and must stay flagged — clearing it would let a glob word
 satisfy an `:allow`, which D3 forbids. The expansion-bearing check is the honest
 "every part is proven" test (it also keeps a leading-tilde word flagged).
 
-Symmetrically, `const_env` resolution itself must not launder an expandable
-value into a literal: `resolve_param_op` resolves a `${VAR…}` operator form only
-when **all** its operands are inert (no nested `$`/backtick, and — for operands
-that become part of the produced word — no glob metachar or leading tilde). An
-operator word with an expandable operand (`${A:+/tmp/*}`, `${Y#$X}`,
-`${Y/cat/$R}`) stays expansion-bearing and floors. This guard lives in
-`crates/shell-parser/src/resolve.rs` (`op_operands_are_inert`) and is newly
-load-bearing because arguments resolve operator forms that the command-name path
-(lone-variable-only) never reached.
+Two further soundness layers are load-bearing because arguments resolve forms
+the command-name path (lone-variable-only) never reached:
+
+1. **Operator operands must be inert** (`crates/shell-parser/src/resolve.rs`,
+   `op_operands_are_inert`). `resolve_param_op` resolves a `${VAR…}` operator
+   form only when **all** its operands are inert: no nested `$`/backtick, no
+   brace metachar (bash brace-expands before parameter expansion), and — for
+   operands that become part of the produced word — no glob metachar or leading
+   tilde. An operator word with an expandable operand (`${A:+/tmp/*}`,
+   `${Y#$X}`, `${Y/cat/$R}`, `${A:+x{a,b}}`) stays expansion-bearing and floors.
+   This keeps the *computed* value faithful to bash.
+
+2. **An unquoted expansion's value must be passed verbatim**
+   (`crates/shell-parser/src/ast/word.rs`, `Word::resolves_to_verbatim_literal`,
+   gating `resolve_argument_words`). `Word::resolve` faithfully computes a value,
+   but an *unquoted* `$VAR` holding `/etc/passw?` resolves to a literal that is
+   not expansion-bearing yet bash pathname-expands (`/etc/passwd`) or
+   word-splits at runtime — a wrong `:allow`. A word is treated as proven only
+   when `!resolved.is_expansion_bearing()` **and** every unquoted expansion
+   resolved to a value with no glob metachar (`*?[`) or splitting whitespace.
+   A quoted expansion (`"$VAR"`) undergoes neither and stays resolvable. Brace
+   and tilde expansion precede parameter expansion in bash, so they never apply
+   to a *value* and are not part of this test.
 
 All-or-nothing per word mirrors the command-name precedent and keeps the
 `arg_expansions` flag honest: a word is cleared only when *every* part is proven.

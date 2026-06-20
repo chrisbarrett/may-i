@@ -424,6 +424,52 @@ fn resolve_parts(
         .collect()
 }
 
+/// Whether an *unquoted* expansion's resolved value would be passed to the
+/// program verbatim — no glob metachar (`*?[`) to trigger pathname expansion
+/// and no whitespace to trigger word-splitting under a default IFS. Brace and
+/// tilde expansion run *before* parameter expansion in bash, so they never
+/// apply to a value and are not part of this test.
+fn value_is_shell_inert(s: &str) -> bool {
+    !s.bytes()
+        .any(|b| matches!(b, b'*' | b'?' | b'[' | b' ' | b'\t' | b'\n'))
+}
+
+/// Whether every expansion in `parts` resolves against `env` to a value the
+/// shell passes through verbatim, given the surrounding quoting. An *unquoted*
+/// expansion whose value carries a glob metachar or splitting whitespace is
+/// **not** verbatim: bash would pathname-expand or word-split it at runtime, so
+/// treating the resolved literal as proven could satisfy an `:allow` on a value
+/// the program never receives. A quoted expansion undergoes neither and is safe.
+/// Returns `false` for any part that does not resolve (an unset variable, a
+/// command/process substitution, a glob/brace) so the word stays floored.
+fn resolves_to_safe_literal_in(
+    parts: &[WordPart],
+    env: &std::collections::HashMap<String, String>,
+    quoted: bool,
+) -> bool {
+    parts.iter().all(|part| match part {
+        WordPart::Literal(_)
+        | WordPart::SingleQuoted(_)
+        | WordPart::AnsiCQuoted(_)
+        | WordPart::Opaque(_) => true,
+        WordPart::Parameter(name) | WordPart::ParameterExpansion(name) => env
+            .get(name.as_str())
+            .is_some_and(|val| quoted || value_is_shell_inert(val)),
+        WordPart::ParameterExpansionOp {
+            name, op, embedded, ..
+        } => match resolve_param_op(name, op, embedded, env) {
+            WordPart::Literal(val) => quoted || value_is_shell_inert(&val),
+            // Stayed an operator form (unset head, or expandable operand held
+            // back by `op_operands_are_inert`): not resolved → not safe.
+            _ => false,
+        },
+        WordPart::DoubleQuoted(inner) => resolves_to_safe_literal_in(inner, env, true),
+        // Globs, braces, command/arithmetic/process substitutions, backticks:
+        // never provably verbatim.
+        _ => false,
+    })
+}
+
 impl Word {
     /// Resolve this word's parameter expansions against `env`, replacing any
     /// part whose variable is present with its literal value and leaving the
@@ -433,6 +479,25 @@ impl Word {
         Word {
             parts: resolve_parts(&self.parts, env),
         }
+    }
+
+    /// Whether this word resolves against `env` to a value the shell passes to
+    /// the program **verbatim** — every expansion resolves to a literal, and no
+    /// *unquoted* expansion's value carries a glob metachar or splitting
+    /// whitespace that bash would pathname-expand or word-split at runtime.
+    ///
+    /// This is the soundness gate for treating a resolved argument word as
+    /// proven: [`Word::resolve`] computes the value, but an unquoted `$VAR`
+    /// holding `/etc/passw?` resolves to a literal that is *not*
+    /// expansion-bearing yet expands to a different path at runtime. A word that
+    /// fails this test must keep its expansion-bearing flag and floor an
+    /// `:allow`. Top-level parts are treated as unquoted; `DoubleQuoted` regions
+    /// as quoted.
+    pub fn resolves_to_verbatim_literal(
+        &self,
+        env: &std::collections::HashMap<String, String>,
+    ) -> bool {
+        resolves_to_safe_literal_in(&self.parts, env, false)
     }
 }
 

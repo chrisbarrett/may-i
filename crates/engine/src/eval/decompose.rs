@@ -768,11 +768,14 @@ fn resolve_argument_words(
         .map(|w| {
             let resolved = w.resolve(const_env);
             // Clear the expansion-bearing flag only when *every* part is proven:
-            // the resolved word carries no remaining expansion. `is_literal`
-            // would also admit an unquoted glob/brace (`/tmp/a*`), which stays
-            // expansion-bearing — clearing it there would widen an `:allow`,
-            // which D3 forbids — so the guard is the expansion-bearing check.
-            if !resolved.is_expansion_bearing() {
+            // the resolved word carries no remaining expansion (`is_literal`
+            // would also admit an unquoted glob/brace like `/tmp/a*`, which must
+            // stay flagged), AND every unquoted expansion resolved to a value
+            // the shell passes verbatim — an unquoted `$VAR` holding `/etc/passw?`
+            // resolves to a non-expansion-bearing literal yet bash glob-expands
+            // it at runtime, so it is *not* proven. Both together prevent a
+            // resolved word from widening an `:allow` (D3).
+            if !resolved.is_expansion_bearing() && w.resolves_to_verbatim_literal(const_env) {
                 (resolved.to_str(), None)
             } else {
                 (

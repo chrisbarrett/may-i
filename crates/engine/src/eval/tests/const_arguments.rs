@@ -229,3 +229,31 @@ fn operator_operand_brace_in_output_floors() {
         baseline.reason
     );
 }
+
+#[test]
+fn unquoted_value_with_glob_floors() {
+    // bash glob-expands unquoted $A -> /etc/passwd at runtime, defeating the
+    // deny. may-i must not resolve $A to the inert literal /etc/passw? and allow.
+    let config = r#"(rule "cat" (or (when (anywhere "/etc/passwd") (deny "secret"))
+                                     (when (anywhere (regex "^/etc/")) (allow "etc"))))"#;
+    let result = decide(config, r#"A=/etc/passw?; cat $A"#);
+    assert!(
+        result.decision >= Decision::Ask,
+        "unquoted glob-bearing value must not resolve-and-allow: {:?} ({:?})",
+        result.decision,
+        result.reason
+    );
+}
+
+#[test]
+fn quoted_value_with_glob_still_resolves() {
+    // "$A" is NOT glob-expanded by bash, so resolution stays faithful.
+    let config = r#"(rule "cat" (when (anywhere "/etc/passw?") (allow "ok")))"#;
+    let result = decide(config, r#"A=/etc/passw?; cat "$A""#);
+    assert_eq!(
+        result.decision,
+        Decision::Allow,
+        "quoted value must still resolve: {:?}",
+        result.reason
+    );
+}
