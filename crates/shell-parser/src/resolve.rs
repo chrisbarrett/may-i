@@ -161,19 +161,43 @@ fn op_operands_are_inert(op: &ParameterOperator) -> bool {
 }
 
 /// A match-pattern operand is inert unless it carries a nested expansion
-/// (`$VAR`, `${…}`, `$(…)`, or backtick). Glob metachars are intended pattern
-/// syntax and are handled by the `glob_*` helpers.
+/// (`$VAR`, `${…}`, `$(…)`, or backtick) or a brace metachar. Glob metachars
+/// (`*?[`) are intended pattern syntax mirrored by the `glob_*` helpers, so
+/// they are inert here — but braces are not pattern syntax: bash performs brace
+/// expansion on the whole word *before* parameter expansion, so a `{` smuggled
+/// into any operand splits the word at runtime in a way our single-literal
+/// result would not reflect.
 fn pattern_is_inert(s: &str) -> bool {
-    !contains_expansion_sigil(s)
+    !contains_expansion_sigil(s) && !contains_brace(s)
 }
 
 /// An output operand (one that becomes part of the produced word) is inert
-/// only when bash would pass it through verbatim: no nested expansion, no glob
-/// metachar, and no leading tilde.
+/// only when bash would pass it through verbatim: no nested expansion, no brace
+/// expansion, no glob metachar, and no leading tilde.
 fn output_is_inert(s: &str) -> bool {
     !contains_expansion_sigil(s)
+        && !contains_brace(s)
         && !s.bytes().any(|b| matches!(b, b'*' | b'?' | b'['))
         && !s.starts_with('~')
+}
+
+/// Whether a brace-expansion metachar (`{` or `}`) appears. The lexer truncates
+/// an operand at the first `}`, so a brace-expansion group smuggled into an
+/// operand surfaces here as an unmatched opening `{`; rejecting either brace is
+/// the conservative, when-in-doubt-stay-dynamic choice. (`{a,b}` at top level
+/// is already modelled as expansion-bearing; this closes the operator-operand
+/// hiding place.)
+fn contains_brace(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => i += 2, // an escaped brace is literal
+            b'{' | b'}' => return true,
+            _ => i += 1,
+        }
+    }
+    false
 }
 
 /// Whether an unescaped `$` or backtick appears, signalling a nested parameter,

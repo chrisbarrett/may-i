@@ -200,3 +200,32 @@ fn inert_operator_operand_still_resolves() {
         result.reason
     );
 }
+
+#[test]
+fn operator_operand_brace_in_output_floors() {
+    // bash brace-expands ${A:+/var/log/app{.log,/../../etc/shadow}} to two
+    // words; the second normalises to /etc/shadow. may-i must not resolve the
+    // word to a single literal that satisfies a ^/var/log/ allow.
+    let config = r#"(rule "cat" (when (anywhere (regex "^/var/log/")) (allow "logs")))"#;
+    let result = decide(
+        config,
+        r#"A=x; cat ${A:+/var/log/app{.log,/../../etc/shadow}}"#,
+    );
+    assert!(
+        result.decision >= Decision::Ask,
+        "brace in output operand must floor: {:?} ({:?})",
+        result.decision,
+        result.reason
+    );
+
+    // Baseline: the same braces at top level already floor (top-level
+    // BraceExpansion is expansion-bearing). The operator-operand path must not
+    // be a hiding place that bypasses that protection.
+    let baseline = decide(config, r#"cat /var/log/app{.log,/../../etc/shadow}"#);
+    assert!(
+        baseline.decision >= Decision::Ask,
+        "top-level brace baseline must floor: {:?} ({:?})",
+        baseline.decision,
+        baseline.reason
+    );
+}
