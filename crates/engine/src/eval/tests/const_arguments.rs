@@ -257,3 +257,172 @@ fn quoted_value_with_glob_still_resolves() {
         result.reason
     );
 }
+
+#[test]
+fn leading_tilde_on_resolved_word_floors() {
+    // `~$A` resolves to a word with a leading literal `~`, which bash tilde-
+    // expands at runtime. The resolved word stays expansion-bearing (the
+    // `!is_expansion_bearing()` half of the gate, which the value-verbatim half
+    // does not catch), so it must floor an :allow keyed on the literal text.
+    let config = r#"(rule "cat" (when (anywhere "~x") (allow "lit")))"#;
+    let result = decide(config, r#"A=x; cat ~$A"#);
+    assert!(
+        result.decision >= Decision::Ask,
+        "leading-tilde resolved word must floor: {:?} ({:?})",
+        result.decision,
+        result.reason
+    );
+}
+
+// The `glob_*` helpers treat `\` as an ordinary char, so a bash pattern with a
+// backslash-escaped metachar (`\*`, `\[`) — which bash matches *literally* —
+// strips/replaces differently from bash. Resolving such an operator word would
+// diverge from the real argument and could dodge a deny. These must floor.
+
+#[test]
+fn operator_escaped_metachar_strip_pattern_floors() {
+    // bash: Y='[p]/etc/shadow'; "${Y#\[p\]}" strips literal "[p]" -> "/etc/shadow",
+    // which the deny gates. may-i's glob helpers ignore the escape and would keep
+    // "[p]/etc/shadow", dodging the deny — so the word must stay unresolved.
+    let config = r#"(rule "cat"
+                      (or (when (anywhere "/etc/shadow") (deny "secret"))
+                          (when (anywhere (regex ".")) (allow "fallthrough"))))"#;
+    let result = decide(config, r#"Y='[p]/etc/shadow'; cat "${Y#\[p\]}""#);
+    assert!(
+        result.decision >= Decision::Ask,
+        "escaped-metachar strip pattern must floor, not allow: {:?} ({:?})",
+        result.decision,
+        result.reason
+    );
+}
+
+#[test]
+fn operator_escaped_star_suffix_pattern_floors() {
+    // bash: Y='/etc/shadow*'; "${Y%\*}" strips a literal trailing '*' -> "/etc/shadow".
+    let config = r#"(rule "cat"
+                      (or (when (anywhere "/etc/shadow") (deny "secret"))
+                          (when (anywhere (regex ".")) (allow "fallthrough"))))"#;
+    let result = decide(config, r#"Y='/etc/shadow*'; cat "${Y%\*}""#);
+    assert!(
+        result.decision >= Decision::Ask,
+        "escaped-star suffix pattern must floor, not allow: {:?} ({:?})",
+        result.decision,
+        result.reason
+    );
+}
+
+#[test]
+fn operator_substring_arithmetic_offset_floors() {
+    // bash treats the offset as an arithmetic expression: ${Y:2+2} -> offset 4.
+    // may-i parses only plain decimals, so a non-trivial expression must floor
+    // rather than silently resolve at offset 0.
+    let config = r#"(rule "cat"
+                      (or (when (anywhere "/etc/shadow") (deny "secret"))
+                          (when (anywhere (regex ".")) (allow "fallthrough"))))"#;
+    let result = decide(config, r#"Y=SAFE/etc/shadow; cat "${Y:2+2}""#);
+    assert!(
+        result.decision >= Decision::Ask,
+        "arithmetic substring offset must floor, not allow: {:?} ({:?})",
+        result.decision,
+        result.reason
+    );
+}
+
+#[test]
+fn operator_substring_octal_offset_floors() {
+    // ${Y:010} is octal 8 to bash, decimal 10 to a bare parse — floor the divergence.
+    let config = r#"(rule "tool" (when (anywhere "23456789abc") (allow "ok")))"#;
+    let result = decide(config, r#"Y=0123456789abc; tool "${Y:010}""#);
+    assert!(
+        result.decision >= Decision::Ask,
+        "octal substring offset must floor, not allow on a decimal reading: {:?} ({:?})",
+        result.decision,
+        result.reason
+    );
+}
+
+#[test]
+fn operator_plain_substring_still_resolves() {
+    // Guard against over-conservatism: a plain decimal offset/length still resolves.
+    let config = r#"(rule "tool" (when (anywhere "cde") (allow "ok")))"#;
+    let result = decide(config, r#"Y=abcde; tool "${Y:2}""#);
+    assert_eq!(
+        result.decision,
+        Decision::Allow,
+        "plain substring offset must still resolve: {:?}",
+        result.reason
+    );
+}
+
+#[test]
+fn operator_length_counts_characters_not_bytes() {
+    // bash ${#Y} counts characters; a byte count would diverge for multibyte values.
+    let config = r#"(rule "tool" (when (anywhere "4") (allow "ok")))"#;
+    let result = decide(config, "Y=café; tool \"${#Y}\"");
+    assert_eq!(
+        result.decision,
+        Decision::Allow,
+        "length must count characters (4 for café), not bytes: {:?}",
+        result.reason
+    );
+}
+
+#[test]
+fn operator_anchored_replace_floors() {
+    // bash `${Y/#b/}` deletes a leading 'b' (start-anchored): "b/etc/shadow" ->
+    // "/etc/shadow", gated by the deny. The AST drops the `#` anchor, so resolution
+    // would search for a literal "#b" and keep the value — the word must floor.
+    let config = r#"(rule "cat"
+                      (or (when (anywhere "/etc/shadow") (deny "secret"))
+                          (when (anywhere (regex ".")) (allow "fallthrough"))))"#;
+    let result = decide(config, r#"Y=b/etc/shadow; cat "${Y/#b/}""#);
+    assert!(
+        result.decision >= Decision::Ask,
+        "anchored replace must floor, not allow: {:?} ({:?})",
+        result.decision,
+        result.reason
+    );
+}
+
+#[test]
+fn operator_unanchored_replace_still_resolves() {
+    // Guard: an ordinary (unanchored) replace still resolves.
+    let config = r#"(rule "tool" (when (anywhere "XbXcX") (allow "ok")))"#;
+    let result = decide(config, r#"Y=abaca; tool "${Y//a/X}""#);
+    assert_eq!(
+        result.decision,
+        Decision::Allow,
+        "unanchored replace must still resolve: {:?}",
+        result.reason
+    );
+}
+
+#[test]
+fn operator_case_conversion_with_pattern_floors() {
+    // bash `${Y^^a}` uppercases only matching chars: "abcabc" -> "AbcAbc". The
+    // `Uppercase` op carries no pattern, so resolving would full-uppercase and
+    // diverge — the patterned form must floor.
+    let config = r#"(rule "tool"
+                      (or (when (anywhere "ABCABC") (allow "wrong"))
+                          (when (anywhere "AbcAbc") (allow "right"))))"#;
+    let result = decide(config, r#"Y=abcabc; tool "${Y^^a}""#);
+    // It must not resolve to the divergent full-uppercase value.
+    assert!(
+        result.reason.as_deref() != Some("wrong"),
+        "patterned case conversion must not resolve to full-uppercase: {:?}",
+        result.reason
+    );
+}
+
+#[test]
+fn operator_plain_case_conversion_still_resolves() {
+    // Guard: pattern-less ${Y^^} still resolves.
+    let config = r#"(rule "tool" (when (anywhere "ABC") (allow "ok")))"#;
+    let result = decide(config, r#"Y=abc; tool "${Y^^}""#);
+    assert_eq!(
+        result.decision,
+        Decision::Allow,
+        "plain uppercase must still resolve: {:?}",
+        result.reason
+    );
+}

@@ -75,14 +75,22 @@ satisfy an `:allow`, which D3 forbids. The expansion-bearing check is the honest
 Two further soundness layers are load-bearing because arguments resolve forms
 the command-name path (lone-variable-only) never reached:
 
-1. **Operator operands must be inert** (`crates/shell-parser/src/resolve.rs`,
-   `op_operands_are_inert`). `resolve_param_op` resolves a `${VAR…}` operator
-   form only when **all** its operands are inert: no nested `$`/backtick, no
-   brace metachar (bash brace-expands before parameter expansion), and — for
+1. **Operator operands must be inert, and the operator must be faithfully
+   modelled** (`crates/shell-parser/src/resolve.rs`, `op_operands_are_inert`).
+   `resolve_param_op` resolves a `${VAR…}` operator form only when **all** its
+   operands are inert: no nested `$`/backtick, no brace metachar (bash
+   brace-expands before parameter expansion), no backslash (a `\*` matches
+   literally in bash but the `glob_*` helpers treat `\` as ordinary), and — for
    operands that become part of the produced word — no glob metachar or leading
-   tilde. An operator word with an expandable operand (`${A:+/tmp/*}`,
-   `${Y#$X}`, `${Y/cat/$R}`, `${A:+x{a,b}}`) stays expansion-bearing and floors.
-   This keeps the *computed* value faithful to bash.
+   tilde. Several operators also diverge structurally and floor: a substring
+   offset/length that is not a plain decimal integer (bash evaluates it as
+   *arithmetic* — `2+2`, octal `010` — we `parse` it; `is_plain_integer`); an
+   anchored replace `${VAR/#pat/…}`/`/%` whose anchor the AST cannot carry
+   (`replace_pattern_is_inert`); and a patterned case conversion `${VAR^^pat}`
+   whose pattern the AST drops (the lexer emits the unresolvable flat form).
+   `${#VAR}` length counts characters, not bytes. An operator word that cannot
+   be resolved faithfully stays expansion-bearing and floors. This keeps the
+   *computed* value byte-identical to bash.
 
 2. **An unquoted expansion's value must be passed verbatim**
    (`crates/shell-parser/src/ast/word.rs`, `Word::resolves_to_verbatim_literal`,

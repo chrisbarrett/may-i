@@ -35,7 +35,8 @@ pub(crate) fn resolve_param_op(
     }
 
     let result = match op {
-        ParameterOperator::Length => val.len().to_string(),
+        // bash `${#VAR}` counts characters, not bytes.
+        ParameterOperator::Length => val.chars().count().to_string(),
         ParameterOperator::StripPrefix { longest, pattern } => {
             glob_strip_prefix(pattern, val, *longest).to_string()
         }
@@ -149,35 +150,74 @@ fn op_operands_are_inert(op: &ParameterOperator) -> bool {
             pattern,
             replacement,
             ..
-        } => pattern_is_inert(pattern) && output_is_inert(replacement),
+        } => replace_pattern_is_inert(pattern) && output_is_inert(replacement),
         ParameterOperator::Default { value, .. }
         | ParameterOperator::Alternative { value, .. }
         | ParameterOperator::Assign { value, .. } => output_is_inert(value),
         ParameterOperator::Error { message, .. } => output_is_inert(message),
         ParameterOperator::Substring { offset, length } => {
-            pattern_is_inert(offset) && length.as_deref().is_none_or(pattern_is_inert)
+            is_plain_integer(offset) && length.as_deref().is_none_or(is_plain_integer)
         }
     }
 }
 
+/// Whether an arithmetic operand is a plain decimal integer that our `parse`
+/// interprets identically to bash. bash treats substring offset/length as full
+/// *arithmetic expressions* — `2+2`, octal `010`, hex `0x10`, base `8#17`,
+/// nested variables — whereas resolution does a bare `str::parse::<isize>`. Any
+/// operand beyond an optionally-signed run of decimal digits would diverge (a
+/// non-numeric expression silently falls back to `0`/full-length, an octal/hex
+/// literal is read as decimal), so only a plain integer is inert; everything
+/// else floors the word.
+fn is_plain_integer(s: &str) -> bool {
+    let t = s.trim();
+    let digits = t.strip_prefix(['+', '-']).unwrap_or(t);
+    // A leading `0` on a multi-digit run is octal to bash but decimal to us, so
+    // reject it too. A single `0` is unambiguous.
+    !digits.is_empty()
+        && digits.bytes().all(|b| b.is_ascii_digit())
+        && !(digits.len() > 1 && digits.starts_with('0'))
+}
+
 /// A match-pattern operand is inert unless it carries a nested expansion
-/// (`$VAR`, `${…}`, `$(…)`, or backtick) or a brace metachar. Glob metachars
-/// (`*?[`) are intended pattern syntax mirrored by the `glob_*` helpers, so
-/// they are inert here — but braces are not pattern syntax: bash performs brace
-/// expansion on the whole word *before* parameter expansion, so a `{` smuggled
-/// into any operand splits the word at runtime in a way our single-literal
-/// result would not reflect.
+/// (`$VAR`, `${…}`, `$(…)`, or backtick), a brace metachar, or a backslash.
+/// Glob metachars (`*?[`) are intended pattern syntax mirrored by the `glob_*`
+/// helpers, so they are inert here — but braces are not pattern syntax: bash
+/// performs brace expansion on the whole word *before* parameter expansion, so
+/// a `{` smuggled into any operand splits the word at runtime in a way our
+/// single-literal result would not reflect.
+///
+/// A backslash is *not* inert: in a bash match pattern `\*`/`\[` escape the
+/// following metachar so it matches *literally*, but the `glob_*` helpers treat
+/// `\` as an ordinary character and the metachar as still-wild. That divergence
+/// makes our resolved literal differ from bash's runtime argument (`${Y#\[p\]}`
+/// strips `[p]` for bash but not for us), which could dodge a deny or satisfy an
+/// `:allow` on the wrong value. Rejecting any backslash keeps such words floored.
 fn pattern_is_inert(s: &str) -> bool {
-    !contains_expansion_sigil(s) && !contains_brace(s)
+    !contains_expansion_sigil(s) && !contains_brace(s) && !s.contains('\\')
+}
+
+/// A replace-operator pattern (`${VAR/pat/rep}`) is inert under the same rules
+/// as any match pattern, with one extra exclusion: a leading `#` or `%` is a
+/// bash *anchor* (`/#` matches only at the start, `/%` only at the end). The
+/// lexer captures the anchor as a literal first character of the pattern, and
+/// the AST has no field to carry it, so `glob_replace` would search for the
+/// literal `#`/`%` instead of anchoring — diverging from bash (`${Y/#b/}` on
+/// `b/etc/shadow` yields `/etc/shadow` for bash but `b/etc/shadow` for us).
+/// Floor any anchored replace so the divergence cannot satisfy or dodge policy.
+fn replace_pattern_is_inert(pattern: &str) -> bool {
+    !pattern.starts_with(['#', '%']) && pattern_is_inert(pattern)
 }
 
 /// An output operand (one that becomes part of the produced word) is inert
 /// only when bash would pass it through verbatim: no nested expansion, no brace
-/// expansion, no glob metachar, and no leading tilde.
+/// expansion, no glob metachar, no leading tilde, and no backslash. A backslash
+/// is dropped by bash's quote removal on the operand (`${A:-a\b}` yields `ab`),
+/// but our resolution keeps it verbatim, so the literals diverge.
 fn output_is_inert(s: &str) -> bool {
     !contains_expansion_sigil(s)
         && !contains_brace(s)
-        && !s.bytes().any(|b| matches!(b, b'*' | b'?' | b'['))
+        && !s.bytes().any(|b| matches!(b, b'*' | b'?' | b'[' | b'\\'))
         && !s.starts_with('~')
 }
 

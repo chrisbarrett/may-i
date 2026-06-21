@@ -448,10 +448,7 @@ fn resolves_to_safe_literal_in(
     quoted: bool,
 ) -> bool {
     parts.iter().all(|part| match part {
-        WordPart::Literal(_)
-        | WordPart::SingleQuoted(_)
-        | WordPart::AnsiCQuoted(_)
-        | WordPart::Opaque(_) => true,
+        WordPart::Literal(_) | WordPart::SingleQuoted(_) | WordPart::AnsiCQuoted(_) => true,
         WordPart::Parameter(name) | WordPart::ParameterExpansion(name) => env
             .get(name.as_str())
             .is_some_and(|val| quoted || value_is_shell_inert(val)),
@@ -464,8 +461,11 @@ fn resolves_to_safe_literal_in(
             _ => false,
         },
         WordPart::DoubleQuoted(inner) => resolves_to_safe_literal_in(inner, env, true),
-        // Globs, braces, command/arithmetic/process substitutions, backticks:
-        // never provably verbatim.
+        // `Opaque` is a trusted variable whose *runtime value is unknown* (it
+        // flattens to a diagnostic label, not a value), so it can never be
+        // proven verbatim — consistent with `is_literal`/`is_dynamic`. Globs,
+        // braces, command/arithmetic/process substitutions, and backticks are
+        // likewise never provably verbatim.
         _ => false,
     })
 }
