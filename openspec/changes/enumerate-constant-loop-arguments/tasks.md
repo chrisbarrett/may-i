@@ -32,13 +32,14 @@
 
 ## 3. Combination and boundary scenarios
 
-- [ ] 3.1 Test: one list value fails the allow pattern → meet yields at least `:ask`.
-- [ ] 3.2 Test: a value matching a deny rule → meet yields `:deny`.
-- [ ] 3.3 Test: nested enumerable loops within budget unroll to the product; over
+- [x] 3.1 Test: one list value fails the allow pattern → meet yields at least `:ask`.
+- [x] 3.2 Test: a value matching a deny rule → meet yields `:deny`.
+- [x] 3.3 Test: nested enumerable loops within budget unroll to the product; over
       budget fall back without under-asking.
-- [ ] 3.4 Test: non-literal list and in-body reassignment both stay flagged.
-- [ ] 3.5 Metamorphic proptest: each unrolled per-value decision equals the
-      decision for the bare command with that literal substituted for `$k`.
+- [x] 3.4 Test: non-literal list and in-body reassignment both stay flagged.
+- [x] 3.5 Metamorphic proptest: each unrolled per-value decision (and reason)
+      equals the bare command with that literal substituted for `$k`; the
+      multi-value meet equals the strictest per-literal decision.
 
 ## 4. Verification
 
