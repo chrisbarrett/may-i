@@ -168,13 +168,23 @@ pub(crate) fn glob_replace(pattern: &str, text: &str, replacement: &str, all: bo
             let substr: String = chars[i..j].iter().collect();
             if glob_match(pattern, &substr) {
                 result.push_str(replacement);
-                i = j;
                 matched = true;
                 if !all {
-                    // Append the rest and return
-                    let rest: String = chars[i..].iter().collect();
+                    // Append the text after the replaced match and return.
+                    let rest: String = chars[j..].iter().collect();
                     result.push_str(&rest);
                     return result;
+                }
+                // A zero-width match (`j == i`, e.g. pattern `*` at end-of-text)
+                // makes no progress; emit one char and advance so the loop
+                // always terminates. A non-empty match jumps past it.
+                if j == i {
+                    if i < chars.len() {
+                        result.push(chars[i]);
+                    }
+                    i += 1;
+                } else {
+                    i = j;
                 }
                 break;
             }
@@ -187,6 +197,28 @@ pub(crate) fn glob_replace(pattern: &str, text: &str, replacement: &str, all: bo
         }
     }
     result
+}
+
+#[cfg(test)]
+mod zero_width_tests {
+    use super::*;
+
+    #[test]
+    fn glob_replace_all_with_empty_matchable_pattern_terminates() {
+        // A `*` pattern matches the empty string; the all-replace loop must
+        // advance past a zero-width match rather than spin forever. (These
+        // outputs lock termination + determinism; this path is floored for
+        // argument resolution and not required to match bash byte-for-byte.)
+        assert_eq!(glob_replace("*", "x", "y", true), "yy");
+        assert_eq!(glob_replace("*", "", "y", true), "y");
+        assert_eq!(glob_replace("**", "ab", "_", true), "__");
+    }
+
+    #[test]
+    fn glob_replace_first_only_star_unchanged() {
+        // First-only replace already terminated; behaviour is preserved.
+        assert_eq!(glob_replace("*", "abc", "y", false), "y");
+    }
 }
 
 #[cfg(test)]

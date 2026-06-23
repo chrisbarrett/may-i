@@ -147,10 +147,20 @@ fn op_operands_are_inert(op: &ParameterOperator) -> bool {
         ParameterOperator::StripPrefix { pattern, .. }
         | ParameterOperator::StripSuffix { pattern, .. } => pattern_is_inert(pattern),
         ParameterOperator::Replace {
+            all,
             pattern,
             replacement,
-            ..
-        } => replace_pattern_is_inert(pattern) && output_is_inert(replacement),
+        } => {
+            replace_pattern_is_inert(pattern)
+                && output_is_inert(replacement)
+                // An all-replace whose pattern matches the empty string makes no
+                // progress per match in `glob_replace` (a zero-width match never
+                // advances), so it must not be resolved — both to avoid the hang
+                // and because bash's adjacent/trailing empty-match suppression is
+                // not reproduced here. A first-only replace terminates, so it is
+                // unaffected.
+                && !(*all && pattern_matches_empty(pattern))
+        }
         ParameterOperator::Default { value, .. }
         | ParameterOperator::Alternative { value, .. }
         | ParameterOperator::Assign { value, .. } => output_is_inert(value),
@@ -207,6 +217,14 @@ fn pattern_is_inert(s: &str) -> bool {
 /// Floor any anchored replace so the divergence cannot satisfy or dodge policy.
 fn replace_pattern_is_inert(pattern: &str) -> bool {
     !pattern.starts_with(['#', '%']) && pattern_is_inert(pattern)
+}
+
+/// Whether a glob pattern can match the empty string. Only a pattern made
+/// solely of `*` quantifiers (including the empty pattern) does — any literal
+/// char, `?` (one char), or `[...]` (one char) requires at least one input
+/// char. Used to reject an all-replace that would loop on zero-width matches.
+fn pattern_matches_empty(pattern: &str) -> bool {
+    pattern.bytes().all(|b| b == b'*')
 }
 
 /// An output operand (one that becomes part of the produced word) is inert

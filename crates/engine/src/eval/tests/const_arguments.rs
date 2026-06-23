@@ -426,3 +426,28 @@ fn operator_plain_case_conversion_still_resolves() {
         result.reason
     );
 }
+
+#[test]
+fn operator_replace_all_empty_matchable_pattern_terminates() {
+    // ${V//*/y}: pattern `*` matches the empty string; glob_replace's all-branch
+    // makes no progress on a zero-width match (would loop forever). The form is
+    // floored, so evaluation TERMINATES (the property under test). The bare
+    // allow rule applies regardless.
+    let config = r#"(rule "echo" (allow "ok"))"#;
+    let result = decide(config, r#"V=x; echo "${V//*/y}""#);
+    assert_eq!(result.decision, Decision::Allow, "{:?}", result.reason);
+}
+
+#[test]
+fn operator_replace_first_only_star_still_resolves() {
+    // A first-only replace (`/`, not `//`) with `*` terminates, so it must not
+    // be over-floored: ${V/*/y} on V=x resolves to `y` and the allow applies.
+    let config = r#"(rule "echo" (when (anywhere "y") (allow "ok")))"#;
+    let result = decide(config, r#"V=x; echo "${V/*/y}""#);
+    assert_eq!(
+        result.decision,
+        Decision::Allow,
+        "first-only star replace should resolve: {:?}",
+        result.reason
+    );
+}

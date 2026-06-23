@@ -86,11 +86,15 @@ the command-name path (lone-variable-only) never reached:
    offset/length that is not a plain decimal integer (bash evaluates it as
    *arithmetic* — `2+2`, octal `010` — we `parse` it; `is_plain_integer`); an
    anchored replace `${VAR/#pat/…}`/`/%` whose anchor the AST cannot carry
-   (`replace_pattern_is_inert`); and a patterned case conversion `${VAR^^pat}`
-   whose pattern the AST drops (the lexer emits the unresolvable flat form).
-   `${#VAR}` length counts characters, not bytes. An operator word that cannot
-   be resolved faithfully stays expansion-bearing and floors. This keeps the
-   *computed* value byte-identical to bash.
+   (`replace_pattern_is_inert`); a patterned case conversion `${VAR^^pat}`
+   whose pattern the AST drops (the lexer emits the unresolvable flat form);
+   and an all-replace whose pattern matches the empty string (`${V//*/y}`),
+   which is both a runtime divergence and a non-terminating `glob_replace` loop
+   (`pattern_matches_empty`). `${#VAR}` length counts characters, not bytes. An
+   operator word that cannot be resolved faithfully stays expansion-bearing and
+   floors. This keeps the *computed* value byte-identical to bash. As
+   defence-in-depth, `glob_replace` itself is now total (it advances past a
+   zero-width match), so the loop cannot hang via any other caller.
 
 2. **An unquoted expansion's value must be passed verbatim**
    (`crates/shell-parser/src/ast/word.rs`, `Word::resolves_to_verbatim_literal`,
