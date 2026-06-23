@@ -3,7 +3,9 @@
 use assert_cmd::Command;
 use assert_cmd::cargo::cargo_bin_cmd;
 use std::io::Write;
-use tempfile::NamedTempFile;
+use std::path::Path;
+use std::sync::OnceLock;
+use tempfile::{NamedTempFile, TempDir};
 
 /// Write a config string to a temporary file.
 pub fn write_config(contents: &str) -> NamedTempFile {
@@ -65,11 +67,33 @@ pub fn may_i(config: &NamedTempFile) -> Command {
     cmd
 }
 
+/// A process-wide empty directory used as a hermetic `HOME` / `XDG_CONFIG_HOME`
+/// for [`may_i_cmd`]. Created once and kept for the test process's lifetime so
+/// the returned [`Command`] doesn't outlive a per-call `TempDir`.
+fn isolated_home() -> &'static Path {
+    static HOME: OnceLock<TempDir> = OnceLock::new();
+    HOME.get_or_init(|| TempDir::new().expect("create isolated HOME"))
+        .path()
+}
+
 /// Build an `assert_cmd::Command` for `may-i` with an isolated `current_dir`
 /// but no `MAYI_CONFIG`. Use for tests that pass `--config` explicitly or
 /// invoke subcommands that don't need a config.
+///
+/// Config discovery is neutralised so a missing config can never resolve the
+/// developer's real `~/.config/may-i/config.lisp`: inherited `MAYI_CONFIG` is
+/// removed, and `HOME` / `XDG_CONFIG_HOME` point at a guaranteed-empty dir.
+/// Resolution order is `--config` → `$MAYI_CONFIG` → `$XDG_CONFIG_HOME/may-i/…`
+/// → `~/.config/may-i/…`, so a config-bearing test still wins via `--config` or
+/// `MAYI_CONFIG`, while a config-less invocation falls through to an absent path
+/// instead of leaking the real config. (Trust-store tests that rely on
+/// `XDG_DATA_HOME` are unaffected — that var is left alone.)
 pub fn may_i_cmd() -> Command {
     let mut cmd = cargo_bin_cmd!("may-i");
-    cmd.current_dir(std::env::temp_dir());
+    let home = isolated_home();
+    cmd.current_dir(std::env::temp_dir())
+        .env_remove("MAYI_CONFIG")
+        .env("HOME", home)
+        .env("XDG_CONFIG_HOME", home);
     cmd
 }
