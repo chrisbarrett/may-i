@@ -1,9 +1,22 @@
 use may_i_shell_parser::{
     Command, ParameterOperator, ParseDiagnostic, Redirection, RedirectionKind, RedirectionTarget,
     SimpleCommand, SubstitutionForm, Word, WordPart, constant_env, defined_function_names,
-    extract_simple_commands,
+    enumerable_for_values,
 };
 use std::collections::{HashMap, HashSet};
+
+/// Maximum number of evaluation units an enumerable-`for` unroll may add before
+/// the loop falls back to its unresolved (flagged) walk. Nested enumerable loops
+/// multiply, so this caps the Cartesian blow-up (D3). Conservative on purpose:
+/// real ops loops carry a handful of values, and exceeding the cap only costs
+/// precision (a fallback to the flagged single walk), never soundness.
+const UNROLL_UNIT_BUDGET: usize = 64;
+
+/// Per-`for`-node unroll decision, keyed by the node's pointer identity. A node
+/// present in the map is unrolled to the given value set; absent means it is not
+/// enumerable, or unrolling it would exceed the budget, so its body is walked
+/// once with the loop variable unresolved (today's behaviour).
+type UnrollPlan = HashMap<*const Command, Vec<String>>;
 
 /// Byte range in the original input string covered by an `EvalUnit`.
 pub(super) type Span = (usize, usize);
@@ -143,7 +156,6 @@ pub(crate) fn decompose(
     diagnostics: &[ParseDiagnostic],
     tainted_env: &HashSet<String>,
 ) -> Vec<EvalUnit> {
-    let simple_commands = extract_simple_commands(cmd);
     let mut units = Vec::new();
 
     // Variables the command provably assigns a constant value. Used to resolve
@@ -156,33 +168,176 @@ pub(crate) fn decompose(
     // this set is decomposed as an ordinary command.
     let internal_call_spans = live_local_call_spans(cmd, &const_env);
 
-    for sc in simple_commands {
-        decompose_simple_command(
-            sc,
-            input,
-            diagnostics,
-            &const_env,
-            &internal_call_spans,
-            tainted_env,
-            &mut units,
-        );
-    }
+    // Which enumerable `for` loops to unroll, and to what value sets. Computed
+    // once so every pass below makes the *same* decision — otherwise the simple,
+    // redirect, and structural passes would emit desynchronised unit streams.
+    let plan = build_unroll_plan(cmd, &const_env);
 
-    // Redirect targets carry their own embedded commands — a process
-    // substitution in redirect position (`… < <(rm)`) attaches to the
-    // enclosing `Redirected` wrapper, not to any simple command's words, so
-    // it is invisible to the word scan above. Walk the whole tree for
-    // redirect targets so those inner commands are evaluated too.
+    // Pass 1 — simple commands (and the units they own: dynamic names, env
+    // prefixes, argv-word substitutions and taints). Threads the constant env so
+    // an unrolled loop body resolves the loop variable as a seeded scalar.
+    collect_simple_command_units(
+        cmd,
+        input,
+        diagnostics,
+        &const_env,
+        &internal_call_spans,
+        tainted_env,
+        &plan,
+        &mut units,
+    );
+
+    // Pass 2 — redirect targets carry their own embedded commands: a process
+    // substitution in redirect position (`… < <(rm)`) attaches to the enclosing
+    // `Redirected` wrapper, not to any simple command's words, so it is
+    // invisible to the word scan above. Walk the whole tree for redirect targets
+    // so those inner commands are evaluated too.
+    //
+    // This pass (and pass 3) is *not* unrolled: the units it owns — redirect
+    // floors, embedded-substitution gates, secret-read taints — do not resolve
+    // the loop variable (their floor/taint outcome is value-independent), so
+    // unrolling would only duplicate identical units. Visiting each body once
+    // (via `children()`) gates them exactly as before.
     push_embedded_units_from_redirect_targets(cmd, diagnostics, tainted_env, &mut units);
 
-    // Assignment values, `for` words, and `case` subject/pattern words are
-    // word positions no other pass owns. A substitution in any of them runs a
-    // command, so walk the whole tree for them too — otherwise the embedded
-    // command would never be gated. (Simple-command words and redirect targets
-    // keep their existing owners and are skipped here to avoid double-counting.)
+    // Pass 3 — assignment values, `for` words, and `case` subject/pattern words
+    // are word positions no other pass owns. A substitution in any of them runs
+    // a command, so walk the whole tree for them too. (Simple-command words and
+    // redirect targets keep their existing owners and are skipped here to avoid
+    // double-counting.)
     push_embedded_units_from_structural_words(cmd, diagnostics, tainted_env, &mut units);
 
     units
+}
+
+/// Build the [`UnrollPlan`]: decide, for every `for` node in the tree, whether
+/// to unroll it and over what value set. A loop unrolls iff it is statically
+/// enumerable (against the env in scope, which carries any enclosing unrolled
+/// loop variables) and the running unit budget allows it (D3). The walk threads
+/// a remaining budget down the tree; a loop that would exceed it is left absent,
+/// so all three decompose passes fall back to its flagged single walk.
+fn build_unroll_plan(cmd: &Command, const_env: &HashMap<String, String>) -> UnrollPlan {
+    let mut plan = UnrollPlan::new();
+    plan_walk(cmd, const_env, UNROLL_UNIT_BUDGET, &mut plan);
+    plan
+}
+
+/// Walk `cmd` deciding unroll for each `for` node. `budget` is the units still
+/// available for unrolling within the current (possibly already-unrolled)
+/// scope. Returns nothing; populates `plan`.
+fn plan_walk(cmd: &Command, env: &HashMap<String, String>, budget: usize, plan: &mut UnrollPlan) {
+    if let Command::For { var, words, body } = cmd
+        && let Some(values) = enumerable_for_values(var, words, body, env)
+    {
+        // Cost of unrolling: one copy of every body unit per value. Use the
+        // body's static unit count as the per-iteration weight; the product
+        // across nested unrolled loops is bounded by threading the divided
+        // budget into each seeded body walk below.
+        let body_units = count_body_units(body).max(1);
+        let count = values.len();
+        let total = body_units.saturating_mul(count);
+        if count > 0 && total <= budget {
+            plan.insert(cmd as *const Command, values.clone());
+            // Each iteration's body may itself unroll nested loops; give each a
+            // share of the remaining budget so the Cartesian product stays
+            // bounded. Seed the loop variable so nested enumerability can read it.
+            let per_iter = (budget / count).max(1);
+            let mut seeded = env.clone();
+            seeded.insert(var.clone(), values[0].clone());
+            plan_walk(body, &seeded, per_iter, plan);
+            return;
+        }
+        // Over budget or empty: not unrolled. Walk the body once, unchanged env.
+        plan_walk(body, env, budget, plan);
+        return;
+    }
+    for child in cmd.children() {
+        plan_walk(child, env, budget, plan);
+    }
+}
+
+/// Number of evaluation-unit-bearing nodes in `body`, used as the per-iteration
+/// weight when costing an unroll. Counts simple commands (the dominant unit
+/// source); a body with none still costs at least one (see `.max(1)` at the call
+/// site) so an empty body does not read as free.
+fn count_body_units(body: &Command) -> usize {
+    let mut n = 0;
+    fn walk(cmd: &Command, n: &mut usize) {
+        if let Command::Simple(_) = cmd {
+            *n += 1;
+        }
+        for child in cmd.children() {
+            walk(child, n);
+        }
+    }
+    walk(body, &mut n);
+    n
+}
+
+/// Pass 1: recursively emit the units owned by simple commands, threading the
+/// constant env. At an enumerable `for` node in the [`UnrollPlan`], the body is
+/// walked once per list value with the loop variable seeded into a copy of the
+/// env, so its argument words resolve as provably-constant scalars (D1); the
+/// across-units meet then combines the per-value decisions strictest-wins.
+///
+/// Replaces the former flat `extract_simple_commands` sweep: a simple command
+/// has no command children, so visiting `Command::Simple` and recursing through
+/// `children()` everywhere else reaches exactly the same set of simple commands
+/// when no loop is unrolled, in the same pre-order.
+#[allow(clippy::too_many_arguments)]
+fn collect_simple_command_units(
+    cmd: &Command,
+    input: &str,
+    diagnostics: &[ParseDiagnostic],
+    env: &HashMap<String, String>,
+    internal_call_spans: &HashSet<Span>,
+    tainted_env: &HashSet<String>,
+    plan: &UnrollPlan,
+    units: &mut Vec<EvalUnit>,
+) {
+    match cmd {
+        Command::Simple(sc) => {
+            decompose_simple_command(
+                sc,
+                input,
+                diagnostics,
+                env,
+                internal_call_spans,
+                tainted_env,
+                units,
+            );
+        }
+        Command::For { var, body, .. } if plan.contains_key(&(cmd as *const Command)) => {
+            for value in &plan[&(cmd as *const Command)] {
+                let mut seeded = env.clone();
+                seeded.insert(var.clone(), value.clone());
+                collect_simple_command_units(
+                    body,
+                    input,
+                    diagnostics,
+                    &seeded,
+                    internal_call_spans,
+                    tainted_env,
+                    plan,
+                    units,
+                );
+            }
+        }
+        _ => {
+            for child in cmd.children() {
+                collect_simple_command_units(
+                    child,
+                    input,
+                    diagnostics,
+                    env,
+                    internal_call_spans,
+                    tainted_env,
+                    plan,
+                    units,
+                );
+            }
+        }
+    }
 }
 
 /// Walk the command tree and emit embedded units for the word positions that

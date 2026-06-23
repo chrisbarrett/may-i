@@ -72,7 +72,23 @@ fn assignment_from_a_substitution_stays_dynamic() {
 }
 
 #[test]
-fn loop_variable_command_name_stays_dynamic() {
+fn enumerable_loop_variable_command_name_resolves_per_value() {
+    // `for c in rm cp; do $c x; done` is statically enumerable, so `$c` resolves
+    // to `rm` and `cp` in the unrolled bodies — the command name is no longer a
+    // dynamic expansion. With a rule allowing both, every value is allowed.
+    let allowed = decide(
+        r#"(rule "rm" (allow "ok")) (rule "cp" (allow "ok"))"#,
+        "for c in rm cp; do $c x; done",
+    );
+    assert_eq!(
+        allowed.decision,
+        Decision::Allow,
+        "both resolved command names should be allowed: {:?}",
+        allowed.reason
+    );
+
+    // With no rules the resolved commands ask per the No-rule path — not as a
+    // dynamic command name, since enumeration resolved the loop variable.
     let result = decide("", "for c in rm cp; do $c x; done");
     assert!(
         result.decision >= Decision::Ask,
@@ -82,8 +98,26 @@ fn loop_variable_command_name_stays_dynamic() {
     );
     let reason = result.reason.as_deref().unwrap_or("");
     assert!(
+        !reason.contains("dynamic command name"),
+        "enumerated loop command name must resolve, not stay dynamic: {reason:?}"
+    );
+}
+
+#[test]
+fn non_enumerable_loop_variable_command_name_stays_dynamic() {
+    // A non-enumerable list (a non-constant variable) leaves `$c` unresolved, so
+    // the command name is still a dynamic expansion exactly as before.
+    let result = decide("", "for c in $X; do $c arg; done");
+    assert!(
+        result.decision >= Decision::Ask,
+        "expected at least ask, got {:?} ({:?})",
+        result.decision,
+        result.reason
+    );
+    let reason = result.reason.as_deref().unwrap_or("");
+    assert!(
         reason.contains("dynamic command name") || reason.contains("$c"),
-        "loop variable command name must stay dynamic: {reason:?}"
+        "non-enumerable loop variable command name must stay dynamic: {reason:?}"
     );
 }
 

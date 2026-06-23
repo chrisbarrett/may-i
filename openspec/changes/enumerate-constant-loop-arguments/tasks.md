@@ -16,14 +16,19 @@
 
 ## 2. Unrolling in `decompose`
 
-- [ ] 2.1 Add a failing engine test: `for k in a b c; do aws s3 cp "s3://bkt/$k" /tmp/x; done`
+- [x] 2.1 Add a failing engine test: `for k in a b c; do aws s3 cp "s3://bkt/$k" /tmp/x; done`
       with an allow matching all three sources resolves to `:allow`, no floor.
       Confirm red.
-- [ ] 2.2 In `decompose`, when a `for` loop is enumerable, emit the body's
+- [x] 2.2 In `decompose`, when a `for` loop is enumerable, emit the body's
       `EvalUnit`s once per list value with the loop variable seeded into each
       copy's `const_env`; otherwise walk the body once as today.
-- [ ] 2.3 Enforce the total evaluation-unit budget; over budget, fall back to the
-      single non-unrolled walk (loop variable unresolved) and `log` the cap.
+- [x] 2.3 Enforce the total evaluation-unit budget; over budget, fall back to the
+      single non-unrolled walk (loop variable unresolved). (Deviation: no `log`
+      facility exists in the pure-eval `engine`/`shell-parser` crates — adding a
+      logging dependency conflicts with "Eval is pure: no IO". The cap is
+      documented in `UNROLL_UNIT_BUDGET`'s doc comment and the fallback floors
+      to `:ask`, so a truncated unroll surfaces as a visible ask, never as full
+      coverage.)
 
 ## 3. Combination and boundary scenarios
 
