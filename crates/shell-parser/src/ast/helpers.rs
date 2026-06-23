@@ -101,6 +101,20 @@ pub(crate) fn abbreviate(s: &str) -> String {
     }
 }
 
+/// Format a subscripted array expansion back to shell syntax (without `${`
+/// and `}`): `arr[@]`, `arr[0]`, `#arr[@]`. The subscript word is flattened
+/// with [`Word::to_str`] (a dynamic subscript like `$i` round-trips through
+/// its source form via that flattening's existing handling).
+pub(crate) fn format_array_expansion(name: &str, subscript: &Subscript, length: bool) -> String {
+    let sub = match subscript {
+        Subscript::Index(w) => w.to_str(),
+        Subscript::All => "@".to_string(),
+        Subscript::Star => "*".to_string(),
+    };
+    let hash = if length { "#" } else { "" };
+    format!("{hash}{name}[{sub}]")
+}
+
 /// Format a parameter expansion operator back to shell syntax (without `${` and `}`).
 pub(crate) fn format_param_op(name: &str, op: &ParameterOperator) -> String {
     match op {

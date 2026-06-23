@@ -114,7 +114,7 @@ fn collect_all_words<'a>(cmd: &'a Command, out: &mut Vec<&'a Word>) {
     match cmd {
         Command::Simple(sc) => {
             out.extend(&sc.words);
-            out.extend(sc.assignments.iter().map(|a| &a.value));
+            out.extend(sc.assignments.iter().flat_map(|a| a.value.words()));
             for r in &sc.redirections {
                 if let RedirectionTarget::File(w) = &r.target {
                     out.push(w);
@@ -138,7 +138,7 @@ fn collect_all_words<'a>(cmd: &'a Command, out: &mut Vec<&'a Word>) {
             }
         }
         Command::Assignment(a) => {
-            out.push(&a.value);
+            out.extend(a.value.words());
         }
         _ => {}
     }

@@ -144,7 +144,9 @@ fn walk_words(cmd: &Command, f: &mut impl FnMut(&crate::ast::Word)) {
             f(w);
         }
         for a in &sc.assignments {
-            f(&a.value);
+            for w in a.value.words() {
+                f(w);
+            }
         }
         for r in &sc.redirections {
             if let crate::ast::RedirectionTarget::File(w) = &r.target {

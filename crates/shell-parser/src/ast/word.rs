@@ -160,6 +160,16 @@ fn collect_dynamic_from(parts: &[WordPart], out: &mut Vec<String>) {
             WordPart::ParameterExpansionOp { name, op, .. } => {
                 out.push(format!("${{{}}}", format_param_op(name, op)));
             }
+            WordPart::ArrayExpansion {
+                name,
+                subscript,
+                length,
+            } => {
+                out.push(format!(
+                    "${{{}}}",
+                    format_array_expansion(name, subscript, *length)
+                ));
+            }
             WordPart::DoubleQuoted(inner) => {
                 collect_dynamic_from(inner, out);
             }
@@ -192,6 +202,15 @@ fn parts_to_display(parts: &[WordPart], out: &mut String) {
             WordPart::ParameterExpansionOp { name, op, .. } => {
                 out.push_str("${");
                 out.push_str(&format_param_op(name, op));
+                out.push('}');
+            }
+            WordPart::ArrayExpansion {
+                name,
+                subscript,
+                length,
+            } => {
+                out.push_str("${");
+                out.push_str(&format_array_expansion(name, subscript, *length));
                 out.push('}');
             }
             WordPart::CommandSubstitution { source, .. } => {
@@ -247,6 +266,13 @@ fn parts_to_str(parts: &[WordPart], out: &mut String) {
             WordPart::ParameterExpansionOp { name, op, .. } => {
                 out.push_str(&format_param_op(name, op));
             }
+            WordPart::ArrayExpansion {
+                name,
+                subscript,
+                length,
+            } => {
+                out.push_str(&format_array_expansion(name, subscript, *length));
+            }
             WordPart::DoubleQuoted(inner) => {
                 parts_to_str(inner, out);
             }
@@ -277,6 +303,7 @@ fn is_expansion_bearing_in(parts: &[WordPart]) -> bool {
         | WordPart::Parameter(_)
         | WordPart::ParameterExpansion(_)
         | WordPart::ParameterExpansionOp { .. }
+        | WordPart::ArrayExpansion { .. }
         | WordPart::Arithmetic { .. }
         | WordPart::ProcessSubstitution { .. }
         | WordPart::Glob(_)

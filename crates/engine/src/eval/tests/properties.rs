@@ -1140,14 +1140,14 @@ mod parser_engine_invariants {
         match cmd {
             Command::Simple(sc) => {
                 out.extend(&sc.words);
-                out.extend(sc.assignments.iter().map(|a| &a.value));
+                out.extend(sc.assignments.iter().flat_map(|a| a.value.words()));
                 for r in &sc.redirections {
                     if let RedirectionTarget::File(w) = &r.target {
                         out.push(w);
                     }
                 }
             }
-            Command::Assignment(a) => out.push(&a.value),
+            Command::Assignment(a) => out.extend(a.value.words()),
             Command::For { words, .. } => out.extend(words),
             Command::Case { word, arms, .. } => {
                 out.push(word);
@@ -1203,7 +1203,9 @@ mod parser_engine_invariants {
                 walk_parts(&word.parts, visit)?;
             }
             for assignment in &sc.assignments {
-                walk_parts(&assignment.value.parts, visit)?;
+                for w in assignment.value.words() {
+                    walk_parts(&w.parts, visit)?;
+                }
             }
         }
         Ok(())
@@ -1236,7 +1238,9 @@ mod parser_engine_invariants {
                 visit(word)?;
             }
             for assignment in &sc.assignments {
-                visit(&assignment.value)?;
+                for w in assignment.value.words() {
+                    visit(w)?;
+                }
             }
         }
         Ok(())

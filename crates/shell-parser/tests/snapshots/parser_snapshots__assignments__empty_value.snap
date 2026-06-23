@@ -5,12 +5,14 @@ expression: "parse(\"FOO=\")"
 Assignment(
     Assignment {
         name: "FOO",
-        value: Word {
-            parts: [
-                Literal(
-                    "",
-                ),
-            ],
-        },
+        value: Scalar(
+            Word {
+                parts: [
+                    Literal(
+                        "",
+                    ),
+                ],
+            },
+        ),
     },
 )

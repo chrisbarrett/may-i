@@ -595,9 +595,10 @@ fn assignment_with_dynamic_value_parts() {
     match &cmd {
         Command::Assignment(a) => {
             assert_eq!(a.name, "x");
-            assert!(a.value.parts.len() >= 2);
-            assert_eq!(a.value.parts[0], WordPart::Literal("hello".into()));
-            assert!(matches!(&a.value.parts[1], WordPart::Parameter(s) if s == "HOME"));
+            let value = a.value.as_scalar().unwrap();
+            assert!(value.parts.len() >= 2);
+            assert_eq!(value.parts[0], WordPart::Literal("hello".into()));
+            assert!(matches!(&value.parts[1], WordPart::Parameter(s) if s == "HOME"));
         }
         _ => panic!("Expected assignment, got {:?}", cmd),
     }

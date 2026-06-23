@@ -448,7 +448,7 @@ fn test_assignment_standalone() {
     match &cmd {
         Command::Assignment(a) => {
             assert_eq!(a.name, "VAR");
-            assert_eq!(a.value.to_str(), "value");
+            assert_eq!(a.value.as_scalar().unwrap().to_str(), "value");
         }
         _ => panic!("Expected assignment, got {:?}", cmd),
     }
@@ -460,7 +460,7 @@ fn test_assignment_empty_value() {
     match &cmd {
         Command::Assignment(a) => {
             assert_eq!(a.name, "VAR");
-            assert_eq!(a.value.to_str(), "");
+            assert_eq!(a.value.as_scalar().unwrap().to_str(), "");
         }
         _ => panic!("Expected assignment"),
     }
@@ -473,7 +473,10 @@ fn test_assignment_with_command() {
         Command::Simple(sc) => {
             assert_eq!(sc.assignments.len(), 1);
             assert_eq!(sc.assignments[0].name, "VAR");
-            assert_eq!(sc.assignments[0].value.to_str(), "value");
+            assert_eq!(
+                sc.assignments[0].value.as_scalar().unwrap().to_str(),
+                "value"
+            );
             assert_eq!(sc.command_name(), Some("cmd"));
             assert_eq!(sc.args().len(), 1);
         }
