@@ -461,9 +461,16 @@ fn substitution_in_subscripted_operator_operand_is_gated() {
 }
 
 /// A command substitution inside a subscript that *also* carries an operator
-/// (`${arr[$(rm -rf /)]:-x}`) must still be gated: bash arithmetic-evaluates the
-/// subscript regardless of the operator. The subscript-fold must carry the
-/// subscript's embedded substitutions into the operator op so they are gated.
+/// whose operand is read structurally (`${arr[$(rm -rf /)]:-x}`, `#`, …) must
+/// still be gated: bash arithmetic-evaluates the subscript regardless of the
+/// operator. The subscript-fold carries the subscript's embedded substitutions
+/// into the operator op so they are gated.
+///
+/// NOTE: the patterned case-conversion (`^pat`/`,,pat`), transform/unknown
+/// (`@Q`), and indirect (`${!arr[…]}`) forms return a flat expansion that cannot
+/// carry `embedded` and stay ungated — a pre-existing, general (scalar-equal on
+/// `main`) gap deferred to a focused follow-up. See design.md "Known
+/// pre-existing gaps". Those forms are deliberately not asserted here.
 #[test]
 fn substitution_in_subscript_with_operator_is_gated() {
     let config = r#"(rule "rm" (deny "no rm")) (rule "echo" (allow))"#;

@@ -342,9 +342,21 @@ impl Lexer {
         };
 
         // Merge any substitutions harvested from a folded subscript into the
-        // operator op's `embedded`, so `${arr[$(cmd)]:-x}` gates the subscript
-        // command. Only the structured op form can carry them; the flat
-        // fallback above is only reached by invalid-bash junk that runs nothing.
+        // operator op's `embedded`, so `${arr[$(cmd)]:-x}` (and every operator
+        // whose operand is read via `read_operand`) gates the subscript command.
+        //
+        // KNOWN GAP (pre-existing, general, deferred): the operator arms that
+        // return a *flat* `WordPart::ParameterExpansion` rather than a
+        // `ParameterExpansionOp` — patterned case-conversion `${x^pat}`/`${x,,pat}`,
+        // and the `_` fallback for transform/unknown operators `${x@Q}` / junk —
+        // cannot carry `embedded`, so a substitution they hold (in a folded
+        // subscript OR in their own operand) stays ungated. This is NOT specific
+        // to arrays: the identical scalar forms (`${VAR^$(cmd)}`, `${VAR@Q$(cmd)}`)
+        // bury the substitution on `main` too, and so does a substitution inside a
+        // glob bracket (`[$(cmd)]`). Closing it needs a flat expansion that can
+        // carry embedded parts (or the missing transform ops) — a focused
+        // follow-up across scalar and array expansions alike, not this
+        // array-modelling change. See design.md "Known pre-existing gaps".
         if !subscript_embedded.is_empty()
             && let Some(WordPart::ParameterExpansionOp { embedded, .. }) = &mut expansion
         {
