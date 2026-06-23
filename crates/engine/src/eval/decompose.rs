@@ -675,8 +675,8 @@ fn decompose_simple_command(
     // A dynamic first word that is a lone variable expansion (`$BIN`,
     // `${BIN}`, `"$BIN"`) is resolved against the command's provably-constant
     // env. On success it is evaluated as that literal command name; otherwise
-    // it falls through to `DynamicCommand` exactly as before. Argument words
-    // are never resolved here.
+    // it falls through to `DynamicCommand` exactly as before. Argument words are
+    // resolved separately by `resolve_argument_words` (D1, all-or-nothing).
     let resolved_command = first_word
         .is_dynamic()
         .then(|| resolve_command_name(first_word, const_env))
@@ -715,11 +715,7 @@ fn decompose_simple_command(
                 span: sc_span,
             });
         } else {
-            let args: Vec<String> = sc.words[1..].iter().map(|w| w.to_str()).collect();
-            let arg_expansions: Vec<Expansion> = sc.words[1..]
-                .iter()
-                .map(|w| w.is_expansion_bearing().then(|| w.display_source()))
-                .collect();
+            let (args, arg_expansions) = resolve_argument_words(&sc.words[1..], const_env);
             units.push(EvalUnit::SimpleCommand {
                 command,
                 args,
@@ -750,6 +746,45 @@ fn decompose_simple_command(
         }
         push_env_read_units(&names, tainted_env, sc_span, units);
     }
+}
+
+/// Resolve each argument word against the command's provably-constant env,
+/// returning the matcher-visible `(args, arg_expansions)` pair (D1).
+///
+/// Resolution is **all-or-nothing per word**: a word whose every expansion
+/// resolves to a provably-constant literal becomes that literal and is no
+/// longer expansion-bearing (its `arg_expansions` entry is cleared to `None`),
+/// so matchers see and gate its real value. Any word with an unresolved part —
+/// an expansion of a non-constant variable, a command substitution, a glob —
+/// keeps its raw `to_str()` form and its existing expansion-bearing flag, so it
+/// floors an `:allow` exactly as before. The two vectors stay the same length
+/// as `words`, preserving the `anywhere_match` `debug_assert_eq!`.
+fn resolve_argument_words(
+    words: &[Word],
+    const_env: &HashMap<String, String>,
+) -> (Vec<String>, Vec<Expansion>) {
+    words
+        .iter()
+        .map(|w| {
+            let resolved = w.resolve(const_env);
+            // Clear the expansion-bearing flag only when *every* part is proven:
+            // the resolved word carries no remaining expansion (`is_literal`
+            // would also admit an unquoted glob/brace like `/tmp/a*`, which must
+            // stay flagged), AND every unquoted expansion resolved to a value
+            // the shell passes verbatim — an unquoted `$VAR` holding `/etc/passw?`
+            // resolves to a non-expansion-bearing literal yet bash glob-expands
+            // it at runtime, so it is *not* proven. Both together prevent a
+            // resolved word from widening an `:allow` (D3).
+            if !resolved.is_expansion_bearing() && w.resolves_to_verbatim_literal(const_env) {
+                (resolved.to_str(), None)
+            } else {
+                (
+                    w.to_str(),
+                    w.is_expansion_bearing().then(|| w.display_source()),
+                )
+            }
+        })
+        .unzip()
 }
 
 /// Resolve a first word that is a lone variable expansion to its literal

@@ -226,13 +226,26 @@ impl Lexer {
                 } else {
                     false
                 };
-                let (_pattern, embedded) = self.read_operand(&['}']);
+                let (pattern, embedded) = self.read_operand(&['}']);
                 self.advance();
-                Some(WordPart::ParameterExpansionOp {
-                    name,
-                    op: ParameterOperator::Uppercase { all },
-                    embedded,
-                })
+                // bash `${VAR^^pat}` converts only chars matching `pat`. The
+                // `Uppercase` op carries no pattern, so a non-empty operand would
+                // be silently dropped and resolution would diverge (full-case vs
+                // patterned). Emit the unresolvable flat form instead so the word
+                // stays expansion-bearing and floors. `${VAR^^}`/`${VAR^}` (no
+                // pattern) resolves as before.
+                if pattern.is_empty() {
+                    Some(WordPart::ParameterExpansionOp {
+                        name,
+                        op: ParameterOperator::Uppercase { all },
+                        embedded,
+                    })
+                } else {
+                    let sigil = if all { "^^" } else { "^" };
+                    Some(WordPart::ParameterExpansion(format!(
+                        "{name}{sigil}{pattern}"
+                    )))
+                }
             }
             Some(',') => {
                 self.advance();
@@ -242,13 +255,22 @@ impl Lexer {
                 } else {
                     false
                 };
-                let (_pattern, embedded) = self.read_operand(&['}']);
+                let (pattern, embedded) = self.read_operand(&['}']);
                 self.advance();
-                Some(WordPart::ParameterExpansionOp {
-                    name,
-                    op: ParameterOperator::Lowercase { all },
-                    embedded,
-                })
+                // See the `^` arm: a non-empty `${VAR,,pat}` pattern is dropped by
+                // the `Lowercase` op, so floor it via the unresolvable flat form.
+                if pattern.is_empty() {
+                    Some(WordPart::ParameterExpansionOp {
+                        name,
+                        op: ParameterOperator::Lowercase { all },
+                        embedded,
+                    })
+                } else {
+                    let sigil = if all { ",," } else { "," };
+                    Some(WordPart::ParameterExpansion(format!(
+                        "{name}{sigil}{pattern}"
+                    )))
+                }
             }
             _ => {
                 // Unknown operator; fall back to flat string

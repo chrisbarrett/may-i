@@ -61,10 +61,52 @@ so this change closes it.
 Where `args`/`arg_expansions` are built (`decompose.rs:644-648`), resolve each
 argument word against the existing `const_env`:
 
-- If `word.resolve(const_env).is_literal()` → push the resolved literal into
-  `args` and set that word's `arg_expansions` entry to `None` (provable).
+- If `!word.resolve(const_env).is_expansion_bearing()` → push the resolved value
+  into `args` and set that word's `arg_expansions` entry to `None` (provable).
 - Otherwise → keep `w.to_str()` and the existing
   `is_expansion_bearing().then(display_source)` entry (unchanged behaviour).
+
+The guard is `!is_expansion_bearing()`, **not** `is_literal()`: `is_literal()`
+returns true for an unquoted glob/brace word (`/tmp/a*`, `{a,b}`), which is
+expansion-bearing and must stay flagged — clearing it would let a glob word
+satisfy an `:allow`, which D3 forbids. The expansion-bearing check is the honest
+"every part is proven" test (it also keeps a leading-tilde word flagged).
+
+Two further soundness layers are load-bearing because arguments resolve forms
+the command-name path (lone-variable-only) never reached:
+
+1. **Operator operands must be inert, and the operator must be faithfully
+   modelled** (`crates/shell-parser/src/resolve.rs`, `op_operands_are_inert`).
+   `resolve_param_op` resolves a `${VAR…}` operator form only when **all** its
+   operands are inert: no nested `$`/backtick, no brace metachar (bash
+   brace-expands before parameter expansion), no backslash (a `\*` matches
+   literally in bash but the `glob_*` helpers treat `\` as ordinary), and — for
+   operands that become part of the produced word — no glob metachar or leading
+   tilde. Several operators also diverge structurally and floor: a substring
+   offset/length that is not a plain decimal integer (bash evaluates it as
+   *arithmetic* — `2+2`, octal `010` — we `parse` it; `is_plain_integer`); an
+   anchored replace `${VAR/#pat/…}`/`/%` whose anchor the AST cannot carry
+   (`replace_pattern_is_inert`); a patterned case conversion `${VAR^^pat}`
+   whose pattern the AST drops (the lexer emits the unresolvable flat form);
+   and an all-replace whose pattern matches the empty string (`${V//*/y}`),
+   which is both a runtime divergence and a non-terminating `glob_replace` loop
+   (`pattern_matches_empty`). `${#VAR}` length counts characters, not bytes. An
+   operator word that cannot be resolved faithfully stays expansion-bearing and
+   floors. This keeps the *computed* value byte-identical to bash. As
+   defence-in-depth, `glob_replace` itself is now total (it advances past a
+   zero-width match), so the loop cannot hang via any other caller.
+
+2. **An unquoted expansion's value must be passed verbatim**
+   (`crates/shell-parser/src/ast/word.rs`, `Word::resolves_to_verbatim_literal`,
+   gating `resolve_argument_words`). `Word::resolve` faithfully computes a value,
+   but an *unquoted* `$VAR` holding `/etc/passw?` resolves to a literal that is
+   not expansion-bearing yet bash pathname-expands (`/etc/passwd`) or
+   word-splits at runtime — a wrong `:allow`. A word is treated as proven only
+   when `!resolved.is_expansion_bearing()` **and** every unquoted expansion
+   resolved to a value with no glob metachar (`*?[`) or splitting whitespace.
+   A quoted expansion (`"$VAR"`) undergoes neither and stays resolvable. Brace
+   and tilde expansion precede parameter expansion in bash, so they never apply
+   to a *value* and are not part of this test.
 
 All-or-nothing per word mirrors the command-name precedent and keeps the
 `arg_expansions` flag honest: a word is cleared only when *every* part is proven.

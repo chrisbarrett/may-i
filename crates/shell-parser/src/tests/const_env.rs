@@ -1,4 +1,5 @@
 use crate::*;
+use proptest::prelude::*;
 use std::collections::HashMap;
 
 fn env_of(input: &str) -> HashMap<String, String> {
@@ -74,10 +75,51 @@ fn export_invalid_name_does_not_bind() {
     assert_eq!(env_of("export 1BAD=x"), HashMap::new());
 }
 
+// -- Task 1: use-order-awareness (D2) --
+
+#[test]
+fn use_before_sole_assignment_does_not_qualify() {
+    // At the use site `$B`, the assignment `B=rm` has not yet executed, so the
+    // value there is the inherited environment, not `rm`. `B` must not resolve.
+    assert_eq!(env_of("$B x; B=rm"), HashMap::new());
+}
+
 #[test]
 fn unset_dynamic_name_is_ignored() {
     // `unset $X` names no statically-known variable; it neither binds nor
     // disqualifies a provably-constant assignment.
     let env = env_of("BIN=./x; unset $X; $BIN run");
     assert_eq!(env, [("BIN".to_string(), "./x".to_string())].into());
+}
+
+// Distinct unrelated identifiers that never collide with the variable under
+// test (which is uppercase) or name a special builtin we model (export/unset).
+fn arb_filler() -> impl Strategy<Value = Vec<String>> {
+    let cmd = "[a-z][a-z0-9]{0,4}";
+    proptest::collection::vec(cmd, 0..3)
+}
+
+proptest! {
+    /// Straight-line `NAME=lit; <filler…>; <use>` qualifies regardless of how
+    /// many unrelated commands sit between the assignment and the use; moving
+    /// the use before the assignment flips it to disqualified (D2).
+    #[test]
+    fn prop_use_order_qualification(
+        name in "[A-Z][A-Z_]{0,5}",
+        value in "[a-z][a-z0-9]{0,6}",
+        filler in arb_filler(),
+    ) {
+        let mid = filler.join("; ");
+        let sep = if mid.is_empty() { String::new() } else { format!("{mid}; ") };
+
+        // assign then (filler) then use
+        let assign_first = format!("{name}={value}; {sep}foo ${name}");
+        let env = constant_env(&parse(&assign_first).command);
+        prop_assert_eq!(env.get(&name).map(String::as_str), Some(value.as_str()));
+
+        // use then assign — disqualified
+        let use_first = format!("foo ${name}; {sep}{name}={value}");
+        let env = constant_env(&parse(&use_first).command);
+        prop_assert_eq!(env.get(&name), None);
+    }
 }
