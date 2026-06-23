@@ -369,15 +369,13 @@ impl Parser {
         {
             // The lexical name is everything before the first `=`. It may carry
             // an append `+` (`arr+=…`) and/or an indexed-element subscript
-            // (`arr[5]=…`); strip both to recover the bare variable name and
-            // validate it. `arr[5]=v` is a scalar assignment to one element —
-            // not an array literal — but we keep the bare name so const_env and
-            // taint see a normal assignment rather than dropping the token.
+            // (`arr[5]=…`). Strip both to recover the bare array name used by
+            // the array-literal branch below.
             let lexical = &s[..eq_pos];
-            let lexical = lexical.strip_suffix('+').unwrap_or(lexical);
-            let bare = match lexical.find('[') {
-                Some(open) => &lexical[..open],
-                None => lexical,
+            let array_name = lexical.strip_suffix('+').unwrap_or(lexical);
+            let bare = match array_name.find('[') {
+                Some(open) => &array_name[..open],
+                None => array_name,
             };
             if !bare.is_empty()
                 && bare.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
@@ -398,6 +396,18 @@ impl Parser {
                         name: bare.to_string(),
                         value: array,
                     });
+                }
+
+                // Only a plain `name=value` binds a scalar. A scalar *append*
+                // (`p+=foo`) appends to the inherited value — it is not a
+                // constant binding, and pre-array behaviour left `p+` as a
+                // command word; an indexed-element target (`arr[5]=v`) is not a
+                // scalar variable assignment either. Both are distinguished by
+                // the raw lexical name carrying a `+`/`[` the bare name dropped;
+                // leave them as command words (the token still survives — no
+                // silent discard) rather than mis-model them as `name=value`.
+                if lexical != bare {
+                    return None;
                 }
 
                 let mut value_parts = Vec::new();
@@ -838,11 +848,13 @@ impl Parser {
 }
 
 /// If `words` names a declaration builtin (`declare`/`typeset`/`local`/
-/// `export`/`readonly`), return the array kind its flags so far imply: a `-A`
-/// flag anywhere in the flag words makes a following `name=(…)` associative;
-/// otherwise it is indexed (`-a` or no flag). Returns `None` when the first
-/// word is not a declaration builtin, so a plain command's `name=(…)` argument
-/// is left as an ordinary word.
+/// `export`/`readonly`), return the array kind its flags imply: a `-A` flag
+/// anywhere in the flag words makes a following `name=(…)` associative;
+/// otherwise it is indexed (`-a` or no flag). Flag position is not tracked —
+/// `-A` anywhere wins — which is sound here because the kind only affects the
+/// follow-on resolver's ordering, never this change's decisions. Returns `None`
+/// when the first word is not a declaration builtin, so a plain command's
+/// `name=(…)` argument is left as an ordinary word.
 fn declaration_array_kind(words: &[Word]) -> Option<ArrayKind> {
     let head = words.first()?;
     if head.parts.len() != 1 {

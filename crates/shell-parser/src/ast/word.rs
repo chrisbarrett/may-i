@@ -24,6 +24,7 @@ fn has_dynamic_in(parts: &[WordPart]) -> bool {
         | WordPart::Parameter(_)
         | WordPart::ParameterExpansion(_)
         | WordPart::ParameterExpansionOp { .. }
+        | WordPart::ArrayExpansion { .. }
         | WordPart::Arithmetic { .. }
         | WordPart::ProcessSubstitution { .. } => true,
         WordPart::DoubleQuoted(inner) => has_dynamic_in(inner),
@@ -46,6 +47,13 @@ fn collect_embedded_commands<'a>(parts: &'a [WordPart], out: &mut Vec<&'a str>) 
             WordPart::ParameterExpansionOp { embedded, .. } => {
                 collect_embedded_commands(embedded, out)
             }
+            // An `Index` subscript (`${arr[$(cmd)]}`) is arithmetic-evaluated by
+            // bash, so a substitution inside it runs and must be gated. `@`/`*`
+            // carry no command.
+            WordPart::ArrayExpansion {
+                subscript: Subscript::Index(w),
+                ..
+            } => collect_embedded_commands(&w.parts, out),
             _ => {}
         }
     }
@@ -128,6 +136,13 @@ fn collect_embedded_with_spans<'a>(
             WordPart::ParameterExpansionOp { embedded, .. } => {
                 collect_embedded_with_spans(embedded, out)
             }
+            // A substitution inside an `Index` subscript (`${arr[$(cmd)]}`) is
+            // run by bash (the subscript is arithmetic-evaluated); its parts
+            // carry absolute spans, so they surface exactly like inline ones.
+            WordPart::ArrayExpansion {
+                subscript: Subscript::Index(w),
+                ..
+            } => collect_embedded_with_spans(&w.parts, out),
             _ => {}
         }
     }

@@ -199,18 +199,20 @@ fn first_arg_part(input: &str) -> WordPart {
     sc.args()[0].parts[0].clone()
 }
 
-/// A subscript followed by an operator (`${arr[0]:-x}`) is not an array
-/// reference: the lexer restores and reads it as a flat parameter expansion,
-/// never dropping the subscript or the operator (`read_subscript` restore path).
+/// A subscript followed by an operator (`${arr[0]:-x}`) is not a pure array
+/// reference: the subscript is folded into the name and the expansion parses as
+/// a structured operator op (so the operand — and any embedded substitution in
+/// it — is captured and gated), never the unstructured flat fallback. The
+/// folded name keeps the subscript text.
 #[test]
-fn subscript_then_operator_is_flat_expansion() {
-    assert!(
-        matches!(
-            first_arg_part("echo ${arr[0]:-x}"),
-            WordPart::ParameterExpansion(_)
-        ),
-        "subscript-then-operator should fall back to a flat expansion"
-    );
+fn subscript_then_operator_is_structured_op() {
+    match first_arg_part("echo ${arr[0]:-x}") {
+        WordPart::ParameterExpansionOp { name, op, .. } => {
+            assert_eq!(name, "arr[0]");
+            assert!(matches!(op, ParameterOperator::Default { .. }));
+        }
+        other => panic!("expected ParameterExpansionOp, got {other:?}"),
+    }
     assert!(!parse("echo ${arr[0]:-x}").has_errors());
 }
 
@@ -274,6 +276,76 @@ fn indexed_element_assignment_does_not_truncate() {
         names.contains(&Some("echo")),
         "trailing echo dropped: {names:?}"
     );
+}
+
+/// A word that is solely `${arr[@]}` is not a literal: an array expansion is a
+/// dynamic, expansion-bearing construct. Guards `has_dynamic_in` (and thus
+/// `is_literal`/`const_env`) against mis-classifying it as static.
+#[test]
+fn array_expansion_word_is_not_literal() {
+    let word = Word {
+        parts: vec![WordPart::ArrayExpansion {
+            name: "arr".to_string(),
+            subscript: Subscript::All,
+            length: false,
+        }],
+    };
+    assert!(!word.is_literal(), "array expansion must not be literal");
+    assert!(word.is_dynamic(), "array expansion must be dynamic");
+    assert!(
+        word.is_expansion_bearing(),
+        "array expansion must be expansion-bearing"
+    );
+}
+
+/// A scalar append `p+=foo` is **not** a constant binding (it appends to the
+/// inherited value), so it must not be modelled as a plain `name=value`
+/// assignment — matching the pre-array behaviour where `p+` is not a valid
+/// assignment name and the token is an ordinary command word. Only the array
+/// append `arr+=(…)` is captured (as an array literal).
+#[test]
+fn scalar_append_is_not_an_assignment() {
+    let cmd = parse("p+=foo").into_command();
+    match &cmd {
+        Command::Simple(sc) => {
+            assert!(
+                sc.assignments.is_empty(),
+                "scalar `p+=foo` must not parse as an assignment: {sc:?}"
+            );
+            assert_eq!(
+                sc.words.iter().map(|w| w.to_str()).collect::<Vec<_>>(),
+                vec!["p+=foo"],
+                "scalar append should survive as a command word"
+            );
+        }
+        other => panic!("expected simple command, got {other:?}"),
+    }
+}
+
+/// The array append form is unaffected: `arr+=(x y)` still parses as an
+/// (indexed) array literal preserving its elements.
+#[test]
+fn array_append_still_parses() {
+    let cmd = parse("arr+=(x y)").into_command();
+    match &cmd {
+        Command::Assignment(a) => {
+            assert_eq!(a.name, "arr");
+            match &a.value {
+                AssignmentValue::Array {
+                    array_kind,
+                    elements,
+                } => {
+                    assert_eq!(*array_kind, ArrayKind::Indexed);
+                    assert_eq!(
+                        elements.iter().map(|w| w.to_str()).collect::<Vec<_>>(),
+                        vec!["x", "y"]
+                    );
+                }
+                other => panic!("expected array, got {other:?}"),
+            }
+        }
+        other => panic!("expected assignment, got {other:?}"),
+    }
 }
 
 // ── Invariant proptests (model-bash-arrays tasks 4.2 / 3.3) ─────────────
@@ -347,6 +419,9 @@ const ARRAY_ISH: &[&str] = &[
     "${arr[0]}",
     "${#arr[@]}",
     "${arr[$i]}",
+    "${arr[$(date)]}",
+    "${arr[foo-$(date)-$BAR]}",
+    "${arr[@]:-$(date)}",
     "${arr[",
     "]}",
     "[",

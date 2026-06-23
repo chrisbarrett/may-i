@@ -44,7 +44,7 @@ impl Lexer {
         }
 
         // Read the variable name
-        let name = self.read_identifier();
+        let mut name = self.read_identifier();
         if name.is_empty() {
             // Not a valid identifier; fall back to flat string
             let s = self.read_until_char('}');
@@ -57,20 +57,31 @@ impl Lexer {
         // distinct rather than folding `arr[@]` into the name (design D2).
         if self.peek() == Some('[') {
             let sub_saved = self.save_state();
-            if let Some(subscript) = self.read_subscript()
-                && self.peek() == Some('}')
-            {
-                self.advance(); // skip }
-                return Some(WordPart::ArrayExpansion {
-                    name,
-                    subscript,
-                    length: false,
-                });
+            if let Some(subscript) = self.read_subscript() {
+                if self.peek() == Some('}') {
+                    self.advance(); // skip }
+                    return Some(WordPart::ArrayExpansion {
+                        name,
+                        subscript,
+                        length: false,
+                    });
+                }
+                // Subscript followed by an operator (`${arr[0]:-x}`): fold the
+                // raw `[sub]` text back into the name and fall through to the
+                // operator dispatch, so the operator's operands — and any
+                // embedded command substitution in them — are captured
+                // structurally. Leaving it to the unstructured flat fallback
+                // would bury an embedded `$(…)` and leave it ungated. The
+                // subscript stays folded into the name for this combined form;
+                // only the pure `${arr[sub]}` reference separates them (the
+                // follow-on resolver needs only those separated).
+                let sub_text: String = self.input[sub_saved.0..self.pos].iter().collect();
+                name.push_str(&sub_text);
+            } else {
+                // Malformed subscript (no `]` before `}`/EOF): restore and let
+                // the flat path below handle it without dropping tokens.
+                self.restore_state(sub_saved);
             }
-            // Subscript followed by an operator (`${arr[0]:-x}`) or malformed:
-            // restore and let the operator/flat paths below handle it without
-            // dropping tokens.
-            self.restore_state(sub_saved);
         }
 
         // Check what follows the name
@@ -377,6 +388,10 @@ impl Lexer {
     pub(super) fn read_subscript(&mut self) -> Option<Subscript> {
         debug_assert_eq!(self.peek(), Some('['));
         self.advance(); // skip [
+        // Absolute byte offset where the inner subscript text begins. `inner` is
+        // built up as a verbatim contiguous copy of the input from here, so this
+        // is the base offset to re-absolutise sub-lexer spans below.
+        let inner_start = self.byte_pos;
         // Capture the inner text up to the matching `]`. Nested `[` (rare, e.g.
         // arithmetic index `arr[a[0]]`) increases depth so the right `]`
         // closes. A `}` or EOF before any closing `]` is malformed.
@@ -410,8 +425,14 @@ impl Lexer {
             "*" => Subscript::Star,
             _ => {
                 // Lex the inner text as a word so a dynamic subscript
-                // (`$i`, `$((i))`, `${j}`) is modelled, not flattened.
+                // (`$i`, `$((i))`, `${j}`) is modelled, not flattened. Seed the
+                // sub-lexer's byte position with `inner_start` so any embedded
+                // substitution (`${arr[$(cmd)]}`) carries an *absolute* span
+                // into the original input — the engine slices the input by that
+                // span to gate the command, so a relative span would mislocate
+                // (or escape) it.
                 let mut sub_lexer = Lexer::new(&inner);
+                sub_lexer.byte_pos = inner_start;
                 let parts = sub_lexer.read_word_parts();
                 let word = if parts.is_empty() {
                     Word::literal(&inner)

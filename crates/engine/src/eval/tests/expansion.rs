@@ -385,6 +385,96 @@ fn array_element_substitution_is_gated() {
     );
 }
 
+/// A command substitution inside an array subscript must be gated, exactly as
+/// one in any other word position (design D4): `echo ${arr[$(rm -rf /)]}` runs
+/// the `rm` (bash arithmetic-evaluates the subscript), so the substitution must
+/// surface as its own evaluation unit and the deny rule must fire. Covers the
+/// `$(…)` and backtick spellings.
+#[test]
+fn command_substitution_in_subscript_is_gated() {
+    let config = r#"(rule "rm" (deny "no rm")) (rule "echo" (allow))"#;
+    for cmd in [
+        "echo ${arr[$(rm -rf /)]}",
+        "echo ${arr[`rm -rf /`]}",
+        "echo ${#arr[$(rm -rf /)]}",
+    ] {
+        let result = decide(config, cmd);
+        assert_eq!(
+            result.decision,
+            Decision::Deny,
+            "embedded command in a subscript must be gated for {cmd:?}: {:?}",
+            result.reason
+        );
+    }
+}
+
+/// A mixed subscript combining literal text, a command substitution, and a
+/// parameter (`${arr[foo-$(rm -rf /)-$BAR]}`) gates the embedded command — the
+/// subscript Word has several parts, so the fix must recurse into all of them,
+/// not just a lone substitution.
+#[test]
+fn mixed_subscript_gates_embedded_command() {
+    let config = r#"(rule "rm" (deny "no rm")) (rule "echo" (allow))"#;
+    let result = decide(config, "echo ${arr[foo-$(rm -rf /)-$BAR]}");
+    assert_eq!(
+        result.decision,
+        Decision::Deny,
+        "embedded command in a mixed subscript must be gated: {:?}",
+        result.reason
+    );
+}
+
+/// The parameter read in a mixed subscript (`${arr[foo-$BAR]}`) is taint-scanned
+/// like any other argv read.
+#[test]
+fn mixed_subscript_taints_parameter_read() {
+    let config = r#"(rule "echo" (allow)) (env "AWS_TOKEN" (deny))"#;
+    let result = decide(config, "echo ${arr[foo-$AWS_TOKEN]}");
+    assert_eq!(
+        result.decision,
+        Decision::Deny,
+        "secret read in a mixed subscript must taint: {:?}",
+        result.reason
+    );
+}
+
+/// A command substitution in an operator operand of a *subscripted* expansion
+/// (`${arr[@]:-$(rm -rf /)}`) must be gated. The non-subscripted
+/// `${VAR:-$(rm)}` is gated; the subscripted form must not fall to an
+/// unstructured flat expansion that buries the substitution.
+#[test]
+fn substitution_in_subscripted_operator_operand_is_gated() {
+    let config = r#"(rule "rm" (deny "no rm")) (rule "echo" (allow))"#;
+    for cmd in [
+        "echo ${arr[@]:-$(rm -rf /)}",
+        "echo ${arr[0]:-$(rm -rf /)}",
+        "echo ${arr[*]#$(rm -rf /)}",
+    ] {
+        let result = decide(config, cmd);
+        assert_eq!(
+            result.decision,
+            Decision::Deny,
+            "embedded command in a subscripted operator operand must be gated for {cmd:?}: {:?}",
+            result.reason
+        );
+    }
+}
+
+/// Secret-read taint reaches an operator operand of a subscripted expansion:
+/// `${arr[@]:-$AWS_TOKEN}` reads the tainted variable just as `${VAR:-$AWS_TOKEN}`
+/// does, so it must deny under an `(env … (deny))` capability.
+#[test]
+fn taint_fires_on_subscripted_operator_operand() {
+    let config = r#"(rule "echo" (allow)) (env "AWS_TOKEN" (deny))"#;
+    let result = decide(config, "echo ${arr[@]:-$AWS_TOKEN}");
+    assert_eq!(
+        result.decision,
+        Decision::Deny,
+        "secret read in a subscripted operator operand must taint: {:?}",
+        result.reason
+    );
+}
+
 use proptest::prelude::*;
 
 /// Array-ish fragments mirroring the parser fuzz corpus — the shapes the
@@ -405,6 +495,9 @@ const ARRAY_ISH: &[&str] = &[
     "${arr[0]}",
     "${#arr[@]}",
     "${arr[$i]}",
+    "${arr[$(date)]}",
+    "${arr[foo-$(date)-$BAR]}",
+    "${arr[@]:-$(date)}",
     "${arr[",
     "]}",
     "[",
