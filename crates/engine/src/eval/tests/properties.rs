@@ -1219,8 +1219,21 @@ mod parser_engine_invariants {
     ) -> Result<(), proptest::test_runner::TestCaseError> {
         for part in parts {
             visit(part)?;
-            if let may_i_shell_parser::WordPart::DoubleQuoted(inner) = part {
-                walk_parts(inner, visit)?;
+            match part {
+                may_i_shell_parser::WordPart::DoubleQuoted(inner) => walk_parts(inner, visit)?,
+                // Recurse into an `Index` subscript so the span/source-coherence
+                // properties guard substitutions captured inside `${arr[$(cmd)]}`
+                // (their spans are re-absolutised by the subscript sub-lexer).
+                may_i_shell_parser::WordPart::ArrayExpansion {
+                    subscript: may_i_shell_parser::Subscript::Index(w),
+                    ..
+                } => walk_parts(&w.parts, visit)?,
+                // And into operator operands' embedded substitutions, which now
+                // also carry a folded subscript's harvested substitutions.
+                may_i_shell_parser::WordPart::ParameterExpansionOp { embedded, .. } => {
+                    walk_parts(embedded, visit)?
+                }
+                _ => {}
             }
         }
         Ok(())

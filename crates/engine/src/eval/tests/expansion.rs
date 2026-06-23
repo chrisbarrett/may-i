@@ -460,6 +460,29 @@ fn substitution_in_subscripted_operator_operand_is_gated() {
     }
 }
 
+/// A command substitution inside a subscript that *also* carries an operator
+/// (`${arr[$(rm -rf /)]:-x}`) must still be gated: bash arithmetic-evaluates the
+/// subscript regardless of the operator. The subscript-fold must carry the
+/// subscript's embedded substitutions into the operator op so they are gated.
+#[test]
+fn substitution_in_subscript_with_operator_is_gated() {
+    let config = r#"(rule "rm" (deny "no rm")) (rule "echo" (allow))"#;
+    for cmd in [
+        "echo ${arr[$(rm -rf /)]:-x}",
+        "echo ${arr[$(rm -rf /)]#foo}",
+        "echo ${arr[`rm -rf /`]:-x}",
+        "echo ${arr[$(rm -rf /)]:-$(rm -rf /)}",
+    ] {
+        let result = decide(config, cmd);
+        assert_eq!(
+            result.decision,
+            Decision::Deny,
+            "embedded command in a subscript-with-operator must be gated for {cmd:?}: {:?}",
+            result.reason
+        );
+    }
+}
+
 /// Secret-read taint reaches an operator operand of a subscripted expansion:
 /// `${arr[@]:-$AWS_TOKEN}` reads the tainted variable just as `${VAR:-$AWS_TOKEN}`
 /// does, so it must deny under an `(env … (deny))` capability.

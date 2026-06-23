@@ -52,6 +52,13 @@ impl Lexer {
             return Some(WordPart::ParameterExpansion(s));
         }
 
+        // Command/backtick/process substitutions harvested out of a subscript
+        // that is folded into the name below (`${arr[$(cmd)]:-x}`). They are
+        // merged into the resulting operator op's `embedded` so the engine gates
+        // them — bash arithmetic-evaluates the subscript regardless of the
+        // operator, so a `$(…)` there runs and must not be lost.
+        let mut subscript_embedded: Vec<WordPart> = Vec::new();
+
         // A subscript `[sub]` immediately after the name is an array reference
         // (`${arr[0]}`, `${arr[@]}`, `${arr[*]}`). Keep the name and subscript
         // distinct rather than folding `arr[@]` into the name (design D2).
@@ -74,9 +81,13 @@ impl Lexer {
                 // would bury an embedded `$(…)` and leave it ungated. The
                 // subscript stays folded into the name for this combined form;
                 // only the pure `${arr[sub]}` reference separates them (the
-                // follow-on resolver needs only those separated).
+                // follow-on resolver needs only those separated). Harvest the
+                // subscript's own substitutions so they are gated too.
                 let sub_text: String = self.input[sub_saved.0..self.pos].iter().collect();
                 name.push_str(&sub_text);
+                if let Subscript::Index(w) = &subscript {
+                    collect_substitution_parts(&w.parts, &mut subscript_embedded);
+                }
             } else {
                 // Malformed subscript (no `]` before `}`/EOF): restore and let
                 // the flat path below handle it without dropping tokens.
@@ -85,7 +96,7 @@ impl Lexer {
         }
 
         // Check what follows the name
-        match self.peek() {
+        let mut expansion = match self.peek() {
             Some('}') => {
                 self.advance(); // skip }
                 Some(WordPart::ParameterExpansion(name))
@@ -328,7 +339,18 @@ impl Lexer {
                 self.advance(); // skip }
                 Some(WordPart::ParameterExpansion(format!("{name}{rest}")))
             }
+        };
+
+        // Merge any substitutions harvested from a folded subscript into the
+        // operator op's `embedded`, so `${arr[$(cmd)]:-x}` gates the subscript
+        // command. Only the structured op form can carry them; the flat
+        // fallback above is only reached by invalid-bash junk that runs nothing.
+        if !subscript_embedded.is_empty()
+            && let Some(WordPart::ParameterExpansionOp { embedded, .. }) = &mut expansion
+        {
+            embedded.splice(0..0, subscript_embedded);
         }
+        expansion
     }
 
     /// Read a parameter-expansion operator operand up to (not including) one of
@@ -456,5 +478,30 @@ impl Lexer {
             }
         }
         name
+    }
+}
+
+/// Clone the command/backtick/process-substitution word parts out of `parts`
+/// (recursing through double-quoted regions and nested operator/subscript
+/// parts), preserving their absolute source spans. Used to lift the
+/// substitutions of a subscript that is folded into a parameter-expansion
+/// name (`${arr[$(cmd)]:-x}`) into the operator op's `embedded` list, so the
+/// engine gates them like any other substitution.
+fn collect_substitution_parts(parts: &[WordPart], out: &mut Vec<WordPart>) {
+    for part in parts {
+        match part {
+            WordPart::CommandSubstitution { .. }
+            | WordPart::Backtick { .. }
+            | WordPart::ProcessSubstitution { .. } => out.push(part.clone()),
+            WordPart::DoubleQuoted(inner) => collect_substitution_parts(inner, out),
+            WordPart::ParameterExpansionOp { embedded, .. } => {
+                collect_substitution_parts(embedded, out)
+            }
+            WordPart::ArrayExpansion {
+                subscript: Subscript::Index(w),
+                ..
+            } => collect_substitution_parts(&w.parts, out),
+            _ => {}
+        }
     }
 }
