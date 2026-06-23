@@ -327,3 +327,119 @@ fn authorised_single_token_expansion_cannot_allow() {
         result.reason
     );
 }
+
+// ── Bash-array modelling (model-bash-arrays) ────────────────────────────
+
+/// Spec scenario: an unresolved subscripted expansion floors an allow.
+/// `aws s3 cp "${parts[@]}" /tmp/x` with a rule that would allow `aws` only
+/// for a constrained source: the subscripted `${parts[@]}` is
+/// expansion-bearing and unresolved, so it cannot satisfy the constraint and
+/// the `:allow` floors to `:ask` (no value resolution in this change).
+#[test]
+fn unresolved_subscript_floors_an_allow() {
+    // The regex matches the flattened `parts[@]` prefix, so the matcher
+    // *attempts* the word and then floors on its unresolved expansion — the
+    // same path a plain unknown scalar takes.
+    let config = r#"(rule "aws" (when (anywhere (regex "parts")) (allow "constrained")))"#;
+    let result = decide(config, r#"aws s3 cp "${parts[@]}" /tmp/x"#);
+    assert!(
+        result.decision >= Decision::Ask,
+        "subscripted expansion must floor the allow: {:?} ({:?})",
+        result.decision,
+        result.reason
+    );
+    let reason = result.reason.as_deref().unwrap_or("");
+    assert!(
+        reason.contains("unresolved shell expansion"),
+        "expected an unresolved-expansion floor naming the array reference: {reason:?}"
+    );
+}
+
+/// The trailing command after an array literal is evaluated (no silent
+/// discard): `arr=(a b c); rm -rf /` must surface the `rm` segment, here
+/// gated by a deny rule, rather than dropping it as the pre-change parser did.
+#[test]
+fn command_after_array_literal_is_evaluated() {
+    let config = r#"(rule "rm" (deny "no rm"))"#;
+    let result = decide(config, "arr=(a b c); rm -rf /");
+    assert_eq!(
+        result.decision,
+        Decision::Deny,
+        "trailing rm after an array literal must be evaluated: {:?}",
+        result.reason
+    );
+}
+
+/// An array element that is a command substitution is gated exactly as a
+/// scalar `x=$(cmd)` is (design D4): `arr=($(rm -rf /))` extracts the
+/// embedded command as its own evaluation unit.
+#[test]
+fn array_element_substitution_is_gated() {
+    let config = r#"(rule "rm" (deny "no rm")) (rule "echo" (allow))"#;
+    let result = decide(config, "arr=($(rm -rf /)); echo done");
+    assert_eq!(
+        result.decision,
+        Decision::Deny,
+        "embedded command in an array element must be gated: {:?}",
+        result.reason
+    );
+}
+
+use proptest::prelude::*;
+
+/// Array-ish fragments mirroring the parser fuzz corpus — the shapes the
+/// evaluator must accept (model or coarsely diagnose) without panicking.
+const ARRAY_ISH: &[&str] = &[
+    "arr=(",
+    ")",
+    "arr=(a b c)",
+    "arr+=(x)",
+    "arr[5]=c",
+    "arr[$i]=c",
+    "declare -a",
+    "declare -A",
+    "declare -A m=([k]=v)",
+    "local -a x=(1 2)",
+    "${arr[@]}",
+    "${arr[*]}",
+    "${arr[0]}",
+    "${#arr[@]}",
+    "${arr[$i]}",
+    "${arr[",
+    "]}",
+    "[",
+    "]",
+    "@",
+    "*",
+    "((",
+    "unset 'arr[1]'",
+    "=(",
+    "+=",
+    "; echo end",
+    "| cat",
+    "&&",
+    "$(date)",
+    "\"${a[@]}\"",
+    "rm -rf /",
+];
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 512, max_shrink_iters: 64, .. ProptestConfig::default() })]
+
+    /// Invariant (b), evaluator side: `evaluate_command` never panics on
+    /// arbitrary array-ish input (design "parser/eval must not panic on
+    /// arbitrary input"). A representative config exercises rule matching,
+    /// taint, and recursion against the new AST nodes.
+    #[test]
+    fn prop_evaluate_never_panics_on_array_ish(
+        frags in proptest::collection::vec(proptest::sample::select(ARRAY_ISH), 0..10),
+    ) {
+        let input = frags.join(" ");
+        let config = parse_config(
+            r#"(rule "echo" (allow)) (rule "rm" (deny)) (env "AWS_TOKEN" (deny))"#,
+        )
+        .expect("config parses");
+        // Must return Ok (or a graceful Err) — never panic/unwind.
+        let _ = evaluate_command(&input, &config, &facts());
+    }
+}
