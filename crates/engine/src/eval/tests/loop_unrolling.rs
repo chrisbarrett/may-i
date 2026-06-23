@@ -136,6 +136,43 @@ fn nested_enumerable_loops_unroll_to_the_product() {
 }
 
 #[test]
+fn nested_inner_list_references_outer_var_floors_uncovered_iteration() {
+    // Security review C1: the inner list `$k` depends on the outer loop value, so
+    // its enumeration must be re-derived per outer iteration. The allow covers
+    // only `safe`; the `danger` outer iteration runs `rm /data/danger`, which is
+    // uncovered, so the meet must floor to at least ask — NOT allow on a stale
+    // inner value set computed from the outer's first value.
+    let config = r#"(rule "rm" (when (positional (or "/data/safe")) (allow "safe only")))"#;
+    let result = decide(
+        config,
+        r#"for k in safe danger; do for j in $k; do rm "/data/$j"; done; done"#,
+    );
+    assert!(
+        result.decision >= Decision::Ask,
+        "value-dependent nested list must re-derive per outer value, not under-ask: {:?} ({:?})",
+        result.decision,
+        result.reason
+    );
+}
+
+#[test]
+fn nested_inner_list_references_outer_var_all_covered_allows() {
+    // Counterpart: when the allow covers every per-outer-value inner expansion,
+    // the value-dependent nesting still resolves and allows.
+    let config = r#"(rule "rm" (when (positional (regex "^/data/(safe|also)$")) (allow "ok")))"#;
+    let result = decide(
+        config,
+        r#"for k in safe also; do for j in $k; do rm "/data/$j"; done; done"#,
+    );
+    assert_eq!(
+        result.decision,
+        Decision::Allow,
+        "all per-outer-value inner expansions covered should allow: {:?}",
+        result.reason
+    );
+}
+
+#[test]
 fn nested_enumerable_loops_one_cell_uncovered_floors() {
     // The same 2×2 grid but the allow misses `y/2`; that one cell floors the
     // whole meet to ask — the product is combined strictest-wins.
@@ -258,4 +295,36 @@ proptest! {
             looped_all.reason
         );
     }
+}
+
+#[test]
+fn nested_inner_unquoted_outer_var_with_space_floors() {
+    // Outer value "a b" word-splits when the inner list is unquoted `$k`, so
+    // the inner loop is non-enumerable (the value is not verbatim) and `$j`
+    // stays flagged — never under-asks on the split iterations.
+    let config = r#"(rule "rm" (when (positional (or "/data/safe")) (allow "safe only")))"#;
+    let result = decide(
+        config,
+        r#"for k in safe "a b"; do for j in $k; do rm "/data/$j"; done; done"#,
+    );
+    assert!(
+        result.decision >= Decision::Ask,
+        "space-bearing outer value feeding an unquoted inner list must floor: {:?} ({:?})",
+        result.decision,
+        result.reason
+    );
+}
+
+#[test]
+fn loop_var_does_not_leak_after_the_loop() {
+    // The seeded loop variable is scoped to the body walk; a use of the same
+    // name *after* the loop must stay unresolved (it is the inherited env there).
+    let config = r#"(rule "rm" (when (anywhere "/data/safe") (allow "safe")))"#;
+    let result = decide(config, r#"for k in safe; do :; done; rm "/data/$k""#);
+    assert!(
+        result.decision >= Decision::Ask,
+        "loop variable must not leak past the loop body: {:?} ({:?})",
+        result.decision,
+        result.reason
+    );
 }

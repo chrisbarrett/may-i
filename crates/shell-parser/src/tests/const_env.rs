@@ -186,6 +186,111 @@ fn unrelated_export_in_body_stays_enumerable() {
     );
 }
 
+// -- Security C2: rebinding builtins in the body disqualify the loop --
+
+#[test]
+fn read_into_loop_var_is_not_enumerable() {
+    // `read k` rewrites the loop variable from stdin — unprovable.
+    assert_eq!(
+        for_values("for k in a b; do read k; rm /data/$k; done"),
+        None
+    );
+    assert_eq!(
+        for_values("for k in a b; do read a k c; rm /data/$k; done"),
+        None
+    );
+}
+
+#[test]
+fn read_array_flag_into_loop_var_is_not_enumerable() {
+    assert_eq!(
+        for_values("for k in a b; do read -a k; rm /data/$k; done"),
+        None
+    );
+}
+
+#[test]
+fn mapfile_and_readarray_into_loop_var_are_not_enumerable() {
+    assert_eq!(
+        for_values("for k in a b; do mapfile k; rm /data/$k; done"),
+        None
+    );
+    assert_eq!(
+        for_values("for k in a b; do readarray k < f; rm /data/$k; done"),
+        None
+    );
+}
+
+#[test]
+fn printf_v_into_loop_var_is_not_enumerable() {
+    assert_eq!(
+        for_values("for k in a b; do printf -v k pwned; rm /data/$k; done"),
+        None
+    );
+    assert_eq!(
+        for_values("for k in a b; do printf -vk pwned; rm /data/$k; done"),
+        None
+    );
+}
+
+#[test]
+fn declaration_builtins_into_loop_var_are_not_enumerable() {
+    for kw in ["declare", "typeset", "local", "readonly"] {
+        assert_eq!(
+            for_values(&format!("for k in a b; do {kw} k=pwned; rm /data/$k; done")),
+            None,
+            "{kw} k=pwned must disqualify"
+        );
+    }
+}
+
+#[test]
+fn getopts_into_loop_var_is_not_enumerable() {
+    assert_eq!(
+        for_values("for k in a b; do getopts xy k; rm /data/$k; done"),
+        None
+    );
+}
+
+#[test]
+fn let_assignment_to_loop_var_is_not_enumerable() {
+    assert_eq!(
+        for_values("for k in a b; do let k=5; rm /data/$k; done"),
+        None
+    );
+    assert_eq!(
+        for_values("for k in a b; do let \"k += 1\"; rm /data/$k; done"),
+        None
+    );
+}
+
+#[test]
+fn unrelated_rebinding_builtins_stay_enumerable() {
+    // The same builtins targeting a *different* variable must not disqualify —
+    // guard against over-rejection collapsing the feature.
+    assert_eq!(
+        for_values("for k in a b; do read other; rm /data/$k; done"),
+        Some(vec!["a".to_string(), "b".to_string()])
+    );
+    assert_eq!(
+        for_values("for k in a b; do printf -v other x; rm /data/$k; done"),
+        Some(vec!["a".to_string(), "b".to_string()])
+    );
+    assert_eq!(
+        for_values("for k in a b; do declare other=x; rm /data/$k; done"),
+        Some(vec!["a".to_string(), "b".to_string()])
+    );
+    assert_eq!(
+        for_values("for k in a b; do let other=5; rm /data/$k; done"),
+        Some(vec!["a".to_string(), "b".to_string()])
+    );
+    // A flagless `read` with no operands writes REPLY, not the loop var.
+    assert_eq!(
+        for_values("for k in a b; do read; rm /data/$k; done"),
+        Some(vec!["a".to_string(), "b".to_string()])
+    );
+}
+
 // Distinct unrelated identifiers that never collide with the variable under
 // test (which is uppercase) or name a special builtin we model (export/unset).
 fn arb_filler() -> impl Strategy<Value = Vec<String>> {

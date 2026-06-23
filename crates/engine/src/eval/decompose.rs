@@ -12,12 +12,6 @@ use std::collections::{HashMap, HashSet};
 /// precision (a fallback to the flagged single walk), never soundness.
 const UNROLL_UNIT_BUDGET: usize = 64;
 
-/// Per-`for`-node unroll decision, keyed by the node's pointer identity. A node
-/// present in the map is unrolled to the given value set; absent means it is not
-/// enumerable, or unrolling it would exceed the budget, so its body is walked
-/// once with the loop variable unresolved (today's behaviour).
-type UnrollPlan = HashMap<*const Command, Vec<String>>;
-
 /// Byte range in the original input string covered by an `EvalUnit`.
 pub(super) type Span = (usize, usize);
 
@@ -168,14 +162,14 @@ pub(crate) fn decompose(
     // this set is decomposed as an ordinary command.
     let internal_call_spans = live_local_call_spans(cmd, &const_env);
 
-    // Which enumerable `for` loops to unroll, and to what value sets. Computed
-    // once so every pass below makes the *same* decision — otherwise the simple,
-    // redirect, and structural passes would emit desynchronised unit streams.
-    let plan = build_unroll_plan(cmd, &const_env);
-
     // Pass 1 — simple commands (and the units they own: dynamic names, env
     // prefixes, argv-word substitutions and taints). Threads the constant env so
     // an unrolled loop body resolves the loop variable as a seeded scalar.
+    // Enumerable `for` loops are unrolled *inline* against the live seeded env,
+    // so a nested loop whose list references the outer variable re-derives its
+    // value set per outer iteration (security review C1). Passes 2 & 3 do not
+    // unroll — the units they own are value-independent — so no shared plan is
+    // needed to keep the passes consistent.
     collect_simple_command_units(
         cmd,
         input,
@@ -183,7 +177,7 @@ pub(crate) fn decompose(
         &const_env,
         &internal_call_spans,
         tainted_env,
-        &plan,
+        UNROLL_UNIT_BUDGET,
         &mut units,
     );
 
@@ -210,57 +204,38 @@ pub(crate) fn decompose(
     units
 }
 
-/// Build the [`UnrollPlan`]: decide, for every `for` node in the tree, whether
-/// to unroll it and over what value set. A loop unrolls iff it is statically
-/// enumerable (against the env in scope, which carries any enclosing unrolled
-/// loop variables) and the running unit budget allows it (D3). The walk threads
-/// a remaining budget down the tree; a loop that would exceed it is left absent,
-/// so all three decompose passes fall back to its flagged single walk.
-fn build_unroll_plan(cmd: &Command, const_env: &HashMap<String, String>) -> UnrollPlan {
-    let mut plan = UnrollPlan::new();
-    plan_walk(cmd, const_env, UNROLL_UNIT_BUDGET, &mut plan);
-    plan
+/// Decide whether to unroll a `for` node against the live env, returning its
+/// value set when it is statically enumerable *and* unrolling it fits the
+/// remaining `budget` (D3). `None` means walk the body once with the loop
+/// variable unresolved — the flagged fallback, which never under-asks. Deciding
+/// here (rather than from a precomputed plan) means the enumerability test sees
+/// the seeded values of any enclosing unrolled loop, so a value-dependent nested
+/// list is re-derived correctly per outer iteration (security review C1).
+fn unroll_values(
+    var: &str,
+    words: &[Word],
+    body: &Command,
+    env: &HashMap<String, String>,
+    budget: usize,
+) -> Option<Vec<String>> {
+    let values = enumerable_for_values(var, words, body, env)?;
+    let count = values.len();
+    // D4: an empty list runs the body zero times; nothing to unroll.
+    if count == 0 {
+        return None;
+    }
+    // Cost of unrolling: one copy of every body unit per value.
+    let total = count_simple_commands(body).max(1).saturating_mul(count);
+    (total <= budget).then_some(values)
 }
 
-/// Walk `cmd` deciding unroll for each `for` node. `budget` is the units still
-/// available for unrolling within the current (possibly already-unrolled)
-/// scope. Returns nothing; populates `plan`.
-fn plan_walk(cmd: &Command, env: &HashMap<String, String>, budget: usize, plan: &mut UnrollPlan) {
-    if let Command::For { var, words, body } = cmd
-        && let Some(values) = enumerable_for_values(var, words, body, env)
-    {
-        // Cost of unrolling: one copy of every body unit per value. Use the
-        // body's static unit count as the per-iteration weight; the product
-        // across nested unrolled loops is bounded by threading the divided
-        // budget into each seeded body walk below.
-        let body_units = count_body_units(body).max(1);
-        let count = values.len();
-        let total = body_units.saturating_mul(count);
-        if count > 0 && total <= budget {
-            plan.insert(cmd as *const Command, values.clone());
-            // Each iteration's body may itself unroll nested loops; give each a
-            // share of the remaining budget so the Cartesian product stays
-            // bounded. Seed the loop variable so nested enumerability can read it.
-            let per_iter = (budget / count).max(1);
-            let mut seeded = env.clone();
-            seeded.insert(var.clone(), values[0].clone());
-            plan_walk(body, &seeded, per_iter, plan);
-            return;
-        }
-        // Over budget or empty: not unrolled. Walk the body once, unchanged env.
-        plan_walk(body, env, budget, plan);
-        return;
-    }
-    for child in cmd.children() {
-        plan_walk(child, env, budget, plan);
-    }
-}
-
-/// Number of evaluation-unit-bearing nodes in `body`, used as the per-iteration
-/// weight when costing an unroll. Counts simple commands (the dominant unit
-/// source); a body with none still costs at least one (see `.max(1)` at the call
-/// site) so an empty body does not read as free.
-fn count_body_units(body: &Command) -> usize {
+/// Number of simple commands in `body`, used as the per-iteration weight when
+/// costing an unroll. Simple commands are the dominant unit source; a body with
+/// none still costs at least one (see `.max(1)` at the call site) so an empty
+/// body does not read as free. This is a conservative *proxy* for the true unit
+/// count (it excludes redirect/env/embedded units, which only over-unrolls
+/// within the divisor and stays bounded by the budget) — never under-asks.
+fn count_simple_commands(body: &Command) -> usize {
     let mut n = 0;
     fn walk(cmd: &Command, n: &mut usize) {
         if let Command::Simple(_) = cmd {
@@ -275,10 +250,15 @@ fn count_body_units(body: &Command) -> usize {
 }
 
 /// Pass 1: recursively emit the units owned by simple commands, threading the
-/// constant env. At an enumerable `for` node in the [`UnrollPlan`], the body is
-/// walked once per list value with the loop variable seeded into a copy of the
-/// env, so its argument words resolve as provably-constant scalars (D1); the
-/// across-units meet then combines the per-value decisions strictest-wins.
+/// constant env and a remaining unroll `budget`. At an enumerable `for` node
+/// (decided here against the *live* seeded env, so a nested loop whose list
+/// references an enclosing loop variable re-derives its value set per outer
+/// iteration — security review C1), the body is walked once per list value with
+/// the loop variable seeded into a copy of the env, so its argument words
+/// resolve as provably-constant scalars (D1); the across-units meet then
+/// combines the per-value decisions strictest-wins. Over budget (or an empty
+/// list, D4) the loop is not unrolled and its body is walked once with the loop
+/// variable unresolved — today's flagged behaviour (D3).
 ///
 /// Replaces the former flat `extract_simple_commands` sweep: a simple command
 /// has no command children, so visiting `Command::Simple` and recursing through
@@ -292,7 +272,7 @@ fn collect_simple_command_units(
     env: &HashMap<String, String>,
     internal_call_spans: &HashSet<Span>,
     tainted_env: &HashSet<String>,
-    plan: &UnrollPlan,
+    budget: usize,
     units: &mut Vec<EvalUnit>,
 ) {
     match cmd {
@@ -307,8 +287,13 @@ fn collect_simple_command_units(
                 units,
             );
         }
-        Command::For { var, body, .. } if plan.contains_key(&(cmd as *const Command)) => {
-            for value in &plan[&(cmd as *const Command)] {
+        Command::For { var, words, body }
+            if let Some(values) = unroll_values(var, words, body, env, budget) =>
+        {
+            // Give each iteration a share of the remaining budget so nested
+            // enumerable loops stay bounded by the Cartesian product (D3).
+            let per_iter = (budget / values.len()).max(1);
+            for value in &values {
                 let mut seeded = env.clone();
                 seeded.insert(var.clone(), value.clone());
                 collect_simple_command_units(
@@ -318,7 +303,7 @@ fn collect_simple_command_units(
                     &seeded,
                     internal_call_spans,
                     tainted_env,
-                    plan,
+                    per_iter,
                     units,
                 );
             }
@@ -332,7 +317,7 @@ fn collect_simple_command_units(
                     env,
                     internal_call_spans,
                     tainted_env,
-                    plan,
+                    budget,
                     units,
                 );
             }

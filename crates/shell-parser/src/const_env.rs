@@ -90,33 +90,171 @@ pub fn enumerable_for_values(
     Some(values)
 }
 
-/// Whether `body` reassigns or `unset`s `name` anywhere — a bare assignment, an
-/// `export NAME=…`, a command-prefix assignment, or an `unset NAME`. Walks the
-/// whole subtree; over-approximating toward "mutated" only costs precision
-/// (the loop falls back to flagged), never soundness.
+/// Whether `body` reassigns or `unset`s `name` anywhere. Walks the whole
+/// subtree; over-approximating toward "mutated" only costs precision (the loop
+/// falls back to flagged), never soundness — so this errs broad on every shell
+/// construct that can rebind a variable, including builtins that read external
+/// input into it (`read`, `mapfile`, …). Missing a rebind would let a later use
+/// resolve to the seeded list value while bash holds a different, possibly
+/// attacker-controlled, value — a wrong-`:allow` (security review C2).
 fn body_mutates(body: &Command, name: &str) -> bool {
     match body {
         Command::Assignment(a) => a.name == name,
-        Command::Simple(sc) => {
-            if sc.assignments.iter().any(|a| a.name == name) {
-                return true;
-            }
-            match sc.command_name() {
-                Some("export") => sc
-                    .words
-                    .iter()
-                    .skip(1)
-                    .any(|w| parse_assignment_word(w).is_some_and(|(n, _)| n == name)),
-                Some("unset") => sc
-                    .words
-                    .iter()
-                    .skip(1)
-                    .any(|w| literal_name(w).as_deref() == Some(name)),
-                _ => false,
-            }
-        }
+        Command::Simple(sc) => simple_mutates(sc, name),
         other => other.children().iter().any(|c| body_mutates(c, name)),
     }
+}
+
+/// Whether a single simple command rebinds `name`: a prefix assignment, or any
+/// builtin that assigns/reads into it. Over-broad on purpose (see `body_mutates`).
+fn simple_mutates(sc: &SimpleCommand, name: &str) -> bool {
+    // A command-prefix assignment (`k=x cmd`) rebinds for that command, and a
+    // bare-assignment simple command (`k=x`) persists — both flow through here.
+    if sc.assignments.iter().any(|a| a.name == name) {
+        return true;
+    }
+    let args = || sc.words.iter().skip(1);
+    let names_operand = |w: &Word| literal_name(w).as_deref() == Some(name);
+    let assigns_operand =
+        |w: &Word| parse_assignment_word(w).is_some_and(|(n, _)| n == name) || names_operand(w);
+    match sc.command_name() {
+        Some("unset") => args().any(names_operand),
+        // Declaration builtins: `declare k=…`, `local k`, `readonly k=…`, etc.
+        // bind the bare name or a `name=value` operand.
+        Some("export" | "declare" | "typeset" | "local" | "readonly") => {
+            args().any(assigns_operand)
+        }
+        // `let k=…` / `let "k += 1"` assigns via an arithmetic operand whose
+        // left-hand side is the name. Conservatively: the name appears as the
+        // identifier prefix of any operand.
+        Some("let") => args().any(|w| arith_assigns(&w.to_str(), name)),
+        // `printf -v k …` writes the formatted output into `k`.
+        Some("printf") => printf_target_is(sc, name),
+        // These builtins read external input (stdin, a file, parsed options)
+        // into the named variable(s). If the loop variable is (or could be) a
+        // target, it is rebound to an unprovable value.
+        Some("read" | "mapfile" | "readarray") => read_targets(sc, name),
+        // `getopts optstring NAME [args]` stores the parsed option into NAME
+        // (the third word).
+        Some("getopts") => sc.words.get(2).is_some_and(names_operand),
+        _ => false,
+    }
+}
+
+/// Whether `printf`'s `-v NAME` target (the var it writes into) is `name`.
+/// Handles both the separate (`-v k`) and joined (`-vk`) spellings.
+fn printf_target_is(sc: &SimpleCommand, name: &str) -> bool {
+    let mut it = sc.words.iter().skip(1);
+    while let Some(w) = it.next() {
+        let text = w.to_str();
+        if text == "-v" {
+            if it.next().map(|n| n.to_str()).as_deref() == Some(name) {
+                return true;
+            }
+        } else if let Some(rest) = text.strip_prefix("-v")
+            && !rest.is_empty()
+            && rest == name
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Whether a `read`/`mapfile`/`readarray` invocation could store into `name`.
+/// Over-approximates: the name appearing as any non-flag operand, or the value
+/// of an array-target flag (`-a name`, `-A name`), counts. A flagless `read`
+/// with no operands writes `REPLY`, never a named var, so it does not mutate.
+fn read_targets(sc: &SimpleCommand, name: &str) -> bool {
+    let mut it = sc.words.iter().skip(1).peekable();
+    while let Some(w) = it.next() {
+        let text = w.to_str();
+        if let Some(flag) = text.strip_prefix('-') {
+            // `-a name` / `-A name` (mapfile/read array target) and `-d`/`-n`/…
+            // take a following argument; only the array-target flags name a
+            // destination variable. Be conservative: if a flag's argument is
+            // `name`, treat it as a target.
+            if flag.is_empty() {
+                continue;
+            }
+            // Joined `-aname` form.
+            if (flag.starts_with('a') || flag.starts_with('A')) && &flag[1..] == name {
+                return true;
+            }
+            // Separate `-a name` form: consume the next word as the flag's value.
+            if matches!(
+                flag,
+                "a" | "A" | "d" | "n" | "N" | "t" | "u" | "C" | "c" | "i" | "O" | "s"
+            ) && it.peek().map(|n| n.to_str()).as_deref() == Some(name)
+            {
+                return true;
+            }
+            continue;
+        }
+        // A non-flag operand is a destination variable name.
+        if text == name {
+            return true;
+        }
+    }
+    false
+}
+
+/// Whether the `let` arithmetic operand `expr` assigns to `name` — its
+/// identifier left-hand side is `name`, possibly with a compound operator
+/// (`name=`, `name+=`, `name++`, `name--`, `name *=`, …). Conservative: any
+/// occurrence of `name` immediately followed by an assignment/increment operator.
+fn arith_assigns(expr: &str, name: &str) -> bool {
+    let trimmed = expr.trim_start();
+    let Some(rest) = trimmed.strip_prefix(name) else {
+        // `let` can also carry leading `((`/whitespace; scan token-wise as a
+        // fallback so `let "k += 1"` (quoted) and bare forms both match.
+        return arith_assigns_scan(trimmed, name);
+    };
+    // The char after the name must end the identifier (not extend it) and begin
+    // an assignment/increment.
+    let after = rest.trim_start();
+    after.starts_with('=')
+        || after.starts_with("+=")
+        || after.starts_with("-=")
+        || after.starts_with("*=")
+        || after.starts_with("/=")
+        || after.starts_with("%=")
+        || after.starts_with("++")
+        || after.starts_with("--")
+        || arith_assigns_scan(trimmed, name)
+}
+
+/// Token-wise fallback for `arith_assigns`: find `name` as a standalone
+/// identifier followed (after optional spaces) by an assignment/increment.
+fn arith_assigns_scan(expr: &str, name: &str) -> bool {
+    let bytes = expr.as_bytes();
+    let nb = name.as_bytes();
+    let mut i = 0;
+    while i + nb.len() <= bytes.len() {
+        let boundary_before = i == 0 || !is_ident_byte(bytes[i - 1]);
+        let matches_here = &bytes[i..i + nb.len()] == nb;
+        let boundary_after = i + nb.len() == bytes.len() || !is_ident_byte(bytes[i + nb.len()]);
+        if boundary_before && matches_here && boundary_after {
+            let after = expr[i + nb.len()..].trim_start();
+            if after.starts_with('=')
+                || after.starts_with("+=")
+                || after.starts_with("-=")
+                || after.starts_with("*=")
+                || after.starts_with("/=")
+                || after.starts_with("%=")
+                || after.starts_with("++")
+                || after.starts_with("--")
+            {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+fn is_ident_byte(b: u8) -> bool {
+    b == b'_' || b.is_ascii_alphanumeric()
 }
 
 fn collect(
