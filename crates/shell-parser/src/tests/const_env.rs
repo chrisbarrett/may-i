@@ -164,6 +164,28 @@ fn unset_loop_var_is_not_enumerable() {
     assert_eq!(for_values("for k in a b; do unset k; rm $k; done"), None);
 }
 
+#[test]
+fn prefix_assignment_of_loop_var_in_body_is_not_enumerable() {
+    // `k=x cmd` inside the body rebinds the loop variable for that command's
+    // environment — conservatively disqualifies the loop.
+    assert_eq!(for_values("for k in a b; do k=x rm $k; done"), None);
+}
+
+#[test]
+fn export_of_loop_var_in_body_is_not_enumerable() {
+    // `export k=x` inside the body reassigns the loop variable.
+    assert_eq!(for_values("for k in a b; do export k=x; rm $k; done"), None);
+}
+
+#[test]
+fn unrelated_export_in_body_stays_enumerable() {
+    // An `export` of a *different* variable does not disqualify the loop.
+    assert_eq!(
+        for_values("for k in a b; do export OTHER=x; rm $k; done"),
+        Some(vec!["a".to_string(), "b".to_string()])
+    );
+}
+
 // Distinct unrelated identifiers that never collide with the variable under
 // test (which is uppercase) or name a special builtin we model (export/unset).
 fn arb_filler() -> impl Strategy<Value = Vec<String>> {

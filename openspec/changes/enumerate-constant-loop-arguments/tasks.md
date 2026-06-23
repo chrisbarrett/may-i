@@ -43,12 +43,20 @@
 
 ## 4. Verification
 
-- [ ] 4.1 `cargo fmt`; full `cargo test` across `shell-parser` and `engine`.
-- [ ] 4.2 `cargo tarpaulin`; inspect `lcov.info` for uncovered branches in the
-      unroll/budget path; add unit tests for any a proptest cannot reach.
-- [ ] 4.3 Confirm dependence on `resolve-constant-argument-expansions` holds (body
-      argument resolution consumes the seeded scalar); no DSL/config/trust-hash
-      surface changed; no migration.
-- [ ] 4.4 Review `REFERENCE.md`: update any description of loop-variable / unresolved
-      expansion handling to cover enumerable `for` lists, or record "verified, no
-      surface change".
+- [x] 4.1 `cargo fmt`; full `cargo test` across `shell-parser` and `engine`
+      (and the whole workspace) — all green.
+- [x] 4.2 `cargo tarpaulin`; inspected coverage for the unroll/budget path. The
+      new decompose functions (`build_unroll_plan`/`plan_walk`/`count_body_units`/
+      `collect_simple_command_units`) are covered; added const_env unit tests for
+      the in-body prefix-assignment and `export` reassignment branches a proptest
+      could not reach.
+- [x] 4.3 Confirmed dependence on `resolve-constant-argument-expansions` holds:
+      the seeded loop-variable scalar flows through `decompose_simple_command`'s
+      `resolve_argument_words`/`resolve_command_name` (the merged single-value
+      path). No DSL/config/trust-hash surface changed; no migration. The two
+      public additions (`enumerable_for_values`, internal decompose helpers) are
+      analysis-only.
+- [x] 4.4 Reviewed `REFERENCE.md`: it carries no description of loop-variable /
+      unresolved-expansion handling (the scalar change added none either), so
+      this is **verified, no surface change** — the improvement is internal
+      precision with no user-facing DSL/config surface.
