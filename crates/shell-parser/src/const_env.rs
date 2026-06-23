@@ -51,6 +51,74 @@ fn record_disqualified(occ: &mut HashMap<String, Occurrence>, name: &str) {
     occ.insert(name.to_string(), Occurrence::Disqualified);
 }
 
+/// The provable finite value set of a `for` loop's variable when the loop is
+/// **statically enumerable** against `env`, or `None` otherwise.
+///
+/// A loop is enumerable iff every word of its list resolves to a value the
+/// shell passes verbatim (a static literal or a provably-constant variable —
+/// no command/process substitution, glob, `$@`/`$*`, or non-constant variable)
+/// and the loop variable is not reassigned or `unset` anywhere in the body. The
+/// returned vector has one entry per list word, in source order (each verbatim
+/// word contributes exactly one value — bash word-splitting cannot apply to a
+/// verbatim word).
+///
+/// `env` is the command's [`constant_env`]; passing it lets `for k in $D x`
+/// enumerate when `D` is provably constant. Soundness rests on every list word
+/// being verbatim, so the resolved value is exactly what each iteration binds.
+pub fn enumerable_for_values(
+    var: &str,
+    words: &[Word],
+    body: &Command,
+    env: &HashMap<String, String>,
+) -> Option<Vec<String>> {
+    // The loop variable must survive the body unmutated, or a later use sees a
+    // different value than the iteration binding (D2). Any reassignment or
+    // `unset` of `var` in the body disqualifies the whole loop, conservatively.
+    if body_mutates(body, var) {
+        return None;
+    }
+    let mut values = Vec::with_capacity(words.len());
+    for word in words {
+        // A word is enumerable only when every expansion resolves verbatim:
+        // this rejects command/process substitutions, globs, `$@`/`$*` (an
+        // unset special parameter never resolves), and non-constant variables.
+        if !word.resolves_to_verbatim_literal(env) {
+            return None;
+        }
+        values.push(word.resolve(env).to_str());
+    }
+    Some(values)
+}
+
+/// Whether `body` reassigns or `unset`s `name` anywhere — a bare assignment, an
+/// `export NAME=…`, a command-prefix assignment, or an `unset NAME`. Walks the
+/// whole subtree; over-approximating toward "mutated" only costs precision
+/// (the loop falls back to flagged), never soundness.
+fn body_mutates(body: &Command, name: &str) -> bool {
+    match body {
+        Command::Assignment(a) => a.name == name,
+        Command::Simple(sc) => {
+            if sc.assignments.iter().any(|a| a.name == name) {
+                return true;
+            }
+            match sc.command_name() {
+                Some("export") => sc
+                    .words
+                    .iter()
+                    .skip(1)
+                    .any(|w| parse_assignment_word(w).is_some_and(|(n, _)| n == name)),
+                Some("unset") => sc
+                    .words
+                    .iter()
+                    .skip(1)
+                    .any(|w| literal_name(w).as_deref() == Some(name)),
+                _ => false,
+            }
+        }
+        other => other.children().iter().any(|c| body_mutates(c, name)),
+    }
+}
+
 fn collect(
     cmd: &Command,
     nested: bool,

@@ -92,6 +92,78 @@ fn unset_dynamic_name_is_ignored() {
     assert_eq!(env, [("BIN".to_string(), "./x".to_string())].into());
 }
 
+// -- Task 1: statically-enumerable `for` loops --
+
+/// The enumerable value set of the first `for` loop in `input`, resolved
+/// against the command's constant env, or `None` when the loop is not
+/// statically enumerable.
+fn for_values(input: &str) -> Option<Vec<String>> {
+    let cmd = parse(input).command;
+    let env = constant_env(&cmd);
+    let mut found = None;
+    fn walk(cmd: &Command, env: &HashMap<String, String>, found: &mut Option<Option<Vec<String>>>) {
+        if found.is_some() {
+            return;
+        }
+        if let Command::For { var, words, body } = cmd {
+            *found = Some(enumerable_for_values(var, words, body, env));
+            return;
+        }
+        for child in cmd.children() {
+            walk(child, env, found);
+        }
+    }
+    walk(&cmd, &env, &mut found);
+    found.flatten()
+}
+
+#[test]
+fn literal_list_is_enumerable() {
+    assert_eq!(
+        for_values("for k in a b c; do echo $k; done"),
+        Some(vec!["a".to_string(), "b".to_string(), "c".to_string()])
+    );
+}
+
+#[test]
+fn command_substitution_list_is_not_enumerable() {
+    assert_eq!(for_values("for k in $(ls); do rm $k; done"), None);
+}
+
+#[test]
+fn glob_list_is_not_enumerable() {
+    assert_eq!(for_values("for k in *.txt; do rm $k; done"), None);
+}
+
+#[test]
+fn splat_list_is_not_enumerable() {
+    assert_eq!(for_values("for k in \"$@\"; do rm $k; done"), None);
+}
+
+#[test]
+fn nonconstant_variable_list_is_not_enumerable() {
+    assert_eq!(for_values("for k in $X; do rm $k; done"), None);
+}
+
+#[test]
+fn constant_variable_list_is_enumerable() {
+    // A list word that is itself a provably-constant scalar resolves.
+    assert_eq!(
+        for_values("D=lit; for k in $D x; do echo $k; done"),
+        Some(vec!["lit".to_string(), "x".to_string()])
+    );
+}
+
+#[test]
+fn reassigned_loop_var_is_not_enumerable() {
+    assert_eq!(for_values("for k in a b; do k=$(date); rm $k; done"), None);
+}
+
+#[test]
+fn unset_loop_var_is_not_enumerable() {
+    assert_eq!(for_values("for k in a b; do unset k; rm $k; done"), None);
+}
+
 // Distinct unrelated identifiers that never collide with the variable under
 // test (which is uppercase) or name a special builtin we model (export/unset).
 fn arb_filler() -> impl Strategy<Value = Vec<String>> {
@@ -100,6 +172,45 @@ fn arb_filler() -> impl Strategy<Value = Vec<String>> {
 }
 
 proptest! {
+    /// Enumerability of a literal `for` list is invariant to reordering
+    /// unrelated commands in the body, and flips off when a list word is made
+    /// dynamic (`$(…)`) or the loop variable is reassigned before use.
+    #[test]
+    fn prop_enumerability_invariants(
+        vals in proptest::collection::vec("[a-z][a-z0-9]{0,4}", 1..4),
+        filler in arb_filler(),
+    ) {
+        let list = vals.join(" ");
+        // Reordering unrelated body commands does not change enumerability.
+        let body_a = {
+            let mut b = filler.clone();
+            b.push("echo $k".to_string());
+            b.join("; ")
+        };
+        let body_b = {
+            let mut b = vec!["echo $k".to_string()];
+            b.extend(filler.clone());
+            b.join("; ")
+        };
+        let va = for_values(&format!("for k in {list}; do {body_a}; done"));
+        let vb = for_values(&format!("for k in {list}; do {body_b}; done"));
+        prop_assert_eq!(&va, &vb);
+        prop_assert_eq!(va.as_deref(), Some(vals.as_slice()));
+
+        // A dynamic list word disqualifies.
+        let dyn_list = format!("{list} $(date)");
+        prop_assert_eq!(
+            for_values(&format!("for k in {dyn_list}; do echo $k; done")),
+            None
+        );
+
+        // Reassigning the loop variable before the use disqualifies.
+        prop_assert_eq!(
+            for_values(&format!("for k in {list}; do k=$(date); echo $k; done")),
+            None
+        );
+    }
+
     /// Straight-line `NAME=lit; <filler…>; <use>` qualifies regardless of how
     /// many unrelated commands sit between the assignment and the use; moving
     /// the use before the assignment flips it to disqualified (D2).

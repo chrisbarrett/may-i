@@ -1,12 +1,16 @@
 ## 1. Enumerability analysis
 
-- [ ] 1.1 Add a failing test in `crates/shell-parser`: a `for` over a literal list
+- [x] 1.1 Add a failing test in `crates/shell-parser`: a `for` over a literal list
       exposes its values as enumerable; a list with `$(…)`, a glob, `$@`/`$*`, or
       a non-constant variable does not. Confirm red.
-- [ ] 1.2 Replace the unconditional loop-variable disqualification in
+- [x] 1.2 Replace the unconditional loop-variable disqualification in
       `constant_env` (`const_env.rs:55`) with the enumerability test: literal list
       words, loop variable not reassigned/`unset` in the body before use.
-- [ ] 1.3 Proptest: enumerability is invariant to reordering unrelated commands in
+      (Deviation: the scalar `constant_env` map still excludes the loop var —
+      it is genuinely multi-valued — and a new `enumerable_for_values` exposes
+      the value set, consumed by `decompose`. The disqualification in `collect`
+      is unchanged because the scalar map is the wrong home for a value *set*.)
+- [x] 1.3 Proptest: enumerability is invariant to reordering unrelated commands in
       the body; flips off when a list word is made dynamic or the variable is
       reassigned before use.
 
