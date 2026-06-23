@@ -101,6 +101,14 @@ fn body_mutates(body: &Command, name: &str) -> bool {
     match body {
         Command::Assignment(a) => a.name == name,
         Command::Simple(sc) => simple_mutates(sc, name),
+        // A nested `for NAME …` rebinds the variable: bash for-loops do not scope
+        // their variable, so after the inner loop it retains the inner list's
+        // last value. `children()` exposes only the inner body, never its `var`,
+        // so this arm is required — without it a use of the variable after the
+        // inner loop would resolve to the (stale) outer seed (security review
+        // C-NEW). Conservative even inside a subshell, where bash *does* scope
+        // it: disqualifying there only over-asks.
+        Command::For { var, body, .. } => var == name || body_mutates(body, name),
         other => other.children().iter().any(|c| body_mutates(c, name)),
     }
 }

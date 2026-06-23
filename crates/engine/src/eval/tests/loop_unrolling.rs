@@ -246,6 +246,69 @@ fn in_body_reassignment_stays_flagged() {
     );
 }
 
+#[test]
+fn nested_for_reusing_loop_var_name_stays_flagged() {
+    // Security review C-NEW: bash `for` loops do NOT scope their variable, so a
+    // nested `for k …` rebinds the outer `k` — after the inner loop, `$k` holds
+    // the inner loop's last value (`gc`), not the outer seed. A use of `$k`
+    // after the inner loop must therefore NOT resolve to the outer value.
+    let config = r#"(rule ":" (allow "noop"))
+                    (rule "rm"
+                      (or (when (anywhere (regex "^/data/(status|log)$")) (allow "safe"))
+                          (when (anywhere "/data/gc") (deny "dangerous"))))"#;
+    let result = decide(
+        config,
+        r#"for k in status log; do for k in clean gc; do :; done; rm "/data/$k"; done"#,
+    );
+    assert!(
+        result.decision >= Decision::Ask,
+        "a nested loop reusing the var name rebinds it; the post-loop use must \
+         not resolve to the stale outer value: {:?} ({:?})",
+        result.decision,
+        result.reason
+    );
+}
+
+#[test]
+fn nested_non_enumerable_for_reusing_loop_var_name_stays_flagged() {
+    // C-NEW variant: the inner loop need not even be enumerable — `for k in $(…)`
+    // still rebinds the outer `k`, so the outer loop must not be unrolled with a
+    // seeded `k` that a later use reads.
+    let config = r#"(rule ":" (allow "noop"))
+                    (rule "rm"
+                      (or (when (anywhere (regex "^/data/(status|log)$")) (allow "safe"))
+                          (when (anywhere "/data/gc") (deny "dangerous"))))"#;
+    let result = decide(
+        config,
+        r#"for k in status log; do for k in $(echo gc); do :; done; rm "/data/$k"; done"#,
+    );
+    assert!(
+        result.decision >= Decision::Ask,
+        "a non-enumerable nested loop reusing the var name still rebinds it: {:?} ({:?})",
+        result.decision,
+        result.reason
+    );
+}
+
+#[test]
+fn nested_for_with_distinct_var_name_still_resolves() {
+    // Control for C-NEW: when the inner loop uses a DIFFERENT name (`j`), the
+    // outer `k` is not rebound, so it still resolves — the fix must not
+    // over-disqualify.
+    let config = r#"(rule ":" (allow "noop"))
+                    (rule "rm" (when (anywhere "/data/safe") (allow "safe")))"#;
+    let result = decide(
+        config,
+        r#"for k in safe; do for j in clean gc; do :; done; rm "/data/$k"; done"#,
+    );
+    assert_eq!(
+        result.decision,
+        Decision::Allow,
+        "a distinct inner var name must leave the outer loop variable resolvable: {:?}",
+        result.reason
+    );
+}
+
 proptest! {
     /// Metamorphic (task 3.5): the decision for an enumerable single-value loop
     /// body equals the decision for the bare command with that literal
