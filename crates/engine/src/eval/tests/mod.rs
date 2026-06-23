@@ -776,6 +776,7 @@ mod const_command_names;
 mod embedded_word_positions;
 mod expansion;
 mod heredoc;
+mod loop_unrolling;
 mod properties;
 mod redirects_env;
 pub(crate) mod strategies;

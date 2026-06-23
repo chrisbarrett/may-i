@@ -1,9 +1,16 @@
 use may_i_shell_parser::{
     Command, ParameterOperator, ParseDiagnostic, Redirection, RedirectionKind, RedirectionTarget,
     SimpleCommand, SubstitutionForm, Word, WordPart, constant_env, defined_function_names,
-    extract_simple_commands,
+    enumerable_for_values,
 };
 use std::collections::{HashMap, HashSet};
+
+/// Maximum number of evaluation units an enumerable-`for` unroll may add before
+/// the loop falls back to its unresolved (flagged) walk. Nested enumerable loops
+/// multiply, so this caps the Cartesian blow-up (D3). Conservative on purpose:
+/// real ops loops carry a handful of values, and exceeding the cap only costs
+/// precision (a fallback to the flagged single walk), never soundness.
+const UNROLL_UNIT_BUDGET: usize = 64;
 
 /// Byte range in the original input string covered by an `EvalUnit`.
 pub(super) type Span = (usize, usize);
@@ -143,7 +150,6 @@ pub(crate) fn decompose(
     diagnostics: &[ParseDiagnostic],
     tainted_env: &HashSet<String>,
 ) -> Vec<EvalUnit> {
-    let simple_commands = extract_simple_commands(cmd);
     let mut units = Vec::new();
 
     // Variables the command provably assigns a constant value. Used to resolve
@@ -156,33 +162,167 @@ pub(crate) fn decompose(
     // this set is decomposed as an ordinary command.
     let internal_call_spans = live_local_call_spans(cmd, &const_env);
 
-    for sc in simple_commands {
-        decompose_simple_command(
-            sc,
-            input,
-            diagnostics,
-            &const_env,
-            &internal_call_spans,
-            tainted_env,
-            &mut units,
-        );
-    }
+    // Pass 1 — simple commands (and the units they own: dynamic names, env
+    // prefixes, argv-word substitutions and taints). Threads the constant env so
+    // an unrolled loop body resolves the loop variable as a seeded scalar.
+    // Enumerable `for` loops are unrolled *inline* against the live seeded env,
+    // so a nested loop whose list references the outer variable re-derives its
+    // value set per outer iteration (security review C1). Passes 2 & 3 do not
+    // unroll — the units they own are value-independent — so no shared plan is
+    // needed to keep the passes consistent.
+    collect_simple_command_units(
+        cmd,
+        input,
+        diagnostics,
+        &const_env,
+        &internal_call_spans,
+        tainted_env,
+        UNROLL_UNIT_BUDGET,
+        &mut units,
+    );
 
-    // Redirect targets carry their own embedded commands — a process
-    // substitution in redirect position (`… < <(rm)`) attaches to the
-    // enclosing `Redirected` wrapper, not to any simple command's words, so
-    // it is invisible to the word scan above. Walk the whole tree for
-    // redirect targets so those inner commands are evaluated too.
+    // Pass 2 — redirect targets carry their own embedded commands: a process
+    // substitution in redirect position (`… < <(rm)`) attaches to the enclosing
+    // `Redirected` wrapper, not to any simple command's words, so it is
+    // invisible to the word scan above. Walk the whole tree for redirect targets
+    // so those inner commands are evaluated too.
+    //
+    // This pass (and pass 3) is *not* unrolled: the units it owns — redirect
+    // floors, embedded-substitution gates, secret-read taints — do not resolve
+    // the loop variable (their floor/taint outcome is value-independent), so
+    // unrolling would only duplicate identical units. Visiting each body once
+    // (via `children()`) gates them exactly as before.
     push_embedded_units_from_redirect_targets(cmd, diagnostics, tainted_env, &mut units);
 
-    // Assignment values, `for` words, and `case` subject/pattern words are
-    // word positions no other pass owns. A substitution in any of them runs a
-    // command, so walk the whole tree for them too — otherwise the embedded
-    // command would never be gated. (Simple-command words and redirect targets
-    // keep their existing owners and are skipped here to avoid double-counting.)
+    // Pass 3 — assignment values, `for` words, and `case` subject/pattern words
+    // are word positions no other pass owns. A substitution in any of them runs
+    // a command, so walk the whole tree for them too. (Simple-command words and
+    // redirect targets keep their existing owners and are skipped here to avoid
+    // double-counting.)
     push_embedded_units_from_structural_words(cmd, diagnostics, tainted_env, &mut units);
 
     units
+}
+
+/// Decide whether to unroll a `for` node against the live env, returning its
+/// value set when it is statically enumerable *and* unrolling it fits the
+/// remaining `budget` (D3). `None` means walk the body once with the loop
+/// variable unresolved — the flagged fallback, which never under-asks. Deciding
+/// here (rather than from a precomputed plan) means the enumerability test sees
+/// the seeded values of any enclosing unrolled loop, so a value-dependent nested
+/// list is re-derived correctly per outer iteration (security review C1).
+fn unroll_values(
+    var: &str,
+    words: &[Word],
+    body: &Command,
+    env: &HashMap<String, String>,
+    budget: usize,
+) -> Option<Vec<String>> {
+    let values = enumerable_for_values(var, words, body, env)?;
+    let count = values.len();
+    // D4: an empty list runs the body zero times; nothing to unroll.
+    if count == 0 {
+        return None;
+    }
+    // Cost of unrolling: one copy of every body unit per value.
+    let total = count_simple_commands(body).max(1).saturating_mul(count);
+    (total <= budget).then_some(values)
+}
+
+/// Number of simple commands in `body`, used as the per-iteration weight when
+/// costing an unroll. Simple commands are the dominant unit source; a body with
+/// none still costs at least one (see `.max(1)` at the call site) so an empty
+/// body does not read as free. This is a conservative *proxy* for the true unit
+/// count (it excludes redirect/env/embedded units, which only over-unrolls
+/// within the divisor and stays bounded by the budget) — never under-asks.
+fn count_simple_commands(body: &Command) -> usize {
+    let mut n = 0;
+    fn walk(cmd: &Command, n: &mut usize) {
+        if let Command::Simple(_) = cmd {
+            *n += 1;
+        }
+        for child in cmd.children() {
+            walk(child, n);
+        }
+    }
+    walk(body, &mut n);
+    n
+}
+
+/// Pass 1: recursively emit the units owned by simple commands, threading the
+/// constant env and a remaining unroll `budget`. At an enumerable `for` node
+/// (decided here against the *live* seeded env, so a nested loop whose list
+/// references an enclosing loop variable re-derives its value set per outer
+/// iteration — security review C1), the body is walked once per list value with
+/// the loop variable seeded into a copy of the env, so its argument words
+/// resolve as provably-constant scalars (D1); the across-units meet then
+/// combines the per-value decisions strictest-wins. Over budget (or an empty
+/// list, D4) the loop is not unrolled and its body is walked once with the loop
+/// variable unresolved — today's flagged behaviour (D3).
+///
+/// Replaces the former flat `extract_simple_commands` sweep: a simple command
+/// has no command children, so visiting `Command::Simple` and recursing through
+/// `children()` everywhere else reaches exactly the same set of simple commands
+/// when no loop is unrolled, in the same pre-order.
+#[allow(clippy::too_many_arguments)]
+fn collect_simple_command_units(
+    cmd: &Command,
+    input: &str,
+    diagnostics: &[ParseDiagnostic],
+    env: &HashMap<String, String>,
+    internal_call_spans: &HashSet<Span>,
+    tainted_env: &HashSet<String>,
+    budget: usize,
+    units: &mut Vec<EvalUnit>,
+) {
+    match cmd {
+        Command::Simple(sc) => {
+            decompose_simple_command(
+                sc,
+                input,
+                diagnostics,
+                env,
+                internal_call_spans,
+                tainted_env,
+                units,
+            );
+        }
+        Command::For { var, words, body }
+            if let Some(values) = unroll_values(var, words, body, env, budget) =>
+        {
+            // Give each iteration a share of the remaining budget so nested
+            // enumerable loops stay bounded by the Cartesian product (D3).
+            let per_iter = (budget / values.len()).max(1);
+            for value in &values {
+                let mut seeded = env.clone();
+                seeded.insert(var.clone(), value.clone());
+                collect_simple_command_units(
+                    body,
+                    input,
+                    diagnostics,
+                    &seeded,
+                    internal_call_spans,
+                    tainted_env,
+                    per_iter,
+                    units,
+                );
+            }
+        }
+        _ => {
+            for child in cmd.children() {
+                collect_simple_command_units(
+                    child,
+                    input,
+                    diagnostics,
+                    env,
+                    internal_call_spans,
+                    tainted_env,
+                    budget,
+                    units,
+                );
+            }
+        }
+    }
 }
 
 /// Walk the command tree and emit embedded units for the word positions that
