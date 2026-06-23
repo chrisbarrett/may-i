@@ -6,20 +6,38 @@ impl Lexer {
     /// Produces either a simple `ParameterExpansion(name)` for `${VAR}` or a
     /// structured `ParameterExpansionOp { name, op }` for operator forms.
     pub(super) fn read_parameter_expansion(&mut self) -> Option<WordPart> {
-        // Special case: ${#VAR} (length operator)
+        // Special case: ${#VAR} (length operator) and ${#arr[sub]} (array
+        // element count).
         if self.peek() == Some('#') {
-            // Look ahead: if what follows '#' is a valid identifier and then '}',
-            // this is the length operator.
+            // Look ahead: if what follows '#' is a valid identifier and then
+            // either `}` (scalar length) or `[sub]}` (array length), this is
+            // the length form.
             let saved = self.save_state();
             self.advance(); // skip #
             let name = self.read_identifier();
-            if !name.is_empty() && self.peek() == Some('}') {
-                self.advance(); // skip }
-                return Some(WordPart::ParameterExpansionOp {
-                    name,
-                    op: ParameterOperator::Length,
-                    embedded: Vec::new(),
-                });
+            if !name.is_empty() {
+                if self.peek() == Some('}') {
+                    self.advance(); // skip }
+                    return Some(WordPart::ParameterExpansionOp {
+                        name,
+                        op: ParameterOperator::Length,
+                        embedded: Vec::new(),
+                    });
+                }
+                if self.peek() == Some('[') {
+                    let sub_saved = self.save_state();
+                    if let Some(subscript) = self.read_subscript()
+                        && self.peek() == Some('}')
+                    {
+                        self.advance(); // skip }
+                        return Some(WordPart::ArrayExpansion {
+                            name,
+                            subscript,
+                            length: true,
+                        });
+                    }
+                    self.restore_state(sub_saved);
+                }
             }
             // Not a length operator; restore and fall through to flat parsing
             self.restore_state(saved);
@@ -32,6 +50,27 @@ impl Lexer {
             let s = self.read_until_char('}');
             self.advance(); // skip }
             return Some(WordPart::ParameterExpansion(s));
+        }
+
+        // A subscript `[sub]` immediately after the name is an array reference
+        // (`${arr[0]}`, `${arr[@]}`, `${arr[*]}`). Keep the name and subscript
+        // distinct rather than folding `arr[@]` into the name (design D2).
+        if self.peek() == Some('[') {
+            let sub_saved = self.save_state();
+            if let Some(subscript) = self.read_subscript()
+                && self.peek() == Some('}')
+            {
+                self.advance(); // skip }
+                return Some(WordPart::ArrayExpansion {
+                    name,
+                    subscript,
+                    length: false,
+                });
+            }
+            // Subscript followed by an operator (`${arr[0]:-x}`) or malformed:
+            // restore and let the operator/flat paths below handle it without
+            // dropping tokens.
+            self.restore_state(sub_saved);
         }
 
         // Check what follows the name
@@ -325,6 +364,63 @@ impl Lexer {
             self.advance();
         }
         (text, embedded)
+    }
+
+    /// Read an array subscript `[ … ]`, the cursor on the opening `[`. On
+    /// success the cursor is just past the closing `]` and the subscript is
+    /// returned: `@` → [`Subscript::All`], `*` → [`Subscript::Star`], any other
+    /// content → [`Subscript::Index`] holding the inner text lexed as a word
+    /// (so `${arr[$i]}` keeps its dynamic subscript). Returns `None` (cursor
+    /// left at the `[`, since callers save/restore) when there is no closing
+    /// `]` before `}` or EOF — a malformed subscript the caller falls back on
+    /// rather than dropping.
+    pub(super) fn read_subscript(&mut self) -> Option<Subscript> {
+        debug_assert_eq!(self.peek(), Some('['));
+        self.advance(); // skip [
+        // Capture the inner text up to the matching `]`. Nested `[` (rare, e.g.
+        // arithmetic index `arr[a[0]]`) increases depth so the right `]`
+        // closes. A `}` or EOF before any closing `]` is malformed.
+        let mut depth = 1usize;
+        let mut inner = String::new();
+        loop {
+            match self.peek() {
+                None => return None,
+                Some('}') if depth == 1 => return None,
+                Some('[') => {
+                    depth += 1;
+                    inner.push('[');
+                    self.advance();
+                }
+                Some(']') => {
+                    depth -= 1;
+                    self.advance();
+                    if depth == 0 {
+                        break;
+                    }
+                    inner.push(']');
+                }
+                Some(ch) => {
+                    inner.push(ch);
+                    self.advance();
+                }
+            }
+        }
+        Some(match inner.as_str() {
+            "@" => Subscript::All,
+            "*" => Subscript::Star,
+            _ => {
+                // Lex the inner text as a word so a dynamic subscript
+                // (`$i`, `$((i))`, `${j}`) is modelled, not flattened.
+                let mut sub_lexer = Lexer::new(&inner);
+                let parts = sub_lexer.read_word_parts();
+                let word = if parts.is_empty() {
+                    Word::literal(&inner)
+                } else {
+                    Word { parts }
+                };
+                Subscript::Index(word)
+            }
+        })
     }
 
     /// Read a shell identifier (alphanumeric + underscore).

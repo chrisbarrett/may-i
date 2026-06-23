@@ -625,7 +625,14 @@ fn collect_parameter_names(word: &Word, out: &mut Vec<String>) {
                     name, subscript, ..
                 } => {
                     push_name(name, out);
+                    // An `Index` subscript is parameter- AND arithmetic-expanded
+                    // by bash, so both a `$NAME` reference and a bare arithmetic
+                    // identifier (`arr[AWS_TOKEN]`) inside it are reads. Scan the
+                    // flattened text for arithmetic idents (catching the bare
+                    // form) and walk the structured parts (catching `$NAME` /
+                    // nested substitutions). `@`/`*` carry no reads.
                     if let Subscript::Index(w) = subscript {
+                        scan_arithmetic_idents(&w.to_str(), out);
                         walk(&w.parts, out);
                     }
                 }

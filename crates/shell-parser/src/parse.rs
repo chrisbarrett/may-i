@@ -275,6 +275,18 @@ impl Parser {
                         assignments.push(assignment);
                         continue;
                     }
+                    // A declaration builtin (`declare`/`typeset`/`local`/
+                    // `export`/`readonly`) takes `name=(…)` array arguments. The
+                    // kind comes from a `-A` flag (associative) vs the default
+                    // `-a`/indexed. Capture these as assignments so the kind is
+                    // recorded and nothing truncates; the builtin name word
+                    // stays in `words`.
+                    if let Some(kind) = declaration_array_kind(&words)
+                        && let Some(assignment) = self.try_parse_named_array_literal(kind)
+                    {
+                        assignments.push(assignment);
+                        continue;
+                    }
                     let word = w.clone();
                     self.advance();
                     words.push(word);
@@ -468,6 +480,51 @@ impl Parser {
             array_kind: ArrayKind::Indexed,
             elements,
         })
+    }
+
+    /// Parse a declaration-builtin array argument `name=(…)` (with the given
+    /// `kind` from the builtin's flags) in argument position. The cursor is on
+    /// the `name=` Word token. Returns `None` (cursor unmoved) when the word is
+    /// not a `name=` shape or the `(` is not adjacent — the caller then treats
+    /// it as an ordinary argument word. A `name=scalar` (no array) also returns
+    /// `None`: only the array-literal form is captured here, since the kind is
+    /// meaningful only for arrays.
+    fn try_parse_named_array_literal(&mut self, kind: ArrayKind) -> Option<Assignment> {
+        let Token::Word(w) = self.peek().clone() else {
+            return None;
+        };
+        if w.parts.len() != 1 {
+            return None;
+        }
+        let WordPart::Literal(ref s) = w.parts[0] else {
+            return None;
+        };
+        let eq_pos = s.find('=')?;
+        if eq_pos + 1 != s.len() {
+            return None; // `name=value` scalar, not an array literal
+        }
+        let lexical = &s[..eq_pos];
+        let lexical = lexical.strip_suffix('+').unwrap_or(lexical);
+        let bare = match lexical.find('[') {
+            Some(open) => &lexical[..open],
+            None => lexical,
+        };
+        if bare.is_empty()
+            || !bare.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            || bare.chars().next().is_some_and(|c| c.is_ascii_digit())
+        {
+            return None;
+        }
+        match self.try_parse_array_literal(s)? {
+            AssignmentValue::Array { elements, .. } => Some(Assignment {
+                name: bare.to_string(),
+                value: AssignmentValue::Array {
+                    array_kind: kind,
+                    elements,
+                },
+            }),
+            AssignmentValue::Scalar(_) => None,
+        }
     }
 
     fn parse_if(&mut self) -> Command {
@@ -778,6 +835,40 @@ impl Parser {
 
         Command::BraceGroup(Box::new(body))
     }
+}
+
+/// If `words` names a declaration builtin (`declare`/`typeset`/`local`/
+/// `export`/`readonly`), return the array kind its flags so far imply: a `-A`
+/// flag anywhere in the flag words makes a following `name=(…)` associative;
+/// otherwise it is indexed (`-a` or no flag). Returns `None` when the first
+/// word is not a declaration builtin, so a plain command's `name=(…)` argument
+/// is left as an ordinary word.
+fn declaration_array_kind(words: &[Word]) -> Option<ArrayKind> {
+    let head = words.first()?;
+    if head.parts.len() != 1 {
+        return None;
+    }
+    let WordPart::Literal(name) = &head.parts[0] else {
+        return None;
+    };
+    if !matches!(
+        name.as_str(),
+        "declare" | "typeset" | "local" | "export" | "readonly"
+    ) {
+        return None;
+    }
+    // Scan the flag words for `-A` (associative). A combined flag like `-Ax`
+    // or `-gA` still selects associative, so look for the letter inside any
+    // single-dash flag word.
+    let associative = words[1..].iter().any(|w| {
+        matches!(&w.parts[..], [WordPart::Literal(s)]
+            if s.starts_with('-') && !s.starts_with("--") && s.contains('A'))
+    });
+    Some(if associative {
+        ArrayKind::Associative
+    } else {
+        ArrayKind::Indexed
+    })
 }
 
 #[cfg(test)]
