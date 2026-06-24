@@ -217,7 +217,16 @@ pub fn evaluate_command_with_fold<F: EvalFold>(
     facts: &ContextFacts,
     fold: &mut F,
 ) -> Result<EvalResult, EvalError> {
-    eval_units(input, config, facts, fold, 0, None, Some(0))
+    eval_units(
+        input,
+        config,
+        facts,
+        fold,
+        0,
+        None,
+        Some(0),
+        &std::collections::HashSet::new(),
+    )
 }
 
 /// The single command-evaluation core: parse `input`, decompose it into
@@ -233,6 +242,7 @@ pub fn evaluate_command_with_fold<F: EvalFold>(
 /// - `segments` is `Some(outer_offset)` to collect `SegmentDecision`s in
 ///   outermost coordinates (top-level, for display), or `None` to skip
 ///   collection (the authorise path, which has no display surface).
+#[allow(clippy::too_many_arguments)]
 fn eval_units<F: EvalFold>(
     input: &str,
     config: &Config,
@@ -241,6 +251,7 @@ fn eval_units<F: EvalFold>(
     depth: usize,
     via: Option<&str>,
     segments: Option<usize>,
+    inherited_fns: &std::collections::HashSet<String>,
 ) -> Result<EvalResult, EvalError> {
     if depth >= DEFAULT_RECURSION_LIMIT {
         return Ok(EvalResult::new(
@@ -275,7 +286,13 @@ fn eval_units<F: EvalFold>(
     let diagnostics = parse_result.diagnostics.clone();
     let has_parse_errors = parse_result.has_errors();
     let tainted_env = config.security.env_capability_names();
-    let units = decompose(&parse_result.command, input, &diagnostics, &tainted_env);
+    let units = decompose(
+        &parse_result.command,
+        input,
+        &diagnostics,
+        &tainted_env,
+        inherited_fns,
+    );
 
     if units.is_empty() {
         let reason = "empty command".to_string();
@@ -321,6 +338,7 @@ fn eval_units<F: EvalFold>(
                 span,
                 kind,
                 origin,
+                inherited_fns,
             } => {
                 let embedded_result = eval_units(
                     source,
@@ -330,6 +348,7 @@ fn eval_units<F: EvalFold>(
                     depth + 1,
                     None,
                     segments.map(|base| base + span.0),
+                    inherited_fns,
                 )?;
                 fold.embedded_command(source, embedded_result.decision);
                 let annotated_reason = embedded_result
@@ -584,6 +603,7 @@ pub(crate) fn evaluate_authorised_string<F: EvalFold>(
         depth,
         via_program,
         None,
+        &std::collections::HashSet::new(),
     )
 }
 
@@ -925,6 +945,189 @@ mod tests {
         assert_eq!(
             result.reason.as_deref(),
             Some("No rule for command `kubectl`")
+        );
+    }
+
+    // -- Substitution-boundary recognition (recognise-local-functions-in-substitutions) --
+
+    #[test]
+    fn subst_call_to_live_local_function_allows() {
+        // Spec: a live local function inside `$(…)` is internal — :allow, no
+        // `No rule for command …`.
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        let result = evaluate_command(
+            "resolve() { echo hi; }; dest=$(resolve)",
+            &config,
+            &empty_facts(),
+        )
+        .unwrap();
+        assert_eq!(result.decision, Decision::Allow);
+        let reason = result.reason.as_deref().unwrap_or("");
+        assert!(
+            !reason.contains("No rule for command `resolve`"),
+            "substitution call to a live local function must be internal: {reason}"
+        );
+    }
+
+    #[test]
+    fn subst_forward_reference_still_asks() {
+        // Spec: the substitution runs before `resolve` is defined, so it is not
+        // live at the site — it stays external and asks.
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        let result = evaluate_command(
+            "dest=$(resolve); resolve() { echo hi; }",
+            &config,
+            &empty_facts(),
+        )
+        .unwrap();
+        assert_eq!(result.decision, Decision::Ask);
+        let reason = result.reason.as_deref().unwrap_or("");
+        assert!(
+            reason.contains("No rule for command `resolve`"),
+            "forward-referenced substitution call must ask: {reason}"
+        );
+    }
+
+    #[test]
+    fn subst_non_defined_command_still_asks() {
+        // Spec: an unknown command inside `$(…)` is unaffected by the inherited
+        // set.
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        let result = evaluate_command(
+            "resolve() { echo hi; }; dest=$(kubectl get pods)",
+            &config,
+            &empty_facts(),
+        )
+        .unwrap();
+        assert_eq!(result.decision, Decision::Ask);
+        let reason = result.reason.as_deref().unwrap_or("");
+        assert!(
+            reason.contains("No rule for command `kubectl`"),
+            "unknown substitution command must ask: {reason}"
+        );
+    }
+
+    #[test]
+    fn subst_inside_function_body_recognised() {
+        // Spec: a substitution inside a function body inherits the Tier-2
+        // establishment set, so a call to an established function is internal.
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        let result = evaluate_command(
+            "resolve() { echo hi; }; main() { dest=$(resolve); }; main",
+            &config,
+            &empty_facts(),
+        )
+        .unwrap();
+        assert_eq!(result.decision, Decision::Allow);
+        let reason = result.reason.as_deref().unwrap_or("");
+        assert!(
+            !reason.contains("No rule for command `resolve`"),
+            "body-site substitution call must be internal: {reason}"
+        );
+    }
+
+    #[test]
+    fn subst_nested_recognised() {
+        // Spec: recognition propagates through nested substitutions — both `f`
+        // and `g` in `out=$(f $(g))` are internal.
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        let result = evaluate_command(
+            "g() { echo x; }; f() { echo y; }; out=$(f $(g))",
+            &config,
+            &empty_facts(),
+        )
+        .unwrap();
+        assert_eq!(result.decision, Decision::Allow);
+        let reason = result.reason.as_deref().unwrap_or("");
+        assert!(
+            !reason.contains("No rule for command `f`")
+                && !reason.contains("No rule for command `g`"),
+            "nested substitution calls must both be internal: {reason}"
+        );
+    }
+
+    #[test]
+    fn subst_nested_forward_reference_not_recognised() {
+        // A function defined after the substitution is not live at the nested
+        // site, so it still asks even though the outer call is internal.
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        let result = evaluate_command(
+            "f() { echo y; }; out=$(f $(g)); g() { echo x; }",
+            &config,
+            &empty_facts(),
+        )
+        .unwrap();
+        assert_eq!(result.decision, Decision::Ask);
+        let reason = result.reason.as_deref().unwrap_or("");
+        assert!(
+            reason.contains("No rule for command `g`"),
+            "nested forward-referenced call must ask: {reason}"
+        );
+    }
+
+    #[test]
+    fn subst_in_parameter_expansion_default_recognised() {
+        // A substitution inside a `${x:-$(resolve)}` operand inherits the same
+        // site liveness as an inline `$(resolve)` would.
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        let result = evaluate_command(
+            "resolve() { echo hi; }; dest=${x:-$(resolve)}",
+            &config,
+            &empty_facts(),
+        )
+        .unwrap();
+        assert_eq!(result.decision, Decision::Allow);
+        let reason = result.reason.as_deref().unwrap_or("");
+        assert!(
+            !reason.contains("No rule for command `resolve`"),
+            "param-expansion-default substitution call must be internal: {reason}"
+        );
+    }
+
+    #[test]
+    fn subst_inherited_fn_unset_within_scope_is_not_recognised() {
+        // Soundness: `fn` is inherited into the substitution, but the
+        // substitution's own source `unset -f fn` before reaching the body-site
+        // call `$(fn)`. In real bash the subshell's `fn` is gone, so `$(fn)`
+        // runs an EXTERNAL `fn` — it must ask, matching the bare call at that
+        // site (whose Tier-2 establishment set excludes the unset name). The
+        // carried set must not re-add an inherited name the site excluded.
+        let config = config_with_rules(vec![allow_rule("echo"), allow_rule("unset")]);
+        let script = "fn() { echo hi; }; x=$( unset -f fn; g() { out=$(fn); }; g )";
+        let result = evaluate_command(script, &config, &empty_facts()).unwrap();
+        assert_eq!(
+            result.decision,
+            Decision::Ask,
+            "fn is unset before the body substitution runs"
+        );
+        let reason = result.reason.as_deref().unwrap_or("");
+        assert!(
+            reason.contains("No rule for command `fn`"),
+            "unset inherited fn must ask in body substitution: {reason}"
+        );
+    }
+
+    #[test]
+    fn subst_recognised_function_dangerous_body_still_asks() {
+        // Spec/D5: recognising the call as internal does not suppress the body's
+        // own gate — the body's `rm` produces the ask, and the `wipe` call adds
+        // no `No rule for command …`.
+        let config = config_with_rules(vec![]);
+        let result = evaluate_command(
+            "wipe() { rm -rf \"$d\"; }; x=$(wipe)",
+            &config,
+            &empty_facts(),
+        )
+        .unwrap();
+        assert_eq!(result.decision, Decision::Ask);
+        let reason = result.reason.as_deref().unwrap_or("");
+        assert!(
+            reason.contains("`rm`"),
+            "decision should come from the body's rm: {reason}"
+        );
+        assert!(
+            !reason.contains("No rule for command `wipe`"),
+            "the wipe substitution call must not report a missing rule: {reason}"
         );
     }
 
@@ -1942,6 +2145,52 @@ mod tests {
 
     proptest! {
         #![proptest_config(ProptestConfig { cases: 256, max_shrink_iters: 64, .. ProptestConfig::default() })]
+
+        /// D4 metamorphic invariant (`recognise-local-functions-in-substitutions`):
+        /// a function call inside `x=$(call)` at a site receives the same
+        /// internal/external classification as the bare `call` at that site.
+        /// The bare-call path — already specified and tested — is ground truth.
+        /// Up to three function definitions and a call placed at a random slot
+        /// among them exercise live / forward-reference / undefined cases;
+        /// bodies use only the allowlisted `echo`, so the sole decision driver
+        /// is the call's own classification (Allow iff internal, else Ask).
+        #[test]
+        fn prop_subst_classification_equals_bare_call(
+            defined in prop::collection::vec(any::<bool>(), 3),
+            target in 0usize..3,
+            slot in 0usize..=3,
+        ) {
+            let config = config_with_rules(vec![allow_rule("echo")]);
+            let defs: Vec<String> = defined
+                .iter()
+                .enumerate()
+                .filter(|&(_, &d)| d)
+                .map(|(i, _)| format!("f{i}() {{ echo hi; }}"))
+                .collect();
+            let call = format!("f{target}");
+            let at = slot.min(defs.len());
+            let build = |call_text: &str| {
+                let mut stmts = defs.clone();
+                stmts.insert(at, call_text.to_string());
+                stmts.join("; ")
+            };
+            let bare = build(&call);
+            let bare_d = evaluate_command(&bare, &config, &empty_facts()).unwrap().decision;
+            // Each substitution surface form must classify the call identically
+            // to the bare call at the same site (D4) — inline `$(…)`, a
+            // parameter-expansion operand, and an `Index` array subscript are
+            // all positions the emitter and the liveness walk must agree on.
+            for wrapped in [
+                build(&format!("x=$({call})")),
+                build(&format!("dest=${{y:-$({call})}}")),
+                build(&format!("dest=${{arr[$({call})]}}")),
+            ] {
+                let wrapped_d = evaluate_command(&wrapped, &config, &empty_facts())
+                    .unwrap()
+                    .decision;
+                prop_assert_eq!(bare_d, wrapped_d, "bare {:?} vs subst {:?}", bare, wrapped);
+            }
+        }
 
         /// `harden-shell-parse-fidelity`: a leading `!` is pipeline negation —
         /// authorisation-transparent. For any well-formed pipeline `P`,

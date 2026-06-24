@@ -887,7 +887,7 @@ mod parser_engine_invariants {
         #[test]
         fn prop_embedded_source_matches_span_slice(input in arb_shell_chars()) {
             let parse_result = may_i_shell_parser::parse(&input);
-            let units = decompose(&parse_result.command, &input, &parse_result.diagnostics, &std::collections::HashSet::new());
+            let units = decompose(&parse_result.command, &input, &parse_result.diagnostics, &std::collections::HashSet::new(), &std::collections::HashSet::new());
             for unit in &units {
                 if let EvalUnit::EmbeddedCommand { source, span, .. } = unit {
                     let (s, e) = *span;
@@ -907,7 +907,7 @@ mod parser_engine_invariants {
             (input, q_start, q_end) in arb_with_single_quoted_region()
         ) {
             let parse_result = may_i_shell_parser::parse(&input);
-            let units = decompose(&parse_result.command, &input, &parse_result.diagnostics, &std::collections::HashSet::new());
+            let units = decompose(&parse_result.command, &input, &parse_result.diagnostics, &std::collections::HashSet::new(), &std::collections::HashSet::new());
             for unit in &units {
                 let (s, e) = match unit {
                     EvalUnit::SimpleCommand { span, .. }
@@ -942,7 +942,7 @@ mod parser_engine_invariants {
         fn prop_recursive_segments_stay_within_parent_span(input in arb_shell_chars()) {
             let result = evaluate_command(&input, &empty_config(), &empty_facts()).unwrap();
             let parse_result = may_i_shell_parser::parse(&input);
-            let units = decompose(&parse_result.command, &input, &parse_result.diagnostics, &std::collections::HashSet::new());
+            let units = decompose(&parse_result.command, &input, &parse_result.diagnostics, &std::collections::HashSet::new(), &std::collections::HashSet::new());
             for unit in &units {
                 if let EvalUnit::EmbeddedCommand { span, .. } = unit {
                     let (p_s, p_e) = *span;
@@ -1108,7 +1108,7 @@ mod parser_engine_invariants {
             ast_spans.sort_unstable();
 
             let mut embedded_spans: Vec<(usize, usize)> =
-                decompose(&pr.command, &input, &pr.diagnostics, &std::collections::HashSet::new())
+                decompose(&pr.command, &input, &pr.diagnostics, &std::collections::HashSet::new(), &std::collections::HashSet::new())
                     .iter()
                     .filter_map(|u| match u {
                         EvalUnit::EmbeddedCommand { span, .. } => Some(*span),
@@ -1284,6 +1284,7 @@ mod parser_engine_invariants {
             input,
             &pr.diagnostics,
             &std::collections::HashSet::new(),
+            &std::collections::HashSet::new(),
         );
         for unit in &units {
             if let EvalUnit::SimpleCommand { command, .. } = unit {
@@ -1308,6 +1309,7 @@ mod parser_engine_invariants {
             &parse_result.command,
             input,
             &parse_result.diagnostics,
+            &std::collections::HashSet::new(),
             &std::collections::HashSet::new(),
         );
         for unit in &units {
