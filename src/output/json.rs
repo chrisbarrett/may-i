@@ -73,6 +73,11 @@ pub fn trace_to_json(entries: &[TraceEntry]) -> Vec<serde_json::Value> {
                 "type": "unresolved_expansion",
                 "words": words,
             }),
+            TraceEntry::ArityGuess { flag, consumed } => serde_json::json!({
+                "type": "arity_guess",
+                "flag": flag,
+                "consumed": consumed,
+            }),
             TraceEntry::DefaultAsk { reason } => serde_json::json!({
                 "type": "default_ask",
                 "reason": reason,

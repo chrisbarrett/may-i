@@ -73,6 +73,13 @@ pub(crate) fn evaluate_at_depth<F: EvalFold>(
     }
     let (expanded, expanded_expansions) = tokenise(args, arg_expansions, &parser);
     fold.record_parser(command, &parser);
+    // Surface each undeclared-long-flag arity guess as a Trace Advisory:
+    // the tokeniser made a guess, so make it observable regardless of
+    // whether any rule consults the residual. Advisories never change the
+    // Decision.
+    for guess in arity_guess_advisories(&expanded, &parser) {
+        fold.arity_guess_advisory(&guess.flag, &guess.consumed);
+    }
     // Parser-level `(parameter X (authorise))` recursion. Run before
     // rule evaluation so `:via NAME` facts are in scope; the
     // recursion result also acts as a fallback decision when no rule
@@ -303,22 +310,108 @@ pub(crate) fn parser_positional_args<'a>(
         .collect()
 }
 
+/// A guess the gnu tokeniser made about an undeclared long flag's
+/// arity: `flag` consumed `consumed` as its value because `consumed`
+/// looked like a plausible (non-flag) value rather than a declared
+/// parameter's value. Surfaced as a Trace Advisory; never alters a
+/// Decision.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ArityGuess {
+    pub flag: String,
+    pub consumed: String,
+}
+
+/// True when `token` could be the value of a preceding undeclared long
+/// flag whose arity must be guessed. A token is **not** a plausible
+/// value (i.e. it is flag-shaped, so it is left in the residual) when it
+/// begins with the style's long or short prefix and the character
+/// immediately after that prefix is an ASCII letter. The `--` flag-stop
+/// is never a plausible value. Digit-led tokens (`-5`), a bare `-`, and
+/// prefix-less tokens are plausible values.
+fn next_token_is_plausible_value(token: &str, long_prefix: &str, short_prefix: &str) -> bool {
+    if token == "--" {
+        return false;
+    }
+    for prefix in [long_prefix, short_prefix] {
+        if !prefix.is_empty()
+            && token.starts_with(prefix)
+            && token[prefix.len()..]
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic())
+        {
+            return false;
+        }
+    }
+    true
+}
+
+/// Decide whether a flag token `arg` consumes its successor, and whether
+/// that consumption is an undeclared-gnu arity *guess* (vs an
+/// author-declared arity). Returns `(consumes_next, is_guess)`.
+///
+/// Sole owner of the consume rule for prefixed flags: both the residual
+/// walk ([`positional_indices_walk`]) and the outer-split scan
+/// ([`first_positional_index`]) call this, so the two can never drift.
+/// `next_plausible` is whether the successor is a plausible value
+/// ([`next_token_is_plausible_value`]).
+fn long_flag_consumption(
+    parser: &ResolvedParser,
+    arg: &str,
+    starts_long: bool,
+    gnu_long_consumes_next: bool,
+    next_plausible: bool,
+) -> (bool, bool) {
+    let is_declared_param = parser.parameter_token_matches(arg);
+    let is_declared_flag = parser.flag_token_matches(arg);
+    // Declared parameters consume regardless of the next token's shape; a
+    // declared boolean `(flag …)` is value-less and never consumes; the
+    // undeclared gnu guess consumes only a plausible value.
+    let is_guess = !is_declared_param && !is_declared_flag && starts_long && gnu_long_consumes_next;
+    let consumes_next = is_declared_param || (is_guess && next_plausible);
+    (consumes_next, is_guess)
+}
+
 /// Index-reporting form of [`parser_positional_args`]: returns the
 /// positions in `args` of the residual positional tokens, so callers can
 /// pair each token with side data aligned to the same argv (expansion
 /// provenance).
 pub(crate) fn parser_positional_indices(args: &[String], parser: &ResolvedParser) -> Vec<usize> {
+    positional_indices_walk(args, parser).0
+}
+
+/// Collect the arity guesses the gnu tokeniser makes for undeclared long
+/// flags over `args`: each is an undeclared, gnu-shaped long flag
+/// immediately followed by a plausible (non-flag) value the tokeniser
+/// consumes. Shares the consumption walk with
+/// [`parser_positional_indices`] so the guess set never drifts from the
+/// residual it explains.
+pub(crate) fn arity_guess_advisories(args: &[String], parser: &ResolvedParser) -> Vec<ArityGuess> {
+    positional_indices_walk(args, parser).1
+}
+
+/// Shared residual walk: returns the residual positional indices paired
+/// with every undeclared-long-flag arity guess (a consumed plausible
+/// value) made along the way.
+fn positional_indices_walk(
+    args: &[String],
+    parser: &ResolvedParser,
+) -> (Vec<usize>, Vec<ArityGuess>) {
     let style = &parser.style;
     let long_prefix = style.long_prefix();
     let short_prefix = style.short_prefix();
     let separators = style.separators();
-    // Under GNU-shaped styles (`--`/`-` prefixes with `=` separator),
-    // every `--long` flag without an inline `=` is assumed to consume
-    // the next arg. Without this `(parameter X *)` rules can't see
-    // the value of an undeclared long flag.
+    // Under GNU-shaped styles (`--`/`-` prefixes with `=` separator), an
+    // undeclared `--long` flag without an inline `=` may consume the next
+    // arg as its value — but only when that arg is a plausible value
+    // (not itself flag-shaped, not the `--` flag-stop). Declared
+    // parameters consume their next arg unconditionally (author-asserted
+    // arity).
     let gnu_long_consumes_next =
         long_prefix == "--" && short_prefix == "-" && separators.iter().any(|s| s == "=");
+    let space_separated = separators.iter().any(|s| s.as_str() == " ");
     let mut out = Vec::new();
+    let mut guesses = Vec::new();
     let mut iter = args.iter().enumerate().peekable();
     let mut past_terminator = false;
     while let Some((i, arg)) = iter.next() {
@@ -349,12 +442,26 @@ pub(crate) fn parser_positional_indices(args: &[String], parser: &ResolvedParser
             if inline_handled {
                 continue;
             }
-            let is_declared_param = parser.parameter_token_matches(arg);
-            let consumes_next = is_declared_param || (starts_long && gnu_long_consumes_next);
+            let next_plausible = iter.peek().is_some_and(|(_, next)| {
+                next_token_is_plausible_value(next, long_prefix, short_prefix)
+            });
+            let (consumes_next, is_guess) = long_flag_consumption(
+                parser,
+                arg,
+                starts_long,
+                gnu_long_consumes_next,
+                next_plausible,
+            );
             if consumes_next
-                && separators.iter().any(|s| s.as_str() == " ")
-                && iter.peek().is_some()
+                && space_separated
+                && let Some((_, next)) = iter.peek()
             {
+                if is_guess {
+                    guesses.push(ArityGuess {
+                        flag: arg.clone(),
+                        consumed: (*next).clone(),
+                    });
+                }
                 iter.next();
             }
             continue;
@@ -371,7 +478,7 @@ pub(crate) fn parser_positional_indices(args: &[String], parser: &ResolvedParser
         }
         out.push(i);
     }
-    out
+    (out, guesses)
 }
 
 /// Tokenised outer/tail slices for a parser that declares `(tail …)`.
@@ -469,8 +576,15 @@ fn first_positional_index(args: &[String], parser: &ResolvedParser) -> usize {
                 i += 1;
                 continue;
             }
-            let is_declared_param = parser.parameter_token_matches(arg);
-            let consumes_next = is_declared_param || (starts_long && gnu_long_consumes_next);
+            let next_plausible = i + 1 < args.len()
+                && next_token_is_plausible_value(&args[i + 1], long_prefix, short_prefix);
+            let (consumes_next, _is_guess) = long_flag_consumption(
+                parser,
+                arg,
+                starts_long,
+                gnu_long_consumes_next,
+                next_plausible,
+            );
             if consumes_next && separators.iter().any(|s| s.as_str() == " ") && i + 1 < args.len() {
                 i += 2;
                 continue;
@@ -818,7 +932,23 @@ mod tokenisation_properties {
         out
     }
 
-    /// Mirror of the pre-refactor `positional_args` GNU branch.
+    /// Whether `tok` is flag-shaped under the default GNU style: it
+    /// begins with `--`/`-` and the char after the prefix is a letter.
+    /// Independent re-derivation of the value-shape rule for the oracle.
+    fn gnu_flag_shaped(tok: &str) -> bool {
+        if let Some(rest) = tok.strip_prefix("--") {
+            return rest.chars().next().is_some_and(|c| c.is_ascii_alphabetic());
+        }
+        if let Some(rest) = tok.strip_prefix('-') {
+            return rest.chars().next().is_some_and(|c| c.is_ascii_alphabetic());
+        }
+        false
+    }
+
+    /// Independent GNU oracle for the residual partition under the
+    /// value-shape rule: an undeclared `--long` flag consumes the next
+    /// token only when it is a plausible value (not `--`, not flag-shaped);
+    /// the `--` flag-stop is never consumed.
     fn positional_args_legacy(args: &[String]) -> Vec<&str> {
         let mut result = Vec::new();
         let mut iter = args.iter().peekable();
@@ -830,7 +960,13 @@ mod tokenisation_properties {
                 result.push(arg.as_str());
                 past_terminator = true;
             } else if arg.starts_with("--") {
-                if !arg.contains('=') {
+                // Inline `=` value → value-less; otherwise consume the next
+                // token only when it is a plausible value.
+                if !arg.contains('=')
+                    && iter
+                        .peek()
+                        .is_some_and(|n| *n != "--" && !gnu_flag_shaped(n))
+                {
                     iter.next();
                 }
             } else if arg.starts_with('-') {
@@ -844,6 +980,181 @@ mod tokenisation_properties {
 
     fn arg_strs(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn gnu_parser_with_param(names: &[&str]) -> ResolvedParser {
+        let mut p = parser_with_style(Style::default_gnu());
+        if !names.is_empty() {
+            p.parameters.push(ParameterDecl {
+                names: names.iter().map(|s| s.to_string()).collect(),
+                treatment: PT::None,
+                shape_form: may_i_core::ast::ParamShapeForm::Unannotated,
+                capture: may_i_core::ast::Capture::Single,
+                binding: None,
+            });
+        }
+        p
+    }
+
+    // 1.1 — an undeclared long flag does NOT consume a flag-shaped next
+    // token: `--quiet --bin may-i -- eval` keeps the `run, --, eval`
+    // adjacency that `(positional "run" "--")` matches against.
+    #[test]
+    fn undeclared_long_flag_does_not_consume_following_flag() {
+        let parser = gnu_parser_with_param(&[]);
+        let args = arg_strs(&["run", "--quiet", "--bin", "may-i", "--", "eval"]);
+        // `--quiet` is value-less (next is the flag-shaped `--bin`); `--bin`
+        // consumes the plausible value `may-i`.
+        assert_eq!(
+            parser_positional_args(&args, &parser),
+            vec!["run", "--", "eval"]
+        );
+    }
+
+    // 1.1 — an undeclared long flag before a bare subcommand still guesses
+    // and consumes it (a plausible, non-flag value).
+    #[test]
+    fn undeclared_long_flag_consumes_bare_subcommand() {
+        let parser = gnu_parser_with_param(&[]);
+        let args = arg_strs(&["--release", "build"]);
+        assert!(parser_positional_args(&args, &parser).is_empty());
+    }
+
+    // 1.1 — an undeclared long flag consumes a plausible (non-flag) value.
+    #[test]
+    fn undeclared_long_flag_consumes_plausible_value() {
+        let parser = gnu_parser_with_param(&[]);
+        let args = arg_strs(&["--output", "report.txt"]);
+        assert!(parser_positional_args(&args, &parser).is_empty());
+    }
+
+    // 1.2 — a short-flag-shaped successor (`-v`) is not a plausible value,
+    // so the undeclared long flag does not consume it (covers the
+    // short-prefix arm of `next_token_is_plausible_value`).
+    #[test]
+    fn undeclared_long_flag_does_not_consume_short_flag_successor() {
+        let parser = gnu_parser_with_param(&[]);
+        let args = arg_strs(&["--output", "-v", "file"]);
+        assert_eq!(parser_positional_args(&args, &parser), vec!["file"]);
+        assert!(arity_guess_advisories(&args, &parser).is_empty());
+    }
+
+    // 1.3 — the value-shape guard also governs the outer/tail split
+    // (`first_positional_index`), which shares `long_flag_consumption`:
+    // `--quiet` keeps the flag-shaped `--bin` in the outer slice, and
+    // `--bin` consumes `may-i`, so the tail starts at `build`.
+    #[test]
+    fn first_positional_index_honours_value_shape_guard() {
+        let parser = parser_with_flags_mode(may_i_core::ast::FlagsMode::Posix);
+        let args = arg_strs(&["--quiet", "--bin", "may-i", "build"]);
+        let split = split_outer_tail(&args, &parser);
+        assert_eq!(
+            split.outer,
+            &[
+                "--quiet".to_string(),
+                "--bin".to_string(),
+                "may-i".to_string()
+            ]
+        );
+        assert_eq!(split.tail.unwrap(), &["build".to_string()]);
+    }
+
+    // 1.4 — a negative-number token is a plausible value: consumed.
+    #[test]
+    fn undeclared_long_flag_consumes_negative_number() {
+        let parser = gnu_parser_with_param(&[]);
+        let args = arg_strs(&["--threshold", "-5", "input"]);
+        assert_eq!(parser_positional_args(&args, &parser), vec!["input"]);
+    }
+
+    // 1.4 — a declared parameter consumes a flag-shaped value
+    // (author-asserted arity).
+    #[test]
+    fn declared_parameter_consumes_flag_shaped_value() {
+        let parser = gnu_parser_with_param(&["e", "regexp"]);
+        let args = arg_strs(&["--regexp", "--foo", "file"]);
+        assert_eq!(parser_positional_args(&args, &parser), vec!["file"]);
+    }
+
+    // 1.4 — a flag declared as a boolean `(flag …)` is value-less and
+    // does not consume its successor (author-asserted arity), so the bare
+    // subcommand survives in the residual.
+    #[test]
+    fn declared_boolean_flag_does_not_consume_successor() {
+        let mut parser = parser_with_style(Style::default_gnu());
+        parser
+            .flags
+            .push(may_i_core::ast::FlagDecl::new(vec!["release".into()]));
+        let args = arg_strs(&["--release", "build"]);
+        assert_eq!(parser_positional_args(&args, &parser), vec!["build"]);
+        // No guess: the arity was declared, not guessed.
+        assert!(arity_guess_advisories(&args, &parser).is_empty());
+    }
+
+    // 2.1 — an undeclared flag must not absorb the `--` flag-stop; the
+    // terminator semantics hold and `value` becomes a positional.
+    #[test]
+    fn undeclared_long_flag_does_not_consume_flag_stop() {
+        let parser = gnu_parser_with_param(&[]);
+        let args = arg_strs(&["--undeclared", "--", "value"]);
+        assert_eq!(parser_positional_args(&args, &parser), vec!["--", "value"]);
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: 256, max_shrink_iters: 50, .. ProptestConfig::default() })]
+
+        // 5.1 — a declared parameter always consumes its successor token
+        // regardless of the successor's shape (author-asserted arity).
+        // The undeclared value-shape residual is covered exhaustively by
+        // `parser_gnu_matches_legacy` against the independent oracle.
+        // `name` is multi-character so its token form is the long `--name`
+        // (single-char names canonicalise to a short `-name`).
+        #[test]
+        fn declared_parameter_always_consumes_successor(name in "[a-z]{2,5}", next in arg_token()) {
+            let parser = gnu_parser_with_param(&[&name]);
+            let args = vec![format!("--{name}"), next];
+            prop_assert!(parser_positional_args(&args, &parser).is_empty());
+        }
+
+        // 5.1 — an undeclared long flag never consumes the `--` flag-stop;
+        // it always survives in the residual as the terminator.
+        #[test]
+        fn undeclared_long_flag_never_eats_flag_stop(name in "[a-z]{1,5}", tail in argv()) {
+            let parser = gnu_parser_with_param(&[]);
+            let mut args = vec![format!("--{name}"), "--".to_string()];
+            args.extend(tail);
+            let residual = parser_positional_args(&args, &parser);
+            prop_assert!(residual.contains(&"--"));
+        }
+    }
+
+    // 3.1 — an arity guess on a plausible value is recorded; no guess for
+    // a flag-shaped successor or a declared parameter.
+    #[test]
+    fn arity_guess_advisories_records_only_real_guesses() {
+        let parser = gnu_parser_with_param(&[]);
+        let guesses = arity_guess_advisories(&arg_strs(&["--output", "report.txt"]), &parser);
+        assert_eq!(
+            guesses,
+            vec![ArityGuess {
+                flag: "--output".into(),
+                consumed: "report.txt".into(),
+            }]
+        );
+
+        // Flag-shaped / absent successors → no guess.
+        assert!(arity_guess_advisories(&arg_strs(&["--verbose", "--quiet"]), &parser).is_empty());
+
+        // `--` flag-stop → no guess.
+        assert!(
+            arity_guess_advisories(&arg_strs(&["--undeclared", "--", "x"]), &parser).is_empty()
+        );
+
+        // Declared parameter → no guess (arity asserted, not guessed).
+        let declared = gnu_parser_with_param(&["output"]);
+        assert!(
+            arity_guess_advisories(&arg_strs(&["--output", "report.txt"]), &declared).is_empty()
+        );
     }
 
     fn parser_with_flags_mode(mode: may_i_core::ast::FlagsMode) -> ResolvedParser {

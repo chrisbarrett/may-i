@@ -47,3 +47,35 @@
   do. As a one-time effect of upgrading, trusted configs that have
   `(load …)`-sourced rules will need to be re-trusted (`may-i trust`)
   the first time they run after the upgrade.
+
+### Behaviour changes
+
+- **Undeclared long flags no longer blindly swallow the next token.**
+  Under gnu-shaped styles, a `--long` flag that is not declared as a
+  `(parameter …)` (nor implicitly registered by a rule) used to consume
+  the following token as its value unconditionally — eating a following
+  flag, the `--` flag-stop, or a subcommand, and corrupting the
+  positional residual that `(positional …)` matches. The tokeniser now
+  consumes that token only when it is a **plausible value**: not itself
+  flag-shaped (begins with `-`/`--` and a letter) and not the `--`
+  flag-stop. Negative numbers (`-5`) and bare `-` remain values; the
+  `--` flag-stop is never absorbed. Declared `(parameter …)` flags are
+  unchanged (they consume regardless of shape), and a flag declared as a
+  boolean `(flag …)` is now treated as value-less so it never consumes
+  its successor.
+
+  This re-tokenises some commands containing undeclared long flags.
+  The shift is mostly `:ask → :allow` (e.g. `cargo run --quiet --bin
+  may-i -- eval` now keeps its `run … --` adjacency). A narrow case can
+  shift the other way: a trailing undeclared boolean before a guarded
+  `(positional …)` (e.g. `cargo --release build`) still consumes the
+  following token, so keep security deny-guards on `(flag …)` /
+  `(anywhere …)`, which scan raw argv, rather than on `(positional …)`.
+  Not trust-relevant — no rule participation, approval, or hash changes.
+
+- **Arity guesses are surfaced in the trace.** When the tokeniser must
+  guess an undeclared long flag's arity (an undeclared gnu-shaped long
+  flag immediately followed by a plausible value), the trace now carries
+  an `arity guess:` Advisory naming the flag and the consumed token, in
+  both the human and `--json` (`"type": "arity_guess"`) trace surfaces.
+  The Advisory is informational and never changes the decision.

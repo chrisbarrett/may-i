@@ -5,3 +5,5 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc c844592a20d8adc98b01efef7bb87182d5f3b93d077e605e12913d2df1fe9624 # shrinks to args = ["--a", "a=a"]
+cc 1c7cf10e5b2a1b3556c8367f7d0f4b98858be77b22a5d50d02916721114523b1 # shrinks to args = ["--a", "--"]
+cc 991cb868b3f271f221ab90dd3cf436522384aace1f16df61115e902aa5373f4e # shrinks to name = "a", next = "--"

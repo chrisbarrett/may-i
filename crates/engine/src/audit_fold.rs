@@ -713,6 +713,10 @@ impl<A: EvalFold, B: EvalFold> EvalFold for ComposedFold<A, B> {
         self.a.unresolved_floor(words);
         self.b.unresolved_floor(words);
     }
+    fn arity_guess_advisory(&mut self, flag: &str, consumed: &str) {
+        self.a.arity_guess_advisory(flag, consumed);
+        self.b.arity_guess_advisory(flag, consumed);
+    }
 }
 
 #[cfg(test)]

@@ -1042,6 +1042,16 @@ impl ResolvedParser {
         self.parameter_tokens().iter().any(|t| t == tok)
     }
 
+    /// True if `tok` matches any declared boolean `(flag …)` spelling.
+    /// A declared boolean flag has author-asserted value-less arity, so
+    /// the gnu tokeniser must not guess that it consumes a value.
+    pub fn flag_token_matches(&self, tok: &str) -> bool {
+        self.flags
+            .iter()
+            .flat_map(|decl| decl.names.iter())
+            .any(|name| self.token_for_name(name) == tok)
+    }
+
     /// Find the `ParameterDecl` whose declared spellings include the
     /// canonical short/long *name* of `tok`.
     pub fn parameter_decl_for_token(&self, tok: &str) -> Option<&ParameterDecl> {

@@ -24,7 +24,11 @@ Established empirically against the debug binary:
 - `cargo run --quiet --bin may-i -- eval` → `--quiet` eats `--bin` → `run`/`--`
   non-adjacent → spurious `ask`.
 - `cargo --release build` → `--release` eats `build` → `(positional "build")`
-  misses → silent `ask`.
+  misses → silent `ask`. Note: the value-shape guard does **not** resolve this
+  case — `build` is a plausible (non-flag) value, so `--release` still consumes
+  it. The guard fixes only flag-then-flag adjacency (the `--quiet --bin` case);
+  the `--release build` guess is now made *observable* via the (B) Advisory and
+  side-stepped by declaring the flag, not silently corrected.
 - `(flag …)` and `(anywhere …)` match on raw argv — they saw a consumed
   `/etc/shadow`. Only `(positional …)` reads the consumption-sensitive residual.
 
@@ -118,11 +122,20 @@ Rollback is a straight revert — no persisted state, no trust-store impact. The
 `.may-i.lisp` `cargo` parser workaround may later be simplified back to
 `(positional "run" "--")`, but that is optional and out of scope here.
 
-## Open Questions
+## Open Questions (resolved)
 
 - Should the arity-guess Advisory have a verbosity threshold (e.g. only at
-  `--trace`/`ask`+), or always render? Lean: follow the existing advisory
-  surface's defaults rather than invent a new knob.
+  `--trace`/`ask`+), or always render? **Resolved:** always render, following
+  the existing trace-advisory surface (it rides the same `traces` path as
+  `unresolved expansion:` and renders whenever the trace does). No new knob.
 - Is "char after prefix is a letter" the exact flag-shape test we want, or
-  should it be "not a digit" (treating `--` -prefixed punctuation flags as
-  flags too)? Resolve against the prelude Styles during implementation.
+  should it be "not a digit"? **Resolved:** "char after prefix is an ASCII
+  letter". Digits (`-5`), bare `-`, and prefix-less tokens are plausible
+  values; only a letter-led prefixed token is flag-shaped. This keeps
+  negative-number values consumable and matches clap/argparse convention.
+- Does declaring a flag suppress the guess? **Resolved (added during
+  implementation):** a flag declared as a boolean `(flag …)` on the parser is
+  treated as value-less and never consumes its successor — so declaring the
+  flag is the supported mitigation for the trailing-boolean-before-subcommand
+  case (`cargo --release build`). `(flag …)` was previously consulted only by
+  rule-body matchers, not the tokeniser; this change makes it govern arity too.
