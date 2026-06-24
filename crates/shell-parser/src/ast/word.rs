@@ -441,18 +441,16 @@ impl Word {
 
 // ── Resolution helpers ───────────────────────────────────────────────
 
+use crate::const_env::ConstLookup;
 use crate::resolve::resolve_param_op;
 
-fn resolve_parts(
-    parts: &[WordPart],
-    env: &std::collections::HashMap<String, String>,
-) -> Vec<WordPart> {
+fn resolve_parts<L: ConstLookup>(parts: &[WordPart], env: &L) -> Vec<WordPart> {
     parts
         .iter()
         .map(|part| match part {
             WordPart::Parameter(name) | WordPart::ParameterExpansion(name) => {
-                if let Some(val) = env.get(name.as_str()) {
-                    WordPart::Literal(val.clone())
+                if let Some(val) = env.lookup_scalar(name.as_str()) {
+                    WordPart::Literal(val.to_string())
                 } else {
                     part.clone()
                 }
@@ -460,10 +458,88 @@ fn resolve_parts(
             WordPart::ParameterExpansionOp {
                 name, op, embedded, ..
             } => resolve_param_op(name, op, embedded, env),
+            WordPart::ArrayExpansion {
+                name,
+                subscript,
+                length,
+            } => resolve_array_expansion(name, subscript, *length, env),
             WordPart::DoubleQuoted(inner) => WordPart::DoubleQuoted(resolve_parts(inner, env)),
             _ => part.clone(),
         })
         .collect()
+}
+
+/// Resolve a subscripted array reference against `env`. Only the single-value
+/// forms reduce to a literal here: `${arr[i]}` with a statically-known index in
+/// range, and the length forms `${#arr[@]}` / `${#arr[*]}` (element count) and
+/// `${#arr[i]}` (element char-length). The word-count-changing `"${arr[@]}"`
+/// splice is handled by the caller in argv construction (it is not a single
+/// `WordPart`), and `${arr[@]}` / `${arr[*]}` value joins are IFS-dependent, so
+/// they stay unresolved. An unknown array, out-of-range or dynamic index, or a
+/// scalar name all leave the part unchanged (expansion-bearing).
+fn resolve_array_expansion<L: ConstLookup>(
+    name: &str,
+    subscript: &Subscript,
+    length: bool,
+    env: &L,
+) -> WordPart {
+    let unresolved = || WordPart::ArrayExpansion {
+        name: name.to_string(),
+        subscript: subscript.clone(),
+        length,
+    };
+    let Some(elements) = env.lookup_array(name) else {
+        return unresolved();
+    };
+    if length {
+        return match subscript {
+            // `${#arr[@]}` / `${#arr[*]}` → element count (order-independent).
+            Subscript::All | Subscript::Star => WordPart::Literal(elements.len().to_string()),
+            // `${#arr[i]}` → character length of element `i`.
+            Subscript::Index(index_word) => match resolve_index(index_word, elements.len(), env) {
+                Some(i) => WordPart::Literal(elements[i].chars().count().to_string()),
+                None => unresolved(),
+            },
+        };
+    }
+    match subscript {
+        Subscript::Index(index_word) => match resolve_index(index_word, elements.len(), env) {
+            Some(i) => WordPart::Literal(elements[i].clone()),
+            None => unresolved(),
+        },
+        // `@`/`*` are the word-count / IFS-join forms — never a lone literal.
+        Subscript::All | Subscript::Star => unresolved(),
+    }
+}
+
+/// Resolve an array subscript word to an in-range element index. The subscript
+/// must resolve (against `env`) to a *canonical* decimal integer (an optional
+/// sign then a lone `0` or a non-zero leading digit). A bash arithmetic
+/// expression, a dynamic index (`${arr[$RANDOM]}`), an unset variable, or a
+/// non-canonical numeral — notably a leading-zero numeral that bash would read
+/// as octal (`010` == 8) — all yield `None`, leaving the expansion unresolved.
+/// A negative index counts from the end (`${arr[-1]}`), matching bash.
+/// Out-of-range indices yield `None`.
+fn resolve_index<L: ConstLookup>(index_word: &Word, len: usize, env: &L) -> Option<usize> {
+    let resolved = index_word.resolve(env);
+    if !resolved.is_literal() {
+        return None;
+    }
+    let raw = resolved.to_str();
+    let text = raw.trim();
+    // bash evaluates the subscript as an *arithmetic* expression, where a
+    // leading `0` means octal (`010` == 8) and `0x`/`0b` mean hex/binary. Rust's
+    // decimal `parse` would read `010` as ten, diverging from bash and possibly
+    // resolving to an element the program never receives. Only accept a
+    // canonical decimal integer (an optional sign, then either a lone `0` or a
+    // non-zero leading digit); anything else stays unresolved.
+    let digits = text.strip_prefix(['+', '-']).unwrap_or(text);
+    if digits.len() > 1 && digits.starts_with('0') {
+        return None;
+    }
+    let n: isize = text.parse().ok()?;
+    let idx = if n < 0 { len as isize + n } else { n };
+    (idx >= 0 && (idx as usize) < len).then_some(idx as usize)
 }
 
 /// Whether an *unquoted* expansion's resolved value would be passed to the
@@ -484,15 +560,11 @@ fn value_is_shell_inert(s: &str) -> bool {
 /// the program never receives. A quoted expansion undergoes neither and is safe.
 /// Returns `false` for any part that does not resolve (an unset variable, a
 /// command/process substitution, a glob/brace) so the word stays floored.
-fn resolves_to_safe_literal_in(
-    parts: &[WordPart],
-    env: &std::collections::HashMap<String, String>,
-    quoted: bool,
-) -> bool {
+fn resolves_to_safe_literal_in<L: ConstLookup>(parts: &[WordPart], env: &L, quoted: bool) -> bool {
     parts.iter().all(|part| match part {
         WordPart::Literal(_) | WordPart::SingleQuoted(_) | WordPart::AnsiCQuoted(_) => true,
         WordPart::Parameter(name) | WordPart::ParameterExpansion(name) => env
-            .get(name.as_str())
+            .lookup_scalar(name.as_str())
             .is_some_and(|val| quoted || value_is_shell_inert(val)),
         WordPart::ParameterExpansionOp {
             name, op, embedded, ..
@@ -500,6 +572,18 @@ fn resolves_to_safe_literal_in(
             WordPart::Literal(val) => quoted || value_is_shell_inert(&val),
             // Stayed an operator form (unset head, or expandable operand held
             // back by `op_operands_are_inert`): not resolved → not safe.
+            _ => false,
+        },
+        // A subscripted array reference is verbatim only when it resolves to a
+        // single literal and that literal is shell-inert in unquoted position
+        // (an unquoted `${arr[i]}` whose element holds a glob/space would be
+        // re-expanded by bash). Mirrors the operator-form arm above.
+        WordPart::ArrayExpansion {
+            name,
+            subscript,
+            length,
+        } => match resolve_array_expansion(name, subscript, *length, env) {
+            WordPart::Literal(val) => quoted || value_is_shell_inert(&val),
             _ => false,
         },
         WordPart::DoubleQuoted(inner) => resolves_to_safe_literal_in(inner, env, true),
@@ -517,7 +601,7 @@ impl Word {
     /// part whose variable is present with its literal value and leaving the
     /// rest untouched. A word all of whose dynamic parts resolve becomes a
     /// literal; partially-resolved words stay dynamic.
-    pub fn resolve(&self, env: &std::collections::HashMap<String, String>) -> Word {
+    pub fn resolve<L: ConstLookup>(&self, env: &L) -> Word {
         Word {
             parts: resolve_parts(&self.parts, env),
         }
@@ -535,10 +619,7 @@ impl Word {
     /// fails this test must keep its expansion-bearing flag and floor an
     /// `:allow`. Top-level parts are treated as unquoted; `DoubleQuoted` regions
     /// as quoted.
-    pub fn resolves_to_verbatim_literal(
-        &self,
-        env: &std::collections::HashMap<String, String>,
-    ) -> bool {
+    pub fn resolves_to_verbatim_literal<L: ConstLookup>(&self, env: &L) -> bool {
         resolves_to_safe_literal_in(&self.parts, env, false)
     }
 }
@@ -672,6 +753,44 @@ mod prop_tests {
                 WordPart::Parameter(name) => assert_eq!(name, &var_name),
                 _ => panic!("Expected Parameter to stay unresolved when not in env"),
             }
+        }
+    }
+
+    // Property (D1 refactor guard): generalising the constant env from
+    // `HashMap<String, String>` to a `ConstLookup` that also carries arrays must
+    // not change scalar resolution. A scalar value resolved against the
+    // array-carrying `HashMap<String, ConstValue>` is byte-for-byte identical to
+    // the same value in the scalar-only map — and the verbatim gate agrees too.
+    proptest! {
+        #[test]
+        fn prop_scalar_resolution_unchanged_across_env_kinds(
+            var_name in arb_var_name(),
+            value in "[a-zA-Z0-9/_.*? -]{0,20}",
+        ) {
+            use crate::const_env::ConstValue;
+            let word = Word {
+                parts: vec![
+                    WordPart::Literal("x".into()),
+                    WordPart::Parameter(var_name.clone()),
+                ],
+            };
+
+            let mut scalar_env: std::collections::HashMap<String, String> =
+                std::collections::HashMap::new();
+            scalar_env.insert(var_name.clone(), value.clone());
+
+            let mut const_env: std::collections::HashMap<String, ConstValue> =
+                std::collections::HashMap::new();
+            const_env.insert(var_name.clone(), ConstValue::Scalar(value.clone()));
+
+            prop_assert_eq!(
+                word.resolve(&scalar_env).to_str(),
+                word.resolve(&const_env).to_str()
+            );
+            prop_assert_eq!(
+                word.resolves_to_verbatim_literal(&scalar_env),
+                word.resolves_to_verbatim_literal(&const_env)
+            );
         }
     }
 }

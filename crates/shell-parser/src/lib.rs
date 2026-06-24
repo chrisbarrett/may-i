@@ -11,7 +11,7 @@ mod segment;
 mod tests;
 
 pub use ast::*;
-pub use const_env::{constant_env, enumerable_for_values};
+pub use const_env::{ConstLookup, ConstValue, constant_env, enumerable_for_values};
 pub use diagnostic::*;
 use parse::Parser;
 pub use segment::{Segment, segment};

@@ -1,13 +1,14 @@
 use super::ast::{ParameterOperator, WordPart};
+use super::const_env::ConstLookup;
 use super::glob::{glob_replace, glob_strip_prefix, glob_strip_suffix};
 
 /// Resolve a `ParameterExpansionOp` given an env snapshot. If the variable is in
 /// env, apply the operator and return a `Literal`. Otherwise return the original part.
-pub(crate) fn resolve_param_op(
+pub(crate) fn resolve_param_op<L: ConstLookup>(
     name: &str,
     op: &ParameterOperator,
     embedded: &[WordPart],
-    env: &std::collections::HashMap<String, String>,
+    env: &L,
 ) -> WordPart {
     let unresolved = || WordPart::ParameterExpansionOp {
         name: name.to_string(),
@@ -15,8 +16,8 @@ pub(crate) fn resolve_param_op(
         embedded: embedded.to_vec(),
     };
 
-    let val = match env.get(name) {
-        Some(v) => v.as_str(),
+    let val = match env.lookup_scalar(name) {
+        Some(v) => v,
         // Unresolved: keep the operand substitutions so a later extraction
         // of the resolved word still sees them.
         None => return unresolved(),

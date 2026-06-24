@@ -84,6 +84,26 @@ fn array_elements_preserved() {
     }
 }
 
+/// Reserved-word tokens (`fi`, `do`, `done`, …) are keywords only in command
+/// position; inside an array literal bash treats them as plain element words.
+/// The lexer still emits keyword tokens, so the parser must recover their
+/// spelling rather than drop them — a dropped element would make a later
+/// `"${arr[@]}"` resolution diverge from bash (soundness).
+#[test]
+fn keyword_spelled_elements_are_preserved() {
+    let cmd = parse("arr=(fi do done then in)").into_command();
+    match &cmd {
+        Command::Assignment(a) => match &a.value {
+            AssignmentValue::Array { elements, .. } => {
+                let strs: Vec<String> = elements.iter().map(|w| w.to_str()).collect();
+                assert_eq!(strs, vec!["fi", "do", "done", "then", "in"]);
+            }
+            other => panic!("expected array, got {other:?}"),
+        },
+        other => panic!("expected assignment, got {other:?}"),
+    }
+}
+
 /// Task 2.2: a subscript inside `${…}` is separated from the name.
 #[test]
 fn subscript_separated_from_name() {

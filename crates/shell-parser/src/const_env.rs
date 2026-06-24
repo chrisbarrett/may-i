@@ -1,5 +1,59 @@
-use crate::ast::{AssignmentValue, Command, SimpleCommand, Word, WordPart};
+use crate::ast::{ArrayKind, AssignmentValue, Command, SimpleCommand, Subscript, Word, WordPart};
 use std::collections::{HashMap, HashSet};
+
+/// The provably-constant value of a variable: either a scalar literal or an
+/// ordered sequence of element literals (an indexed array). Generalising the
+/// constant env to a value kind lets scalars stay the singleton case while
+/// arrays carry their full element sequence, so a subscripted expansion
+/// (`${arr[i]}`, `"${arr[@]}"`, `${#arr[@]}`) can resolve against it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConstValue {
+    Scalar(String),
+    /// An **indexed** array's element literals, in order. Associative arrays
+    /// are never represented here (their element order is unspecified, so
+    /// resolving `"${m[@]}"` would be unsound) — they are disqualified during
+    /// analysis.
+    Array(Vec<String>),
+}
+
+/// Read-only lookup over a constant env, abstracting the value kind so the
+/// resolution path (`Word::resolve`, the verbatim gate) works against both a
+/// scalar-only `HashMap<String, String>` (used throughout the existing tests
+/// and scalar callers) and the array-carrying `HashMap<String, ConstValue>`
+/// the analysis now produces. Scalar lookups behave identically across both,
+/// so generalising the env never changes scalar resolution.
+pub trait ConstLookup {
+    /// The scalar literal bound to `name`, if any. An array name returns
+    /// `None` here (an array is not a scalar value).
+    fn lookup_scalar(&self, name: &str) -> Option<&str>;
+    /// The ordered element literals of the indexed array bound to `name`, if
+    /// any. Always `None` for a scalar-only env.
+    fn lookup_array(&self, name: &str) -> Option<&[String]>;
+}
+
+impl ConstLookup for HashMap<String, String> {
+    fn lookup_scalar(&self, name: &str) -> Option<&str> {
+        self.get(name).map(String::as_str)
+    }
+    fn lookup_array(&self, _name: &str) -> Option<&[String]> {
+        None
+    }
+}
+
+impl ConstLookup for HashMap<String, ConstValue> {
+    fn lookup_scalar(&self, name: &str) -> Option<&str> {
+        match self.get(name) {
+            Some(ConstValue::Scalar(s)) => Some(s.as_str()),
+            _ => None,
+        }
+    }
+    fn lookup_array(&self, name: &str) -> Option<&[String]> {
+        match self.get(name) {
+            Some(ConstValue::Array(elems)) => Some(elems.as_slice()),
+            _ => None,
+        }
+    }
+}
 
 /// Build the set of variables whose value is *provably constant* for the whole
 /// command. A variable qualifies only when it has exactly one straight-line,
@@ -12,7 +66,7 @@ use std::collections::{HashMap, HashSet};
 /// (a substitution RHS, an unresolved variable, a glob, a loop variable, a
 /// prefix assignment, a reassignment) keeps the variable out of the result, so
 /// callers fall back to treating its uses as dynamic.
-pub fn constant_env(cmd: &Command) -> HashMap<String, String> {
+pub fn constant_env(cmd: &Command) -> HashMap<String, ConstValue> {
     let mut occ: HashMap<String, Occurrence> = HashMap::new();
     // Names that have already been *read* (appeared as a parameter expansion in
     // some word) on the straight-line spine seen so far. A constant assignment
@@ -32,13 +86,14 @@ pub fn constant_env(cmd: &Command) -> HashMap<String, String> {
 /// assignment makes it `Constant`; any second occurrence of any kind, or any
 /// disqualifying occurrence, makes it `Disqualified` for good.
 enum Occurrence {
-    Constant(String),
+    Constant(ConstValue),
     Disqualified,
 }
 
-/// Record a binding whose RHS is a proven static literal at straight-line
-/// top level. A second binding of the same name flips it to disqualified.
-fn record_constant(occ: &mut HashMap<String, Occurrence>, name: &str, value: String) {
+/// Record a binding whose RHS is a proven static literal (scalar or indexed
+/// array) at straight-line top level. A second binding of the same name flips
+/// it to disqualified.
+fn record_constant(occ: &mut HashMap<String, Occurrence>, name: &str, value: ConstValue) {
     occ.entry(name.to_string())
         .and_modify(|e| *e = Occurrence::Disqualified)
         .or_insert(Occurrence::Constant(value));
@@ -65,11 +120,11 @@ fn record_disqualified(occ: &mut HashMap<String, Occurrence>, name: &str) {
 /// `env` is the command's [`constant_env`]; passing it lets `for k in $D x`
 /// enumerate when `D` is provably constant. Soundness rests on every list word
 /// being verbatim, so the resolved value is exactly what each iteration binds.
-pub fn enumerable_for_values(
+pub fn enumerable_for_values<L: ConstLookup>(
     var: &str,
     words: &[Word],
     body: &Command,
-    env: &HashMap<String, String>,
+    env: &L,
 ) -> Option<Vec<String>> {
     // The loop variable must survive the body unmutated, or a later use sees a
     // different value than the iteration binding (D2). Any reassignment or
@@ -274,16 +329,18 @@ fn collect(
     match cmd {
         Command::Assignment(a) => match &a.value {
             AssignmentValue::Scalar(w) => record_assignment(&a.name, w, nested, occ, used),
-            // An array value is not a scalar literal, so it can never be the
-            // constant binding for a later scalar use. Record the names its
-            // element words read (in source order, before disqualifying), then
-            // disqualify the array name itself. v1 does not resolve array
-            // values.
-            AssignmentValue::Array { elements, .. } => {
+            // An array literal (`arr=(a b c)`). Record the names its element
+            // words read (in source order, before recording), then record the
+            // array as a constant when every element is a provable literal and
+            // the kind is indexed; otherwise disqualify.
+            AssignmentValue::Array {
+                array_kind,
+                elements,
+            } => {
                 for w in elements {
                     mark_used(w, used);
                 }
-                record_disqualified(occ, &a.name);
+                record_array_assignment(&a.name, *array_kind, elements, nested, occ, used);
             }
         },
         Command::Simple(sc) => collect_simple(sc, nested, occ, used),
@@ -338,6 +395,18 @@ fn collect_simple(
         record_disqualified(occ, &a.name);
     }
 
+    // An array element assignment (`arr[i]=x`) or append (`arr+=…`) parses as
+    // an ordinary command word, not an `Assignment` node, so it must be
+    // detected here and disqualify the array name — otherwise a later
+    // `"${arr[@]}"` use would resolve to the pre-mutation sequence (unsound).
+    // Scanning every word over-approximates (an `echo arr[0]=x` argument also
+    // disqualifies `arr`), which only costs precision, never soundness.
+    for word in &sc.words {
+        if let Some(name) = array_mutation_target(word) {
+            record_disqualified(occ, &name);
+        }
+    }
+
     match sc.command_name() {
         Some("export") => {
             for word in sc.words.iter().skip(1) {
@@ -350,7 +419,7 @@ fn collect_simple(
         }
         Some("unset") => {
             for word in sc.words.iter().skip(1) {
-                if let Some(name) = literal_name(word) {
+                if let Some(name) = unset_target_name(word) {
                     record_disqualified(occ, &name);
                 }
             }
@@ -369,9 +438,48 @@ fn record_assignment(
     match literal_value(value) {
         // A name read earlier on the spine takes its value from the inherited
         // environment at that use, not from this assignment (D2): disqualify.
-        Some(v) if !nested && !used.contains(name) => record_constant(occ, name, v),
+        Some(v) if !nested && !used.contains(name) => {
+            record_constant(occ, name, ConstValue::Scalar(v))
+        }
         _ => record_disqualified(occ, name),
     }
+}
+
+/// Record an array-literal assignment (`arr=(a b c)`) as a provably-constant
+/// indexed array when every condition holds; otherwise disqualify the name.
+///
+/// The array qualifies only when: its kind is **indexed** (associative element
+/// order is unspecified, so resolving `"${m[@]}"` would be unsound); every
+/// element is a provable static literal; the assignment is straight-line
+/// (`!nested`); and the name was not read earlier on the spine (use-order, D2).
+/// A second array assignment to the name flips it to disqualified via
+/// [`record_constant`]'s dup handling, which is how an `arr+=(…)` append (the
+/// parser models it as a fresh array assignment to the same name) disqualifies.
+fn record_array_assignment(
+    name: &str,
+    array_kind: ArrayKind,
+    elements: &[Word],
+    nested: bool,
+    occ: &mut HashMap<String, Occurrence>,
+    used: &mut HashSet<String>,
+) {
+    if array_kind != ArrayKind::Indexed || nested || used.contains(name) {
+        record_disqualified(occ, name);
+        return;
+    }
+    let mut values = Vec::with_capacity(elements.len());
+    for w in elements {
+        match literal_element(w) {
+            Some(v) => values.push(v),
+            // Any non-literal element (command substitution, glob, unresolved
+            // variable) keeps the whole array unresolved (all-or-nothing).
+            None => {
+                record_disqualified(occ, name);
+                return;
+            }
+        }
+    }
+    record_constant(occ, name, ConstValue::Array(values));
 }
 
 /// Record the variable name each parameter expansion in this word *reads* —
@@ -406,6 +514,18 @@ fn mark_used_parts(parts: &[WordPart], used: &mut HashSet<String>) {
                 // they carry are still reads on this spine.
                 mark_used_parts(embedded, used);
             }
+            // A subscripted array reference (`${arr[i]}`, `"${arr[@]}"`) reads
+            // the array variable, so the name is a use on this spine: a later
+            // sole assignment to it must not be treated as the value seen here
+            // (D2). The `Index` subscript may itself read a scalar (`${arr[$i]}`).
+            WordPart::ArrayExpansion {
+                name, subscript, ..
+            } => {
+                used.insert(name.clone());
+                if let Subscript::Index(w) = subscript {
+                    mark_used_parts(&w.parts, used);
+                }
+            }
             WordPart::DoubleQuoted(inner) => mark_used_parts(inner, used),
             _ => {}
         }
@@ -417,12 +537,25 @@ fn mark_used_parts(parts: &[WordPart], used: &mut HashSet<String>) {
 /// `resolve_param_op`; with nothing to resolve, any expansion, substitution,
 /// glob, or opaque part keeps the word non-literal and yields `None`.
 fn literal_value(value: &Word) -> Option<String> {
-    let resolved = value.resolve(&HashMap::new());
+    let resolved = value.resolve(&HashMap::<String, String>::new());
     if !resolved.is_literal() {
         return None;
     }
     let v = resolved.to_str();
     (!v.is_empty()).then_some(v)
+}
+
+/// The value of a single array element when it is a provable static literal.
+/// Unlike [`literal_value`], an empty element (`arr=("" b)`) is admitted — an
+/// empty string is a legitimate array element, not the "no literal" signal it
+/// is for a scalar binding. Any dynamic, glob, brace, or opaque part keeps the
+/// element non-literal and yields `None`, which disqualifies the whole array.
+fn literal_element(value: &Word) -> Option<String> {
+    // `is_literal` alone admits a glob/brace (it tracks only substitutions and
+    // opaque values), but bash glob-/brace-expands array elements at assignment
+    // time, so those are not provable. Require *both* not-dynamic/opaque and
+    // not-expansion-bearing (which also rejects a leading tilde).
+    (value.is_literal() && !value.is_expansion_bearing()).then(|| value.to_str())
 }
 
 /// Split a single `NAME=VALUE` word (as it appears in `export NAME=VALUE`)
@@ -447,8 +580,50 @@ fn parse_assignment_word(word: &Word) -> Option<(String, Word)> {
     Some((name.to_string(), Word { parts: value_parts }))
 }
 
-/// The plain variable name of a `unset NAME` argument, when it is a static
-/// literal naming a valid identifier.
+/// The bare array name an `unset` argument removes, stripping any element
+/// subscript: `unset arr` and `unset 'arr[0]'` both disqualify `arr`. Returns
+/// `None` for a non-literal argument (`unset $X` names nothing statically) or
+/// an invalid identifier.
+fn unset_target_name(word: &Word) -> Option<String> {
+    if !word.is_literal() {
+        return None;
+    }
+    let s = word.to_str();
+    let bare = match s.find('[') {
+        Some(open) => &s[..open],
+        None => s.as_str(),
+    };
+    is_valid_name(bare).then(|| bare.to_string())
+}
+
+/// If `word` is an array-mutating assignment in command/prefix position — an
+/// element assignment (`arr[i]=…`) or an append (`arr+=…` / `arr[i]+=…`) —
+/// return the bare array name it mutates. These parse as ordinary command
+/// words rather than `Assignment` nodes, so the constant-array analysis must
+/// detect them here. A plain `name=value` (no `+`, no subscript) is a scalar
+/// assignment handled on the assignment path and is not flagged here.
+fn array_mutation_target(word: &Word) -> Option<String> {
+    // Flatten the word: a subscript like `[1]` lexes as its own `Glob` part, so
+    // `parts.first()` is only `arr`, not the whole `arr[1]=x`. The flattened
+    // form reunites them.
+    let s = word.to_str();
+    let eq = s.find('=')?;
+    let lhs = &s[..eq];
+    let appended = lhs.ends_with('+');
+    let lhs = lhs.strip_suffix('+').unwrap_or(lhs);
+    let (bare, subscripted) = match lhs.find('[') {
+        Some(open) => (&lhs[..open], true),
+        None => (lhs, false),
+    };
+    if !appended && !subscripted {
+        return None;
+    }
+    is_valid_name(bare).then(|| bare.to_string())
+}
+
+/// The plain variable name of a literal identifier argument (used by the
+/// loop-body mutation scan). Returns `None` for a subscripted or non-literal
+/// word.
 fn literal_name(word: &Word) -> Option<String> {
     if !word.is_literal() {
         return None;

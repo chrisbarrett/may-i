@@ -475,13 +475,27 @@ impl Parser {
                     self.advance();
                     elements.push(w);
                 }
-                // Any other token inside `(…)` (operators, redirects) is not a
-                // plain element word. Consume it without dropping it from the
-                // stream so nothing is silently lost; it contributes no
-                // element. This keeps malformed arrays panic-free and
-                // non-truncating.
+                // A reserved-word *token* (`fi`, `do`, `done`, …) is only a
+                // keyword in command position; inside `(…)` bash treats it as a
+                // plain literal element. The lexer still emits the keyword
+                // token, so recover its spelling as a literal element word —
+                // otherwise the element is silently dropped and a later
+                // `"${arr[@]}"` resolution would diverge from bash (unsound).
+                other if keyword_token_text(&other).is_some() => {
+                    self.advance();
+                    elements.push(Word::literal(keyword_token_text(&other).unwrap()));
+                }
+                // Any other token inside `(…)` (operators, redirects, braces) is
+                // not a plain element word. Consume it without dropping it from
+                // the stream, and record an opaque (non-literal) element so the
+                // constant-array analysis cannot treat the array as a provable
+                // literal sequence — the element it stands for is not modelled.
+                // Keeps malformed arrays panic-free, non-truncating, and sound.
                 _ => {
                     self.advance();
+                    elements.push(Word {
+                        parts: vec![WordPart::Opaque("<unmodelled array element>".to_string())],
+                    });
                 }
             }
         }
@@ -845,6 +859,29 @@ impl Parser {
 
         Command::BraceGroup(Box::new(body))
     }
+}
+
+/// The literal spelling of a reserved-word token, used to recover it as a
+/// plain element word inside an array literal (`arr=(fi do done)`), where bash
+/// does not treat reserved words as keywords. Returns `None` for non-keyword
+/// tokens (operators, redirects, parens), which are not literal element words.
+fn keyword_token_text(token: &Token) -> Option<&'static str> {
+    Some(match token {
+        Token::If => "if",
+        Token::Then => "then",
+        Token::Elif => "elif",
+        Token::Else => "else",
+        Token::Fi => "fi",
+        Token::For => "for",
+        Token::While => "while",
+        Token::Until => "until",
+        Token::Do => "do",
+        Token::Done => "done",
+        Token::Case => "case",
+        Token::Esac => "esac",
+        Token::Function => "function",
+        _ => return None,
+    })
 }
 
 /// If `words` names a declaration builtin (`declare`/`typeset`/`local`/
