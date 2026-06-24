@@ -5,17 +5,19 @@
 // and s-expression string parsing.
 
 mod buffer;
-pub mod color;
 pub mod output;
 mod render;
+mod span_collector;
+pub mod style;
+mod styled;
 
 pub use buffer::{AnnotatedLine, AnnotatedLineBuilder, StringBuilder};
-pub use color::{colorize_atom, strip_ansi, visible_len};
 pub use output::{OutputEvent, PrettyOutput};
-pub use render::{line_prefix_width, pretty, pretty_into};
+pub use render::{line_prefix_width, pretty, pretty_into, pretty_styled};
+pub use span_collector::SpanCollector;
+pub use style::{Style, atom_style};
+pub use styled::{Span, Styled};
 
-#[cfg(test)]
-pub(crate) use colored::Colorize;
 #[cfg(test)]
 pub(crate) use may_i_core::{Doc, DocF, LayoutHint, Trivia, TriviaSource};
 
@@ -261,17 +263,6 @@ pub fn indent_spec(name: &str) -> Option<u8> {
         .iter()
         .find(|(k, _)| *k == name)
         .map(|(_, v)| *v)
-}
-
-#[cfg(test)]
-pub(crate) fn force_color() {
-    use std::sync::Once;
-    // Enable colors once for all color tests. Never unset — unsetting
-    // races with parallel tests that expect colors to be on.
-    static INIT: Once = Once::new();
-    INIT.call_once(|| {
-        colored::control::set_override(true);
-    });
 }
 
 #[cfg(test)]

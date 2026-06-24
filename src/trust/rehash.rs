@@ -25,8 +25,12 @@ pub fn rehash_after_migration() -> miette::Result<usize> {
 
 /// Path-injecting variant used by `rehash_after_migration` and unit tests.
 pub(crate) fn rehash_at(store_path: &Path) -> miette::Result<usize> {
-    let load = TrustStore::load(store_path)
-        .map_err(|e| miette::miette!("Failed to load trust store: {e}"))?;
+    let load = TrustStore::load(store_path).map_err(|e| {
+        miette::miette!(
+            "Failed to load trust store: {}",
+            may_i_core::SafeText::new(e.to_string())
+        )
+    })?;
     let mut store = load.store;
     let mut rehashed = 0usize;
     let entries: Vec<(String, RuleEntry)> = store
@@ -48,9 +52,12 @@ pub(crate) fn rehash_at(store_path: &Path) -> miette::Result<usize> {
         rehashed += 1;
     }
     if rehashed > 0 {
-        store
-            .save(store_path)
-            .map_err(|e| miette::miette!("Failed to save trust store: {e}"))?;
+        store.save(store_path).map_err(|e| {
+            miette::miette!(
+                "Failed to save trust store: {}",
+                may_i_core::SafeText::new(e.to_string())
+            )
+        })?;
     }
     Ok(rehashed)
 }

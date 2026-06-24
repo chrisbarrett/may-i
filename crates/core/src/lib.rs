@@ -6,6 +6,8 @@ pub mod doc;
 pub mod pattern;
 pub mod predicates;
 pub mod primitives;
+pub mod safe_source;
+pub mod safe_text;
 pub mod span;
 pub mod trivia;
 
@@ -19,6 +21,8 @@ pub mod test_generators;
 mod arbitrary_impls;
 
 pub use doc::{Doc, DocF, LayoutHint};
+pub use safe_source::SafeSource;
+pub use safe_text::SafeText;
 pub use span::Span;
 pub use trivia::{Trivia, TriviaAnn, TriviaSource};
 

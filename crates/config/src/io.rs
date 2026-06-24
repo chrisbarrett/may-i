@@ -186,10 +186,10 @@ fn load_file_sexprs(path: &Path) -> miette::Result<Vec<Sexpr>> {
         miette::bail!("failed to parse {}", filename);
     }
 
-    eprintln!(
+    crate::record_advisory(format!(
         "warning: {} uses deprecated syntax and was auto-migrated",
         path.display()
-    );
+    ));
     Ok(sexprs)
 }
 
@@ -308,7 +308,9 @@ fn expand_loads(
             matches.sort();
 
             if matches.is_empty() {
-                eprintln!("warning: load pattern matched no files: {pattern_str}");
+                crate::record_advisory(format!(
+                    "warning: load pattern matched no files: {pattern_str}"
+                ));
                 continue;
             }
 
@@ -650,7 +652,7 @@ pub fn resolve_path(override_path: Option<&Path>) -> miette::Result<PathBuf> {
                 std::fs::write(&path, include_str!("starter_config.lisp"))
                     .into_diagnostic()
                     .wrap_err_with(|| format!("Failed to write {}", path.display()))?;
-                eprintln!("Created starter config at {}", path.display());
+                crate::record_advisory(format!("Created starter config at {}", path.display()));
                 Ok(path)
             }
         },

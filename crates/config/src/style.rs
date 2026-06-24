@@ -85,9 +85,9 @@ pub(crate) fn parse_style_definition(sexpr: &Sexpr) -> Result<StyleSpec, RawErro
         };
 
         if !seen.insert(attr_name) {
-            eprintln!(
+            crate::record_advisory(format!(
                 "warning: duplicate (define-arg-style {name}) attribute `{attr_name}` — last declaration wins"
-            );
+            ));
         }
 
         match attr_name {

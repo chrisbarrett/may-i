@@ -12,5 +12,6 @@ pub mod pipeline;
 pub mod runtime_facts;
 pub mod shape_diag;
 pub mod shell_parse_error;
+pub mod sink;
 pub mod trace;
 pub mod trust;

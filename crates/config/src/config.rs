@@ -129,10 +129,10 @@ fn push_parser(config: &mut Config, parser: may_i_core::ast::Parser) {
         .iter()
         .any(|p| p.program == parser.program && !p.provenance.is_prelude());
     if existing_non_prelude {
-        eprintln!(
+        crate::record_advisory(format!(
             "warning: duplicate (parser \"{}\" …) — last declaration wins",
             parser.program
-        );
+        ));
     }
     config.parsers.push(parser);
 }
@@ -140,10 +140,10 @@ fn push_parser(config: &mut Config, parser: may_i_core::ast::Parser) {
 /// Push a `StyleSpec` onto config, warning on duplicates by name.
 fn push_style_spec(config: &mut Config, spec: may_i_core::ast::StyleSpec) {
     if config.style_specs.iter().any(|s| s.name == spec.name) {
-        eprintln!(
+        crate::record_advisory(format!(
             "warning: duplicate define-arg-style for `{}` — last declaration wins",
             spec.name
-        );
+        ));
     }
     config.style_specs.push(spec);
 }
@@ -304,9 +304,9 @@ fn parse_audit_form(list: &[Sexpr], _span: Span) -> Result<AuditConfig, RawError
         };
 
         if !seen.insert(attr_name) {
-            eprintln!(
+            crate::record_advisory(format!(
                 "warning: duplicate (audit …) sub-form `{attr_name}` — last declaration wins"
-            );
+            ));
         }
 
         match attr_name {

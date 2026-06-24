@@ -1,0 +1,22 @@
+# ast-grep rule for the output-boundary gate (display-safe-output capability).
+#
+# Structural (AST) match — ignores comments and string literals — for process
+# stream-handle acquisition that clippy's print-macro denies miss. The single
+# output sink (src/sink.rs) is the sanctioned owner and is excluded by the
+# scanning script (scripts/check-output-sink-boundary.sh), as is test code.
+id: no-stream-handle-outside-sink
+language: rust
+severity: error
+message: >-
+  process stream handle acquired outside the output sink (src/sink.rs); route
+  output through crate::sink (layout/styled_line/line/json/with_stdout/with_stderr)
+rule:
+  any:
+    - pattern: io::stdout()
+    - pattern: io::stderr()
+    - pattern: std::io::stdout()
+    - pattern: std::io::stderr()
+    - pattern: console::Term::stdout()
+    - pattern: console::Term::stderr()
+    - pattern: $X.from_raw_fd($$$ARGS)
+    - pattern: FromRawFd::from_raw_fd($$$ARGS)

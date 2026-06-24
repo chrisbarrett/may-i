@@ -1,4 +1,4 @@
-use may_i_pp::{AnnotatedLineBuilder, Format, pretty, pretty_into, visible_len};
+use may_i_pp::{AnnotatedLineBuilder, Format, pretty_into, pretty_styled};
 
 use super::colorize::colorize_right;
 use super::{ColRow, ColumnGeometry};
@@ -28,20 +28,19 @@ pub(super) fn render_annotated_rule(
         line_number: line,
         preserve_user_breaks: false,
     };
-    let rendered = pretty(&doc, 0, &fmt);
-    let rendered_lines: Vec<&str> = rendered.lines().collect();
+    let styled_lines = pretty_styled(&doc, 0, &fmt);
 
     let line_annotations: Vec<String> = annotated_lines
         .iter()
         .map(|al| format_line_annotation(&al.annotations))
         .collect();
 
-    rendered_lines
-        .iter()
+    styled_lines
+        .into_iter()
         .enumerate()
         .map(|(i, sline)| {
             let ann = line_annotations.get(i).map_or("", |s| s.as_str());
-            ColRow::new(sline.to_string(), visible_len(sline), colorize_right(ann))
+            ColRow::new(sline, colorize_right(ann))
         })
         .collect()
 }

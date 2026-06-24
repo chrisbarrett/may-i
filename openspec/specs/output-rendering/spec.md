@@ -20,7 +20,7 @@ The module SHALL NOT publicly re-export single-purpose leaf renderers that a bui
 
 The following items remain publicly re-exported from `crate::output`:
 
-- `Terminal`, `write_layout`, `strip_ansi` — the renderer protocol surface.
+- `Terminal`, `write_layout` — the renderer protocol surface. The ANSI-stripping helpers `strip_ansi` and `visible_len` are no longer part of the surface; under color-as-data no Layout value carries embedded ANSI, so they are removed (see the `display-safe-output` capability).
 - `shorten_home` — a path-display utility with multiple unrelated callers.
 - `trace_to_json`, `render_check_results_json` — JSON intent operations consumed by both stdout and hook-response paths.
 - `colorize_decision_keyword`, `format_flags_mode` — small text helpers reused outside trace/check rendering.
@@ -39,6 +39,11 @@ The following items remain publicly re-exported from `crate::output`:
 
 - **WHEN** scanning the `pub use` lines and `pub` items in `src/output/mod.rs`
 - **THEN** `render_check_failure`, `render_check_summary`, `render_check_verbose_line`, `render_labelled_separator`, `render_eval_result`, `render_trusted_groups`, `render_advisory_stack`, `render_skipped_readonly_advisory`, and `render_wrapper_boundary_advisory` SHALL NOT appear
+
+#### Scenario: ANSI-stripping helpers are not in the surface
+
+- **WHEN** scanning the `pub use` lines and `pub` items in `src/output/mod.rs`
+- **THEN** neither `strip_ansi` nor `visible_len` appears
 
 ### Requirement: cmd modules do not assemble Layout values or script render sequences
 

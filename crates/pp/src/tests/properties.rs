@@ -52,15 +52,6 @@ proptest! {
             "unbalanced parens in: {:?}", result);
     }
 
-    #[test]
-    fn balanced_parens_with_color(doc in arb_doc(), width in 10..120usize) {
-        force_color();
-        let result = pretty(&doc, 0, &Format { width, color: true, ..Default::default() });
-        let (open, close) = count_parens(&result);
-        prop_assert_eq!(open, close,
-            "unbalanced parens (colored) in: {:?}", result);
-    }
-
     // ── Width constraints ────────────────────────────────────────
 
     #[test]
@@ -76,25 +67,10 @@ proptest! {
         });
         let slack = max_atom_len + 10; // parens + spaces
         for line in result.lines() {
-            let vis = visible_len(line);
+            let vis = line.chars().count();
             prop_assert!(vis <= width + slack,
                 "line too wide ({vis} vs width {width} + slack {slack}): {line:?}");
         }
-    }
-
-    // ── Color transparency ───────────────────────────────────────
-
-    #[test]
-    fn color_preserves_visible_text(doc in arb_doc(), width in 10..120usize) {
-        let plain = pretty(&doc, 0, &Format { width, ..Default::default() });
-
-        force_color();
-        let colored_output = pretty(&doc, 0, &Format { width, color: true, ..Default::default() });
-
-        // Strip ANSI codes from colored output and compare.
-        let stripped = strip_ansi(&colored_output);
-        prop_assert_eq!(plain, stripped,
-            "color changed visible text");
     }
 
     // ── Atom roundtrip ───────────────────────────────────────────
@@ -105,10 +81,6 @@ proptest! {
         let result = pretty(&doc, 0, &Format::default());
         prop_assert_eq!(result, s);
     }
-}
-
-fn strip_ansi(s: &str) -> String {
-    crate::strip_ansi(s)
 }
 
 // ── Pretty-print idempotency (task 10.1) ─────────────────────────

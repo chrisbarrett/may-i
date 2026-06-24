@@ -21,4 +21,8 @@ in
     inherit build;
     checks = self'.checks;
   };
+
+  # Lightweight shell for script-level checks (CI runs `nix develop .#scripts`
+  # so it gets the same pinned `ast-grep` without building the Rust toolchain).
+  devShells.scripts = import ./scripts-shell.nix { inherit build; };
 }

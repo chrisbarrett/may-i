@@ -8,7 +8,6 @@
 // integrity advisory) and Trust consultation delegate to `InvocationTrust`
 // so they are not duplicated.
 
-use std::io;
 use std::path::Path;
 
 use may_i_config::LoadResult;
@@ -75,7 +74,7 @@ pub struct EvalContext<'a> {
 /// pre-shortened config path.
 pub struct EvalOutcomeBody {
     pub command: String,
-    pub colored: String,
+    pub colored: may_i_output::Styled,
     pub result: EvalResult,
     pub traces: Vec<TraceEntry>,
     pub display_path: String,
@@ -117,6 +116,7 @@ impl CommandPipeline {
     /// trust-store loader.
     pub fn load(config_path: Option<&Path>, json: bool) -> miette::Result<Self> {
         let loaded = may_i_config::load_and_resolve(config_path)?;
+        crate::sink::flush_config_advisories();
         // Shape check runs after parser resolution and before trust
         // filtering: a value-shape mismatch is a hard load error,
         // surfaced consistently across every command that loads config.
@@ -137,7 +137,7 @@ impl CommandPipeline {
     pub fn with_trust(loaded: LoadResult, json: bool, trust: InvocationTrust) -> Self {
         Self {
             loaded,
-            terminal: Terminal::detect(),
+            terminal: crate::sink::terminal(),
             json,
             trust,
             audit: AuditConfig::default(),
@@ -210,8 +210,10 @@ impl CommandPipeline {
     /// Text-mode prelude: render the migration note (if applicable) then trust
     /// integrity advisories to stderr. No-op in JSON mode. Idempotent.
     pub(crate) fn render_prelude_advisories(&mut self) {
-        self.trust
-            .render_prelude(&self.loaded, &self.terminal, &mut io::stderr());
+        let loaded = &self.loaded;
+        let terminal = &self.terminal;
+        let trust = &mut self.trust;
+        crate::sink::with_stderr(|w| trust.render_prelude(loaded, terminal, w));
     }
 
     /// Consult Trust for `command` in `mode`. On `Ok`, the pipeline's config
@@ -228,7 +230,9 @@ impl CommandPipeline {
     /// Render the Trust warning advisory to stderr. No-op in JSON mode;
     /// idempotent across repeat calls within one invocation.
     pub(crate) fn render_trust_warning(&mut self) {
-        self.trust.render_warning(&self.terminal, &mut io::stderr());
+        let terminal = &self.terminal;
+        let trust = &mut self.trust;
+        crate::sink::with_stderr(|w| trust.render_warning(terminal, w));
     }
 
     /// Shared prelude + trust flow used by `run_eval`, `run_check`, `run_hook`.
@@ -275,13 +279,13 @@ impl CommandPipeline {
                 command,
                 &AuditTap::trust_block(block.decision, block.reason.clone()),
             );
-            output::render_eval_trust_block(
-                &mut io::stdout(),
-                &mut io::stderr(),
-                &self.terminal,
-                &block,
-                self.json,
-            );
+            let terminal = &self.terminal;
+            let json = self.json;
+            crate::sink::with_stdout(|out| {
+                crate::sink::with_stderr(|err| {
+                    output::render_eval_trust_block(out, err, terminal, &block, json);
+                });
+            });
             return Ok(());
         }
 
@@ -297,7 +301,9 @@ impl CommandPipeline {
             closure(&ctx)?
         };
 
-        output::render_eval(&mut io::stdout(), &self.terminal, self.json, &body);
+        let terminal = &self.terminal;
+        let json = self.json;
+        crate::sink::with_stdout(|w| output::render_eval(w, terminal, json, &body));
         self.emit_audit(AuditMode::Eval, None, command, &body.audit);
         Ok(())
     }
@@ -325,7 +331,9 @@ impl CommandPipeline {
             closure(&ctx)?
         };
 
-        output::render_check(&mut io::stdout(), &self.terminal, self.json, &body);
+        let terminal = &self.terminal;
+        let json = self.json;
+        crate::sink::with_stdout(|w| output::render_check(w, terminal, json, &body));
         Ok(())
     }
 
@@ -348,7 +356,7 @@ impl CommandPipeline {
                 command,
                 &AuditTap::trust_block(block.decision, block.reason.clone()),
             );
-            output::render_hook_trust_block(&mut io::stdout(), profile, &block);
+            crate::sink::with_stdout(|w| output::render_hook_trust_block(w, profile, &block));
             return Ok(());
         }
 
@@ -364,7 +372,7 @@ impl CommandPipeline {
             closure(&ctx)?
         };
 
-        output::render_hook(&mut io::stdout(), profile, &body.result);
+        crate::sink::with_stdout(|w| output::render_hook(w, profile, &body.result));
         self.emit_audit(AuditMode::Hook, Some(profile.name()), command, &body.audit);
         Ok(())
     }

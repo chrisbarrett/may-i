@@ -8,7 +8,7 @@
 use std::io::Write;
 
 use may_i::cmd_eval::evaluate_with_colorization;
-use may_i::output::{self, EvalOutput};
+use may_i::output::EvalOutput;
 use may_i::pipeline::CommandPipeline;
 use may_i::trust::InvocationTrust;
 use tempfile::NamedTempFile;
@@ -40,8 +40,7 @@ fn render_trace(config_source: &str, command: &str) -> String {
     }
     .render(&mut buf, pipeline.terminal());
 
-    let raw = String::from_utf8_lossy(&buf).into_owned();
-    output::strip_ansi(&raw).to_string()
+    String::from_utf8_lossy(&buf).into_owned()
 }
 
 #[test]

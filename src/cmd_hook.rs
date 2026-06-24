@@ -18,11 +18,11 @@ pub(crate) fn cmd_hook(pipeline: &mut CommandPipeline) -> miette::Result<()> {
     std::io::stdin()
         .take(65536)
         .read_to_string(&mut input)
-        .map_err(|e| miette::miette!("{e}"))
+        .map_err(|e| miette::miette!("{}", may_i_core::SafeText::new(e.to_string())))
         .wrap_err("Failed to read stdin")?;
 
     let payload: serde_json::Value = serde_json::from_str(&input)
-        .map_err(|e| miette::miette!("{e}"))
+        .map_err(|e| miette::miette!("{}", may_i_core::SafeText::new(e.to_string())))
         .wrap_err("Invalid JSON")?;
 
     let Some(command) = extract_command(&payload)? else {
@@ -40,7 +40,7 @@ pub(crate) fn cmd_hook(pipeline: &mut CommandPipeline) -> miette::Result<()> {
         let mut fold = engine::AuditFold::new();
         let result =
             engine::eval::evaluate_command_with_fold(&command, ctx.config, &context, &mut fold)
-                .map_err(|e| miette::miette!("{e}"))?;
+                .map_err(|e| miette::miette!("{}", may_i_core::SafeText::new(e.to_string())))?;
         let audit_rules = fold.into_deciding_hashes(result.decision);
         let audit = AuditTap::from_eval(&result, &command, audit_rules, cwd.clone());
         Ok(HookOutcomeBody { result, audit })

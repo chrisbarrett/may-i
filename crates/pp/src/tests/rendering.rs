@@ -23,18 +23,6 @@ fn pp(doc: &Doc, width: usize) -> String {
     )
 }
 
-fn pp_color(doc: &Doc, width: usize) -> String {
-    pretty(
-        doc,
-        0,
-        &Format {
-            width,
-            color: true,
-            ..Default::default()
-        },
-    )
-}
-
 // ── Flat rendering ──────────────────────────────────────────────
 
 #[test]
@@ -108,70 +96,6 @@ fn single_child_wraps() {
     assert_eq!(result, "(a-very-long-form-name)");
 }
 
-// ── Coloring ────────────────────────────────────────────────────
-
-fn with_forced_color(f: impl FnOnce()) {
-    force_color();
-    f();
-}
-
-#[test]
-fn keywords_get_colored() {
-    with_forced_color(|| {
-        let result = pp_color(&a(":deny"), 80);
-        assert!(
-            result.contains("\x1b["),
-            "expected ANSI codes in: {result:?}"
-        );
-        assert!(result.contains("deny"));
-    });
-}
-
-#[test]
-fn strings_get_colored() {
-    with_forced_color(|| {
-        let result = pp_color(&a("\"rm\""), 80);
-        assert!(
-            result.contains("\x1b["),
-            "expected ANSI codes in: {result:?}"
-        );
-        assert!(result.contains("rm"));
-    });
-}
-
-#[test]
-fn special_forms_get_colored() {
-    with_forced_color(|| {
-        let result = pp_color(&a("command"), 80);
-        assert!(
-            result.contains("\x1b["),
-            "expected ANSI codes in: {result:?}"
-        );
-    });
-}
-
-#[test]
-fn plain_atoms_not_colored() {
-    with_forced_color(|| {
-        let result = pp_color(&a("foo"), 80);
-        assert!(
-            !result.contains("\x1b["),
-            "unexpected ANSI codes in: {result:?}"
-        );
-    });
-}
-
-#[test]
-fn parens_dimmed_in_color_mode() {
-    with_forced_color(|| {
-        let result = pp_color(&l(vec![a("x")]), 80);
-        assert!(
-            result.contains("\x1b["),
-            "expected ANSI codes in: {result:?}"
-        );
-    });
-}
-
 // ── from_sexpr ──────────────────────────────────────────────────
 
 #[test]
@@ -199,19 +123,6 @@ fn from_sexpr_list() {
     );
     let doc = doc_from_sexpr(&sexpr);
     assert_eq!(pp(&doc, 80), "(rule foo)");
-}
-
-// ── visible_len ─────────────────────────────────────────────────
-
-#[test]
-fn visible_len_plain() {
-    assert_eq!(visible_len("hello"), 5);
-}
-
-#[test]
-fn visible_len_with_ansi() {
-    let s = "hello".green().to_string();
-    assert_eq!(visible_len(&s), 5);
 }
 
 // ── Default layout heuristic (non-indent-spec forms) ──────────
@@ -945,56 +856,40 @@ fn breaking_descendant_prevents_flat() {
 // ── Dimmed rendering ─────────────────────────────────────────────
 
 #[test]
-fn dimmed_atom_renders_dimmed() {
-    with_forced_color(|| {
-        let doc = Doc {
-            dimmed: true,
-            ..a("command")
-        };
-        let result = pp_color(&doc, 80);
-        // When dimmed, atoms should render without syntax coloring.
-        // The dimmed styling may or may not include ANSI codes depending
-        // on terminal capabilities, but the content should be present.
-        assert!(result.contains("command"));
-        // Verify it's not colored as a special form (blue)
-        // by checking the raw output doesn't contain the blue color code
-        let has_blue = result.contains("\x1b[34m") || result.contains("\x1b[38;5;");
-        assert!(
-            !has_blue,
-            "dimmed atom should not have blue syntax color: {result:?}"
-        );
-    });
+fn dimmed_atom_renders_text() {
+    let doc = Doc {
+        dimmed: true,
+        ..a("command")
+    };
+    let result = pp(&doc, 80);
+    // The string path is plain; the dimmed atom still renders its text.
+    assert_eq!(result, "command");
 }
 
 #[test]
 fn dimmed_inherits_to_children() {
-    with_forced_color(|| {
-        // Parent list is dimmed → children should also render dimmed.
-        let doc = Doc {
-            ann: (),
-            node: DocF::List(vec![a("rule"), a(":allow")]),
-            layout: LayoutHint::Auto,
-            dimmed: true,
-        };
-        let result = pp_color(&doc, 80);
-        assert!(result.contains("rule"));
-        assert!(result.contains(":allow"));
-    });
+    // Parent list is dimmed → children still render their text.
+    let doc = Doc {
+        ann: (),
+        node: DocF::List(vec![a("rule"), a(":allow")]),
+        layout: LayoutHint::Auto,
+        dimmed: true,
+    };
+    let result = pp(&doc, 80);
+    assert!(result.contains("rule"));
+    assert!(result.contains(":allow"));
 }
 
 #[test]
 fn dimmed_only_affects_flagged_subtree() {
-    with_forced_color(|| {
-        // One child dimmed, sibling not — sibling retains syntax color.
-        let dimmed_child = Doc {
-            dimmed: true,
-            ..a("\"dimmed\"")
-        };
-        let normal_child = a("\"bright\"");
-        let doc = l(vec![a("or"), dimmed_child, normal_child]);
-        let result = pp_color(&doc, 80);
-        // Both should be present.
-        assert!(result.contains("dimmed"));
-        assert!(result.contains("bright"));
-    });
+    // One child dimmed, sibling not — both still render their text.
+    let dimmed_child = Doc {
+        dimmed: true,
+        ..a("\"dimmed\"")
+    };
+    let normal_child = a("\"bright\"");
+    let doc = l(vec![a("or"), dimmed_child, normal_child]);
+    let result = pp(&doc, 80);
+    assert!(result.contains("dimmed"));
+    assert!(result.contains("bright"));
 }

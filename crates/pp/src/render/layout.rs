@@ -1,7 +1,6 @@
 use may_i_core::{Doc, DocF, TriviaSource};
 
 use crate::buffer::EventBuffer;
-use crate::color::visible_len;
 use crate::output::PrettyOutput;
 use crate::render::{emit_trivia_or_line, render, render_child_on_line};
 use crate::{FILL_ELIGIBLE_HEADS, indent_spec};
@@ -430,7 +429,7 @@ pub(super) fn render_fill<A: Clone + TriviaSource>(
     out.emit_delim('(', dimmed);
 
     let head = children[0].as_atom().unwrap();
-    let head_width = visible_len(head);
+    let head_width = head.chars().count();
     out.emit_atom(head, &children[0].ann, dimmed);
 
     if children.len() == 1 {
@@ -447,7 +446,7 @@ pub(super) fn render_fill<A: Clone + TriviaSource>(
     let last = children.len() - 1;
     for (i, child) in children[1..].iter().enumerate() {
         let atom = child.as_atom().unwrap();
-        let atom_width = visible_len(atom);
+        let atom_width = atom.chars().count();
         let is_last = i + 1 == last;
 
         if col + 1 + atom_width <= width {

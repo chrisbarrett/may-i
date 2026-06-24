@@ -1,11 +1,8 @@
 // Eval subcommand — evaluate a command and print result with trace.
 
-use std::io::Write;
-
-use colored::Colorize;
-
 use may_i_core::Decision;
 use may_i_engine as engine;
+use may_i_output::{Style, Styled};
 use may_i_shell_parser as parser;
 
 use crate::annotation::{TraceEntry, TracingFold};
@@ -30,7 +27,7 @@ pub fn cmd_eval(
         }
         for diag in &result.parse_diagnostics {
             let err = crate::shell_parse_error::ShellParseError::from_diagnostic(diag, command);
-            let _ = writeln!(std::io::stderr(), "{:?}", miette::Report::new(err));
+            crate::sink::report(&miette::Report::new(err));
         }
         let audit = AuditTap::from_eval(&result, command, audit_rules, None);
         Ok(EvalOutcomeBody {
@@ -52,7 +49,7 @@ pub fn evaluate_with_colorization(
     command: &str,
     loaded: &may_i_config::LoadResult,
     context: &may_i_core::ContextFacts,
-) -> miette::Result<(engine::EvalResult, Vec<TraceEntry>, String, Vec<String>)> {
+) -> miette::Result<(engine::EvalResult, Vec<TraceEntry>, Styled, Vec<String>)> {
     // Eval needs both the Trace it renders and the audit capture: compose the
     // two folds over one traversal. Projection runs through the TracingFold
     // half, so the returned decision is unchanged.
@@ -62,11 +59,11 @@ pub fn evaluate_with_colorization(
     );
     let result =
         engine::eval::evaluate_command_with_fold(command, &loaded.config, context, &mut fold)
-            .map_err(|e| miette::miette!("{e}"))?;
+            .map_err(|e| miette::miette!("{}", may_i_core::SafeText::new(e.to_string())))?;
 
     let segments = parser::segment(command);
     let colored_command = if segments.is_empty() {
-        colorize_text(command, result.decision)
+        Styled::span(command, echo_style(result.decision))
     } else {
         colorize_segments(command, &segments, &result.segment_decisions)
     };
@@ -76,11 +73,11 @@ pub fn evaluate_with_colorization(
     Ok((result, tracing.traces, colored_command, audit_rules))
 }
 
-fn colorize_text(text: &str, decision: Decision) -> String {
+fn echo_style(decision: Decision) -> Style {
     match decision {
-        Decision::Allow => text.green().underline().to_string(),
-        Decision::Ask => text.yellow().underline().to_string(),
-        Decision::Deny => text.red().underline().to_string(),
+        Decision::Allow => Style::EchoAllow,
+        Decision::Ask => Style::EchoAsk,
+        Decision::Deny => Style::EchoDeny,
     }
 }
 
@@ -92,19 +89,19 @@ fn colorize_segments(
     command: &str,
     segments: &[parser::Segment],
     segment_decisions: &[engine::SegmentDecision],
-) -> String {
-    let mut display_parts = Vec::new();
+) -> Styled {
+    let mut out = Styled::new();
     for seg in segments {
         let text = &command[seg.start..seg.end];
         if seg.is_operator {
-            display_parts.push(format!(" {text} "));
+            out.push(format!(" {text} "), Style::Plain);
         } else {
             let decision = strictest_overlapping(seg.start, seg.end, segment_decisions)
                 .unwrap_or(Decision::Ask);
-            display_parts.push(colorize_text(text, decision));
+            out.push(text, echo_style(decision));
         }
     }
-    display_parts.concat()
+    out
 }
 
 fn strictest_overlapping(

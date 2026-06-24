@@ -6,10 +6,9 @@
 use std::io::Write;
 use std::path::PathBuf;
 
-use colored::Colorize;
 use may_i_config::LoadResult;
 use may_i_core::ast::Config;
-use may_i_output::{Advisory, Layout, NoteHeading, NoteLevel};
+use may_i_output::{Advisory, Layout, NoteHeading, NoteLevel, Style, Styled};
 
 use crate::output::{self, Terminal};
 use crate::trust::advisory;
@@ -132,10 +131,11 @@ impl InvocationTrust {
             .unwrap_or_else(|| "may-i".into());
         let display_path = output::shorten_home(&loaded.config_path);
         let prefix = "Migrations available:";
-        let heading = NoteHeading {
-            text: format!("{} {}", prefix.yellow().bold(), display_path.bold()),
-            visible_width: prefix.len() + 1 + display_path.len(),
-        };
+        let heading = NoteHeading::from(
+            Styled::span(prefix, Style::Ask)
+                .with(" ", Style::Plain)
+                .with(display_path, Style::Strong),
+        );
         Some(
             Advisory {
                 level: NoteLevel::Warn,

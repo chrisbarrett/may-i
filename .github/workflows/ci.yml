@@ -29,3 +29,19 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
       - run: cargo test --workspace
+
+  # Script-level checks run through the flake's lightweight `scripts` dev shell,
+  # so CI uses the same pinned tools as local development (and the prek hooks)
+  # without building the Rust toolchain.
+  scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3 # v31.10.6
+
+      # Output-boundary gate: no process stream handle (io::stdout/stderr,
+      # console::Term::std*, raw fd) acquired outside the sink. Structural
+      # ast-grep scan; see scripts/check-output-sink-boundary.sh.
+      - name: Output sink boundary
+        run: nix develop .#scripts --command scripts/check-output-sink-boundary.sh

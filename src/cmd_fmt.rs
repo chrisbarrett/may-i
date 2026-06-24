@@ -12,10 +12,11 @@
 // `--check` short-circuits all writes and signals via exit code only:
 //   0 = clean, 1 = would change, 2 = error.
 
-use std::io::{IsTerminal, Read};
+use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use may_i::sink;
 use may_i_config::{canonicalise_forms, parse_config_from_sexprs};
 use may_i_pp::detect_column_width;
 use may_i_sexpr::parse_cst;
@@ -46,7 +47,9 @@ pub(crate) fn cmd_fmt(
     // Reject mixed `-` + paths at argv parse.
     let dash_count = files.iter().filter(|f| f.as_str() == "-").count();
     if dash_count > 0 && files.len() > 1 {
-        eprintln!("error: mixed `-` and file arguments are not supported");
+        sink::with_stderr(|w| {
+            let _ = writeln!(w, "error: mixed `-` and file arguments are not supported");
+        });
         return Ok(Severity::Error.to_exit());
     }
 
@@ -54,7 +57,9 @@ pub(crate) fn cmd_fmt(
     if dash_count == 1 {
         let mut buf = String::new();
         if let Err(e) = std::io::stdin().read_to_string(&mut buf) {
-            eprintln!("error: failed to read stdin: {e}");
+            sink::with_stderr(|w| {
+                let _ = writeln!(w, "error: failed to read stdin: {e}");
+            });
             return Ok(Severity::Error.to_exit());
         }
         return Ok(run_stdin_text(&buf, check));
@@ -68,7 +73,9 @@ pub(crate) fn cmd_fmt(
     if files.is_empty() && !std::io::stdin().is_terminal() {
         let mut buf = String::new();
         if let Err(e) = std::io::stdin().read_to_string(&mut buf) {
-            eprintln!("error: failed to read stdin: {e}");
+            sink::with_stderr(|w| {
+                let _ = writeln!(w, "error: failed to read stdin: {e}");
+            });
             return Ok(Severity::Error.to_exit());
         }
         if !buf.trim().is_empty() {
@@ -79,7 +86,9 @@ pub(crate) fn cmd_fmt(
     // File mode or walk mode.
     let paths: Vec<PathBuf> = if files.is_empty() {
         let primary = may_i_config::resolve_path(config_path)?;
-        may_i_config::walk_load_graph(&primary)?
+        let walked = may_i_config::walk_load_graph(&primary)?;
+        sink::flush_config_advisories();
+        walked
     } else {
         files.into_iter().map(PathBuf::from).collect()
     };
@@ -101,7 +110,9 @@ fn process_file(path: &Path, check: bool) -> Severity {
     let source = match std::fs::read_to_string(path) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("error: failed to read {}: {e}", path.display());
+            sink::with_stderr(|w| {
+                let _ = writeln!(w, "error: failed to read {}: {e}", path.display());
+            });
             return Severity::Error;
         }
     };
@@ -109,15 +120,20 @@ fn process_file(path: &Path, check: bool) -> Severity {
     let (canonical, severity) = match canonical_text(&source) {
         Ok((text, legacy)) => {
             if legacy {
-                eprintln!(
-                    "warning: {} contains legacy syntax — run `may-i migrate` to update it",
-                    path.display()
-                );
+                sink::with_stderr(|w| {
+                    let _ = writeln!(
+                        w,
+                        "warning: {} contains legacy syntax — run `may-i migrate` to update it",
+                        path.display()
+                    );
+                });
             }
             (text, Severity::Clean)
         }
         Err(msg) => {
-            eprintln!("error: {}: {msg}", path.display());
+            sink::with_stderr(|w| {
+                let _ = writeln!(w, "error: {}: {msg}", path.display());
+            });
             return Severity::Error;
         }
     };
@@ -133,16 +149,22 @@ fn process_file(path: &Path, check: bool) -> Severity {
     let metadata = match std::fs::metadata(path) {
         Ok(m) => m,
         Err(e) => {
-            eprintln!("error: failed to stat {}: {e}", path.display());
+            sink::with_stderr(|w| {
+                let _ = writeln!(w, "error: failed to stat {}: {e}", path.display());
+            });
             return Severity::Error;
         }
     };
     if metadata.permissions().readonly() {
-        eprintln!("warning: skipped, not writable: {}", path.display());
+        sink::with_stderr(|w| {
+            let _ = writeln!(w, "warning: skipped, not writable: {}", path.display());
+        });
         return severity;
     }
     if let Err(e) = std::fs::write(path, &canonical) {
-        eprintln!("error: failed to write {}: {e}", path.display());
+        sink::with_stderr(|w| {
+            let _ = writeln!(w, "error: failed to write {}: {e}", path.display());
+        });
         return Severity::Error;
     }
     severity
@@ -154,12 +176,19 @@ fn run_stdin_text(source: &str, check: bool) -> ExitCode {
     let (canonical, legacy) = match canonical_text(source) {
         Ok(p) => p,
         Err(msg) => {
-            eprintln!("error: <stdin>: {msg}");
+            sink::with_stderr(|w| {
+                let _ = writeln!(w, "error: <stdin>: {msg}");
+            });
             return Severity::Error.to_exit();
         }
     };
     if legacy {
-        eprintln!("warning: <stdin> contains legacy syntax — run `may-i migrate` to update it");
+        sink::with_stderr(|w| {
+            let _ = writeln!(
+                w,
+                "warning: <stdin> contains legacy syntax — run `may-i migrate` to update it"
+            );
+        });
     }
 
     if check {
@@ -170,7 +199,9 @@ fn run_stdin_text(source: &str, check: bool) -> ExitCode {
         };
     }
 
-    print!("{canonical}");
+    sink::with_stdout(|w| {
+        let _ = write!(w, "{canonical}");
+    });
     Severity::Clean.to_exit()
 }
 

@@ -9,10 +9,8 @@
 use std::io::Write;
 use std::path::Path;
 
-use colored::Colorize;
 use may_i_core::{ContextFacts, Decision};
-use may_i_output::{ColRow, HRuleLabel, Layout};
-use may_i_pp::colorize_atom;
+use may_i_output::{ColRow, HRuleLabel, Layout, Style, Styled, write_line};
 
 use super::{Terminal, colorize_decision_keyword, shorten_home, write_layout, write_trace};
 use crate::annotation::TraceEntry;
@@ -50,7 +48,7 @@ impl CheckOutput<'_> {
         let mut failures: Vec<&CheckResultView<'_>> = Vec::new();
         for r in self.results {
             if self.verbose {
-                render_check_verbose_line(w, r.command, r.expected, r.actual, r.passed);
+                render_check_verbose_line(w, term, r.command, r.expected, r.actual, r.passed);
             }
             if !r.passed {
                 failures.push(r);
@@ -78,26 +76,27 @@ impl CheckOutput<'_> {
 /// drives both the label colour and which of expected/actual is shown.
 pub(crate) fn render_check_verbose_line(
     w: &mut impl Write,
+    term: &Terminal,
     command: &str,
     expected: Decision,
     actual: Decision,
     passed: bool,
 ) {
-    if passed {
-        let _ = writeln!(
-            w,
-            "  {} {}",
-            "PASS".green().bold(),
-            format!("{command} → {actual}").dimmed()
-        );
+    let line = if passed {
+        Styled::plain("  ")
+            .with("PASS", Style::Allow)
+            .with(" ", Style::Plain)
+            .with(format!("{command} → {actual}"), Style::Dimmed)
     } else {
-        let _ = writeln!(
-            w,
-            "  {} {}",
-            "FAIL".red().bold(),
-            format!("{command} → {actual} (expected {expected})").yellow()
-        );
-    }
+        Styled::plain("  ")
+            .with("FAIL", Style::Deny)
+            .with(" ", Style::Plain)
+            .with(
+                format!("{command} → {actual} (expected {expected})"),
+                Style::AskSoft,
+            )
+    };
+    write_line(w, &line, term);
 }
 
 /// Render one failed check to `w`. Includes the labelled separator, the
@@ -108,20 +107,20 @@ pub(crate) fn render_check_failure(
     term: &Terminal,
     failure: &CheckResultView<'_>,
 ) {
-    let icon = "✗".red().bold().to_string();
-    let label = format!("{icon} {}", failure.command.bold());
-    let label_width = 2 + failure.command.len();
-    render_labelled_separator(w, term, "", Some((&label, label_width)));
+    let label = Styled::span("✗", Style::Deny)
+        .with(" ", Style::Plain)
+        .with(failure.command, Style::Strong);
+    render_labelled_separator(w, term, "", Some(label));
     let _ = writeln!(w);
 
     let loc = failure.location.unwrap_or("<unknown>");
     let (file, line_col) = loc.split_once(':').unwrap_or((loc, ""));
     let short_file = shorten_home(std::path::Path::new(file));
-    let _ = write!(w, "{}", short_file.dimmed());
+    let mut loc_line = Styled::span(short_file, Style::Dimmed);
     if !line_col.is_empty() {
-        let _ = write!(w, "{}", format!(":{line_col}").dimmed());
+        loc_line.push(format!(":{line_col}"), Style::Dimmed);
     }
-    let _ = writeln!(w);
+    write_line(w, &loc_line, term);
 
     let expected_kw = format!(":{}", failure.expected);
     let actual_kw = format!(":{}", failure.actual);
@@ -134,13 +133,15 @@ pub(crate) fn render_check_failure(
     }
     if let Some(reason) = failure.reason {
         let quoted = format!("\"{reason}\"");
-        rows.push(ColRow::kv("reason", colorize_atom(&quoted, true)));
+        rows.push(ColRow::kv("reason", Styled::atom(&quoted)));
     }
     let layout = Layout::Indent(2, Box::new(Layout::Columns(rows)));
     write_layout(w, &layout, term);
 
     if !failure.traces.is_empty() {
-        let _ = writeln!(w, "\n  {}\n", "Trace".bold());
+        let _ = writeln!(w);
+        write_line(w, &Styled::plain("  ").with("Trace", Style::Strong), term);
+        let _ = writeln!(w);
         write_trace(w, failure.traces, failure.command, "  ", term);
     }
 }
@@ -149,25 +150,36 @@ pub(crate) fn render_check_failure(
 /// the config path. The caller is responsible for the trailing rule.
 pub(crate) fn render_check_summary(
     w: &mut impl Write,
-    _term: &Terminal,
+    term: &Terminal,
     passed: usize,
     failed: usize,
     display_path: &str,
 ) {
-    let _ = writeln!(w, "\n{}\n", "Summary".bold());
-    let icon = if failed > 0 {
-        "✗".red()
-    } else {
-        "✓".green()
-    };
-    let _ = writeln!(
-        w,
-        "  {icon} {} passed, {} failed",
-        passed.to_string().bold(),
-        failed.to_string().bold()
-    );
     let _ = writeln!(w);
-    let _ = writeln!(w, "  {} {}", "config:".dimmed(), display_path.dimmed());
+    write_line(w, &Styled::span("Summary", Style::Strong), term);
+    let _ = writeln!(w);
+    let (icon, icon_style) = if failed > 0 {
+        ("✗", Style::DenySoft)
+    } else {
+        ("✓", Style::AllowSoft)
+    };
+    let summary = Styled::plain("  ")
+        .with(icon, icon_style)
+        .with(" ", Style::Plain)
+        .with(passed.to_string(), Style::Strong)
+        .with(" passed, ", Style::Plain)
+        .with(failed.to_string(), Style::Strong)
+        .with(" failed", Style::Plain);
+    write_line(w, &summary, term);
+    let _ = writeln!(w);
+    write_line(
+        w,
+        &Styled::plain("  ")
+            .with("config:", Style::Dimmed)
+            .with(" ", Style::Plain)
+            .with(display_path, Style::Dimmed),
+        term,
+    );
 }
 
 /// Render an HRule (optionally labelled) at `indent`. Used between failures
@@ -176,12 +188,9 @@ pub(crate) fn render_labelled_separator(
     w: &mut impl Write,
     term: &Terminal,
     indent: &str,
-    label: Option<(&str, usize)>,
+    label: Option<Styled>,
 ) {
-    let hrule_label = label.map(|(text, w)| HRuleLabel {
-        text: text.to_string(),
-        visible_width: w,
-    });
+    let hrule_label = label.map(HRuleLabel::from);
     let layout = Layout::HRule(hrule_label);
     let indented = Layout::Indent(indent.len(), Box::new(layout));
     write_layout(w, &indented, term);
@@ -209,19 +218,24 @@ mod tests {
     use may_i_core::ContextFacts;
 
     use super::*;
-    use crate::output::strip_ansi;
+
+    const TERM: Terminal = Terminal {
+        width: 80,
+        color: false,
+    };
 
     #[test]
     fn render_check_verbose_line_pass_shows_actual_only() {
         let mut buf = Vec::new();
         render_check_verbose_line(
             &mut buf,
+            &TERM,
             "git status",
             Decision::Allow,
             Decision::Allow,
             true,
         );
-        let out = strip_ansi(&String::from_utf8(buf).unwrap());
+        let out = String::from_utf8(buf).unwrap();
         assert!(out.contains("PASS"));
         assert!(out.contains("git status"));
         assert!(out.contains("allow"));
@@ -231,8 +245,15 @@ mod tests {
     #[test]
     fn render_check_verbose_line_fail_shows_expected_and_actual() {
         let mut buf = Vec::new();
-        render_check_verbose_line(&mut buf, "rm -rf /", Decision::Deny, Decision::Allow, false);
-        let out = strip_ansi(&String::from_utf8(buf).unwrap());
+        render_check_verbose_line(
+            &mut buf,
+            &TERM,
+            "rm -rf /",
+            Decision::Deny,
+            Decision::Allow,
+            false,
+        );
+        let out = String::from_utf8(buf).unwrap();
         assert!(out.contains("FAIL"));
         assert!(out.contains("rm -rf /"));
         assert!(out.contains("allow"));
@@ -250,7 +271,7 @@ mod tests {
             let term = Terminal::detect();
             let mut buf = Vec::new();
             builder.render(&mut buf, &term);
-            strip_ansi(&String::from_utf8(buf).unwrap())
+            String::from_utf8(buf).unwrap()
         })
     }
 

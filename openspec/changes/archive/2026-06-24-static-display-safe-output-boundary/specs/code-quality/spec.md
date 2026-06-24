@@ -1,22 +1,24 @@
 ## ADDED Requirements
 
-### Requirement: may-i-output is the sole crate depending on colored
+### Requirement: No workspace crate depends on colored
 
-The `colored` crate SHALL be a dependency of `may-i-output` only. No other
-workspace crate — including the root binary, `config`, and `pp` — SHALL declare
-`colored` in its `Cargo.toml`, so inline styling (`"x".red()`, `.dimmed()`, …)
-outside the renderer is a compile error rather than a reviewable convention. This
-makes the role→SGR table in `may-i-output` the only code that can produce an ANSI
-sequence.
+The `colored` crate SHALL NOT be a dependency of any workspace crate — including
+the root binary, `config`, `pp`, and `may-i-output`. The renderer in
+`may-i-output` emits SGR sequences directly from its role→SGR table (raw
+`\x1b[…m` writes), so `colored` is unnecessary even there, and any inline styling
+(`"x".red()`, `.dimmed()`, …) anywhere in the workspace is a compile error rather
+than a reviewable convention. This is strictly stronger than confining `colored`
+to the renderer crate: the role→SGR table in `may-i-output` is the only code that
+produces an ANSI sequence, and it does so without the dependency.
 
-#### Scenario: Only may-i-output depends on colored
+#### Scenario: colored is absent from the dependency graph
 
-- **WHEN** `cargo metadata --no-deps --format-version 1` is queried and each workspace member's dependency list is inspected
-- **THEN** `colored` appears only for the `may-i-output` package
+- **WHEN** `cargo metadata --format-version 1` (or `Cargo.lock`) is inspected
+- **THEN** no package named `colored` appears
 
-#### Scenario: No inline colored calls outside the renderer
+#### Scenario: No inline colored calls anywhere
 
-- **WHEN** the workspace is scanned (excluding `crates/may-i-output/`) for `use colored` or `Colorize` method calls (`.red()`, `.green()`, `.blue()`, `.yellow()`, `.cyan()`, `.dimmed()`, `.bold()`, `bright_*`)
+- **WHEN** the workspace is scanned for `use colored` or `Colorize` method calls (`.red()`, `.green()`, `.blue()`, `.yellow()`, `.cyan()`, `.dimmed()`, `.bold()`, `bright_*`)
 - **THEN** zero matches are found
 
 ### Requirement: Direct process-stream printing is denied outside the sink

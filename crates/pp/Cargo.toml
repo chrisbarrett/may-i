@@ -8,7 +8,6 @@ edition = "2024"
 
 [dependencies]
 may-i-core = { path = "../core" }
-colored = "3.1.1"
 
 [dev-dependencies]
 may-i-sexpr = { path = "../sexpr" }

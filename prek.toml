@@ -32,6 +32,15 @@ hooks = [
     stages = ["pre-commit"],
   },
   {
+    id = "output-sink-boundary",
+    name = "output sink boundary (no stdout/stderr handles outside the sink)",
+    entry = "scripts/check-output-sink-boundary.sh",
+    language = "system",
+    types = ["rust"],
+    pass_filenames = false,
+    stages = ["pre-commit"],
+  },
+  {
     id = "openspec-validate",
     name = "openspec validate",
     entry = "openspec validate --all --strict --no-interactive",

@@ -8,6 +8,7 @@ craneLib.devShell {
   inherit checks;
 
   packages = with pkgs; [
+    ast-grep
     cargo-affected
     cargo-fuzz
     cargo-insta
