@@ -1,5 +1,5 @@
 ---
-source: crates/shell-parser/tests/parser_snapshots.rs
+source: tests/parser_snapshots.rs
 assertion_line: 255
 expression: "parse(\"cat <<\\\\EOF\\nhello\\nEOF\")"
 ---

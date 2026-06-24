@@ -1,4 +1,4 @@
-use crate::ast::{Command, SimpleCommand, Word, WordPart};
+use crate::ast::{AssignmentValue, Command, SimpleCommand, Word, WordPart};
 use std::collections::{HashMap, HashSet};
 
 /// Build the set of variables whose value is *provably constant* for the whole
@@ -272,7 +272,20 @@ fn collect(
     used: &mut HashSet<String>,
 ) {
     match cmd {
-        Command::Assignment(a) => record_assignment(&a.name, &a.value, nested, occ, used),
+        Command::Assignment(a) => match &a.value {
+            AssignmentValue::Scalar(w) => record_assignment(&a.name, w, nested, occ, used),
+            // An array value is not a scalar literal, so it can never be the
+            // constant binding for a later scalar use. Record the names its
+            // element words read (in source order, before disqualifying), then
+            // disqualify the array name itself. v1 does not resolve array
+            // values.
+            AssignmentValue::Array { elements, .. } => {
+                for w in elements {
+                    mark_used(w, used);
+                }
+                record_disqualified(occ, &a.name);
+            }
+        },
         Command::Simple(sc) => collect_simple(sc, nested, occ, used),
         Command::For { var, body, .. } => {
             // The loop variable is rebound on each iteration — never constant.
@@ -309,7 +322,9 @@ fn collect_simple(
     // assignment on the spine (D2). Both the assignment values and the argv
     // words are read at this point in source order.
     for a in &sc.assignments {
-        mark_used(&a.value, used);
+        for w in a.value.words() {
+            mark_used(w, used);
+        }
     }
     for word in &sc.words {
         mark_used(word, used);

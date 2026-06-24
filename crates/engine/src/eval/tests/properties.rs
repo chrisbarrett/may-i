@@ -1140,14 +1140,14 @@ mod parser_engine_invariants {
         match cmd {
             Command::Simple(sc) => {
                 out.extend(&sc.words);
-                out.extend(sc.assignments.iter().map(|a| &a.value));
+                out.extend(sc.assignments.iter().flat_map(|a| a.value.words()));
                 for r in &sc.redirections {
                     if let RedirectionTarget::File(w) = &r.target {
                         out.push(w);
                     }
                 }
             }
-            Command::Assignment(a) => out.push(&a.value),
+            Command::Assignment(a) => out.extend(a.value.words()),
             Command::For { words, .. } => out.extend(words),
             Command::Case { word, arms, .. } => {
                 out.push(word);
@@ -1203,7 +1203,9 @@ mod parser_engine_invariants {
                 walk_parts(&word.parts, visit)?;
             }
             for assignment in &sc.assignments {
-                walk_parts(&assignment.value.parts, visit)?;
+                for w in assignment.value.words() {
+                    walk_parts(&w.parts, visit)?;
+                }
             }
         }
         Ok(())
@@ -1217,8 +1219,21 @@ mod parser_engine_invariants {
     ) -> Result<(), proptest::test_runner::TestCaseError> {
         for part in parts {
             visit(part)?;
-            if let may_i_shell_parser::WordPart::DoubleQuoted(inner) = part {
-                walk_parts(inner, visit)?;
+            match part {
+                may_i_shell_parser::WordPart::DoubleQuoted(inner) => walk_parts(inner, visit)?,
+                // Recurse into an `Index` subscript so the span/source-coherence
+                // properties guard substitutions captured inside `${arr[$(cmd)]}`
+                // (their spans are re-absolutised by the subscript sub-lexer).
+                may_i_shell_parser::WordPart::ArrayExpansion {
+                    subscript: may_i_shell_parser::Subscript::Index(w),
+                    ..
+                } => walk_parts(&w.parts, visit)?,
+                // And into operator operands' embedded substitutions, which now
+                // also carry a folded subscript's harvested substitutions.
+                may_i_shell_parser::WordPart::ParameterExpansionOp { embedded, .. } => {
+                    walk_parts(embedded, visit)?
+                }
+                _ => {}
             }
         }
         Ok(())
@@ -1236,7 +1251,9 @@ mod parser_engine_invariants {
                 visit(word)?;
             }
             for assignment in &sc.assignments {
-                visit(&assignment.value)?;
+                for w in assignment.value.words() {
+                    visit(w)?;
+                }
             }
         }
         Ok(())

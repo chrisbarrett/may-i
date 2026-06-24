@@ -1,5 +1,5 @@
 ---
-source: crates/shell-parser/tests/parser_snapshots.rs
+source: tests/parser_snapshots.rs
 expression: "parse(\"case $(uname) in Linux) echo linux;; Darwin) echo mac;; esac\")"
 ---
 Case {

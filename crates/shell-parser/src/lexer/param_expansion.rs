@@ -6,27 +6,45 @@ impl Lexer {
     /// Produces either a simple `ParameterExpansion(name)` for `${VAR}` or a
     /// structured `ParameterExpansionOp { name, op }` for operator forms.
     pub(super) fn read_parameter_expansion(&mut self) -> Option<WordPart> {
-        // Special case: ${#VAR} (length operator)
+        // Special case: ${#VAR} (length operator) and ${#arr[sub]} (array
+        // element count).
         if self.peek() == Some('#') {
-            // Look ahead: if what follows '#' is a valid identifier and then '}',
-            // this is the length operator.
+            // Look ahead: if what follows '#' is a valid identifier and then
+            // either `}` (scalar length) or `[sub]}` (array length), this is
+            // the length form.
             let saved = self.save_state();
             self.advance(); // skip #
             let name = self.read_identifier();
-            if !name.is_empty() && self.peek() == Some('}') {
-                self.advance(); // skip }
-                return Some(WordPart::ParameterExpansionOp {
-                    name,
-                    op: ParameterOperator::Length,
-                    embedded: Vec::new(),
-                });
+            if !name.is_empty() {
+                if self.peek() == Some('}') {
+                    self.advance(); // skip }
+                    return Some(WordPart::ParameterExpansionOp {
+                        name,
+                        op: ParameterOperator::Length,
+                        embedded: Vec::new(),
+                    });
+                }
+                if self.peek() == Some('[') {
+                    let sub_saved = self.save_state();
+                    if let Some(subscript) = self.read_subscript()
+                        && self.peek() == Some('}')
+                    {
+                        self.advance(); // skip }
+                        return Some(WordPart::ArrayExpansion {
+                            name,
+                            subscript,
+                            length: true,
+                        });
+                    }
+                    self.restore_state(sub_saved);
+                }
             }
             // Not a length operator; restore and fall through to flat parsing
             self.restore_state(saved);
         }
 
         // Read the variable name
-        let name = self.read_identifier();
+        let mut name = self.read_identifier();
         if name.is_empty() {
             // Not a valid identifier; fall back to flat string
             let s = self.read_until_char('}');
@@ -34,8 +52,51 @@ impl Lexer {
             return Some(WordPart::ParameterExpansion(s));
         }
 
+        // Command/backtick/process substitutions harvested out of a subscript
+        // that is folded into the name below (`${arr[$(cmd)]:-x}`). They are
+        // merged into the resulting operator op's `embedded` so the engine gates
+        // them — bash arithmetic-evaluates the subscript regardless of the
+        // operator, so a `$(…)` there runs and must not be lost.
+        let mut subscript_embedded: Vec<WordPart> = Vec::new();
+
+        // A subscript `[sub]` immediately after the name is an array reference
+        // (`${arr[0]}`, `${arr[@]}`, `${arr[*]}`). Keep the name and subscript
+        // distinct rather than folding `arr[@]` into the name (design D2).
+        if self.peek() == Some('[') {
+            let sub_saved = self.save_state();
+            if let Some(subscript) = self.read_subscript() {
+                if self.peek() == Some('}') {
+                    self.advance(); // skip }
+                    return Some(WordPart::ArrayExpansion {
+                        name,
+                        subscript,
+                        length: false,
+                    });
+                }
+                // Subscript followed by an operator (`${arr[0]:-x}`): fold the
+                // raw `[sub]` text back into the name and fall through to the
+                // operator dispatch, so the operator's operands — and any
+                // embedded command substitution in them — are captured
+                // structurally. Leaving it to the unstructured flat fallback
+                // would bury an embedded `$(…)` and leave it ungated. The
+                // subscript stays folded into the name for this combined form;
+                // only the pure `${arr[sub]}` reference separates them (the
+                // follow-on resolver needs only those separated). Harvest the
+                // subscript's own substitutions so they are gated too.
+                let sub_text: String = self.input[sub_saved.0..self.pos].iter().collect();
+                name.push_str(&sub_text);
+                if let Subscript::Index(w) = &subscript {
+                    collect_substitution_parts(&w.parts, &mut subscript_embedded);
+                }
+            } else {
+                // Malformed subscript (no `]` before `}`/EOF): restore and let
+                // the flat path below handle it without dropping tokens.
+                self.restore_state(sub_saved);
+            }
+        }
+
         // Check what follows the name
-        match self.peek() {
+        let mut expansion = match self.peek() {
             Some('}') => {
                 self.advance(); // skip }
                 Some(WordPart::ParameterExpansion(name))
@@ -278,7 +339,30 @@ impl Lexer {
                 self.advance(); // skip }
                 Some(WordPart::ParameterExpansion(format!("{name}{rest}")))
             }
+        };
+
+        // Merge any substitutions harvested from a folded subscript into the
+        // operator op's `embedded`, so `${arr[$(cmd)]:-x}` (and every operator
+        // whose operand is read via `read_operand`) gates the subscript command.
+        //
+        // KNOWN GAP (pre-existing, general, deferred): the operator arms that
+        // return a *flat* `WordPart::ParameterExpansion` rather than a
+        // `ParameterExpansionOp` — patterned case-conversion `${x^pat}`/`${x,,pat}`,
+        // and the `_` fallback for transform/unknown operators `${x@Q}` / junk —
+        // cannot carry `embedded`, so a substitution they hold (in a folded
+        // subscript OR in their own operand) stays ungated. This is NOT specific
+        // to arrays: the identical scalar forms (`${VAR^$(cmd)}`, `${VAR@Q$(cmd)}`)
+        // bury the substitution on `main` too, and so does a substitution inside a
+        // glob bracket (`[$(cmd)]`). Closing it needs a flat expansion that can
+        // carry embedded parts (or the missing transform ops) — a focused
+        // follow-up across scalar and array expansions alike, not this
+        // array-modelling change. See design.md "Known pre-existing gaps".
+        if !subscript_embedded.is_empty()
+            && let Some(WordPart::ParameterExpansionOp { embedded, .. }) = &mut expansion
+        {
+            embedded.splice(0..0, subscript_embedded);
         }
+        expansion
     }
 
     /// Read a parameter-expansion operator operand up to (not including) one of
@@ -327,6 +411,73 @@ impl Lexer {
         (text, embedded)
     }
 
+    /// Read an array subscript `[ … ]`, the cursor on the opening `[`. On
+    /// success the cursor is just past the closing `]` and the subscript is
+    /// returned: `@` → [`Subscript::All`], `*` → [`Subscript::Star`], any other
+    /// content → [`Subscript::Index`] holding the inner text lexed as a word
+    /// (so `${arr[$i]}` keeps its dynamic subscript). Returns `None` (cursor
+    /// left at the `[`, since callers save/restore) when there is no closing
+    /// `]` before `}` or EOF — a malformed subscript the caller falls back on
+    /// rather than dropping.
+    pub(super) fn read_subscript(&mut self) -> Option<Subscript> {
+        debug_assert_eq!(self.peek(), Some('['));
+        self.advance(); // skip [
+        // Absolute byte offset where the inner subscript text begins. `inner` is
+        // built up as a verbatim contiguous copy of the input from here, so this
+        // is the base offset to re-absolutise sub-lexer spans below.
+        let inner_start = self.byte_pos;
+        // Capture the inner text up to the matching `]`. Nested `[` (rare, e.g.
+        // arithmetic index `arr[a[0]]`) increases depth so the right `]`
+        // closes. A `}` or EOF before any closing `]` is malformed.
+        let mut depth = 1usize;
+        let mut inner = String::new();
+        loop {
+            match self.peek() {
+                None => return None,
+                Some('}') if depth == 1 => return None,
+                Some('[') => {
+                    depth += 1;
+                    inner.push('[');
+                    self.advance();
+                }
+                Some(']') => {
+                    depth -= 1;
+                    self.advance();
+                    if depth == 0 {
+                        break;
+                    }
+                    inner.push(']');
+                }
+                Some(ch) => {
+                    inner.push(ch);
+                    self.advance();
+                }
+            }
+        }
+        Some(match inner.as_str() {
+            "@" => Subscript::All,
+            "*" => Subscript::Star,
+            _ => {
+                // Lex the inner text as a word so a dynamic subscript
+                // (`$i`, `$((i))`, `${j}`) is modelled, not flattened. Seed the
+                // sub-lexer's byte position with `inner_start` so any embedded
+                // substitution (`${arr[$(cmd)]}`) carries an *absolute* span
+                // into the original input — the engine slices the input by that
+                // span to gate the command, so a relative span would mislocate
+                // (or escape) it.
+                let mut sub_lexer = Lexer::new(&inner);
+                sub_lexer.byte_pos = inner_start;
+                let parts = sub_lexer.read_word_parts();
+                let word = if parts.is_empty() {
+                    Word::literal(&inner)
+                } else {
+                    Word { parts }
+                };
+                Subscript::Index(word)
+            }
+        })
+    }
+
     /// Read a shell identifier (alphanumeric + underscore).
     pub(super) fn read_identifier(&mut self) -> String {
         let mut name = String::new();
@@ -339,5 +490,30 @@ impl Lexer {
             }
         }
         name
+    }
+}
+
+/// Clone the command/backtick/process-substitution word parts out of `parts`
+/// (recursing through double-quoted regions and nested operator/subscript
+/// parts), preserving their absolute source spans. Used to lift the
+/// substitutions of a subscript that is folded into a parameter-expansion
+/// name (`${arr[$(cmd)]:-x}`) into the operator op's `embedded` list, so the
+/// engine gates them like any other substitution.
+fn collect_substitution_parts(parts: &[WordPart], out: &mut Vec<WordPart>) {
+    for part in parts {
+        match part {
+            WordPart::CommandSubstitution { .. }
+            | WordPart::Backtick { .. }
+            | WordPart::ProcessSubstitution { .. } => out.push(part.clone()),
+            WordPart::DoubleQuoted(inner) => collect_substitution_parts(inner, out),
+            WordPart::ParameterExpansionOp { embedded, .. } => {
+                collect_substitution_parts(embedded, out)
+            }
+            WordPart::ArrayExpansion {
+                subscript: Subscript::Index(w),
+                ..
+            } => collect_substitution_parts(&w.parts, out),
+            _ => {}
+        }
     }
 }

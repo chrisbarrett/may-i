@@ -7,33 +7,39 @@ Simple(
         assignments: [
             Assignment {
                 name: "A",
-                value: Word {
-                    parts: [
-                        Literal(
-                            "1",
-                        ),
-                    ],
-                },
+                value: Scalar(
+                    Word {
+                        parts: [
+                            Literal(
+                                "1",
+                            ),
+                        ],
+                    },
+                ),
             },
             Assignment {
                 name: "B",
-                value: Word {
-                    parts: [
-                        Literal(
-                            "2",
-                        ),
-                    ],
-                },
+                value: Scalar(
+                    Word {
+                        parts: [
+                            Literal(
+                                "2",
+                            ),
+                        ],
+                    },
+                ),
             },
             Assignment {
                 name: "C",
-                value: Word {
-                    parts: [
-                        Literal(
-                            "3",
-                        ),
-                    ],
-                },
+                value: Scalar(
+                    Word {
+                        parts: [
+                            Literal(
+                                "3",
+                            ),
+                        ],
+                    },
+                ),
             },
         ],
         words: [

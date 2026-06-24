@@ -24,6 +24,7 @@ fn has_dynamic_in(parts: &[WordPart]) -> bool {
         | WordPart::Parameter(_)
         | WordPart::ParameterExpansion(_)
         | WordPart::ParameterExpansionOp { .. }
+        | WordPart::ArrayExpansion { .. }
         | WordPart::Arithmetic { .. }
         | WordPart::ProcessSubstitution { .. } => true,
         WordPart::DoubleQuoted(inner) => has_dynamic_in(inner),
@@ -46,6 +47,13 @@ fn collect_embedded_commands<'a>(parts: &'a [WordPart], out: &mut Vec<&'a str>) 
             WordPart::ParameterExpansionOp { embedded, .. } => {
                 collect_embedded_commands(embedded, out)
             }
+            // An `Index` subscript (`${arr[$(cmd)]}`) is arithmetic-evaluated by
+            // bash, so a substitution inside it runs and must be gated. `@`/`*`
+            // carry no command.
+            WordPart::ArrayExpansion {
+                subscript: Subscript::Index(w),
+                ..
+            } => collect_embedded_commands(&w.parts, out),
             _ => {}
         }
     }
@@ -128,6 +136,13 @@ fn collect_embedded_with_spans<'a>(
             WordPart::ParameterExpansionOp { embedded, .. } => {
                 collect_embedded_with_spans(embedded, out)
             }
+            // A substitution inside an `Index` subscript (`${arr[$(cmd)]}`) is
+            // run by bash (the subscript is arithmetic-evaluated); its parts
+            // carry absolute spans, so they surface exactly like inline ones.
+            WordPart::ArrayExpansion {
+                subscript: Subscript::Index(w),
+                ..
+            } => collect_embedded_with_spans(&w.parts, out),
             _ => {}
         }
     }
@@ -159,6 +174,16 @@ fn collect_dynamic_from(parts: &[WordPart], out: &mut Vec<String>) {
             }
             WordPart::ParameterExpansionOp { name, op, .. } => {
                 out.push(format!("${{{}}}", format_param_op(name, op)));
+            }
+            WordPart::ArrayExpansion {
+                name,
+                subscript,
+                length,
+            } => {
+                out.push(format!(
+                    "${{{}}}",
+                    format_array_expansion(name, subscript, *length)
+                ));
             }
             WordPart::DoubleQuoted(inner) => {
                 collect_dynamic_from(inner, out);
@@ -192,6 +217,15 @@ fn parts_to_display(parts: &[WordPart], out: &mut String) {
             WordPart::ParameterExpansionOp { name, op, .. } => {
                 out.push_str("${");
                 out.push_str(&format_param_op(name, op));
+                out.push('}');
+            }
+            WordPart::ArrayExpansion {
+                name,
+                subscript,
+                length,
+            } => {
+                out.push_str("${");
+                out.push_str(&format_array_expansion(name, subscript, *length));
                 out.push('}');
             }
             WordPart::CommandSubstitution { source, .. } => {
@@ -247,6 +281,13 @@ fn parts_to_str(parts: &[WordPart], out: &mut String) {
             WordPart::ParameterExpansionOp { name, op, .. } => {
                 out.push_str(&format_param_op(name, op));
             }
+            WordPart::ArrayExpansion {
+                name,
+                subscript,
+                length,
+            } => {
+                out.push_str(&format_array_expansion(name, subscript, *length));
+            }
             WordPart::DoubleQuoted(inner) => {
                 parts_to_str(inner, out);
             }
@@ -277,6 +318,7 @@ fn is_expansion_bearing_in(parts: &[WordPart]) -> bool {
         | WordPart::Parameter(_)
         | WordPart::ParameterExpansion(_)
         | WordPart::ParameterExpansionOp { .. }
+        | WordPart::ArrayExpansion { .. }
         | WordPart::Arithmetic { .. }
         | WordPart::ProcessSubstitution { .. }
         | WordPart::Glob(_)

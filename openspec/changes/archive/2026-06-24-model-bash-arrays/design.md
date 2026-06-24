@@ -99,3 +99,26 @@ change behaviour-preserving except for the recovered tail command.
 - **Unblocks but is not consumed yet.** Value only fully realises once
   `resolve-constant-array-arguments` lands; on its own the win is fidelity (no
   truncation) and a recognisable array AST.
+
+## Known pre-existing gaps (deferred, not introduced here)
+
+These are wrong-`:allow` / ungated-execution shapes the adversarial review
+surfaced. They are **pre-existing and general** — the identical *scalar* forms
+behave the same on `main` — so they are out of scope for this array-modelling
+change, which gates strictly more than `main` and adds no new bypass. Recorded
+so a focused follow-up can close them across scalar and array expansions alike:
+
+- **Flat-fallback parameter expansions bury embedded substitutions.** The lexer
+  arms that return a flat `WordPart::ParameterExpansion` rather than a structured
+  `ParameterExpansionOp` cannot carry an `embedded` list, so a `$(…)`/backtick in
+  them is never gated. This affects patterned case-conversion `${x^pat}` /
+  `${x,,pat}`, transform/unknown operators `${x@Q}` / junk, and indirect
+  expansion `${!x}`. Scalar parity on `main`: `${VAR^$(rm)}`, `${VAR@Q$(rm)}`,
+  `${!arr[$(rm)]}` all already `:allow`. (The common operators whose operand is
+  read via `read_operand` — `:-`, `#`, `%`, `/`, `:=`, … — *are* gated, including
+  in a subscript, by this change.) Fix needs a flat expansion that can carry
+  embedded parts, or the missing transform ops.
+- **Substitutions inside a glob bracket** (`echo [$(rm)]`, and by extension a
+  doubly-nested subscript `${arr[a[$(rm)]]}`) are kept as raw `Glob` text and
+  never structured, so they stay ungated. Also pre-existing and not
+  array-specific (plain globs on `main` behave identically).

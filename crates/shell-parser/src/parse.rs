@@ -275,6 +275,18 @@ impl Parser {
                         assignments.push(assignment);
                         continue;
                     }
+                    // A declaration builtin (`declare`/`typeset`/`local`/
+                    // `export`/`readonly`) takes `name=(…)` array arguments. The
+                    // kind comes from a `-A` flag (associative) vs the default
+                    // `-a`/indexed. Capture these as assignments so the kind is
+                    // recorded and nothing truncates; the builtin name word
+                    // stays in `words`.
+                    if let Some(kind) = declaration_array_kind(&words)
+                        && let Some(assignment) = self.try_parse_named_array_literal(kind)
+                    {
+                        assignments.push(assignment);
+                        continue;
+                    }
                     let word = w.clone();
                     self.advance();
                     words.push(word);
@@ -355,15 +367,52 @@ impl Parser {
             && let WordPart::Literal(ref s) = w.parts[0]
             && let Some(eq_pos) = s.find('=')
         {
-            let name = &s[..eq_pos];
-            if !name.is_empty()
-                && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-                && name.chars().next().is_some_and(|c| !c.is_ascii_digit())
+            // The lexical name is everything before the first `=`. It may carry
+            // an append `+` (`arr+=…`) and/or an indexed-element subscript
+            // (`arr[5]=…`). Strip both to recover the bare array name used by
+            // the array-literal branch below.
+            let lexical = &s[..eq_pos];
+            let array_name = lexical.strip_suffix('+').unwrap_or(lexical);
+            let bare = match array_name.find('[') {
+                Some(open) => &array_name[..open],
+                None => array_name,
+            };
+            if !bare.is_empty()
+                && bare.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                && bare.chars().next().is_some_and(|c| !c.is_ascii_digit())
             {
-                let value_start = &s[eq_pos + 1..];
+                // `name=(…)` / `name+=(…)`: the RHS is an array literal when the
+                // value text is empty and a `(` follows immediately (no space).
+                // bash treats an adjacent `(` after `=` as an array literal; a
+                // space (`x= (sub)`) is an env-prefix + subshell, which the
+                // byte-offset adjacency check below preserves.
+                let value_text = &s[eq_pos + 1..];
+                if value_text.is_empty()
+                    && w.parts.len() == 1
+                    && matches!(self.peek(), Token::Word(_))
+                    && let Some(array) = self.try_parse_array_literal(s)
+                {
+                    return Some(Assignment {
+                        name: bare.to_string(),
+                        value: array,
+                    });
+                }
+
+                // Only a plain `name=value` binds a scalar. A scalar *append*
+                // (`p+=foo`) appends to the inherited value — it is not a
+                // constant binding, and pre-array behaviour left `p+` as a
+                // command word; an indexed-element target (`arr[5]=v`) is not a
+                // scalar variable assignment either. Both are distinguished by
+                // the raw lexical name carrying a `+`/`[` the bare name dropped;
+                // leave them as command words (the token still survives — no
+                // silent discard) rather than mis-model them as `name=value`.
+                if lexical != bare {
+                    return None;
+                }
+
                 let mut value_parts = Vec::new();
-                if !value_start.is_empty() {
-                    value_parts.push(WordPart::Literal(value_start.to_string()));
+                if !value_text.is_empty() {
+                    value_parts.push(WordPart::Literal(value_text.to_string()));
                 }
                 // Include additional word parts
                 for part in &w.parts[1..] {
@@ -374,12 +423,118 @@ impl Parser {
                 } else {
                     Word { parts: value_parts }
                 };
-                let name = name.to_string();
                 self.advance();
-                return Some(Assignment { name, value });
+                return Some(Assignment {
+                    name: bare.to_string(),
+                    value: AssignmentValue::Scalar(value),
+                });
             }
         }
         None
+    }
+
+    /// Parse an array literal `(word…)` whose opening `(` immediately follows
+    /// the assignment word `assign_word` (the `name=` / `name+=` prefix). The
+    /// cursor is on the `name=` Word token; on success it is advanced past the
+    /// closing `)`. Returns `None` (leaving the cursor unmoved) when the `(`
+    /// is not adjacent (a space — `x= (sub)`), so the caller falls back to the
+    /// scalar/env-prefix interpretation. An unterminated `(` consumes to EOF
+    /// and emits no extra diagnostic here — the trailing `RParen` absence is
+    /// caught by `parse_complete`'s leftover-token check, never silently
+    /// dropping tokens.
+    fn try_parse_array_literal(&mut self, assign_word: &str) -> Option<AssignmentValue> {
+        let assign_offset = self.current_offset();
+        // The next token must be a `(` adjacent to the end of `name=`.
+        let (lparen_tok, lparen_off) = self.tokens.get(self.pos + 1)?.clone();
+        if !matches!(lparen_tok, Token::LParen) {
+            return None;
+        }
+        if lparen_off != assign_offset + assign_word.len() {
+            // A space separates `name=` from `(`: not an array literal.
+            return None;
+        }
+
+        self.advance(); // consume `name=` word
+        self.advance(); // consume `(`
+
+        let mut elements = Vec::new();
+        loop {
+            self.skip_newlines();
+            match self.peek().clone() {
+                Token::RParen => {
+                    self.advance();
+                    break;
+                }
+                Token::Eof => {
+                    // Unterminated `(`: stop here. `parse_complete` does not
+                    // fire (we consumed to EOF), but no tokens are dropped —
+                    // the elements seen so far are preserved.
+                    break;
+                }
+                Token::Word(w) => {
+                    self.advance();
+                    elements.push(w);
+                }
+                // Any other token inside `(…)` (operators, redirects) is not a
+                // plain element word. Consume it without dropping it from the
+                // stream so nothing is silently lost; it contributes no
+                // element. This keeps malformed arrays panic-free and
+                // non-truncating.
+                _ => {
+                    self.advance();
+                }
+            }
+        }
+
+        Some(AssignmentValue::Array {
+            array_kind: ArrayKind::Indexed,
+            elements,
+        })
+    }
+
+    /// Parse a declaration-builtin array argument `name=(…)` (with the given
+    /// `kind` from the builtin's flags) in argument position. The cursor is on
+    /// the `name=` Word token. Returns `None` (cursor unmoved) when the word is
+    /// not a `name=` shape or the `(` is not adjacent — the caller then treats
+    /// it as an ordinary argument word. A `name=scalar` (no array) also returns
+    /// `None`: only the array-literal form is captured here, since the kind is
+    /// meaningful only for arrays.
+    fn try_parse_named_array_literal(&mut self, kind: ArrayKind) -> Option<Assignment> {
+        let Token::Word(w) = self.peek().clone() else {
+            return None;
+        };
+        if w.parts.len() != 1 {
+            return None;
+        }
+        let WordPart::Literal(ref s) = w.parts[0] else {
+            return None;
+        };
+        let eq_pos = s.find('=')?;
+        if eq_pos + 1 != s.len() {
+            return None; // `name=value` scalar, not an array literal
+        }
+        let lexical = &s[..eq_pos];
+        let lexical = lexical.strip_suffix('+').unwrap_or(lexical);
+        let bare = match lexical.find('[') {
+            Some(open) => &lexical[..open],
+            None => lexical,
+        };
+        if bare.is_empty()
+            || !bare.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            || bare.chars().next().is_some_and(|c| c.is_ascii_digit())
+        {
+            return None;
+        }
+        match self.try_parse_array_literal(s)? {
+            AssignmentValue::Array { elements, .. } => Some(Assignment {
+                name: bare.to_string(),
+                value: AssignmentValue::Array {
+                    array_kind: kind,
+                    elements,
+                },
+            }),
+            AssignmentValue::Scalar(_) => None,
+        }
     }
 
     fn parse_if(&mut self) -> Command {
@@ -690,6 +845,42 @@ impl Parser {
 
         Command::BraceGroup(Box::new(body))
     }
+}
+
+/// If `words` names a declaration builtin (`declare`/`typeset`/`local`/
+/// `export`/`readonly`), return the array kind its flags imply: a `-A` flag
+/// anywhere in the flag words makes a following `name=(…)` associative;
+/// otherwise it is indexed (`-a` or no flag). Flag position is not tracked —
+/// `-A` anywhere wins — which is sound here because the kind only affects the
+/// follow-on resolver's ordering, never this change's decisions. Returns `None`
+/// when the first word is not a declaration builtin, so a plain command's
+/// `name=(…)` argument is left as an ordinary word.
+fn declaration_array_kind(words: &[Word]) -> Option<ArrayKind> {
+    let head = words.first()?;
+    if head.parts.len() != 1 {
+        return None;
+    }
+    let WordPart::Literal(name) = &head.parts[0] else {
+        return None;
+    };
+    if !matches!(
+        name.as_str(),
+        "declare" | "typeset" | "local" | "export" | "readonly"
+    ) {
+        return None;
+    }
+    // Scan the flag words for `-A` (associative). A combined flag like `-Ax`
+    // or `-gA` still selects associative, so look for the letter inside any
+    // single-dash flag word.
+    let associative = words[1..].iter().any(|w| {
+        matches!(&w.parts[..], [WordPart::Literal(s)]
+            if s.starts_with('-') && !s.starts_with("--") && s.contains('A'))
+    });
+    Some(if associative {
+        ArrayKind::Associative
+    } else {
+        ArrayKind::Indexed
+    })
 }
 
 #[cfg(test)]

@@ -1,7 +1,7 @@
 use may_i_shell_parser::{
     Command, ParameterOperator, ParseDiagnostic, Redirection, RedirectionKind, RedirectionTarget,
-    SimpleCommand, SubstitutionForm, Word, WordPart, constant_env, defined_function_names,
-    enumerable_for_values,
+    SimpleCommand, Subscript, SubstitutionForm, Word, WordPart, constant_env,
+    defined_function_names, enumerable_for_values,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -359,13 +359,18 @@ fn push_embedded_units_from_structural_words(
     };
     match cmd {
         Command::Assignment(a) => {
-            push_embedded_units_from_word(
-                &a.value,
-                &SubstitutionOrigin::Assignment(a.name.clone()),
-                diagnostics,
-                units,
-            );
-            taint(&a.value, units);
+            // Both a scalar value and each array element word are command
+            // substitution / env-read scan sites: `x=$(cmd)` and
+            // `arr=($(cmd))` must both gate the substitution (design D4).
+            for w in a.value.words() {
+                push_embedded_units_from_word(
+                    w,
+                    &SubstitutionOrigin::Assignment(a.name.clone()),
+                    diagnostics,
+                    units,
+                );
+                taint(w, units);
+            }
         }
         Command::For { words, .. } => {
             for word in words {
@@ -611,6 +616,26 @@ fn collect_parameter_names(word: &Word, out: &mut Vec<String>) {
                 // expansion precedes glob expansion, so `[$SECRET]` reads the
                 // secret (review round 5).
                 WordPart::Glob(pattern) => scan_parameter_refs(pattern, out),
+                // `${arr[i]}` reads the array variable `arr`; an `Index`
+                // subscript is itself parameter- and arithmetic-expanded by
+                // bash, so a `$SECRET` or bare arithmetic identifier inside it
+                // is a read too (mirrors the pre-array `scan_name_subscript`
+                // path, which scanned the folded `arr[i]` name string).
+                WordPart::ArrayExpansion {
+                    name, subscript, ..
+                } => {
+                    push_name(name, out);
+                    // An `Index` subscript is parameter- AND arithmetic-expanded
+                    // by bash, so both a `$NAME` reference and a bare arithmetic
+                    // identifier (`arr[AWS_TOKEN]`) inside it are reads. Scan the
+                    // flattened text for arithmetic idents (catching the bare
+                    // form) and walk the structured parts (catching `$NAME` /
+                    // nested substitutions). `@`/`*` carry no reads.
+                    if let Subscript::Index(w) = subscript {
+                        scan_arithmetic_idents(&w.to_str(), out);
+                        walk(&w.parts, out);
+                    }
+                }
                 _ => {}
             }
         }
@@ -798,12 +823,14 @@ fn decompose_simple_command(
             name: assignment.name.clone(),
             span: sc_span,
         });
-        push_embedded_units_from_word(
-            &assignment.value,
-            &SubstitutionOrigin::Assignment(assignment.name.clone()),
-            diagnostics,
-            units,
-        );
+        for w in assignment.value.words() {
+            push_embedded_units_from_word(
+                w,
+                &SubstitutionOrigin::Assignment(assignment.name.clone()),
+                diagnostics,
+                units,
+            );
+        }
     }
 
     if sc.words.is_empty() {
@@ -882,7 +909,9 @@ fn decompose_simple_command(
             collect_parameter_names(word, &mut names);
         }
         for assignment in &sc.assignments {
-            collect_parameter_names(&assignment.value, &mut names);
+            for w in assignment.value.words() {
+                collect_parameter_names(w, &mut names);
+            }
         }
         push_env_read_units(&names, tainted_env, sc_span, units);
     }
@@ -1210,14 +1239,14 @@ fn command_words(cmd: &Command) -> Vec<&Word> {
     match cmd {
         Command::Simple(sc) => {
             out.extend(&sc.words);
-            out.extend(sc.assignments.iter().map(|a| &a.value));
+            out.extend(sc.assignments.iter().flat_map(|a| a.value.words()));
             for r in &sc.redirections {
                 if let RedirectionTarget::File(w) = &r.target {
                     out.push(w);
                 }
             }
         }
-        Command::Assignment(a) => out.push(&a.value),
+        Command::Assignment(a) => out.extend(a.value.words()),
         Command::For { words, .. } => out.extend(words),
         Command::Case { word, arms, .. } => {
             out.push(word);
