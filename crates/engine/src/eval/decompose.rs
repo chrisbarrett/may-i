@@ -1,6 +1,6 @@
 use may_i_shell_parser::{
-    Command, ParameterOperator, ParseDiagnostic, Redirection, RedirectionKind, RedirectionTarget,
-    SimpleCommand, Subscript, SubstitutionForm, Word, WordPart, constant_env,
+    Command, ConstValue, ParameterOperator, ParseDiagnostic, Redirection, RedirectionKind,
+    RedirectionTarget, SimpleCommand, Subscript, SubstitutionForm, Word, WordPart, constant_env,
     defined_function_names, enumerable_for_values,
 };
 use std::collections::{HashMap, HashSet};
@@ -215,7 +215,7 @@ fn unroll_values(
     var: &str,
     words: &[Word],
     body: &Command,
-    env: &HashMap<String, String>,
+    env: &HashMap<String, ConstValue>,
     budget: usize,
 ) -> Option<Vec<String>> {
     let values = enumerable_for_values(var, words, body, env)?;
@@ -269,7 +269,7 @@ fn collect_simple_command_units(
     cmd: &Command,
     input: &str,
     diagnostics: &[ParseDiagnostic],
-    env: &HashMap<String, String>,
+    env: &HashMap<String, ConstValue>,
     internal_call_spans: &HashSet<Span>,
     tainted_env: &HashSet<String>,
     budget: usize,
@@ -295,7 +295,7 @@ fn collect_simple_command_units(
             let per_iter = (budget / values.len()).max(1);
             for value in &values {
                 let mut seeded = env.clone();
-                seeded.insert(var.clone(), value.clone());
+                seeded.insert(var.clone(), ConstValue::Scalar(value.clone()));
                 collect_simple_command_units(
                     body,
                     input,
@@ -806,7 +806,7 @@ fn decompose_simple_command(
     sc: &SimpleCommand,
     _input: &str,
     diagnostics: &[ParseDiagnostic],
-    const_env: &HashMap<String, String>,
+    const_env: &HashMap<String, ConstValue>,
     internal_call_spans: &HashSet<Span>,
     tainted_env: &HashSet<String>,
     units: &mut Vec<EvalUnit>,
@@ -918,7 +918,7 @@ fn decompose_simple_command(
 }
 
 /// Resolve each argument word against the command's provably-constant env,
-/// returning the matcher-visible `(args, arg_expansions)` pair (D1).
+/// returning the matcher-visible `(args, arg_expansions)` pair (D1, D2).
 ///
 /// Resolution is **all-or-nothing per word**: a word whose every expansion
 /// resolves to a provably-constant literal becomes that literal and is no
@@ -926,34 +926,80 @@ fn decompose_simple_command(
 /// so matchers see and gate its real value. Any word with an unresolved part —
 /// an expansion of a non-constant variable, a command substitution, a glob —
 /// keeps its raw `to_str()` form and its existing expansion-bearing flag, so it
-/// floors an `:allow` exactly as before. The two vectors stay the same length
-/// as `words`, preserving the `anywhere_match` `debug_assert_eq!`.
+/// floors an `:allow` exactly as before.
+///
+/// One word can map to *more than one* argv slot: a quoted `"${arr[@]}"` over a
+/// provably-constant indexed array splices one resolved word per element (the
+/// only word-count-changing expansion). Building the two vectors element-by-
+/// element keeps `args.len() == arg_expansions.len()` (the `anywhere_match`
+/// `debug_assert_eq!`) regardless of how many slots each source word yields.
 fn resolve_argument_words(
     words: &[Word],
-    const_env: &HashMap<String, String>,
+    const_env: &HashMap<String, ConstValue>,
 ) -> (Vec<String>, Vec<Expansion>) {
-    words
-        .iter()
-        .map(|w| {
-            let resolved = w.resolve(const_env);
-            // Clear the expansion-bearing flag only when *every* part is proven:
-            // the resolved word carries no remaining expansion (`is_literal`
-            // would also admit an unquoted glob/brace like `/tmp/a*`, which must
-            // stay flagged), AND every unquoted expansion resolved to a value
-            // the shell passes verbatim — an unquoted `$VAR` holding `/etc/passw?`
-            // resolves to a non-expansion-bearing literal yet bash glob-expands
-            // it at runtime, so it is *not* proven. Both together prevent a
-            // resolved word from widening an `:allow` (D3).
-            if !resolved.is_expansion_bearing() && w.resolves_to_verbatim_literal(const_env) {
-                (resolved.to_str(), None)
-            } else {
-                (
-                    w.to_str(),
-                    w.is_expansion_bearing().then(|| w.display_source()),
-                )
+    let mut args = Vec::with_capacity(words.len());
+    let mut expansions = Vec::with_capacity(words.len());
+    for w in words {
+        // Quoted `"${arr[@]}"` → one resolved argv word per element. Each
+        // element is a known literal and IFS-independent (quoted), so its
+        // expansion flag clears. This is the only place argv length changes.
+        if let Some(elements) = quoted_array_splice(w, const_env) {
+            for element in elements {
+                args.push(element);
+                expansions.push(None);
             }
-        })
-        .unzip()
+            continue;
+        }
+        let resolved = w.resolve(const_env);
+        // Clear the expansion-bearing flag only when *every* part is proven:
+        // the resolved word carries no remaining expansion (`is_literal` would
+        // also admit an unquoted glob/brace like `/tmp/a*`, which must stay
+        // flagged), AND every unquoted expansion resolved to a value the shell
+        // passes verbatim — an unquoted `$VAR` holding `/etc/passw?` resolves to
+        // a non-expansion-bearing literal yet bash glob-expands it at runtime,
+        // so it is *not* proven. Both together prevent a resolved word from
+        // widening an `:allow` (D3).
+        if !resolved.is_expansion_bearing() && w.resolves_to_verbatim_literal(const_env) {
+            args.push(resolved.to_str());
+            expansions.push(None);
+        } else {
+            args.push(w.to_str());
+            expansions.push(w.is_expansion_bearing().then(|| w.display_source()));
+        }
+    }
+    (args, expansions)
+}
+
+/// The element sequence of a lone, quoted `"${arr[@]}"` word over a
+/// provably-constant indexed array, or `None` for any other word.
+///
+/// Restricting to a **lone** quoted `[@]` word keeps v1 sound and simple; a
+/// mixed splice (`pre"${arr[@]}"post`, whose first/last elements join the
+/// adjacent literals) is left unresolved and floors as before (D2). `[*]` and
+/// unquoted `[@]` are IFS/glob-dependent and are not spliced. A scalar name (or
+/// any non-indexed/non-constant array) yields `None` — kind-gating happens in
+/// the analysis, which never records an associative array.
+fn quoted_array_splice(
+    word: &Word,
+    const_env: &HashMap<String, ConstValue>,
+) -> Option<Vec<String>> {
+    let [WordPart::DoubleQuoted(inner)] = word.parts.as_slice() else {
+        return None;
+    };
+    let [
+        WordPart::ArrayExpansion {
+            name,
+            subscript: Subscript::All,
+            length: false,
+        },
+    ] = inner.as_slice()
+    else {
+        return None;
+    };
+    match const_env.get(name) {
+        Some(ConstValue::Array(elements)) => Some(elements.clone()),
+        _ => None,
+    }
 }
 
 /// Resolve a first word that is a lone variable expansion to its literal
@@ -962,7 +1008,10 @@ fn resolve_argument_words(
 /// and that variable resolves to a non-empty literal. Anything else — a mixed
 /// word, an operator expansion, or an unresolved variable — returns `None` so
 /// the caller keeps the command dynamic.
-fn resolve_command_name(first_word: &Word, const_env: &HashMap<String, String>) -> Option<String> {
+fn resolve_command_name(
+    first_word: &Word,
+    const_env: &HashMap<String, ConstValue>,
+) -> Option<String> {
     lone_variable_part(first_word)?;
     let resolved = first_word.resolve(const_env);
     if !resolved.is_literal() {
@@ -999,7 +1048,7 @@ fn lone_variable_part(word: &Word) -> Option<()> {
 /// the command has no words (assignment-only).
 fn resolved_command_name(
     sc: &SimpleCommand,
-    const_env: &HashMap<String, String>,
+    const_env: &HashMap<String, ConstValue>,
 ) -> Option<String> {
     let first_word = sc.words.first()?;
     if first_word.is_dynamic() {
@@ -1021,7 +1070,10 @@ enum UnsetEffect {
 /// Recognise an `unset -f NAME…` simple command and report what it unsets.
 /// Returns `None` for anything that is not a function-unset (a plain `unset`
 /// touches variables, not functions, and is ignored here).
-fn unset_f_effect(sc: &SimpleCommand, const_env: &HashMap<String, String>) -> Option<UnsetEffect> {
+fn unset_f_effect(
+    sc: &SimpleCommand,
+    const_env: &HashMap<String, ConstValue>,
+) -> Option<UnsetEffect> {
     if resolved_command_name(sc, const_env).as_deref() != Some("unset") {
         return None;
     }
@@ -1061,7 +1113,7 @@ fn apply_unset(effect: &UnsetEffect, live: &mut HashSet<String>) {
 /// establishment set fixed at the activation point (Tier 2). Conservative
 /// throughout — a call is internal only when the function is provably live
 /// there, because a false internal would let an ungated external run.
-fn live_local_call_spans(cmd: &Command, const_env: &HashMap<String, String>) -> HashSet<Span> {
+fn live_local_call_spans(cmd: &Command, const_env: &HashMap<String, ConstValue>) -> HashSet<Span> {
     let defs = defined_function_names(cmd);
     let mut out = HashSet::new();
     if defs.is_empty() {
@@ -1113,7 +1165,7 @@ fn classify(
     mode: Mode,
     live: &mut HashSet<String>,
     established: &HashSet<String>,
-    const_env: &HashMap<String, String>,
+    const_env: &HashMap<String, ConstValue>,
     out: &mut HashSet<Span>,
 ) {
     match mode {
@@ -1189,13 +1241,13 @@ fn classify(
 /// hidden invocation be wrongly established.
 fn activation_pos(
     cmd: &Command,
-    const_env: &HashMap<String, String>,
+    const_env: &HashMap<String, ConstValue>,
     defs: &HashSet<String>,
 ) -> usize {
     fn walk(
         cmd: &Command,
         in_body: bool,
-        const_env: &HashMap<String, String>,
+        const_env: &HashMap<String, ConstValue>,
         defs: &HashSet<String>,
         best: &mut usize,
     ) {
@@ -1311,10 +1363,13 @@ fn spine_def_positions(cmd: &Command) -> Vec<(usize, String)> {
 /// when any such statement has a dynamic target (could remove anything). Scans
 /// the whole tree — conservative: a name unset anywhere is treated as never
 /// reliably live for Tier 2.
-fn collect_unsets(cmd: &Command, const_env: &HashMap<String, String>) -> (HashSet<String>, bool) {
+fn collect_unsets(
+    cmd: &Command,
+    const_env: &HashMap<String, ConstValue>,
+) -> (HashSet<String>, bool) {
     fn walk(
         cmd: &Command,
-        const_env: &HashMap<String, String>,
+        const_env: &HashMap<String, ConstValue>,
         names: &mut HashSet<String>,
         all: &mut bool,
     ) {
@@ -1340,7 +1395,7 @@ fn collect_unsets(cmd: &Command, const_env: &HashMap<String, String>) -> (HashSe
 /// it may have unset the name, so it is no longer *definitely* live.
 fn remove_possible_unsets(
     cmd: &Command,
-    const_env: &HashMap<String, String>,
+    const_env: &HashMap<String, ConstValue>,
     live: &mut HashSet<String>,
 ) {
     if let Command::Simple(sc) = cmd

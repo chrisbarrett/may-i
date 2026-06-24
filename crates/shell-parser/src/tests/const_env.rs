@@ -2,14 +2,22 @@ use crate::*;
 use proptest::prelude::*;
 use std::collections::HashMap;
 
-fn env_of(input: &str) -> HashMap<String, String> {
+fn env_of(input: &str) -> HashMap<String, ConstValue> {
     constant_env(&parse(input).command)
+}
+
+/// Build an expected constant env of scalar bindings.
+fn scalars(pairs: &[(&str, &str)]) -> HashMap<String, ConstValue> {
+    pairs
+        .iter()
+        .map(|(n, v)| (n.to_string(), ConstValue::Scalar(v.to_string())))
+        .collect()
 }
 
 #[test]
 fn single_static_assignment_qualifies() {
     let env = env_of("BIN=./x; $BIN run");
-    assert_eq!(env, [("BIN".to_string(), "./x".to_string())].into());
+    assert_eq!(env, scalars(&[("BIN", "./x")]));
 }
 
 #[test]
@@ -47,7 +55,7 @@ fn loop_variable_does_not_qualify() {
 #[test]
 fn export_assignment_qualifies() {
     let env = env_of("export VAR=./x; $VAR run");
-    assert_eq!(env, [("VAR".to_string(), "./x".to_string())].into());
+    assert_eq!(env, scalars(&[("VAR", "./x")]));
 }
 
 #[test]
@@ -89,7 +97,7 @@ fn unset_dynamic_name_is_ignored() {
     // `unset $X` names no statically-known variable; it neither binds nor
     // disqualifies a provably-constant assignment.
     let env = env_of("BIN=./x; unset $X; $BIN run");
-    assert_eq!(env, [("BIN".to_string(), "./x".to_string())].into());
+    assert_eq!(env, scalars(&[("BIN", "./x")]));
 }
 
 // -- Task 1: statically-enumerable `for` loops --
@@ -101,7 +109,11 @@ fn for_values(input: &str) -> Option<Vec<String>> {
     let cmd = parse(input).command;
     let env = constant_env(&cmd);
     let mut found = None;
-    fn walk(cmd: &Command, env: &HashMap<String, String>, found: &mut Option<Option<Vec<String>>>) {
+    fn walk(
+        cmd: &Command,
+        env: &HashMap<String, ConstValue>,
+        found: &mut Option<Option<Vec<String>>>,
+    ) {
         if found.is_some() {
             return;
         }
@@ -353,11 +365,128 @@ proptest! {
         // assign then (filler) then use
         let assign_first = format!("{name}={value}; {sep}foo ${name}");
         let env = constant_env(&parse(&assign_first).command);
-        prop_assert_eq!(env.get(&name).map(String::as_str), Some(value.as_str()));
+        prop_assert_eq!(env.get(&name), Some(&ConstValue::Scalar(value.clone())));
 
         // use then assign — disqualified
         let use_first = format!("foo ${name}; {sep}{name}={value}");
         let env = constant_env(&parse(&use_first).command);
         prop_assert_eq!(env.get(&name), None);
     }
+}
+
+// -- Constant-array analysis (D1) --
+
+/// The constant value bound to `name` in `input`'s constant env, or `None`.
+fn value_of(input: &str, name: &str) -> Option<ConstValue> {
+    env_of(input).get(name).cloned()
+}
+
+#[test]
+fn literal_array_qualifies_as_constant() {
+    assert_eq!(
+        value_of("arr=(a b c); cmd \"${arr[@]}\"", "arr"),
+        Some(ConstValue::Array(vec![
+            "a".to_string(),
+            "b".to_string(),
+            "c".to_string()
+        ]))
+    );
+}
+
+#[test]
+fn empty_array_qualifies() {
+    assert_eq!(
+        value_of("arr=(); cmd", "arr"),
+        Some(ConstValue::Array(vec![]))
+    );
+}
+
+#[test]
+fn append_disqualifies_array() {
+    // `arr+=(d)` parses as a second array assignment to `arr` — a second
+    // occurrence disqualifies it.
+    assert_eq!(
+        value_of("arr=(a b); arr+=(d); cmd \"${arr[@]}\"", "arr"),
+        None
+    );
+}
+
+#[test]
+fn scalar_append_disqualifies() {
+    // `arr+=foo` (scalar append) is detected as a mutating command word.
+    assert_eq!(value_of("arr=(a b); arr+=foo; cmd", "arr"), None);
+}
+
+#[test]
+fn element_assignment_disqualifies_array() {
+    assert_eq!(
+        value_of("arr=(a b); arr[1]=x; cmd \"${arr[@]}\"", "arr"),
+        None
+    );
+}
+
+#[test]
+fn element_append_disqualifies_array() {
+    assert_eq!(
+        value_of("arr=(a b); arr[1]+=x; cmd \"${arr[@]}\"", "arr"),
+        None
+    );
+}
+
+#[test]
+fn unset_element_disqualifies_array() {
+    assert_eq!(
+        value_of("arr=(a b); unset 'arr[0]'; cmd \"${arr[@]}\"", "arr"),
+        None
+    );
+}
+
+#[test]
+fn unset_whole_array_disqualifies() {
+    assert_eq!(
+        value_of("arr=(a b); unset arr; cmd \"${arr[@]}\"", "arr"),
+        None
+    );
+}
+
+#[test]
+fn nonliteral_element_disqualifies_array() {
+    assert_eq!(
+        value_of("arr=(a $(hostname) c); cmd \"${arr[@]}\"", "arr"),
+        None
+    );
+}
+
+#[test]
+fn glob_element_disqualifies_array() {
+    // An unquoted glob element is glob-expanded by bash at runtime — not a
+    // provable literal.
+    assert_eq!(value_of("arr=(a *.txt c); cmd \"${arr[@]}\"", "arr"), None);
+}
+
+#[test]
+fn variable_element_disqualifies_array() {
+    assert_eq!(value_of("arr=(a $x c); cmd \"${arr[@]}\"", "arr"), None);
+}
+
+#[test]
+fn associative_array_is_disqualified() {
+    // `declare -A` records an associative array (unspecified element order);
+    // it must never become a constant the resolver could order.
+    assert_eq!(
+        value_of("declare -A m=([a]=1 [b]=2); cmd \"${m[@]}\"", "m"),
+        None
+    );
+}
+
+#[test]
+fn array_inside_conditional_does_not_qualify() {
+    assert_eq!(value_of("if true; then arr=(a b); fi", "arr"), None);
+}
+
+#[test]
+fn use_before_array_assignment_disqualifies() {
+    // `"${arr[@]}"` reads `arr` before its sole assignment — the value there is
+    // the inherited environment, not `(a b)` (D2).
+    assert_eq!(value_of("cmd \"${arr[@]}\"; arr=(a b)", "arr"), None);
 }

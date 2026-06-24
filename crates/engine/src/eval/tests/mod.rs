@@ -771,6 +771,7 @@ fn named_predicate_missing_returns_unresolved_error() {
     );
 }
 
+mod array_arguments;
 mod const_arguments;
 mod const_command_names;
 mod embedded_word_positions;

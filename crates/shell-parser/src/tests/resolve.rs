@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 #[test]
 fn resolve_param_length() {
-    let env = [("VAR".into(), "hello".into())].into();
+    let env: HashMap<String, String> = [("VAR".into(), "hello".into())].into();
     let w = Word {
         parts: vec![WordPart::ParameterExpansionOp {
             name: "VAR".into(),
@@ -20,7 +20,7 @@ fn resolve_param_length() {
 
 #[test]
 fn resolve_param_strip_prefix() {
-    let env = [("PATH".into(), "/usr/local/bin".into())].into();
+    let env: HashMap<String, String> = [("PATH".into(), "/usr/local/bin".into())].into();
     let w = Word {
         parts: vec![WordPart::ParameterExpansionOp {
             name: "PATH".into(),
@@ -38,7 +38,7 @@ fn resolve_param_strip_prefix() {
 
 #[test]
 fn resolve_param_strip_suffix() {
-    let env = [("FILE".into(), "archive.tar.gz".into())].into();
+    let env: HashMap<String, String> = [("FILE".into(), "archive.tar.gz".into())].into();
     let w = Word {
         parts: vec![WordPart::ParameterExpansionOp {
             name: "FILE".into(),
@@ -55,7 +55,7 @@ fn resolve_param_strip_suffix() {
 
 #[test]
 fn resolve_param_replace() {
-    let env = [("VAR".into(), "hello world".into())].into();
+    let env: HashMap<String, String> = [("VAR".into(), "hello world".into())].into();
     let w = Word {
         parts: vec![WordPart::ParameterExpansionOp {
             name: "VAR".into(),
@@ -73,7 +73,7 @@ fn resolve_param_replace() {
 
 #[test]
 fn resolve_param_default_colon_empty() {
-    let env = [("VAR".into(), String::new())].into();
+    let env: HashMap<String, String> = [("VAR".into(), String::new())].into();
     let w = Word {
         parts: vec![WordPart::ParameterExpansionOp {
             name: "VAR".into(),
@@ -90,7 +90,7 @@ fn resolve_param_default_colon_empty() {
 
 #[test]
 fn resolve_param_default_colon_set() {
-    let env = [("VAR".into(), "value".into())].into();
+    let env: HashMap<String, String> = [("VAR".into(), "value".into())].into();
     let w = Word {
         parts: vec![WordPart::ParameterExpansionOp {
             name: "VAR".into(),
@@ -107,7 +107,7 @@ fn resolve_param_default_colon_set() {
 
 #[test]
 fn resolve_param_alternative_colon_set() {
-    let env = [("VAR".into(), "value".into())].into();
+    let env: HashMap<String, String> = [("VAR".into(), "value".into())].into();
     let w = Word {
         parts: vec![WordPart::ParameterExpansionOp {
             name: "VAR".into(),
@@ -124,7 +124,7 @@ fn resolve_param_alternative_colon_set() {
 
 #[test]
 fn resolve_param_alternative_colon_empty() {
-    let env = [("VAR".into(), String::new())].into();
+    let env: HashMap<String, String> = [("VAR".into(), String::new())].into();
     let w = Word {
         parts: vec![WordPart::ParameterExpansionOp {
             name: "VAR".into(),
@@ -141,7 +141,7 @@ fn resolve_param_alternative_colon_empty() {
 
 #[test]
 fn resolve_param_substring() {
-    let env = [("VAR".into(), "hello world".into())].into();
+    let env: HashMap<String, String> = [("VAR".into(), "hello world".into())].into();
     let w = Word {
         parts: vec![WordPart::ParameterExpansionOp {
             name: "VAR".into(),
@@ -158,7 +158,7 @@ fn resolve_param_substring() {
 
 #[test]
 fn resolve_param_substring_no_length() {
-    let env = [("VAR".into(), "hello world".into())].into();
+    let env: HashMap<String, String> = [("VAR".into(), "hello world".into())].into();
     let w = Word {
         parts: vec![WordPart::ParameterExpansionOp {
             name: "VAR".into(),
@@ -175,7 +175,7 @@ fn resolve_param_substring_no_length() {
 
 #[test]
 fn resolve_param_uppercase_all() {
-    let env = [("VAR".into(), "hello".into())].into();
+    let env: HashMap<String, String> = [("VAR".into(), "hello".into())].into();
     let w = Word {
         parts: vec![WordPart::ParameterExpansionOp {
             name: "VAR".into(),
@@ -189,7 +189,7 @@ fn resolve_param_uppercase_all() {
 
 #[test]
 fn resolve_param_uppercase_first() {
-    let env = [("VAR".into(), "hello".into())].into();
+    let env: HashMap<String, String> = [("VAR".into(), "hello".into())].into();
     let w = Word {
         parts: vec![WordPart::ParameterExpansionOp {
             name: "VAR".into(),
@@ -203,7 +203,7 @@ fn resolve_param_uppercase_first() {
 
 #[test]
 fn resolve_param_lowercase_all() {
-    let env = [("VAR".into(), "HELLO".into())].into();
+    let env: HashMap<String, String> = [("VAR".into(), "HELLO".into())].into();
     let w = Word {
         parts: vec![WordPart::ParameterExpansionOp {
             name: "VAR".into(),
@@ -217,7 +217,7 @@ fn resolve_param_lowercase_all() {
 
 #[test]
 fn resolve_param_error_set() {
-    let env = [("VAR".into(), "value".into())].into();
+    let env: HashMap<String, String> = [("VAR".into(), "value".into())].into();
     let w = Word {
         parts: vec![WordPart::ParameterExpansionOp {
             name: "VAR".into(),
@@ -234,7 +234,7 @@ fn resolve_param_error_set() {
 
 #[test]
 fn resolve_param_assign_set() {
-    let env = [("VAR".into(), "value".into())].into();
+    let env: HashMap<String, String> = [("VAR".into(), "value".into())].into();
     let w = Word {
         parts: vec![WordPart::ParameterExpansionOp {
             name: "VAR".into(),
@@ -251,7 +251,7 @@ fn resolve_param_assign_set() {
 
 #[test]
 fn resolve_param_unresolved_stays_dynamic() {
-    let env = HashMap::new();
+    let env: HashMap<String, String> = HashMap::new();
     let w = Word {
         parts: vec![WordPart::ParameterExpansionOp {
             name: "UNKNOWN".into(),
@@ -269,7 +269,7 @@ fn resolve_param_unresolved_stays_dynamic() {
 
 #[test]
 fn resolve_param_op_in_double_quotes() {
-    let env = [("HOME".into(), "/home/user".into())].into();
+    let env: HashMap<String, String> = [("HOME".into(), "/home/user".into())].into();
     let w = Word {
         parts: vec![WordPart::DoubleQuoted(vec![
             WordPart::ParameterExpansionOp {
@@ -291,7 +291,7 @@ fn resolve_param_op_in_double_quotes() {
 
 #[test]
 fn resolve_param_default_no_colon_set() {
-    let env = [("VAR".into(), "hello".into())].into();
+    let env: HashMap<String, String> = [("VAR".into(), "hello".into())].into();
     let w = Word {
         parts: vec![WordPart::ParameterExpansionOp {
             name: "VAR".into(),
@@ -310,7 +310,7 @@ fn resolve_param_default_no_colon_set() {
 
 #[test]
 fn resolve_param_alternative_no_colon_set() {
-    let env = [("VAR".into(), "hello".into())].into();
+    let env: HashMap<String, String> = [("VAR".into(), "hello".into())].into();
     let w = Word {
         parts: vec![WordPart::ParameterExpansionOp {
             name: "VAR".into(),
@@ -330,7 +330,7 @@ fn resolve_param_alternative_no_colon_set() {
 
 #[test]
 fn resolve_param_substring_negative_offset() {
-    let env = [("VAR".into(), "hello world".into())].into();
+    let env: HashMap<String, String> = [("VAR".into(), "hello world".into())].into();
     let w = Word {
         parts: vec![WordPart::ParameterExpansionOp {
             name: "VAR".into(),
@@ -349,7 +349,7 @@ fn resolve_param_substring_negative_offset() {
 
 #[test]
 fn resolve_param_uppercase_first_char() {
-    let env = [("VAR".into(), "hello".into())].into();
+    let env: HashMap<String, String> = [("VAR".into(), "hello".into())].into();
     let w = Word {
         parts: vec![WordPart::ParameterExpansionOp {
             name: "VAR".into(),
@@ -363,7 +363,7 @@ fn resolve_param_uppercase_first_char() {
 
 #[test]
 fn resolve_param_uppercase_first_empty() {
-    let env = [("VAR".into(), "".into())].into();
+    let env: HashMap<String, String> = [("VAR".into(), "".into())].into();
     let w = Word {
         parts: vec![WordPart::ParameterExpansionOp {
             name: "VAR".into(),
@@ -379,7 +379,7 @@ fn resolve_param_uppercase_first_empty() {
 
 #[test]
 fn resolve_param_lowercase_first() {
-    let env = [("VAR".into(), "HELLO".into())].into();
+    let env: HashMap<String, String> = [("VAR".into(), "HELLO".into())].into();
     let w = Word {
         parts: vec![WordPart::ParameterExpansionOp {
             name: "VAR".into(),
@@ -393,7 +393,7 @@ fn resolve_param_lowercase_first() {
 
 #[test]
 fn resolve_param_lowercase_first_empty() {
-    let env = [("VAR".into(), "".into())].into();
+    let env: HashMap<String, String> = [("VAR".into(), "".into())].into();
     let w = Word {
         parts: vec![WordPart::ParameterExpansionOp {
             name: "VAR".into(),
