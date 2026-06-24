@@ -56,6 +56,11 @@ pub enum TraceEntry {
     /// annotation under the preceding rule rather than a silent
     /// no-match.
     UnresolvedExpansion { words: Vec<String> },
+    /// The gnu tokeniser guessed an undeclared long flag's arity:
+    /// `flag` consumed `consumed` as its value because `consumed` looked
+    /// like a plausible (non-flag) value. Surfaced as an Advisory so the
+    /// guess is observable; never changes the Decision.
+    ArityGuess { flag: String, consumed: String },
     /// No matching rule — default ask.
     DefaultAsk { reason: String },
     /// A call to a script-local function, resolved to `:allow` as an
@@ -1517,6 +1522,13 @@ impl EvalFold for TracingFold {
             words: words.to_vec(),
         });
     }
+
+    fn arity_guess_advisory(&mut self, flag: &str, consumed: &str) {
+        self.traces.push(TraceEntry::ArityGuess {
+            flag: flag.to_string(),
+            consumed: consumed.to_string(),
+        });
+    }
 }
 
 fn flatten_facts(facts: &ContextFacts) -> Vec<(String, String)> {
@@ -1534,6 +1546,9 @@ impl std::fmt::Debug for TraceEntry {
             Self::EmbeddedCommand { source, .. } => write!(f, "EmbeddedCommand({source})"),
             Self::UnresolvedExpansion { words } => {
                 write!(f, "UnresolvedExpansion({})", words.join(", "))
+            }
+            Self::ArityGuess { flag, consumed } => {
+                write!(f, "ArityGuess({flag} → {consumed})")
             }
             Self::DefaultAsk { reason } => write!(f, "DefaultAsk({reason})"),
             Self::LocalFunctionCall { name } => write!(f, "LocalFunctionCall({name})"),
@@ -1992,6 +2007,83 @@ mod tests {
             decision,
             reason: Some(reason.into()),
         }
+    }
+
+    fn argv(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn allow_tool_config() -> Config {
+        make_config(vec![make_rule(
+            CommandPattern::Literal("tool".into()),
+            terminal(Decision::Allow, "ok"),
+        )])
+    }
+
+    fn arity_guesses(entries: &[TraceEntry]) -> Vec<(String, String)> {
+        entries
+            .iter()
+            .filter_map(|e| match e {
+                TraceEntry::ArityGuess { flag, consumed } => Some((flag.clone(), consumed.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    // 3.1 — an undeclared long flag consuming a plausible value surfaces
+    // an arity-guess Advisory naming the flag and the consumed token.
+    #[test]
+    fn undeclared_long_flag_guess_emits_arity_advisory() {
+        let cfg = allow_tool_config();
+        let entries = eval_tracing(&cfg, "tool", &argv(&["--output", "report.txt"]));
+        assert_eq!(
+            arity_guesses(&entries),
+            vec![("--output".to_string(), "report.txt".to_string())]
+        );
+    }
+
+    // 3.1 — no Advisory when the flag is left value-less (its successors
+    // are flag-shaped or absent).
+    #[test]
+    fn no_arity_advisory_without_guess() {
+        let cfg = allow_tool_config();
+        let entries = eval_tracing(&cfg, "tool", &argv(&["--verbose", "--quiet"]));
+        assert!(arity_guesses(&entries).is_empty());
+    }
+
+    // 3.3 — the Advisory is informational: the Decision is identical with
+    // and without the guess present in argv.
+    #[test]
+    fn arity_advisory_does_not_change_decision() {
+        let cfg = allow_tool_config();
+        let facts = ContextFacts::default();
+
+        let mut plain = TracingFold::new();
+        let d_plain = evaluate_with_fold("tool", &argv(&["run"]), &cfg, &facts, &mut plain)
+            .unwrap()
+            .decision;
+        let mut guessed = TracingFold::new();
+        let d_guessed = evaluate_with_fold(
+            "tool",
+            &argv(&["--output", "report.txt"]),
+            &cfg,
+            &facts,
+            &mut guessed,
+        )
+        .unwrap()
+        .decision;
+
+        assert_eq!(d_plain, Decision::Allow);
+        assert_eq!(
+            d_guessed,
+            Decision::Allow,
+            "advisory must not move the decision"
+        );
+        assert!(
+            !arity_guesses(&guessed.traces).is_empty(),
+            "the guessed run should carry an advisory"
+        );
+        assert!(arity_guesses(&plain.traces).is_empty());
     }
 
     #[test]

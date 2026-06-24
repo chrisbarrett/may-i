@@ -193,6 +193,17 @@ sub-sequence. Sub-patterns may themselves be quantifiers, so sequences nest.
 A binding inside a repeated group collects every matched value into a set (it
 does not pair values across occurrences).
 
+> [!IMPORTANT]
+> `(positional …)` matches the **residual** — the tokens left after flags and
+> parameters are consumed. For a flag the parser does not declare, the gnu
+> tokeniser must _guess_ whether it takes a value (see [Declaring flags so the
+> tokeniser doesn't guess](#declaring-flags-so-the-tokeniser-doesnt-guess)), and
+> a wrong guess can shift a positional out of the residual. So a security
+> **deny-guard belongs on `(flag …)` or `(anywhere …)`**, which scan the raw
+> argv and are immune to arity guessing — never on `(positional …)`, which sees
+> the consumption-sensitive residual. Use `(positional …)` for routing and
+> allow-listing, not as the last line of defence.
+
 ### `(exact PAT…)`
 
 Like `(positional …)`, but fails if any positional args are left unconsumed. Use
@@ -297,6 +308,53 @@ Every parser body declares its flag-scanning mode. Three modes:
   occurrence of any listed boundary token; the boundary token is
   consumed and dropped. Used by `mise --` and
   `nix --command|-c`.
+
+### Declaring flags so the tokeniser doesn't guess
+
+`(flag NAME)` and `(parameter NAME …)` are not only rule-body matchers —
+they are also **parser-body declaration kinds**. Declaring a flag on the
+parser fixes its arity, so the tokeniser never has to guess:
+
+```lisp
+;; `--release` and `-v` are boolean; `--bin` takes a value.
+(parser "cargo"
+  (style gnu)
+  (flag "release")
+  (flag "v")
+  (parameter "bin"))
+```
+
+- `(flag NAME)` — declares a **value-less** (boolean) flag. The token after
+  it stays in the positional residual.
+- `(parameter NAME …)` — declares a **value-bearing** flag. It consumes the
+  next token as its value regardless of that token's shape (author-asserted
+  arity), so `(parameter "bin")` makes `--bin --foo` capture `--foo`.
+
+#### The value-shape rule for undeclared long flags
+
+Under gnu-shaped styles, when a `--long` flag is **neither** declared as a
+`(parameter …)` **nor** referenced by one in a matching rule, its arity is
+unknown and the tokeniser guesses: it consumes the next token as the flag's
+value **only when that token is a plausible value** —
+
+- **not consumed** (left in the residual): a flag-shaped token — one that
+  begins with `--`/`-` and whose next character is a letter — and the `--`
+  flag-stop, which is never absorbed.
+- **consumed** as the value: a prefix-less token (`report.txt`), a
+  negative-number token (`-5`), or a bare `-`.
+
+So `tool --output report.txt` consumes `report.txt`, while
+`cargo run --quiet --bin may-i -- eval` leaves `--quiet` value-less (its
+successor `--bin` is flag-shaped) and keeps the `run … -- … eval` adjacency.
+A boolean flag immediately before a bare subcommand (`cargo --release build`)
+**cannot** be told apart by shape from a value flag, so the guess still
+consumes `build`; declare `(flag "release")` to keep `build` in the residual.
+
+Every such guess is surfaced as an **arity-guess Advisory** in the trace
+(naming the flag and the consumed token) so it is observable, not silent. The
+Advisory never changes the decision. See the deny-guard guidance under
+[`(positional …)`](#positional-pat) — guards that must hold belong on
+`(flag …)` / `(anywhere …)`, which read raw argv.
 
 ### Tail recursion: `(rest #cmd)` + `(authorise #cmd)`
 

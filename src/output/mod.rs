@@ -163,6 +163,9 @@ fn trace_to_layout(
             TraceEntry::UnresolvedExpansion { words } => {
                 builder.on_unresolved_expansion(words);
             }
+            TraceEntry::ArityGuess { flag, consumed } => {
+                builder.on_arity_guess(flag, consumed);
+            }
             TraceEntry::DefaultAsk { .. } => {
                 builder.on_default_ask();
             }
@@ -309,6 +312,17 @@ impl<'a> TraceLayoutBuilder<'a> {
         let label = format!("{} {}", "unresolved expansion:".dimmed(), joined.italic());
         let label_visible = "unresolved expansion: ".len() + joined.len();
         let right = colorize_right("→ :ask (floor)");
+        let mut row = ColRow::new(label, label_visible, right);
+        row.left_align = ColAlign::Right;
+        self.current_rows.push(row);
+        self.first = false;
+    }
+
+    fn on_arity_guess(&mut self, flag: &str, consumed: &str) {
+        let detail = format!("{flag} consumed {consumed}");
+        let label = format!("{} {}", "arity guess:".dimmed(), detail.italic());
+        let label_visible = "arity guess: ".len() + detail.len();
+        let right = colorize_right("→ guessed value");
         let mut row = ColRow::new(label, label_visible, right);
         row.left_align = ColAlign::Right;
         self.current_rows.push(row);
@@ -510,6 +524,25 @@ mod tests {
             "{stripped}"
         );
         assert!(stripped.contains(":allow (internal)"), "{stripped}");
+    }
+
+    #[test]
+    fn trace_to_layout_with_arity_guess() {
+        let term = Terminal::new(80);
+        let entries = vec![TraceEntry::ArityGuess {
+            flag: "--bin".into(),
+            consumed: "may-i".into(),
+        }];
+        let layout = trace_to_layout(&entries, "cargo run --bin may-i", 0, &term);
+        let mut buf = Vec::new();
+        write_layout(&mut buf, &layout, &term);
+        let output = String::from_utf8(buf).unwrap();
+        let stripped = strip_ansi(&output);
+        assert!(
+            stripped.contains("arity guess: --bin consumed may-i"),
+            "{stripped}"
+        );
+        assert!(stripped.contains("guessed value"), "{stripped}");
     }
 
     #[test]

@@ -331,6 +331,14 @@ pub trait EvalFold {
     /// trace use this to annotate the suppressed match rather than show
     /// a silent no-match. Default implementation is a no-op.
     fn unresolved_floor(&mut self, _words: &[String]) {}
+
+    /// Called once per evaluation entry for each undeclared, gnu-shaped
+    /// long flag whose arity the tokeniser guessed — `flag` consumed
+    /// `consumed` as its value because `consumed` looked like a plausible
+    /// (non-flag) value. Folds that render a trace surface this as an
+    /// Advisory so the guess is observable; it never changes the
+    /// Decision. Default implementation is a no-op.
+    fn arity_guess_advisory(&mut self, _flag: &str, _consumed: &str) {}
 }
 
 /// Zero-overhead fold that simply returns evaluation results unchanged.
