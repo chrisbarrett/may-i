@@ -101,6 +101,20 @@ fn literal_index_resolves_single_element() {
 }
 
 #[test]
+fn constant_scalar_index_resolves_the_element() {
+    // The index word can itself be a provably-constant scalar: `i=1` makes
+    // `${zones[$i]}` resolve to element 1.
+    let config = r#"(rule "echo" (when (anywhere "z-b") (allow "zone b")))"#;
+    let result = decide(config, r#"i=1; zones=(z-a z-b z-c); echo "${zones[$i]}""#);
+    assert_eq!(
+        result.decision,
+        Decision::Allow,
+        "constant scalar index should resolve to z-b: {:?}",
+        result.reason
+    );
+}
+
+#[test]
 fn negative_index_resolves_from_end() {
     // bash `${arr[-1]}` is the last element.
     let config = r#"(rule "echo" (when (anywhere "z-c") (allow "last")))"#;
@@ -209,6 +223,20 @@ fn length_of_element_with_dynamic_index_stays_unresolved() {
 }
 
 #[test]
+fn length_of_out_of_range_element_stays_unresolved() {
+    // `${#arr[9]}` — no element 9, so the char-length form has nothing to
+    // resolve and floors.
+    let config = r#"(rule "echo" (when (anywhere (regex ".")) (allow "any")))"#;
+    let result = decide(config, r#"arr=(a b); echo "${#arr[9]}""#);
+    assert!(
+        floored(&result),
+        "length of an out-of-range element must floor: {:?} ({:?})",
+        result.decision,
+        result.reason
+    );
+}
+
+#[test]
 fn non_numeric_literal_index_stays_unresolved() {
     // `${arr[notanumber]}` — a non-numeric subscript is an arithmetic
     // expression bash evaluates (an unset name → 0); we do not model it, so it
@@ -218,6 +246,28 @@ fn non_numeric_literal_index_stays_unresolved() {
     assert!(
         floored(&result),
         "non-numeric literal index must floor: {:?} ({:?})",
+        result.decision,
+        result.reason
+    );
+}
+
+#[test]
+fn octal_leading_zero_index_stays_unresolved() {
+    // `${arr[010]}` — bash evaluates the subscript arithmetically, where a
+    // leading `0` means OCTAL: `010` == 8, not 10. Resolving it as decimal 10
+    // would key matchers on the wrong element (a wrong-`:allow` on a value the
+    // program never receives). It must floor rather than resolve.
+    let config = r#"(rule "echo"
+                      (or (when (anywhere "danger") (deny "bad"))
+                          (when (anywhere "safe") (allow "ok"))))"#;
+    // bash index 8 == "danger"; decimal-10 misread == "safe".
+    let result = decide(
+        config,
+        r#"arr=(e0 e1 e2 e3 e4 e5 e6 e7 danger e9 safe); echo "${arr[010]}""#,
+    );
+    assert!(
+        floored(&result),
+        "octal leading-zero index must floor, not resolve to decimal: {:?} ({:?})",
         result.decision,
         result.reason
     );

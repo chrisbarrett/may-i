@@ -513,16 +513,31 @@ fn resolve_array_expansion<L: ConstLookup>(
 }
 
 /// Resolve an array subscript word to an in-range element index. The subscript
-/// must resolve (against `env`) to a plain decimal integer — a bash arithmetic
-/// expression, a dynamic index (`${arr[$RANDOM]}`), or an unset variable yields
-/// `None`, leaving the expansion unresolved. A negative index counts from the
-/// end (`${arr[-1]}`), matching bash. Out-of-range indices yield `None`.
+/// must resolve (against `env`) to a *canonical* decimal integer (an optional
+/// sign then a lone `0` or a non-zero leading digit). A bash arithmetic
+/// expression, a dynamic index (`${arr[$RANDOM]}`), an unset variable, or a
+/// non-canonical numeral — notably a leading-zero numeral that bash would read
+/// as octal (`010` == 8) — all yield `None`, leaving the expansion unresolved.
+/// A negative index counts from the end (`${arr[-1]}`), matching bash.
+/// Out-of-range indices yield `None`.
 fn resolve_index<L: ConstLookup>(index_word: &Word, len: usize, env: &L) -> Option<usize> {
     let resolved = index_word.resolve(env);
     if !resolved.is_literal() {
         return None;
     }
-    let n: isize = resolved.to_str().trim().parse().ok()?;
+    let raw = resolved.to_str();
+    let text = raw.trim();
+    // bash evaluates the subscript as an *arithmetic* expression, where a
+    // leading `0` means octal (`010` == 8) and `0x`/`0b` mean hex/binary. Rust's
+    // decimal `parse` would read `010` as ten, diverging from bash and possibly
+    // resolving to an element the program never receives. Only accept a
+    // canonical decimal integer (an optional sign, then either a lone `0` or a
+    // non-zero leading digit); anything else stays unresolved.
+    let digits = text.strip_prefix(['+', '-']).unwrap_or(text);
+    if digits.len() > 1 && digits.starts_with('0') {
+        return None;
+    }
+    let n: isize = text.parse().ok()?;
     let idx = if n < 0 { len as isize + n } else { n };
     (idx >= 0 && (idx as usize) < len).then_some(idx as usize)
 }

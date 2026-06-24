@@ -181,11 +181,15 @@ pub enum WordPart {
     /// A subscripted array reference inside `${…}`: `${arr[0]}`, `${arr[@]}`,
     /// `${arr[*]}`, and the length form `${#arr[@]}`. The array `name` and the
     /// `subscript` are kept distinct rather than folded into the name string,
-    /// so a later change can recognise and resolve it. `length` is set for the
+    /// so the resolver can recognise and resolve it. `length` is set for the
     /// `${#name[subscript]}` form.
     ///
-    /// This is expansion-bearing (unresolved) — this change models it but does
-    /// not resolve array values.
+    /// Against a provably-constant **indexed** array, the single-value forms
+    /// `${arr[i]}` and `${#arr[@]}` resolve through `Word::resolve`, and a quoted
+    /// `"${arr[@]}"` splices to one argv word per element during argv
+    /// construction (engine `decompose`). The IFS-dependent forms (`${arr[*]}`,
+    /// unquoted `${arr[@]}`) and any non-constant array stay expansion-bearing
+    /// (unresolved).
     ArrayExpansion {
         name: String,
         subscript: Subscript,

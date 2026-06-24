@@ -1,7 +1,7 @@
 use may_i_shell_parser::{
-    Command, ConstValue, ParameterOperator, ParseDiagnostic, Redirection, RedirectionKind,
-    RedirectionTarget, SimpleCommand, Subscript, SubstitutionForm, Word, WordPart, constant_env,
-    defined_function_names, enumerable_for_values,
+    Command, ConstLookup, ConstValue, ParameterOperator, ParseDiagnostic, Redirection,
+    RedirectionKind, RedirectionTarget, SimpleCommand, Subscript, SubstitutionForm, Word, WordPart,
+    constant_env, defined_function_names, enumerable_for_values,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -996,10 +996,7 @@ fn quoted_array_splice(
     else {
         return None;
     };
-    match const_env.get(name) {
-        Some(ConstValue::Array(elements)) => Some(elements.clone()),
-        _ => None,
-    }
+    const_env.lookup_array(name).map(<[String]>::to_vec)
 }
 
 /// Resolve a first word that is a lone variable expansion to its literal
