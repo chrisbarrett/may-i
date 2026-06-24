@@ -14,6 +14,9 @@ use super::AuditSource;
 #[derive(Debug, Clone, PartialEq)]
 pub struct AuditTap {
     pub decision: Decision,
+    /// Operator-authored (or already-escaped `EvalResult`) reason text. When
+    /// sourced from an evaluation it arrives via the escaped `DisplaySafe` and is
+    /// stringified here; it is never raw, attacker-derived input on its own.
     pub reason: Option<String>,
     pub source: AuditSource,
     pub parse_ok: bool,
@@ -46,7 +49,7 @@ impl AuditTap {
         };
         Self {
             decision: result.decision,
-            reason: result.reason.clone(),
+            reason: result.reason.as_deref().map(String::from),
             source,
             parse_ok,
             diagnostic,
@@ -73,10 +76,11 @@ impl AuditTap {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use may_i_engine::DisplaySafe;
 
     #[test]
     fn clean_eval_is_rule_sourced() {
-        let result = EvalResult::new(Decision::Deny, Some("danger".into()));
+        let result = EvalResult::new(Decision::Deny, Some(DisplaySafe::new("danger")));
         let tap = AuditTap::from_eval(&result, "rm -rf /", vec!["h1".into()], None);
         assert_eq!(tap.source, AuditSource::Rule);
         assert!(tap.parse_ok);
@@ -88,7 +92,7 @@ mod tests {
     #[test]
     fn parse_error_floors_to_parse_floor() {
         use may_i_shell_parser::{ParseDiagnostic, ParseDiagnosticKind, Span};
-        let mut result = EvalResult::new(Decision::Ask, Some("floored".into()));
+        let mut result = EvalResult::new(Decision::Ask, Some(DisplaySafe::new("floored")));
         result.parse_diagnostics.push(ParseDiagnostic {
             span: Span { start: 0, end: 1 },
             kind: ParseDiagnosticKind::UnterminatedDoubleQuote,

@@ -4,7 +4,7 @@ use may_i_core::ast::{EffectResult, ParameterTreatment, PunPolicy, ResolvedParse
 use may_i_core::{ContextFacts, Decision};
 
 use crate::fold::{EvalFold, PureFold};
-use crate::{EvalError, EvalResult};
+use crate::{DisplaySafe, EvalError, EvalResult};
 
 use super::context::EvalContext;
 use super::effects::evaluate_effect_fold;
@@ -55,10 +55,10 @@ pub(crate) fn evaluate_at_depth<F: EvalFold>(
     if depth >= super::context::DEFAULT_RECURSION_LIMIT {
         return Ok(EvalResult::new(
             Decision::Ask,
-            Some(format!(
+            Some(DisplaySafe::new(format!(
                 "recursion depth limit ({}) exceeded",
                 super::context::DEFAULT_RECURSION_LIMIT
-            )),
+            ))),
         ));
     }
     let parser = config.parser_for_with_rules(command);
@@ -69,7 +69,10 @@ pub(crate) fn evaluate_at_depth<F: EvalFold>(
     if parser.style.pun() == PunPolicy::Error
         && let Err(reason) = check_pun_error(args, &parser)
     {
-        return Ok(EvalResult::new(Decision::Ask, Some(reason)));
+        return Ok(EvalResult::new(
+            Decision::Ask,
+            Some(DisplaySafe::new(reason)),
+        ));
     }
     let (expanded, expanded_expansions) = tokenise(args, arg_expansions, &parser);
     fold.record_parser(command, &parser);
@@ -113,7 +116,9 @@ pub(crate) fn evaluate_at_depth<F: EvalFold>(
         let nested = match value_expansion {
             Some(display) if nested.decision == Decision::Allow => EvalResult::new(
                 Decision::Ask,
-                Some(super::command::unresolved_expansion_reason(&[display])),
+                Some(DisplaySafe::new(
+                    super::command::unresolved_expansion_reason(&[display]),
+                )),
             ),
             _ => nested,
         };
@@ -636,10 +641,10 @@ impl<'a> Evaluator<'a> {
         if ctx.is_depth_exceeded() {
             return Ok(EvalResult::new(
                 Decision::Ask,
-                Some(format!(
+                Some(DisplaySafe::new(format!(
                     "recursion depth limit ({}) exceeded",
                     ctx.recursion_limit
-                )),
+                ))),
             ));
         }
 
@@ -693,7 +698,7 @@ impl<'a> Evaluator<'a> {
             let reason = if distinct_reasons.is_empty() {
                 None
             } else {
-                Some(distinct_reasons.join("; "))
+                Some(DisplaySafe::new(distinct_reasons.join("; ")))
             };
             let reason_source_match_index = tied
                 .iter()
@@ -703,14 +708,14 @@ impl<'a> Evaluator<'a> {
             return Ok(EvalResult::new(strictest, reason));
         }
 
-        let display_command = super::command::escape_for_reason(ctx.command);
-        let reason = if any_command_matched {
+        let command = ctx.command;
+        let reason = DisplaySafe::new(if any_command_matched {
             format!(
-                "Rules for `{display_command}` exist but context or arguments did not match any patterns"
+                "Rules for `{command}` exist but context or arguments did not match any patterns"
             )
         } else {
-            format!("No rule for command `{display_command}`")
-        };
+            format!("No rule for command `{command}`")
+        });
         let _out = fold.default_ask(&reason);
         Ok(EvalResult::new(Decision::Ask, Some(reason)))
     }

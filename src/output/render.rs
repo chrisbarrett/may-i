@@ -97,7 +97,7 @@ fn render_eval_text(stdout: &mut impl Write, terminal: &Terminal, body: &EvalOut
 fn render_eval_json(stdout: &mut impl Write, body: &EvalOutcomeBody) {
     let mut json = serde_json::json!({
         "decision": body.result.decision.to_string(),
-        "reason": body.result.reason.clone().unwrap_or_default(),
+        "reason": body.result.reason.as_deref().unwrap_or_default(),
         "trace": trace_to_json(&body.traces),
     });
     if !body.result.parse_diagnostics.is_empty() {
@@ -159,8 +159,8 @@ fn render_check_json(stdout: &mut impl Write, body: &CheckOutcomeBody) {
 #[cfg(test)]
 mod tests {
     use may_i_core::{ContextFacts, Decision};
-    use may_i_engine::EvalResult;
     use may_i_engine::check::CheckResult;
+    use may_i_engine::{DisplaySafe, EvalResult};
 
     use super::*;
     use crate::cmd_check::TraceExtra;
@@ -174,7 +174,7 @@ mod tests {
         EvalOutcomeBody {
             command: "echo hi".into(),
             colored: "echo hi".into(),
-            result: EvalResult::new(Decision::Allow, Some("safe".into())),
+            result: EvalResult::new(Decision::Allow, Some(DisplaySafe::new("safe"))),
             traces: vec![],
             display_path: "/tmp/cfg.lisp".into(),
             audit: crate::audit::AuditTap {
@@ -252,7 +252,7 @@ mod tests {
         decision: Decision,
         reason: Option<&str>,
     ) -> serde_json::Value {
-        let result = EvalResult::new(decision, reason.map(str::to_string));
+        let result = EvalResult::new(decision, reason.map(DisplaySafe::new));
         let mut out = Vec::new();
         render_hook(&mut out, profile, &result);
         serde_json::from_slice(&out).expect("parse")

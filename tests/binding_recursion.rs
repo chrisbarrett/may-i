@@ -248,7 +248,7 @@ fn authorise_dynamic_inner_command_asks() {
     let facts = ContextFacts::default();
     let result = evaluate("bash", &args(&["-c", "$X arg"]), &config, &facts).expect("evaluate");
     assert_eq!(result.decision, Decision::Ask);
-    let reason = result.reason.unwrap_or_default();
+    let reason = result.reason.as_deref().unwrap_or_default();
     assert!(
         reason.contains("dynamic"),
         "reason should mention dynamic command name; got {reason}"
@@ -322,7 +322,7 @@ fn sudo_bash_c_via_bash_fact_reaches_inner_rm() {
     )
     .expect("evaluate");
     assert_eq!(result.decision, Decision::Deny);
-    let reason = result.reason.unwrap_or_default();
+    let reason = result.reason.as_deref().unwrap_or_default();
     assert!(reason.contains("rm via bash"), "got reason: {reason}");
 }
 
@@ -379,7 +379,7 @@ fn token_list_dynamic_first_token_asks_with_reason() {
     let facts = ContextFacts::default();
     let result = evaluate("sudo", &args(&["$X", "arg"]), &config, &facts).expect("evaluate");
     assert_eq!(result.decision, Decision::Ask);
-    let reason = result.reason.unwrap_or_default();
+    let reason = result.reason.as_deref().unwrap_or_default();
     assert!(
         reason.contains("dynamic"),
         "reason should mention dynamic command name; got {reason}"

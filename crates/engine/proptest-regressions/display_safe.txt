@@ -4,6 +4,4 @@
 #
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
-cc b3e235fba0a7c6922281c1307f164777d1f9e49d01435b832c5872234a2442dc # shrinks to input = "\"\">(<(\"\")"
-cc d165846c212133f6a080b6940da0857ceb7a9b8bbd0635e3194c8c222f12d519
-cc aae197ffda3dd6873818ce842b78d680cf927a6a31763e64ccc007515ff5ffd1 # shrinks to input = "${v-\0foo}"
+cc 0e051363f6f284d3b9a384aaee48cc424b22bfaaa36e394cdf05a9040883e5b2 # shrinks to s = "\u{80}"

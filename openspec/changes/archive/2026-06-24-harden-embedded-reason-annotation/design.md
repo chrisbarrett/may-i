@@ -85,6 +85,9 @@ removes input influence rather than narrowing it.
 **Alternative rejected — a `pub(crate)` flag field on `EvalResult`.** Lower
 churn, but it pollutes the public result type with a transient internal concern
 and leaks an annotation bookkeeping bit to every consumer of `evaluate_command`.
+(D3 below does change the public result type, but for a *durable display-safety
+contract* on the reason itself — not for transient bookkeeping. The objection
+stands for the flag; it does not apply to D3.)
 
 ### D2 — Make the escaping invariant load-bearing
 
@@ -95,6 +98,47 @@ control character reaches a reason-interpolated name. The property then fails if
 `escape_for_reason` is ever bypassed on that path, turning a today-vacuous check
 into a real guard. A focused regression test pins one explicit
 control-char-in-command-name case alongside the property.
+
+### D3 — Make display-safety a type, not a per-site discipline
+
+D2 makes the escaping invariant *tested*, but the escape is still an obligation
+discharged by hand at every reason-building site (`escape_for_reason(name)`
+inside each `format!`). The post-implementation review proved this is
+whack-a-mole: a separate interpolation path (`DynamicCommand`'s
+`dynamic_parts()` in `decompose.rs`) had silently skipped the escape and leaked
+a raw control byte to the `may-i eval` text/TTY surface. Any *new* reason site
+can reintroduce the same class of bug, and a test only catches the paths a
+generator happens to reach.
+
+Move the invariant into the type system. Introduce a `DisplaySafe` newtype (engine
+crate) with a private field and a single escaping smart constructor
+(`DisplaySafe::new` runs the control-escape over the whole string). `EvalResult.reason`
+becomes `Option<DisplaySafe>`. Because `escape_for_reason` is a per-char,
+control-only map, escaping static template text is a no-op and escaping an
+already-escaped string is idempotent — so one call at construction subsumes
+every per-site escape, which are then **deleted**. A reason-building site
+*cannot* forget: it must produce a `DisplaySafe`, and there is no constructor that
+skips the escape.
+
+**Mechanism.** `DisplaySafe::new` is built at each reason's origin (so the value
+passed to `fold.default_ask(&reason)` *and* the one stored on `EvalResult` are
+both safe — the audit/trace surface is covered, not only the result).
+`EvalResult::new` takes `Option<DisplaySafe>` rather than `Option<String>`, so a raw
+`String` cannot reach the field. `DisplaySafe` derefs to `str` (existing
+`reason.as_deref()` readers keep compiling), implements `Display` and a
+string-faithful `Serialize`. The `DynamicCommand` point-escape from D2's review
+is reverted — the sink subsumes it.
+
+**Scope.** Only `EvalResult.reason` (the attacker-influenced, parsed-from-input
+reason) becomes `DisplaySafe`. The operator-authored reason strings on `TrustBlock`,
+`AuditTap`, and check failures are not parsed from adversary input and stay
+`String`; widening `DisplaySafe` to them is a separate concern.
+
+**Alternative rejected — phantom-typed source tagging.** Tag every
+parser-derived string `Safe`/`Unsafe` and require conversion before it can reach
+a reason. Same guarantee, far more churn across the parser surface, and no extra
+safety for what is structurally a single-sink problem. The sink newtype is the
+80/20.
 
 ## Risks / Trade-offs
 

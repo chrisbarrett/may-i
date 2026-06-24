@@ -1,6 +1,6 @@
 // Config validation — run embedded checks against the engine.
 
-use crate::EvalResult;
+use crate::{DisplaySafe, EvalResult};
 use may_i_core::ast::{Check, Config};
 use may_i_core::{ContextFacts, Decision};
 use may_i_shell_parser::{self as parser, Command};
@@ -13,6 +13,8 @@ pub struct CheckResult<T = ()> {
     pub actual: Decision,
     pub passed: bool,
     pub context: ContextFacts,
+    /// Stringified from the evaluation's escaped [`crate::DisplaySafe`] (or a
+    /// fixed check-status literal); never raw, attacker-derived input.
     pub reason: Option<String>,
     pub extra: T,
 }
@@ -45,13 +47,15 @@ fn evaluate_simple(input: &str, config: &Config, context: &ContextFacts) -> Eval
         ParsedCheck::Simple(cmd_name, args) => {
             match crate::eval::evaluate(&cmd_name, &args, config, context) {
                 Ok(result) => result,
-                Err(e) => EvalResult::new(Decision::Deny, Some(e.to_string())),
+                Err(e) => EvalResult::new(Decision::Deny, Some(DisplaySafe::new(e.to_string()))),
             }
         }
         ParsedCheck::Empty => EvalResult::new(Decision::Allow, None),
         ParsedCheck::Compound => EvalResult::new(
             Decision::Ask,
-            Some("Compound commands not yet supported in checks".into()),
+            Some(DisplaySafe::new(
+                "Compound commands not yet supported in checks",
+            )),
         ),
     }
 }
@@ -80,7 +84,7 @@ pub fn run_checks_with<T, E>(
             actual: eval.decision,
             passed: eval.decision == check.expected,
             context: check.context.clone(),
-            reason: eval.reason,
+            reason: eval.reason.map(|r| r.to_string()),
             extra,
         });
     }

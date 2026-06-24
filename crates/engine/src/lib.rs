@@ -2,6 +2,7 @@
 
 pub mod audit_fold;
 pub mod check;
+pub mod display_safe;
 pub mod eval;
 pub mod fold;
 pub mod shape;
@@ -12,6 +13,8 @@ pub mod trust;
 pub mod test_generators;
 
 use may_i_core::Decision;
+
+pub use display_safe::DisplaySafe;
 
 /// A per-unit decision with the byte range of that unit in the original input.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,7 +48,9 @@ impl std::error::Error for EvalError {}
 #[derive(Debug, Clone)]
 pub struct EvalResult {
     pub decision: Decision,
-    pub reason: Option<String>,
+    /// The display-safe reason. `DisplaySafe`'s only constructor control-escapes, so
+    /// this field cannot hold an unescaped string by construction.
+    pub reason: Option<DisplaySafe>,
     pub parse_diagnostics: Vec<may_i_shell_parser::ParseDiagnostic>,
     /// Per-unit decisions with byte ranges in the original input. Top-level
     /// entries are pairwise non-overlapping; embedded-command entries may be
@@ -56,7 +61,7 @@ pub struct EvalResult {
 impl EvalResult {
     /// Create a new EvalResult with the given decision and optional reason.
     #[must_use]
-    pub fn new(decision: Decision, reason: Option<String>) -> Self {
+    pub fn new(decision: Decision, reason: Option<DisplaySafe>) -> Self {
         Self {
             decision,
             reason,
