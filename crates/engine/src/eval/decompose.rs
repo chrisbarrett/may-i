@@ -83,6 +83,13 @@ pub(crate) enum EvalUnit {
         /// The syntactic position that lexically owns this substitution, used to
         /// attribute a bubbled-up reason to the owning command/assignment/etc.
         origin: SubstitutionOrigin,
+        /// Script-local function names provably **live at this substitution's
+        /// site** — the functions a bare call here would resolve as internal
+        /// (D1/D2). Carried into the embedded evaluation so a call to one of
+        /// these inside the substitution is recognised as internal exactly as
+        /// the same bare call at the site would be. Empty reproduces the
+        /// pre-change behaviour (the substitution re-parses in isolation).
+        inherited_fns: HashSet<String>,
     },
     /// A command with a dynamic name that cannot be resolved.
     DynamicCommand { reason: String, span: Span },
@@ -149,6 +156,7 @@ pub(crate) fn decompose(
     input: &str,
     diagnostics: &[ParseDiagnostic],
     tainted_env: &HashSet<String>,
+    inherited_fns: &HashSet<String>,
 ) -> Vec<EvalUnit> {
     let mut units = Vec::new();
 
@@ -158,9 +166,15 @@ pub(crate) fn decompose(
     let const_env = constant_env(cmd);
 
     // Spans of simple commands that are calls to a *live* script-local
-    // function — the order/liveness-aware classification (D2). Anything not in
-    // this set is decomposed as an ordinary command.
-    let internal_call_spans = live_local_call_spans(cmd, &const_env);
+    // function — the order/liveness-aware classification (D2) — and the
+    // live-name set in force at each substitution's site (D1/D2). Both seed
+    // their analysis with `inherited_fns`, the functions live at the enclosing
+    // scope's entry (empty at top level). Anything not in the call-span set is
+    // decomposed as an ordinary command.
+    let LiveAnalysis {
+        internal_calls: internal_call_spans,
+        subst_sites: subst_live_sets,
+    } = live_local_analysis(cmd, &const_env, inherited_fns);
 
     // Pass 1 — simple commands (and the units they own: dynamic names, env
     // prefixes, argv-word substitutions and taints). Threads the constant env so
@@ -200,6 +214,28 @@ pub(crate) fn decompose(
     // redirect targets keep their existing owners and are skipped here to avoid
     // double-counting.)
     push_embedded_units_from_structural_words(cmd, diagnostics, tainted_env, &mut units);
+
+    // Fill each substitution's carried set with the functions live **at its
+    // site** (D1/D2), keyed by the substitution's start offset (unique per
+    // substitution). The recorded set is already `inherited_fns ∪
+    // established-here` — `live_local_analysis` seeds both tiers with the
+    // inherited names and then reduces them by any `unset -f` in force at the
+    // site — so it is used directly, NOT re-unioned with `inherited_fns`.
+    // Re-unioning would resurrect a name the site deliberately dropped (e.g.
+    // after `unset -f fn`), recognising an external call as internal — an
+    // under-ask. A substitution with no recorded site set (a position the
+    // liveness walk does not reach, e.g. a heredoc body) carries the EMPTY set:
+    // recognise nothing and ask, the soundness-preserving direction.
+    for unit in &mut units {
+        if let EvalUnit::EmbeddedCommand {
+            span,
+            inherited_fns: carried,
+            ..
+        } = unit
+        {
+            *carried = subst_live_sets.get(&span.0).cloned().unwrap_or_default();
+        }
+    }
 
     units
 }
@@ -1103,37 +1139,73 @@ fn apply_unset(effect: &UnsetEffect, live: &mut HashSet<String>) {
     }
 }
 
-/// Spans of simple commands that are calls to a *live* script-local function —
-/// the ones `decompose` emits as `LocalFunctionCall`. Implements the two-tier
-/// liveness analysis (design D2): top-level calls are order-sensitive (Tier 1);
-/// calls inside function bodies and conditionally-reached regions use the
-/// establishment set fixed at the activation point (Tier 2). Conservative
-/// throughout — a call is internal only when the function is provably live
-/// there, because a false internal would let an ungated external run.
-fn live_local_call_spans(cmd: &Command, const_env: &HashMap<String, ConstValue>) -> HashSet<Span> {
+/// The two products of one liveness walk over the outer AST (design D2). Both
+/// derive from the same `classify` pass because they share its Spine/Deferred
+/// state, so computing them together avoids a second traversal.
+struct LiveAnalysis {
+    /// Spans of simple commands that are calls to a *live* script-local
+    /// function — the ones `decompose` emits as `LocalFunctionCall`.
+    internal_calls: HashSet<Span>,
+    /// Function names live at each substitution's site, keyed by the
+    /// substitution's **start byte offset**. That key MUST equal the
+    /// corresponding `EmbeddedCommand`'s `span.0`; the post-pass in `decompose`
+    /// joins each emitted substitution to its set on it.
+    subst_sites: HashMap<usize, HashSet<String>>,
+}
+
+/// Run the two-tier liveness analysis (design D2): top-level calls are
+/// order-sensitive (Tier 1); calls inside function bodies and
+/// conditionally-reached regions use the establishment set fixed at the
+/// activation point (Tier 2). Conservative throughout — a call is internal only
+/// when the function is provably live there, because a false internal would let
+/// an ungated external run. `inherited_fns` seeds both tiers with the functions
+/// live at the enclosing scope's entry (empty at the top level).
+fn live_local_analysis(
+    cmd: &Command,
+    const_env: &HashMap<String, ConstValue>,
+    inherited_fns: &HashSet<String>,
+) -> LiveAnalysis {
     let defs = defined_function_names(cmd);
     let mut out = HashSet::new();
-    if defs.is_empty() {
-        return out;
+    let mut subst_sets: HashMap<usize, HashSet<String>> = HashMap::new();
+    // Nothing to recognise when neither this source defines a function nor the
+    // enclosing scope contributed one. The site map stays empty, so every
+    // substitution falls back to the inherited floor in `decompose`.
+    if defs.is_empty() && inherited_fns.is_empty() {
+        return LiveAnalysis {
+            internal_calls: out,
+            subst_sites: subst_sets,
+        };
     }
 
     // Tier 2 establishment set: the functions unconditionally defined at top
     // level before the activation point (the earliest non-body call to any
     // defined function), minus any name ever unset. Every body runs at or after
-    // the activation point, so these are guaranteed live inside any body.
+    // the activation point, so these are guaranteed live inside any body. The
+    // inherited functions were established before this scope even ran, so they
+    // join the establishment set (subject to the same unset handling).
     let activation = activation_pos(cmd, const_env, &defs);
     let (unset_names, unset_all) = collect_unsets(cmd, const_env);
     let established: HashSet<String> = if unset_all {
         HashSet::new()
     } else {
-        spine_def_positions(cmd)
-            .into_iter()
-            .filter(|(pos, name)| *pos < activation && !unset_names.contains(name))
-            .map(|(_, name)| name)
+        inherited_fns
+            .iter()
+            .cloned()
+            .chain(
+                spine_def_positions(cmd)
+                    .into_iter()
+                    .filter(|(pos, _)| *pos < activation)
+                    .map(|(_, name)| name),
+            )
+            .filter(|name| !unset_names.contains(name))
             .collect()
     };
 
-    let mut live: HashSet<String> = HashSet::new();
+    // Seed the order-sensitive spine `live` set with the inherited functions:
+    // they are live from the inner script's first statement (until any unset
+    // along the spine removes them).
+    let mut live: HashSet<String> = inherited_fns.clone();
     classify(
         cmd,
         Mode::Spine,
@@ -1141,8 +1213,12 @@ fn live_local_call_spans(cmd: &Command, const_env: &HashMap<String, ConstValue>)
         &established,
         const_env,
         &mut out,
+        &mut subst_sets,
     );
-    out
+    LiveAnalysis {
+        internal_calls: out,
+        subst_sites: subst_sets,
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -1164,29 +1240,78 @@ fn classify(
     established: &HashSet<String>,
     const_env: &HashMap<String, ConstValue>,
     out: &mut HashSet<Span>,
+    subst_sets: &mut HashMap<usize, HashSet<String>>,
 ) {
+    // Record the functions live at every substitution this command owns
+    // directly (its own words, not those of child commands — `command_words`
+    // does not recurse). A substitution runs when its enclosing command runs,
+    // so the in-force set is the spine `live` set here (Tier 1) or the fixed
+    // `established` set in a deferred region (Tier 2). First writer wins; start
+    // offsets are unique, so there is never a real conflict.
+    record_subst_sites(cmd, mode, live, established, subst_sets);
+
     match mode {
         Mode::Spine => match cmd {
             Command::Sequence(cmds) => {
                 for c in cmds {
-                    classify(c, Mode::Spine, live, established, const_env, out);
+                    classify(
+                        c,
+                        Mode::Spine,
+                        live,
+                        established,
+                        const_env,
+                        out,
+                        subst_sets,
+                    );
                 }
             }
             // The right operand of `&&`/`||` runs conditionally — deferred. It
             // may also unset a name; drop anything it might unset from `live`.
             Command::And(a, b) | Command::Or(a, b) => {
-                classify(a, Mode::Spine, live, established, const_env, out);
-                classify(b, Mode::Deferred, live, established, const_env, out);
+                classify(
+                    a,
+                    Mode::Spine,
+                    live,
+                    established,
+                    const_env,
+                    out,
+                    subst_sets,
+                );
+                classify(
+                    b,
+                    Mode::Deferred,
+                    live,
+                    established,
+                    const_env,
+                    out,
+                    subst_sets,
+                );
                 remove_possible_unsets(b, const_env, live);
             }
             Command::Redirected { command, .. } => {
-                classify(command, Mode::Spine, live, established, const_env, out);
+                classify(
+                    command,
+                    Mode::Spine,
+                    live,
+                    established,
+                    const_env,
+                    out,
+                    subst_sets,
+                );
             }
             Command::FunctionDef { name, body } => {
                 if !name.is_empty() {
                     live.insert(name.clone());
                 }
-                classify(body, Mode::Deferred, live, established, const_env, out);
+                classify(
+                    body,
+                    Mode::Deferred,
+                    live,
+                    established,
+                    const_env,
+                    out,
+                    subst_sets,
+                );
             }
             Command::Simple(sc) => {
                 if let Some(effect) = unset_f_effect(sc, const_env) {
@@ -1205,7 +1330,15 @@ fn classify(
             _ => {
                 remove_possible_unsets(cmd, const_env, live);
                 for child in cmd.children() {
-                    classify(child, Mode::Deferred, live, established, const_env, out);
+                    classify(
+                        child,
+                        Mode::Deferred,
+                        live,
+                        established,
+                        const_env,
+                        out,
+                        subst_sets,
+                    );
                 }
             }
         },
@@ -1217,8 +1350,41 @@ fn classify(
                 out.insert((sc.span.start, sc.span.end));
             }
             for child in cmd.children() {
-                classify(child, Mode::Deferred, live, established, const_env, out);
+                classify(
+                    child,
+                    Mode::Deferred,
+                    live,
+                    established,
+                    const_env,
+                    out,
+                    subst_sets,
+                );
             }
+        }
+    }
+}
+
+/// Record, for each top-level substitution in `cmd`'s own words, the set of
+/// functions live at its site — the spine `live` set in [`Mode::Spine`], the
+/// fixed `established` set in [`Mode::Deferred`]. Keyed by the substitution's
+/// start offset; the first writer wins (offsets are unique across the input, so
+/// this only guards against an accidental double-visit).
+fn record_subst_sites(
+    cmd: &Command,
+    mode: Mode,
+    live: &HashSet<String>,
+    established: &HashSet<String>,
+    subst_sets: &mut HashMap<usize, HashSet<String>>,
+) {
+    let in_force = match mode {
+        Mode::Spine => live,
+        Mode::Deferred => established,
+    };
+    for word in command_words(cmd) {
+        let mut starts = Vec::new();
+        collect_substitution_starts(word, &mut starts);
+        for s in starts {
+            subst_sets.entry(s).or_insert_with(|| in_force.clone());
         }
     }
 }
@@ -1303,14 +1469,31 @@ fn command_words(cmd: &Command) -> Vec<&Word> {
                 out.extend(&arm.patterns);
             }
         }
+        // A compound's redirections hang off the `Redirected` wrapper, not any
+        // simple command — `done < <(helper)` parks the process substitution
+        // here. Expose the file-target words so both the activation scan and the
+        // substitution-site liveness see them (the inner command is reached by
+        // the caller's recursion).
+        Command::Redirected { redirections, .. } => {
+            for r in redirections {
+                if let RedirectionTarget::File(w) = &r.target {
+                    out.push(w);
+                }
+            }
+        }
         _ => {}
     }
     out
 }
 
 /// Byte offsets where a command/backtick/process substitution begins inside a
-/// word (recursing through double-quoted parts). Arithmetic `$((…))` runs no
-/// command and is excluded.
+/// word. Arithmetic `$((…))` runs no command and is excluded. Recurses through
+/// exactly the part shapes the parser's `collect_embedded_with_spans` emits
+/// `EmbeddedCommand` units for — double-quoted parts, parameter-expansion
+/// operands (`${x:-$(cmd)}`), and `Index` array subscripts (`${arr[$(cmd)]}`) —
+/// so the offsets recorded here line up with the units the post-pass joins to.
+/// A position this misses degrades only to the inherited floor (a spurious ask),
+/// never to a missed gate, but divergence from the emitter loses recognition.
 fn collect_substitution_starts(word: &Word, out: &mut Vec<usize>) {
     fn walk(parts: &[WordPart], out: &mut Vec<usize>) {
         for part in parts {
@@ -1319,6 +1502,11 @@ fn collect_substitution_starts(word: &Word, out: &mut Vec<usize>) {
                 | WordPart::Backtick { span, .. }
                 | WordPart::ProcessSubstitution { span, .. } => out.push(span.start),
                 WordPart::DoubleQuoted(inner) => walk(inner, out),
+                WordPart::ParameterExpansionOp { embedded, .. } => walk(embedded, out),
+                WordPart::ArrayExpansion {
+                    subscript: Subscript::Index(w),
+                    ..
+                } => walk(&w.parts, out),
                 _ => {}
             }
         }
@@ -1431,6 +1619,9 @@ fn push_embedded_units_from_word(
             span: (embedded.span.start, embedded.span.end),
             kind: kind_from_form(embedded.form),
             origin: origin.clone(),
+            // Filled by the post-pass in `decompose` once the per-site live
+            // sets are known; empty here keeps this emitter site-agnostic.
+            inherited_fns: HashSet::new(),
         });
     }
 }
@@ -1441,13 +1632,25 @@ mod tests {
 
     fn decompose_input(input: &str) -> Vec<EvalUnit> {
         let result = parse(input);
-        decompose(&result.command, input, &result.diagnostics, &HashSet::new())
+        decompose(
+            &result.command,
+            input,
+            &result.diagnostics,
+            &HashSet::new(),
+            &HashSet::new(),
+        )
     }
 
     fn decompose_input_with_caps(input: &str, caps: &[&str]) -> Vec<EvalUnit> {
         let result = parse(input);
         let tainted: HashSet<String> = caps.iter().map(|s| s.to_string()).collect();
-        decompose(&result.command, input, &result.diagnostics, &tainted)
+        decompose(
+            &result.command,
+            input,
+            &result.diagnostics,
+            &tainted,
+            &HashSet::new(),
+        )
     }
 
     #[test]
@@ -2310,6 +2513,82 @@ mod tests {
         assert_eq!(
             embedded_origin("$(which python) --version"),
             Some(SubstitutionOrigin::SimpleCommand(None))
+        );
+    }
+
+    /// The carried `inherited_fns` of the (first) substitution whose source is
+    /// `source`, for inspecting position-aware inheritance.
+    fn carried_inherited(input: &str, source: &str) -> HashSet<String> {
+        decompose_input(input)
+            .into_iter()
+            .find_map(|u| match u {
+                EvalUnit::EmbeddedCommand {
+                    source: s,
+                    inherited_fns,
+                    ..
+                } if s == source => Some(inherited_fns),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no embedded unit with source {source:?}"))
+    }
+
+    #[test]
+    fn decompose_substitution_inherits_live_local_function() {
+        // `resolve` is defined before the substitution runs, so it is live at
+        // the site and carried into the embedded evaluation.
+        let carried = carried_inherited("resolve() { echo hi; }; dest=$(resolve)", "resolve");
+        assert!(
+            carried.contains("resolve"),
+            "expected `resolve` in carried set, got {carried:?}"
+        );
+    }
+
+    #[test]
+    fn decompose_substitution_does_not_inherit_forward_reference() {
+        // The substitution runs before `resolve` is defined — not live at the
+        // site — so it is NOT carried (soundness: never under-asks).
+        let carried = carried_inherited("dest=$(resolve); resolve() { echo hi; }", "resolve");
+        assert!(
+            !carried.contains("resolve"),
+            "forward-referenced function must not be inherited, got {carried:?}"
+        );
+    }
+
+    #[test]
+    fn decompose_substitution_in_param_expansion_default_inherits() {
+        // A substitution inside a `${x:-…}` operand is emitted as its own unit
+        // and must receive the same site liveness as an inline `$(…)`.
+        let carried = carried_inherited("resolve() { echo hi; }; dest=${x:-$(resolve)}", "resolve");
+        assert!(
+            carried.contains("resolve"),
+            "param-expansion-default substitution must inherit live set, got {carried:?}"
+        );
+    }
+
+    #[test]
+    fn decompose_substitution_in_array_subscript_inherits() {
+        // `${arr[$(resolve)]}` — the Index subscript is run by bash; its
+        // substitution must inherit the site liveness too.
+        let carried =
+            carried_inherited("resolve() { echo hi; }; dest=${arr[$(resolve)]}", "resolve");
+        assert!(
+            carried.contains("resolve"),
+            "array-subscript substitution must inherit live set, got {carried:?}"
+        );
+    }
+
+    #[test]
+    fn decompose_substitution_in_compound_redirect_target_inherits() {
+        // A process substitution on a compound's `Redirected` wrapper
+        // (`done < <(resolve)`) must inherit the site liveness, like an inline
+        // redirect on a simple command would.
+        let carried = carried_inherited(
+            "resolve() { echo hi; }; while read x; do :; done < <(resolve)",
+            "resolve",
+        );
+        assert!(
+            carried.contains("resolve"),
+            "compound-redirect substitution must inherit live set, got {carried:?}"
         );
     }
 }

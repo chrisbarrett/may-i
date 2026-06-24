@@ -3,7 +3,7 @@
 
 mod common;
 
-use common::{may_i, parse_json, write_config};
+use common::{bash_payload, may_i, parse_json, write_config};
 
 /// The motivating shape: a script defines functions and calls them, some
 /// from inside another body. Only the dynamic `"$TGBIN"` command — out of
@@ -55,6 +55,46 @@ deploy"#;
     assert!(
         !reasons.contains("No rule for command `materialise`"),
         "internal calls must not report a missing rule: {reasons}"
+    );
+}
+
+/// The motivating defect (in hook mode): a `dest=$(resolve)` substitution
+/// inside a function body, under `set -euo pipefail`, must recognise the call
+/// to the script-local `resolve` as internal rather than asking on it.
+#[test]
+fn hook_substitution_call_to_local_function_does_not_ask() {
+    let cfg = write_config(
+        r#"
+(rule "echo" (allow))
+(rule "set" (allow))
+"#,
+    );
+    let script = r#"set -euo pipefail
+resolve() { echo "/path/$1"; }
+main() { dest=$(resolve foo); echo "$dest"; }
+main"#;
+
+    let output = may_i(&cfg)
+        .args(["--json"])
+        .write_stdin(bash_payload(script))
+        .output()
+        .expect("run");
+    assert!(
+        output.status.success(),
+        "exit 0 expected, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let resp = parse_json(&output);
+    assert_eq!(
+        resp["hookSpecificOutput"]["permissionDecision"], "allow",
+        "substitution call to `resolve` must not ask: {resp}"
+    );
+    let reason = resp["hookSpecificOutput"]["permissionDecisionReason"]
+        .as_str()
+        .unwrap_or("");
+    assert!(
+        !reason.contains("No rule for command `resolve`"),
+        "substitution call must be internal: {reason}"
     );
 }
 
