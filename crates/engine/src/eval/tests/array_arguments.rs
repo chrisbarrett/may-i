@@ -166,7 +166,76 @@ fn length_resolves_to_count() {
     );
 }
 
+#[test]
+fn length_of_single_element_resolves_to_char_length() {
+    // `${#arr[1]}` is the character length of element 1 (`café` → 4).
+    let config = r#"(rule "tool" (when (anywhere "4") (allow "ok")))"#;
+    let result = decide(config, "arr=(x café y); tool \"${#arr[1]}\"");
+    assert_eq!(
+        result.decision,
+        Decision::Allow,
+        "length of element should be its char count: {:?}",
+        result.reason
+    );
+}
+
+#[test]
+fn star_length_resolves_to_count() {
+    // `${#arr[*]}` is the element count, like `${#arr[@]}`.
+    let config = r#"(rule "echo" (when (anywhere "2") (allow "two")))"#;
+    let result = decide(config, r#"arr=(a b); echo "${#arr[*]}""#);
+    assert_eq!(
+        result.decision,
+        Decision::Allow,
+        "star length should resolve to the count: {:?}",
+        result.reason
+    );
+}
+
 // -- Forms that must stay unresolved --
+
+#[test]
+fn length_of_element_with_dynamic_index_stays_unresolved() {
+    // `${#arr[$x]}` — the char-length of a dynamically-indexed element cannot be
+    // resolved (the index does not reduce to a known integer), so it floors.
+    let config = r#"(rule "echo" (when (anywhere (regex ".")) (allow "any")))"#;
+    let result = decide(config, r#"arr=(café x); echo "${#arr[$x]}""#);
+    assert!(
+        floored(&result),
+        "length of a dynamically-indexed element must floor: {:?} ({:?})",
+        result.decision,
+        result.reason
+    );
+}
+
+#[test]
+fn non_numeric_literal_index_stays_unresolved() {
+    // `${arr[notanumber]}` — a non-numeric subscript is an arithmetic
+    // expression bash evaluates (an unset name → 0); we do not model it, so it
+    // must floor rather than guess.
+    let config = r#"(rule "echo" (when (anywhere (regex ".")) (allow "any")))"#;
+    let result = decide(config, r#"arr=(a b); echo "${arr[notanumber]}""#);
+    assert!(
+        floored(&result),
+        "non-numeric literal index must floor: {:?} ({:?})",
+        result.decision,
+        result.reason
+    );
+}
+
+#[test]
+fn operator_element_poisons_the_array() {
+    // A non-word token inside the array literal (`|`) is not a modelled element;
+    // the array must not be treated as a constant sequence.
+    let config = r#"(rule "cmd" (when (anywhere (regex ".")) (allow "any")))"#;
+    let result = decide(config, r#"arr=(a | b); cmd "${arr[@]}""#);
+    assert!(
+        floored(&result),
+        "array with an unmodelled element must floor: {:?} ({:?})",
+        result.decision,
+        result.reason
+    );
+}
 
 #[test]
 fn star_form_stays_unresolved() {
