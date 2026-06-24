@@ -19,8 +19,10 @@ today an undeclared long flag consumes one of them.
   flag SHALL consume the next token as its value only when that token is a
   plausible value — i.e. **not** itself flag-shaped and **not** the `--`
   flag-stop. Declared parameters keep eating their next token regardless (the
-  author asserted the arity). Negative-number tokens (`-5`) remain plausible
-  values, not flags.
+  author asserted the arity); a flag declared as a boolean `(flag …)` is
+  treated as value-less and never consumes its successor (so declaring the flag
+  is the mitigation for the trailing-boolean-before-subcommand case).
+  Negative-number tokens (`-5`) remain plausible values, not flags.
 - **Never consume `--` (C′).** The `--` flag-stop SHALL never be absorbed as a
   flag value, so its terminator semantics always hold.
 - **Surface the residual guess as an Advisory (B).** When the heuristic still
@@ -56,9 +58,13 @@ _None._
 ## Impact
 
 - **Code**: `crates/engine/src/eval/entry.rs` (`parser_positional_indices` /
-  `parser_positional_args` — the `gnu_long_consumes_next` consume decision); the
-  Advisory must thread through the Trace producer (`traces`) and renderers
-  (`output-rendering`); reference text in `src/cmd_help.rs`.
+  `parser_positional_args` / `first_positional_index` — the
+  `gnu_long_consumes_next` consume decision plus the value-shape guard);
+  `crates/core/src/ast.rs` (`flag_token_matches`, so a declared `(flag …)`
+  suppresses the guess); a new `arity_guess_advisory` fold hook threaded
+  through `ComposedFold` and the Trace producer (`traces`) and renderers
+  (`output-rendering`); reference text in `REFERENCE.md` (embedded via
+  `src/cmd_help.rs`).
 - **Behaviour**: commands containing undeclared long flags re-tokenise. The fix
   direction is mostly `ask → allow` (structure restored); a narrow case (a
   trailing undeclared boolean before a guarded `(positional …)`) can shift the
