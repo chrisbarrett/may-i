@@ -104,7 +104,16 @@ pub fn check_config(config: &Config) -> Vec<ShapeMismatch> {
 fn env_for_rule(config: &Config, rule: &may_i_core::ast::Rule) -> ShapeEnv {
     let programs = crate::trust::extract_program_names(match &rule.command_effect.value {
         Effect::CommandPattern(p) => p,
-        _ => return ShapeEnv::default(),
+        Effect::Terminal { .. }
+        | Effect::ArgPattern(_)
+        | Effect::And { .. }
+        | Effect::Or { .. }
+        | Effect::Not { .. }
+        | Effect::When { .. }
+        | Effect::Unless { .. }
+        | Effect::If { .. }
+        | Effect::Cond { .. }
+        | Effect::Authorise { .. } => return ShapeEnv::default(),
     });
     let mut merged = HashMap::new();
     for prog in programs {

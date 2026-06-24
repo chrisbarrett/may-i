@@ -7,7 +7,11 @@ mod parse;
 pub(crate) mod resolve;
 mod segment;
 
+// Tests assert a value is one variant and `panic!` on anything else; a
+// catch-all arm is the point, not an oversight, so the exhaustive-match lint
+// does not apply here.
 #[cfg(test)]
+#[allow(clippy::wildcard_enum_match_arm)]
 mod tests;
 
 pub use ast::*;
@@ -31,6 +35,10 @@ pub fn parse(input: &str) -> ParseResult {
 /// simple command. Returns `None` for empty, assignment-only, or compound
 /// commands.
 pub fn parse_simple_command(input: &str) -> Option<(String, Vec<String>)> {
+    // The first arm guards `Command::Simple` on a non-empty word list; the
+    // catch-all must still cover `Simple` with empty words, so enumerating
+    // variants alone cannot reproduce the behaviour.
+    #[allow(clippy::wildcard_enum_match_arm)]
     match parse(input).command {
         Command::Simple(sc) if !sc.words.is_empty() => {
             let cmd = sc.words[0].to_str();
@@ -140,7 +148,16 @@ fn collect_all_words<'a>(cmd: &'a Command, out: &mut Vec<&'a Word>) {
         Command::Assignment(a) => {
             out.extend(a.value.words());
         }
-        _ => {}
+        Command::Pipeline(_)
+        | Command::And(_, _)
+        | Command::Or(_, _)
+        | Command::Sequence(_)
+        | Command::Background(_)
+        | Command::Subshell(_)
+        | Command::BraceGroup(_)
+        | Command::If { .. }
+        | Command::Loop { .. }
+        | Command::FunctionDef { .. } => {}
     }
     for child in cmd.children() {
         collect_all_words(child, out);
@@ -177,7 +194,19 @@ fn collect_structural_dynamic_parts(
                 }
             }
         }
-        _ => {}
+        Command::Simple(_)
+        | Command::Pipeline(_)
+        | Command::And(_, _)
+        | Command::Or(_, _)
+        | Command::Sequence(_)
+        | Command::Background(_)
+        | Command::Subshell(_)
+        | Command::BraceGroup(_)
+        | Command::If { .. }
+        | Command::Loop { .. }
+        | Command::FunctionDef { .. }
+        | Command::Redirected { .. }
+        | Command::Assignment(_) => {}
     }
     for child in cmd.children() {
         collect_structural_dynamic_parts(child, env, out);

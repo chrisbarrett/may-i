@@ -44,7 +44,7 @@ impl Sexpr {
     pub fn as_atom(&self) -> Option<&str> {
         match self {
             Sexpr::Keyword(s, _) | Sexpr::Symbol(s, _) => Some(s),
-            _ => None,
+            Sexpr::Binding(..) | Sexpr::String(..) | Sexpr::List(..) | Sexpr::Vector(..) => None,
         }
     }
 
@@ -53,7 +53,11 @@ impl Sexpr {
     pub fn as_binding(&self) -> Option<&str> {
         match self {
             Sexpr::Binding(s, _) => Some(s),
-            _ => None,
+            Sexpr::Keyword(..)
+            | Sexpr::Symbol(..)
+            | Sexpr::String(..)
+            | Sexpr::List(..)
+            | Sexpr::Vector(..) => None,
         }
     }
 
@@ -61,7 +65,11 @@ impl Sexpr {
     pub fn as_str(&self) -> Option<&str> {
         match self {
             Sexpr::String(s, _) => Some(s),
-            _ => None,
+            Sexpr::Keyword(..)
+            | Sexpr::Symbol(..)
+            | Sexpr::Binding(..)
+            | Sexpr::List(..)
+            | Sexpr::Vector(..) => None,
         }
     }
 
@@ -71,7 +79,7 @@ impl Sexpr {
     pub fn as_atom_or_str(&self) -> Option<&str> {
         match self {
             Sexpr::Keyword(s, _) | Sexpr::Symbol(s, _) | Sexpr::String(s, _) => Some(s),
-            _ => None,
+            Sexpr::Binding(..) | Sexpr::List(..) | Sexpr::Vector(..) => None,
         }
     }
 
@@ -79,7 +87,7 @@ impl Sexpr {
     pub fn as_list(&self) -> Option<&[Sexpr]> {
         match self {
             Sexpr::List(v, _) | Sexpr::Vector(v, _) => Some(v),
-            _ => None,
+            Sexpr::Keyword(..) | Sexpr::Symbol(..) | Sexpr::Binding(..) | Sexpr::String(..) => None,
         }
     }
 

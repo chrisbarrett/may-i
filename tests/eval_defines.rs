@@ -233,6 +233,9 @@ fn find_annotation_in_value(
     value: &serde_json::Value,
     ann_type: &str,
 ) -> Option<serde_json::Value> {
+    // `serde_json::Value` is an external `#[non_exhaustive]` enum; the scalar
+    // variants genuinely share the catch-all, so enumeration is not possible.
+    #[allow(clippy::wildcard_enum_match_arm)]
     match value {
         serde_json::Value::Object(map) => {
             if map.get("type").and_then(|t| t.as_str()) == Some(ann_type) {

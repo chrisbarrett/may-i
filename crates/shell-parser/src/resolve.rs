@@ -275,7 +275,10 @@ fn contains_expansion_sigil(s: &str) -> bool {
     false
 }
 
+// Tests assert a value is one variant and `panic!` on anything else; a
+// catch-all arm is the point here, not an oversight.
 #[cfg(test)]
+#[allow(clippy::wildcard_enum_match_arm)]
 mod prop_tests {
     use super::*;
     use proptest::prelude::*;

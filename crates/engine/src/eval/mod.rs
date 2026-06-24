@@ -29,5 +29,8 @@ pub(crate) use effects::{evaluate_effect, evaluate_effect_fold};
 #[cfg(test)]
 pub(crate) use predicates::evaluate_predicate;
 
+// Tests assert one variant and `panic!`/ignore the rest; the catch-all arm is
+// intentional here.
 #[cfg(test)]
+#[allow(clippy::wildcard_enum_match_arm)]
 mod tests;

@@ -94,7 +94,12 @@ impl<E: std::fmt::Debug + ToDoc> Expr<E> {
         match self {
             Expr::Wildcard => true,
             Expr::Bind { expr, .. } => expr.matches_any_value(),
-            _ => false,
+            Expr::Literal(_)
+            | Expr::Regex(_)
+            | Expr::And(_)
+            | Expr::Or(_)
+            | Expr::Not(_)
+            | Expr::Cond(_) => false,
         }
     }
 
@@ -319,6 +324,10 @@ impl PosTerm {
     /// uses this to collapse a single-sub-pattern quantifier head into a
     /// `Single` term, while a single *quantified* sub-pattern stays a group.
     pub fn into_bare_pattern(self) -> Result<Expr<Effect>, Self> {
+        // The first arm refines `Single` by quantifier value, so the remaining
+        // cases (non-`One` singles and all groups) cannot be enumerated as whole
+        // variants; the catch-all also rebinds `repr` to reconstruct `self`.
+        #[allow(clippy::wildcard_enum_match_arm)]
         match self.repr {
             PosTermRepr::Single {
                 quantifier: Quantifier::One,
@@ -602,7 +611,7 @@ mod tests {
                     }
                 ));
             }
-            _ => panic!("expected group"),
+            PosTermView::Single { .. } | PosTermView::Group { .. } => panic!("expected group"),
         }
     }
 

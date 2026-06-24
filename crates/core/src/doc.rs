@@ -34,7 +34,7 @@ impl<R> DocF<R> {
     pub fn as_atom(&self) -> Option<&str> {
         match self {
             DocF::Atom(s) => Some(s),
-            _ => None,
+            DocF::List(_) | DocF::Vector(_) => None,
         }
     }
 

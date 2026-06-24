@@ -144,7 +144,32 @@ impl Parser {
                     let next = self.parse_and_or();
                     commands.push(next);
                 }
-                _ => break,
+                Token::Word(_)
+                | Token::Pipe
+                | Token::And
+                | Token::Or
+                | Token::LParen
+                | Token::RParen
+                | Token::LBrace
+                | Token::RBrace
+                | Token::If
+                | Token::Then
+                | Token::Elif
+                | Token::Else
+                | Token::Fi
+                | Token::For
+                | Token::While
+                | Token::Until
+                | Token::Do
+                | Token::Done
+                | Token::Case
+                | Token::Esac
+                | Token::DoubleSemi
+                | Token::SemiAmp
+                | Token::DoubleSemiAmp
+                | Token::Function
+                | Token::Redirect(_)
+                | Token::Eof => break,
             }
         }
 
@@ -191,7 +216,33 @@ impl Parser {
                     let right = self.parse_pipeline();
                     left = Command::Or(Box::new(left), Box::new(right));
                 }
-                _ => break,
+                Token::Word(_)
+                | Token::Pipe
+                | Token::Semi
+                | Token::Amp
+                | Token::LParen
+                | Token::RParen
+                | Token::LBrace
+                | Token::RBrace
+                | Token::Newline
+                | Token::If
+                | Token::Then
+                | Token::Elif
+                | Token::Else
+                | Token::Fi
+                | Token::For
+                | Token::While
+                | Token::Until
+                | Token::Do
+                | Token::Done
+                | Token::Case
+                | Token::Esac
+                | Token::DoubleSemi
+                | Token::SemiAmp
+                | Token::DoubleSemiAmp
+                | Token::Function
+                | Token::Redirect(_)
+                | Token::Eof => break,
             }
         }
 
@@ -238,7 +289,27 @@ impl Parser {
             Token::Function => self.parse_function_def(),
             Token::LParen => self.parse_subshell(),
             Token::LBrace => self.parse_brace_group(),
-            _ => return self.parse_simple_command(),
+            Token::Word(_)
+            | Token::Pipe
+            | Token::And
+            | Token::Or
+            | Token::Semi
+            | Token::Amp
+            | Token::RParen
+            | Token::RBrace
+            | Token::Newline
+            | Token::Then
+            | Token::Elif
+            | Token::Else
+            | Token::Fi
+            | Token::Do
+            | Token::Done
+            | Token::Esac
+            | Token::DoubleSemi
+            | Token::SemiAmp
+            | Token::DoubleSemiAmp
+            | Token::Redirect(_)
+            | Token::Eof => return self.parse_simple_command(),
         };
         self.maybe_wrap_redirections(cmd)
     }
@@ -319,7 +390,33 @@ impl Parser {
                     self.advance();
                     redirections.push(redir);
                 }
-                _ => break,
+                Token::Pipe
+                | Token::And
+                | Token::Or
+                | Token::Semi
+                | Token::Amp
+                | Token::LParen
+                | Token::RParen
+                | Token::LBrace
+                | Token::RBrace
+                | Token::Newline
+                | Token::If
+                | Token::Then
+                | Token::Elif
+                | Token::Else
+                | Token::Fi
+                | Token::For
+                | Token::While
+                | Token::Until
+                | Token::Do
+                | Token::Done
+                | Token::Case
+                | Token::Esac
+                | Token::DoubleSemi
+                | Token::SemiAmp
+                | Token::DoubleSemiAmp
+                | Token::Function
+                | Token::Eof => break,
             }
         }
 
@@ -460,6 +557,11 @@ impl Parser {
         let mut elements = Vec::new();
         loop {
             self.skip_newlines();
+            // The guarded `other if keyword_token_text(..)` arm binds every
+            // remaining variant conditionally, so the catch-all's variant set
+            // overlaps the guard's domain; enumerating would not be a clean
+            // exhaustive split.
+            #[allow(clippy::wildcard_enum_match_arm)]
             match self.peek().clone() {
                 Token::RParen => {
                     self.advance();
@@ -583,7 +685,33 @@ impl Parser {
                     else_branch = Some(Box::new(body));
                     break;
                 }
-                _ => break,
+                Token::Word(_)
+                | Token::Pipe
+                | Token::And
+                | Token::Or
+                | Token::Semi
+                | Token::Amp
+                | Token::LParen
+                | Token::RParen
+                | Token::LBrace
+                | Token::RBrace
+                | Token::Newline
+                | Token::If
+                | Token::Then
+                | Token::Fi
+                | Token::For
+                | Token::While
+                | Token::Until
+                | Token::Do
+                | Token::Done
+                | Token::Case
+                | Token::Esac
+                | Token::DoubleSemi
+                | Token::SemiAmp
+                | Token::DoubleSemiAmp
+                | Token::Function
+                | Token::Redirect(_)
+                | Token::Eof => break,
             }
         }
 
@@ -772,7 +900,32 @@ impl Parser {
                     self.advance();
                     CaseTerminator::Continue
                 }
-                _ => CaseTerminator::Break,
+                Token::Word(_)
+                | Token::Pipe
+                | Token::And
+                | Token::Or
+                | Token::Semi
+                | Token::Amp
+                | Token::LParen
+                | Token::RParen
+                | Token::LBrace
+                | Token::RBrace
+                | Token::Newline
+                | Token::If
+                | Token::Then
+                | Token::Elif
+                | Token::Else
+                | Token::Fi
+                | Token::For
+                | Token::While
+                | Token::Until
+                | Token::Do
+                | Token::Done
+                | Token::Case
+                | Token::Esac
+                | Token::Function
+                | Token::Redirect(_)
+                | Token::Eof => CaseTerminator::Break,
             };
 
             self.skip_newlines();
@@ -880,7 +1033,22 @@ fn keyword_token_text(token: &Token) -> Option<&'static str> {
         Token::Case => "case",
         Token::Esac => "esac",
         Token::Function => "function",
-        _ => return None,
+        Token::Word(_)
+        | Token::Pipe
+        | Token::And
+        | Token::Or
+        | Token::Semi
+        | Token::Amp
+        | Token::LParen
+        | Token::RParen
+        | Token::LBrace
+        | Token::RBrace
+        | Token::Newline
+        | Token::DoubleSemi
+        | Token::SemiAmp
+        | Token::DoubleSemiAmp
+        | Token::Redirect(_)
+        | Token::Eof => return None,
     })
 }
 
@@ -920,7 +1088,10 @@ fn declaration_array_kind(words: &[Word]) -> Option<ArrayKind> {
     })
 }
 
+// Tests assert a value is one variant and `panic!` on anything else; a
+// catch-all arm is the point here, not an oversight.
 #[cfg(test)]
+#[allow(clippy::wildcard_enum_match_arm)]
 mod tests {
     use super::*;
     use crate::diagnostic::{ParseDiagnosticKind, Severity};

@@ -11,7 +11,20 @@ pub(crate) fn try_fold_static_cat(cmd: &str) -> Option<String> {
     // Command::Redirected only wraps compound commands (if/for/while/…).
     let sc = match &result.command {
         Command::Simple(sc) => sc,
-        _ => return None,
+        Command::Pipeline(_)
+        | Command::And(_, _)
+        | Command::Or(_, _)
+        | Command::Sequence(_)
+        | Command::Background(_)
+        | Command::Subshell(_)
+        | Command::BraceGroup(_)
+        | Command::If { .. }
+        | Command::For { .. }
+        | Command::Loop { .. }
+        | Command::Case { .. }
+        | Command::FunctionDef { .. }
+        | Command::Redirected { .. }
+        | Command::Assignment(_) => return None,
     };
     check_cat_heredoc(sc)
 }

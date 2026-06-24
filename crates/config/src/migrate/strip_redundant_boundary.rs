@@ -46,7 +46,7 @@ fn prelude_tail_tokens(prog: &str) -> Option<Vec<String>> {
     let parser = parsers.into_iter().find(|p| p.program == prog)?;
     match parser.flags_mode {
         FlagsMode::Until(toks) => Some(toks),
-        _ => None,
+        FlagsMode::Posix | FlagsMode::Permute => None,
     }
 }
 

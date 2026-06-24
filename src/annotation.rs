@@ -114,7 +114,16 @@ fn apply_terminal_effect(node: TraceNode, effect: &Effect) -> TraceNode {
                 reason: reason.clone(),
             }),
         ),
-        _ => node,
+        Effect::CommandPattern(..)
+        | Effect::ArgPattern(..)
+        | Effect::And { .. }
+        | Effect::Or { .. }
+        | Effect::Not { .. }
+        | Effect::When { .. }
+        | Effect::Unless { .. }
+        | Effect::If { .. }
+        | Effect::Cond { .. }
+        | Effect::Authorise { .. } => node,
     }
 }
 
@@ -140,6 +149,9 @@ fn positional_arg_to_doc(p: &may_i_core::pattern::PosTerm) -> Doc<()> {
 }
 
 fn capture_source(pattern: &ArgPattern) -> CaptureSource {
+    // The catch-all must also catch `Parameter { form: Match, .. }`, which a
+    // preceding arm partially matches; enumerating would not preserve that.
+    #[allow(clippy::wildcard_enum_match_arm)]
     match pattern {
         ArgPattern::Tail => CaptureSource::Tail,
         ArgPattern::Parameter {
@@ -261,7 +273,17 @@ fn truncate_matched_anywhere(node: TraceNode) -> TraceNode {
         && node.children().len() > 2
         && let Some(role) = match node.role() {
             Role::ArgMatch => Some(Role::ArgMatch),
-            _ => None,
+            Role::Plain
+            | Role::Rule { .. }
+            | Role::Command
+            | Role::FactQuery
+            | Role::EffectDecision
+            | Role::VarRef { .. }
+            | Role::Combinator
+            | Role::BindMatch { .. }
+            | Role::RegexMatch
+            | Role::PositionalMatch
+            | Role::CollapsedEllipsis => None,
         }
     {
         let ev = node.evidence().cloned();
@@ -659,7 +681,17 @@ fn annotate_pattern_element(node: TraceNode, detail: &PositionalElementDetail) -
             Role::Plain => Role::BindMatch {
                 key: bind.key.to_string(),
             },
-            other => other.clone(),
+            other @ (Role::Rule { .. }
+            | Role::Command
+            | Role::ArgMatch
+            | Role::FactQuery
+            | Role::EffectDecision
+            | Role::VarRef { .. }
+            | Role::Combinator
+            | Role::BindMatch { .. }
+            | Role::RegexMatch
+            | Role::PositionalMatch
+            | Role::CollapsedEllipsis) => other.clone(),
         };
         let evidence_to_apply = Some(Evidence::Bind {
             value: bind.value.clone(),
@@ -751,7 +783,7 @@ fn annotate_expr_match(node: TraceNode, detail: &may_i_engine::fold::ExprMatchDe
             }
             rebuilt
         }
-        _ => node,
+        ExprMatchDetail::Literal { .. } | ExprMatchDetail::Wildcard { .. } => node,
     }
 }
 
@@ -906,6 +938,8 @@ impl EvalFold for TracingFold {
         cmd: &str,
         matched: bool,
     ) -> Self::EffectOut {
+        // `CommandPattern` is `#[non_exhaustive]`, so a catch-all is required.
+        #[allow(clippy::wildcard_enum_match_arm)]
         let node = match pattern {
             CommandPattern::Or(sub_patterns) => {
                 let mut cs: Vec<TraceNode> = vec![plain_atom("or")];
@@ -1176,6 +1210,10 @@ impl EvalFold for TracingFold {
 
         let mut children = node.into_children().unwrap_or_default();
 
+        // Preceding arms partially match `Ordered` (only `continuation: None`),
+        // so the catch-all must still catch its other forms; enumerating would
+        // not preserve that.
+        #[allow(clippy::wildcard_enum_match_arm)]
         let trailing_cond_branch = match pattern {
             ArgPattern::Ordered {
                 mode: MatchMode::Positional,
@@ -1191,7 +1229,7 @@ impl EvalFold for TracingFold {
                 .last()
                 .and_then(|e| match e.match_kind {
                     PositionalMatchKind::CondBranch(idx) => Some(idx),
-                    _ => None,
+                    PositionalMatchKind::None | PositionalMatchKind::Expr(_) => None,
                 }),
             _ => None,
         };
@@ -1558,7 +1596,10 @@ impl std::fmt::Debug for TraceEntry {
     }
 }
 
+// Tests assert one variant and `panic!`/ignore the rest; the catch-all arm is
+// intentional here.
 #[cfg(test)]
+#[allow(clippy::wildcard_enum_match_arm)]
 mod tests {
     use super::*;
     use may_i_core::Span;

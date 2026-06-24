@@ -367,6 +367,9 @@ pub(super) fn render_cond<A: Clone + TriviaSource>(
     for (i, clause) in children[1..].iter().enumerate() {
         let is_last = i == children.len() - 2;
         let clause_dimmed = dimmed || clause.dimmed;
+        // The guarded `List` arm above shares the catch-all with short lists,
+        // atoms, and vectors, so enumerating variants can't preserve behaviour.
+        #[allow(clippy::wildcard_enum_match_arm)]
         match &clause.node {
             DocF::List(parts) if parts.len() >= 2 => {
                 emit_trivia_or_line(&clause.ann, body_indent, out);

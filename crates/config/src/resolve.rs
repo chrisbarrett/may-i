@@ -106,6 +106,8 @@ pub(crate) fn collect_named_refs(predicate: &Spanned<Predicate>) -> Vec<NamedRef
 }
 
 fn collect_refs_recursive(predicate: &Predicate, span: Span, refs: &mut Vec<NamedRef>) {
+    // `Predicate` is `#[non_exhaustive]`; remaining variants hold no nested predicates.
+    #[allow(clippy::wildcard_enum_match_arm)]
     match predicate {
         Predicate::Named(name) => {
             refs.push(NamedRef {
@@ -275,7 +277,11 @@ fn collect_refs_from_effect_recursive(effect: &Effect, _span: Span, refs: &mut V
         Effect::Not { effect } => {
             collect_refs_from_effect_recursive(&effect.value, effect.span, refs);
         }
-        _ => {} // Terminal effects and patterns don't contain predicates
+        // Terminal effects and patterns don't contain predicates
+        Effect::Terminal { .. }
+        | Effect::CommandPattern(_)
+        | Effect::ArgPattern(_)
+        | Effect::Authorise { .. } => {}
     }
 }
 
@@ -312,7 +318,10 @@ pub fn validate_and_resolve(
     Ok(rules.to_vec())
 }
 
+// Tests assert one variant and `panic!`/ignore the rest; the catch-all arm is
+// intentional here.
 #[cfg(test)]
+#[allow(clippy::wildcard_enum_match_arm)]
 mod tests {
     use super::*;
     use may_i_core::Decision;

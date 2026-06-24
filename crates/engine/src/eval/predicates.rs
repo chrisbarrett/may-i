@@ -208,6 +208,9 @@ pub(crate) fn captured_facts(pred: &Predicate, ctx: &EvalContext) -> may_i_core:
 
 fn collect_captures(pred: &Predicate, ctx: &EvalContext, out: &mut may_i_core::ContextFacts) {
     use super::positional::match_expr_with_binding;
+    // `Predicate` is `#[non_exhaustive]`; only the quantifier and boolean
+    // combinator arms below capture facts — all others bind nothing.
+    #[allow(clippy::wildcard_enum_match_arm)]
     match pred {
         Predicate::Every {
             binding, pattern, ..

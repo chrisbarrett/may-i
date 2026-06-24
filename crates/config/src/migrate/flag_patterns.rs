@@ -190,7 +190,7 @@ fn literal_value(node: &CstNode) -> Option<String> {
     match &node.shape {
         Shape::String(s) => Some(s.clone()),
         Shape::Symbol(s) => Some(s.clone()),
-        _ => None,
+        Shape::Keyword(_) | Shape::Binding(_) | Shape::List(_) | Shape::Vector(_) => None,
     }
 }
 

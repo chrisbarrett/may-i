@@ -221,7 +221,16 @@ impl Effect {
     pub fn matches_command(&self, command: &str) -> bool {
         match self {
             Effect::CommandPattern(pattern) => pattern.is_match(command),
-            _ => false,
+            Effect::Terminal { .. }
+            | Effect::ArgPattern(_)
+            | Effect::And { .. }
+            | Effect::Or { .. }
+            | Effect::Not { .. }
+            | Effect::When { .. }
+            | Effect::Unless { .. }
+            | Effect::If { .. }
+            | Effect::Cond { .. }
+            | Effect::Authorise { .. } => false,
         }
     }
 
@@ -1319,7 +1328,10 @@ fn collect_parameter_names_in_effect(effect: &Effect, out: &mut Vec<String>) {
                 collect_parameter_names_in_effect(&fb.value, out);
             }
         }
-        _ => {}
+        Effect::Terminal { .. }
+        | Effect::CommandPattern(_)
+        | Effect::ArgPattern(_)
+        | Effect::Authorise { .. } => {}
     }
 }
 

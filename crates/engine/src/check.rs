@@ -36,7 +36,19 @@ pub(crate) fn parse_check_command(input: &str) -> ParsedCheck {
     } else {
         match parser::parse(input).command {
             Command::Simple(_) | Command::Assignment(_) => ParsedCheck::Empty,
-            _ => ParsedCheck::Compound,
+            Command::Pipeline(_)
+            | Command::And(_, _)
+            | Command::Or(_, _)
+            | Command::Sequence(_)
+            | Command::Background(_)
+            | Command::Subshell(_)
+            | Command::BraceGroup(_)
+            | Command::If { .. }
+            | Command::For { .. }
+            | Command::Loop { .. }
+            | Command::Case { .. }
+            | Command::FunctionDef { .. }
+            | Command::Redirected { .. } => ParsedCheck::Compound,
         }
     }
 }

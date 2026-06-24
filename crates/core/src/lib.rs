@@ -9,7 +9,10 @@ pub mod primitives;
 pub mod span;
 pub mod trivia;
 
+// Test-support strategies; their tests assert one variant and treat the rest
+// as the catch-all, so the exhaustive-match lint does not apply.
 #[cfg(any(test, feature = "test-generators"))]
+#[allow(clippy::wildcard_enum_match_arm)]
 pub mod test_generators;
 
 #[cfg(any(test, feature = "arbitrary"))]

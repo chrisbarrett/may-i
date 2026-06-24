@@ -115,7 +115,7 @@ impl BindingValue {
     pub(crate) fn as_collection(&self) -> &[BoundToken] {
         match self {
             BindingValue::Tokens(v) => v,
-            _ => &[],
+            BindingValue::Token(_) | BindingValue::Count(_) | BindingValue::Unbound => &[],
         }
     }
 }
@@ -560,7 +560,10 @@ fn positional_tokens(
         .collect()
 }
 
+// Tests assert one variant and `panic!`/ignore the rest; the catch-all arm is
+// intentional here.
 #[cfg(test)]
+#[allow(clippy::wildcard_enum_match_arm)]
 mod tests {
     use super::*;
     use may_i_core::ast::{

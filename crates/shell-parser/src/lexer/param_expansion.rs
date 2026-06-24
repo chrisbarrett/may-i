@@ -513,7 +513,18 @@ fn collect_substitution_parts(parts: &[WordPart], out: &mut Vec<WordPart>) {
                 subscript: Subscript::Index(w),
                 ..
             } => collect_substitution_parts(&w.parts, out),
-            _ => {}
+            // `ArrayExpansion` with an `@`/`*` subscript carries no nested word,
+            // so it falls here alongside every leaf part.
+            WordPart::ArrayExpansion { .. }
+            | WordPart::Literal(_)
+            | WordPart::SingleQuoted(_)
+            | WordPart::AnsiCQuoted(_)
+            | WordPart::Parameter(_)
+            | WordPart::ParameterExpansion(_)
+            | WordPart::Arithmetic { .. }
+            | WordPart::BraceExpansion(_)
+            | WordPart::Glob(_)
+            | WordPart::Opaque(_) => {}
         }
     }
 }

@@ -11,7 +11,16 @@ fn is_dynamic_in(parts: &[WordPart]) -> bool {
         | WordPart::AnsiCQuoted(_)
         | WordPart::BraceExpansion(_) => false,
         WordPart::DoubleQuoted(inner) => is_dynamic_in(inner),
-        _ => true,
+        WordPart::Parameter(_)
+        | WordPart::ParameterExpansion(_)
+        | WordPart::ArrayExpansion { .. }
+        | WordPart::ParameterExpansionOp { .. }
+        | WordPart::CommandSubstitution { .. }
+        | WordPart::Backtick { .. }
+        | WordPart::Arithmetic { .. }
+        | WordPart::Glob(_)
+        | WordPart::ProcessSubstitution { .. }
+        | WordPart::Opaque(_) => true,
     })
 }
 
@@ -28,8 +37,12 @@ fn has_dynamic_in(parts: &[WordPart]) -> bool {
         | WordPart::Arithmetic { .. }
         | WordPart::ProcessSubstitution { .. } => true,
         WordPart::DoubleQuoted(inner) => has_dynamic_in(inner),
-        WordPart::Opaque(_) => false,
-        _ => false,
+        WordPart::Opaque(_)
+        | WordPart::Literal(_)
+        | WordPart::SingleQuoted(_)
+        | WordPart::AnsiCQuoted(_)
+        | WordPart::BraceExpansion(_)
+        | WordPart::Glob(_) => false,
     })
 }
 
@@ -54,7 +67,16 @@ fn collect_embedded_commands<'a>(parts: &'a [WordPart], out: &mut Vec<&'a str>) 
                 subscript: Subscript::Index(w),
                 ..
             } => collect_embedded_commands(&w.parts, out),
-            _ => {}
+            WordPart::Literal(_)
+            | WordPart::SingleQuoted(_)
+            | WordPart::AnsiCQuoted(_)
+            | WordPart::Parameter(_)
+            | WordPart::ParameterExpansion(_)
+            | WordPart::Arithmetic { .. }
+            | WordPart::BraceExpansion(_)
+            | WordPart::Glob(_)
+            | WordPart::Opaque(_)
+            | WordPart::ArrayExpansion { .. } => {}
         }
     }
 }
@@ -143,7 +165,16 @@ fn collect_embedded_with_spans<'a>(
                 subscript: Subscript::Index(w),
                 ..
             } => collect_embedded_with_spans(&w.parts, out),
-            _ => {}
+            WordPart::Literal(_)
+            | WordPart::SingleQuoted(_)
+            | WordPart::AnsiCQuoted(_)
+            | WordPart::Parameter(_)
+            | WordPart::ParameterExpansion(_)
+            | WordPart::Arithmetic { .. }
+            | WordPart::BraceExpansion(_)
+            | WordPart::Glob(_)
+            | WordPart::Opaque(_)
+            | WordPart::ArrayExpansion { .. } => {}
         }
     }
 }
@@ -189,7 +220,11 @@ fn collect_dynamic_from(parts: &[WordPart], out: &mut Vec<String>) {
                 collect_dynamic_from(inner, out);
             }
             WordPart::Opaque(_) => {} // safe, not dynamic
-            _ => {}
+            WordPart::Literal(_)
+            | WordPart::SingleQuoted(_)
+            | WordPart::AnsiCQuoted(_)
+            | WordPart::BraceExpansion(_)
+            | WordPart::Glob(_) => {}
         }
     }
 }
@@ -336,7 +371,19 @@ fn has_opaque_in(parts: &[WordPart]) -> bool {
     parts.iter().any(|part| match part {
         WordPart::Opaque(_) => true,
         WordPart::DoubleQuoted(inner) => has_opaque_in(inner),
-        _ => false,
+        WordPart::Literal(_)
+        | WordPart::SingleQuoted(_)
+        | WordPart::AnsiCQuoted(_)
+        | WordPart::Parameter(_)
+        | WordPart::ParameterExpansion(_)
+        | WordPart::ArrayExpansion { .. }
+        | WordPart::ParameterExpansionOp { .. }
+        | WordPart::CommandSubstitution { .. }
+        | WordPart::Backtick { .. }
+        | WordPart::Arithmetic { .. }
+        | WordPart::BraceExpansion(_)
+        | WordPart::Glob(_)
+        | WordPart::ProcessSubstitution { .. } => false,
     })
 }
 
@@ -464,7 +511,16 @@ fn resolve_parts<L: ConstLookup>(parts: &[WordPart], env: &L) -> Vec<WordPart> {
                 length,
             } => resolve_array_expansion(name, subscript, *length, env),
             WordPart::DoubleQuoted(inner) => WordPart::DoubleQuoted(resolve_parts(inner, env)),
-            _ => part.clone(),
+            WordPart::Literal(_)
+            | WordPart::SingleQuoted(_)
+            | WordPart::AnsiCQuoted(_)
+            | WordPart::CommandSubstitution { .. }
+            | WordPart::Backtick { .. }
+            | WordPart::Arithmetic { .. }
+            | WordPart::BraceExpansion(_)
+            | WordPart::Glob(_)
+            | WordPart::ProcessSubstitution { .. }
+            | WordPart::Opaque(_) => part.clone(),
         })
         .collect()
 }
@@ -572,7 +628,20 @@ fn resolves_to_safe_literal_in<L: ConstLookup>(parts: &[WordPart], env: &L, quot
             WordPart::Literal(val) => quoted || value_is_shell_inert(&val),
             // Stayed an operator form (unset head, or expandable operand held
             // back by `op_operands_are_inert`): not resolved → not safe.
-            _ => false,
+            WordPart::SingleQuoted(_)
+            | WordPart::DoubleQuoted(_)
+            | WordPart::AnsiCQuoted(_)
+            | WordPart::Parameter(_)
+            | WordPart::ParameterExpansion(_)
+            | WordPart::ArrayExpansion { .. }
+            | WordPart::ParameterExpansionOp { .. }
+            | WordPart::CommandSubstitution { .. }
+            | WordPart::Backtick { .. }
+            | WordPart::Arithmetic { .. }
+            | WordPart::BraceExpansion(_)
+            | WordPart::Glob(_)
+            | WordPart::ProcessSubstitution { .. }
+            | WordPart::Opaque(_) => false,
         },
         // A subscripted array reference is verbatim only when it resolves to a
         // single literal and that literal is shell-inert in unquoted position
@@ -584,7 +653,20 @@ fn resolves_to_safe_literal_in<L: ConstLookup>(parts: &[WordPart], env: &L, quot
             length,
         } => match resolve_array_expansion(name, subscript, *length, env) {
             WordPart::Literal(val) => quoted || value_is_shell_inert(&val),
-            _ => false,
+            WordPart::SingleQuoted(_)
+            | WordPart::DoubleQuoted(_)
+            | WordPart::AnsiCQuoted(_)
+            | WordPart::Parameter(_)
+            | WordPart::ParameterExpansion(_)
+            | WordPart::ArrayExpansion { .. }
+            | WordPart::ParameterExpansionOp { .. }
+            | WordPart::CommandSubstitution { .. }
+            | WordPart::Backtick { .. }
+            | WordPart::Arithmetic { .. }
+            | WordPart::BraceExpansion(_)
+            | WordPart::Glob(_)
+            | WordPart::ProcessSubstitution { .. }
+            | WordPart::Opaque(_) => false,
         },
         WordPart::DoubleQuoted(inner) => resolves_to_safe_literal_in(inner, env, true),
         // `Opaque` is a trusted variable whose *runtime value is unknown* (it
@@ -592,7 +674,13 @@ fn resolves_to_safe_literal_in<L: ConstLookup>(parts: &[WordPart], env: &L, quot
         // proven verbatim — consistent with `is_literal`/`is_dynamic`. Globs,
         // braces, command/arithmetic/process substitutions, and backticks are
         // likewise never provably verbatim.
-        _ => false,
+        WordPart::CommandSubstitution { .. }
+        | WordPart::Backtick { .. }
+        | WordPart::Arithmetic { .. }
+        | WordPart::BraceExpansion(_)
+        | WordPart::Glob(_)
+        | WordPart::ProcessSubstitution { .. }
+        | WordPart::Opaque(_) => false,
     })
 }
 
@@ -730,6 +818,8 @@ mod prop_tests {
             let resolved = word.resolve(&env);
 
             assert_eq!(resolved.parts.len(), 1);
+            // The catch-all is the test's assertion: any non-Literal variant is a failure.
+            #[allow(clippy::wildcard_enum_match_arm)]
             match &resolved.parts[0] {
                 WordPart::Literal(s) => assert_eq!(s, &value),
                 _ => panic!("Expected Literal after resolving variable"),
@@ -749,6 +839,8 @@ mod prop_tests {
             let resolved = word.resolve(&env);
 
             assert_eq!(resolved.parts.len(), 1);
+            // The catch-all is the test's assertion: any non-Parameter variant is a failure.
+            #[allow(clippy::wildcard_enum_match_arm)]
             match &resolved.parts[0] {
                 WordPart::Parameter(name) => assert_eq!(name, &var_name),
                 _ => panic!("Expected Parameter to stay unresolved when not in env"),

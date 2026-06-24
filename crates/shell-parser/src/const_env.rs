@@ -164,7 +164,18 @@ fn body_mutates(body: &Command, name: &str) -> bool {
         // C-NEW). Conservative even inside a subshell, where bash *does* scope
         // it: disqualifying there only over-asks.
         Command::For { var, body, .. } => var == name || body_mutates(body, name),
-        other => other.children().iter().any(|c| body_mutates(c, name)),
+        other @ (Command::Pipeline(_)
+        | Command::And(_, _)
+        | Command::Or(_, _)
+        | Command::Sequence(_)
+        | Command::Background(_)
+        | Command::Subshell(_)
+        | Command::BraceGroup(_)
+        | Command::If { .. }
+        | Command::Loop { .. }
+        | Command::Case { .. }
+        | Command::FunctionDef { .. }
+        | Command::Redirected { .. }) => other.children().iter().any(|c| body_mutates(c, name)),
     }
 }
 
@@ -360,7 +371,16 @@ fn collect(
         // loops, function bodies, `&&`/`||`, background) is conditional or
         // runs in a subshell: assignments within may not execute, may execute
         // out of order, or may not persist. Treat their contents as nested.
-        other => {
+        other @ (Command::Pipeline(_)
+        | Command::And(_, _)
+        | Command::Or(_, _)
+        | Command::Background(_)
+        | Command::Subshell(_)
+        | Command::BraceGroup(_)
+        | Command::If { .. }
+        | Command::Loop { .. }
+        | Command::Case { .. }
+        | Command::FunctionDef { .. }) => {
             for child in other.children() {
                 collect(child, true, occ, used);
             }
@@ -527,7 +547,16 @@ fn mark_used_parts(parts: &[WordPart], used: &mut HashSet<String>) {
                 }
             }
             WordPart::DoubleQuoted(inner) => mark_used_parts(inner, used),
-            _ => {}
+            WordPart::Literal(_)
+            | WordPart::SingleQuoted(_)
+            | WordPart::AnsiCQuoted(_)
+            | WordPart::CommandSubstitution { .. }
+            | WordPart::Backtick { .. }
+            | WordPart::Arithmetic { .. }
+            | WordPart::BraceExpansion(_)
+            | WordPart::Glob(_)
+            | WordPart::ProcessSubstitution { .. }
+            | WordPart::Opaque(_) => {}
         }
     }
 }

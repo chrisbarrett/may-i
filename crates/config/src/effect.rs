@@ -338,7 +338,10 @@ fn parse_not(args: &[Sexpr], span: may_i_core::Span) -> Result<Effect, RawError>
     })
 }
 
+// Tests assert one variant and `panic!`/ignore the rest; the catch-all arm is
+// intentional here.
 #[cfg(test)]
+#[allow(clippy::wildcard_enum_match_arm)]
 mod tests {
     use super::parse_effect;
     use may_i_core::Decision;

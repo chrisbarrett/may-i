@@ -57,7 +57,7 @@ fn atom_text(node: &CstNode) -> Option<&str> {
     use may_i_sexpr::cst::ShapeF;
     match &node.shape {
         ShapeF::String(s) | ShapeF::Symbol(s) => Some(s.as_str()),
-        _ => None,
+        ShapeF::Keyword(_) | ShapeF::Binding(_) | ShapeF::List(_) | ShapeF::Vector(_) => None,
     }
 }
 

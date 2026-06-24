@@ -42,7 +42,16 @@ pub fn extract_program_names(pattern: &CommandPattern) -> Vec<&str> {
 fn extract_command_programs(effect: &Effect) -> Vec<&str> {
     match effect {
         Effect::CommandPattern(pat) => extract_program_names(pat),
-        _ => vec![],
+        Effect::Terminal { .. }
+        | Effect::ArgPattern(_)
+        | Effect::And { .. }
+        | Effect::Or { .. }
+        | Effect::Not { .. }
+        | Effect::When { .. }
+        | Effect::Unless { .. }
+        | Effect::If { .. }
+        | Effect::Cond { .. }
+        | Effect::Authorise { .. } => vec![],
     }
 }
 
@@ -104,19 +113,24 @@ fn references_any_define(effect: &Effect, define_names: &BTreeSet<&str>) -> bool
             .iter()
             .any(|e| references_any_define(&e.value, define_names)),
         Effect::Not { effect } => references_any_define(&effect.value, define_names),
-        _ => false,
+        Effect::Terminal { .. }
+        | Effect::CommandPattern(_)
+        | Effect::ArgPattern(_)
+        | Effect::Authorise { .. } => false,
     }
 }
 
 /// Check if a predicate references any of the given define names.
 fn predicate_references_any(pred: &Predicate, define_names: &BTreeSet<&str>) -> bool {
+    // `Predicate` is `#[non_exhaustive]`; only `Named`/`And`/`Or`/`Not` can
+    // transitively reference a define — every other predicate cannot.
+    #[allow(clippy::wildcard_enum_match_arm)]
     match pred {
         Predicate::Named(name) => define_names.contains(name.as_str()),
         Predicate::And(preds) | Predicate::Or(preds) => preds
             .iter()
             .any(|p| predicate_references_any(p, define_names)),
         Predicate::Not(inner) => predicate_references_any(inner, define_names),
-        Predicate::Fact(_) | Predicate::Arg(_) => false,
         _ => false,
     }
 }

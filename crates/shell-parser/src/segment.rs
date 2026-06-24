@@ -25,6 +25,10 @@ pub fn segment(input: &str) -> Vec<Segment> {
     let mut cmd_start: Option<usize> = None;
 
     for (tok, byte_off) in &tokens {
+        // Guarded arms (`… if depth <= 0`) name operator and newline tokens;
+        // the catch-all must still cover those same variants when depth > 0,
+        // so enumerating variants alone would change behaviour.
+        #[allow(clippy::wildcard_enum_match_arm)]
         match tok {
             Token::Eof => {
                 // Flush any pending command segment
@@ -76,7 +80,33 @@ pub fn segment(input: &str) -> Vec<Segment> {
                 // Add the operator segment
                 let op_len = match tok {
                     Token::And | Token::Or => 2,
-                    _ => 1,
+                    Token::Word(_)
+                    | Token::Pipe
+                    | Token::Semi
+                    | Token::Amp
+                    | Token::LParen
+                    | Token::RParen
+                    | Token::LBrace
+                    | Token::RBrace
+                    | Token::Newline
+                    | Token::If
+                    | Token::Then
+                    | Token::Elif
+                    | Token::Else
+                    | Token::Fi
+                    | Token::For
+                    | Token::While
+                    | Token::Until
+                    | Token::Do
+                    | Token::Done
+                    | Token::Case
+                    | Token::Esac
+                    | Token::DoubleSemi
+                    | Token::SemiAmp
+                    | Token::DoubleSemiAmp
+                    | Token::Function
+                    | Token::Redirect(_)
+                    | Token::Eof => 1,
                 };
                 segments.push(Segment {
                     start: *byte_off,

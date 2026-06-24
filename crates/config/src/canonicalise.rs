@@ -274,7 +274,9 @@ fn flag_or_parameter_sort_key(node: &CstNode) -> String {
             .min()
             .map(|s| s.to_string())
             .unwrap_or_default(),
-        _ => String::new(),
+        ShapeF::Keyword(_) | ShapeF::Symbol(_) | ShapeF::Binding(_) | ShapeF::List(_) => {
+            String::new()
+        }
     }
 }
 

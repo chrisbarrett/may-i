@@ -311,6 +311,10 @@ fn collect_simple_command_units(
     budget: usize,
     units: &mut Vec<EvalUnit>,
 ) {
+    // The `For` arm below is guarded (unrollable loops only); the catch-all must
+    // still handle non-unrollable `For` nodes, so enumerating variants here would
+    // change behaviour.
+    #[allow(clippy::wildcard_enum_match_arm)]
     match cmd {
         Command::Simple(sc) => {
             decompose_simple_command(
@@ -439,7 +443,18 @@ fn push_embedded_units_from_structural_words(
                 }
             }
         }
-        _ => {}
+        Command::Simple(_)
+        | Command::Pipeline(_)
+        | Command::And(_, _)
+        | Command::Or(_, _)
+        | Command::Sequence(_)
+        | Command::Background(_)
+        | Command::Subshell(_)
+        | Command::BraceGroup(_)
+        | Command::If { .. }
+        | Command::Loop { .. }
+        | Command::FunctionDef { .. }
+        | Command::Redirected { .. } => {}
     }
     for child in cmd.children() {
         push_embedded_units_from_structural_words(child, diagnostics, tainted_env, units);
@@ -468,7 +483,19 @@ fn push_embedded_units_from_redirect_targets(
             command,
             redirections,
         } => (redirections.as_slice(), first_simple_span(command)),
-        _ => (&[], (0, 0)),
+        Command::Pipeline(_)
+        | Command::And(_, _)
+        | Command::Or(_, _)
+        | Command::Sequence(_)
+        | Command::Background(_)
+        | Command::Subshell(_)
+        | Command::BraceGroup(_)
+        | Command::If { .. }
+        | Command::For { .. }
+        | Command::Loop { .. }
+        | Command::Case { .. }
+        | Command::FunctionDef { .. }
+        | Command::Assignment(_) => (&[], (0, 0)),
     };
     for redirection in redirections {
         match &redirection.target {
@@ -672,7 +699,13 @@ fn collect_parameter_names(word: &Word, out: &mut Vec<String>) {
                         walk(&w.parts, out);
                     }
                 }
-                _ => {}
+                WordPart::Literal(_)
+                | WordPart::SingleQuoted(_)
+                | WordPart::AnsiCQuoted(_)
+                | WordPart::CommandSubstitution { .. }
+                | WordPart::Backtick { .. }
+                | WordPart::ProcessSubstitution { .. }
+                | WordPart::Opaque(_) => {}
             }
         }
     }
@@ -1332,7 +1365,14 @@ fn classify(
             // to the parent); compound interiors are conditionally reached.
             // Classify their calls as deferred and conservatively drop any name
             // the region might unset from the spine's `live` set.
-            _ => {
+            Command::Pipeline(_)
+            | Command::Background(_)
+            | Command::Subshell(_)
+            | Command::BraceGroup(_)
+            | Command::If { .. }
+            | Command::For { .. }
+            | Command::Loop { .. }
+            | Command::Case { .. } => {
                 remove_possible_unsets(cmd, const_env, live);
                 for child in cmd.children() {
                     classify(
@@ -1486,7 +1526,16 @@ fn command_words(cmd: &Command) -> Vec<&Word> {
                 }
             }
         }
-        _ => {}
+        Command::Pipeline(_)
+        | Command::And(_, _)
+        | Command::Or(_, _)
+        | Command::Sequence(_)
+        | Command::Background(_)
+        | Command::Subshell(_)
+        | Command::BraceGroup(_)
+        | Command::If { .. }
+        | Command::Loop { .. }
+        | Command::FunctionDef { .. } => {}
     }
     out
 }
@@ -1502,6 +1551,10 @@ fn command_words(cmd: &Command) -> Vec<&Word> {
 fn collect_substitution_starts(word: &Word, out: &mut Vec<usize>) {
     fn walk(parts: &[WordPart], out: &mut Vec<usize>) {
         for part in parts {
+            // The `ArrayExpansion` arm matches only the `Index` subscript; the
+            // catch-all must still handle `All`/`Star`, so enumerating variants
+            // here would change behaviour.
+            #[allow(clippy::wildcard_enum_match_arm)]
             match part {
                 WordPart::CommandSubstitution { span, .. }
                 | WordPart::Backtick { span, .. }
@@ -1526,6 +1579,10 @@ fn collect_substitution_starts(word: &Word, out: &mut Vec<usize>) {
 /// the only definitions eligible to *establish* a function for Tier 2.
 fn spine_def_positions(cmd: &Command) -> Vec<(usize, String)> {
     fn walk(cmd: &Command, out: &mut Vec<(usize, String)>) {
+        // The `FunctionDef` arm is guarded (non-empty name only); the catch-all
+        // must still handle empty-named defs, so enumerating variants here would
+        // change behaviour.
+        #[allow(clippy::wildcard_enum_match_arm)]
         match cmd {
             Command::Sequence(cmds) => {
                 for c in cmds {
@@ -1630,7 +1687,10 @@ fn push_embedded_units_from_word(
         });
     }
 }
+// Tests assert one variant and `panic!`/ignore the rest; the catch-all arm is
+// intentional here.
 #[cfg(test)]
+#[allow(clippy::wildcard_enum_match_arm)]
 mod tests {
     use super::*;
     use may_i_shell_parser::parse;

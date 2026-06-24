@@ -183,7 +183,10 @@ pub(crate) fn build_catalog(config: &Config, store: TrustStore) -> TrustCatalog 
     TrustCatalog { views, store }
 }
 
+// Tests assert one variant and `panic!`/ignore the rest; the catch-all arm is
+// intentional here.
 #[cfg(test)]
+#[allow(clippy::wildcard_enum_match_arm)]
 mod tests {
     use std::path::PathBuf;
 

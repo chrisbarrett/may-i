@@ -618,6 +618,8 @@ pub(crate) fn build_expr_match_detail<E: std::fmt::Debug + may_i_core::ToDoc>(
     value: &str,
 ) -> Option<crate::fold::ExprMatchDetail> {
     use may_i_core::pattern::Expr;
+    // `Expr` is `#[non_exhaustive]`; only literal/regex/wildcard yield detail.
+    #[allow(clippy::wildcard_enum_match_arm)]
     match expr {
         Expr::Literal(s) => Some(crate::fold::ExprMatchDetail::Literal {
             expected: s.clone(),

@@ -402,7 +402,7 @@ fn parse_flag_names(sexpr: &Sexpr) -> Result<Vec<String>, RawError> {
             }
             names
         }
-        _ => {
+        Sexpr::Keyword(..) | Sexpr::Binding(..) | Sexpr::List(..) => {
             return Err(RawError::new(
                 "flag name must be a string or a vector of strings",
                 sexpr.span(),
@@ -469,6 +469,9 @@ fn parse_positional_form(
 /// sub-pattern — it is an implicit-sequence `Group`. Sub-patterns may
 /// themselves be quantifier forms, so groups nest.
 pub(crate) fn parse_positional_arg(sexpr: &Sexpr) -> Result<PosTerm, RawError> {
+    // The guarded `List` arm means the catch-all must still also match empty
+    // lists, so enumerating the remaining variants would change behaviour.
+    #[allow(clippy::wildcard_enum_match_arm)]
     match sexpr {
         Sexpr::List(list, _) if !list.is_empty() => {
             let tag = list[0]
@@ -521,7 +524,10 @@ fn parse_quantified(
     Ok(PosTerm::group(quantifier, seq).expect("body is non-empty"))
 }
 
+// Tests assert one variant and `panic!`/ignore the rest; the catch-all arm is
+// intentional here.
 #[cfg(test)]
+#[allow(clippy::wildcard_enum_match_arm)]
 mod tests {
     use super::*;
     use may_i_core::pattern::PosTermView;

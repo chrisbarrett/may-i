@@ -714,13 +714,14 @@ fn find_parameter_value_with_parser(
         .filter(|s| !s.trim().is_empty() && s.as_str() != "=")
         .cloned()
         .collect();
-    let many_till_terminator =
-        parser
-            .parameter_decl_for_token_in(&tokens)
-            .and_then(|d| match &d.capture {
-                may_i_core::ast::Capture::ManyTill { terminator } => Some(terminator.clone()),
-                _ => None,
-            });
+    let many_till_terminator = parser.parameter_decl_for_token_in(&tokens).and_then(|d| {
+        // `Capture` is `#[non_exhaustive]`; only `ManyTill` is relevant here.
+        #[allow(clippy::wildcard_enum_match_arm)]
+        match &d.capture {
+            may_i_core::ast::Capture::ManyTill { terminator } => Some(terminator.clone()),
+            _ => None,
+        }
+    });
     let mut i = 0;
     while i < args.len() {
         let arg = &args[i];
@@ -803,9 +804,13 @@ fn evaluate_parameter_fold<F: EvalFold>(
     let many_till = ctx
         .parser
         .parameter_decl_for_token_in(&tokens)
-        .and_then(|d| match &d.capture {
-            may_i_core::ast::Capture::ManyTill { terminator } => Some(terminator.clone()),
-            _ => None,
+        .and_then(|d| {
+            // `Capture` is `#[non_exhaustive]`; only `ManyTill` is relevant here.
+            #[allow(clippy::wildcard_enum_match_arm)]
+            match &d.capture {
+                may_i_core::ast::Capture::ManyTill { terminator } => Some(terminator.clone()),
+                _ => None,
+            }
         });
     let outer_exp = ctx.expansions_for_prefix(outer_args.len());
     if matches!(form, ParameterForm::Authorise)

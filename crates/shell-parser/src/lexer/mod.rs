@@ -395,7 +395,31 @@ impl Lexer {
             }
             // Separators, operators, and all reserved-word tokens allow a
             // reserved word to follow.
-            _ => true,
+            Token::Pipe
+            | Token::And
+            | Token::Or
+            | Token::Semi
+            | Token::Amp
+            | Token::LParen
+            | Token::RParen
+            | Token::LBrace
+            | Token::RBrace
+            | Token::Newline
+            | Token::If
+            | Token::Then
+            | Token::Elif
+            | Token::Else
+            | Token::Fi
+            | Token::For
+            | Token::While
+            | Token::Until
+            | Token::Do
+            | Token::Done
+            | Token::Case
+            | Token::Esac
+            | Token::DoubleSemi
+            | Token::SemiAmp
+            | Token::DoubleSemiAmp => true,
         }
     }
 
@@ -604,7 +628,11 @@ impl Lexer {
             }
             // Input/Output/Append/Clobber and Herestring all take a word
             // target and share the process-substitution handling below.
-            _ => {
+            RedirectionKind::Input
+            | RedirectionKind::Output
+            | RedirectionKind::Append
+            | RedirectionKind::Clobber
+            | RedirectionKind::Herestring => {
                 self.skip_whitespace();
                 // A process-substitution target (`… < <(cmd)`): consume the
                 // whole `<( … )` as the target so the inner command is

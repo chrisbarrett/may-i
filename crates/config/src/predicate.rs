@@ -186,7 +186,11 @@ fn parse_fact_query(sexpr: &Sexpr) -> Result<FactQuery, RawError> {
     // Vector syntax: presence or value check
     let items = match sexpr {
         Sexpr::Vector(items, _) => items,
-        _ => {
+        Sexpr::Keyword(..)
+        | Sexpr::Symbol(..)
+        | Sexpr::Binding(..)
+        | Sexpr::String(..)
+        | Sexpr::List(..) => {
             return Err(RawError::new(
                 "fact query must be a namespaced key or vector like [:key] or [:key pattern]",
                 sexpr.span(),
@@ -298,7 +302,10 @@ fn parse_fact_pattern(sexpr: &Sexpr) -> Result<FactPattern, RawError> {
     }
 }
 
+// Tests assert one variant and `panic!`/ignore the rest; the catch-all arm is
+// intentional here.
 #[cfg(test)]
+#[allow(clippy::wildcard_enum_match_arm)]
 mod tests {
     use super::*;
     use may_i_core::pattern::{ArgPattern, MatchMode};

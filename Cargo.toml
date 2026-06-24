@@ -12,6 +12,9 @@ vec_box = "allow"
 # Test fixtures and proptest strategies use tuple types that triple-nest
 # generic types; factoring into named aliases adds noise without clarity.
 type_complexity = "allow"
+# Ban catch-all `_` arms over enum variants: exhaustive matches force every
+# variant to be handled, so adding a variant surfaces every site that must change.
+wildcard_enum_match_arm = "deny"
 
 [lints]
 workspace = true

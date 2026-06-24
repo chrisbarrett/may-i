@@ -659,7 +659,10 @@ fn check_effect_named_defines(
             }
             Ok(())
         }
-        _ => Ok(()),
+        Effect::Terminal { .. }
+        | Effect::CommandPattern(_)
+        | Effect::ArgPattern(_)
+        | Effect::Authorise { .. } => Ok(()),
     }
 }
 
@@ -669,6 +672,9 @@ fn check_predicate_named_defines<'a>(
     defines: &std::collections::HashMap<&'a str, &'a Predicate>,
     seen: &mut Vec<&'a str>,
 ) -> Result<(), RawError> {
+    // `Predicate` is `#[non_exhaustive]`; the catch-all binds the remaining
+    // variants for `validate_capability_predicate`.
+    #[allow(clippy::wildcard_enum_match_arm)]
     match pred {
         Predicate::Named(name) => {
             if seen.contains(&name.as_str()) {
@@ -720,7 +726,11 @@ fn parse_with_facts(
 fn parse_fact_literal(sexpr: &Sexpr) -> Result<ContextFacts, RawError> {
     let items = match sexpr {
         Sexpr::Vector(items, _) => items,
-        _ => {
+        Sexpr::Keyword(..)
+        | Sexpr::Symbol(..)
+        | Sexpr::Binding(..)
+        | Sexpr::String(..)
+        | Sexpr::List(..) => {
             return Err(RawError::new(
                 "with-facts requires a fact vector",
                 sexpr.span(),
@@ -750,7 +760,11 @@ fn parse_fact_literal(sexpr: &Sexpr) -> Result<ContextFacts, RawError> {
 fn parse_fact_entry(entry: &Sexpr) -> Result<(Keyword, Option<String>), RawError> {
     let items = match entry {
         Sexpr::Vector(items, _) => items,
-        _ => {
+        Sexpr::Keyword(..)
+        | Sexpr::Symbol(..)
+        | Sexpr::Binding(..)
+        | Sexpr::String(..)
+        | Sexpr::List(..) => {
             return Err(RawError::new(
                 "fact entries must be vectors like [:key] or [:key \"value\"]",
                 entry.span(),

@@ -205,5 +205,8 @@ mod effect_eval_tests;
 mod fold_properties;
 #[cfg(test)]
 mod integration_tests;
+// Tests assert one variant and `panic!`/ignore the rest; the catch-all arm is
+// intentional here.
 #[cfg(test)]
+#[allow(clippy::wildcard_enum_match_arm)]
 mod predicate_eval_tests;

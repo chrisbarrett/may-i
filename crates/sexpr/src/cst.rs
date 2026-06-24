@@ -276,7 +276,7 @@ impl<A> CstNode<A> {
     pub fn as_atom(&self) -> Option<&str> {
         match &self.shape {
             ShapeF::Keyword(s) | ShapeF::Symbol(s) => Some(s),
-            _ => None,
+            ShapeF::Binding(_) | ShapeF::String(_) | ShapeF::List(_) | ShapeF::Vector(_) => None,
         }
     }
 
@@ -285,7 +285,11 @@ impl<A> CstNode<A> {
     pub fn as_binding(&self) -> Option<&str> {
         match &self.shape {
             ShapeF::Binding(s) => Some(s),
-            _ => None,
+            ShapeF::Keyword(_)
+            | ShapeF::Symbol(_)
+            | ShapeF::String(_)
+            | ShapeF::List(_)
+            | ShapeF::Vector(_) => None,
         }
     }
 
@@ -293,7 +297,11 @@ impl<A> CstNode<A> {
     pub fn as_str(&self) -> Option<&str> {
         match &self.shape {
             ShapeF::String(s) => Some(s),
-            _ => None,
+            ShapeF::Keyword(_)
+            | ShapeF::Symbol(_)
+            | ShapeF::Binding(_)
+            | ShapeF::List(_)
+            | ShapeF::Vector(_) => None,
         }
     }
 
@@ -301,7 +309,11 @@ impl<A> CstNode<A> {
     pub fn as_list(&self) -> Option<&[Box<CstNode<A>>]> {
         match &self.shape {
             ShapeF::List(children) => Some(children),
-            _ => None,
+            ShapeF::Keyword(_)
+            | ShapeF::Symbol(_)
+            | ShapeF::Binding(_)
+            | ShapeF::String(_)
+            | ShapeF::Vector(_) => None,
         }
     }
 
@@ -856,7 +868,10 @@ pub fn reflow(node: &CstNode<TriviaAnn>) -> CstNode<TriviaAnn> {
     })
 }
 
+// Tests assert one shape variant and `panic!`/ignore the rest; the catch-all
+// arm is intentional here.
 #[cfg(test)]
+#[allow(clippy::wildcard_enum_match_arm)]
 mod tests {
     use super::*;
 
@@ -1701,6 +1716,7 @@ mod tests {
 }
 
 #[cfg(test)]
+#[allow(clippy::wildcard_enum_match_arm)]
 mod proptests {
     use super::*;
     use proptest::prelude::*;
@@ -2657,6 +2673,7 @@ mod proptests {
 }
 
 #[cfg(test)]
+#[allow(clippy::wildcard_enum_match_arm)]
 mod post_order_rewrite_tests {
     use super::*;
     use proptest::prelude::*;
