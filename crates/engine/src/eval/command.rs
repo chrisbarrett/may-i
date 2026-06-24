@@ -3,7 +3,7 @@ use may_i_core::{ContextFacts, Decision, Keyword};
 use may_i_shell_parser as parser;
 
 use crate::fold::{EvalFold, PureFold};
-use crate::{EvalError, EvalResult, SegmentDecision};
+use crate::{DisplaySafe, EvalError, EvalResult, SegmentDecision};
 
 use super::context::{DEFAULT_RECURSION_LIMIT, EvalContext};
 use super::decompose::{EmbeddedKind, EvalUnit, SubstitutionOrigin, decompose};
@@ -98,33 +98,12 @@ fn resolve_redirect_decision(
     }
 }
 
-/// Escape control characters (e.g. newlines from `$'\n'` ANSI-C
-/// quoting) when interpolating a parsed command name into a reason
-/// string. The reason is consumed as a single JSON value by the
-/// Claude Code hook surface, so embedded newlines corrupt it.
-pub(super) fn escape_for_reason(s: &str) -> String {
-    if !s.chars().any(|c| c.is_control()) {
-        return s.to_string();
-    }
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        if c.is_control() {
-            out.extend(c.escape_default());
-        } else {
-            out.push(c);
-        }
-    }
-    out
-}
-
-/// Reason for flooring an `:allow` that relied on a match against one or
+/// DisplaySafe for flooring an `:allow` that relied on a match against one or
 /// more expansion-bearing words. Names each word (source-faithful,
-/// control-escaped, deduplicated) on a single line.
+/// deduplicated) on a single line. Control-escaping is the [`DisplaySafe`] sink's
+/// job — this builds the raw text only.
 pub(super) fn unresolved_expansion_reason(words: &[String]) -> String {
-    let mut names: Vec<String> = words
-        .iter()
-        .map(|w| format!("`{}`", escape_for_reason(w)))
-        .collect();
+    let mut names: Vec<String> = words.iter().map(|w| format!("`{w}`")).collect();
     names.sort();
     names.dedup();
     format!(
@@ -144,22 +123,17 @@ pub(super) fn unresolved_expansion_reason(words: &[String]) -> String {
 /// (`SimpleCommand(None)`) and a process substitution (`kind == None`) carry no
 /// nameable owner and fall back to the generic `(embedded substitution)` form.
 ///
-/// Idempotent on already-annotated reasons: if `inner` already contains
-/// ` substitution in ` the original is returned unchanged so that nested
-/// substitutions don't accumulate layers of parens.
+/// Wraps unconditionally. The sole caller (`eval_units`' `EmbeddedCommand`
+/// arm) guarantees this runs at most once per reason by gating on the
+/// structural `inner_annotated` flag, never by sniffing the reason text.
+/// Single-wrap across nested substitutions is thus an evaluation-structure
+/// invariant, and a command name's text can no longer suppress or forge the
+/// clause.
 fn annotate_embedded_reason(
     inner: &str,
     kind: Option<EmbeddedKind>,
     origin: &SubstitutionOrigin,
 ) -> String {
-    // Already-annotated reasons are returned unchanged. Both the named clause
-    // (`… substitution in …`) and the generic fallback (`… (embedded
-    // substitution)`) are recognised, so a substitution bubbling through two
-    // embedding layers — e.g. a nested process substitution, which always takes
-    // the generic path — does not accumulate a second suffix.
-    if inner.contains(" substitution in ") || inner.ends_with(" (embedded substitution)") {
-        return inner.to_string();
-    }
     let generic = || format!("{inner} (embedded substitution)");
     let form = match kind {
         Some(EmbeddedKind::Backtick) => "backtick",
@@ -169,12 +143,12 @@ fn annotate_embedded_reason(
     };
     let location = match origin {
         SubstitutionOrigin::SimpleCommand(Some(name)) => {
-            format!("in `{}`", escape_for_reason(name))
+            format!("in `{name}`")
         }
         // A dynamic command name cannot be named; fall back to generic.
         SubstitutionOrigin::SimpleCommand(None) => return generic(),
         SubstitutionOrigin::Assignment(name) => {
-            format!("in assignment to `{}`", escape_for_reason(name))
+            format!("in assignment to `{name}`")
         }
         SubstitutionOrigin::ForList => "in `for` list".to_string(),
         SubstitutionOrigin::CaseSubject => "in `case` subject".to_string(),
@@ -217,7 +191,9 @@ pub fn evaluate_command_with_fold<F: EvalFold>(
     facts: &ContextFacts,
     fold: &mut F,
 ) -> Result<EvalResult, EvalError> {
-    eval_units(
+    // The top-level entry discards the origin-annotation flag; only the
+    // `EmbeddedCommand` recursion consumes it.
+    Ok(eval_units(
         input,
         config,
         facts,
@@ -226,7 +202,8 @@ pub fn evaluate_command_with_fold<F: EvalFold>(
         None,
         Some(0),
         &std::collections::HashSet::new(),
-    )
+    )?
+    .0)
 }
 
 /// The single command-evaluation core: parse `input`, decompose it into
@@ -242,6 +219,13 @@ pub fn evaluate_command_with_fold<F: EvalFold>(
 /// - `segments` is `Some(outer_offset)` to collect `SegmentDecision`s in
 ///   outermost coordinates (top-level, for display), or `None` to skip
 ///   collection (the authorise path, which has no display surface).
+///
+/// Returns the aggregate [`EvalResult`] together with a boolean meaning *the
+/// aggregate reason already carries a substitution-origin clause*. The flag is
+/// out-of-band evaluation state: only the `EmbeddedCommand` recursion consumes
+/// it (to decide whether to re-annotate), so a command's text can never
+/// suppress or forge the annotation. The two other direct callers
+/// (`evaluate_command_with_fold`, `evaluate_authorised_string`) discard it.
 #[allow(clippy::too_many_arguments)]
 fn eval_units<F: EvalFold>(
     input: &str,
@@ -252,21 +236,24 @@ fn eval_units<F: EvalFold>(
     via: Option<&str>,
     segments: Option<usize>,
     inherited_fns: &std::collections::HashSet<String>,
-) -> Result<EvalResult, EvalError> {
+) -> Result<(EvalResult, bool), EvalError> {
     if depth >= DEFAULT_RECURSION_LIMIT {
-        return Ok(EvalResult::new(
-            Decision::Ask,
-            Some(format!(
-                "recursion depth limit ({DEFAULT_RECURSION_LIMIT}) exceeded"
-            )),
+        return Ok((
+            EvalResult::new(
+                Decision::Ask,
+                Some(DisplaySafe::new(format!(
+                    "recursion depth limit ({DEFAULT_RECURSION_LIMIT}) exceeded"
+                ))),
+            ),
+            false,
         ));
     }
 
     let trimmed = input.trim();
     if trimmed.is_empty() {
-        let reason = "empty command".to_string();
+        let reason = DisplaySafe::new("empty command");
         let _out = fold.default_ask(&reason);
-        return Ok(EvalResult::new(Decision::Ask, Some(reason)));
+        return Ok((EvalResult::new(Decision::Ask, Some(reason)), false));
     }
 
     // Push the carrier's `:via` fact once, seen by every unit and every
@@ -295,17 +282,22 @@ fn eval_units<F: EvalFold>(
     );
 
     if units.is_empty() {
-        let reason = "empty command".to_string();
+        let reason = DisplaySafe::new("empty command");
         let _out = fold.default_ask(&reason);
-        return Ok(EvalResult::new(Decision::Ask, Some(reason)));
+        return Ok((EvalResult::new(Decision::Ask, Some(reason)), false));
     }
 
     let mut aggregate_decision = Decision::Allow;
-    let mut aggregate_reason: Option<String> = None;
+    let mut aggregate_reason: Option<DisplaySafe> = None;
+    // Whether `aggregate_reason` already carries a substitution-origin clause.
+    // Adopted from whichever unit's reason wins the strictest-wins meet; only
+    // an `EmbeddedCommand` unit ever sets it true. Determined structurally, so
+    // a command's text cannot flip it.
+    let mut aggregate_annotated = false;
     // Lowest-priority reason from internal calls (script-local functions),
     // surfaced only when no decisive unit produced one. See the aggregate
     // loop below.
-    let mut internal_call_reason: Option<String> = None;
+    let mut internal_call_reason: Option<DisplaySafe> = None;
     let mut segment_decisions: Vec<SegmentDecision> = Vec::new();
     // Spans of structural floors (env prefixes, redirect targets) — they
     // raise overlapping segments to at least `:ask` after the loop, like
@@ -318,6 +310,9 @@ fn eval_units<F: EvalFold>(
 
     for unit in &units {
         let unit_span = unit.span();
+        // Set true only by the `EmbeddedCommand` arm when its reason carries a
+        // substitution-origin clause. Every other unit leaves it false.
+        let mut unit_annotated = false;
         let result = match unit {
             EvalUnit::SimpleCommand {
                 command,
@@ -340,7 +335,7 @@ fn eval_units<F: EvalFold>(
                 origin,
                 inherited_fns,
             } => {
-                let embedded_result = eval_units(
+                let (embedded_result, inner_annotated) = eval_units(
                     source,
                     config,
                     &effective_facts,
@@ -351,18 +346,25 @@ fn eval_units<F: EvalFold>(
                     inherited_fns,
                 )?;
                 fold.embedded_command(source, embedded_result.decision);
-                let annotated_reason = embedded_result
-                    .reason
-                    .as_deref()
-                    .map(|r| annotate_embedded_reason(r, *kind, origin));
+                // Annotate at most once: if the bubbled reason already carries
+                // an origin clause (a nested substitution annotated it deeper
+                // down), pass it through; otherwise wrap it here. Decided by
+                // the structural `inner_annotated` flag, never by reason text.
+                let annotated_reason: Option<DisplaySafe> = match &embedded_result.reason {
+                    Some(r) if inner_annotated => Some(r.clone()),
+                    Some(r) => Some(DisplaySafe::new(annotate_embedded_reason(r, *kind, origin))),
+                    None => None,
+                };
+                unit_annotated = annotated_reason.is_some();
                 EvalResult {
                     reason: annotated_reason,
                     ..embedded_result
                 }
             }
             EvalUnit::DynamicCommand { reason, .. } => {
-                let _out = fold.default_ask(reason);
-                EvalResult::new(Decision::Ask, Some(reason.clone()))
+                let reason = DisplaySafe::new(reason.clone());
+                let _out = fold.default_ask(&reason);
+                EvalResult::new(Decision::Ask, Some(reason))
             }
             // A call to a function this command defines is internal: the body
             // was authorised once at its definition, so the call itself runs
@@ -371,10 +373,9 @@ fn eval_units<F: EvalFold>(
             // raises the aggregate (Allow is the floor).
             EvalUnit::LocalFunctionCall { name, .. } => {
                 fold.local_function_call(name);
-                let reason = format!(
-                    "internal call to script-local function `{}` — body authorised at its definition",
-                    escape_for_reason(name)
-                );
+                let reason = DisplaySafe::new(format!(
+                    "internal call to script-local function `{name}` — body authorised at its definition"
+                ));
                 EvalResult::new(Decision::Allow, Some(reason))
             }
             // A `NAME=VALUE` prefix. An unconditional-allow name (the
@@ -398,21 +399,19 @@ fn eval_units<F: EvalFold>(
                 match decision {
                     Some((Decision::Allow, _)) => continue,
                     Some((decision, reason)) => {
-                        let reason = reason.unwrap_or_else(|| {
+                        let reason = DisplaySafe::new(reason.unwrap_or_else(|| {
                             format!(
-                                "environment prefix `{}` is governed by an (env …) capability",
-                                escape_for_reason(name)
+                                "environment prefix `{name}` is governed by an (env …) capability"
                             )
-                        });
+                        }));
                         floor_spans.push(*span);
                         let _out = fold.default_ask(&reason);
                         EvalResult::new(decision, Some(reason))
                     }
                     None => {
-                        let reason = format!(
-                            "environment prefix `{}` is not in (safe-env-vars …)",
-                            escape_for_reason(name)
-                        );
+                        let reason = DisplaySafe::new(format!(
+                            "environment prefix `{name}` is not in (safe-env-vars …)"
+                        ));
                         floor_spans.push(*span);
                         let _out = fold.default_ask(&reason);
                         EvalResult::new(Decision::Ask, Some(reason))
@@ -435,12 +434,9 @@ fn eval_units<F: EvalFold>(
                 if decision == Decision::Allow {
                     continue;
                 }
-                let reason = cap_reason.unwrap_or_else(|| {
-                    format!(
-                        "command carries a redirect (`{operator} {}`)",
-                        escape_for_reason(target)
-                    )
-                });
+                let reason = DisplaySafe::new(cap_reason.unwrap_or_else(|| {
+                    format!("command carries a redirect (`{operator} {target}`)")
+                }));
                 floor_spans.push(*span);
                 let _out = fold.default_ask(&reason);
                 EvalResult::new(decision, Some(reason))
@@ -453,12 +449,9 @@ fn eval_units<F: EvalFold>(
                 let cap_decision = fold_env_capabilities(config, &effective_facts, name);
                 match cap_decision {
                     Some((decision, reason)) if decision > Decision::Allow => {
-                        let reason = reason.unwrap_or_else(|| {
-                            format!(
-                                "environment variable `{}` is read into a command argument",
-                                escape_for_reason(name)
-                            )
-                        });
+                        let reason = DisplaySafe::new(reason.unwrap_or_else(|| {
+                            format!("environment variable `{name}` is read into a command argument")
+                        }));
                         floor_spans.push(*span);
                         let _out = fold.default_ask(&reason);
                         EvalResult::new(decision, Some(reason))
@@ -506,6 +499,7 @@ fn eval_units<F: EvalFold>(
         } else if result.decision >= aggregate_decision {
             aggregate_decision = result.decision;
             aggregate_reason = result.reason;
+            aggregate_annotated = unit_annotated;
         }
     }
 
@@ -513,10 +507,12 @@ fn eval_units<F: EvalFold>(
     // prefixes): mirror the empty-units case rather than falling through
     // to the initial `:allow`.
     if !any_decisive_unit && aggregate_decision == Decision::Allow && aggregate_reason.is_none() {
-        let reason = "empty command".to_string();
+        let reason = DisplaySafe::new("empty command");
         let _out = fold.default_ask(&reason);
         aggregate_decision = Decision::Ask;
         aggregate_reason = Some(reason);
+        // `aggregate_annotated` is still its initial `false` here: no unit won
+        // the meet, so the only line that sets it true never ran.
     }
 
     // An all-internal `:allow` (every unit a call to a script-local function)
@@ -544,7 +540,8 @@ fn eval_units<F: EvalFold>(
     if has_parse_errors {
         if aggregate_decision < Decision::Ask {
             aggregate_decision = Decision::Ask;
-            aggregate_reason = Some(parse_error_reason(&diagnostics, input));
+            aggregate_reason = Some(DisplaySafe::new(parse_error_reason(&diagnostics, input)));
+            aggregate_annotated = false;
         }
         for seg in &mut segment_decisions {
             if seg.decision < Decision::Ask {
@@ -556,7 +553,7 @@ fn eval_units<F: EvalFold>(
     let mut eval_result = EvalResult::new(aggregate_decision, aggregate_reason);
     eval_result.parse_diagnostics = diagnostics;
     eval_result.segment_decisions = segment_decisions;
-    Ok(eval_result)
+    Ok((eval_result, aggregate_annotated))
 }
 
 /// Evaluate `input` as a full shell command line on behalf of an
@@ -595,7 +592,9 @@ pub(crate) fn evaluate_authorised_string<F: EvalFold>(
     // surface — but otherwise goes through the same core as the top-level
     // path, including `:via` injection, embedded-reason annotation, fold
     // events, and the parse-error floor.
-    eval_units(
+    // The authorise path discards the origin-annotation flag (it has no
+    // enclosing substitution to re-annotate for).
+    Ok(eval_units(
         input,
         effective_config,
         facts,
@@ -604,7 +603,8 @@ pub(crate) fn evaluate_authorised_string<F: EvalFold>(
         via_program,
         None,
         &std::collections::HashSet::new(),
-    )
+    )?
+    .0)
 }
 
 /// Token-list sibling of [`evaluate_authorised_string`].
@@ -649,16 +649,16 @@ pub(crate) fn evaluate_authorised_tokens<F: EvalFold>(
     if depth >= DEFAULT_RECURSION_LIMIT {
         return Ok(EvalResult::new(
             Decision::Ask,
-            Some(format!(
+            Some(DisplaySafe::new(format!(
                 "recursion depth limit ({DEFAULT_RECURSION_LIMIT}) exceeded"
-            )),
+            ))),
         ));
     }
 
     if tokens.is_empty() {
         return Ok(EvalResult::new(
             Decision::Ask,
-            Some("empty command".to_string()),
+            Some(DisplaySafe::new("empty command")),
         ));
     }
 
@@ -674,7 +674,9 @@ pub(crate) fn evaluate_authorised_tokens<F: EvalFold>(
         return Ok(match &expansions[0] {
             Some(display) if result.decision == Decision::Allow => EvalResult::new(
                 Decision::Ask,
-                Some(unresolved_expansion_reason(std::slice::from_ref(display))),
+                Some(DisplaySafe::new(unresolved_expansion_reason(
+                    std::slice::from_ref(display),
+                ))),
             ),
             _ => result,
         });
@@ -684,9 +686,9 @@ pub(crate) fn evaluate_authorised_tokens<F: EvalFold>(
     if command.is_empty() || contains_shell_metacharacter(command) {
         return Ok(EvalResult::new(
             Decision::Ask,
-            Some(format!(
+            Some(DisplaySafe::new(format!(
                 "dynamic or malformed inner command name: {command:?}"
-            )),
+            ))),
         ));
     }
     // An expansion-bearing command name flattens to a plausible-looking
@@ -694,10 +696,9 @@ pub(crate) fn evaluate_authorised_tokens<F: EvalFold>(
     if let Some(display) = &expansions[0] {
         return Ok(EvalResult::new(
             Decision::Ask,
-            Some(format!(
-                "dynamic inner command name: {}",
-                escape_for_reason(display)
-            )),
+            Some(DisplaySafe::new(format!(
+                "dynamic inner command name: {display}"
+            ))),
         ));
     }
 
@@ -1240,6 +1241,28 @@ mod tests {
     }
 
     #[test]
+    fn command_name_with_annotation_phrase_does_not_suppress_clause() {
+        // The inner command name is the literal text `a substitution in b`
+        // (single-quoted, no rule matches it). A text-sniffing idempotency
+        // guard would see ` substitution in ` in the bubbled reason and
+        // suppress the enclosing substitution's origin clause — exactly the
+        // adversary-controllable degradation this change removes. The clause
+        // naming `echo` MUST survive.
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        let result = evaluate_command(
+            r#"echo "$('a substitution in b')""#,
+            &config,
+            &empty_facts(),
+        )
+        .unwrap();
+        assert_eq!(result.decision, Decision::Ask);
+        assert_eq!(
+            result.reason.as_deref(),
+            Some("No rule for command `a substitution in b` ($(...) substitution in `echo`)")
+        );
+    }
+
+    #[test]
     fn top_level_no_rule_reason_is_not_annotated() {
         let config = config_with_rules(vec![]);
         let result = evaluate_command("kubectl get pods", &config, &empty_facts()).unwrap();
@@ -1267,6 +1290,29 @@ mod tests {
         assert_eq!(
             count, 1,
             "expected exactly one ` substitution in ` clause, got {count}: {reason}"
+        );
+    }
+
+    #[test]
+    fn nested_process_substitution_does_not_double_wrap() {
+        // A process substitution (kind `None`) always takes the generic
+        // `(embedded substitution)` clause. When it bubbles through an
+        // enclosing substitution the structural `inner_annotated` flag must
+        // suppress re-wrapping — no `… (embedded substitution) ($(...)
+        // substitution in `echo`)` and no doubled generic clause.
+        let config = config_with_rules(vec![allow_rule("echo"), allow_rule("cat")]);
+        let result =
+            evaluate_command(r#"echo "$(cat <(badcmd))""#, &config, &empty_facts()).unwrap();
+        assert_eq!(result.decision, Decision::Ask);
+        let reason = result.reason.as_deref().unwrap_or("");
+        assert_eq!(
+            reason.matches("(embedded substitution)").count(),
+            1,
+            "expected exactly one generic clause: {reason}"
+        );
+        assert!(
+            !reason.contains(" substitution in "),
+            "generic clause must not gain a named owner from the outer layer: {reason}"
         );
     }
 
@@ -1316,25 +1362,10 @@ mod tests {
             annotate_embedded_reason("No rule for command `x`", None, &RedirectTarget),
             "No rule for command `x` (embedded substitution)"
         );
-        // Idempotent: an already-annotated reason is returned unchanged.
-        let once = dollar(ForList);
-        assert_eq!(
-            annotate_embedded_reason(
-                &once,
-                Some(EmbeddedKind::Dollar),
-                &SimpleCommand(Some("y".into()))
-            ),
-            once
-        );
-        // Idempotent on the generic clause too — a process substitution bubbling
-        // through two layers must not double-wrap into `… (embedded
-        // substitution) (embedded substitution)`.
-        let generic_once =
-            annotate_embedded_reason("No rule for command `x`", None, &RedirectTarget);
-        assert_eq!(
-            annotate_embedded_reason(&generic_once, None, &RedirectTarget),
-            generic_once
-        );
+        // Single-wrap across nesting is no longer this function's concern (it
+        // wraps unconditionally); the `EmbeddedCommand` arm's structural flag
+        // owns idempotency. See `nested_embedded_substitution_does_not_double_wrap`
+        // and `nested_process_substitution_does_not_double_wrap`.
     }
 
     #[test]
@@ -1567,6 +1598,41 @@ mod tests {
         );
     }
 
+    /// A *dynamic* command name (a command substitution in command position)
+    /// is named in its reason via `dynamic_parts()`, a separate interpolation
+    /// path from the static-name one. A raw control byte in that source must
+    /// be escaped too — the spec requires every input-derived name be
+    /// control-escaped, not only the simple-command path.
+    #[test]
+    fn control_char_in_dynamic_command_name_is_escaped_in_reason() {
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        // A parameter expansion in command position is a dynamic command name;
+        // a raw control byte in its operand source flows through
+        // `dynamic_parts()` into the reason and must be escaped.
+        let result = evaluate_command("${x-\u{1b}foo}", &config, &empty_facts()).unwrap();
+        let reason = result.reason.as_deref().unwrap_or("");
+        assert!(
+            !reason.chars().any(|c| c.is_control()),
+            "dynamic-command reason must carry no raw control char: {reason:?}"
+        );
+    }
+
+    /// Terminated `$'\n'` inside a substitution decodes to a real newline in
+    /// the inner command name, which is then interpolated into the bubbled,
+    /// origin-annotated reason. The escape on that path must hold so the
+    /// reason stays single-line. Complements the unterminated-`$'\n` case
+    /// above and pins the substitution-interpolated-name variant.
+    #[test]
+    fn newline_command_name_in_substitution_is_escaped_in_reason() {
+        let config = config_with_rules(vec![allow_rule("echo")]);
+        let result = evaluate_command(r#"echo "$($'\n'x)""#, &config, &empty_facts()).unwrap();
+        let reason = result.reason.as_deref().unwrap_or("");
+        assert!(
+            !reason.contains('\n'),
+            "reason must contain no raw newline: {reason:?}"
+        );
+    }
+
     // -- POSIX line continuation regression (2026-05-18 incident) --
 
     #[test]
@@ -1672,7 +1738,7 @@ mod tests {
     #[test]
     fn parse_error_reason_names_diagnostic_kind_and_location() {
         let config = config_with_rules(vec![allow_rule("echo")]);
-        // Unterminated single quote — Error severity. Reason should
+        // Unterminated single quote — Error severity. DisplaySafe should
         // name the diagnostic and a line position.
         let result = evaluate_command("echo 'unterminated", &config, &empty_facts()).unwrap();
         assert_eq!(result.decision, Decision::Ask);
@@ -2092,6 +2158,37 @@ mod tests {
         crate::eval::tests::arb_shell_chars()
     }
 
+    /// Inputs that provably drive a control character into a command-name
+    /// position, so `prop_reason_is_single_line` actually exercises the
+    /// `DisplaySafe` escaping sink on the reason-interpolated-name path rather than
+    /// passing vacuously. Mixes raw non-separator control bytes (`\x00`,
+    /// `\x1b`, …) and ANSI-C source forms (`$'\n'`, `$'\t'`), placed at top
+    /// level and inside a substitution, with ordinary shell soup as a control
+    /// arm.
+    fn arb_reason_input() -> impl Strategy<Value = String> {
+        // Raw control bytes that are NOT shell word separators, so they land
+        // inside the command-name token rather than splitting it.
+        let raw_ctrl = prop::sample::select(vec!['\u{0}', '\u{1}', '\u{7}', '\u{8}', '\u{1b}']);
+        // ANSI-C quoting forms that decode to a control char *within* a word —
+        // the only way a newline/tab reaches a name instead of separating it.
+        let ansi_c = prop::sample::select(vec![r"$'\n'", r"$'\t'", r"$'\r'", r"$'\x1b'"]);
+        let template = prop::sample::select(vec![
+            "{x}cmd", // control char opens a top-level command name
+            "{x}cmd arg",
+            r#"echo "$({x}cmd)""#, // …inside a $() substitution's name
+            "dest=$({x}cmd)",      // …inside an assignment's substitution
+            "cat <({x}cmd)",       // …inside a process substitution's name
+            "`{x}cmd`",            // …in a backtick command-sub *as* the command name (dynamic)
+            "$({x}cmd) z",         // …in a $() command-sub as the command name (dynamic)
+            "${v-{x}foo}",         // …in a parameter-expansion operand (dynamic command name)
+        ]);
+        prop_oneof![
+            (raw_ctrl, template.clone()).prop_map(|(c, t)| t.replace("{x}", &c.to_string())),
+            (ansi_c, template).prop_map(|(s, t)| t.replace("{x}", s)),
+            crate::eval::tests::arb_shell_chars(),
+        ]
+    }
+
     /// Well-formed shell pipelines built from a fixed command/arg/operator
     /// vocabulary. Used to property-test that a leading `!` is transparent:
     /// these never carry parse errors, so reasons (which embed line/column
@@ -2220,18 +2317,21 @@ mod tests {
             }
         }
 
-        /// The reason field is consumed as a single JSON string value
-        /// in the Claude Code hook surface (`permissionDecisionReason`).
-        /// An embedded newline corrupts that surface; this invariant
-        /// guards every reason-producing path at once.
+        /// The reason field is surfaced as a single value: a JSON string on
+        /// the Claude Code hook surface (`permissionDecisionReason`) and a
+        /// raw-printed line on the `may-i eval` TTY surface. A raw control
+        /// character corrupts the latter (newline breaks the line, `\x1b`
+        /// injects a terminal escape), so NO input-derived name may carry one
+        /// unescaped. The spec requires "no raw newline or other control
+        /// character"; assert exactly that, across every reason-producing path.
         #[test]
-        fn prop_reason_is_single_line(input in arb_input()) {
+        fn prop_reason_is_single_line(input in arb_reason_input()) {
             let config = config_with_rules(vec![allow_rule("echo"), deny_rule("rm")]);
             let result = evaluate_command(&input, &config, &empty_facts()).unwrap();
             if let Some(reason) = &result.reason {
                 prop_assert!(
-                    !reason.contains('\n'),
-                    "multi-line reason for {input:?}: {reason:?}"
+                    !reason.chars().any(|c| c.is_control()),
+                    "reason carries a raw control character for {input:?}: {reason:?}"
                 );
             }
         }

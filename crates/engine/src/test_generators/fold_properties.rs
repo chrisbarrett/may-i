@@ -281,7 +281,7 @@ proptest! {
         };
         let result = eval::evaluate(&cmd, &args, &config, &facts).unwrap();
         prop_assert_eq!(result.decision, Decision::Allow);
-        prop_assert_eq!(result.reason, Some(reason),
+        prop_assert_eq!(result.reason.as_deref(), Some(reason.as_str()),
             "Should use terminal effect's reason, not bare predicate Allow");
     }
 
@@ -327,7 +327,7 @@ proptest! {
         };
         let result = eval::evaluate(&cmd, &args, &config, &facts).unwrap();
         prop_assert_eq!(result.decision, Decision::Ask);
-        prop_assert_eq!(result.reason, Some("fallback".into()),
+        prop_assert_eq!(result.reason.as_deref(), Some("fallback"),
             "Should skip first rule and match second");
     }
 }

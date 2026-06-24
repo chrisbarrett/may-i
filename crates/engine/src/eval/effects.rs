@@ -342,7 +342,10 @@ fn recurse_into_bound_command<F: EvalFold>(
     };
     Ok(fold.effect_terminal(
         effect,
-        EffectResult::Decision(eval_result.decision, eval_result.reason),
+        EffectResult::Decision(
+            eval_result.decision,
+            eval_result.reason.map(|r| r.to_string()),
+        ),
     ))
 }
 
@@ -558,9 +561,12 @@ fn evaluate_tail_authorise_fold<F: EvalFold>(
         let inner_terminal = fold.effect_terminal(
             &Effect::Terminal {
                 decision: eval_result.decision,
-                reason: eval_result.reason.clone(),
+                reason: eval_result.reason.as_ref().map(|r| r.to_string()),
             },
-            EffectResult::Decision(eval_result.decision, eval_result.reason),
+            EffectResult::Decision(
+                eval_result.decision,
+                eval_result.reason.map(|r| r.to_string()),
+            ),
         );
         fold.effect_arg_continuation(pattern, ctx.args, detail, inner_terminal)
     })
@@ -896,9 +902,12 @@ fn recurse_into_inner_command<F: EvalFold>(
     let inner_terminal = fold.effect_terminal(
         &Effect::Terminal {
             decision: eval_result.decision,
-            reason: eval_result.reason.clone(),
+            reason: eval_result.reason.as_ref().map(|r| r.to_string()),
         },
-        EffectResult::Decision(eval_result.decision, eval_result.reason),
+        EffectResult::Decision(
+            eval_result.decision,
+            eval_result.reason.map(|r| r.to_string()),
+        ),
     );
     Ok(fold.effect_arg_continuation(pattern, ctx.args, detail, inner_terminal))
 }

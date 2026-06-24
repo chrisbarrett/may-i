@@ -19,7 +19,7 @@ fn eval_effect(effect: &Effect, ctx: &EvalContext) -> EffectResult {
     let rules = [rule];
     let evaluator = Evaluator::new(&rules);
     let result = evaluator.evaluate(&mut crate::fold::PureFold, ctx).unwrap();
-    EffectResult::Decision(result.decision, result.reason)
+    EffectResult::Decision(result.decision, result.reason.map(|r| r.to_string()))
 }
 
 proptest! {
@@ -379,7 +379,7 @@ proptest! {
     }
 
     // 4.3.4 Property: Most-strict rule wins under Allow < Ask < Deny.
-    // Reason ties to the earliest matching rule at the strictest effect.
+    // DisplaySafe ties to the earliest matching rule at the strictest effect.
     #[test]
     fn most_strict_rule_wins(
         cmd_name in "[a-zA-Z][a-zA-Z0-9]{0,9}",
@@ -411,7 +411,7 @@ proptest! {
         };
         let result = evaluate(&cmd_name, &args, &config, &facts).unwrap();
         prop_assert_eq!(result.decision, Decision::Deny);
-        prop_assert_eq!(result.reason, Some("second".to_string()));
+        prop_assert_eq!(result.reason.as_deref(), Some("second"));
     }
 
     // Reversing the rule list does not change `Decision`. The chosen
@@ -617,7 +617,7 @@ mod combine_lattice_tests {
             ..Config::default()
         };
         let r = evaluate(cmd, &[], &config, &facts).unwrap();
-        (r.decision, r.reason)
+        (r.decision, r.reason.map(|r| r.to_string()))
     }
 
     #[test]

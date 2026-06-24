@@ -35,8 +35,14 @@ command:
 - Make the escaping invariant load-bearing: extend the reason-invariant property
   test (or add a focused one) so a control character provably flows through a
   reason-interpolated name (command name), exercising `escape_for_reason`.
+- Enforce display-safety in the type system rather than by per-site discipline:
+  introduce a `DisplaySafe` newtype with a single escaping smart constructor and make
+  `EvalResult.reason` an `Option<DisplaySafe>`, so no reason-building site can ever
+  emit an unescaped reason (the post-review `DynamicCommand` leak proved per-site
+  escaping is whack-a-mole). The scattered `escape_for_reason` calls are deleted;
+  the newtype's constructor is the single choke point.
 - No change to any decision, classification, segment, or trust-hash behaviour —
-  purely the integrity of the diagnostic string and its test coverage.
+  purely the integrity of the diagnostic string, its type, and its test coverage.
 
 ## Capabilities
 

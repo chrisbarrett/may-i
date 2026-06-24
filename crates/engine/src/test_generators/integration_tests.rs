@@ -159,7 +159,7 @@ fn combined_and_or_not_in_rule() {
     // Or returns first non-Nil = Allow("or-allow")
     // And returns last = Allow("and-second")
     assert_eq!(result.decision, Decision::Allow);
-    assert_eq!(result.reason, Some("and-second".to_string()));
+    assert_eq!(result.reason.as_deref(), Some("and-second"));
 }
 
 // ── Order independence (order-independent-rules change) ─────────────
@@ -180,7 +180,7 @@ fn order_independence_allow_and_deny_coexist_deny_wins() {
     };
     let result = evaluate("rm", &args, &config, &facts).unwrap();
     assert_eq!(result.decision, Decision::Deny);
-    assert_eq!(result.reason, Some("dangerous".to_string()));
+    assert_eq!(result.reason.as_deref(), Some("dangerous"));
 
     // Deny before allow.
     let config = Config {
@@ -189,7 +189,7 @@ fn order_independence_allow_and_deny_coexist_deny_wins() {
     };
     let result = evaluate("rm", &args, &config, &facts).unwrap();
     assert_eq!(result.decision, Decision::Deny);
-    assert_eq!(result.reason, Some("dangerous".to_string()));
+    assert_eq!(result.reason.as_deref(), Some("dangerous"));
 }
 
 #[test]
@@ -216,8 +216,8 @@ fn order_independence_tied_deny_reasons_sorted_joined() {
 
     assert_eq!(result_ba.decision, Decision::Deny);
     assert_eq!(result_ab.decision, Decision::Deny);
-    assert_eq!(result_ba.reason, Some("A; B".to_string()));
-    assert_eq!(result_ab.reason, Some("A; B".to_string()));
+    assert_eq!(result_ba.reason.as_deref(), Some("A; B"));
+    assert_eq!(result_ab.reason.as_deref(), Some("A; B"));
 }
 
 #[test]
@@ -233,7 +233,7 @@ fn order_independence_identical_deny_reasons_deduplicated() {
     let args: Vec<String> = vec![];
     let result = evaluate("rm", &args, &config, &facts).unwrap();
     assert_eq!(result.decision, Decision::Deny);
-    assert_eq!(result.reason, Some("no rm".to_string()));
+    assert_eq!(result.reason.as_deref(), Some("no rm"));
 }
 
 proptest::proptest! {

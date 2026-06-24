@@ -901,6 +901,11 @@ fn decompose_simple_command(
 
     if dynamic_unresolved {
         units.push(EvalUnit::DynamicCommand {
+            // Raw, input-derived text. Control-escaping is the `DisplaySafe` sink's
+            // job (applied when this becomes an `EvalResult` reason in
+            // `eval_units`), so the unit carries the source-faithful
+            // description unescaped — a control byte in an expansion operand
+            // (`${x-<ctrl>}`) is neutralised at that single choke point.
             reason: format!(
                 "dynamic command name: {}",
                 first_word.dynamic_parts().join(", ")
