@@ -616,7 +616,9 @@ fn check_dup(
             }
             // Same kind: last-wins, drop the earlier declaration that
             // contained this name.
-            eprintln!("warning: duplicate {kind} declaration for `{n}` — last declaration wins");
+            crate::record_advisory(format!(
+                "warning: duplicate {kind} declaration for `{n}` — last declaration wins"
+            ));
             if kind == "flag" {
                 flags.retain(|decl| !decl.names.iter().any(|s| s == n));
             } else {

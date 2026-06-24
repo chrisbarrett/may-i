@@ -9,7 +9,7 @@ use std::path::Path;
 use serde::Deserialize;
 
 use may_i::cmd_eval::evaluate_with_colorization;
-use may_i::output::{self, EvalOutput};
+use may_i::output::EvalOutput;
 use may_i::pipeline::CommandPipeline;
 use may_i::trust::InvocationTrust;
 use may_i_config::LoadResult;
@@ -54,10 +54,10 @@ fn parse_facts(raw_facts: &[String]) -> may_i_core::ContextFacts {
     may_i::runtime_facts::parse_cli_facts(raw_facts).expect("failed to parse facts")
 }
 
-/// Render trace output for a command evaluation into a buffer.
-fn render_output(command: &str, facts: &[String]) -> Vec<u8> {
-    colored::control::set_override(true);
-
+/// Render trace output for a command evaluation into a buffer. `color`
+/// selects whether the renderer emits SGR (raw snapshots) or plain bytes
+/// (stripped snapshots).
+fn render_output(command: &str, facts: &[String], color: bool) -> Vec<u8> {
     let context = parse_facts(facts);
     let config = load_config();
     let (result, traces, colored_command, _audit) =
@@ -66,6 +66,7 @@ fn render_output(command: &str, facts: &[String]) -> Vec<u8> {
 
     let trust = InvocationTrust::with_loader(false, Box::new(|| None));
     let pipeline = CommandPipeline::with_trust(config, false, trust);
+    let term = pipeline.terminal().with_color(color);
     let mut buf = Vec::new();
     EvalOutput {
         config_path: &config_path,
@@ -74,7 +75,7 @@ fn render_output(command: &str, facts: &[String]) -> Vec<u8> {
         colored_command: &colored_command,
         eval_result: &result,
     }
-    .render(&mut buf, pipeline.terminal());
+    .render(&mut buf, &term);
     buf
 }
 
@@ -82,10 +83,10 @@ fn render_output(command: &str, facts: &[String]) -> Vec<u8> {
 fn normalise_config_path(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     for line in s.lines() {
-        let stripped = output::strip_ansi(line);
-        if stripped.trim_start().starts_with("config:") {
-            // Replace the entire line with a normalised placeholder,
-            // preserving any leading whitespace and ANSI codes up to "config:".
+        if line.contains("config:") {
+            // Replace the entire line with a normalised placeholder. (The
+            // literal "config:" survives in styled output as a span, so no
+            // ANSI stripping is needed to detect it.)
             result.push_str("  config: <config-path>");
         } else {
             result.push_str(line);
@@ -104,10 +105,9 @@ fn migrated_v1_stripped_snapshots() {
     let cases = load_cases();
 
     for case in &cases {
-        let raw_output = render_output(&case.command, &case.facts);
+        let raw_output = render_output(&case.command, &case.facts, false);
         let output_str = String::from_utf8_lossy(&raw_output);
-        let stripped = output::strip_ansi(&output_str);
-        let normalised = normalise_config_path(&stripped);
+        let normalised = normalise_config_path(&output_str);
 
         insta::assert_snapshot!(format!("{}_stripped", case.name), normalised);
     }
@@ -118,7 +118,7 @@ fn migrated_v1_raw_snapshots() {
     let cases = load_cases();
 
     for case in &cases {
-        let raw_output = render_output(&case.command, &case.facts);
+        let raw_output = render_output(&case.command, &case.facts, true);
         let output_str = String::from_utf8_lossy(&raw_output);
         let normalised = normalise_config_path(output_str.as_ref());
 

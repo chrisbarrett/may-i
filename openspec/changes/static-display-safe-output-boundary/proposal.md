@@ -62,19 +62,21 @@ adversary-eval path is sealed, removing `colored` from `pp` last.
   content + `Style` roles; width fields removed). The module's renderer-protocol
   surface drops `strip_ansi`/`visible_len`; the per-subcommand builders feed the
   single sink rather than raw writers.
-- `code-quality`: add the output-boundary tooling invariants — `may-i-output` is
-  the sole crate depending on `colored`; `clippy::print_stdout`/`print_stderr`
-  denied with one allow site; stream-handle acquisition banned outside the sink.
+- `code-quality`: add the output-boundary tooling invariants — `colored` is
+  absent from every workspace crate (the renderer emits SGR directly);
+  `clippy::print_stdout`/`print_stderr` denied with one allow site;
+  stream-handle acquisition banned outside the sink.
 
 ## Impact
 
 - **Crates**: `core` (new `SafeText`/`SafeSource`), `may-i-output` (color-as-data
-  rewrite, sole `colored` dependent, single sink), `engine` (`DisplaySafe`→alias),
-  `pp` (roles fold-in, `colored` removed last), bin (`colored` removed, all
-  `cmd_*` output through the sink, miette sanitisation).
-- **Dependencies**: `colored` removed from bin + `config` + `pp` Cargo manifests;
-  `may-i-output` retains it.
-- **Tooling**: workspace `Cargo.toml` lints, `.pre-commit-config`/prek hook.
+  rewrite, raw-SGR renderer, single sink), `engine` (`DisplaySafe`→alias),
+  `pp` (`Style` roles + span collector, `colored` removed), bin (`colored`
+  removed, all `cmd_*` output through the sink, miette sanitisation).
+- **Dependencies**: `colored` removed from every Cargo manifest — the renderer
+  writes SGR directly, so no crate (including `may-i-output`) depends on it.
+- **Tooling**: workspace `Cargo.toml` lints, prek hook (ast-grep structural
+  scan), `ast-grep` added to the dev shell.
 - **Tests**: new color-off / color-on proptests over the render surfaces;
   existing snapshot tests re-baseline (escaping now applied on trace surfaces).
 - **No user-facing config syntax change** — no migration-system entry. Rendered

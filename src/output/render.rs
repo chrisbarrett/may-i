@@ -164,7 +164,6 @@ mod tests {
 
     use super::*;
     use crate::cmd_check::TraceExtra;
-    use crate::output::strip_ansi;
 
     fn term() -> Terminal {
         Terminal::detect()
@@ -214,7 +213,7 @@ mod tests {
     fn eval_text_writes_result_block() {
         let mut out = Vec::new();
         render_eval(&mut out, &term(), false, &eval_body());
-        let s = strip_ansi(&String::from_utf8(out).unwrap());
+        let s = String::from_utf8(out).unwrap();
         assert!(s.contains("Result"));
         assert!(s.contains("echo hi"));
     }
@@ -233,7 +232,7 @@ mod tests {
     fn check_text_writes_summary() {
         let mut out = Vec::new();
         render_check(&mut out, &term(), false, &check_body());
-        let s = strip_ansi(&String::from_utf8(out).unwrap());
+        let s = String::from_utf8(out).unwrap();
         assert!(s.contains("Summary"));
     }
 

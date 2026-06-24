@@ -8,8 +8,7 @@
 use std::io::Write;
 use std::path::Path;
 
-use colored::Colorize;
-use may_i_output::{ColItem, Layout};
+use may_i_output::{ColItem, Layout, Style, Styled, write_line};
 
 use super::{Terminal, shorten_home, write_layout};
 
@@ -24,7 +23,7 @@ impl TrustListing<'_> {
     /// Emit the optional heading followed by the grouped sections to `w`.
     pub fn render(&self, w: &mut impl Write, term: &Terminal) {
         if let Some(h) = self.heading {
-            let _ = writeln!(w, "  {}", h.dimmed());
+            write_line(w, &Styled::plain("  ").with(h, Style::Dimmed), term);
         }
         render_trusted_groups(w, term, self.groups);
     }
@@ -38,13 +37,16 @@ fn render_trusted_groups(w: &mut impl Write, term: &Terminal, groups: &[(&Path, 
         if i > 0 {
             sections.push(Layout::Blank);
         }
-        let heading = Layout::Text(shorten_home(file).dimmed().to_string());
-        let items: Vec<ColItem> = progs.iter().map(|p| ColItem::new(*p, p.len())).collect();
+        let heading = Layout::Text(Styled::span(shorten_home(file), Style::Dimmed));
+        let items: Vec<ColItem> = progs
+            .iter()
+            .map(|p| ColItem::new(Styled::plain(*p)))
+            .collect();
         let programs = Layout::Indent(
             2,
             Box::new(Layout::Wrap {
                 items,
-                separator: ColItem::new(", ", 2),
+                separator: ColItem::new(Styled::plain(", ")),
             }),
         );
         sections.push(Layout::Stack(vec![heading, programs]));
@@ -56,7 +58,6 @@ fn render_trusted_groups(w: &mut impl Write, term: &Terminal, groups: &[(&Path, 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::output::strip_ansi;
 
     fn render_listing_at(
         width: usize,
@@ -67,7 +68,7 @@ mod tests {
             let term = Terminal::new(width);
             let mut buf = Vec::new();
             TrustListing { heading, groups }.render(&mut buf, &term);
-            strip_ansi(&String::from_utf8(buf).unwrap())
+            String::from_utf8(buf).unwrap()
         })
     }
 

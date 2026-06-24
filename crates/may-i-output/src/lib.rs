@@ -1,37 +1,112 @@
-// Declarative layout primitives for terminal output.
+// Declarative, color-as-data layout primitives for terminal output.
 //
-// Provides a tree of layout nodes (`Layout`) that can be rendered to any
-// `Write` sink. The trace/check commands construct Layout trees, which are
-// then rendered in one pass — separating structure from presentation.
+// Provides a tree of layout nodes (`Layout`) rendered to any `Write` sink. Leaf
+// content is `Styled` — a run of `(SafeText, Style)` spans — so no layout value
+// can carry an embedded ANSI escape: styling is *data* (a semantic `Style`
+// role), and this renderer is the single site that turns a role into an actual
+// SGR sequence. It is also the single site that decides colour enablement.
+//
+// Visible width is computed here from escape-free content; there are no
+// caller-supplied width fields and no `strip_ansi`/`visible_len` helpers,
+// because no value carries ANSI for them to strip.
 
 use std::io::Write;
 
-use colored::Colorize;
-use may_i_pp::visible_len;
+// Re-export the color-as-data vocabulary so consumers depend on one surface.
+pub use may_i_pp::{Span, Style, Styled, atom_style};
 
 // ── Terminal geometry ─────────────────────────────────────────────
 
 const DIVIDER: &str = "│";
 
-/// Terminal dimensions threaded through layout rendering.
+/// Terminal dimensions and colour enablement threaded through rendering.
 #[derive(Debug, Clone, Copy)]
 pub struct Terminal {
     pub width: usize,
+    pub color: bool,
 }
 
 impl Terminal {
+    /// A terminal of the given width with colour disabled.
     pub fn new(width: usize) -> Self {
-        Self { width }
+        Self {
+            width,
+            color: false,
+        }
     }
 
-    /// Detect terminal width from the environment.
+    /// Set colour enablement.
+    #[must_use]
+    pub fn with_color(mut self, color: bool) -> Self {
+        self.color = color;
+        self
+    }
+
+    /// Detect terminal width from the environment. Colour stays disabled; the
+    /// sink decides colour from `NO_COLOR`/tty and sets it via `with_color`.
     pub fn detect() -> Self {
         let width = std::env::var("COLUMNS")
             .ok()
             .and_then(|s| s.parse::<usize>().ok())
             .or_else(|| terminal_size::terminal_size().map(|(w, _)| w.0 as usize))
             .unwrap_or(80);
-        Self { width }
+        Self::new(width)
+    }
+}
+
+// ── Role → SGR (the single ANSI-emitting site) ────────────────────
+
+/// SGR parameter string for a role, or `None` for `Style::Plain` (no escape).
+/// This table is the only place a `\x1b` byte originates.
+fn sgr_params(style: Style) -> Option<&'static str> {
+    Some(match style {
+        Style::Plain => return None,
+        Style::Dimmed => "2",
+        Style::Strong => "1",
+        Style::Emphasis => "3",
+        Style::Keyword => "94",
+        Style::StringLit => "32",
+        Style::FormHead => "34",
+        Style::Allow => "1;32",
+        Style::AllowSoft => "32",
+        Style::Ask => "1;33",
+        Style::AskSoft => "33",
+        Style::AskEmphasis => "3;33",
+        Style::Deny => "1;31",
+        Style::DenySoft => "31",
+        Style::Info => "1;34",
+        Style::Accent => "36",
+        Style::EchoAllow => "4;32",
+        Style::EchoAsk => "4;33",
+        Style::EchoDeny => "4;31",
+    })
+}
+
+/// Write one styled span, emitting SGR only when colour is enabled.
+fn write_span(w: &mut impl Write, span: &Span, color: bool) {
+    match (color, sgr_params(span.style())) {
+        (true, Some(params)) => {
+            let _ = write!(w, "\x1b[{params}m{}\x1b[0m", span.content());
+        }
+        _ => {
+            let _ = write!(w, "{}", span.content());
+        }
+    }
+}
+
+/// Write a styled run.
+fn write_styled(w: &mut impl Write, s: &Styled, color: bool) {
+    for span in s.spans() {
+        write_span(w, span, color);
+    }
+}
+
+/// Write chrome (dividers, fills) in the dimmed role.
+fn write_dim(w: &mut impl Write, text: &str, color: bool) {
+    if color {
+        let _ = write!(w, "\x1b[2m{text}\x1b[0m");
+    } else {
+        let _ = write!(w, "{text}");
     }
 }
 
@@ -50,8 +125,8 @@ pub enum Layout {
     Indent(usize, Box<Layout>),
     /// Vertical sequence of children.
     Stack(Vec<Layout>),
-    /// Pre-formatted text line(s).
-    Text(String),
+    /// A single styled line.
+    Text(Styled),
     /// Wrap items across lines with a separator, like a flow/inline layout.
     Wrap {
         items: Vec<ColItem>,
@@ -68,34 +143,59 @@ pub enum NoteLevel {
     Error,
 }
 
+impl NoteLevel {
+    /// The role used to colour this level's heading and icon.
+    fn style(self) -> Style {
+        match self {
+            NoteLevel::Info => Style::Info,
+            NoteLevel::Warn => Style::Ask,
+            NoteLevel::Error => Style::Deny,
+        }
+    }
+
+    fn icon(self) -> &'static str {
+        match self {
+            NoteLevel::Info => "ℹ",
+            NoteLevel::Warn => "⚠",
+            NoteLevel::Error => "✗",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Note {
     pub level: NoteLevel,
     pub heading: NoteHeading,
-    pub body: String,
+    /// Body paragraphs; each is word-wrapped by the renderer. (A `Styled` run
+    /// cannot contain a newline, so paragraphs are an explicit list.)
+    pub body: Vec<Styled>,
     /// Child layouts rendered inside the box, each separated by a dashed rule.
     pub children: Vec<Layout>,
 }
 
-/// Heading content for a note box.
-///
-/// The heading appears in the top border after the level icon. Use `From<String>`
-/// for plain text (colored by level), or construct directly with pre-styled text
-/// and its visible width.
+/// Heading content for a note box. The heading appears in the top border after
+/// the level icon. Carries styled content; visible width is derived.
 #[derive(Debug, Clone)]
 pub struct NoteHeading {
-    /// Pre-rendered heading text (may contain ANSI codes).
-    pub text: String,
-    /// Visible width of `text` (excluding ANSI).
-    pub visible_width: usize,
+    pub content: Styled,
+}
+
+impl NoteHeading {
+    fn width(&self) -> usize {
+        self.content.width()
+    }
+}
+
+impl From<Styled> for NoteHeading {
+    fn from(content: Styled) -> Self {
+        Self { content }
+    }
 }
 
 impl From<String> for NoteHeading {
     fn from(s: String) -> Self {
-        let visible_width = visible_len(&s);
         Self {
-            text: s,
-            visible_width,
+            content: Styled::plain(s),
         }
     }
 }
@@ -120,16 +220,11 @@ pub struct Advisory {
 }
 
 impl Advisory {
-    /// Convert to a `Layout::Note`, coloring the heading by level.
+    /// Convert to a `Layout::Note`, colouring the heading by level (bold).
     pub fn into_layout(self) -> Layout {
-        let colorize: fn(&str) -> colored::ColoredString = match self.level {
-            NoteLevel::Info => |s| s.blue(),
-            NoteLevel::Warn => |s| s.yellow(),
-            NoteLevel::Error => |s| s.red(),
-        };
+        let style = self.level.style();
         let heading = NoteHeading {
-            visible_width: visible_len(&self.heading),
-            text: colorize(&self.heading).bold().to_string(),
+            content: Styled::span(self.heading.clone(), style),
         };
         self.into_note_with_heading(heading)
     }
@@ -143,14 +238,14 @@ impl Advisory {
             let mut parts: Vec<Layout> = Vec::new();
             let has_suggestion = !self.suggestion.is_empty();
             if has_suggestion {
-                parts.push(Layout::Text(self.suggestion));
+                parts.push(Layout::Text(Styled::plain(self.suggestion)));
             }
             if !self.command.is_empty() {
                 if has_suggestion {
                     parts.push(Layout::Blank);
                 }
-                let cmd_text = format!("{}{}", "$ ".dimmed(), self.command,);
-                parts.push(Layout::Text(cmd_text));
+                let cmd = Styled::span("$ ", Style::Dimmed).with(self.command, Style::Plain);
+                parts.push(Layout::Text(cmd));
             }
             children.push(Layout::Stack(parts));
         }
@@ -158,10 +253,18 @@ impl Advisory {
         Layout::Note(Note {
             level: self.level,
             heading,
-            body: self.detail,
+            body: paragraphs(&self.detail),
             children,
         })
     }
+}
+
+/// Split plain text into word-wrappable paragraphs on newlines.
+fn paragraphs(text: &str) -> Vec<Styled> {
+    if text.is_empty() {
+        return Vec::new();
+    }
+    text.split('\n').map(Styled::plain).collect()
 }
 
 impl Layout {
@@ -173,8 +276,19 @@ impl Layout {
 
 #[derive(Debug, Clone)]
 pub struct HRuleLabel {
-    pub text: String,
-    pub visible_width: usize,
+    pub content: Styled,
+}
+
+impl HRuleLabel {
+    fn width(&self) -> usize {
+        self.content.width()
+    }
+}
+
+impl From<Styled> for HRuleLabel {
+    fn from(content: Styled) -> Self {
+        Self { content }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -187,73 +301,88 @@ pub enum ColAlign {
 /// Content for the right-hand side of a `ColRow`.
 #[derive(Debug, Clone)]
 pub enum ColContent {
-    /// A single pre-formatted string.
-    Text(String),
+    /// A single styled line.
+    Text(Styled),
     /// A sequence of items that can be wrapped across multiple lines.
     Breakable {
         items: Vec<ColItem>,
         /// Separator inserted between items on the same line (e.g. ", ").
-        separator: String,
-        /// Visible width of the separator.
-        separator_width: usize,
+        separator: Styled,
     },
 }
 
-/// One atomic item in a `Breakable` content sequence.
+impl From<Styled> for ColContent {
+    fn from(s: Styled) -> Self {
+        ColContent::Text(s)
+    }
+}
+
+impl From<&str> for ColContent {
+    fn from(s: &str) -> Self {
+        ColContent::Text(Styled::plain(s))
+    }
+}
+
+impl From<String> for ColContent {
+    fn from(s: String) -> Self {
+        ColContent::Text(Styled::plain(s))
+    }
+}
+
+/// One atomic item in a `Breakable` content sequence or a `Wrap`.
 #[derive(Debug, Clone)]
 pub struct ColItem {
-    /// Rendered (possibly colored) text.
-    pub text: String,
-    /// Visible width of `text`.
-    pub width: usize,
+    pub content: Styled,
 }
 
 impl ColItem {
-    pub fn new(text: impl Into<String>, width: usize) -> Self {
+    pub fn new(content: impl Into<Styled>) -> Self {
         Self {
-            text: text.into(),
-            width,
+            content: content.into(),
         }
+    }
+
+    fn width(&self) -> usize {
+        self.content.width()
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct ColRow {
-    pub left: String,
-    pub left_width: usize,
+    pub left: Styled,
     pub left_align: ColAlign,
     pub right: ColContent,
 }
 
 impl ColRow {
-    pub fn new(left: impl Into<String>, left_width: usize, right: impl Into<String>) -> Self {
+    pub fn new(left: impl Into<Styled>, right: impl Into<ColContent>) -> Self {
         Self {
             left: left.into(),
-            left_width,
             left_align: ColAlign::Left,
-            right: ColContent::Text(right.into()),
+            right: right.into(),
         }
     }
 
-    pub fn kv(label: impl Into<String>, value: impl Into<String>) -> Self {
-        let label = label.into();
-        let width = visible_len(&label);
+    pub fn kv(label: impl Into<Styled>, value: impl Into<ColContent>) -> Self {
         Self {
-            left: label,
-            left_width: width,
+            left: label.into(),
             left_align: ColAlign::Left,
-            right: ColContent::Text(value.into()),
+            right: value.into(),
         }
     }
 
-    #[cfg(test)]
-    fn with_align(mut self, align: ColAlign) -> Self {
-        self.left_align = align;
+    #[must_use]
+    pub fn right_aligned(mut self) -> Self {
+        self.left_align = ColAlign::Right;
         self
     }
 
+    fn left_width(&self) -> usize {
+        self.left.width()
+    }
+
     fn is_elision(&self) -> bool {
-        self.left_width == 1 && self.left.contains('…')
+        self.left.width() == 1 && self.left.to_plain_string().contains('…')
     }
 }
 
@@ -261,6 +390,13 @@ impl ColRow {
 
 pub fn write_layout(w: &mut impl Write, layout: &Layout, term: &Terminal) {
     render_layout(w, layout, 0, term);
+}
+
+/// Write a single styled line (plus newline) to `w`, honouring `term.color`.
+/// The renderer remains the sole site that turns a role into an SGR sequence.
+pub fn write_line(w: &mut impl Write, line: &Styled, term: &Terminal) {
+    write_styled(w, line, term.color);
+    let _ = writeln!(w);
 }
 
 fn render_layout(w: &mut impl Write, layout: &Layout, indent: usize, term: &Terminal) {
@@ -283,7 +419,9 @@ fn render_layout(w: &mut impl Write, layout: &Layout, indent: usize, term: &Term
             }
         }
         Layout::Text(text) => {
-            let _ = writeln!(w, "{:indent$}{text}", "");
+            let _ = write!(w, "{:indent$}", "");
+            write_styled(w, text, term.color);
+            let _ = writeln!(w);
         }
         Layout::Wrap { items, separator } => {
             write_wrap(w, indent, items, separator, term);
@@ -299,7 +437,6 @@ fn render_to_string(layout: &Layout, indent: usize, term: &Terminal) -> String {
     let mut buf = Vec::new();
     render_layout(&mut buf, layout, indent, term);
     let s = String::from_utf8_lossy(&buf).into_owned();
-    // Trim trailing newline so callers get clean content.
     if s.ends_with('\n') {
         s[..s.len() - 1].to_string()
     } else {
@@ -313,22 +450,21 @@ fn write_hrule(w: &mut impl Write, indent: usize, label: Option<&HRuleLabel>, te
         Some(label) => {
             let prefix = "─── ";
             let mid = " ";
-            let used = visible_len(prefix) + label.visible_width + visible_len(mid);
+            let used = prefix.chars().count() + label.width() + mid.chars().count();
             let remaining = usable.saturating_sub(used);
             let suffix = "─".repeat(remaining);
-            let _ = writeln!(
-                w,
-                "{:indent$}{}{}{}{}",
-                "",
-                prefix.dimmed(),
-                label.text,
-                mid.dimmed(),
-                suffix.dimmed(),
-            );
+            let _ = write!(w, "{:indent$}", "");
+            write_dim(w, prefix, term.color);
+            write_styled(w, &label.content, term.color);
+            write_dim(w, mid, term.color);
+            write_dim(w, &suffix, term.color);
+            let _ = writeln!(w);
         }
         None => {
             let rule = "─".repeat(usable);
-            let _ = writeln!(w, "{:indent$}{}", "", rule.dimmed());
+            let _ = write!(w, "{:indent$}", "");
+            write_dim(w, &rule, term.color);
+            let _ = writeln!(w);
         }
     }
 }
@@ -344,7 +480,7 @@ fn compute_divider_col(rows: &[ColRow]) -> usize {
     let max_left = rows
         .iter()
         .filter(|r| !r.is_elision())
-        .map(|r| r.left_width)
+        .map(ColRow::left_width)
         .max()
         .unwrap_or(0);
     max_left + 1
@@ -362,83 +498,96 @@ fn write_col_row(
             if row.left.is_empty() && text.is_empty() {
                 return;
             }
-            let right = if text.is_empty() {
-                String::new()
-            } else {
-                format!(" {text}")
-            };
-            write_col_left(w, indent, row, divider_col);
-            let _ = writeln!(w, "{}{right}", DIVIDER.dimmed());
+            write_col_left(w, indent, row, divider_col, term);
+            write_dim(w, DIVIDER, term.color);
+            if !text.is_empty() {
+                let _ = write!(w, " ");
+                write_styled(w, text, term.color);
+            }
+            let _ = writeln!(w);
         }
-        ColContent::Breakable {
-            items,
-            separator,
-            separator_width,
-        } => {
+        ColContent::Breakable { items, separator } => {
             let right_avail = term
                 .width
                 .saturating_sub(indent + divider_col + 1) // divider
                 .saturating_sub(2); // " │ " padding → " " after divider
 
-            // Word-wrap items into lines.
-            let mut lines: Vec<String> = Vec::new();
-            let mut cur = String::new();
-            let mut cur_width = 0;
-
-            for (i, item) in items.iter().enumerate() {
-                let need_sep = !cur.is_empty();
-                let addition = if need_sep {
-                    separator_width + item.width
-                } else {
-                    item.width
-                };
-
-                if !cur.is_empty() && cur_width + addition > right_avail {
-                    // Trailing separator on continued lines.
-                    cur.push_str(separator);
-                    lines.push(cur);
-                    cur = String::new();
-                    cur_width = 0;
-                }
-
-                if !cur.is_empty() {
-                    cur.push_str(separator);
-                    cur_width += separator_width;
-                }
-                cur.push_str(&item.text);
-                cur_width += item.width;
-
-                if i == items.len() - 1 && !cur.is_empty() {
-                    lines.push(std::mem::take(&mut cur));
-                }
-            }
+            let lines = wrap_breakable(items, separator, right_avail);
 
             if lines.is_empty() {
-                write_col_left(w, indent, row, divider_col);
-                let _ = writeln!(w, "{}", DIVIDER.dimmed());
+                write_col_left(w, indent, row, divider_col, term);
+                write_dim(w, DIVIDER, term.color);
+                let _ = writeln!(w);
             } else {
                 for (i, line) in lines.iter().enumerate() {
                     if i == 0 {
-                        write_col_left(w, indent, row, divider_col);
+                        write_col_left(w, indent, row, divider_col, term);
                     } else {
-                        // Continuation lines: empty left, same divider position.
                         let _ = write!(w, "{:indent$}{:divider_col$}", "", "");
                     }
-                    let _ = writeln!(w, "{} {line}", DIVIDER.dimmed());
+                    write_dim(w, DIVIDER, term.color);
+                    let _ = write!(w, " ");
+                    write_styled(w, line, term.color);
+                    let _ = writeln!(w);
                 }
             }
         }
     }
 }
 
+/// Word-wrap breakable items into styled lines. Continued lines carry a
+/// trailing separator; the final line does not.
+fn wrap_breakable(items: &[ColItem], separator: &Styled, avail: usize) -> Vec<Styled> {
+    let sep_width = separator.width();
+    let mut lines: Vec<Styled> = Vec::new();
+    let mut cur = Styled::new();
+    let mut cur_width = 0;
+
+    for (i, item) in items.iter().enumerate() {
+        let need_sep = !cur.is_empty();
+        let addition = if need_sep {
+            sep_width + item.width()
+        } else {
+            item.width()
+        };
+
+        if !cur.is_empty() && cur_width + addition > avail {
+            cur.extend(separator.clone());
+            lines.push(std::mem::take(&mut cur));
+            cur_width = 0;
+        }
+
+        if !cur.is_empty() {
+            cur.extend(separator.clone());
+            cur_width += sep_width;
+        }
+        cur.extend(item.content.clone());
+        cur_width += item.width();
+
+        if i == items.len() - 1 && !cur.is_empty() {
+            lines.push(std::mem::take(&mut cur));
+        }
+    }
+
+    lines
+}
+
 /// Write the left-hand side of a column row (label + alignment padding).
-fn write_col_left(w: &mut impl Write, indent: usize, row: &ColRow, divider_col: usize) {
-    let gap = divider_col.saturating_sub(row.left_width);
+fn write_col_left(
+    w: &mut impl Write,
+    indent: usize,
+    row: &ColRow,
+    divider_col: usize,
+    term: &Terminal,
+) {
+    let gap = divider_col.saturating_sub(row.left_width());
     let (lead, trail) = match row.left_align {
         ColAlign::Right => (gap.saturating_sub(1), 1),
         ColAlign::Left => (0, gap),
     };
-    let _ = write!(w, "{:indent$}{:lead$}{}{:trail$}", "", "", row.left, "",);
+    let _ = write!(w, "{:indent$}{:lead$}", "", "");
+    write_styled(w, &row.left, term.color);
+    let _ = write!(w, "{:trail$}", "");
 }
 
 fn write_wrap(
@@ -449,32 +598,32 @@ fn write_wrap(
     term: &Terminal,
 ) {
     let avail = term.width.saturating_sub(indent);
-    let mut lines: Vec<String> = Vec::new();
-    let mut cur = String::new();
+    let sep_width = separator.width();
+    let mut lines: Vec<Styled> = Vec::new();
+    let mut cur = Styled::new();
     let mut cur_width = 0;
 
     for (i, item) in items.iter().enumerate() {
         let need_sep = !cur.is_empty();
         let addition = if need_sep {
-            separator.width + item.width
+            sep_width + item.width()
         } else {
-            item.width
+            item.width()
         };
 
         if !cur.is_empty() && cur_width + addition > avail {
-            // Break before the next item without appending a trailing
-            // separator — Wrap is prose-style flow, not Breakable.
-            lines.push(cur);
-            cur = String::new();
+            // Break before the next item without a trailing separator — Wrap is
+            // prose-style flow, not Breakable.
+            lines.push(std::mem::take(&mut cur));
             cur_width = 0;
         }
 
         if !cur.is_empty() {
-            cur.push_str(&separator.text);
-            cur_width += separator.width;
+            cur.extend(separator.content.clone());
+            cur_width += sep_width;
         }
-        cur.push_str(&item.text);
-        cur_width += item.width;
+        cur.extend(item.content.clone());
+        cur_width += item.width();
 
         if i == items.len() - 1 && !cur.is_empty() {
             lines.push(std::mem::take(&mut cur));
@@ -482,124 +631,127 @@ fn write_wrap(
     }
 
     for line in &lines {
-        let _ = writeln!(w, "{:indent$}{line}", "");
+        let _ = write!(w, "{:indent$}", "");
+        write_styled(w, line, term.color);
+        let _ = writeln!(w);
     }
 }
 
 fn write_note(w: &mut impl Write, indent: usize, note: &Note, term: &Terminal) {
-    let icon: &str = match note.level {
-        NoteLevel::Info => "ℹ",
-        NoteLevel::Warn => "⚠",
-        NoteLevel::Error => "✗",
-    };
-
-    let colorize: fn(&str) -> colored::ColoredString = match note.level {
-        NoteLevel::Info => |s| s.blue(),
-        NoteLevel::Warn => |s| s.yellow(),
-        NoteLevel::Error => |s| s.red(),
-    };
-
     let usable = term.width.saturating_sub(indent);
+    let level_style = note.level.style();
+    let icon = note.level.icon();
 
     // Top border: ╭─ ⚠ Heading text ───────╮
-    let header = format!("{} {}", colorize(icon).bold(), note.heading.text);
-    let header_visible_width = visible_len(icon) + 1 + note.heading.visible_width;
+    let header_visible_width = icon.chars().count() + 1 + note.heading.width();
     let top_prefix = "╭─ ";
     let top_mid = " ";
-    let top_used = visible_len(top_prefix) + header_visible_width + visible_len(top_mid) + 1; // +1 for ╮
+    let top_used = top_prefix.chars().count() + header_visible_width + top_mid.chars().count() + 1; // +1 for ╮
     let top_fill = usable.saturating_sub(top_used);
-    let _ = writeln!(
-        w,
-        "{:indent$}{}{}{}{}{}",
-        "",
-        top_prefix.dimmed(),
-        header,
-        top_mid.dimmed(),
-        "─".repeat(top_fill).dimmed(),
-        "╮".dimmed(),
-    );
+    let _ = write!(w, "{:indent$}", "");
+    write_dim(w, top_prefix, term.color);
+    write_span(w, &Span::new(icon, level_style), term.color);
+    let _ = write!(w, " ");
+    write_styled(w, &note.heading.content, term.color);
+    write_dim(w, top_mid, term.color);
+    write_dim(w, &"─".repeat(top_fill), term.color);
+    write_dim(w, "╮", term.color);
+    let _ = writeln!(w);
 
     // "│ " prefix + " │" suffix = 4 chars of box chrome.
     let inner_width = usable.saturating_sub(4).max(10);
 
-    // Body: split into paragraphs on newlines, word-wrap each, blank line between.
-    if !note.body.is_empty() {
-        let paragraphs: Vec<&str> = note.body.split('\n').collect();
-        for (i, para) in paragraphs.iter().enumerate() {
-            if i > 0 {
-                write_box_line(w, indent, usable, "", 0);
-            }
-            let trimmed = para.trim();
-            if let Some(rest) = trimmed.strip_prefix("$ ") {
-                // Command lines render verbatim with dimmed sigil.
-                let cmd_text = format!("{}{}", "$ ".dimmed(), rest);
-                write_box_line(w, indent, usable, &cmd_text, trimmed.len());
-            } else {
-                for line in word_wrap(trimmed, inner_width) {
-                    write_box_line(w, indent, usable, &line, line.len());
-                }
-            }
+    // Body: each paragraph word-wrapped, blank line between paragraphs.
+    for (i, para) in note.body.iter().enumerate() {
+        if i > 0 {
+            write_box_line(w, indent, usable, &Styled::new(), 0, term);
+        }
+        let plain = para.to_plain_string();
+        for line in word_wrap(plain.trim(), inner_width) {
+            let width = line.chars().count();
+            write_box_line(w, indent, usable, &Styled::plain(line), width, term);
         }
     }
 
     // Child layouts rendered inside the box, each preceded by a dashed separator.
     let mid_fill = usable.saturating_sub(2);
-    let child_term = Terminal::new(inner_width);
+    let child_term = Terminal::new(inner_width).with_color(term.color);
+    let measure_term = Terminal::new(inner_width);
     for child in &note.children {
-        let _ = writeln!(
-            w,
-            "{:indent$}{}{}{}",
-            "",
-            "├".dimmed(),
-            "┄".repeat(mid_fill).dimmed(),
-            "┤".dimmed(),
-        );
-        let mut child_buf = Vec::new();
-        render_layout(&mut child_buf, child, 0, &child_term);
-        let child_str = String::from_utf8_lossy(&child_buf);
-        for line in child_str.lines() {
-            let vis_width = visible_len(line);
-            write_box_line(w, indent, usable, line, vis_width);
+        let _ = write!(w, "{:indent$}", "");
+        write_dim(w, "├", term.color);
+        write_dim(w, &"┄".repeat(mid_fill), term.color);
+        write_dim(w, "┤", term.color);
+        let _ = writeln!(w);
+
+        let mut color_buf = Vec::new();
+        render_layout(&mut color_buf, child, 0, &child_term);
+        let color_str = String::from_utf8_lossy(&color_buf).into_owned();
+
+        let mut plain_buf = Vec::new();
+        render_layout(&mut plain_buf, child, 0, &measure_term);
+        let plain_str = String::from_utf8_lossy(&plain_buf).into_owned();
+
+        for (display, plain) in color_str.lines().zip(plain_str.lines()) {
+            let vis_width = plain.chars().count();
+            write_box_line_raw(w, indent, usable, display, vis_width, term);
         }
     }
 
     // Bottom border: ╰──────╯
     let bottom_fill = usable.saturating_sub(2);
-    let _ = writeln!(
-        w,
-        "{:indent$}{}{}{}",
-        "",
-        "╰".dimmed(),
-        "─".repeat(bottom_fill).dimmed(),
-        "╯".dimmed(),
-    );
+    let _ = write!(w, "{:indent$}", "");
+    write_dim(w, "╰", term.color);
+    write_dim(w, &"─".repeat(bottom_fill), term.color);
+    write_dim(w, "╯", term.color);
+    let _ = writeln!(w);
 }
 
-/// Write a single line inside a box: "│ content                 │"
-///
-/// If `text_width` exceeds the available inner width, the right border
-/// character is omitted so the line doesn't wrap awkwardly.
+/// Write a styled line inside a box: "│ content                 │".
 fn write_box_line(
     w: &mut impl Write,
     indent: usize,
     box_width: usize,
-    text: &str,
+    text: &Styled,
     text_width: usize,
+    term: &Terminal,
 ) {
     let inner_width = box_width.saturating_sub(4);
+    let _ = write!(w, "{:indent$}", "");
+    write_dim(w, DIVIDER, term.color);
+    let _ = write!(w, " ");
+    write_styled(w, text, term.color);
     if text_width > inner_width {
-        // Text overflows — omit right border to avoid wrapping.
-        let _ = writeln!(w, "{:indent$}{} {text}", "", DIVIDER.dimmed(),);
+        let _ = writeln!(w);
     } else {
         let padding = inner_width - text_width;
-        let _ = writeln!(
-            w,
-            "{:indent$}{} {text}{:padding$} {}",
-            "",
-            DIVIDER.dimmed(),
-            "",
-            DIVIDER.dimmed(),
-        );
+        let _ = write!(w, "{:padding$} ", "");
+        write_dim(w, DIVIDER, term.color);
+        let _ = writeln!(w);
+    }
+}
+
+/// Like `write_box_line` but the content is pre-rendered display bytes (already
+/// styled) with a known visible width — used for child sub-layouts.
+fn write_box_line_raw(
+    w: &mut impl Write,
+    indent: usize,
+    box_width: usize,
+    display: &str,
+    text_width: usize,
+    term: &Terminal,
+) {
+    let inner_width = box_width.saturating_sub(4);
+    let _ = write!(w, "{:indent$}", "");
+    write_dim(w, DIVIDER, term.color);
+    let _ = write!(w, " {display}");
+    if text_width > inner_width {
+        let _ = writeln!(w);
+    } else {
+        let padding = inner_width - text_width;
+        let _ = write!(w, "{:padding$} ", "");
+        write_dim(w, DIVIDER, term.color);
+        let _ = writeln!(w);
     }
 }
 
@@ -611,7 +763,7 @@ fn word_wrap(text: &str, max_width: usize) -> Vec<String> {
     let mut cur_width = 0;
 
     for word in &words {
-        let w_len = word.len();
+        let w_len = word.chars().count();
         if !cur.is_empty() && cur_width + 1 + w_len > max_width {
             lines.push(cur);
             cur = String::new();
@@ -633,15 +785,18 @@ fn word_wrap(text: &str, max_width: usize) -> Vec<String> {
     lines
 }
 
-// ── Helpers ───────────────────────────────────────────────────────
-
-pub use may_i_pp::strip_ansi;
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const TERM: Terminal = Terminal { width: 120 };
+    const TERM: Terminal = Terminal {
+        width: 120,
+        color: false,
+    };
+
+    fn col_row(left: &str, right: &str) -> ColRow {
+        ColRow::new(Styled::plain(left), Styled::plain(right))
+    }
 
     #[test]
     fn blank_renders_empty_line() {
@@ -651,93 +806,74 @@ mod tests {
 
     #[test]
     fn text_renders_with_indent() {
-        let s = render_to_string(&Layout::Text("hello".into()), 4, &TERM);
+        let s = render_to_string(&Layout::Text(Styled::plain("hello")), 4, &TERM);
         assert_eq!(s, "    hello");
     }
 
     #[test]
     fn indent_adds_to_children() {
-        let layout = Layout::indent(3, Layout::Text("hi".into()));
+        let layout = Layout::indent(3, Layout::Text(Styled::plain("hi")));
         let s = render_to_string(&layout, 0, &TERM);
         assert_eq!(s, "   hi");
     }
 
     #[test]
     fn stack_renders_children_sequentially() {
-        let layout = Layout::Stack(vec![Layout::Text("a".into()), Layout::Text("b".into())]);
+        let layout = Layout::Stack(vec![
+            Layout::Text(Styled::plain("a")),
+            Layout::Text(Styled::plain("b")),
+        ]);
         let s = render_to_string(&layout, 0, &TERM);
         assert_eq!(s, "a\nb");
     }
 
     #[test]
     fn columns_aligns_divider() {
-        let rows = vec![
-            ColRow::new("short", 5, "r1"),
-            ColRow::new("longer left", 11, "r2"),
-        ];
+        let rows = vec![col_row("short", "r1"), col_row("longer left", "r2")];
         let layout = Layout::Columns(rows);
         let s = render_to_string(&layout, 0, &TERM);
         let lines: Vec<&str> = s.lines().collect();
-        // Both lines should have the divider at the same column
-        let div_pos_0 = strip_ansi(lines[0]).find('│').unwrap();
-        let div_pos_1 = strip_ansi(lines[1]).find('│').unwrap();
+        let div_pos_0 = lines[0].find('│').unwrap();
+        let div_pos_1 = lines[1].find('│').unwrap();
         assert_eq!(div_pos_0, div_pos_1);
     }
 
     #[test]
     fn columns_right_align() {
-        let row = ColRow::new("text", 4, "ann").with_align(ColAlign::Right);
-        let layout = Layout::Columns(vec![ColRow::new("longer", 6, ""), row]);
+        let row = col_row("text", "ann").right_aligned();
+        let layout = Layout::Columns(vec![col_row("longer", ""), row]);
         let s = render_to_string(&layout, 0, &TERM);
         let lines: Vec<&str> = s.lines().collect();
-        let stripped = strip_ansi(lines[1]);
-        // "text" should be right-aligned within the divider column
-        assert!(stripped.starts_with("  text"), "got: {stripped:?}");
+        assert!(lines[1].starts_with("  text"), "got: {:?}", lines[1]);
     }
 
     #[test]
     fn hrule_without_label() {
         let layout = Layout::HRule(None);
-        let mut buf = Vec::new();
-        write_layout(&mut buf, &layout, &TERM);
-        let s = String::from_utf8(buf).unwrap();
-        let stripped = strip_ansi(&s);
-        assert!(stripped.contains("─"));
+        let s = render_to_string(&layout, 0, &TERM);
+        assert!(s.contains('─'));
     }
 
     #[test]
     fn hrule_with_label() {
-        let layout = Layout::HRule(Some(HRuleLabel {
-            text: "section".into(),
-            visible_width: 7,
-        }));
-        let mut buf = Vec::new();
-        write_layout(&mut buf, &layout, &TERM);
-        let s = String::from_utf8(buf).unwrap();
-        let stripped = strip_ansi(&s);
-        assert!(stripped.contains("section"));
-        assert!(stripped.contains("─"));
+        let layout = Layout::HRule(Some(HRuleLabel::from(Styled::plain("section"))));
+        let s = render_to_string(&layout, 0, &TERM);
+        assert!(s.contains("section"));
+        assert!(s.contains('─'));
     }
 
     #[test]
     fn kv_creates_left_aligned_row() {
-        let row = ColRow::kv("key", "value");
-        assert_eq!(row.left, "key");
-        assert_eq!(row.left_width, 3);
+        let row = ColRow::kv(Styled::plain("key"), Styled::plain("value"));
+        assert_eq!(row.left.to_plain_string(), "key");
+        assert_eq!(row.left_width(), 3);
         assert!(matches!(row.left_align, ColAlign::Left));
     }
 
     #[test]
     fn note_heading_from_unicode_uses_visible_width() {
         let heading = NoteHeading::from("ℹ Info".to_string());
-        // "ℹ Info" is 6 visible chars, not 8 bytes
-        assert_eq!(heading.visible_width, 6);
-    }
-
-    #[test]
-    fn kv_unicode_label_uses_visible_width() {
-        let row = ColRow::kv("ℹ Info", "value");
-        assert_eq!(row.left_width, 6);
+        assert_eq!(heading.width(), 6);
     }
 
     #[test]
@@ -746,11 +882,11 @@ mod tests {
         let layout = Layout::Note(Note {
             level: NoteLevel::Warn,
             heading: "Test heading".into(),
-            body: "This is the body text.".into(),
+            body: paragraphs("This is the body text."),
             children: vec![],
         });
         let s = render_to_string(&layout, 0, &term);
-        insta::assert_snapshot!(strip_ansi(&s));
+        insta::assert_snapshot!(s);
     }
 
     #[test]
@@ -759,11 +895,11 @@ mod tests {
         let layout = Layout::Note(Note {
             level: NoteLevel::Info,
             heading: "FYI".into(),
-            body: "Something to know.".into(),
+            body: paragraphs("Something to know."),
             children: vec![],
         });
         let s = render_to_string(&layout, 0, &term);
-        insta::assert_snapshot!(strip_ansi(&s));
+        insta::assert_snapshot!(s);
     }
 
     #[test]
@@ -772,11 +908,11 @@ mod tests {
         let layout = Layout::Note(Note {
             level: NoteLevel::Error,
             heading: "Bad thing".into(),
-            body: "Something went wrong.".into(),
+            body: paragraphs("Something went wrong."),
             children: vec![],
         });
         let s = render_to_string(&layout, 0, &term);
-        insta::assert_snapshot!(strip_ansi(&s));
+        insta::assert_snapshot!(s);
     }
 
     #[test]
@@ -785,11 +921,11 @@ mod tests {
         let layout = Layout::Note(Note {
             level: NoteLevel::Warn,
             heading: "Warn".into(),
-            body: "one two three four five six seven eight nine ten".into(),
+            body: paragraphs("one two three four five six seven eight nine ten"),
             children: vec![],
         });
         let s = render_to_string(&layout, 0, &term);
-        insta::assert_snapshot!(strip_ansi(&s));
+        insta::assert_snapshot!(s);
     }
 
     #[test]
@@ -798,11 +934,11 @@ mod tests {
         let layout = Layout::Note(Note {
             level: NoteLevel::Warn,
             heading: "Heads up".into(),
-            body: String::new(),
+            body: vec![],
             children: vec![],
         });
         let s = render_to_string(&layout, 0, &term);
-        insta::assert_snapshot!(strip_ansi(&s));
+        insta::assert_snapshot!(s);
     }
 
     #[test]
@@ -813,12 +949,12 @@ mod tests {
             Layout::Note(Note {
                 level: NoteLevel::Info,
                 heading: "Hi".into(),
-                body: "Hello world.".into(),
+                body: paragraphs("Hello world."),
                 children: vec![],
             }),
         );
         let s = render_to_string(&layout, 0, &term);
-        insta::assert_snapshot!(strip_ansi(&s));
+        insta::assert_snapshot!(s);
     }
 
     #[test]
@@ -827,19 +963,14 @@ mod tests {
         let layout = Layout::Note(Note {
             level: NoteLevel::Warn,
             heading: "Short".into(),
-            body: "Some body text here.".into(),
+            body: paragraphs("Some body text here."),
             children: vec![],
         });
         let s = render_to_string(&layout, 0, &term);
-        let stripped = strip_ansi(&s);
-        let widths: Vec<usize> = stripped.lines().map(|l| l.chars().count()).collect();
+        let widths: Vec<usize> = s.lines().map(|l| l.chars().count()).collect();
         let first = widths[0];
         for (i, &w) in widths.iter().enumerate() {
-            assert_eq!(
-                w, first,
-                "line {} width {} != expected {}: {:?}",
-                i, w, first, stripped
-            );
+            assert_eq!(w, first, "line {i} width {w} != expected {first}: {s:?}");
         }
     }
 
@@ -850,13 +981,11 @@ mod tests {
         let layout = Layout::Note(Note {
             level: NoteLevel::Warn,
             heading: "Warn".into(),
-            body: long_path.into(),
+            body: paragraphs(long_path),
             children: vec![],
         });
         let s = render_to_string(&layout, 0, &term);
-        let stripped = strip_ansi(&s);
-        // The body line with the long path should not have a trailing │
-        let body_lines: Vec<&str> = stripped.lines().filter(|l| l.contains(long_path)).collect();
+        let body_lines: Vec<&str> = s.lines().filter(|l| l.contains(long_path)).collect();
         assert!(!body_lines.is_empty(), "should contain the long path");
         for line in &body_lines {
             assert!(
@@ -872,28 +1001,28 @@ mod tests {
         let layout = Layout::Note(Note {
             level: NoteLevel::Warn,
             heading: "Migration needed".into(),
-            body: "Config format is outdated.\nRun this command:\n$ may-i migrate".into(),
+            body: paragraphs("Config format is outdated.\nRun this command:\n$ may-i migrate"),
             children: vec![],
         });
         let s = render_to_string(&layout, 0, &term);
-        insta::assert_snapshot!(strip_ansi(&s));
+        insta::assert_snapshot!(s);
     }
 
     #[test]
     fn note_with_child_layout() {
         let term = Terminal::new(50);
         let child = Layout::Stack(vec![
-            Layout::Text("~/foo.lisp (3)".into()),
-            Layout::Text("   ls, cat, rm".into()),
+            Layout::Text(Styled::plain("~/foo.lisp (3)")),
+            Layout::Text(Styled::plain("   ls, cat, rm")),
         ]);
         let layout = Layout::Note(Note {
             level: NoteLevel::Warn,
             heading: "Test".into(),
-            body: "Body text.".into(),
+            body: paragraphs("Body text."),
             children: vec![child],
         });
         let s = render_to_string(&layout, 0, &term);
-        insta::assert_snapshot!(strip_ansi(&s));
+        insta::assert_snapshot!(s);
     }
 
     #[test]
@@ -909,7 +1038,7 @@ mod tests {
         }
         .into_layout();
         let s = render_to_string(&layout, 0, &term);
-        insta::assert_snapshot!(strip_ansi(&s));
+        insta::assert_snapshot!(s);
     }
 
     #[test]
@@ -925,74 +1054,69 @@ mod tests {
         }
         .into_layout();
         let s = render_to_string(&layout, 0, &term);
-        insta::assert_snapshot!(strip_ansi(&s));
+        insta::assert_snapshot!(s);
     }
 
     #[test]
     fn breakable_with_empty_items() {
         let rows = vec![ColRow {
-            left: "lbl".into(),
-            left_width: 3,
+            left: Styled::plain("lbl"),
             left_align: ColAlign::Left,
             right: ColContent::Breakable {
                 items: vec![],
-                separator: ", ".into(),
-                separator_width: 2,
+                separator: Styled::plain(", "),
             },
         }];
         let layout = Layout::Columns(rows);
         let s = render_to_string(&layout, 0, &TERM);
-        let stripped = strip_ansi(&s);
-        assert!(stripped.contains("│"));
+        assert!(s.contains('│'));
     }
 
     #[test]
-    fn strip_ansi_removes_escape_codes() {
-        let colored = format!("{}hello{}", "\x1b[31m", "\x1b[0m");
-        assert_eq!(strip_ansi(&colored), "hello");
+    fn color_off_emits_no_escape() {
+        let layout = Layout::Columns(vec![ColRow::new(
+            Styled::span("k", Style::Keyword),
+            Styled::span("v", Style::Allow),
+        )]);
+        let s = render_to_string(&layout, 0, &Terminal::new(40));
+        assert!(!s.contains('\x1b'));
     }
 
     #[test]
-    fn strip_ansi_preserves_plain_text() {
-        assert_eq!(strip_ansi("plain text"), "plain text");
+    fn color_on_emits_palette_sgr() {
+        let layout = Layout::Text(Styled::span("k", Style::Keyword));
+        let s = render_to_string(&layout, 0, &Terminal::new(40).with_color(true));
+        assert!(s.contains("\x1b[94m"));
+        assert!(s.contains("\x1b[0m"));
     }
 
     #[test]
     fn breakable_wraps_items_across_lines() {
         let term = Terminal::new(30);
         let rows = vec![ColRow {
-            left: "label".into(),
-            left_width: 5,
+            left: Styled::plain("label"),
             left_align: ColAlign::Right,
             right: ColContent::Breakable {
                 items: vec![
-                    ColItem::new("aaaa", 4),
-                    ColItem::new("bbbb", 4),
-                    ColItem::new("cccc", 4),
-                    ColItem::new("dddd", 4),
-                    ColItem::new("eeee", 4),
+                    ColItem::new(Styled::plain("aaaa")),
+                    ColItem::new(Styled::plain("bbbb")),
+                    ColItem::new(Styled::plain("cccc")),
+                    ColItem::new(Styled::plain("dddd")),
+                    ColItem::new(Styled::plain("eeee")),
                 ],
-                separator: ", ".into(),
-                separator_width: 2,
+                separator: Styled::plain(", "),
             },
         }];
         let layout = Layout::Columns(rows);
         let s = render_to_string(&layout, 0, &term);
-        let stripped = strip_ansi(&s);
-        let lines: Vec<&str> = stripped.lines().collect();
-        // Should wrap across multiple lines
-        assert!(
-            lines.len() > 1,
-            "expected wrapping across multiple lines, got: {stripped:?}"
-        );
-        // All lines should have the divider
+        let lines: Vec<&str> = s.lines().collect();
+        assert!(lines.len() > 1, "expected wrapping: {s:?}");
         for line in &lines {
             assert!(
                 line.contains('│'),
                 "each line should have divider: {line:?}"
             );
         }
-        // Non-final lines should have trailing separator (comma)
         for line in &lines[..lines.len() - 1] {
             let after_div = line.split('│').nth(1).unwrap().trim();
             assert!(
@@ -1006,24 +1130,21 @@ mod tests {
     fn breakable_fits_on_one_line() {
         let term = Terminal::new(80);
         let rows = vec![ColRow {
-            left: "lbl".into(),
-            left_width: 3,
+            left: Styled::plain("lbl"),
             left_align: ColAlign::Right,
             right: ColContent::Breakable {
-                items: vec![ColItem::new("a", 1), ColItem::new("b", 1)],
-                separator: ", ".into(),
-                separator_width: 2,
+                items: vec![
+                    ColItem::new(Styled::plain("a")),
+                    ColItem::new(Styled::plain("b")),
+                ],
+                separator: Styled::plain(", "),
             },
         }];
         let layout = Layout::Columns(rows);
         let s = render_to_string(&layout, 0, &term);
-        let stripped = strip_ansi(&s);
-        let lines: Vec<&str> = stripped.lines().collect();
-        assert_eq!(lines.len(), 1, "should fit on one line: {stripped:?}");
-        assert!(
-            stripped.contains("a, b"),
-            "items joined with separator: {stripped:?}"
-        );
+        let lines: Vec<&str> = s.lines().collect();
+        assert_eq!(lines.len(), 1, "should fit on one line: {s:?}");
+        assert!(s.contains("a, b"), "items joined with separator: {s:?}");
     }
 }
 
@@ -1044,39 +1165,31 @@ mod proptests {
         let leaf = prop_oneof![
             Just(Layout::Blank),
             Just(Layout::HRule(None)),
-            "[a-z ]{0,30}".prop_map(|s| Layout::HRule(Some(HRuleLabel {
-                visible_width: s.len(),
-                text: s,
-            }))),
-            "[a-z ]{0,40}".prop_map(Layout::Text),
+            "[a-z ]{0,30}".prop_map(|s| Layout::HRule(Some(HRuleLabel::from(Styled::plain(s))))),
+            "[a-z ]{0,40}".prop_map(|s| Layout::Text(Styled::plain(s))),
             (any_note_level(), "[a-z ]{1,20}", "[a-z ]{0,40}").prop_map(
                 |(level, heading, body)| {
                     Layout::Note(Note {
                         level,
                         heading: heading.into(),
-                        body,
+                        body: paragraphs(&body),
                         children: vec![],
                     })
                 }
             ),
             prop::collection::vec(
-                ("[a-z]{1,10}", "[a-z ]{0,20}").prop_map(|(l, r)| {
-                    let w = l.len();
-                    ColRow::new(l, w, r)
-                }),
+                ("[a-z]{1,10}", "[a-z ]{0,20}")
+                    .prop_map(|(l, r)| ColRow::new(Styled::plain(l), Styled::plain(r))),
                 1..=4,
             )
             .prop_map(Layout::Columns),
             prop::collection::vec(
-                "[a-z]{1,10}".prop_map(|s| {
-                    let w = s.len();
-                    ColItem::new(s, w)
-                }),
+                "[a-z]{1,10}".prop_map(|s| ColItem::new(Styled::plain(s))),
                 1..=6,
             )
             .prop_map(|items| Layout::Wrap {
                 items,
-                separator: ColItem::new(", ", 2),
+                separator: ColItem::new(Styled::plain(", ")),
             }),
         ];
         leaf.prop_recursive(2, 8, 3, |inner| {
@@ -1089,10 +1202,7 @@ mod proptests {
     }
 
     fn item_strategy() -> impl Strategy<Value = ColItem> {
-        "[a-z]{1,10}".prop_map(|s| {
-            let w = s.len();
-            ColItem::new(s, w)
-        })
+        "[a-z]{1,10}".prop_map(|s| ColItem::new(Styled::plain(s)))
     }
 
     proptest! {
@@ -1103,42 +1213,30 @@ mod proptests {
             label_width in 1..20usize,
         ) {
             let term = Terminal::new(term_cols);
-
             let label = "x".repeat(label_width);
             let rows = vec![ColRow {
-                left: label.clone(),
-                left_width: label_width,
+                left: Styled::plain(label),
                 left_align: ColAlign::Right,
                 right: ColContent::Breakable {
                     items: items.clone(),
-                    separator: ", ".into(),
-                    separator_width: 2,
+                    separator: Styled::plain(", "),
                 },
             }];
             let layout = Layout::Columns(rows);
             let s = render_to_string(&layout, 0, &term);
-            let stripped = strip_ansi(&s);
 
-            // Every item text appears in the output.
             for item in &items {
                 prop_assert!(
-                    stripped.contains(&item.text),
-                    "item {:?} missing from output: {stripped:?}",
-                    item.text
+                    s.contains(&item.content.to_plain_string()),
+                    "item {:?} missing from output: {s:?}",
+                    item.content.to_plain_string()
                 );
             }
-
-            // Every line has a divider.
-            for line in stripped.lines() {
-                prop_assert!(
-                    line.contains('│'),
-                    "line missing divider: {line:?}"
-                );
+            for line in s.lines() {
+                prop_assert!(line.contains('│'), "line missing divider: {line:?}");
             }
-
-            let lines: Vec<&str> = stripped.lines().collect();
+            let lines: Vec<&str> = s.lines().collect();
             if lines.len() > 1 {
-                // Non-final lines should end with trailing separator.
                 for line in &lines[..lines.len() - 1] {
                     let after_div = line.split('│').nth(1).unwrap().trim();
                     prop_assert!(
@@ -1146,7 +1244,6 @@ mod proptests {
                         "continued line should end with separator: {line:?}"
                     );
                 }
-                // Final line should NOT end with separator.
                 let last = lines.last().unwrap();
                 let after_div = last.split('│').nth(1).unwrap().trim();
                 prop_assert!(
@@ -1163,17 +1260,12 @@ mod proptests {
         ) {
             let text = words.join(" ");
             let wrapped = word_wrap(&text, max_width);
-
-            // All original words must appear in the output
             let all_output_words: Vec<&str> = wrapped.iter()
                 .flat_map(|line| line.split_whitespace())
                 .collect();
-            prop_assert_eq!(all_output_words.len(), words.len(),
-                "word count changed: input {} words, output {} words\ninput: {:?}\nwrapped: {:?}",
-                words.len(), all_output_words.len(), words, wrapped);
+            prop_assert_eq!(all_output_words.len(), words.len());
             for (orig, out) in words.iter().zip(all_output_words.iter()) {
-                prop_assert_eq!(orig.as_str(), *out,
-                    "word mismatch: original {:?} vs output {:?}", orig, out);
+                prop_assert_eq!(orig.as_str(), *out);
             }
         }
 
@@ -1184,17 +1276,34 @@ mod proptests {
         ) {
             let text = words.join(" ");
             let wrapped = word_wrap(&text, max_width);
-
             for line in &wrapped {
-                // Lines should not exceed max_width, UNLESS they contain a single
-                // word longer than max_width
                 let line_words: Vec<&str> = line.split_whitespace().collect();
                 if line_words.len() > 1 {
-                    prop_assert!(line.len() <= max_width,
-                        "multi-word line exceeds width {}: {:?} (len={})",
-                        max_width, line, line.len());
+                    prop_assert!(line.chars().count() <= max_width,
+                        "multi-word line exceeds width {}: {:?}", max_width, line);
                 }
             }
+        }
+
+        /// Colour off: the renderer emits no control character for any layout.
+        #[test]
+        fn color_off_render_is_control_free(layout in any_layout(), width in 20..200usize) {
+            let term = Terminal::new(width);
+            let mut buf = Vec::new();
+            write_layout(&mut buf, &layout, &term);
+            let s = String::from_utf8_lossy(&buf);
+            for c in s.chars() {
+                prop_assert!(c == '\n' || !c.is_control(), "control char leaked: {c:?}");
+            }
+        }
+
+        /// write_layout never panics on arbitrary layouts and widths.
+        #[test]
+        fn write_layout_never_panics(layout in any_layout(), width in 20..200usize) {
+            let term = Terminal::new(width).with_color(true);
+            let mut buf = Vec::new();
+            write_layout(&mut buf, &layout, &term);
+            let _ = String::from_utf8_lossy(&buf);
         }
     }
 
@@ -1202,20 +1311,5 @@ mod proptests {
     fn word_wrap_empty_input() {
         let result = word_wrap("", 80);
         assert_eq!(result, vec![String::new()]);
-    }
-
-    proptest! {
-        /// write_layout never panics on arbitrary layouts and widths.
-        #[test]
-        fn write_layout_never_panics(
-            layout in any_layout(),
-            width in 20..200usize,
-        ) {
-            let term = Terminal::new(width);
-            let mut buf = Vec::new();
-            write_layout(&mut buf, &layout, &term);
-            // Just ensuring no panic; output is valid UTF-8.
-            let _ = String::from_utf8_lossy(&buf);
-        }
     }
 }

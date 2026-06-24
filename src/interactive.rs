@@ -34,7 +34,7 @@ pub(crate) struct TerminalPrompt {
 impl TerminalPrompt {
     pub(crate) fn new() -> Self {
         Self {
-            term: console::Term::stderr(),
+            term: crate::sink::interactive_term(),
         }
     }
 }
@@ -49,7 +49,12 @@ impl UserPrompt for TerminalPrompt {
             .with_prompt(prompt)
             .default(default)
             .interact()
-            .map_err(|e| miette::miette!("prompt failed: {e}"))
+            .map_err(|e| {
+                miette::miette!(
+                    "prompt failed: {}",
+                    may_i_core::SafeText::new(e.to_string())
+                )
+            })
     }
 
     fn choose(&mut self, prompt: &str, items: &[&str], default: usize) -> miette::Result<usize> {
@@ -58,15 +63,22 @@ impl UserPrompt for TerminalPrompt {
             .items(items)
             .default(default)
             .interact()
-            .map_err(|e| miette::miette!("prompt failed: {e}"))
+            .map_err(|e| {
+                miette::miette!(
+                    "prompt failed: {}",
+                    may_i_core::SafeText::new(e.to_string())
+                )
+            })
     }
 
     fn read_key(&mut self, keys: &[char]) -> miette::Result<char> {
         loop {
-            let ch = self
-                .term
-                .read_char()
-                .map_err(|e| miette::miette!("read key failed: {e}"))?;
+            let ch = self.term.read_char().map_err(|e| {
+                miette::miette!(
+                    "read key failed: {}",
+                    may_i_core::SafeText::new(e.to_string())
+                )
+            })?;
             if keys.contains(&ch) {
                 return Ok(ch);
             }
@@ -179,7 +191,7 @@ pub fn pending_programs(catalog: &TrustCatalog) -> Vec<String> {
 }
 
 fn compute_pp_width() -> (usize, usize) {
-    let term = console::Term::stderr();
+    let term = crate::sink::interactive_term();
     let term_width = term.size().1 as usize;
     let pp_width = term_width.saturating_sub(4).max(40);
     (pp_width, term_width)

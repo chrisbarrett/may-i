@@ -1,4 +1,7 @@
 // Smoke test: end-to-end migration converts v1 flag matchers.
+// Test-only debug output; the workspace `print_stdout` deny targets the
+// production sink, not test scaffolding.
+#![allow(clippy::print_stdout)]
 
 use may_i_config::migrate;
 

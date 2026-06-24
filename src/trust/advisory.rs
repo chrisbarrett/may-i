@@ -8,9 +8,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use colored::Colorize;
 use may_i_engine::trust::{canonical_rule, hash_rule};
-use may_i_output::{Advisory, ColItem, Layout, NoteLevel};
+use may_i_output::{Advisory, ColItem, Layout, NoteLevel, Style, Styled};
 
 use crate::output;
 use crate::trust::view::{TrustCatalog, TrustState};
@@ -156,23 +155,23 @@ fn trust_samples(file_to_programs: &BTreeMap<&Path, Vec<&str>>) -> Layout {
     for (file, progs) in file_to_programs {
         let path = output::shorten_home(file);
         let count = progs.len();
-        let header = format!("{} ({count})", path.cyan());
+        let header = Styled::span(path, Style::Accent).with(format!(" ({count})"), Style::Plain);
         children.push(Layout::Text(header));
 
         let take = progs.len().min(5);
         let mut items: Vec<ColItem> = progs[..take]
             .iter()
-            .map(|p| ColItem::new(*p, p.len()))
+            .map(|p| ColItem::new(Styled::plain(*p)))
             .collect();
         if progs.len() > 5 {
-            items.push(ColItem::new("...", 3));
+            items.push(ColItem::new(Styled::plain("...")));
         }
-        let sep_text = format!("{} ", ",".dimmed());
+        let separator = Styled::span(",", Style::Dimmed).with(" ", Style::Plain);
         children.push(Layout::Indent(
             3,
             Box::new(Layout::Wrap {
                 items,
-                separator: ColItem::new(sep_text, 2),
+                separator: ColItem::new(separator),
             }),
         ));
     }
@@ -550,8 +549,7 @@ mod tests {
         let term = output::Terminal::new(60);
         let mut buf = Vec::new();
         output::write_layout(&mut buf, layout, &term);
-        let raw = String::from_utf8(buf).unwrap();
-        may_i_output::strip_ansi(&raw)
+        String::from_utf8(buf).unwrap()
     }
 
     fn entry(program: &str, files: &[&str]) -> UntrustedEntry {

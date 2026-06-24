@@ -72,7 +72,12 @@ valid.
 `Style` enumerates roles (keyword, string-literal, form-head, dimmed, heading,
 match-hit, match-miss, …), mirroring what `colorize_atom` already does
 (content-class → colour). The renderer owns the role→SGR palette and the single
-`NO_COLOR`/`--color` branch. **Alternative rejected:** a structural
+`NO_COLOR`/`--color` branch. **Crate placement:** `Style` lives in `pp`, not
+`may-i-output`. The dependency graph is `may-i-output → pp → core`, and Phase 2
+(D7 / task 7.1) requires `pp`'s pretty-printer to *emit* roles, so the enum must
+sit where `pp` can name it; `may-i-output` re-exports it. The role→SGR mapping
+still lives solely in the `may-i-output` renderer, so D3's "renderer owns the
+palette" invariant holds — only the enum's home moves down a crate. **Alternative rejected:** a structural
 `(Color, attributes)` representation — it scatters palette decisions back to call
 sites, the exact sprawl being removed. Roles are added only when a surface needs
 one; never a raw colour.
@@ -99,12 +104,17 @@ needs the source sanitised to be safe.
 ### D6: The gate is a compiler fact first, a lint second
 
 The strongest enforcement of "only the renderer emits ANSI" is removing `colored`
-from every crate except `may-i-output` — an inline `.red()` elsewhere then fails
-to compile. On top: `clippy::print_stdout`/`print_stderr`/`dbg_macro` denied
-workspace-wide with the sink as the sole allow site, and a prek grep banning
-stream-handle acquisition (which clippy's macro lints miss, e.g.
-`writeln!(stderr(), …)`). The gate lands **last** within the change — after the
-sink and role migration — or it is a wall of errors before the call sites move.
+from **every** crate — an inline `.red()` anywhere then fails to compile. The
+renderer in `may-i-output` turned out not to need `colored` either: it writes the
+SGR sequences from its role→SGR table directly (`\x1b[…m`), so the dependency is
+removed workspace-wide (stronger than the originally-planned "confine it to
+`may-i-output`"). On top: `clippy::print_stdout`/`print_stderr`/`dbg_macro`
+denied workspace-wide with the sink as the sole allow site, and a prek hook —
+an **ast-grep** structural scan (not a regex grep, so comments and string
+literals can't false-positive) — banning stream-handle acquisition that clippy's
+macro lints miss (e.g. `writeln!(stderr(), …)`, `console::Term::stderr()`). The
+gate lands **last** within the change — after the sink and role migration — or it
+is a wall of errors before the call sites move.
 
 ### D7: Two-phase migration inside one change
 
@@ -144,16 +154,20 @@ inline-ANSI island is left behind.
 1. `may-i-core`: add `SafeText` (move/generalise `DisplaySafe`) and `SafeSource`
    with proptests (no-control, idempotent, offset/length-preserving).
 2. `engine`: re-alias `DisplaySafe` to `SafeText`; no behaviour change.
-3. `may-i-output`: introduce `Style` roles; convert `Layout` leaves to
-   `SafeText` + `Style`; delete width fields and `strip_ansi`/`visible_len`;
+3. `pp`: add the `Style` role enum and a `PrettyOutput` impl that collects
+   `(SafeText, Style)` spans (the seam replacing `StringBuilder`'s baked ANSI);
+   `may-i-output`: re-export `Style`, convert `Layout` leaves to styled spans
+   (`SafeText` + `Style`); delete width fields and `strip_ansi`/`visible_len`;
    move the role→SGR + colour-enable decision into the renderer.
 4. Build the single sink module (owns `stdout`/`stderr`; `layout`/`line`/`json`).
 5. Migrate `src/output/*` builders and every `cmd_*`/`config` print site through
    the sink; sanitise miette input (`SafeSource` for `shape_diag`, `SafeText` for
    `miette!` interpolations).
 6. Add the colour-off / colour-on proptests over the render surfaces.
-7. **Gate (last):** remove `colored` from bin/`config`/(then `pp`); add the
-   clippy denies with the sink allow; add the prek grep.
+7. **Gate (last):** remove `colored` from every crate (bin, `config`, `pp`,
+   `may-i-output` — the renderer emits SGR directly); add the clippy denies with
+   the sink allow; add the prek hook (ast-grep structural scan) and wire it into
+   CI.
 8. Phase 2: fold `pp`/`fmt`/`migrate` onto roles; remove `colored` from `pp`.
 
 Rollback: the change is internal; reverting the commit restores the prior

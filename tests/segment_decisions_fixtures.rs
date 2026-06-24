@@ -16,7 +16,6 @@ fn fixture_path(name: &str) -> PathBuf {
 }
 
 fn run(command: &str) -> (String, String) {
-    colored::control::set_override(true);
     let cfg = common::write_config(
         r#"
 (rule "echo" (allow))
@@ -29,6 +28,13 @@ fn run(command: &str) -> (String, String) {
     let context = ContextFacts::default();
     let (result, _traces, colored, _audit) =
         evaluate_with_colorization(command, &loaded, &context).expect("evaluate_with_colorization");
+    let mut buf = Vec::new();
+    may_i_output::write_line(
+        &mut buf,
+        &colored,
+        &may_i_output::Terminal::new(200).with_color(true),
+    );
+    let colored = String::from_utf8(buf).unwrap().trim_end().to_string();
     (result.decision.to_string(), colored)
 }
 

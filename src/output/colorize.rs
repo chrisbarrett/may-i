@@ -1,9 +1,14 @@
-use colored::Colorize;
-use may_i_pp::colorize_atom;
+use may_i_output::Styled;
+use may_i_pp::Style;
 
-pub(super) fn colorize_right(s: &str) -> String {
+/// Colourise a trace right-column annotation string into styled spans.
+///
+/// The annotation is producer-generated text describing a match/decision; its
+/// shape (`→ keyword`, `actual ~ regex → yes`, `facts += :k "v"`, …) drives
+/// which spans get which role. Input-derived fragments are escaped by `Styled`.
+pub(super) fn colorize_right(s: &str) -> Styled {
     if s.is_empty() {
-        return String::new();
+        return Styled::new();
     }
 
     if s.starts_with("(effect ") || s.starts_with("(default ") {
@@ -11,207 +16,191 @@ pub(super) fn colorize_right(s: &str) -> String {
     }
 
     if s == "yes" {
-        return "yes".green().bold().to_string();
+        return Styled::span("yes", Style::Allow);
     }
     if s == "no" {
-        return "no".yellow().to_string();
+        return Styled::span("no", Style::AskSoft);
     }
 
-    if s.contains("~") || s.contains("∈") {
-        if let Some(arrow_pos) = s.find("→") {
+    if s.contains('~') || s.contains('∈') {
+        if let Some(arrow_pos) = s.find('→') {
             let before = &s[..arrow_pos];
             let after = s[arrow_pos + "→".len()..].trim();
-            let colored_result = match after {
-                "yes" => "yes".green().bold().to_string(),
-                "no" => "no".yellow().to_string(),
-                other => other.to_string(),
-            };
-            format!("{}{} {colored_result}", before.dimmed(), "→".dimmed())
+            let mut out = Styled::span(before, Style::Dimmed).with("→", Style::Dimmed);
+            out.push(" ", Style::Plain);
+            out.extend(verdict_span(after));
+            out
         } else {
-            s.dimmed().to_string()
+            Styled::span(s, Style::Dimmed)
         }
-    } else if let Some(arrow_pos) = s.find("→") {
+    } else if let Some(arrow_pos) = s.find('→') {
         let before = &s[..arrow_pos];
         let after = s[arrow_pos + "→".len()..].trim();
-        let colored_result = match after {
-            "yes" => "yes".green().bold().to_string(),
-            "no" => "no".yellow().to_string(),
-            "missing" => "missing".yellow().to_string(),
-            other if other.starts_with(':') => {
-                if let Some(space) = other.find(' ') {
-                    let keyword = &other[..space];
-                    let rest = other[space..].trim();
-                    format!(
-                        "{} {}",
-                        colorize_decision_keyword(keyword),
-                        colorize_atom(rest, true)
-                    )
-                } else {
-                    colorize_decision_keyword(other)
-                }
-            }
-            other => other.to_string(),
-        };
-        format!("{}{} {colored_result}", before.dimmed(), "→".dimmed())
+        let mut out = Styled::span(before, Style::Dimmed).with("→", Style::Dimmed);
+        out.push(" ", Style::Plain);
+        out.extend(arrow_target_span(after));
+        out
     } else if let Some(rest) = s.strip_prefix("facts += ") {
         if let Some(space_pos) = rest.find(' ') {
             let keyword = &rest[..space_pos];
             let value = &rest[space_pos + 1..];
-            format!(
-                "{} {} {}",
-                "facts +=".dimmed(),
-                colorize_atom(keyword, true),
-                colorize_atom(value, true),
-            )
+            Styled::span("facts +=", Style::Dimmed)
+                .with(" ", Style::Plain)
+                .with(keyword, may_i_pp::atom_style(keyword))
+                .with(" ", Style::Plain)
+                .with(value, may_i_pp::atom_style(value))
         } else {
-            s.dimmed().to_string()
+            Styled::span(s, Style::Dimmed)
         }
     } else {
-        s.dimmed().to_string()
+        Styled::span(s, Style::Dimmed)
     }
 }
 
-pub fn colorize_decision_keyword(s: &str) -> String {
-    if s == ":allow" {
-        s.green().bold().to_string()
-    } else if s == ":ask" {
-        s.yellow().bold().to_string()
-    } else if s == ":deny" {
-        s.red().bold().to_string()
-    } else {
-        s.to_string()
+/// Colourise a target appearing after `→` in a non-regex annotation.
+fn arrow_target_span(after: &str) -> Styled {
+    match after {
+        "yes" => Styled::span("yes", Style::Allow),
+        "no" => Styled::span("no", Style::AskSoft),
+        "missing" => Styled::span("missing", Style::AskSoft),
+        other if other.starts_with(':') => {
+            if let Some(space) = other.find(' ') {
+                let keyword = &other[..space];
+                let rest = other[space..].trim();
+                colorize_decision_keyword(keyword)
+                    .with(" ", Style::Plain)
+                    .with(rest, may_i_pp::atom_style(rest))
+            } else {
+                colorize_decision_keyword(other)
+            }
+        }
+        other => Styled::plain(other),
     }
 }
 
-fn colorize_effect_sexpr(s: &str) -> String {
-    s.replace(":allow", &":allow".green().bold().to_string())
-        .replace(":ask", &":ask".yellow().bold().to_string())
-        .replace(":deny", &":deny".red().bold().to_string())
+/// Colourise a regex/set-membership verdict (`yes`/`no` or plain text).
+fn verdict_span(after: &str) -> Styled {
+    match after {
+        "yes" => Styled::span("yes", Style::Allow),
+        "no" => Styled::span("no", Style::AskSoft),
+        other => Styled::plain(other),
+    }
+}
+
+pub fn colorize_decision_keyword(s: &str) -> Styled {
+    match s {
+        ":allow" => Styled::span(s, Style::Allow),
+        ":ask" => Styled::span(s, Style::Ask),
+        ":deny" => Styled::span(s, Style::Deny),
+        _ => Styled::plain(s),
+    }
+}
+
+fn colorize_effect_sexpr(s: &str) -> Styled {
+    // Split on the decision keywords, styling each occurrence by decision and
+    // leaving the surrounding text plain.
+    let mut out = Styled::new();
+    let mut rest = s;
+    let keywords = [
+        (":allow", Style::Allow),
+        (":ask", Style::Ask),
+        (":deny", Style::Deny),
+    ];
+    'outer: while !rest.is_empty() {
+        // Find the earliest keyword occurrence.
+        let mut best: Option<(usize, &str, Style)> = None;
+        for (kw, style) in keywords {
+            if let Some(pos) = rest.find(kw)
+                && best.is_none_or(|(b, _, _)| pos < b)
+            {
+                best = Some((pos, kw, style));
+            }
+        }
+        match best {
+            Some((pos, kw, style)) => {
+                if pos > 0 {
+                    out.push(&rest[..pos], Style::Plain);
+                }
+                out.push(kw, style);
+                rest = &rest[pos + kw.len()..];
+            }
+            None => {
+                out.push(rest, Style::Plain);
+                break 'outer;
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use may_i_output::strip_ansi;
+
+    fn plain(s: &Styled) -> String {
+        s.to_plain_string()
+    }
 
     #[test]
     fn colorize_right_empty() {
-        assert_eq!(colorize_right(""), "");
+        assert_eq!(plain(&colorize_right("")), "");
     }
 
     #[test]
     fn colorize_right_yes() {
-        let result = colorize_right("yes");
-        let stripped = strip_ansi(&result);
-        assert_eq!(stripped, "yes");
+        assert_eq!(plain(&colorize_right("yes")), "yes");
     }
 
     #[test]
     fn colorize_right_no() {
-        let result = colorize_right("no");
-        let stripped = strip_ansi(&result);
-        assert_eq!(stripped, "no");
+        assert_eq!(plain(&colorize_right("no")), "no");
     }
 
     #[test]
     fn colorize_right_arrow_keyword() {
-        let result = colorize_right("→ :allow");
-        let stripped = strip_ansi(&result);
-        assert!(stripped.contains(":allow"));
+        assert!(plain(&colorize_right("→ :allow")).contains(":allow"));
     }
 
     #[test]
     fn colorize_right_arrow_keyword_with_reason() {
-        let result = colorize_right("→ :deny \"reason\"");
-        let stripped = strip_ansi(&result);
-        assert!(stripped.contains(":deny"));
-        assert!(stripped.contains("reason"));
+        let p = plain(&colorize_right("→ :deny \"reason\""));
+        assert!(p.contains(":deny"));
+        assert!(p.contains("reason"));
     }
 
     #[test]
     fn colorize_right_effect_sexpr() {
-        let result = colorize_right("(effect :allow)");
-        let stripped = strip_ansi(&result);
-        assert!(stripped.contains(":allow"));
+        assert!(plain(&colorize_right("(effect :allow)")).contains(":allow"));
     }
 
     #[test]
     fn colorize_right_facts_bind() {
-        let result = colorize_right("facts += :key \"value\"");
-        let stripped = strip_ansi(&result);
-        assert!(stripped.contains(":key"));
-        assert!(stripped.contains("value"));
+        let p = plain(&colorize_right("facts += :key \"value\""));
+        assert!(p.contains(":key"));
+        assert!(p.contains("value"));
     }
 
     #[test]
     fn colorize_right_regex() {
-        let result = colorize_right("\"val\" ~ (regex \"pat\") → yes");
-        let stripped = strip_ansi(&result);
-        assert!(stripped.contains("yes"));
+        assert!(plain(&colorize_right("\"val\" ~ (regex \"pat\") → yes")).contains("yes"));
     }
 
     #[test]
     fn colorize_right_arg_match() {
-        let result = colorize_right("\"t\" ∈ {\"a\", \"b\"} → no");
-        let stripped = strip_ansi(&result);
-        assert!(stripped.contains("no"));
+        assert!(plain(&colorize_right("\"t\" ∈ {\"a\", \"b\"} → no")).contains("no"));
     }
 
     #[test]
     fn colorize_decision_keywords() {
-        assert!(strip_ansi(&colorize_decision_keyword(":allow")).contains(":allow"));
-        assert!(strip_ansi(&colorize_decision_keyword(":ask")).contains(":ask"));
-        assert!(strip_ansi(&colorize_decision_keyword(":deny")).contains(":deny"));
-        assert_eq!(colorize_decision_keyword(":other"), ":other");
-    }
-
-    #[test]
-    fn colorize_right_regex_match() {
-        let s = r#""actual" ~ (regex "pat") → yes"#;
-        let result = colorize_right(s);
-        assert!(result.contains("yes"));
-    }
-
-    #[test]
-    fn colorize_right_regex_no_match() {
-        let s = r#""actual" ~ (regex "pat") → no"#;
-        let result = colorize_right(s);
-        assert!(result.contains("no"));
-    }
-
-    #[test]
-    fn colorize_right_arg_in_set() {
-        let s = r#""t" ∈ {a, b} → yes"#;
-        let result = colorize_right(s);
-        assert!(result.contains("yes"));
-    }
-
-    #[test]
-    fn colorize_right_arg_not_in_set() {
-        let s = r#""t" ∈ {a, b} → no"#;
-        let result = colorize_right(s);
-        assert!(result.contains("no"));
-    }
-
-    #[test]
-    fn colorize_right_regex_without_arrow() {
-        let s = r#""actual" ~ (regex "pat")"#;
-        let result = colorize_right(s);
-        assert!(!result.is_empty());
-    }
-
-    #[test]
-    fn colorize_right_set_without_arrow() {
-        let s = r#""t" ∈ {a, b}"#;
-        let result = colorize_right(s);
-        assert!(!result.is_empty());
+        assert!(plain(&colorize_decision_keyword(":allow")).contains(":allow"));
+        assert!(plain(&colorize_decision_keyword(":ask")).contains(":ask"));
+        assert!(plain(&colorize_decision_keyword(":deny")).contains(":deny"));
+        assert_eq!(plain(&colorize_decision_keyword(":other")), ":other");
     }
 
     #[test]
     fn colorize_right_facts_add() {
-        let s = "facts += :key value";
-        let result = colorize_right(s);
-        assert!(result.contains("facts"));
+        assert!(plain(&colorize_right("facts += :key value")).contains("facts"));
     }
 
     proptest::proptest! {

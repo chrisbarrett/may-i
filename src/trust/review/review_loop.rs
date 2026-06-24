@@ -6,7 +6,9 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use colored::Colorize;
+use may_i_output::Style;
+
+use super::render::paint;
 
 use crate::output::{Terminal, write_layout};
 use crate::trust::review::prompt::{
@@ -101,8 +103,8 @@ pub fn run_review(
             trusted_rule_count,
             trusted_file_count,
         ));
-        let (label, vis_len) = render_progress_label(idx, total, rule.badge);
-        block.push_str(&render_separator(&label, vis_len, term));
+        let label = render_progress_label(idx, total, rule.badge);
+        block.push_str(&render_separator(label, term));
         block.push('\n');
         block.push_str(&render_rule_detail(
             rule.source_file.as_deref(),
@@ -179,16 +181,23 @@ pub fn run_integrity_repair(
         return Ok(Vec::new());
     }
 
+    let color = crate::sink::stderr_color();
     let mut header = String::new();
     header.push_str(&format!(
         "\n{}\n",
-        "Trust store integrity check found suspect entries:"
-            .yellow()
-            .bold()
+        paint(
+            "Trust store integrity check found suspect entries:",
+            Style::Ask,
+            color
+        )
     ));
     header.push_str(&format!(
-        "{}\n",
-        "Stored canonical forms do not match their hashes.\n".dimmed()
+        "{}\n\n",
+        paint(
+            "Stored canonical forms do not match their hashes.",
+            Style::Dimmed,
+            color
+        )
     ));
     prompt.render(&header);
 
@@ -211,13 +220,19 @@ pub fn run_integrity_repair(
                 ops.push(StoreOp::Reapprove {
                     program: suspect.program.clone(),
                 });
-                prompt.render(&format!("  {} re-approved\n", suspect.program.green()));
+                prompt.render(&format!(
+                    "  {} re-approved\n",
+                    paint(&suspect.program, Style::AllowSoft, color)
+                ));
             }
             RepairAction::Drop => {
                 ops.push(StoreOp::Drop {
                     program: suspect.program.clone(),
                 });
-                prompt.render(&format!("  {} dropped\n", suspect.program.red()));
+                prompt.render(&format!(
+                    "  {} dropped\n",
+                    paint(&suspect.program, Style::DenySoft, color)
+                ));
             }
         }
     }
@@ -230,6 +245,7 @@ pub fn run_program_review(
     prompt: &mut dyn UserPrompt,
     programs: &[ProgramReviewEntry],
 ) -> miette::Result<Vec<StoreOp>> {
+    let color = crate::sink::stderr_color();
     let mut ops: Vec<StoreOp> = Vec::new();
     for entry in programs {
         prompt.render(&render_entry_detail(
@@ -249,9 +265,15 @@ pub fn run_program_review(
                     form: form.clone(),
                 });
             }
-            prompt.render(&format!("  {} approved\n\n", entry.program.green()));
+            prompt.render(&format!(
+                "  {} approved\n\n",
+                paint(&entry.program, Style::AllowSoft, color)
+            ));
         } else {
-            prompt.render(&format!("  {} skipped\n\n", entry.program.yellow()));
+            prompt.render(&format!(
+                "  {} skipped\n\n",
+                paint(&entry.program, Style::AskSoft, color)
+            ));
         }
     }
     Ok(ops)

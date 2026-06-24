@@ -1,19 +1,28 @@
 // Pure rendering helpers for the trust review and repair loops. Each function
 // returns a string (or string fragments) so the loop can hand the result to
 // `UserPrompt::render`. This module is the only place inside
-// `src/trust/review/` allowed to import `may_i_pp`, `may_i_sexpr`, `similar`,
-// or `colored`.
+// `src/trust/review/` allowed to import `may_i_pp`, `may_i_sexpr`, or
+// `similar`.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use colored::Colorize;
-
 use may_i_core::Doc;
+use may_i_output::{Style, Styled};
 
 use crate::output::{Terminal, render_labelled_separator, shorten_home};
 use crate::trust::review::prompt::ReviewSummary;
 use crate::trust::store::SuspectEntry;
+
+/// Render a single styled fragment to an inline string (no trailing newline),
+/// emitting SGR only when colour is on for the stderr review surface.
+pub(crate) fn paint(text: impl Into<String>, style: Style, color: bool) -> String {
+    let term = crate::output::Terminal::new(0).with_color(color);
+    let mut buf = Vec::new();
+    may_i_output::write_line(&mut buf, &Styled::span(text, style), &term);
+    let s = String::from_utf8(buf).unwrap_or_default();
+    s.strip_suffix('\n').map(str::to_string).unwrap_or(s)
+}
 
 /// Convert a parsed s-expression into a `Doc` tree for pretty-printing.
 fn doc_from_sexpr(sexpr: &may_i_sexpr::Sexpr) -> Doc {
@@ -42,23 +51,38 @@ pub fn pretty_form(canonical: &str, width: usize, color: bool) -> String {
         line_number: None,
         preserve_user_breaks: false,
     };
-    may_i_pp::pretty(&doc, 0, &fmt)
+    // Color-as-data: collect styled spans, then render with the role→SGR
+    // renderer. `color` decides SGR emission; the styling is in the data either
+    // way. Returns a multi-line string (no trailing newline) so callers' existing
+    // `.lines()` handling is unchanged.
+    let lines = may_i_pp::pretty_styled(&doc, 0, &fmt);
+    let term = Terminal::new(width).with_color(color);
+    let mut buf = Vec::new();
+    for line in &lines {
+        may_i_output::write_line(&mut buf, line, &term);
+    }
+    let s = String::from_utf8(buf).unwrap_or_default();
+    s.strip_suffix('\n').map(str::to_string).unwrap_or(s)
 }
 
 /// Render the detail block for a single suspect entry (integrity failure).
 pub(crate) fn render_suspect_detail(suspect: &SuspectEntry) -> String {
+    let color = crate::sink::stderr_color();
     let mut out = String::new();
     out.push_str(&format!(
         "  {} {}\n",
-        suspect.program.bold(),
-        "SUSPECT".red().bold()
+        paint(&suspect.program, Style::Strong, color),
+        paint("SUSPECT", Style::Deny, color)
     ));
     out.push_str(&format!(
         "    {} {}\n",
-        "stored hash:".dimmed(),
-        suspect.hash.dimmed()
+        paint("stored hash:", Style::Dimmed, color),
+        paint(&suspect.hash, Style::Dimmed, color)
     ));
-    out.push_str(&format!("    {}\n", suspect.stored_form.dimmed()));
+    out.push_str(&format!(
+        "    {}\n",
+        paint(&suspect.stored_form, Style::Dimmed, color)
+    ));
     out.push('\n');
     out
 }
@@ -70,15 +94,20 @@ pub(crate) fn render_rule_detail(
     prev_form: Option<&str>,
     pp_width: usize,
 ) -> String {
+    let color = crate::sink::stderr_color();
     let mut out = String::new();
     if let Some(file) = source_file {
-        out.push_str(&format!("  {} {}\n", "file:".dimmed(), shorten_home(file)));
+        out.push_str(&format!(
+            "  {} {}\n",
+            paint("file:", Style::Dimmed, color),
+            shorten_home(file)
+        ));
     }
 
     if let Some(old) = prev_form {
         out.push_str(&render_pretty_diff(old, canonical_form, pp_width));
     } else {
-        let pretty = pretty_form(canonical_form, pp_width, true);
+        let pretty = pretty_form(canonical_form, pp_width, color);
         for line in pretty.lines() {
             out.push_str(&format!("    {}\n", line));
         }
@@ -90,6 +119,7 @@ pub(crate) fn render_rule_detail(
 
 /// Render a line-level diff between pretty-printed old and new forms.
 fn render_pretty_diff(old_canonical: &str, new_canonical: &str, pp_width: usize) -> String {
+    let color = crate::sink::stderr_color();
     let old_pretty = pretty_form(old_canonical, pp_width, false);
     let new_pretty = pretty_form(new_canonical, pp_width, false);
     let diff = similar::TextDiff::from_lines(&old_pretty, &new_pretty);
@@ -98,13 +128,22 @@ fn render_pretty_diff(old_canonical: &str, new_canonical: &str, pp_width: usize)
     for change in diff.iter_all_changes() {
         match change.tag() {
             similar::ChangeTag::Delete => {
-                out.push_str(&format!("    {}", format!("-{}", change).red()));
+                out.push_str(&format!(
+                    "    {}",
+                    paint(format!("-{}", change), Style::DenySoft, color)
+                ));
             }
             similar::ChangeTag::Insert => {
-                out.push_str(&format!("    {}", format!("+{}", change).green()));
+                out.push_str(&format!(
+                    "    {}",
+                    paint(format!("+{}", change), Style::AllowSoft, color)
+                ));
             }
             similar::ChangeTag::Equal => {
-                out.push_str(&format!("    {}", format!(" {}", change).dimmed()));
+                out.push_str(&format!(
+                    "    {}",
+                    paint(format!(" {}", change), Style::Dimmed, color)
+                ));
             }
         }
     }
@@ -119,19 +158,24 @@ pub(crate) fn render_entry_detail(
     source_files: &BTreeSet<PathBuf>,
     previous_rules: Option<&[String]>,
 ) -> String {
+    let color = crate::sink::stderr_color();
     let badge = match status {
-        "NEW" => status.yellow().bold().to_string(),
-        "CHANGED" => status.red().bold().to_string(),
+        "NEW" => paint(status, Style::Ask, color),
+        "CHANGED" => paint(status, Style::Deny, color),
         _ => status.to_string(),
     };
 
     let mut out = String::new();
-    out.push_str(&format!("  {} {}\n", program.bold(), badge));
+    out.push_str(&format!(
+        "  {} {}\n",
+        paint(program, Style::Strong, color),
+        badge
+    ));
 
     for file in source_files {
         out.push_str(&format!(
             "    {} {}\n",
-            "file:".dimmed(),
+            paint("file:", Style::Dimmed, color),
             shorten_home(file)
         ));
     }
@@ -147,7 +191,7 @@ pub(crate) fn render_entry_detail(
         }
     } else {
         for rule in canonical_rules {
-            let pretty = pretty_form(rule, 72, true);
+            let pretty = pretty_form(rule, 72, color);
             for line in pretty.lines() {
                 out.push_str(&format!("    {}\n", line));
             }
@@ -159,6 +203,7 @@ pub(crate) fn render_entry_detail(
 
 /// Render a line-level diff between joined previous and current rule forms.
 fn render_diff(old: &[String], new: &[String]) -> String {
+    let color = crate::sink::stderr_color();
     let old_text = old.join("\n");
     let new_text = new.join("\n");
     let diff = similar::TextDiff::from_lines(&old_text, &new_text);
@@ -167,13 +212,22 @@ fn render_diff(old: &[String], new: &[String]) -> String {
     for change in diff.iter_all_changes() {
         match change.tag() {
             similar::ChangeTag::Delete => {
-                out.push_str(&format!("    {}", format!("-{}", change).red()));
+                out.push_str(&format!(
+                    "    {}",
+                    paint(format!("-{}", change), Style::DenySoft, color)
+                ));
             }
             similar::ChangeTag::Insert => {
-                out.push_str(&format!("    {}", format!("+{}", change).green()));
+                out.push_str(&format!(
+                    "    {}",
+                    paint(format!("+{}", change), Style::AllowSoft, color)
+                ));
             }
             similar::ChangeTag::Equal => {
-                out.push_str(&format!("    {}", format!(" {}", change).dimmed()));
+                out.push_str(&format!(
+                    "    {}",
+                    paint(format!(" {}", change), Style::Dimmed, color)
+                ));
             }
         }
     }
@@ -182,11 +236,24 @@ fn render_diff(old: &[String], new: &[String]) -> String {
 
 /// Render the final review session summary line.
 pub(crate) fn render_summary(summary: &ReviewSummary) -> String {
+    let color = crate::sink::stderr_color();
     format!(
         "  {}  {}  {}\n",
-        format!("Approved: {}", summary.approved).green(),
-        format!("Blocked: {}", summary.blocked).red(),
-        format!("Skipped: {}", summary.skipped).yellow(),
+        paint(
+            format!("Approved: {}", summary.approved),
+            Style::AllowSoft,
+            color
+        ),
+        paint(
+            format!("Blocked: {}", summary.blocked),
+            Style::DenySoft,
+            color
+        ),
+        paint(
+            format!("Skipped: {}", summary.skipped),
+            Style::AskSoft,
+            color
+        ),
     )
 }
 
@@ -198,13 +265,17 @@ pub(crate) fn render_trusted_summary(
     if trusted_rule_count == 0 {
         return String::new();
     }
+    let color = crate::sink::stderr_color();
     format!(
         "  {}\n\n",
-        format!(
-            "{} rules trusted across {} files",
-            trusted_rule_count, trusted_file_count
+        paint(
+            format!(
+                "{} rules trusted across {} files",
+                trusted_rule_count, trusted_file_count
+            ),
+            Style::Dimmed,
+            color
         )
-        .dimmed()
     )
 }
 
@@ -212,39 +283,36 @@ pub(crate) fn render_trusted_summary(
 /// terminal. Routes through the shared `output::render_labelled_separator`
 /// helper so colour/HRule behaviour stays consistent with the rest of the
 /// CLI.
-pub(crate) fn render_separator(label: &str, visible_width: usize, term: &Terminal) -> String {
+pub(crate) fn render_separator(label: may_i_output::Styled, term: &Terminal) -> String {
     let mut buf: Vec<u8> = Vec::new();
-    render_labelled_separator(&mut buf, term, "  ", Some((label, visible_width)));
+    render_labelled_separator(&mut buf, term, "  ", Some(label));
     String::from_utf8(buf).unwrap_or_default()
 }
 
 /// Render the per-rule progress separator with badge.
-pub(crate) fn render_progress_label(idx: usize, total: usize, badge: &str) -> (String, usize) {
-    let colored_badge = match badge {
-        "NEW" => badge.yellow().bold().to_string(),
-        "CHANGED" => badge.red().bold().to_string(),
-        _ => badge.to_string(),
+pub(crate) fn render_progress_label(idx: usize, total: usize, badge: &str) -> may_i_output::Styled {
+    use may_i_output::{Style, Styled};
+    let badge_style = match badge {
+        "NEW" => Style::Ask,
+        "CHANGED" => Style::Deny,
+        _ => Style::Plain,
     };
-    let label = format!(
-        "Rule {}/{} {} {}",
-        idx + 1,
-        total,
-        "──".dimmed(),
-        colored_badge
-    );
-    let visible_len = format!("Rule {}/{} ── {}", idx + 1, total, badge).len();
-    (label, visible_len)
+    Styled::span(format!("Rule {}/{} ", idx + 1, total), Style::Plain)
+        .with("──", Style::Dimmed)
+        .with(" ", Style::Plain)
+        .with(badge, badge_style)
 }
 
 /// Render the per-rule key legend.
 pub(crate) fn render_key_legend() -> String {
+    let color = crate::sink::stderr_color();
     format!(
         "  {} approve  {} block  {} skip  {} quit  {}\n",
-        "[y]".bold(),
-        "[n]".bold(),
-        "[s]".bold(),
-        "[q]".bold(),
-        "?".dimmed()
+        paint("[y]", Style::Strong, color),
+        paint("[n]", Style::Strong, color),
+        paint("[s]", Style::Strong, color),
+        paint("[q]", Style::Strong, color),
+        paint("?", Style::Dimmed, color)
     )
 }
 

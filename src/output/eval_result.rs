@@ -8,9 +8,8 @@
 use std::io::Write;
 use std::path::Path;
 
-use colored::Colorize;
 use may_i_engine::EvalResult;
-use may_i_pp::colorize_atom;
+use may_i_output::{Style, Styled, write_line};
 
 use super::{Terminal, colorize_decision_keyword, shorten_home, write_trace};
 use crate::annotation::TraceEntry;
@@ -22,7 +21,7 @@ pub struct EvalOutput<'a> {
     pub config_path: &'a Path,
     pub trace_entries: &'a [TraceEntry],
     pub command: &'a str,
-    pub colored_command: &'a str,
+    pub colored_command: &'a Styled,
     pub eval_result: &'a EvalResult,
 }
 
@@ -47,37 +46,44 @@ pub(crate) fn render_eval_result(
     w: &mut impl Write,
     term: &Terminal,
     command: &str,
-    colored_command: &str,
+    colored_command: &Styled,
     traces: &[TraceEntry],
     result: &EvalResult,
     display_path: &str,
 ) {
     if !traces.is_empty() {
-        let _ = writeln!(w, "\n{}\n", "Trace".bold());
+        let _ = writeln!(w);
+        write_line(w, &Styled::span("Trace", Style::Strong), term);
+        let _ = writeln!(w);
         write_trace(w, traces, command, "  ", term);
     }
 
-    let _ = writeln!(w, "\n{}\n", "Result".bold());
-    let _ = writeln!(w, "  {colored_command}");
+    let _ = writeln!(w);
+    write_line(w, &Styled::span("Result", Style::Strong), term);
+    let _ = writeln!(w);
+    let mut echo = Styled::plain("  ");
+    echo.extend(colored_command.clone());
+    write_line(w, &echo, term);
     let _ = writeln!(w);
     {
         let keyword = format!(":{}", result.decision);
-        let colored_keyword = colorize_decision_keyword(&keyword);
-        match &result.reason {
-            Some(reason) => {
-                let quoted = format!("\"{reason}\"");
-                let _ = writeln!(
-                    w,
-                    "  {} {colored_keyword} {}",
-                    "→".dimmed(),
-                    colorize_atom(&quoted, true)
-                );
-            }
-            None => {
-                let _ = writeln!(w, "  {} {colored_keyword}", "→".dimmed());
-            }
+        let mut line = Styled::plain("  ").with("→", Style::Dimmed);
+        line.push(" ", Style::Plain);
+        line.extend(colorize_decision_keyword(&keyword));
+        if let Some(reason) = &result.reason {
+            let quoted = format!("\"{reason}\"");
+            line.push(" ", Style::Plain);
+            line.extend(Styled::atom(&quoted));
         }
+        write_line(w, &line, term);
     }
     let _ = writeln!(w);
-    let _ = writeln!(w, "  {} {}", "config:".dimmed(), display_path.dimmed());
+    write_line(
+        w,
+        &Styled::plain("  ")
+            .with("config:", Style::Dimmed)
+            .with(" ", Style::Plain)
+            .with(display_path, Style::Dimmed),
+        term,
+    );
 }

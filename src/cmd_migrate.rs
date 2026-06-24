@@ -3,20 +3,34 @@
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
-use colored::Colorize;
 use may_i_config::migrate::{migrate_forms, validate_migration};
+use may_i_output::{Style, Styled, Terminal, write_line};
 use may_i_pp::detect_column_width;
 use may_i_sexpr::parse_cst;
 use similar::{ChangeTag, TextDiff};
 
-use crate::output;
+use crate::{output, sink};
+
+/// Render one `Styled` line (plus newline) to a `String`, honouring the colour
+/// decision. The renderer in `may_i_output` is the sole site that turns a role
+/// into an SGR sequence, so colour stays a property of the `Terminal` rather
+/// than embedded in the content.
+fn render_styled_line(line: &Styled, use_color: bool) -> String {
+    let term = Terminal::new(0).with_color(use_color);
+    let mut buf: Vec<u8> = Vec::new();
+    write_line(&mut buf, line, &term);
+    String::from_utf8(buf).expect("styled output is valid UTF-8")
+}
 
 fn generate_diff(original: &str, migrated: &str, config_path: &Path, use_color: bool) -> String {
     let diff = TextDiff::from_lines(original, migrated);
     let mut output = String::new();
 
     let display_path = crate::output::shorten_home(config_path);
-    output.push_str(&format!("{}:\n", display_path));
+    output.push_str(&render_styled_line(
+        &Styled::plain(format!("{display_path}:")),
+        use_color,
+    ));
 
     let mut has_changes = false;
 
@@ -25,18 +39,18 @@ fn generate_diff(original: &str, migrated: &str, config_path: &Path, use_color: 
             for change in diff.iter_changes(&op) {
                 has_changes = true;
                 let line = change.value().trim_end_matches('\n');
-                let (prefix, line) = match change.tag() {
-                    ChangeTag::Delete if use_color => {
-                        ("-".red().to_string(), line.red().to_string())
-                    }
-                    ChangeTag::Delete => ("-".to_string(), line.to_string()),
-                    ChangeTag::Insert if use_color => {
-                        ("+".green().to_string(), line.green().to_string())
-                    }
-                    ChangeTag::Insert => ("+".to_string(), line.to_string()),
-                    ChangeTag::Equal => (" ".to_string(), line.to_string()),
+                let styled = match change.tag() {
+                    // The original styled '-' lines red (= DenySoft) and '+'
+                    // lines green (= AllowSoft); context lines stay plain.
+                    ChangeTag::Delete => Styled::new()
+                        .with("-", Style::DenySoft)
+                        .with(line, Style::DenySoft),
+                    ChangeTag::Insert => Styled::new()
+                        .with("+", Style::AllowSoft)
+                        .with(line, Style::AllowSoft),
+                    ChangeTag::Equal => Styled::plain(format!(" {line}")),
                 };
-                output.push_str(&format!("{}{}\n", prefix, line));
+                output.push_str(&render_styled_line(&styled, use_color));
             }
         }
     }
@@ -45,12 +59,13 @@ fn generate_diff(original: &str, migrated: &str, config_path: &Path, use_color: 
 }
 
 fn should_use_color() -> bool {
-    std::env::var("NO_COLOR").is_err() && io::stdout().is_terminal()
+    std::env::var("NO_COLOR").is_err() && sink::stdout_is_terminal()
 }
 
 fn prompt_confirm(message: &str) -> io::Result<String> {
-    print!("{}", message);
-    io::stdout().flush()?;
+    sink::with_stdout(|w| {
+        let _ = write!(w, "{message}");
+    });
     let mut input = String::new();
     io::stdin().read_line(&mut input)?;
     Ok(input.trim().to_string())
@@ -74,13 +89,19 @@ pub fn cmd_migrate(
     } else {
         may_i_config::walk_load_graph(&config_file)?
     };
+    crate::sink::flush_config_advisories();
 
     let mut changed_files: Vec<(PathBuf, String, String)> = Vec::new();
     let mut skipped_readonly: Vec<PathBuf> = Vec::new();
 
     for file in &files {
-        let source = std::fs::read_to_string(file)
-            .map_err(|e| miette::miette!("Failed to read {}: {e}", file.display()))?;
+        let source = std::fs::read_to_string(file).map_err(|e| {
+            miette::miette!(
+                "Failed to read {}: {}",
+                may_i_core::SafeText::new(file.display().to_string()),
+                may_i_core::SafeText::new(e.to_string())
+            )
+        })?;
 
         let (original_forms, parse_errors) = parse_cst(&source);
         if let Some(err) = parse_errors.first() {
@@ -119,8 +140,13 @@ pub fn cmd_migrate(
         if source != output_text {
             // Detect read-only files up front so the user gets a clear
             // signal rather than a write failure mid-walk.
-            let metadata = std::fs::metadata(file)
-                .map_err(|e| miette::miette!("Failed to stat {}: {e}", file.display()))?;
+            let metadata = std::fs::metadata(file).map_err(|e| {
+                miette::miette!(
+                    "Failed to stat {}: {}",
+                    may_i_core::SafeText::new(file.display().to_string()),
+                    may_i_core::SafeText::new(e.to_string())
+                )
+            })?;
             if metadata.permissions().readonly() {
                 skipped_readonly.push(file.clone());
                 continue;
@@ -131,11 +157,15 @@ pub fn cmd_migrate(
 
     if !skipped_readonly.is_empty() {
         let term = output::Terminal::detect();
-        output::render_skipped_readonly_advisory(&mut std::io::stderr(), &term, &skipped_readonly);
+        sink::with_stderr(|w| {
+            output::render_skipped_readonly_advisory(w, &term, &skipped_readonly);
+        });
     }
 
     if changed_files.is_empty() {
-        println!("No migration needed - all files up to date.");
+        sink::with_stdout(|w| {
+            let _ = writeln!(w, "No migration needed - all files up to date.");
+        });
         return Ok(());
     }
 
@@ -144,13 +174,18 @@ pub fn cmd_migrate(
         for (path, before, after) in &changed_files {
             let diff = generate_diff(before, after, path, use_color);
             if !diff.is_empty() {
-                println!("{diff}");
+                sink::with_stdout(|w| {
+                    let _ = writeln!(w, "{diff}");
+                });
             }
         }
-        println!(
-            "Dry run: {} file(s) would be migrated. Re-run without --dry-run to apply.",
-            changed_files.len()
-        );
+        sink::with_stdout(|w| {
+            let _ = writeln!(
+                w,
+                "Dry run: {} file(s) would be migrated. Re-run without --dry-run to apply.",
+                changed_files.len()
+            );
+        });
         return Ok(());
     }
 
@@ -158,22 +193,30 @@ pub fn cmd_migrate(
         for (path, before, after) in &changed_files {
             let diff = generate_diff(before, after, path, use_color);
             if !diff.is_empty() {
-                println!("{diff}");
+                sink::with_stdout(|w| {
+                    let _ = writeln!(w, "{diff}");
+                });
             }
         }
 
-        let is_tty = io::stdin().is_terminal() && io::stdout().is_terminal();
+        let is_tty = io::stdin().is_terminal() && sink::stdout_is_terminal();
         if !is_tty {
             // Output is piped — just show the diff as a preview.
             return Ok(());
         }
 
         let prompt = format!("Apply migration to {} file(s)? [y/N] ", changed_files.len());
-        let response = prompt_confirm(&prompt)
-            .map_err(|e| miette::miette!("Failed to read prompt response: {e}"))?;
+        let response = prompt_confirm(&prompt).map_err(|e| {
+            miette::miette!(
+                "Failed to read prompt response: {}",
+                may_i_core::SafeText::new(e.to_string())
+            )
+        })?;
 
         if response.is_empty() || !response.to_lowercase().starts_with('y') {
-            println!("Migration cancelled.");
+            sink::with_stdout(|w| {
+                let _ = writeln!(w, "Migration cancelled.");
+            });
             return Ok(());
         }
     }
@@ -181,30 +224,47 @@ pub fn cmd_migrate(
     if let Some(path) = output_path {
         // Single-file mode — write to the explicit output path.
         let (_, _, output_text) = changed_files.into_iter().next().unwrap();
-        std::fs::write(path, output_text)
-            .map_err(|e| miette::miette!("Failed to write output file: {e}"))?;
-        println!("Migrated config written to {}", path.display());
+        std::fs::write(path, output_text).map_err(|e| {
+            miette::miette!(
+                "Failed to write output file: {}",
+                may_i_core::SafeText::new(e.to_string())
+            )
+        })?;
+        sink::with_stdout(|w| {
+            let _ = writeln!(w, "Migrated config written to {}", path.display());
+        });
     } else {
         for (path, _, output_text) in &changed_files {
-            std::fs::write(path, output_text)
-                .map_err(|e| miette::miette!("Failed to write {}: {e}", path.display()))?;
+            std::fs::write(path, output_text).map_err(|e| {
+                miette::miette!(
+                    "Failed to write {}: {}",
+                    may_i_core::SafeText::new(path.display().to_string()),
+                    may_i_core::SafeText::new(e.to_string())
+                )
+            })?;
         }
-        println!("Migrated {} file(s) in-place.", changed_files.len());
+        sink::with_stdout(|w| {
+            let _ = writeln!(w, "Migrated {} file(s) in-place.", changed_files.len());
+        });
 
         // Class A trust-hash rehash: re-canonicalise every approved rule
         // entry so existing approvals carry over to the new canonical form.
         let rehashed = crate::trust::rehash_after_migration()?;
         if rehashed > 0 {
-            println!(
-                "Rehashed {rehashed} trust entr{} to the new canonical form.",
-                if rehashed == 1 { "y" } else { "ies" }
-            );
+            sink::with_stdout(|w| {
+                let _ = writeln!(
+                    w,
+                    "Rehashed {rehashed} trust entr{} to the new canonical form.",
+                    if rehashed == 1 { "y" } else { "ies" }
+                );
+            });
         }
 
         // Class B warning: the carrier-boundary fix may change behaviour
         // for rules over sudo/xargs/etc. Re-load and scan the resolved
         // ruleset so users know to re-run their `(check …)` cases.
         if let Ok(loaded) = may_i_config::load_and_resolve(config_path) {
+            crate::sink::flush_config_advisories();
             warn_about_wrapper_rules(&loaded.config);
         }
     }
@@ -235,7 +295,9 @@ fn warn_about_wrapper_rules(config: &may_i_core::ast::Config) {
     }
 
     let term = output::Terminal::detect();
-    output::render_wrapper_boundary_advisory(&mut std::io::stderr(), &term, &affected);
+    sink::with_stderr(|w| {
+        output::render_wrapper_boundary_advisory(w, &term, &affected);
+    });
 }
 
 #[cfg(test)]

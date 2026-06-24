@@ -1,9 +1,11 @@
-use colored::Colorize;
 use may_i_core::{Doc, DocF, LayoutHint, Trivia, TriviaSource};
 
 use crate::buffer::{EventBuffer, StringBuilder};
 use crate::indent_spec;
 use crate::output::PrettyOutput;
+use crate::span_collector::SpanCollector;
+use crate::style::Style;
+use crate::styled::Styled;
 
 mod layout;
 use layout::*;
@@ -24,16 +26,44 @@ pub(crate) fn preserve_user_breaks_enabled() -> bool {
 /// Pretty-print a Doc with the given format settings.
 pub fn pretty<A: Clone + TriviaSource>(doc: &Doc<A>, indent: usize, fmt: &crate::Format) -> String {
     let prefix_width = fmt.line_number.map_or(0, line_prefix_width);
-    let mut sb = StringBuilder::new(fmt.color);
+    let mut sb = StringBuilder::new();
     PRESERVE_USER_BREAKS.with(|f| f.set(fmt.preserve_user_breaks));
     pretty_into(doc, indent + prefix_width, fmt.width, &mut sb);
     PRESERVE_USER_BREAKS.with(|f| f.set(false));
     let content = sb.into_string();
 
     match fmt.line_number {
-        Some(n) => prepend_line_number(&content, n, fmt.color),
+        Some(n) => prepend_line_number(&content, n),
         None => content,
     }
+}
+
+/// Pretty-print a Doc into color-as-data styled lines (one [`Styled`] run per
+/// visible line). This is the colour-bearing successor to `pretty(color:true)`:
+/// it records semantic [`Style`] roles instead of baking ANSI, leaving the
+/// role→SGR decision (and `NO_COLOR`/`--color` enablement) to the renderer.
+pub fn pretty_styled<A: Clone + TriviaSource>(
+    doc: &Doc<A>,
+    indent: usize,
+    fmt: &crate::Format,
+) -> Vec<Styled> {
+    let prefix_width = fmt.line_number.map_or(0, line_prefix_width);
+    let mut col = SpanCollector::new();
+    PRESERVE_USER_BREAKS.with(|f| f.set(fmt.preserve_user_breaks));
+    pretty_into(doc, indent + prefix_width, fmt.width, &mut col);
+    PRESERVE_USER_BREAKS.with(|f| f.set(false));
+    let mut lines = col.into_lines();
+
+    if let Some(n) = fmt.line_number {
+        let mut first = Styled::span(format!("{n}: "), Style::Dimmed);
+        if let Some(existing) = lines.first_mut() {
+            first.extend(std::mem::take(existing));
+            *existing = first;
+        } else {
+            lines.push(first);
+        }
+    }
+    lines
 }
 
 /// Pretty-print a Doc into any `PrettyOutput` implementation.
@@ -50,7 +80,7 @@ pub fn line_prefix_width(n: usize) -> usize {
     format!("{n}").len() + 2
 }
 
-fn prepend_line_number(content: &str, n: usize, color: bool) -> String {
+fn prepend_line_number(content: &str, n: usize) -> String {
     let prefix = format!("{n}: ");
     let mut result = String::new();
     for (i, line) in content.lines().enumerate() {
@@ -58,11 +88,7 @@ fn prepend_line_number(content: &str, n: usize, color: bool) -> String {
             result.push('\n');
         }
         if i == 0 {
-            if color {
-                result.push_str(&prefix.dimmed().to_string());
-            } else {
-                result.push_str(&prefix);
-            }
+            result.push_str(&prefix);
         }
         result.push_str(line);
     }

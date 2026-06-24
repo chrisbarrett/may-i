@@ -1,6 +1,6 @@
 // CLI interface — clap derive with TTY detection
 
-use std::io::IsTerminal;
+use std::io::{IsTerminal, Write};
 use std::process::ExitCode;
 
 use clap::{CommandFactory, Parser, Subcommand};
@@ -83,7 +83,7 @@ fn apply_audit_config(
     overrides: &may_i::audit::AuditOverrides,
 ) -> miette::Result<()> {
     let effective = may_i::audit::resolve_audit_config(&pipeline.config().audit, overrides)
-        .map_err(|e| miette::miette!("{e}"))?;
+        .map_err(|e| miette::miette!("{}", may_i_core::SafeText::new(e.to_string())))?;
     pipeline.set_audit(effective);
     Ok(())
 }
@@ -157,7 +157,7 @@ fn main() -> ExitCode {
             if e.downcast_ref::<may_i::cmd_check::CheckFailure>().is_some() {
                 return ExitCode::from(1);
             }
-            eprintln!("{e:?}");
+            may_i::sink::report(&e);
             // Exit code 2 signals a blocking error to Claude Code hooks.
             // stderr is fed back to Claude so it can adjust its plan.
             ExitCode::from(2)
@@ -178,7 +178,12 @@ fn run() -> miette::Result<ExitCode> {
                 std::io::stdin()
                     .take(65536)
                     .read_to_string(&mut buf)
-                    .map_err(|e| miette::miette!("failed to read stdin: {e}"))?;
+                    .map_err(|e| {
+                        miette::miette!(
+                            "failed to read stdin: {}",
+                            may_i_core::SafeText::new(e.to_string())
+                        )
+                    })?;
                 let trimmed = buf.trim();
                 if trimmed.is_empty() {
                     None
@@ -214,10 +219,15 @@ fn run() -> miette::Result<ExitCode> {
         }
         None => {
             if std::io::stdin().is_terminal() {
-                Cli::command()
-                    .print_help()
-                    .map_err(|e| miette::miette!("Failed to print help: {e}"))?;
-                println!();
+                Cli::command().print_help().map_err(|e| {
+                    miette::miette!(
+                        "Failed to print help: {}",
+                        may_i_core::SafeText::new(e.to_string())
+                    )
+                })?;
+                may_i::sink::with_stdout(|w| {
+                    let _ = writeln!(w);
+                });
             } else {
                 let mut pipeline =
                     may_i::pipeline::CommandPipeline::load(cli.config.as_deref(), cli.json)?;

@@ -70,7 +70,7 @@ fn run_checks_with_traces(
             &check.context,
             &mut fold,
         )
-        .map_err(|e| miette::miette!("{e}"))?;
+        .map_err(|e| miette::miette!("{}", may_i_core::SafeText::new(e.to_string())))?;
         Ok((
             result,
             TraceExtra {

@@ -1713,7 +1713,7 @@ mod tests {
         let term = crate::output::Terminal::new(120);
         let mut buf = Vec::new();
         crate::output::render_trace(&mut buf, &fold.traces, cmd, "", &term);
-        crate::output::strip_ansi(&String::from_utf8(buf).unwrap())
+        String::from_utf8(buf).unwrap()
     }
 
     /// A regex inside an optional is annotated even when the optional skips it.

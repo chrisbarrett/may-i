@@ -3,11 +3,12 @@
 use std::collections::BTreeMap;
 use std::io::Write;
 
-use colored::Colorize;
 use may_i_config as config;
+use may_i_output::{Style, Styled};
 
 use crate::interactive;
 use crate::output::{self, TrustListing};
+use crate::sink;
 use crate::trust::store::{TrustStore, default_trust_store_path};
 use crate::trust::view::{TrustCatalog, TrustState, TrustView, build_catalog};
 
@@ -23,11 +24,16 @@ pub fn cmd_trust(
     config_path: Option<&std::path::Path>,
 ) -> miette::Result<()> {
     let loaded = config::load_and_resolve(config_path)?;
+    crate::sink::flush_config_advisories();
 
     let store_path = default_trust_store_path()
         .ok_or_else(|| miette::miette!("cannot determine trust store path"))?;
-    let load_result = TrustStore::load(&store_path)
-        .map_err(|e| miette::miette!("failed to read trust store: {e}"))?;
+    let load_result = TrustStore::load(&store_path).map_err(|e| {
+        miette::miette!(
+            "failed to read trust store: {}",
+            may_i_core::SafeText::new(e.to_string())
+        )
+    })?;
     let mut store = load_result.store;
 
     let is_tty = interactive::is_interactive(json_mode);
@@ -37,9 +43,12 @@ pub fn cmd_trust(
     if !load_result.suspects.is_empty() {
         let modified = interactive::repair_integrity(&mut store, &load_result.suspects, is_tty)?;
         if modified {
-            store
-                .save(&store_path)
-                .map_err(|e| miette::miette!("failed to save trust store: {e}"))?;
+            store.save(&store_path).map_err(|e| {
+                miette::miette!(
+                    "failed to save trust store: {}",
+                    may_i_core::SafeText::new(e.to_string())
+                )
+            })?;
         }
     }
 
@@ -47,9 +56,13 @@ pub fn cmd_trust(
 
     if catalog.is_empty() {
         if json_mode {
-            println!("[]");
+            sink::with_stdout(|w| {
+                let _ = writeln!(w, "[]");
+            });
         } else {
-            eprintln!("No loaded config content requires trust approval.");
+            sink::with_stderr(|w| {
+                let _ = writeln!(w, "No loaded config content requires trust approval.");
+            });
         }
         return Ok(());
     }
@@ -74,12 +87,17 @@ fn approve_all(
         if json_mode {
             let empty: Vec<String> = Vec::new();
             let json = serde_json::json!({ "approved": empty });
-            println!(
-                "{}",
-                serde_json::to_string(&json).expect("serialization is infallible")
-            );
+            sink::with_stdout(|w| {
+                let _ = writeln!(
+                    w,
+                    "{}",
+                    serde_json::to_string(&json).expect("serialization is infallible")
+                );
+            });
         } else {
-            eprintln!("All programs already trusted.");
+            sink::with_stderr(|w| {
+                let _ = writeln!(w, "All programs already trusted.");
+            });
         }
         return Ok(());
     }
@@ -90,20 +108,28 @@ fn approve_all(
         interactive::batch_approve(catalog)
     };
 
-    catalog
-        .save(store_path)
-        .map_err(|e| miette::miette!("failed to save trust store: {e}"))?;
+    catalog.save(store_path).map_err(|e| {
+        miette::miette!(
+            "failed to save trust store: {}",
+            may_i_core::SafeText::new(e.to_string())
+        )
+    })?;
 
     if json_mode {
         let json = serde_json::json!({ "approved": approved });
-        println!(
-            "{}",
-            serde_json::to_string(&json).expect("serialization is infallible")
-        );
+        sink::with_stdout(|w| {
+            let _ = writeln!(
+                w,
+                "{}",
+                serde_json::to_string(&json).expect("serialization is infallible")
+            );
+        });
     } else if !is_tty {
-        for prog in &approved {
-            eprintln!("Approved: {prog}");
-        }
+        sink::with_stderr(|w| {
+            for prog in &approved {
+                let _ = writeln!(w, "Approved: {prog}");
+            }
+        });
     }
     Ok(())
 }
@@ -116,19 +142,27 @@ fn approve_one(
     is_tty: bool,
 ) -> miette::Result<()> {
     let groups = catalog.group_by_program();
-    let views = groups
-        .get(program)
-        .ok_or_else(|| miette::miette!("no loaded rules found for program '{program}'"))?;
+    let views = groups.get(program).ok_or_else(|| {
+        miette::miette!(
+            "no loaded rules found for program '{}'",
+            may_i_core::SafeText::new(program)
+        )
+    })?;
 
     if views.iter().all(|v| v.state() == TrustState::Approved) {
         if json_mode {
             let json = serde_json::json!({ "program": program, "status": "trusted" });
-            println!(
-                "{}",
-                serde_json::to_string(&json).expect("serialization is infallible")
-            );
+            sink::with_stdout(|w| {
+                let _ = writeln!(
+                    w,
+                    "{}",
+                    serde_json::to_string(&json).expect("serialization is infallible")
+                );
+            });
         } else {
-            eprintln!("{program}: already trusted");
+            sink::with_stderr(|w| {
+                let _ = writeln!(w, "{program}: already trusted");
+            });
         }
         return Ok(());
     }
@@ -147,18 +181,26 @@ fn approve_one(
         }
     }
 
-    catalog
-        .save(store_path)
-        .map_err(|e| miette::miette!("failed to save trust store: {e}"))?;
+    catalog.save(store_path).map_err(|e| {
+        miette::miette!(
+            "failed to save trust store: {}",
+            may_i_core::SafeText::new(e.to_string())
+        )
+    })?;
 
     if json_mode {
         let json = serde_json::json!({ "approved": [program] });
-        println!(
-            "{}",
-            serde_json::to_string(&json).expect("serialization is infallible")
-        );
+        sink::with_stdout(|w| {
+            let _ = writeln!(
+                w,
+                "{}",
+                serde_json::to_string(&json).expect("serialization is infallible")
+            );
+        });
     } else if !is_tty {
-        eprintln!("Approved: {program}");
+        sink::with_stderr(|w| {
+            let _ = writeln!(w, "Approved: {program}");
+        });
     }
     Ok(())
 }
@@ -178,9 +220,12 @@ fn list_status(
 
     if is_tty && has_pending {
         let (_approved, _summary) = interactive::interactive_review(catalog)?;
-        catalog
-            .save(store_path)
-            .map_err(|e| miette::miette!("failed to save trust store: {e}"))?;
+        catalog.save(store_path).map_err(|e| {
+            miette::miette!(
+                "failed to save trust store: {}",
+                may_i_core::SafeText::new(e.to_string())
+            )
+        })?;
 
         print_trusted_summary(catalog);
     } else {
@@ -191,8 +236,6 @@ fn list_status(
 
 /// Print only the grouped-by-file trusted summary, without re-showing any rule forms.
 fn print_trusted_summary(catalog: &TrustCatalog) {
-    let mut w = std::io::stderr();
-
     let groups = catalog.group_by_program();
     let trusted: Vec<(&str, &Vec<&TrustView>)> = groups
         .iter()
@@ -205,12 +248,14 @@ fn print_trusted_summary(catalog: &TrustCatalog) {
     }
 
     let grouped = group_by_file(&trusted);
-    let term = output::Terminal::detect();
-    TrustListing {
-        heading: None,
-        groups: &grouped,
-    }
-    .render(&mut w, &term);
+    let term = output::Terminal::detect().with_color(crate::sink::stderr_color());
+    sink::with_stderr(|w| {
+        TrustListing {
+            heading: None,
+            groups: &grouped,
+        }
+        .render(w, &term);
+    });
 }
 
 /// Per-rule JSON output.
@@ -235,72 +280,96 @@ fn list_status_json(catalog: &TrustCatalog) {
             entry
         })
         .collect();
-    println!(
-        "{}",
-        serde_json::to_string(&entries).expect("serialization is infallible")
-    );
+    sink::with_stdout(|w| {
+        let _ = writeln!(
+            w,
+            "{}",
+            serde_json::to_string(&entries).expect("serialization is infallible")
+        );
+    });
 }
 
 /// Per-rule human-readable listing grouped by program.
 fn list_status_human(catalog: &TrustCatalog) {
-    let mut w = std::io::stderr();
+    let color = crate::sink::stderr_color();
+    let term = output::Terminal::detect().with_color(color);
 
     let groups = catalog.group_by_program();
 
-    let mut has_pending = false;
-    let mut all_approved_programs: Vec<(&str, &Vec<&TrustView>)> = Vec::new();
+    sink::with_stderr(|w| {
+        let mut has_pending = false;
+        let mut all_approved_programs: Vec<(&str, &Vec<&TrustView>)> = Vec::new();
 
-    for (program, views) in &groups {
-        let all_approved = views.iter().all(|v| v.state() == TrustState::Approved);
+        for (program, views) in &groups {
+            let all_approved = views.iter().all(|v| v.state() == TrustState::Approved);
 
-        if all_approved {
-            all_approved_programs.push((program, views));
-            continue;
-        }
-
-        has_pending = true;
-
-        let _ = writeln!(w, "  {}", program.bold());
-
-        for view in views {
-            let badge_colored = match view.state() {
-                TrustState::Approved => "approved".green().to_string(),
-                TrustState::Blocked => "blocked".red().to_string(),
-                TrustState::Pending => "pending".yellow().to_string(),
-            };
-            let pretty = interactive::pretty_form(view.canonical_form(), 72, true);
-            let first_line = pretty.lines().next().unwrap_or(view.canonical_form());
-            let _ = writeln!(w, "    {} {}", first_line, badge_colored);
-            for line in pretty.lines().skip(1) {
-                let _ = writeln!(w, "    {}", line);
+            if all_approved {
+                all_approved_programs.push((program, views));
+                continue;
             }
-            if let Some(file) = view.source_file() {
-                let _ = writeln!(
-                    w,
-                    "      {} {}",
-                    "file:".dimmed(),
-                    output::shorten_home(file)
+
+            has_pending = true;
+
+            may_i_output::write_line(w, &Styled::plain("  ").with(*program, Style::Strong), &term);
+
+            for view in views {
+                let (badge_text, badge_style) = match view.state() {
+                    TrustState::Approved => ("approved", Style::AllowSoft),
+                    TrustState::Blocked => ("blocked", Style::DenySoft),
+                    TrustState::Pending => ("pending", Style::AskSoft),
+                };
+                let mut badge_buf = Vec::new();
+                may_i_output::write_line(
+                    &mut badge_buf,
+                    &Styled::span(badge_text, badge_style),
+                    &term,
                 );
+                let badge = String::from_utf8(badge_buf).unwrap_or_default();
+                let badge = badge.trim_end();
+                let pretty = interactive::pretty_form(view.canonical_form(), 72, color);
+                let first_line = pretty.lines().next().unwrap_or(view.canonical_form());
+                let _ = writeln!(w, "    {first_line} {badge}");
+                for line in pretty.lines().skip(1) {
+                    let _ = writeln!(w, "    {}", line);
+                }
+                if let Some(file) = view.source_file() {
+                    let mut file_buf = Vec::new();
+                    may_i_output::write_line(
+                        &mut file_buf,
+                        &Styled::span("file:", Style::Dimmed),
+                        &term,
+                    );
+                    let file_label = String::from_utf8(file_buf).unwrap_or_default();
+                    let file_label = file_label.trim_end();
+                    let _ = writeln!(w, "      {} {}", file_label, output::shorten_home(file));
+                }
+            }
+            let _ = writeln!(w);
+        }
+
+        // Show fully-approved programs grouped by file.
+        if !all_approved_programs.is_empty() {
+            let grouped = group_by_file(&all_approved_programs);
+            TrustListing {
+                heading: has_pending.then_some("Trusted:"),
+                groups: &grouped,
+            }
+            .render(w, &term);
+
+            if !has_pending {
+                let mut all_buf = Vec::new();
+                may_i_output::write_line(
+                    &mut all_buf,
+                    &Styled::span("All trusted.", Style::AllowSoft),
+                    &term,
+                );
+                let all_trusted = String::from_utf8(all_buf).unwrap_or_default();
+                let all_trusted = all_trusted.trim_end();
+                let _ = writeln!(w);
+                let _ = writeln!(w, "  {}", all_trusted);
             }
         }
-        let _ = writeln!(w);
-    }
-
-    // Show fully-approved programs grouped by file.
-    if !all_approved_programs.is_empty() {
-        let grouped = group_by_file(&all_approved_programs);
-        let term = output::Terminal::detect();
-        TrustListing {
-            heading: has_pending.then_some("Trusted:"),
-            groups: &grouped,
-        }
-        .render(&mut w, &term);
-
-        if !has_pending {
-            let _ = writeln!(w);
-            let _ = writeln!(w, "  {}", "All trusted.".green());
-        }
-    }
+    });
 }
 
 /// Group programs by their source file. Returns file → [program names] in file order.

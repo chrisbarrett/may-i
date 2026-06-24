@@ -18,12 +18,11 @@ mod trust_groups;
 
 use std::io::Write;
 
-use colored::Colorize;
 use may_i_core::ast::FlagsMode;
-use may_i_output::{ColAlign, ColContent, ColItem, ColRow, HRuleLabel, Layout};
-use may_i_pp::colorize_atom;
+use may_i_output::{ColAlign, ColContent, ColItem, ColRow, HRuleLabel, Layout, Styled};
+use may_i_pp::Style;
 
-pub use may_i_output::{Terminal, strip_ansi, write_layout};
+pub use may_i_output::{Terminal, write_layout};
 
 pub(crate) use self::advisory::render_advisory_stack;
 pub(crate) use self::check::render_labelled_separator;
@@ -65,35 +64,31 @@ fn facts_rows(facts: &[(String, String)]) -> Vec<ColRow> {
         .iter()
         .map(|(key, value)| {
             let quoted = format!("\"{value}\"");
-            let colored = format!(
-                "{} {}",
-                colorize_atom(key, true),
-                colorize_atom(&quoted, true)
-            );
-            let width = key.len() + 1 + quoted.len();
-            ColItem::new(colored, width)
+            let mut content = Styled::atom(key);
+            content.push(" ", Style::Plain);
+            content.extend(Styled::atom(&quoted));
+            ColItem::new(content)
         })
         .collect();
 
-    let label = "facts";
     vec![ColRow {
-        left: label.dimmed().to_string(),
-        left_width: label.len(),
+        left: Styled::span("facts", Style::Dimmed),
         left_align: ColAlign::Right,
         right: ColContent::Breakable {
             items,
-            separator: ", ".dimmed().to_string(),
-            separator_width: 2,
+            separator: Styled::span(", ", Style::Dimmed),
         },
     }]
 }
 
 fn command_row(cmd: &str, _geom: &ColumnGeometry) -> Vec<ColRow> {
-    let label = "command";
-    let label_colored = label.dimmed().to_string();
-    let mut row = ColRow::new(label_colored, label.len(), cmd.bold().to_string());
-    row.left_align = ColAlign::Right;
-    vec![row]
+    vec![
+        ColRow::new(
+            Styled::span("command", Style::Dimmed),
+            Styled::span(cmd, Style::Strong),
+        )
+        .right_aligned(),
+    ]
 }
 
 // ── Trace rendering ────────────────────────────────────────────────
@@ -262,7 +257,8 @@ impl<'a> TraceLayoutBuilder<'a> {
                 self.children.push(Layout::Blank);
             }
         } else if !self.current_rows.is_empty() {
-            self.current_rows.push(ColRow::new(" ", 1, ""));
+            self.current_rows
+                .push(ColRow::new(Styled::plain(" "), Styled::new()));
         }
 
         let pushed_cmd: Option<&str> = if let Some(cmd) = self.pending_command.take() {
@@ -298,53 +294,51 @@ impl<'a> TraceLayoutBuilder<'a> {
 
     fn on_embedded_command(&mut self, source: &str, decision: may_i_core::Decision) {
         let decision_str = format!(":{decision}");
-        let label = format!("{} {}", "embedded:".dimmed(), source.italic());
-        let label_visible = "embedded: ".len() + source.len();
+        let label = Styled::span("embedded:", Style::Dimmed)
+            .with(" ", Style::Plain)
+            .with(source, Style::Emphasis);
         let right = colorize_right(&format!("→ {decision_str}"));
-        let mut row = ColRow::new(label, label_visible, right);
-        row.left_align = ColAlign::Right;
-        self.current_rows.push(row);
+        self.current_rows
+            .push(ColRow::new(label, right).right_aligned());
         self.first = false;
     }
 
     fn on_unresolved_expansion(&mut self, words: &[String]) {
         let joined = words.join(", ");
-        let label = format!("{} {}", "unresolved expansion:".dimmed(), joined.italic());
-        let label_visible = "unresolved expansion: ".len() + joined.len();
+        let label = Styled::span("unresolved expansion:", Style::Dimmed)
+            .with(" ", Style::Plain)
+            .with(joined, Style::Emphasis);
         let right = colorize_right("→ :ask (floor)");
-        let mut row = ColRow::new(label, label_visible, right);
-        row.left_align = ColAlign::Right;
-        self.current_rows.push(row);
+        self.current_rows
+            .push(ColRow::new(label, right).right_aligned());
         self.first = false;
     }
 
     fn on_arity_guess(&mut self, flag: &str, consumed: &str) {
         let detail = format!("{flag} consumed {consumed}");
-        let label = format!("{} {}", "arity guess:".dimmed(), detail.italic());
-        let label_visible = "arity guess: ".len() + detail.len();
+        let label = Styled::span("arity guess:", Style::Dimmed)
+            .with(" ", Style::Plain)
+            .with(detail, Style::Emphasis);
         let right = colorize_right("→ guessed value");
-        let mut row = ColRow::new(label, label_visible, right);
-        row.left_align = ColAlign::Right;
-        self.current_rows.push(row);
+        self.current_rows
+            .push(ColRow::new(label, right).right_aligned());
         self.first = false;
     }
 
     fn on_default_ask(&mut self) {
-        let label = "No matching rule".italic().yellow().to_string();
-        let label_visible = "No matching rule".len();
-        let mut row = ColRow::new(label, label_visible, colorize_right("→ :ask (default)"));
-        row.left_align = ColAlign::Right;
-        self.current_rows.push(row);
+        let label = Styled::span("No matching rule", Style::AskEmphasis);
+        self.current_rows
+            .push(ColRow::new(label, colorize_right("→ :ask (default)")).right_aligned());
         self.first = false;
     }
 
     fn on_local_function_call(&mut self, name: &str) {
-        let label = format!("{} {}", "internal call:".dimmed(), name.italic());
-        let label_visible = "internal call: ".len() + name.len();
+        let label = Styled::span("internal call:", Style::Dimmed)
+            .with(" ", Style::Plain)
+            .with(name, Style::Emphasis);
         let right = colorize_right("→ :allow (internal)");
-        let mut row = ColRow::new(label, label_visible, right);
-        row.left_align = ColAlign::Right;
-        self.current_rows.push(row);
+        self.current_rows
+            .push(ColRow::new(label, right).right_aligned());
         self.first = false;
     }
 
@@ -364,9 +358,8 @@ impl<'a> TraceLayoutBuilder<'a> {
         if let Some(b) = rest_binding {
             value.push_str(&format!("  rest {b}"));
         }
-        let label = "parser";
-        let mut row = ColRow::new(label.dimmed().to_string(), label.len(), value);
-        row.left_align = ColAlign::Right;
+        let row = ColRow::new(Styled::span("parser", Style::Dimmed), Styled::plain(value))
+            .right_aligned();
         self.pending_parsers.insert(command.to_string(), row);
         // Parser entries do not flip `first`: they are buffered and bind
         // to a later command row.
@@ -374,22 +367,17 @@ impl<'a> TraceLayoutBuilder<'a> {
 
     fn on_parse_diagnostics(&mut self, diagnostics: &[may_i_shell_parser::ParseDiagnostic]) {
         for diag in diagnostics {
-            let severity_str = match diag.severity {
-                may_i_shell_parser::Severity::Error => "error".red().bold().to_string(),
-                may_i_shell_parser::Severity::Warning => "warning".yellow().bold().to_string(),
+            let (sev_text, sev_style) = match diag.severity {
+                may_i_shell_parser::Severity::Error => ("error", Style::Deny),
+                may_i_shell_parser::Severity::Warning => ("warning", Style::Ask),
             };
             let msg = diag.message();
-            let label = format!("parse {severity_str}: {msg}");
-            let label_visible = "parse ".len()
-                + match diag.severity {
-                    may_i_shell_parser::Severity::Error => "error".len(),
-                    may_i_shell_parser::Severity::Warning => "warning".len(),
-                }
-                + ": ".len()
-                + msg.len();
-            let mut row = ColRow::new(label, label_visible, "");
-            row.left_align = ColAlign::Right;
-            self.current_rows.push(row);
+            let mut label = Styled::span("parse ", Style::Plain);
+            label.push(sev_text, sev_style);
+            label.push(": ", Style::Plain);
+            label.push(msg, Style::Plain);
+            self.current_rows
+                .push(ColRow::new(label, Styled::new()).right_aligned());
         }
         self.first = false;
     }
@@ -419,17 +407,15 @@ pub(crate) fn format_flags_mode(mode: &FlagsMode) -> String {
 
 fn segment_header_layout(command: &str, decision: may_i_core::Decision) -> Layout {
     use may_i_core::Decision;
-    let icon = match decision {
-        Decision::Allow => "✓".green().bold().to_string(),
-        Decision::Ask => "?".yellow().bold().to_string(),
-        Decision::Deny => "✗".red().bold().to_string(),
+    let (icon, style) = match decision {
+        Decision::Allow => ("✓", Style::Allow),
+        Decision::Ask => ("?", Style::Ask),
+        Decision::Deny => ("✗", Style::Deny),
     };
-    let label = format!("{icon} {}", command.bold());
-    let label_width = 2 + command.len();
-    Layout::HRule(Some(HRuleLabel {
-        text: label,
-        visible_width: label_width,
-    }))
+    let label = Styled::span(icon, style)
+        .with(" ", Style::Plain)
+        .with(command, Style::Strong);
+    Layout::HRule(Some(HRuleLabel::from(label)))
 }
 
 // ── Path display ───────────────────────────────────────────────────
@@ -473,7 +459,7 @@ mod tests {
         ];
         let rows = facts_rows(&facts);
         assert_eq!(rows.len(), 1);
-        let stripped = strip_ansi(&rows[0].left);
+        let stripped = rows[0].left.to_plain_string();
         assert_eq!(stripped, "facts");
     }
 
@@ -482,7 +468,7 @@ mod tests {
         let geom = ColumnGeometry { left_width: 40 };
         let rows = command_row("git push", &geom);
         assert_eq!(rows.len(), 1);
-        let stripped = strip_ansi(&rows[0].left);
+        let stripped = rows[0].left.to_plain_string();
         assert_eq!(stripped, "command");
     }
 
@@ -504,7 +490,7 @@ mod tests {
         let mut buf = Vec::new();
         write_layout(&mut buf, &layout, &term);
         let output = String::from_utf8(buf).unwrap();
-        let stripped = strip_ansi(&output);
+        let stripped = output.clone();
         assert!(stripped.contains("No matching rule"));
     }
 
@@ -518,7 +504,7 @@ mod tests {
         let mut buf = Vec::new();
         write_layout(&mut buf, &layout, &term);
         let output = String::from_utf8(buf).unwrap();
-        let stripped = strip_ansi(&output);
+        let stripped = output.clone();
         assert!(
             stripped.contains("internal call: materialise"),
             "{stripped}"
@@ -537,7 +523,7 @@ mod tests {
         let mut buf = Vec::new();
         write_layout(&mut buf, &layout, &term);
         let output = String::from_utf8(buf).unwrap();
-        let stripped = strip_ansi(&output);
+        let stripped = output.clone();
         assert!(
             stripped.contains("arity guess: --bin consumed may-i"),
             "{stripped}"
@@ -556,7 +542,7 @@ mod tests {
         let mut buf = Vec::new();
         write_layout(&mut buf, &layout, &term);
         let output = String::from_utf8(buf).unwrap();
-        let stripped = strip_ansi(&output);
+        let stripped = output.clone();
         assert!(stripped.contains("ls"));
     }
 
@@ -601,7 +587,7 @@ mod tests {
         let mut buf = Vec::new();
         write_layout(&mut buf, &layout, &term);
         let output = String::from_utf8(buf).unwrap();
-        let stripped = strip_ansi(&output);
+        let stripped = output.clone();
         assert!(stripped.contains("command"));
         assert!(stripped.contains("git push"));
     }
@@ -632,7 +618,7 @@ mod tests {
         let mut buf = Vec::new();
         write_layout(&mut buf, &layout, &term);
         let output = String::from_utf8(buf).unwrap();
-        let stripped = strip_ansi(&output);
+        let stripped = output.clone();
         assert!(stripped.contains("rm -rf"));
     }
 
@@ -671,7 +657,7 @@ mod tests {
         let mut buf = Vec::new();
         write_layout(&mut buf, &layout, &term);
         let output = String::from_utf8(buf).unwrap();
-        let stripped = strip_ansi(&output);
+        let stripped = output.clone();
         assert_eq!(
             stripped.matches("facts").count(),
             1,
@@ -696,7 +682,7 @@ mod tests {
         let layout = trace_to_layout(entries, command, 0, &term);
         let mut buf = Vec::new();
         write_layout(&mut buf, &layout, &term);
-        strip_ansi(&String::from_utf8(buf).unwrap())
+        String::from_utf8(buf).unwrap()
     }
 
     fn parser_then_rule(

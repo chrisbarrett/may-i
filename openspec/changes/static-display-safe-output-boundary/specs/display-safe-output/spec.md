@@ -32,16 +32,21 @@ SHALL NOT provide a `From`/`Into` conversion that bypasses escaping.
 
 A type `SafeSource` SHALL sanitise source text that is addressed by byte-offset
 spans (the snippet rendered by miette diagnostics). Its constructor SHALL replace
-each control character with a single-byte printable placeholder so that the byte
-length of the source is unchanged and every span offset into the original source
-remains valid against the sanitised source. `SafeSource` SHALL live in
+each *dangerous* control character with a printable placeholder of equal UTF-8
+byte length so that the byte length of the source is unchanged and every span
+offset into the original source remains valid against the sanitised source. Line
+feed (`\n`) and tab (`\t`) SHALL be preserved, because in a multi-line
+offset-addressed snippet they are structural: the renderer derives a span's
+line/column from them, and scrubbing them would collapse the snippet and
+misplace every caret. They are not injection vectors (unlike `\x1b`). Every
+other control character SHALL be scrubbed. `SafeSource` SHALL live in
 `may-i-core` alongside `SafeText`, and SHALL be distinct from `SafeText` because
 `SafeText`'s expanding escape would shift offsets.
 
-#### Scenario: Sanitised source has no control characters
+#### Scenario: Sanitised source has no dangerous control characters
 
 - **WHEN** `SafeSource::new(src)` is called for any string `src`
-- **THEN** the result contains no `char` for which `is_control()` holds
+- **THEN** the result contains no `char` for which `is_control()` holds other than `\n` and `\t`, and in particular contains no `\x1b`
 
 #### Scenario: Byte length is preserved
 

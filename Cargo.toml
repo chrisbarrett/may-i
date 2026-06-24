@@ -15,6 +15,12 @@ type_complexity = "allow"
 # Ban catch-all `_` arms over enum variants: exhaustive matches force every
 # variant to be handled, so adding a variant surfaces every site that must change.
 wildcard_enum_match_arm = "deny"
+# Output-boundary gate: direct process-stream printing is compile-blocked
+# workspace-wide; the only `#[allow(...)]` for these is the output sink
+# (`src/sink.rs`), which owns every stdout/stderr handle.
+print_stdout = "deny"
+print_stderr = "deny"
+dbg_macro = "deny"
 
 [lints]
 workspace = true
@@ -33,7 +39,6 @@ may-i-output = { path = "crates/may-i-output" }
 may-i-pp = { path = "crates/pp" }
 may-i-sexpr = { path = "crates/sexpr" }
 clap = { version = "4", features = ["derive"] }
-colored = "3.1.1"
 miette = { version = "7", features = ["fancy"] }
 thiserror = "2"
 dirs = "6"

@@ -4,8 +4,7 @@
 use std::io::Write;
 use std::path::PathBuf;
 
-use colored::Colorize;
-use may_i_output::{Advisory, ColItem, Layout, NoteLevel};
+use may_i_output::{Advisory, ColItem, Layout, NoteLevel, Style, Styled};
 
 use super::{Terminal, shorten_home, write_layout};
 
@@ -19,7 +18,7 @@ pub(crate) fn render_skipped_readonly_advisory(
     let listing = Layout::Stack(
         displays
             .iter()
-            .map(|p| Layout::Text(p.clone()))
+            .map(|p| Layout::Text(Styled::plain(p)))
             .collect::<Vec<_>>(),
     );
     let (n_phrase, target) = if paths.len() == 1 {
@@ -48,11 +47,11 @@ pub(crate) fn render_wrapper_boundary_advisory(
 ) {
     let items: Vec<ColItem> = affected
         .iter()
-        .map(|name| ColItem::new(name.cyan().to_string(), name.len()))
+        .map(|name| ColItem::new(Styled::span(*name, Style::Accent)))
         .collect();
     let names = Layout::Wrap {
         items,
-        separator: ColItem::new(", ", 2),
+        separator: ColItem::new(Styled::plain(", ")),
     };
     let layout = Advisory {
         level: NoteLevel::Warn,

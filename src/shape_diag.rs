@@ -165,11 +165,19 @@ pub fn build_report(
     if mismatches.is_empty() {
         return None;
     }
+    // The source is offset-addressed by the spans, so it is sanitised with
+    // `SafeSource` (length-preserving: control bytes become single printable
+    // bytes, keeping every span offset valid). The path is a free-form name, so
+    // `SafeText` (expanding escape) suffices. miette then renders its own SGR
+    // over escape-free input, so its output is trusted.
+    let safe_path = may_i_core::SafeText::new(path);
+    let safe_source = may_i_core::SafeSource::new(source);
     let problems = mismatches
         .iter()
         .map(|m| ShapeDiagnostic {
             header: header_for(m.operator),
-            src: NamedSource::new(path, source.to_string()).with_language("lisp"),
+            src: NamedSource::new(safe_path.as_str(), safe_source.as_str().to_string())
+                .with_language("lisp"),
             use_span: to_source_span(m.use_span),
             use_label: use_label_for(m.operator),
             decl_span: m.decl_span.map(to_source_span),

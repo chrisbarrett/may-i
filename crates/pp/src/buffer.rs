@@ -1,23 +1,19 @@
-use colored::Colorize;
-
-use crate::color::colorize_atom;
 use crate::output::{OutputEvent, PrettyOutput};
 
 // ── StringBuilder ───────────────────────────────────────────────────
 
-/// A `PrettyOutput` implementation that produces a colorized `String`,
-/// reproducing the behavior of the original `pretty()` function.
+/// A `PrettyOutput` implementation that produces a plain `String`.
+///
+/// Colour is emitted separately as data via [`crate::SpanCollector`] /
+/// [`crate::pretty_styled`]; this builder always renders plain text.
+#[derive(Default)]
 pub struct StringBuilder {
     buf: String,
-    color: bool,
 }
 
 impl StringBuilder {
-    pub fn new(color: bool) -> Self {
-        Self {
-            buf: String::new(),
-            color,
-        }
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn into_string(self) -> String {
@@ -38,19 +34,11 @@ impl<A> PrettyOutput<A> for StringBuilder {
     }
 
     fn emit_delim(&mut self, ch: char, _dimmed: bool) {
-        if self.color {
-            self.buf.push_str(&ch.to_string().dimmed().to_string());
-        } else {
-            self.buf.push(ch);
-        }
+        self.buf.push(ch);
     }
 
-    fn emit_atom(&mut self, text: &str, _ann: &A, dimmed: bool) {
-        if dimmed && self.color {
-            self.buf.push_str(&text.dimmed().to_string());
-        } else {
-            self.buf.push_str(&colorize_atom(text, self.color));
-        }
+    fn emit_atom(&mut self, text: &str, _ann: &A, _dimmed: bool) {
+        self.buf.push_str(text);
     }
 
     fn emit_raw(&mut self, text: &str) {
