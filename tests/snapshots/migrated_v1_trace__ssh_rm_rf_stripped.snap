@@ -6,7 +6,7 @@ expression: normalised
 Trace
 
                                   command │ ssh prod "rm -rf /"
-                                   parser │ gnu  flags posix  rest #cmd
+                                   parser │ gnu  flags posix  parameters (-D -E -F -I -J -L -O -Q -R -S -W -b -c -e -i -l -m -o -p -w)  rest #cmd
   107: (rule "ssh"                        │
          (when (positional [:ssh/host *]) │
            <arg-pattern>))                │

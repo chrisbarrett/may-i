@@ -6,7 +6,7 @@ expression: normalised
 [1mTrace[0m
 
                                   [2mcommand[0m [2m│[0m [1mssh prod "rm -rf /"[0m
-                                   [2mparser[0m [2m│[0m gnu  flags posix  rest #cmd
+                                   [2mparser[0m [2m│[0m gnu  flags posix  parameters (-D -E -F -I -J -L -O -Q -R -S -W -b -c -e -i -l -m -o -p -w)  rest #cmd
   [2m107: [0m[2m([0m[34mrule[0m [32m"ssh"[0m                        [2m│[0m
          [2m([0m[34mwhen[0m [2m([0m[34mpositional[0m [2m[[0m[94m:ssh/host[0m *[2m][0m[2m)[0m [2m│[0m
            [2m<arg-pattern>[0m[2m)[0m[2m)[0m                [2m│[0m

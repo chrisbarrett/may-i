@@ -364,7 +364,9 @@ with `(rest #var)` on the parser side and `(authorise #var)` on the
 rule side:
 
 ```lisp
-;; Prelude already ships this declaration; shown for illustration:
+;; Simplified illustration. The shipped prelude additionally declares
+;; sudo's value-taking flags (-u, -p, …) as (parameter …) so they
+;; consume their argument instead of swallowing the inner command:
 (parser "sudo" (style gnu) (flags posix) (rest #cmd))
 
 (rule "sudo" (authorise #cmd))
@@ -499,7 +501,9 @@ strictest decision wins.
 Parsers can name positional slots so rules can match them by binding:
 
 ```lisp
-;; Prelude ssh declaration — the host token is bound to #host so
+;; Prelude ssh declaration (simplified — the shipped parser also
+;; declares ssh's value-taking flags as (parameter …) so e.g. `-p 22`
+;; doesn't bind `22` to #host). The host token is bound to #host so
 ;; rules can branch on it via (matches? #host …).
 (parser "ssh"
   (style gnu)
