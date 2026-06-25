@@ -122,6 +122,16 @@ pub(crate) fn resolve_param_op<L: ConstLookup>(
                 }
             }
         }
+        // Patterned case-conversion (bash converts only matching chars),
+        // transform output, an unrecognised operator, and indirect/nameref
+        // deref are never resolved: they stay expansion-bearing and floor an
+        // `:allow`. `op_operands_are_inert` reports them not-inert, so a set
+        // variable returns above before reaching here; this arm keeps the match
+        // exhaustive (and correct) for the unset / empty-name paths.
+        ParameterOperator::CaseConvert { .. }
+        | ParameterOperator::Transform { .. }
+        | ParameterOperator::Unknown { .. }
+        | ParameterOperator::Indirect { .. } => return unresolved(),
     };
     WordPart::Literal(result)
 }
@@ -169,6 +179,13 @@ fn op_operands_are_inert(op: &ParameterOperator) -> bool {
         ParameterOperator::Substring { offset, length } => {
             is_plain_integer(offset) && length.as_deref().is_none_or(is_plain_integer)
         }
+        // Never resolved (see `resolve_param_op`): report not-inert so a set
+        // variable still floors the word rather than being case-converted /
+        // transformed / dereferenced to a divergent literal.
+        ParameterOperator::CaseConvert { .. }
+        | ParameterOperator::Transform { .. }
+        | ParameterOperator::Unknown { .. }
+        | ParameterOperator::Indirect { .. } => false,
     }
 }
 

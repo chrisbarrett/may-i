@@ -465,12 +465,6 @@ fn substitution_in_subscripted_operator_operand_is_gated() {
 /// still be gated: bash arithmetic-evaluates the subscript regardless of the
 /// operator. The subscript-fold carries the subscript's embedded substitutions
 /// into the operator op so they are gated.
-///
-/// NOTE: the patterned case-conversion (`^pat`/`,,pat`), transform/unknown
-/// (`@Q`), and indirect (`${!arr[…]}`) forms return a flat expansion that cannot
-/// carry `embedded` and stay ungated — a pre-existing, general (scalar-equal on
-/// `main`) gap deferred to a focused follow-up. See design.md "Known
-/// pre-existing gaps". Those forms are deliberately not asserted here.
 #[test]
 fn substitution_in_subscript_with_operator_is_gated() {
     let config = r#"(rule "rm" (deny "no rm")) (rule "echo" (allow))"#;
@@ -488,6 +482,138 @@ fn substitution_in_subscript_with_operator_is_gated() {
             result.reason
         );
     }
+}
+
+/// A command substitution buried in a flat parameter-expansion form — patterned
+/// case-conversion (`${x^$(cmd)}`, `${x,,$(cmd)}`), transform/unknown operator
+/// (`${x@Q$(cmd)}`), or indirect/nameref (`${!$(cmd)}`) — runs in bash, so it
+/// must be gated. These forms stay unresolved (they floor `:allow`); the fix
+/// makes the buried substitution visible, not the value resolvable.
+#[test]
+fn substitution_in_flat_parameter_expansion_is_gated() {
+    let config = r#"(rule "rm" (deny "no rm")) (rule "echo" (allow))"#;
+    for cmd in [
+        "echo ${x^$(rm -rf /)}",
+        "echo ${x^^$(rm -rf /)}",
+        "echo ${x,$(rm -rf /)}",
+        "echo ${x,,$(rm -rf /)}",
+        "echo ${x@Q$(rm -rf /)}",
+        "echo ${x@a$(rm -rf /)}",
+        "echo ${!$(rm -rf /)}",
+    ] {
+        let result = decide(config, cmd);
+        assert_eq!(
+            result.decision,
+            Decision::Deny,
+            "embedded command in a flat parameter expansion must be gated for {cmd:?}: {:?}",
+            result.reason
+        );
+    }
+}
+
+/// A command substitution inside a glob bracket (`echo [$(rm -rf /)]`) runs:
+/// bash performs command substitution before pathname globbing, so the command
+/// must be gated rather than swallowed into the glob pattern text. Covers the
+/// `$(…)` and backtick spellings.
+#[test]
+fn substitution_in_glob_bracket_is_gated() {
+    let config = r#"(rule "rm" (deny "no rm")) (rule "echo" (allow))"#;
+    for cmd in ["echo [$(rm -rf /)]", "echo [`rm -rf /`]"] {
+        let result = decide(config, cmd);
+        assert_eq!(
+            result.decision,
+            Decision::Deny,
+            "embedded command in a glob bracket must be gated for {cmd:?}: {:?}",
+            result.reason
+        );
+    }
+}
+
+/// An indirect expansion floors an `:allow`: its runtime value is unknown, so
+/// the word is expansion-bearing and a non-wildcard matcher tested against it
+/// must not be satisfied on the strength of the literal text (ADDED spec
+/// scenario "Indirect expansion floors an allow").
+#[test]
+fn indirect_expansion_floors_allow() {
+    let config = r#"(rule "echo" (when (anywhere "ref") (allow "matched literal")))"#;
+    let result = decide(config, "echo ${!ref}");
+    assert!(
+        result.decision >= Decision::Ask,
+        "indirect expansion must not satisfy a non-wildcard allow on its literal text: {:?} ({:?})",
+        result.decision,
+        result.reason
+    );
+}
+
+/// An indirect expansion does not taint its literal name: `${!AWS_TOKEN}` reads
+/// the variable *named by* `$AWS_TOKEN`, not `AWS_TOKEN` itself, so a secret-read
+/// capability on `AWS_TOKEN` must not fire. (The form still floors an `:allow` as
+/// expansion-bearing — asserted by the parser tests — but it is not a read of the
+/// literal name.)
+#[test]
+fn indirect_expansion_does_not_taint_literal_name() {
+    let config = r#"(rule "echo" (allow)) (env "AWS_TOKEN" (deny))"#;
+    let result = decide(config, "echo ${!AWS_TOKEN}");
+    assert_ne!(
+        result.decision,
+        Decision::Deny,
+        "indirect ${{!AWS_TOKEN}} must not taint the literal name: {:?}",
+        result.reason
+    );
+}
+
+/// Secret-read taint reaches the operand of a transform / unknown operator:
+/// bash parameter-expands such operand text, so a `$AWS_TOKEN` smuggled there
+/// is a read and must deny. Locks the `Transform`/`Unknown` operand scan in
+/// `operator_operands` against regression — these forms keep a bare `$NAME` as
+/// verbatim operand text (not in `embedded`), so this scan is the only thing
+/// that gates it. Conservative: the scan over-approximates toward tainting.
+#[test]
+fn taint_fires_in_transform_and_unknown_operands() {
+    let config = r#"(rule "echo" (allow)) (env "AWS_TOKEN" (deny))"#;
+    for cmd in ["echo ${x@Q$AWS_TOKEN}", "echo ${x.$AWS_TOKEN}"] {
+        let result = decide(config, cmd);
+        assert_eq!(
+            result.decision,
+            Decision::Deny,
+            "secret read in a transform/unknown operand must taint for {cmd:?}: {:?}",
+            result.reason
+        );
+    }
+}
+
+/// An indirect array-key expansion taints a secret read in its *subscript*:
+/// `${!arr[$AWS_TOKEN]}` reads the variable named indirectly (not `arr`), but
+/// bash arithmetic-evaluates the subscript, so `$AWS_TOKEN` there is a genuine
+/// read and must deny. (The literal indirect name itself is still not tainted —
+/// see `indirect_expansion_does_not_taint_literal_name`.)
+#[test]
+fn indirect_array_key_subscript_taints_secret_read() {
+    let config = r#"(rule "echo" (allow)) (env "AWS_TOKEN" (deny))"#;
+    for cmd in ["echo ${!arr[$AWS_TOKEN]}", "echo ${!arr[$AWS_TOKEN-x]}"] {
+        let result = decide(config, cmd);
+        assert_eq!(
+            result.decision,
+            Decision::Deny,
+            "secret read in an indirect array-key subscript must taint for {cmd:?}: {:?}",
+            result.reason
+        );
+    }
+}
+
+/// Secret-read taint reaches the *pattern* of a patterned case-conversion:
+/// bash parameter-expands the pattern, so `${x^$AWS_TOKEN}` reads the tainted
+/// variable and must deny under an `(env … (deny))` capability.
+#[test]
+fn taint_fires_in_case_conversion_pattern() {
+    let config = r#"(rule "echo" (allow)) (env "AWS_TOKEN" (deny))"#;
+    let result = decide(config, "echo ${x^$AWS_TOKEN}");
+    assert_eq!(
+        result.decision,
+        Decision::Deny,
+        "secret read in a case-conversion pattern must taint: {:?}",
+        result.reason
+    );
 }
 
 /// Secret-read taint reaches an operator operand of a subscripted expansion:

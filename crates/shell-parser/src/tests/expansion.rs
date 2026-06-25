@@ -1350,13 +1350,18 @@ fn parse_param_expansion_lowercase_all() {
 }
 
 #[test]
-fn parse_param_expansion_unknown_operator_fallback() {
-    // An operator the lexer doesn't recognise falls back to flat ParameterExpansion
+fn parse_param_expansion_transform_operator() {
+    // `@`-transforms (`${VAR@Q}`) are a structured `Transform` op, not a flat
+    // string, so a substitution buried in them can be carried in `embedded`.
     let cmd = parse("echo ${VAR@Q}").into_command();
     if let Command::Simple(sc) = &cmd {
         assert_eq!(
             sc.words[1].parts,
-            vec![WordPart::ParameterExpansion("VAR@Q".into())]
+            vec![WordPart::ParameterExpansionOp {
+                name: "VAR".into(),
+                op: ParameterOperator::Transform { spec: "Q".into() },
+                embedded: Vec::new(),
+            }]
         );
     } else {
         panic!("Expected simple command");
@@ -1364,15 +1369,134 @@ fn parse_param_expansion_unknown_operator_fallback() {
 }
 
 #[test]
-fn parse_param_expansion_non_identifier_fallback() {
-    // ${!VAR} — '!' is not a valid identifier start, falls back to flat
-    let cmd = parse("echo ${!VAR}").into_command();
+fn parse_param_expansion_unknown_operator() {
+    // An operator the lexer doesn't recognise becomes a structured `Unknown` op
+    // (still unresolved), keeping its source for display and carrying any
+    // embedded substitution rather than swallowing it into a flat string.
+    let cmd = parse("echo ${VAR.foo}").into_command();
     if let Command::Simple(sc) = &cmd {
         assert_eq!(
             sc.words[1].parts,
-            vec![WordPart::ParameterExpansion("!VAR".into())]
+            vec![WordPart::ParameterExpansionOp {
+                name: "VAR".into(),
+                op: ParameterOperator::Unknown {
+                    source: ".foo".into()
+                },
+                embedded: Vec::new(),
+            }]
         );
     } else {
         panic!("Expected simple command");
+    }
+}
+
+#[test]
+fn parse_param_expansion_patterned_case_conversion() {
+    // `${VAR^pat}` carries the pattern in a structured `CaseConvert` op (not a
+    // flat string), so a substitution in the pattern is gated. The no-pattern
+    // `${VAR^}` keeps resolving via `Uppercase` (asserted above).
+    let cmd = parse("echo ${VAR^^[a-z]}").into_command();
+    if let Command::Simple(sc) = &cmd {
+        assert_eq!(
+            sc.words[1].parts,
+            vec![WordPart::ParameterExpansionOp {
+                name: "VAR".into(),
+                op: ParameterOperator::CaseConvert {
+                    upper: true,
+                    all: true,
+                    pattern: "[a-z]".into(),
+                },
+                embedded: Vec::new(),
+            }]
+        );
+    } else {
+        panic!("Expected simple command");
+    }
+}
+
+#[test]
+fn parse_param_expansion_indirect() {
+    // `${!ref}` is the indirect/nameref shape — a structured `Indirect` op, not
+    // an opaque flat `ParameterExpansion`. The empty `name` keeps the literal
+    // `ref` from being treated as the variable read.
+    let cmd = parse("echo ${!ref}").into_command();
+    if let Command::Simple(sc) = &cmd {
+        assert_eq!(
+            sc.words[1].parts,
+            vec![WordPart::ParameterExpansionOp {
+                name: String::new(),
+                op: ParameterOperator::Indirect {
+                    operand: "ref".into(),
+                    listing: NameListing::Indirect,
+                },
+                embedded: Vec::new(),
+            }]
+        );
+    } else {
+        panic!("Expected simple command");
+    }
+}
+
+#[test]
+fn parse_param_expansion_indirect_listing_forms() {
+    // The prefix-listing (`${!p*}` / `${!p@}`) and array-key (`${!arr[@]}`)
+    // forms classify distinctly for display fidelity; all stay unresolved.
+    let cases = [
+        ("echo ${!p*}", "p*", NameListing::Prefix),
+        ("echo ${!p@}", "p@", NameListing::Prefix),
+        ("echo ${!arr[@]}", "arr[@]", NameListing::Keys),
+    ];
+    for (input, operand, listing) in cases {
+        let cmd = parse(input).into_command();
+        if let Command::Simple(sc) = &cmd {
+            assert_eq!(
+                sc.words[1].parts,
+                vec![WordPart::ParameterExpansionOp {
+                    name: String::new(),
+                    op: ParameterOperator::Indirect {
+                        operand: operand.into(),
+                        listing,
+                    },
+                    embedded: Vec::new(),
+                }],
+                "indirect listing mismatch for {input:?}"
+            );
+        } else {
+            panic!("Expected simple command for {input:?}");
+        }
+    }
+}
+
+/// The flat parameter-expansion forms round-trip byte-for-byte through
+/// `display_source` (design D4). The re-parse round-trip proptest is the broad
+/// guardrail; this pins the exact spellings.
+#[test]
+fn flat_param_expansion_forms_round_trip() {
+    for form in [
+        "${VAR^[a-z]}",
+        "${VAR^^[a-z]}",
+        "${VAR,[A-Z]}",
+        "${VAR,,[A-Z]}",
+        "${VAR@Q}",
+        "${VAR@}", // empty transform spec
+        "${VAR.foo}",
+        "${!ref}",
+        "${!}", // empty indirect operand
+        "${!p*}",
+        "${!arr[@]}",
+        "${VAR^$(date)}",
+        "${!$(date)}",
+    ] {
+        let input = format!("echo {form}");
+        let cmd = parse(&input).into_command();
+        if let Command::Simple(sc) = &cmd {
+            assert_eq!(
+                sc.words[1].display_source(),
+                form,
+                "round-trip mismatch for {form:?}"
+            );
+        } else {
+            panic!("Expected simple command for {input:?}");
+        }
     }
 }

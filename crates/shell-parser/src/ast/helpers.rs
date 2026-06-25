@@ -203,5 +203,23 @@ pub(crate) fn format_param_op(name: &str, op: &ParameterOperator) -> String {
                 format!("{name},")
             }
         }
+        ParameterOperator::CaseConvert {
+            upper,
+            all,
+            pattern,
+        } => {
+            let sigil = match (upper, all) {
+                (true, true) => "^^",
+                (true, false) => "^",
+                (false, true) => ",,",
+                (false, false) => ",",
+            };
+            format!("{name}{sigil}{pattern}")
+        }
+        ParameterOperator::Transform { spec } => format!("{name}@{spec}"),
+        ParameterOperator::Unknown { source } => format!("{name}{source}"),
+        // `name` is empty for indirect forms; the operand carries the full text
+        // after `!` (`ref`, `prefix*`, `arr[@]`), so this re-renders `${!…}`.
+        ParameterOperator::Indirect { operand, .. } => format!("{name}!{operand}"),
     }
 }
