@@ -55,8 +55,12 @@ Grounded against the macOS man pages (read this session) and GNU/util-linux docs
 Per-carrier value-flags (short + long where applicable):
 
 - **sudo** (identical cross-platform): `-C/--close-from`, `-D/--chdir`,
-  `-g/--group`, `-h/--host`, `-p/--prompt`, `-R/--chroot`, `-r/--role`,
+  `-g/--group`, `--host`, `-p/--prompt`, `-R/--chroot`, `-r/--role`,
   `-t/--type`, `-T/--command-timeout`, `-U/--other-user`, `-u/--user`.
+  Short `-h` is **excluded**: it is overloaded (`-h` alone = help,
+  `-h host` = host), so declaring it value-taking would let `sudo -h rm`
+  swallow `rm` (violates the scenario-6 inverse-mis-parse rule). The
+  unambiguous long `--host` is declared instead.
 - **env**: BSD `-u -C -P -S`; GNU `--unset --chdir --split-string`
   (`-S` = BSD split / GNU `--split-string`; `-C` = BSD altwd / GNU chdir).
 - **ssh** (OpenSSH, identical): `-b -c -D -E -e -F -I -i -J -L -l -m -O -o -p -Q
@@ -68,7 +72,10 @@ Per-carrier value-flags (short + long where applicable):
   (long: `--string-limit --env --username` …).
 - **time**: BSD `-o`; GNU `-o/--output -f/--format`.
 - **xargs**: existing `-n -I -L -P -d`; add `-s/--max-chars`, BSD `-J -R -S`,
-  GNU `-a/--arg-file -E -e/--eof`.
+  GNU `-a/--arg-file -E`. GNU `-e/--eof` is **excluded**: its eof-string
+  argument is *optional*, so `xargs -e rm` treats `-e` as valueless and
+  declaring it would swallow `rm` (scenario-6 inverse mis-parse). `-E`
+  (mandatory arg on BSD and GNU) covers the value-taking case.
 
 ### D2: Only proven-safe DSL primitives
 
