@@ -95,17 +95,27 @@ does not need for the common case.
 
 ### D2 — Indirect / nameref is its own operator shape
 
-Add `ParameterOperator::Indirect { listing: NameListing }` where `NameListing`
-distinguishes plain `${!name}`, the prefix-listing `${!prefix*}` / `${!prefix@}`,
-and the array-key `${!arr[@]}`. The lexer gains a `!` arm before
-`read_identifier`; the operand (the text after `!`) is read with `read_operand`
-so an embedded substitution is captured.
+Add `ParameterOperator::Indirect { operand: String, listing: NameListing }`
+where `NameListing` distinguishes plain `${!name}`, the prefix-listing
+`${!prefix*}` / `${!prefix@}`, and the array-key `${!arr[@]}`. The lexer gains a
+`!` arm before `read_identifier`; the operand (the text after `!`) is read with
+`read_operand` so an embedded substitution is captured into `embedded`. The
+literal operand text is kept on the op (`operand`) for display, and the
+enclosing `ParameterExpansionOp.name` is left **empty** — there is no direct
+read, and an empty name means `push_name` drops it with no special-casing.
 
 Resolution: always `unresolved()`. Taint: the literal name after `!` is **not**
 the variable read (the read is indirect), so it is *not* pushed as a secret-read
-— matching the existing `scan_parameter_refs` carve-out for `${!NAME}` at
-`decompose.rs:819`. `operator_operands` returns no read-bearing operand for
+— the empty enclosing `name` and the `operator_operands` carve-out below keep it
+out of taint, matching the existing `scan_parameter_refs` carve-out for
+`${!NAME}` operand text. `operator_operands` returns no read-bearing operand for
 `Indirect` (its own embedded substitutions are still gated via `embedded`).
+**Exception — the array-key subscript:** `${!arr[sub]}` (`NameListing::Keys`)
+still has its subscript arithmetic-/parameter-expanded by bash, so a `$NAME` or
+bare identifier there is a genuine read; `collect_parameter_names` runs
+`scan_name_subscript` over the operand for the `Keys` listing (preserving the
+pre-change flat form's `${!arr[$SECRET]}` taint). The plain/prefix listings
+carry no subscript and contribute no read.
 
 *Alternative — keep `${!…}` as the flat fallback but make the fallback carry
 embedded.* Rejected: leaves the nameref as structurally opaque junk (the #2

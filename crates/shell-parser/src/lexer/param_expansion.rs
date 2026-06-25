@@ -43,6 +43,26 @@ impl Lexer {
             self.restore_state(saved);
         }
 
+        // Indirect / nameref `${!name}`, `${!prefix*}`, `${!arr[@]}`. The `!`
+        // makes the expansion read the variable *named by* the operand, so the
+        // operand is not itself the variable read — it stays unresolved. Read
+        // the operand via `read_operand` so an embedded `$( … )` / backtick is
+        // captured and gated, and classify the listing shape for display.
+        // Placed before `read_identifier` because `!` is not an identifier
+        // start, so the name read would otherwise be empty and the form would
+        // collapse to an opaque flat string.
+        if self.peek() == Some('!') {
+            self.advance(); // skip !
+            let (operand, embedded) = self.read_operand(&['}']);
+            self.advance(); // skip }
+            let listing = classify_name_listing(&operand);
+            return Some(WordPart::ParameterExpansionOp {
+                name: String::new(),
+                op: ParameterOperator::Indirect { operand, listing },
+                embedded,
+            });
+        }
+
         // Read the variable name
         let mut name = self.read_identifier();
         if name.is_empty() {
@@ -292,9 +312,10 @@ impl Lexer {
                 // bash `${VAR^^pat}` converts only chars matching `pat`. The
                 // `Uppercase` op carries no pattern, so a non-empty operand would
                 // be silently dropped and resolution would diverge (full-case vs
-                // patterned). Emit the unresolvable flat form instead so the word
-                // stays expansion-bearing and floors. `${VAR^^}`/`${VAR^}` (no
-                // pattern) resolves as before.
+                // patterned). Emit the structured `CaseConvert` (never resolved,
+                // so the word stays expansion-bearing and floors) which carries
+                // the operand's `embedded` substitutions for gating.
+                // `${VAR^^}`/`${VAR^}` (no pattern) resolves as before.
                 if pattern.is_empty() {
                     Some(WordPart::ParameterExpansionOp {
                         name,
@@ -302,10 +323,15 @@ impl Lexer {
                         embedded,
                     })
                 } else {
-                    let sigil = if all { "^^" } else { "^" };
-                    Some(WordPart::ParameterExpansion(format!(
-                        "{name}{sigil}{pattern}"
-                    )))
+                    Some(WordPart::ParameterExpansionOp {
+                        name,
+                        op: ParameterOperator::CaseConvert {
+                            upper: true,
+                            all,
+                            pattern,
+                        },
+                        embedded,
+                    })
                 }
             }
             Some(',') => {
@@ -319,7 +345,8 @@ impl Lexer {
                 let (pattern, embedded) = self.read_operand(&['}']);
                 self.advance();
                 // See the `^` arm: a non-empty `${VAR,,pat}` pattern is dropped by
-                // the `Lowercase` op, so floor it via the unresolvable flat form.
+                // the `Lowercase` op, so emit the structured `CaseConvert`
+                // (unresolved, expansion-bearing) carrying its `embedded`.
                 if pattern.is_empty() {
                     Some(WordPart::ParameterExpansionOp {
                         name,
@@ -327,36 +354,43 @@ impl Lexer {
                         embedded,
                     })
                 } else {
-                    let sigil = if all { ",," } else { "," };
-                    Some(WordPart::ParameterExpansion(format!(
-                        "{name}{sigil}{pattern}"
-                    )))
+                    Some(WordPart::ParameterExpansionOp {
+                        name,
+                        op: ParameterOperator::CaseConvert {
+                            upper: false,
+                            all,
+                            pattern,
+                        },
+                        embedded,
+                    })
                 }
             }
             _ => {
-                // Unknown operator; fall back to flat string
-                let rest = self.read_until_char('}');
+                // Operator the lexer does not structure. Read via `read_operand`
+                // (not `read_until_char`) so an embedded `$( … )` / backtick is
+                // captured and gated. A leading `@` is a transform (`${VAR@Q}`);
+                // anything else is an unrecognised operator kept verbatim. Both
+                // stay unresolved (expansion-bearing) — only the substitution
+                // becomes visible.
+                let (rest, embedded) = self.read_operand(&['}']);
                 self.advance(); // skip }
-                Some(WordPart::ParameterExpansion(format!("{name}{rest}")))
+                let op = match rest.strip_prefix('@') {
+                    Some(spec) => ParameterOperator::Transform {
+                        spec: spec.to_string(),
+                    },
+                    None => ParameterOperator::Unknown { source: rest },
+                };
+                Some(WordPart::ParameterExpansionOp { name, op, embedded })
             }
         };
 
         // Merge any substitutions harvested from a folded subscript into the
         // operator op's `embedded`, so `${arr[$(cmd)]:-x}` (and every operator
         // whose operand is read via `read_operand`) gates the subscript command.
-        //
-        // KNOWN GAP (pre-existing, general, deferred): the operator arms that
-        // return a *flat* `WordPart::ParameterExpansion` rather than a
-        // `ParameterExpansionOp` — patterned case-conversion `${x^pat}`/`${x,,pat}`,
-        // and the `_` fallback for transform/unknown operators `${x@Q}` / junk —
-        // cannot carry `embedded`, so a substitution they hold (in a folded
-        // subscript OR in their own operand) stays ungated. This is NOT specific
-        // to arrays: the identical scalar forms (`${VAR^$(cmd)}`, `${VAR@Q$(cmd)}`)
-        // bury the substitution on `main` too, and so does a substitution inside a
-        // glob bracket (`[$(cmd)]`). Closing it needs a flat expansion that can
-        // carry embedded parts (or the missing transform ops) — a focused
-        // follow-up across scalar and array expansions alike, not this
-        // array-modelling change. See design.md "Known pre-existing gaps".
+        // Every operator arm above now yields a `ParameterExpansionOp` that can
+        // carry `embedded` — the patterned case-conversion, transform/unknown,
+        // and indirect forms included — so a folded subscript's substitutions
+        // are never lost.
         if !subscript_embedded.is_empty()
             && let Some(WordPart::ParameterExpansionOp { embedded, .. }) = &mut expansion
         {
@@ -490,6 +524,21 @@ impl Lexer {
             }
         }
         name
+    }
+}
+
+/// Classify an indirect-expansion operand (the text after `!`) into its
+/// [`NameListing`] shape. An array-key form `${!arr[@]}` carries a `[`; a
+/// prefix-listing `${!prefix*}` / `${!prefix@}` ends with `*` or `@`; anything
+/// else is a plain indirect `${!name}`. All stay unresolved — the distinction
+/// is for display fidelity only.
+fn classify_name_listing(operand: &str) -> NameListing {
+    if operand.contains('[') {
+        NameListing::Keys
+    } else if operand.ends_with('*') || operand.ends_with('@') {
+        NameListing::Prefix
+    } else {
+        NameListing::Indirect
     }
 }
 

@@ -295,6 +295,52 @@ pub enum ParameterOperator {
     Lowercase {
         all: bool,
     }, // ${VAR,} / ${VAR,,}
+    /// `${VAR^pat}` / `${VAR^^pat}` / `${VAR,pat}` / `${VAR,,pat}` — case
+    /// conversion restricted to characters matching `pattern`. Unlike the
+    /// pattern-less `Uppercase`/`Lowercase`, this is **never resolved** (bash
+    /// converts only matching chars, diverging from a full-case fold), but the
+    /// pattern is kept structured so a substitution buried in it is gated.
+    CaseConvert {
+        upper: bool,
+        all: bool,
+        pattern: String,
+    },
+    /// `${VAR@op}` — a parameter transformation (`@Q`, `@a`, `@P`, …). Never
+    /// resolved; `spec` is the operator text after `@`, kept for display and so
+    /// a substitution in it is carried in `embedded`.
+    Transform {
+        spec: String,
+    },
+    /// An operator the lexer does not structure (`${VAR.foo}` and other junk).
+    /// Never resolved; `source` is the verbatim text after the name, kept for
+    /// display fidelity and substitution gating.
+    Unknown {
+        source: String,
+    },
+    /// Indirect / nameref expansion `${!name}`, `${!prefix*}`, `${!arr[@]}`.
+    /// The variable read is named *indirectly* by the operand, so the operand
+    /// is not itself a read of that literal name. Never resolved. The enclosing
+    /// `ParameterExpansionOp.name` is empty for this form (there is no direct
+    /// read); `operand` carries the text after `!` for display, and `listing`
+    /// records the shape.
+    Indirect {
+        operand: String,
+        listing: NameListing,
+    },
+}
+
+/// The shape of an indirect/nameref expansion `${!…}`. All variants stay
+/// unresolved; the distinction is retained for display fidelity and to record
+/// intent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NameListing {
+    /// `${!name}` — the value of the variable *named by* `$name`.
+    Indirect,
+    /// `${!prefix*}` / `${!prefix@}` — the names of variables sharing a prefix.
+    Prefix,
+    /// `${!arr[@]}` / `${!arr[*]}` — the keys/indices of an array.
+    Keys,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]

@@ -85,16 +85,52 @@ impl Lexer {
                             }
                         }
                         Some(_) => {
-                            // Glob bracket expression: [abc], [a-z], etc.
+                            // Glob bracket expression: [abc], [a-z], etc. A
+                            // command (`$( … )`) or backtick substitution inside
+                            // runs *before* globbing (bash expands it first), so
+                            // lift it to its own structured part via the shared
+                            // readers — keeping the surrounding bracket text as
+                            // `Glob` parts — rather than swallowing the command
+                            // into the opaque glob string and leaving it ungated
+                            // (design D3). A `$NAME`/`${…}` reference stays in the
+                            // glob text; it runs no command and is taint-scanned
+                            // there. Arithmetic `$(( … ))` (the `peek_at(2)`
+                            // guard) is likewise left in place — it runs no
+                            // command; a substitution nested inside it is a
+                            // degenerate, pre-existing case, not handled here.
                             let mut glob = String::from("[");
-                            while let Some(ch) = self.peek() {
-                                glob.push(ch);
-                                self.advance();
-                                if ch == ']' {
-                                    break;
+                            loop {
+                                match self.peek() {
+                                    None => break,
+                                    Some('$')
+                                        if self.peek_at(1) == Some('(')
+                                            && self.peek_at(2) != Some('(') =>
+                                    {
+                                        if !glob.is_empty() {
+                                            parts.push(WordPart::Glob(std::mem::take(&mut glob)));
+                                        }
+                                        if let Some(part) = self.read_dollar() {
+                                            parts.push(part);
+                                        }
+                                    }
+                                    Some('`') => {
+                                        if !glob.is_empty() {
+                                            parts.push(WordPart::Glob(std::mem::take(&mut glob)));
+                                        }
+                                        parts.push(self.read_backtick());
+                                    }
+                                    Some(ch) => {
+                                        glob.push(ch);
+                                        self.advance();
+                                        if ch == ']' {
+                                            break;
+                                        }
+                                    }
                                 }
                             }
-                            parts.push(WordPart::Glob(glob));
+                            if !glob.is_empty() {
+                                parts.push(WordPart::Glob(glob));
+                            }
                         }
                     }
                 }

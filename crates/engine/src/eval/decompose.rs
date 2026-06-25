@@ -1,5 +1,5 @@
 use may_i_shell_parser::{
-    Command, ConstLookup, ConstValue, ParameterOperator, ParseDiagnostic, Redirection,
+    Command, ConstLookup, ConstValue, NameListing, ParameterOperator, ParseDiagnostic, Redirection,
     RedirectionKind, RedirectionTarget, SimpleCommand, Subscript, SubstitutionForm, Word, WordPart,
     constant_env, defined_function_names, enumerable_for_values,
 };
@@ -660,6 +660,20 @@ fn collect_parameter_names(word: &Word, out: &mut Vec<String>) {
                     push_name(name, out);
                     scan_name_subscript(name, out);
                     walk(embedded, out);
+                    // An indirect array-key expansion `${!arr[sub]}` reads the
+                    // variable *named indirectly* (not the literal `arr`), but
+                    // bash still arithmetic-/parameter-expands the subscript, so
+                    // a `$NAME` or bare identifier in it is a genuine read. Scan
+                    // it like any other subscript — without this, a secret in
+                    // `${!arr[$AWS_TOKEN]}` would evade taint. The plain/prefix
+                    // listings carry no subscript and are correctly skipped.
+                    if let ParameterOperator::Indirect {
+                        operand,
+                        listing: NameListing::Keys,
+                    } = op
+                    {
+                        scan_name_subscript(operand, out);
+                    }
                     for operand in operator_operands(op) {
                         scan_parameter_refs(operand, out);
                     }
@@ -763,6 +777,16 @@ fn operator_operands(op: &ParameterOperator) -> Vec<&str> {
             Some(len) => vec![offset.as_str(), len.as_str()],
             None => vec![offset.as_str()],
         },
+        // Patterned case-conversion expands its pattern; a transform/unknown
+        // operator may carry a `$NAME` reference in its operand text — bash
+        // expands both, so scan them for secret reads.
+        CaseConvert { pattern, .. } => vec![pattern.as_str()],
+        Transform { spec } => vec![spec.as_str()],
+        Unknown { source } => vec![source.as_str()],
+        // Indirect/nameref reads the variable *named by* its operand, so the
+        // literal operand name is not a read. Its own embedded substitutions
+        // are still gated via `ParameterExpansionOp.embedded`.
+        Indirect { .. } => Vec::new(),
         Length | Uppercase { .. } | Lowercase { .. } => Vec::new(),
     }
 }

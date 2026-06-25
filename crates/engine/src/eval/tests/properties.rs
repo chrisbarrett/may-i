@@ -1065,14 +1065,16 @@ mod parser_engine_invariants {
         /// `decompose` produces a matching `EmbeddedCommand` unit — and no
         /// substitution yields two. Arithmetic `$(( … ))` runs no command and
         /// produces none. The generator places the substitution in simple-
-        /// command words, bare assignment values, `for` iteration words, and
-        /// `case` subject/pattern positions, so a future word position cannot
-        /// silently reintroduce the gap.
+        /// command words, bare assignment values, `for` iteration words,
+        /// `case` subject/pattern positions, parameter-expansion operands of
+        /// every operator class (default/strip, patterned case-conversion,
+        /// transform, indirect/nameref), and glob brackets, so a future word
+        /// position cannot silently reintroduce the gap.
         #[test]
         fn prop_every_substitution_yields_embedded_unit(
             inner in prop::sample::select(vec!["rm -rf /", "date", "ls /a", "true"]),
             form in 0u8..4,
-            ctx in 0u8..7,
+            ctx in 0u8..12,
         ) {
             // 0 dollar, 1 backtick, 2 process-sub, 3 arithmetic. Process
             // substitution is only well-formed in command-word position, so
@@ -1093,7 +1095,14 @@ mod parser_engine_invariants {
                 // Parameter-expansion operands: default value and strip-prefix
                 // pattern. Bash expands both, so a substitution there runs.
                 5 => format!("echo ${{x:-{sub}}}"),
-                _ => format!("echo ${{x#{sub}}}"),
+                6 => format!("echo ${{x#{sub}}}"),
+                // Flat forms closed by this change: patterned case-conversion,
+                // transform/unknown operator, indirect/nameref, glob bracket.
+                7 => format!("echo ${{x^{sub}}}"),
+                8 => format!("echo ${{x,,{sub}}}"),
+                9 => format!("echo ${{x@Q{sub}}}"),
+                10 => format!("echo ${{!{sub}}}"),
+                _ => format!("echo [{sub}]"),
             };
 
             let pr = may_i_shell_parser::parse(&input);
@@ -1124,6 +1133,58 @@ mod parser_engine_invariants {
                 "substitution coverage mismatch for input {:?}: \
                  AST command/backtick/process spans {:?} vs embedded-unit spans {:?}",
                 input, ast_spans, embedded_spans
+            );
+        }
+
+        /// Spec: § Embedded command substitutions are evaluated in every word
+        /// position.
+        ///
+        /// Blast-radius bound (design "behaviour-preserving"): structuring the
+        /// previously-flat forms must not change decisions for
+        /// *substitution-free* inputs. With no command/backtick substitution
+        /// present, the patterned case-conversion, transform/unknown,
+        /// indirect/nameref, and glob-bracket forms emit NO embedded-command
+        /// unit — so the change adds no gating — and a plain allow rule still
+        /// allows (the form introduces neither a spurious embedded command nor
+        /// a denial). The forms stay expansion-bearing/unresolved; that floor
+        /// is pinned by the parser round-trip and `is_expansion_bearing` tests.
+        #[test]
+        fn prop_substitution_free_flat_forms_add_no_gating(form in 0u8..6) {
+            let input = match form {
+                0 => "echo ${x^pat}",
+                1 => "echo ${x^^pat}",
+                2 => "echo ${x,,pat}",
+                3 => "echo ${x@Q}",
+                4 => "echo ${!name}",
+                _ => "echo [abc]",
+            };
+            let pr = may_i_shell_parser::parse(input);
+            prop_assume!(!pr.has_errors());
+            let units = decompose(
+                &pr.command,
+                input,
+                &pr.diagnostics,
+                &std::collections::HashSet::new(),
+                &std::collections::HashSet::new(),
+            );
+            let embedded = units
+                .iter()
+                .filter(|u| matches!(u, EvalUnit::EmbeddedCommand { .. }))
+                .count();
+            prop_assert_eq!(
+                embedded, 0,
+                "substitution-free flat form must add no embedded-command unit: {:?}",
+                input
+            );
+
+            let config = may_i_config::parse_config(r#"(rule "echo" (allow))"#)
+                .expect("config parses");
+            let result = evaluate_command(input, &config, &empty_facts())
+                .expect("evaluation succeeds");
+            prop_assert_eq!(
+                result.decision, may_i_core::Decision::Allow,
+                "substitution-free flat form must not change the decision: {:?}",
+                result.reason
             );
         }
     }
