@@ -1,5 +1,6 @@
 mod arrays;
 mod const_env;
+mod dialect;
 mod expansion;
 mod glob;
 mod helpers;

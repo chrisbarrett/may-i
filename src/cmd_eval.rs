@@ -16,13 +16,14 @@ pub fn cmd_eval(
     raw_facts: &[String],
     env_names: &[String],
     inherit_env: bool,
+    dialect: parser::Dialect,
 ) -> miette::Result<()> {
     let context_facts = parse_cli_facts(raw_facts)?;
     let entry_env = build_entry_env(env_names, inherit_env);
 
     pipeline.run_eval(command, |ctx| {
         let (result, mut traces, colored_command, audit_rules) =
-            evaluate_with_colorization(command, ctx.loaded, &context_facts, &entry_env)?;
+            evaluate_with_colorization(command, ctx.loaded, &context_facts, &entry_env, dialect)?;
         if !result.parse_diagnostics.is_empty() {
             traces.push(TraceEntry::ParseDiagnostics {
                 diagnostics: result.parse_diagnostics.clone(),
@@ -53,6 +54,7 @@ pub fn evaluate_with_colorization(
     loaded: &may_i_config::LoadResult,
     context: &may_i_core::ContextFacts,
     entry_env: &EntryEnv,
+    dialect: parser::Dialect,
 ) -> miette::Result<(engine::EvalResult, Vec<TraceEntry>, Styled, Vec<String>)> {
     // Eval needs both the Trace it renders and the audit capture: compose the
     // two folds over one traversal. Projection runs through the TracingFold
@@ -66,6 +68,7 @@ pub fn evaluate_with_colorization(
         &loaded.config,
         context,
         entry_env,
+        dialect,
         &mut fold,
     )
     .map_err(|e| miette::miette!("{}", may_i_core::SafeText::new(e.to_string())))?;

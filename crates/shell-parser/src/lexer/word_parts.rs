@@ -1,6 +1,14 @@
 use super::Lexer;
 use crate::ast::*;
 use crate::diagnostic::{ParseDiagnostic, ParseDiagnosticKind, Severity, Span};
+use crate::dialect::Dialect;
+
+/// Whether any part read so far is an unquoted glob metacharacter (`*`, `?`,
+/// or a `[…]` bracket expression) — the guard that distinguishes a zsh glob
+/// qualifier `(…)` from a subshell or a function-definition paren.
+fn parts_have_glob(parts: &[WordPart]) -> bool {
+    parts.iter().any(|p| matches!(p, WordPart::Glob(_)))
+}
 
 impl Lexer {
     pub(super) fn read_word_parts(&mut self) -> Vec<WordPart> {
@@ -8,6 +16,23 @@ impl Lexer {
         loop {
             match self.peek() {
                 None => break,
+                // zsh glob qualifier: a `(` immediately adjacent (no space —
+                // we are still inside one word) to a preceding glob metachar is
+                // a qualifier, not a subshell. Fold its balanced `(…)` into the
+                // word as unresolved glob text so the word stays
+                // expansion-bearing (floors an `:allow` like a plain glob) and
+                // the bash `UnexpectedToken` error is suppressed. Only under
+                // `Dialect::Zsh`; bash breaks on the metachar `(` as before.
+                Some('(') if self.dialect == Dialect::Zsh && parts_have_glob(&parts) => {
+                    self.advance(); // consume '('
+                    let (inner, found) = self.read_balanced_parens_checked();
+                    let mut qualifier = String::from("(");
+                    qualifier.push_str(&inner);
+                    if found {
+                        qualifier.push(')');
+                    }
+                    parts.push(WordPart::Glob(qualifier));
+                }
                 Some(ch) if super::is_metachar(ch) => break,
                 Some('\'') => {
                     let open_pos = self.byte_pos;

@@ -39,6 +39,7 @@ fn eval_body_with_captures<F: EvalFold>(
         unresolved: ctx.unresolved.clone(),
         config: ctx.config,
         env_scope: ctx.env_scope,
+        dialect: ctx.dialect,
     };
     evaluate_effect_fold(fold, body, &derived, rules)
 }
@@ -313,6 +314,7 @@ fn recurse_into_bound_command<F: EvalFold>(
                 fold,
                 ctx.recursion_depth + 1,
                 Some(ctx.command),
+                ctx.dialect,
             )?
         }
         super::bindings::BindingValue::Tokens(v) => {
@@ -321,13 +323,13 @@ fn recurse_into_bound_command<F: EvalFold>(
                 .map(|t| (t.text.clone(), t.expansion.clone()))
                 .unzip();
             super::command::evaluate_authorised_tokens(
-                &texts,
-                &expansions,
+                super::decompose::Argv::new(&texts, &expansions),
                 ctx.config,
                 ctx.facts,
                 fold,
                 ctx.recursion_depth + 1,
                 Some(ctx.command),
+                ctx.dialect,
             )?
         }
         super::bindings::BindingValue::Unbound => {
@@ -544,13 +546,13 @@ fn evaluate_tail_authorise_fold<F: EvalFold>(
     } else {
         fold.begin_recursive_eval();
         let eval_result = super::command::evaluate_authorised_tokens(
-            &owned,
-            &tail_exp,
+            super::decompose::Argv::new(&owned, &tail_exp),
             ctx.config,
             ctx.facts,
             fold,
             ctx.recursion_depth + 1,
             Some(ctx.command),
+            ctx.dialect,
         )?;
         let detail = ArgMatchDetail {
             search_tokens: vec![],
@@ -897,6 +899,7 @@ fn recurse_into_inner_command<F: EvalFold>(
         fold,
         ctx.recursion_depth + 1,
         Some(ctx.command),
+        ctx.dialect,
     )?;
     let detail = ArgMatchDetail {
         search_tokens: vec![],
@@ -1084,6 +1087,7 @@ fn evaluate_effect_with_owned_args_fold<F: EvalFold>(
         unresolved: ctx.unresolved.clone(),
         config: ctx.config,
         env_scope: ctx.env_scope,
+        dialect: ctx.dialect,
     };
     evaluate_effect_fold(fold, effect, &inner_ctx, rules)
 }

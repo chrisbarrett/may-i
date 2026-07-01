@@ -13,7 +13,10 @@ use miette::Context;
 use may_i::audit::AuditTap;
 use may_i::pipeline::{CommandPipeline, HarnessProfile, HookOutcomeBody};
 
-pub(crate) fn cmd_hook(pipeline: &mut CommandPipeline) -> miette::Result<()> {
+pub(crate) fn cmd_hook(
+    pipeline: &mut CommandPipeline,
+    dialect: may_i_shell_parser::Dialect,
+) -> miette::Result<()> {
     // Capture the entry environment as the very first action — the names-only
     // snapshot of the exported environment — before any internal mutation.
     // The git-environment scrubbing (`io.rs`) only edits spawned child
@@ -46,7 +49,7 @@ pub(crate) fn cmd_hook(pipeline: &mut CommandPipeline) -> miette::Result<()> {
         // Hook runs `AuditFold` alone — no trace-tree cost on the hot path.
         let mut fold = engine::AuditFold::new();
         let result = engine::eval::evaluate_command_with_fold_env(
-            &command, ctx.config, &context, &entry_env, &mut fold,
+            &command, ctx.config, &context, &entry_env, dialect, &mut fold,
         )
         .map_err(|e| miette::miette!("{}", may_i_core::SafeText::new(e.to_string())))?;
         let audit_rules = fold.into_deciding_hashes(result.decision);

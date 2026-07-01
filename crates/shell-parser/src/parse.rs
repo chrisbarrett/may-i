@@ -1,5 +1,6 @@
 use super::ast::*;
 use super::diagnostic::{ParseDiagnostic, ParseDiagnosticKind, Severity, Span};
+use super::dialect::Dialect;
 use super::lexer::{Lexer, Token};
 
 pub(super) struct Parser {
@@ -7,12 +8,23 @@ pub(super) struct Parser {
     tokens: Vec<(Token, usize)>,
     pos: usize,
     input_len: usize,
+    dialect: Dialect,
+    /// Depth of the current brace-group / function-body context. Under
+    /// `Dialect::Zsh` a whitespace-delimited `}` terminates a command list
+    /// only when this is non-zero; at top level (`0`) a `}` stays a literal
+    /// argument, matching both dialects.
+    brace_depth: usize,
     pub(super) diagnostics: Vec<ParseDiagnostic>,
 }
 
 impl Parser {
+    #[cfg(test)]
     pub(super) fn new(input: &str) -> Self {
-        let mut lexer = Lexer::new(input);
+        Self::new_with_dialect(input, Dialect::Bash)
+    }
+
+    pub(super) fn new_with_dialect(input: &str, dialect: Dialect) -> Self {
+        let mut lexer = Lexer::new_with_dialect(input, dialect);
         let tokens = lexer.tokenize_with_offsets();
         let diagnostics = lexer.take_diagnostics();
         Parser {
@@ -20,6 +32,8 @@ impl Parser {
             tokens,
             pos: 0,
             input_len: input.len(),
+            dialect,
+            brace_depth: 0,
             diagnostics,
         }
     }
@@ -76,6 +90,18 @@ impl Parser {
         matches!(self.peek(), Token::Word(w)
             if w.parts.len() == 1
                 && matches!(&w.parts[0], WordPart::Literal(s) if s == lit))
+    }
+
+    /// Whether the current token is a zsh no-semicolon brace terminator: a
+    /// whitespace-delimited `}` (lexed as the standalone `Word` `}`, because a
+    /// `}` outside command position is not the `RBrace` keyword token) while
+    /// parsing inside a brace-group / function-body context under
+    /// `Dialect::Zsh`. At top level (`brace_depth == 0`) or under `Bash` a `}`
+    /// stays a literal argument, so this returns false and today's behaviour
+    /// is unchanged. Only the whitespace-delimited form is recognised; a glued
+    /// `}` (`hi}`) is a different word and falls back to the fail-safe warning.
+    fn at_zsh_brace_terminator(&self) -> bool {
+        self.dialect == Dialect::Zsh && self.brace_depth > 0 && self.peek_word_is("}")
     }
 
     pub(super) fn parse_complete(&mut self) -> Command {
@@ -337,6 +363,12 @@ impl Parser {
         let span_start = self.current_offset();
 
         loop {
+            // Under zsh, a whitespace-delimited `}` inside a brace/function
+            // context terminates the command list instead of being absorbed as
+            // a literal argument. Break so `parse_brace_group` sees it.
+            if self.at_zsh_brace_terminator() {
+                break;
+            }
             match self.peek().clone() {
                 Token::Word(ref w) => {
                     // Check for assignment (VAR=value) before any command words
@@ -1062,9 +1094,15 @@ impl Parser {
     fn parse_brace_group(&mut self) -> Command {
         self.advance(); // skip {
         self.skip_newlines();
+        // Mark that command lists parsed below are inside a brace context, so
+        // the zsh no-semicolon `}` terminator is recognised (see
+        // `at_zsh_brace_terminator`). Restored after the body regardless of
+        // how it terminates.
+        self.brace_depth += 1;
         let body = self.parse_list();
+        self.brace_depth -= 1;
         self.skip_newlines();
-        if !self.expect(&Token::RBrace) {
+        if !self.expect_brace_close() {
             self.diagnostics.push(ParseDiagnostic {
                 span: Span {
                     start: self.current_offset(),
@@ -1076,6 +1114,21 @@ impl Parser {
         }
 
         Command::BraceGroup(Box::new(body))
+    }
+
+    /// Consume a brace-group closer, returning whether one was found. Accepts
+    /// the `RBrace` keyword token (the `;`/newline-terminated bash form) and,
+    /// under `Dialect::Zsh`, a whitespace-delimited `}` word (the no-semicolon
+    /// zsh form, lexed as `Word` `}` because it is not in command position).
+    fn expect_brace_close(&mut self) -> bool {
+        if self.expect(&Token::RBrace) {
+            return true;
+        }
+        if self.dialect == Dialect::Zsh && self.peek_word_is("}") {
+            self.advance();
+            return true;
+        }
+        false
     }
 }
 

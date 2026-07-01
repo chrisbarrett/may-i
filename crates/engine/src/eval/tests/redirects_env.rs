@@ -23,6 +23,7 @@ fn decide_with_env(config_src: &str, input: &str, env_names: &[&str]) -> crate::
         &config,
         &ContextFacts::default(),
         &entry_env,
+        may_i_shell_parser::Dialect::Bash,
         &mut fold,
     )
     .expect("evaluation succeeds")

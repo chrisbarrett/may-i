@@ -66,6 +66,23 @@ pub(crate) enum SubstitutionOrigin {
 /// non-wildcard matcher toward `:allow`.
 pub(crate) type Expansion = Option<String>;
 
+/// A tokenised argument vector paired with its per-token expansion
+/// provenance. The two slices are always the same length; [`Argv::new`]
+/// checks the invariant so the recursion entry points can carry both as one
+/// argument instead of two positional slices.
+#[derive(Clone, Copy)]
+pub(crate) struct Argv<'a> {
+    pub(crate) args: &'a [String],
+    pub(crate) expansions: &'a [Expansion],
+}
+
+impl<'a> Argv<'a> {
+    pub(crate) fn new(args: &'a [String], expansions: &'a [Expansion]) -> Self {
+        debug_assert_eq!(args.len(), expansions.len());
+        Self { args, expansions }
+    }
+}
+
 /// A unit of evaluation extracted from an AST.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(clippy::enum_variant_names)]

@@ -2,11 +2,13 @@
 use may_i_core::ast::Style;
 use may_i_core::ast::{EffectResult, ParameterTreatment, PunPolicy, ResolvedParser, Rule};
 use may_i_core::{ContextFacts, Decision};
+use may_i_shell_parser::Dialect;
 
 use crate::fold::{EvalFold, PureFold};
 use crate::{DisplaySafe, EvalError, EvalResult};
 
 use super::context::EvalContext;
+use super::decompose::Argv;
 use super::effects::evaluate_effect_fold;
 
 /// Evaluate a command against config and context using PureFold.
@@ -38,20 +40,33 @@ pub fn evaluate_with_fold<F: EvalFold>(
     fold: &mut F,
 ) -> Result<EvalResult, EvalError> {
     let expansions = vec![None; args.len()];
-    evaluate_at_depth(command, args, &expansions, config, facts, fold, 0)
+    evaluate_at_depth(
+        command,
+        Argv::new(args, &expansions),
+        config,
+        facts,
+        Dialect::Bash,
+        fold,
+        0,
+    )
 }
 
 /// Common implementation; entry-points just pick a starting depth.
-/// `arg_expansions` is per-token expansion provenance aligned with `args`.
+/// `argv` carries the argument tokens with their per-token expansion
+/// provenance.
 pub(crate) fn evaluate_at_depth<F: EvalFold>(
     command: &str,
-    args: &[String],
-    arg_expansions: &[super::decompose::Expansion],
+    argv: Argv,
     config: &may_i_core::ast::Config,
     facts: &ContextFacts,
+    dialect: Dialect,
     fold: &mut F,
     depth: usize,
 ) -> Result<EvalResult, EvalError> {
+    let Argv {
+        args,
+        expansions: arg_expansions,
+    } = argv;
     if depth >= super::context::DEFAULT_RECURSION_LIMIT {
         return Ok(EvalResult::new(
             Decision::Ask,
@@ -109,6 +124,7 @@ pub(crate) fn evaluate_at_depth<F: EvalFold>(
             fold,
             depth + 1,
             None,
+            dialect,
         )?;
         // An expansion-bearing captured value re-parses as unfaithful
         // text; its recursion result cannot prove an allow (asymmetric
@@ -141,6 +157,7 @@ pub(crate) fn evaluate_at_depth<F: EvalFold>(
         config,
     );
     ctx.recursion_depth = depth;
+    ctx.dialect = dialect;
     let result = evaluator.evaluate(fold, &ctx)?;
     if matches!(result.decision, Decision::Ask)
         && let Some(rec) = parser_recursion
