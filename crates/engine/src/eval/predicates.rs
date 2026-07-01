@@ -1,6 +1,8 @@
-use may_i_core::ast::Predicate;
+use may_i_core::ast::{EnvScopeMatcher, Predicate};
 use may_i_core::pattern::{ArgPattern, MatchMode};
 use may_i_core::{FactPattern, FactQuery};
+
+use super::context::EnvScope;
 
 use crate::EvalError;
 use crate::fold::PureFold;
@@ -8,6 +10,18 @@ use crate::fold::{ChildResult, EvalFold, build_fact_detail};
 
 use super::context::{EvalContext, PredicateResult};
 use super::effects::{matcher_scope, scan_until_double_dash};
+
+/// Whether the write's raw `scope` satisfies a `(scope …)` `matcher`.
+/// `ReachesChild` is the disjunction of all reaching forms — and a unit only
+/// exists for a reaching write — so it matches any scope.
+fn scope_matches(matcher: EnvScopeMatcher, scope: EnvScope) -> bool {
+    match matcher {
+        EnvScopeMatcher::ReachesChild => true,
+        EnvScopeMatcher::Prefix => scope == EnvScope::Prefix,
+        EnvScopeMatcher::Export => scope == EnvScope::Export,
+        EnvScopeMatcher::Bare => scope == EnvScope::Bare,
+    }
+}
 
 /// Evaluate a predicate against the context (non-generic, uses PureFold).
 #[cfg(test)]
@@ -185,6 +199,22 @@ pub(crate) fn evaluate_predicate_fold<F: EvalFold>(
                 PredicateResult::NoMatch
             };
             Ok(fold.predicate_some(binding, pattern, result))
+        }
+        // `(scope …)` — matches the scope of the env write under evaluation.
+        // `ctx.env_scope` is `Some` exactly when an env write is being
+        // evaluated (always a reaching write), so `reaches-child` matches any
+        // present scope; the raw matchers compare for equality. Outside an env
+        // decision `env_scope` is `None` and nothing matches.
+        Predicate::Scope(matcher) => {
+            let matched = ctx
+                .env_scope
+                .is_some_and(|scope| scope_matches(*matcher, scope));
+            let result = if matched {
+                PredicateResult::Match
+            } else {
+                PredicateResult::NoMatch
+            };
+            Ok(fold.predicate_scope(*matcher, result))
         }
         // `Predicate` is `#[non_exhaustive]`; future variants must be
         // added here explicitly.

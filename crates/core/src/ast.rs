@@ -350,6 +350,41 @@ pub enum Predicate {
         binding_span: Span,
         pattern: crate::pattern::Expr<Effect>,
     },
+
+    /// True iff the environment write currently under evaluation has the given
+    /// scope. Valid only inside an `(env …)` decision; rejected elsewhere at
+    /// load time.
+    /// Syntax: `(scope prefix|export|bare|reaches-child)`
+    Scope(EnvScopeMatcher),
+}
+
+/// The scope an `(scope …)` predicate matches against the write under
+/// evaluation. `ReachesChild` is the derived disjunction of the reaching forms;
+/// the others match the raw syntactic scope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnvScopeMatcher {
+    /// A command prefix (`NAME=VALUE cmd`).
+    Prefix,
+    /// An exported declaration (`export …`, `declare -x …`) or any declaration
+    /// made reaching by an active `set -a`.
+    Export,
+    /// A bare assignment made reaching by the entry environment or `set -a`.
+    Bare,
+    /// Any reaching write — the disjunction of the forms above.
+    ReachesChild,
+}
+
+impl EnvScopeMatcher {
+    /// The canonical source token for this matcher.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            EnvScopeMatcher::Prefix => "prefix",
+            EnvScopeMatcher::Export => "export",
+            EnvScopeMatcher::Bare => "bare",
+            EnvScopeMatcher::ReachesChild => "reaches-child",
+        }
+    }
 }
 
 impl Predicate {
@@ -433,6 +468,9 @@ impl ToDoc for Predicate {
                 Doc::atom(binding.to_string()),
                 Doc::atom("<expr>"),
             ]),
+            Predicate::Scope(matcher) => {
+                Doc::list(vec![Doc::atom("scope"), Doc::atom(matcher.as_str())])
+            }
         }
     }
 }
@@ -1456,6 +1494,11 @@ pub struct Check {
 
     /// Context facts for the test.
     pub context: crate::context::ContextFacts,
+
+    /// Simulated entry environment for the test, declared by `(with-env …)`.
+    /// Defaults to empty — `check` is hermetic and never reads the host
+    /// environment.
+    pub entry_env: crate::context::EntryEnv,
 
     /// Source span for error reporting.
     pub span: Span,

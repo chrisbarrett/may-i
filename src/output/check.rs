@@ -10,7 +10,7 @@ use std::io::Write;
 use std::path::Path;
 
 use may_i_core::{ContextFacts, Decision};
-use may_i_output::{ColRow, HRuleLabel, Layout, Style, Styled, write_line};
+use may_i_output::{Advisory, ColRow, HRuleLabel, Layout, NoteLevel, Style, Styled, write_line};
 
 use super::{Terminal, colorize_decision_keyword, shorten_home, write_layout, write_trace};
 use crate::annotation::TraceEntry;
@@ -36,12 +36,16 @@ pub struct CheckOutput<'a> {
     pub config_path: &'a Path,
     pub results: &'a [CheckResultView<'a>],
     pub verbose: bool,
+    /// Names of scope-dependent env rules with no `(with-env …)` coverage,
+    /// rendered as a leading `warn` advisory.
+    pub untested_scope_rules: &'a [String],
 }
 
 impl CheckOutput<'_> {
-    /// Emit the `may-i check` text body (verbose lines, failure detail
-    /// blocks, separator, summary) to `w`.
+    /// Emit the `may-i check` text body (advisory, verbose lines, failure
+    /// detail blocks, separator, summary) to `w`.
     pub fn render(&self, w: &mut impl Write, term: &Terminal) {
+        self.render_untested_scope_advisory(w, term);
         let passed = self.results.iter().filter(|r| r.passed).count();
         let failed = self.results.len() - passed;
 
@@ -69,6 +73,36 @@ impl CheckOutput<'_> {
         }
         let display_path = shorten_home(self.config_path);
         render_check_summary(w, term, passed, failed, &display_path);
+    }
+
+    /// Render the non-failing `warn` advisory for scope-dependent env rules
+    /// that no `(with-env …)` case exercises. No-op when there are none.
+    fn render_untested_scope_advisory(&self, w: &mut impl Write, term: &Terminal) {
+        if self.untested_scope_rules.is_empty() {
+            return;
+        }
+        let listing = Layout::Stack(
+            self.untested_scope_rules
+                .iter()
+                .map(|name| Layout::Text(Styled::atom(name)))
+                .collect::<Vec<_>>(),
+        );
+        let layout = Advisory {
+            level: NoteLevel::Warn,
+            heading: "Untested scope-dependent env rule(s)".into(),
+            detail: "These (env …) rules branch on (scope …), but no (check …) \
+                     case declares the name in a (with-env …). The hermetic \
+                     default entry environment is empty, so the reaching-write \
+                     branch — covering always-exported names like PATH and LD_* \
+                     — is never exercised."
+                .into(),
+            suggestion: "Add a check declaring the name, e.g.:".into(),
+            command: "(with-env [\"PATH\"] (ask \"PATH=/evil:$PATH\"))".into(),
+            children: vec![listing],
+        }
+        .into_layout();
+        write_layout(w, &layout, term);
+        let _ = writeln!(w);
     }
 }
 
@@ -267,6 +301,7 @@ mod tests {
                 config_path: &config_path,
                 results: views,
                 verbose,
+                untested_scope_rules: &[],
             };
             let term = Terminal::detect();
             let mut buf = Vec::new();

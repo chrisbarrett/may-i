@@ -1,5 +1,5 @@
 ---
-source: tests/parser_snapshots.rs
+source: crates/shell-parser/tests/parser_snapshots.rs
 expression: "parse(\"A=1 B=2 C=3 cmd arg\")"
 ---
 Simple(
@@ -16,6 +16,7 @@ Simple(
                         ],
                     },
                 ),
+                scope: Prefix,
             },
             Assignment {
                 name: "B",
@@ -28,6 +29,7 @@ Simple(
                         ],
                     },
                 ),
+                scope: Prefix,
             },
             Assignment {
                 name: "C",
@@ -40,6 +42,7 @@ Simple(
                         ],
                     },
                 ),
+                scope: Prefix,
             },
         ],
         words: [

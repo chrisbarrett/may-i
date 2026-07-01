@@ -347,16 +347,18 @@ impl Parser {
                         continue;
                     }
                     // A declaration builtin (`declare`/`typeset`/`local`/
-                    // `export`/`readonly`) takes `name=(…)` array arguments. The
-                    // kind comes from a `-A` flag (associative) vs the default
-                    // `-a`/indexed. Capture these as assignments so the kind is
-                    // recorded and nothing truncates; the builtin name word
-                    // stays in `words`.
-                    if let Some(kind) = declaration_array_kind(&words)
-                        && let Some(assignment) = self.try_parse_named_array_literal(kind)
-                    {
-                        assignments.push(assignment);
-                        continue;
+                    // `export`/`readonly`) takes `name=value` scalar and
+                    // `name=(…)` array arguments. The array kind comes from a
+                    // `-A` flag (associative) vs the default `-a`/indexed.
+                    // Capture both as assignments so the kind is recorded, the
+                    // export scope is tagged, and nothing truncates; the builtin
+                    // name and its flag words stay in `words`.
+                    if let Some(kind) = declaration_array_kind(&words) {
+                        let exported = declaration_exports(&words);
+                        if let Some(assignment) = self.try_parse_declaration_arg(kind, exported) {
+                            assignments.push(assignment);
+                            continue;
+                        }
                     }
                     let word = w.clone();
                     self.advance();
@@ -420,9 +422,18 @@ impl Parser {
             }
         }
 
-        // If only assignments and no words, return as assignment command
-        if !assignments.is_empty() && words.is_empty() && assignments.len() == 1 {
-            return Command::Assignment(assignments.pop().unwrap());
+        // No command word follows: the prefix-position assignments are bare
+        // assignments (shell-local unless the entry environment or `set -a`
+        // makes them reach a child — resolved later by the engine). Retag from
+        // the provisional `Prefix` they were parsed with.
+        if !assignments.is_empty() && words.is_empty() {
+            for assignment in &mut assignments {
+                assignment.scope = AssignmentScope::Bare;
+            }
+            // A single bare assignment is its own command.
+            if assignments.len() == 1 {
+                return Command::Assignment(assignments.pop().unwrap());
+            }
         }
 
         if assignments.is_empty() && words.is_empty() && redirections.is_empty() {
@@ -459,6 +470,7 @@ impl Parser {
     }
 
     fn try_parse_assignment(&mut self) -> Option<Assignment> {
+        let span_start = self.current_offset();
         if let Token::Word(ref w) = self.peek().clone()
             && !w.parts.is_empty()
             && let WordPart::Literal(ref s) = w.parts[0]
@@ -492,6 +504,14 @@ impl Parser {
                     return Some(Assignment {
                         name: bare.to_string(),
                         value: array,
+                        // Parsed in prefix/bare position (before any command
+                        // word). `parse_simple_command` retags to `Bare` when
+                        // no command word follows.
+                        scope: AssignmentScope::Prefix,
+                        span: Span {
+                            start: span_start,
+                            end: self.trimmed_end_offset(span_start),
+                        },
                     });
                 }
 
@@ -524,6 +544,11 @@ impl Parser {
                 return Some(Assignment {
                     name: bare.to_string(),
                     value: AssignmentValue::Scalar(value),
+                    scope: AssignmentScope::Prefix,
+                    span: Span {
+                        start: span_start,
+                        end: self.trimmed_end_offset(span_start),
+                    },
                 });
             }
         }
@@ -608,32 +633,31 @@ impl Parser {
         })
     }
 
-    /// Parse a declaration-builtin array argument `name=(…)` (with the given
-    /// `kind` from the builtin's flags) in argument position. The cursor is on
-    /// the `name=` Word token. Returns `None` (cursor unmoved) when the word is
-    /// not a `name=` shape or the `(` is not adjacent — the caller then treats
-    /// it as an ordinary argument word. A `name=scalar` (no array) also returns
-    /// `None`: only the array-literal form is captured here, since the kind is
-    /// meaningful only for arrays.
-    fn try_parse_named_array_literal(&mut self, kind: ArrayKind) -> Option<Assignment> {
+    /// Parse a declaration-builtin argument `name=value` (scalar) or
+    /// `name=(…)` (array, with the given `kind` from the builtin's flags) in
+    /// argument position, tagging it `Declaration { exported }`. The cursor is
+    /// on the `name=` Word token. Returns `None` (cursor unmoved) when the word
+    /// is not a `name=value` shape — the caller then treats it as an ordinary
+    /// argument word. An append (`p+=…`) or indexed-element target (`arr[5]=…`)
+    /// is not a constant binding and is left as a word, matching the
+    /// prefix-position scalar branch.
+    fn try_parse_declaration_arg(&mut self, kind: ArrayKind, exported: bool) -> Option<Assignment> {
+        let span_start = self.current_offset();
         let Token::Word(w) = self.peek().clone() else {
             return None;
         };
-        if w.parts.len() != 1 {
+        if w.parts.is_empty() {
             return None;
         }
         let WordPart::Literal(ref s) = w.parts[0] else {
             return None;
         };
         let eq_pos = s.find('=')?;
-        if eq_pos + 1 != s.len() {
-            return None; // `name=value` scalar, not an array literal
-        }
         let lexical = &s[..eq_pos];
-        let lexical = lexical.strip_suffix('+').unwrap_or(lexical);
-        let bare = match lexical.find('[') {
-            Some(open) => &lexical[..open],
-            None => lexical,
+        let lexical_bare = lexical.strip_suffix('+').unwrap_or(lexical);
+        let bare = match lexical_bare.find('[') {
+            Some(open) => &lexical_bare[..open],
+            None => lexical_bare,
         };
         if bare.is_empty()
             || !bare.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
@@ -641,16 +665,57 @@ impl Parser {
         {
             return None;
         }
-        match self.try_parse_array_literal(s)? {
-            AssignmentValue::Array { elements, .. } => Some(Assignment {
+        let scope = AssignmentScope::Declaration { exported };
+
+        // `name=(…)`: array literal when the value text is empty and a `(`
+        // immediately follows (no space).
+        let value_text = &s[eq_pos + 1..];
+        if value_text.is_empty()
+            && w.parts.len() == 1
+            && matches!(self.peek(), Token::Word(_))
+            && let Some(AssignmentValue::Array { elements, .. }) = self.try_parse_array_literal(s)
+        {
+            return Some(Assignment {
                 name: bare.to_string(),
                 value: AssignmentValue::Array {
                     array_kind: kind,
                     elements,
                 },
-            }),
-            AssignmentValue::Scalar(_) => None,
+                scope,
+                span: Span {
+                    start: span_start,
+                    end: self.trimmed_end_offset(span_start),
+                },
+            });
         }
+
+        // `name=value` scalar. An append/indexed-element target is not a scalar
+        // binding — leave it as a word (the token still survives downstream).
+        if lexical != bare {
+            return None;
+        }
+        let mut value_parts = Vec::new();
+        if !value_text.is_empty() {
+            value_parts.push(WordPart::Literal(value_text.to_string()));
+        }
+        for part in &w.parts[1..] {
+            value_parts.push(part.clone());
+        }
+        let value = if value_parts.is_empty() {
+            Word::literal("")
+        } else {
+            Word { parts: value_parts }
+        };
+        self.advance();
+        Some(Assignment {
+            name: bare.to_string(),
+            value: AssignmentValue::Scalar(value),
+            scope,
+            span: Span {
+                start: span_start,
+                end: self.trimmed_end_offset(span_start),
+            },
+        })
     }
 
     fn parse_if(&mut self) -> Command {
@@ -1085,6 +1150,30 @@ fn declaration_array_kind(words: &[Word]) -> Option<ArrayKind> {
         ArrayKind::Associative
     } else {
         ArrayKind::Indexed
+    })
+}
+
+/// Whether a declaration builtin's argument is exported into the environment
+/// (a write that reaches a child). `export …` always exports; `declare` /
+/// `typeset` / `local` / `readonly` export only with an `-x` flag. The caller
+/// guarantees `words` names a declaration builtin (it is gated by
+/// [`declaration_array_kind`]). Conservative toward flooring: `export -n`
+/// (un-export) is not modelled — an `export` head is treated as exporting.
+fn declaration_exports(words: &[Word]) -> bool {
+    let Some(head) = words.first() else {
+        return false;
+    };
+    let Some(WordPart::Literal(name)) = head.parts.first() else {
+        return false;
+    };
+    if name == "export" {
+        return true;
+    }
+    // A combined flag like `-gx` or `-rx` still carries the export attribute,
+    // so look for the letter inside any single-dash flag word.
+    words[1..].iter().any(|w| {
+        matches!(&w.parts[..], [WordPart::Literal(s)]
+            if s.starts_with('-') && !s.starts_with("--") && s.contains('x'))
     })
 }
 

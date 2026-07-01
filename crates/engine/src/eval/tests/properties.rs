@@ -457,6 +457,7 @@ fn run_checks_with_rule_level_checks() {
             command: "ls -la".into(),
             expected: Decision::Allow,
             context: ContextFacts::default(),
+            entry_env: may_i_core::EntryEnv::empty(),
             span: s,
         }],
         span: s,
@@ -503,6 +504,7 @@ fn run_checks_with_config_level_checks() {
             command: "git push".into(),
             expected: Decision::Deny,
             context: ContextFacts::default(),
+            entry_env: may_i_core::EntryEnv::empty(),
             span: s,
         }],
         ..Config::default()
@@ -739,6 +741,14 @@ fn cond_short_circuits_predicates_after_first_match() {
             result
         }
 
+        fn predicate_scope(
+            &mut self,
+            _: may_i_core::ast::EnvScopeMatcher,
+            result: PredicateResult,
+        ) -> PredicateResult {
+            result
+        }
+
         fn rule_matched(
             &mut self,
             _: &Rule,
@@ -887,7 +897,7 @@ mod parser_engine_invariants {
         #[test]
         fn prop_embedded_source_matches_span_slice(input in arb_shell_chars()) {
             let parse_result = may_i_shell_parser::parse(&input);
-            let units = decompose(&parse_result.command, &input, &parse_result.diagnostics, &std::collections::HashSet::new(), &std::collections::HashSet::new());
+            let units = decompose(&parse_result.command, &input, &parse_result.diagnostics, &std::collections::HashSet::new(), &std::collections::HashSet::new(), &may_i_core::EntryEnv::empty());
             for unit in &units {
                 if let EvalUnit::EmbeddedCommand { source, span, .. } = unit {
                     let (s, e) = *span;
@@ -907,14 +917,14 @@ mod parser_engine_invariants {
             (input, q_start, q_end) in arb_with_single_quoted_region()
         ) {
             let parse_result = may_i_shell_parser::parse(&input);
-            let units = decompose(&parse_result.command, &input, &parse_result.diagnostics, &std::collections::HashSet::new(), &std::collections::HashSet::new());
+            let units = decompose(&parse_result.command, &input, &parse_result.diagnostics, &std::collections::HashSet::new(), &std::collections::HashSet::new(), &may_i_core::EntryEnv::empty());
             for unit in &units {
                 let (s, e) = match unit {
                     EvalUnit::SimpleCommand { span, .. }
                     | EvalUnit::LocalFunctionCall { span, .. }
                     | EvalUnit::EmbeddedCommand { span, .. } => *span,
                     EvalUnit::DynamicCommand { .. }
-                    | EvalUnit::EnvPrefix { .. }
+                    | EvalUnit::EnvWrite { .. }
                     | EvalUnit::RedirectTarget { .. }
                     | EvalUnit::EnvRead { .. } => continue,
                 };
@@ -942,7 +952,7 @@ mod parser_engine_invariants {
         fn prop_recursive_segments_stay_within_parent_span(input in arb_shell_chars()) {
             let result = evaluate_command(&input, &empty_config(), &empty_facts()).unwrap();
             let parse_result = may_i_shell_parser::parse(&input);
-            let units = decompose(&parse_result.command, &input, &parse_result.diagnostics, &std::collections::HashSet::new(), &std::collections::HashSet::new());
+            let units = decompose(&parse_result.command, &input, &parse_result.diagnostics, &std::collections::HashSet::new(), &std::collections::HashSet::new(), &may_i_core::EntryEnv::empty());
             for unit in &units {
                 if let EvalUnit::EmbeddedCommand { span, .. } = unit {
                     let (p_s, p_e) = *span;
@@ -1117,7 +1127,7 @@ mod parser_engine_invariants {
             ast_spans.sort_unstable();
 
             let mut embedded_spans: Vec<(usize, usize)> =
-                decompose(&pr.command, &input, &pr.diagnostics, &std::collections::HashSet::new(), &std::collections::HashSet::new())
+                decompose(&pr.command, &input, &pr.diagnostics, &std::collections::HashSet::new(), &std::collections::HashSet::new(), &may_i_core::EntryEnv::empty())
                     .iter()
                     .filter_map(|u| match u {
                         EvalUnit::EmbeddedCommand { span, .. } => Some(*span),
@@ -1166,6 +1176,7 @@ mod parser_engine_invariants {
                 &pr.diagnostics,
                 &std::collections::HashSet::new(),
                 &std::collections::HashSet::new(),
+                &may_i_core::EntryEnv::empty(),
             );
             let embedded = units
                 .iter()
@@ -1346,6 +1357,7 @@ mod parser_engine_invariants {
             &pr.diagnostics,
             &std::collections::HashSet::new(),
             &std::collections::HashSet::new(),
+            &may_i_core::EntryEnv::empty(),
         );
         for unit in &units {
             if let EvalUnit::SimpleCommand { command, .. } = unit {
@@ -1372,6 +1384,7 @@ mod parser_engine_invariants {
             &parse_result.diagnostics,
             &std::collections::HashSet::new(),
             &std::collections::HashSet::new(),
+            &may_i_core::EntryEnv::empty(),
         );
         for unit in &units {
             if let EvalUnit::SimpleCommand { command, .. } = unit {

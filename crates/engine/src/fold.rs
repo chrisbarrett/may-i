@@ -279,6 +279,14 @@ pub trait EvalFold {
         result: PredicateResult,
     ) -> Self::PredicateOut;
 
+    /// `(scope …)` — the env-write scope predicate inside an `(env …)`
+    /// decision; `matcher` preserved for trace rendering.
+    fn predicate_scope(
+        &mut self,
+        matcher: may_i_core::ast::EnvScopeMatcher,
+        result: PredicateResult,
+    ) -> Self::PredicateOut;
+
     // -- Rule-level --
 
     fn rule_matched(
@@ -339,6 +347,12 @@ pub trait EvalFold {
     /// Advisory so the guess is observable; it never changes the
     /// Decision. Default implementation is a no-op.
     fn arity_guess_advisory(&mut self, _flag: &str, _consumed: &str) {}
+
+    /// Called when the entry environment tipped an env-write decision — a bare
+    /// reassignment floored because `name` is present in the entry environment.
+    /// Folds that render a trace use this to attribute the contribution (the
+    /// name and its presence only, never a value). Default is a no-op.
+    fn env_entry_contribution(&mut self, _name: &str) {}
 }
 
 /// Zero-overhead fold that simply returns evaluation results unchanged.
@@ -542,6 +556,14 @@ impl EvalFold for PureFold {
         &mut self,
         _binding: &may_i_core::ast::BindingName,
         _pattern: &may_i_core::pattern::Expr<Effect>,
+        result: PredicateResult,
+    ) -> PredicateResult {
+        result
+    }
+
+    fn predicate_scope(
+        &mut self,
+        _matcher: may_i_core::ast::EnvScopeMatcher,
         result: PredicateResult,
     ) -> PredicateResult {
         result

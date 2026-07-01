@@ -1,4 +1,6 @@
-use crate::ast::{ArrayKind, AssignmentValue, Command, SimpleCommand, Subscript, Word, WordPart};
+use crate::ast::{
+    ArrayKind, AssignmentScope, AssignmentValue, Command, SimpleCommand, Subscript, Word, WordPart,
+};
 use std::collections::{HashMap, HashSet};
 
 /// The provably-constant value of a variable: either a scalar literal or an
@@ -407,12 +409,24 @@ fn collect_simple(
         mark_used(word, used);
     }
 
-    // A prefix assignment (`VAR=lit cmd`) binds only the invoked command's
-    // environment and does not persist, so it can never be the constant
-    // binding for a later use. Recording it as an occurrence also disqualifies
-    // a name that is otherwise assigned at top level (ambiguous).
+    // Classify each assignment by scope. A command *prefix* (`VAR=lit cmd`)
+    // binds only the invoked command's environment and does not persist, so it
+    // can never be the constant binding for a later use — record it as a
+    // disqualifying occurrence. A declaration-builtin argument
+    // (`export VAR=./x`, `declare VAR=./x`) and a bare assignment in a
+    // multi-assignment command (`A=1 B=2`) persist in the current shell and so
+    // bind a constant exactly like a standalone `Command::Assignment`.
     for a in &sc.assignments {
-        record_disqualified(occ, &a.name);
+        match a.scope {
+            AssignmentScope::Prefix => record_disqualified(occ, &a.name),
+            AssignmentScope::Declaration { .. } | AssignmentScope::Bare => match &a.value {
+                AssignmentValue::Scalar(w) => record_assignment(&a.name, w, nested, occ, used),
+                AssignmentValue::Array {
+                    array_kind,
+                    elements,
+                } => record_array_assignment(&a.name, *array_kind, elements, nested, occ, used),
+            },
+        }
     }
 
     // An array element assignment (`arr[i]=x`) or append (`arr+=…`) parses as
@@ -427,24 +441,14 @@ fn collect_simple(
         }
     }
 
-    match sc.command_name() {
-        Some("export") => {
-            for word in sc.words.iter().skip(1) {
-                if let Some((name, value)) = parse_assignment_word(word) {
-                    record_assignment(&name, &value, nested, occ, used);
-                }
-                // A bare `export FOO` re-exports an existing value without
-                // rebinding it, so it is left alone.
+    // An `unset NAME` disqualifies the name — a later use reads the inherited
+    // value, not any straight-line assignment.
+    if let Some("unset") = sc.command_name() {
+        for word in sc.words.iter().skip(1) {
+            if let Some(name) = unset_target_name(word) {
+                record_disqualified(occ, &name);
             }
         }
-        Some("unset") => {
-            for word in sc.words.iter().skip(1) {
-                if let Some(name) = unset_target_name(word) {
-                    record_disqualified(occ, &name);
-                }
-            }
-        }
-        _ => {}
     }
 }
 

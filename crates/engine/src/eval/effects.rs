@@ -38,6 +38,7 @@ fn eval_body_with_captures<F: EvalFold>(
         parser_bindings: ctx.parser_bindings.clone(),
         unresolved: ctx.unresolved.clone(),
         config: ctx.config,
+        env_scope: ctx.env_scope,
     };
     evaluate_effect_fold(fold, body, &derived, rules)
 }
@@ -1082,6 +1083,7 @@ fn evaluate_effect_with_owned_args_fold<F: EvalFold>(
         parser_bindings: inner_parser_bindings,
         unresolved: ctx.unresolved.clone(),
         config: ctx.config,
+        env_scope: ctx.env_scope,
     };
     evaluate_effect_fold(fold, effect, &inner_ctx, rules)
 }

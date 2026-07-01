@@ -237,6 +237,7 @@ fn canonical_predicate(pred: &Predicate) -> String {
         Predicate::Matches { binding, .. } => format!("(matches? {binding} <expr>)"),
         Predicate::Every { binding, .. } => format!("(every? {binding} <expr>)"),
         Predicate::Some { binding, .. } => format!("(some? {binding} <expr>)"),
+        Predicate::Scope(matcher) => format!("(scope {})", matcher.as_str()),
         _ => "<unknown>".to_string(),
     }
 }
@@ -851,6 +852,23 @@ mod tests {
         assert_eq!(h_a, h_b);
     }
 
+    // --- canonical form for (scope …) (review: trust-hash integrity) ---
+
+    #[test]
+    fn canonical_effect_distinguishes_scope_matchers() {
+        // Two (env …) decisions differing only in the (scope …) matcher must
+        // canonicalise differently, or their loaded-config trust hashes collide.
+        let prefix = may_i_config::parse_config(r#"(env "PATH" (when (scope prefix) (ask)))"#)
+            .expect("parses");
+        let export = may_i_config::parse_config(r#"(env "PATH" (when (scope export) (ask)))"#)
+            .expect("parses");
+        let cp = canonical_effect(&prefix.security.env_caps[0].decision.value);
+        let ce = canonical_effect(&export.security.env_caps[0].decision.value);
+        assert_ne!(cp, ce, "scope matchers must not collide in canonical form");
+        assert!(cp.contains("(scope prefix)"), "{cp}");
+        assert!(!cp.contains("<unknown>"), "{cp}");
+    }
+
     // --- canonical_rule ---
 
     #[test]
@@ -881,6 +899,7 @@ mod tests {
             command: "git status".into(),
             expected: Decision::Allow,
             context: may_i_core::ContextFacts::default(),
+            entry_env: may_i_core::EntryEnv::empty(),
             span: dummy_span(),
         });
         let s2 = canonical_rule(&rule);

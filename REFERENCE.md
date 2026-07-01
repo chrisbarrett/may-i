@@ -692,6 +692,24 @@ more decision-tagged check entries.
       (allow "git push"))))
 ```
 
+To simulate the **entry environment** (which `check` otherwise treats as empty —
+it is hermetic), wrap entries in `(with-env [NAME …] …)`. The vector lists
+names only (no values); the body is one or more check entries. Names nest and
+merge by union, and `(with-env …)` composes with `(with-facts …)` in either
+order:
+
+```lisp
+(check
+  (with-env ["PATH"]
+    (ask "PATH=/evil:$PATH; ls"))        ; PATH present → reaches a child → :ask
+  (allow "MY_TMP=/x; ls"))               ; MY_TMP absent → shell-local → :allow
+```
+
+A `(scope …)`-dependent `(env …)` rule with no `(with-env …)` coverage for its
+name draws a `warn` advisory from `may-i check`: the empty default never
+exercises the always-exported names (`PATH`, `LD_*`, …) the rule guards. The
+advisory does not fail the run.
+
 Run them:
 
 ```bash
@@ -730,10 +748,17 @@ repo-local file they are inert until you approve their trust scope (`:env` /
 
 Environment use splits into two positions, with opposite defaults:
 
-- **Write** — a `NAME=VALUE cmd` prefix — defaults to `:ask`, because a prefix
-  like `LD_PRELOAD=…` changes what executes. `(env NAME (allow))` lifts that
-  floor (it is exactly a `(safe-env-vars NAME)` entry); `(env NAME (ask|deny))`
-  tightens it.
+- **Write** — a write that **reaches a child process** — defaults to `:ask`,
+  because a write like `LD_PRELOAD=…` changes what executes. A write reaches a
+  child when it is a command prefix (`NAME=VALUE cmd`), an exported declaration
+  (`export NAME=…`, `declare -x …`), a bare reassignment (`NAME=…` as its own
+  command) of a name present in the **entry environment** (bash keeps the export
+  attribute, so the new value re-crosses), or any assignment while `set -a` /
+  `set -o allexport` is active. A purely shell-local write — a bare assignment
+  of a name *not* in the entry environment, a `declare`/`local`/`readonly`
+  without `-x`, or an array literal — does **not** floor; it sets a shell
+  variable no child inherits. `(env NAME (allow))` lifts the floor (it is
+  exactly a `(safe-env-vars NAME)` entry); `(env NAME (ask|deny))` tightens it.
 - **Read** — a `$NAME` expansion in a command argument — defaults to `:allow`.
   `(env NAME (ask|deny))` *taints* the name: whenever `$NAME` appears in argv,
   it contributes `:ask`/`:deny`. This is structural secret-exfiltration defence
@@ -765,6 +790,38 @@ the decision verbs, `(and|or|not …)`, `(if|when|unless|cond …)`, and
 `(fact? …)`. Argv matchers (`(positional …)`, `(flag …)`, `(authorise …)`, …)
 are rejected at load time: a capability is command-agnostic and has no argv to
 match against.
+
+Inside an `(env …)` decision you may also branch on **how** a write crosses the
+boundary with the `(scope …)` predicate. Its values are `prefix`, `export`,
+`bare`, and the derived `reaches-child` (the disjunction of all reaching forms):
+
+```lisp
+(env "EDITOR" (when (scope reaches-child) (ask)))   ; ask only when it reaches a child
+(env "PATH"   (when (scope bare) (deny)))           ; deny a bare re-export specifically
+```
+
+`(scope …)` is valid only inside an `(env …)` decision — using it in a rule body
+or a `(redirect …)` decision is rejected at load time.
+
+### The entry environment
+
+Whether a *bare* reassignment reaches a child depends on the **entry
+environment** — the names-only snapshot of the exported environment at the start
+of the invocation. It carries names only, never values. Its source depends on
+the invocation mode:
+
+- `may-i hook` captures the live process environment as its first action.
+- `may-i eval` defaults to an **empty** entry environment. `--env NAME`
+  (repeatable) adds a hypothetical name; `--inherit-env` captures this process's
+  exported names (for reproducing a live hook decision). The two combine.
+- `may-i check` is **hermetic**: it never reads the host environment; a case
+  declares names with `(with-env [NAME …] …)` (see *Checks*).
+
+```sh
+may-i eval --env PATH 'PATH=/evil:$PATH; ls'      # PATH present → reaches → :ask
+may-i eval 'PATH=/evil:$PATH; ls'                 # PATH absent  → shell-local → :allow
+may-i eval --inherit-env 'LD_PRELOAD=/x echo hi'  # reproduce a live decision locally
+```
 
 ### Trusting redirect targets: `(redirect PAT? DECISION)`
 

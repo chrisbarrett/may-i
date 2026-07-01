@@ -27,7 +27,8 @@ fn run(command: &str) -> (String, String) {
     let loaded = may_i_config::load_and_resolve(Some(cfg.path())).expect("load config");
     let context = ContextFacts::default();
     let (result, _traces, colored, _audit) =
-        evaluate_with_colorization(command, &loaded, &context).expect("evaluate_with_colorization");
+        evaluate_with_colorization(command, &loaded, &context, &may_i_core::EntryEnv::empty())
+            .expect("evaluate_with_colorization");
     let mut buf = Vec::new();
     may_i_output::write_line(
         &mut buf,

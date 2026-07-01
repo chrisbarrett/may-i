@@ -104,6 +104,121 @@ pub fn run_checks_with<T, E>(
     Ok(results)
 }
 
+/// Names of `(env NAME …)` capabilities whose decision is **scope-dependent**
+/// (it consults a `(scope …)` predicate) but for which no `(check …)` case
+/// declares `NAME` in a `(with-env …)`. The hermetic default entry environment
+/// is empty, so such a rule's reaching-write branch is never exercised — most
+/// of the always-exported dangerous names (`PATH`, `LD_*`, …) the rule guards.
+/// Used to emit a non-failing `warn`-level advisory from `may-i check`.
+///
+/// Coverage is measured as "the name appears in some check's `(with-env …)`".
+/// This is a deliberate heuristic: a check that exercises the reaching-write
+/// branch via a prefix or `export` (which reach unconditionally, needing no
+/// `(with-env …)`) is not counted, so such a rule may still be advised. The
+/// advisory is non-failing, and `(with-env …)` is the intended way to test the
+/// entry-environment-dependent branch, so this errs toward a reminder.
+pub fn untested_scope_env_rules(config: &Config) -> Vec<String> {
+    use std::collections::BTreeSet;
+
+    let entry_envs: Vec<&may_i_core::EntryEnv> = config
+        .rules
+        .iter()
+        .flat_map(|rule| rule.checks.iter())
+        .chain(config.checks.iter())
+        .map(|c| &c.entry_env)
+        .collect();
+    let covered = |name: &str| entry_envs.iter().any(|env| env.contains(name));
+
+    // A `(scope …)` can be reached through a `(define …)`, so resolve named
+    // references against the define table when scanning capability decisions.
+    let defines: std::collections::HashMap<&str, &may_i_core::ast::Predicate> = config
+        .defines
+        .iter()
+        .map(|d| (d.name.as_str(), &d.predicate.value))
+        .collect();
+
+    let mut untested = BTreeSet::new();
+    for cap in config
+        .security
+        .env_caps
+        .iter()
+        .chain(config.security.loaded_env_caps.iter())
+    {
+        if effect_uses_scope(&cap.decision.value, &defines) && !covered(&cap.name) {
+            untested.insert(cap.name.clone());
+        }
+    }
+    untested.into_iter().collect()
+}
+
+/// Whether a capability decision consults a `(scope …)` predicate anywhere
+/// (resolving `(define …)` references).
+fn effect_uses_scope(
+    effect: &may_i_core::ast::Effect,
+    defines: &std::collections::HashMap<&str, &may_i_core::ast::Predicate>,
+) -> bool {
+    use may_i_core::ast::Effect;
+    match effect {
+        Effect::When { predicate, effect } | Effect::Unless { predicate, effect } => {
+            predicate_uses_scope(&predicate.value, defines, &mut Vec::new())
+                || effect_uses_scope(&effect.value, defines)
+        }
+        Effect::If {
+            predicate,
+            then_effect,
+            else_effect,
+        } => {
+            predicate_uses_scope(&predicate.value, defines, &mut Vec::new())
+                || effect_uses_scope(&then_effect.value, defines)
+                || effect_uses_scope(&else_effect.value, defines)
+        }
+        Effect::Cond { branches, fallback } => {
+            branches.iter().any(|(p, b)| {
+                predicate_uses_scope(&p.value, defines, &mut Vec::new())
+                    || effect_uses_scope(&b.value, defines)
+            }) || fallback
+                .as_ref()
+                .is_some_and(|fb| effect_uses_scope(&fb.value, defines))
+        }
+        Effect::And { effects } | Effect::Or { effects } => {
+            effects.iter().any(|e| effect_uses_scope(&e.value, defines))
+        }
+        Effect::Not { effect } => effect_uses_scope(&effect.value, defines),
+        Effect::Terminal { .. }
+        | Effect::CommandPattern(_)
+        | Effect::ArgPattern(_)
+        | Effect::Authorise { .. } => false,
+    }
+}
+
+fn predicate_uses_scope<'a>(
+    pred: &'a may_i_core::ast::Predicate,
+    defines: &std::collections::HashMap<&'a str, &'a may_i_core::ast::Predicate>,
+    seen: &mut Vec<&'a str>,
+) -> bool {
+    use may_i_core::ast::Predicate;
+    #[allow(clippy::wildcard_enum_match_arm)]
+    match pred {
+        Predicate::Scope(_) => true,
+        Predicate::And(preds) | Predicate::Or(preds) => {
+            preds.iter().any(|p| predicate_uses_scope(p, defines, seen))
+        }
+        Predicate::Not(inner) => predicate_uses_scope(inner, defines, seen),
+        Predicate::Named(name) => {
+            if seen.contains(&name.as_str()) {
+                return false; // cycle guard
+            }
+            defines.get(name.as_str()).is_some_and(|resolved| {
+                seen.push(name.as_str());
+                let uses = predicate_uses_scope(resolved, defines, seen);
+                seen.pop();
+                uses
+            })
+        }
+        _ => false,
+    }
+}
+
 /// Run all embedded checks using the default evaluator (no extra data).
 pub fn run_checks(config: &Config) -> Vec<CheckResult> {
     run_checks_with(config, |check| {
@@ -121,6 +236,62 @@ mod tests {
     use may_i_core::ast::{Check, Config, Effect, Rule};
     use may_i_core::pattern::CommandPattern;
     use may_i_core::{Decision, Span};
+
+    #[test]
+    fn untested_scope_rule_is_reported() {
+        let config =
+            may_i_config::parse_config(r#"(env "PATH" (when (scope reaches-child) (ask)))"#)
+                .expect("parses");
+        assert_eq!(untested_scope_env_rules(&config), vec!["PATH".to_string()]);
+    }
+
+    #[test]
+    fn scope_rule_with_with_env_coverage_is_not_reported() {
+        let config = may_i_config::parse_config(
+            r#"
+            (env "PATH" (when (scope reaches-child) (ask)))
+            (check (with-env ["PATH"] (ask "PATH=/evil:$PATH")))
+            "#,
+        )
+        .expect("parses");
+        assert!(untested_scope_env_rules(&config).is_empty());
+    }
+
+    #[test]
+    fn scope_in_if_branch_is_detected() {
+        let config =
+            may_i_config::parse_config(r#"(env "PATH" (if (scope reaches-child) (ask) (allow)))"#)
+                .expect("parses");
+        assert_eq!(untested_scope_env_rules(&config), vec!["PATH".to_string()]);
+    }
+
+    #[test]
+    fn scope_nested_in_and_is_detected() {
+        let config = may_i_config::parse_config(
+            r#"(env "PATH" (when (and (scope bare) (not (fact? :ci))) (deny)))"#,
+        )
+        .expect("parses");
+        assert_eq!(untested_scope_env_rules(&config), vec!["PATH".to_string()]);
+    }
+
+    #[test]
+    fn scope_via_define_is_detected() {
+        // A (scope …) reached through a (define …) must still be flagged as
+        // untested when no (with-env …) covers the name.
+        let config = may_i_config::parse_config(
+            r#"(define reaches (scope reaches-child)) (env "PATH" (when reaches (ask)))"#,
+        )
+        .expect("parses");
+        assert_eq!(untested_scope_env_rules(&config), vec!["PATH".to_string()]);
+    }
+
+    #[test]
+    fn non_scope_env_rule_is_not_reported() {
+        // A plain (env NAME (deny)) does not depend on (scope …), so it is not
+        // a scope-dependent rule and needs no with-env coverage.
+        let config = may_i_config::parse_config(r#"(env "AWS_TOKEN" (deny))"#).expect("parses");
+        assert!(untested_scope_env_rules(&config).is_empty());
+    }
 
     fn create_test_rule(name: &str, effect: Effect) -> Rule {
         use may_i_core::ast::Spanned;
@@ -153,6 +324,7 @@ mod tests {
             command: "ls -la".into(),
             expected: Decision::Allow,
             context: ContextFacts::default(),
+            entry_env: may_i_core::EntryEnv::empty(),
             span: Span::new(0, 0),
         };
 
@@ -177,6 +349,7 @@ mod tests {
             command: "ls".into(),
             expected: Decision::Allow,
             context: ContextFacts::default(),
+            entry_env: may_i_core::EntryEnv::empty(),
             span: Span::new(0, 0),
         };
 
@@ -220,6 +393,7 @@ mod tests {
                 command: "echo hi".into(),
                 expected: Decision::Allow,
                 context: ContextFacts::default(),
+                entry_env: may_i_core::EntryEnv::empty(),
                 span: s,
             }],
             span: s,
@@ -232,6 +406,7 @@ mod tests {
                 command: "echo bye".into(),
                 expected: Decision::Allow,
                 context: ContextFacts::default(),
+                entry_env: may_i_core::EntryEnv::empty(),
                 span: s,
             }],
             ..Config::default()
@@ -269,6 +444,7 @@ mod tests {
                 command: "echo hi".into(),
                 expected: Decision::Allow,
                 context: ContextFacts::default(),
+                entry_env: may_i_core::EntryEnv::empty(),
                 span: s,
             }],
             span: s,

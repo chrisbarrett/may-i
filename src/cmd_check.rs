@@ -31,12 +31,17 @@ pub fn cmd_check(pipeline: &mut CommandPipeline, verbose: bool) -> miette::Resul
         let passed = results.iter().filter(|r| r.passed).count();
         let failed = results.len() - passed;
         failed_signal.set(failed);
+        // A scope-dependent env rule whose name no check declares in
+        // `(with-env …)` is never exercised under the hermetic empty default.
+        // Advise (warn) — it does not fail the run.
+        let untested_scope_rules = engine::check::untested_scope_env_rules(&ctx.loaded.config);
         Ok(CheckOutcomeBody {
             results,
             verbose,
             passed,
             failed,
             display_path: ctx.display_path.clone(),
+            untested_scope_rules,
         })
     })?;
 
@@ -64,10 +69,13 @@ fn run_checks_with_traces(
 
     engine::check::run_checks_with(&loaded.config, |check| {
         let mut fold = TracingFold::from_load_result(loaded);
-        let result = engine::eval::evaluate_command_with_fold(
+        // `check` is hermetic: the entry environment comes only from the case's
+        // `(with-env …)` declaration (defaulting to empty), never the host.
+        let result = engine::eval::evaluate_command_with_fold_env(
             &check.command,
             &loaded.config,
             &check.context,
+            &check.entry_env,
             &mut fold,
         )
         .map_err(|e| miette::miette!("{}", may_i_core::SafeText::new(e.to_string())))?;

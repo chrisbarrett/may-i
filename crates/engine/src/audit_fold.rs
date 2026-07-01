@@ -265,6 +265,13 @@ impl EvalFold for AuditFold {
     ) -> PredicateResult {
         self.inner.predicate_some(binding, pattern, result)
     }
+    fn predicate_scope(
+        &mut self,
+        matcher: may_i_core::ast::EnvScopeMatcher,
+        result: PredicateResult,
+    ) -> PredicateResult {
+        self.inner.predicate_scope(matcher, result)
+    }
 
     fn rule_matched(
         &mut self,
@@ -655,6 +662,16 @@ impl<A: EvalFold, B: EvalFold> EvalFold for ComposedFold<A, B> {
             self.b.predicate_some(binding, pattern, result),
         )
     }
+    fn predicate_scope(
+        &mut self,
+        matcher: may_i_core::ast::EnvScopeMatcher,
+        result: PredicateResult,
+    ) -> Self::PredicateOut {
+        (
+            self.a.predicate_scope(matcher, result),
+            self.b.predicate_scope(matcher, result),
+        )
+    }
 
     fn rule_matched(
         &mut self,
@@ -716,6 +733,10 @@ impl<A: EvalFold, B: EvalFold> EvalFold for ComposedFold<A, B> {
     fn arity_guess_advisory(&mut self, flag: &str, consumed: &str) {
         self.a.arity_guess_advisory(flag, consumed);
         self.b.arity_guess_advisory(flag, consumed);
+    }
+    fn env_entry_contribution(&mut self, name: &str) {
+        self.a.env_entry_contribution(name);
+        self.b.env_entry_contribution(name);
     }
 }
 

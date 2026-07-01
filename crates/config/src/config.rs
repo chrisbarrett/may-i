@@ -6,7 +6,7 @@ use may_i_core::ast::{
     RedirectCapability, SecurityConfig, Spanned,
 };
 use may_i_core::pattern::ArgPattern;
-use may_i_core::{ContextFacts, Decision, Keyword};
+use may_i_core::{ContextFacts, Decision, EntryEnv, Keyword};
 use may_i_sexpr::{RawError, Sexpr};
 
 fn parse_decision_tag(atom: &str, span: Span) -> Result<Decision, RawError> {
@@ -116,6 +116,7 @@ pub fn parse_config_from_sexprs(forms: &[Sexpr]) -> Result<Config, RawError> {
     }
 
     validate_named_capabilities(&config)?;
+    reject_scope_outside_env(&config)?;
     Ok(config)
 }
 
@@ -268,6 +269,7 @@ pub(crate) fn parse_config_from_tagged_sexprs(
     }
 
     validate_named_capabilities(&config)?;
+    reject_scope_outside_env(&config)?;
     Ok(config)
 }
 
@@ -384,7 +386,7 @@ fn parse_env_form(args: &[Sexpr], span: Span) -> Result<(Vec<String>, Spanned<Ef
     }
     let names = parse_env_subject(&args[0])?;
     let decision = crate::effect::parse_effect(&args[1])?;
-    validate_capability_effect(&decision.value, decision.span)?;
+    validate_capability_effect(&decision.value, decision.span, true)?;
     Ok((names, decision))
 }
 
@@ -434,7 +436,7 @@ fn parse_redirect_form(args: &[Sexpr], span: Span) -> Result<RedirectCapability,
         }
     };
     let decision = crate::effect::parse_effect(decision_sexpr)?;
-    validate_capability_effect(&decision.value, decision.span)?;
+    validate_capability_effect(&decision.value, decision.span, false)?;
     Ok(RedirectCapability { pattern, decision })
 }
 
@@ -523,7 +525,14 @@ fn capability_form_error(form: &str, span: Span) -> RawError {
 /// Reject argv-analysis and parser-binding constructs in a capability
 /// decision expression (design D6). Walks the fact-conditioned subset and
 /// errors on the first forbidden form, naming it.
-fn validate_capability_effect(effect: &Effect, span: Span) -> Result<(), RawError> {
+/// Validate a capability decision. `allow_scope` is true only for `(env …)`
+/// decisions, where the `(scope …)` predicate is meaningful; a redirect
+/// decision passes false so `(scope …)` is rejected there.
+fn validate_capability_effect(
+    effect: &Effect,
+    span: Span,
+    allow_scope: bool,
+) -> Result<(), RawError> {
     match effect {
         Effect::Terminal { .. } => Ok(()),
         Effect::CommandPattern(_) => Err(capability_form_error("a bare command pattern", span)),
@@ -531,28 +540,30 @@ fn validate_capability_effect(effect: &Effect, span: Span) -> Result<(), RawErro
         Effect::Authorise { .. } => Err(capability_form_error("(authorise …)", span)),
         Effect::And { effects } | Effect::Or { effects } => effects
             .iter()
-            .try_for_each(|e| validate_capability_effect(&e.value, e.span)),
-        Effect::Not { effect } => validate_capability_effect(&effect.value, effect.span),
+            .try_for_each(|e| validate_capability_effect(&e.value, e.span, allow_scope)),
+        Effect::Not { effect } => {
+            validate_capability_effect(&effect.value, effect.span, allow_scope)
+        }
         Effect::When { predicate, effect } | Effect::Unless { predicate, effect } => {
-            validate_capability_predicate(&predicate.value, predicate.span)?;
-            validate_capability_effect(&effect.value, effect.span)
+            validate_capability_predicate(&predicate.value, predicate.span, allow_scope)?;
+            validate_capability_effect(&effect.value, effect.span, allow_scope)
         }
         Effect::If {
             predicate,
             then_effect,
             else_effect,
         } => {
-            validate_capability_predicate(&predicate.value, predicate.span)?;
-            validate_capability_effect(&then_effect.value, then_effect.span)?;
-            validate_capability_effect(&else_effect.value, else_effect.span)
+            validate_capability_predicate(&predicate.value, predicate.span, allow_scope)?;
+            validate_capability_effect(&then_effect.value, then_effect.span, allow_scope)?;
+            validate_capability_effect(&else_effect.value, else_effect.span, allow_scope)
         }
         Effect::Cond { branches, fallback } => {
             for (predicate, body) in branches {
-                validate_capability_predicate(&predicate.value, predicate.span)?;
-                validate_capability_effect(&body.value, body.span)?;
+                validate_capability_predicate(&predicate.value, predicate.span, allow_scope)?;
+                validate_capability_effect(&body.value, body.span, allow_scope)?;
             }
             if let Some(fb) = fallback {
-                validate_capability_effect(&fb.value, fb.span)?;
+                validate_capability_effect(&fb.value, fb.span, allow_scope)?;
             }
             Ok(())
         }
@@ -563,18 +574,29 @@ fn validate_capability_effect(effect: &Effect, span: Span) -> Result<(), RawErro
 /// `(and|or|not …)` of facts, and `(define …)`d names are permitted; named
 /// references are resolved and re-checked once the full config is known
 /// (see [`validate_named_capabilities`]).
-fn validate_capability_predicate(pred: &Predicate, span: Span) -> Result<(), RawError> {
+fn validate_capability_predicate(
+    pred: &Predicate,
+    span: Span,
+    allow_scope: bool,
+) -> Result<(), RawError> {
     match pred {
         Predicate::Fact(_) | Predicate::Named(_) => Ok(()),
         Predicate::And(preds) | Predicate::Or(preds) => preds
             .iter()
-            .try_for_each(|p| validate_capability_predicate(p, span)),
-        Predicate::Not(inner) => validate_capability_predicate(inner, span),
+            .try_for_each(|p| validate_capability_predicate(p, span, allow_scope)),
+        Predicate::Not(inner) => validate_capability_predicate(inner, span, allow_scope),
         Predicate::Arg(pat) => Err(capability_form_error(arg_pattern_label(pat), span)),
         Predicate::Bound { .. } => Err(capability_form_error("(bound? …)", span)),
         Predicate::Matches { .. } => Err(capability_form_error("(matches? …)", span)),
         Predicate::Every { .. } => Err(capability_form_error("(every? …)", span)),
         Predicate::Some { .. } => Err(capability_form_error("(some? …)", span)),
+        // `(scope …)` is valid only inside an `(env …)` decision (where the
+        // env-write scope is defined); a redirect decision rejects it.
+        Predicate::Scope(_) if allow_scope => Ok(()),
+        Predicate::Scope(_) => Err(capability_form_error(
+            "(scope …) outside an (env …) decision",
+            span,
+        )),
         // `Predicate` is `#[non_exhaustive]`: reject any future variant rather
         // than silently admitting it into a capability decision (fail closed).
         _ => Err(capability_form_error("an unsupported predicate", span)),
@@ -591,13 +613,22 @@ fn validate_named_capabilities(config: &Config) -> Result<(), RawError> {
         .iter()
         .map(|d| (d.name.as_str(), &d.predicate.value))
         .collect();
-    let caps = config
+    // Env caps may reach a `(scope …)` through a `(define …)`; redirect caps
+    // may not.
+    let env_caps = config
         .security
         .env_caps
         .iter()
         .map(|c| &c.decision)
-        .chain(config.security.loaded_env_caps.iter().map(|c| &c.decision))
-        .chain(config.security.redirect_caps.iter().map(|c| &c.decision))
+        .chain(config.security.loaded_env_caps.iter().map(|c| &c.decision));
+    for decision in env_caps {
+        check_effect_named_defines(&decision.value, decision.span, &defines, true)?;
+    }
+    let redirect_caps = config
+        .security
+        .redirect_caps
+        .iter()
+        .map(|c| &c.decision)
         .chain(
             config
                 .security
@@ -605,13 +636,38 @@ fn validate_named_capabilities(config: &Config) -> Result<(), RawError> {
                 .iter()
                 .map(|c| &c.decision),
         );
-    for decision in caps {
-        check_effect_named_defines(&decision.value, decision.span, &defines)?;
+    for decision in redirect_caps {
+        check_effect_named_defines(&decision.value, decision.span, &defines, false)?;
     }
     Ok(())
 }
 
-fn check_effect_named_defines(
+/// Reject a `(scope …)` predicate appearing directly in a rule body
+/// (command effect or body effect). The `(scope …)` predicate is meaningful
+/// only inside an `(env …)` decision; elsewhere it can never match, so a config
+/// using it there is almost certainly a mistake — fail at load with a clear
+/// message rather than silently never matching.
+fn reject_scope_outside_env(config: &Config) -> Result<(), RawError> {
+    // A `(scope …)` can be smuggled into a rule body through a `(define …)`, so
+    // resolve named references against the define table (with a cycle guard),
+    // mirroring `check_predicate_named_defines`.
+    let defines: std::collections::HashMap<&str, &Predicate> = config
+        .defines
+        .iter()
+        .map(|d| (d.name.as_str(), &d.predicate.value))
+        .collect();
+    for rule in &config.rules {
+        reject_scope_in_effect(
+            &rule.command_effect.value,
+            rule.command_effect.span,
+            &defines,
+        )?;
+        reject_scope_in_effect(&rule.effect.value, rule.effect.span, &defines)?;
+    }
+    Ok(())
+}
+
+fn reject_scope_in_effect(
     effect: &Effect,
     _span: Span,
     defines: &std::collections::HashMap<&str, &Predicate>,
@@ -619,16 +675,97 @@ fn check_effect_named_defines(
     match effect {
         Effect::And { effects } | Effect::Or { effects } => effects
             .iter()
-            .try_for_each(|e| check_effect_named_defines(&e.value, e.span, defines)),
-        Effect::Not { effect } => check_effect_named_defines(&effect.value, effect.span, defines),
+            .try_for_each(|e| reject_scope_in_effect(&e.value, e.span, defines)),
+        Effect::Not { effect } => reject_scope_in_effect(&effect.value, effect.span, defines),
+        Effect::When { predicate, effect } | Effect::Unless { predicate, effect } => {
+            reject_scope_in_predicate(&predicate.value, predicate.span, defines, &mut Vec::new())?;
+            reject_scope_in_effect(&effect.value, effect.span, defines)
+        }
+        Effect::If {
+            predicate,
+            then_effect,
+            else_effect,
+        } => {
+            reject_scope_in_predicate(&predicate.value, predicate.span, defines, &mut Vec::new())?;
+            reject_scope_in_effect(&then_effect.value, then_effect.span, defines)?;
+            reject_scope_in_effect(&else_effect.value, else_effect.span, defines)
+        }
+        Effect::Cond { branches, fallback } => {
+            for (predicate, body) in branches {
+                reject_scope_in_predicate(
+                    &predicate.value,
+                    predicate.span,
+                    defines,
+                    &mut Vec::new(),
+                )?;
+                reject_scope_in_effect(&body.value, body.span, defines)?;
+            }
+            if let Some(fb) = fallback {
+                reject_scope_in_effect(&fb.value, fb.span, defines)?;
+            }
+            Ok(())
+        }
+        Effect::Terminal { .. }
+        | Effect::CommandPattern(_)
+        | Effect::ArgPattern(_)
+        | Effect::Authorise { .. } => Ok(()),
+    }
+}
+
+fn reject_scope_in_predicate<'a>(
+    pred: &'a Predicate,
+    span: Span,
+    defines: &std::collections::HashMap<&'a str, &'a Predicate>,
+    seen: &mut Vec<&'a str>,
+) -> Result<(), RawError> {
+    #[allow(clippy::wildcard_enum_match_arm)]
+    match pred {
+        Predicate::Scope(_) => Err(RawError::new(
+            "(scope …) is valid only inside an (env …) decision",
+            span,
+        )
+        .with_help("move the (scope …) branch into an (env NAME …) capability")),
+        Predicate::And(preds) | Predicate::Or(preds) => preds
+            .iter()
+            .try_for_each(|p| reject_scope_in_predicate(p, span, defines, seen)),
+        Predicate::Not(inner) => reject_scope_in_predicate(inner, span, defines, seen),
+        Predicate::Named(name) => {
+            if seen.contains(&name.as_str()) {
+                return Ok(()); // cycle guard
+            }
+            if let Some(resolved) = defines.get(name.as_str()) {
+                seen.push(name.as_str());
+                reject_scope_in_predicate(resolved, span, defines, seen)?;
+                seen.pop();
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+fn check_effect_named_defines(
+    effect: &Effect,
+    _span: Span,
+    defines: &std::collections::HashMap<&str, &Predicate>,
+    allow_scope: bool,
+) -> Result<(), RawError> {
+    match effect {
+        Effect::And { effects } | Effect::Or { effects } => effects
+            .iter()
+            .try_for_each(|e| check_effect_named_defines(&e.value, e.span, defines, allow_scope)),
+        Effect::Not { effect } => {
+            check_effect_named_defines(&effect.value, effect.span, defines, allow_scope)
+        }
         Effect::When { predicate, effect } | Effect::Unless { predicate, effect } => {
             check_predicate_named_defines(
                 &predicate.value,
                 predicate.span,
                 defines,
                 &mut Vec::new(),
+                allow_scope,
             )?;
-            check_effect_named_defines(&effect.value, effect.span, defines)
+            check_effect_named_defines(&effect.value, effect.span, defines, allow_scope)
         }
         Effect::If {
             predicate,
@@ -640,9 +777,10 @@ fn check_effect_named_defines(
                 predicate.span,
                 defines,
                 &mut Vec::new(),
+                allow_scope,
             )?;
-            check_effect_named_defines(&then_effect.value, then_effect.span, defines)?;
-            check_effect_named_defines(&else_effect.value, else_effect.span, defines)
+            check_effect_named_defines(&then_effect.value, then_effect.span, defines, allow_scope)?;
+            check_effect_named_defines(&else_effect.value, else_effect.span, defines, allow_scope)
         }
         Effect::Cond { branches, fallback } => {
             for (predicate, body) in branches {
@@ -651,11 +789,12 @@ fn check_effect_named_defines(
                     predicate.span,
                     defines,
                     &mut Vec::new(),
+                    allow_scope,
                 )?;
-                check_effect_named_defines(&body.value, body.span, defines)?;
+                check_effect_named_defines(&body.value, body.span, defines, allow_scope)?;
             }
             if let Some(fb) = fallback {
-                check_effect_named_defines(&fb.value, fb.span, defines)?;
+                check_effect_named_defines(&fb.value, fb.span, defines, allow_scope)?;
             }
             Ok(())
         }
@@ -671,6 +810,7 @@ fn check_predicate_named_defines<'a>(
     span: Span,
     defines: &std::collections::HashMap<&'a str, &'a Predicate>,
     seen: &mut Vec<&'a str>,
+    allow_scope: bool,
 ) -> Result<(), RawError> {
     // `Predicate` is `#[non_exhaustive]`; the catch-all binds the remaining
     // variants for `validate_capability_predicate`.
@@ -682,29 +822,37 @@ fn check_predicate_named_defines<'a>(
             }
             if let Some(resolved) = defines.get(name.as_str()) {
                 seen.push(name.as_str());
-                check_predicate_named_defines(resolved, span, defines, seen)?;
+                check_predicate_named_defines(resolved, span, defines, seen, allow_scope)?;
                 seen.pop();
             }
             Ok(())
         }
         Predicate::And(preds) | Predicate::Or(preds) => preds
             .iter()
-            .try_for_each(|p| check_predicate_named_defines(p, span, defines, seen)),
-        Predicate::Not(inner) => check_predicate_named_defines(inner, span, defines, seen),
-        other => validate_capability_predicate(other, span),
+            .try_for_each(|p| check_predicate_named_defines(p, span, defines, seen, allow_scope)),
+        Predicate::Not(inner) => {
+            check_predicate_named_defines(inner, span, defines, seen, allow_scope)
+        }
+        other => validate_capability_predicate(other, span, allow_scope),
     }
 }
 
 /// Parse check form: (check (DECISION "cmd" REASON?) …)
-/// Supports nested with-facts: (check (with-facts [[:key]] (allow "cmd")))
+/// Supports nested with-facts / with-env wrappers.
 pub(crate) fn parse_check(args: &[Sexpr], check_span: Span) -> Result<Vec<Check>, RawError> {
-    parse_check_items(args, &ContextFacts::default(), check_span)
+    parse_check_items(
+        args,
+        &ContextFacts::default(),
+        &EntryEnv::empty(),
+        check_span,
+    )
 }
 
 /// Parse with-facts form: (with-facts [[:key] [:key "value"]] :allow "cmd" ...)
 fn parse_with_facts(
     list: &[Sexpr],
     inherited: &ContextFacts,
+    entry_env: &EntryEnv,
     check_span: Span,
 ) -> Result<Vec<Check>, RawError> {
     if list.len() < 2 {
@@ -719,7 +867,60 @@ fn parse_with_facts(
     let merged = inherited.merge(&facts);
 
     // Parse remaining check items with merged context
-    parse_check_items(&list[2..], &merged, check_span)
+    parse_check_items(&list[2..], &merged, entry_env, check_span)
+}
+
+/// Parse with-env form: (with-env [NAME …] CHECK-ITEM …). Lists
+/// environment-variable names (no values) added to the simulated entry
+/// environment, then one or more check items. Inner names merge with outer by
+/// set union, mirroring `(with-facts …)`; the two compose in either order.
+fn parse_with_env(
+    list: &[Sexpr],
+    facts: &ContextFacts,
+    inherited: &EntryEnv,
+    check_span: Span,
+) -> Result<Vec<Check>, RawError> {
+    if list.len() < 2 {
+        return Err(RawError::new(
+            "with-env must have a name vector",
+            list.first().map_or(Span::new(0, 0), Sexpr::span),
+        )
+        .with_help("use (with-env [\"PATH\"] (ask \"PATH=/evil:$PATH\"))"));
+    }
+
+    let names = parse_env_literal(&list[1])?;
+    let mut merged = inherited.clone();
+    for name in &names {
+        merged.insert(name.clone());
+    }
+
+    parse_check_items(&list[2..], facts, &merged, check_span)
+}
+
+/// Parse an entry-environment name vector: `["PATH" "LD_PRELOAD"]`. Names only;
+/// values are not accepted (the entry environment is names-only).
+fn parse_env_literal(sexpr: &Sexpr) -> Result<Vec<String>, RawError> {
+    let items = match sexpr {
+        Sexpr::Vector(items, _) => items,
+        Sexpr::Keyword(..)
+        | Sexpr::Symbol(..)
+        | Sexpr::Binding(..)
+        | Sexpr::String(..)
+        | Sexpr::List(..) => {
+            return Err(
+                RawError::new("with-env requires a name vector", sexpr.span())
+                    .with_help("use (with-env [\"PATH\"] (ask \"PATH=/evil:$PATH\"))"),
+            );
+        }
+    };
+    items
+        .iter()
+        .map(|item| {
+            item.as_atom_or_str()
+                .map(str::to_string)
+                .ok_or_else(|| RawError::new("with-env names must be strings", item.span()))
+        })
+        .collect()
 }
 
 /// Parse fact literal vector: [[:key] [:key "value"]]
@@ -816,6 +1017,7 @@ fn parse_context_key(sexpr: &Sexpr) -> Result<Keyword, RawError> {
 fn parse_check_items(
     items: &[Sexpr],
     context: &ContextFacts,
+    entry_env: &EntryEnv,
     check_span: Span,
 ) -> Result<Vec<Check>, RawError> {
     let mut checks = Vec::new();
@@ -823,7 +1025,7 @@ fn parse_check_items(
     for item in items {
         let list = item.as_list().ok_or_else(|| {
             RawError::new(
-                "check items must be lists like (allow \"cmd\") or (with-facts …)",
+                "check items must be lists like (allow \"cmd\"), (with-facts …), or (with-env …)",
                 item.span(),
             )
         })?;
@@ -835,7 +1037,13 @@ fn parse_check_items(
             .ok_or_else(|| RawError::new("check item tag must be an atom", list[0].span()))?;
 
         if head == "with-facts" {
-            let nested = parse_with_facts(list, context, check_span)?;
+            let nested = parse_with_facts(list, context, entry_env, check_span)?;
+            checks.extend(nested);
+            continue;
+        }
+
+        if head == "with-env" {
+            let nested = parse_with_env(list, context, entry_env, check_span)?;
             checks.extend(nested);
             continue;
         }
@@ -864,6 +1072,7 @@ fn parse_check_items(
             command: cmd.to_string(),
             expected,
             context: context.clone(),
+            entry_env: entry_env.clone(),
             span: list[1].span(),
         });
     }
@@ -883,6 +1092,116 @@ mod tests {
         assert!(config.defines.is_empty());
         assert!(config.security.safe_env_vars.is_empty());
         assert!(config.checks.is_empty());
+    }
+
+    #[test]
+    fn with_env_populates_entry_env() {
+        let config = parse_config(r#"(check (with-env ["PATH"] (ask "PATH=/evil:$PATH")))"#)
+            .expect("parses");
+        assert_eq!(config.checks.len(), 1);
+        assert!(config.checks[0].entry_env.contains("PATH"));
+        assert_eq!(config.checks[0].command, "PATH=/evil:$PATH");
+        assert_eq!(config.checks[0].expected, Decision::Ask);
+    }
+
+    #[test]
+    fn check_without_with_env_has_empty_entry_env() {
+        let config = parse_config(r#"(check (allow "MY_TMP=/x ls"))"#).expect("parses");
+        assert!(config.checks[0].entry_env.is_empty());
+    }
+
+    #[test]
+    fn nested_with_env_merges_by_union() {
+        let config = parse_config(
+            r#"(check (with-env ["PATH"] (with-env ["LD_PRELOAD"] (ask "LD_PRELOAD=/x echo hi"))))"#,
+        )
+        .expect("parses");
+        let env = &config.checks[0].entry_env;
+        assert!(env.contains("PATH"));
+        assert!(env.contains("LD_PRELOAD"));
+    }
+
+    #[test]
+    fn with_env_composes_with_with_facts_either_order() {
+        let a = parse_config(
+            r#"(check (with-env ["PATH"] (with-facts [[:client/claude-code]] (ask "PATH=/x ls"))))"#,
+        )
+        .expect("parses");
+        assert!(a.checks[0].entry_env.contains("PATH"));
+        assert!(
+            a.checks[0]
+                .context
+                .has(&Keyword::new(":client/claude-code").unwrap())
+        );
+
+        let b = parse_config(
+            r#"(check (with-facts [[:client/claude-code]] (with-env ["PATH"] (ask "PATH=/x ls"))))"#,
+        )
+        .expect("parses");
+        assert!(b.checks[0].entry_env.contains("PATH"));
+        assert!(
+            b.checks[0]
+                .context
+                .has(&Keyword::new(":client/claude-code").unwrap())
+        );
+    }
+
+    #[test]
+    fn with_env_rejects_value_bearing_entry() {
+        // The entry environment is names-only; a [:k v]-style pair is invalid.
+        assert!(parse_config(r#"(check (with-env [["PATH" "/x"]] (ask "ls")))"#).is_err());
+    }
+
+    #[test]
+    fn scope_predicate_parses_inside_env_decision() {
+        let config =
+            parse_config(r#"(env "PATH" (when (scope reaches-child) (ask)))"#).expect("parses");
+        assert_eq!(config.security.env_caps.len(), 1);
+    }
+
+    #[test]
+    fn scope_predicate_rejected_in_rule_body() {
+        let err = parse_config(r#"(rule "ls" (when (scope prefix) (allow)))"#)
+            .expect_err("(scope …) in a rule body must be rejected");
+        assert!(
+            format!("{err:?}").contains("scope"),
+            "error should mention scope: {err:?}"
+        );
+    }
+
+    #[test]
+    fn scope_predicate_rejected_in_rule_body_via_define() {
+        // Smuggling (scope …) through a (define …) must still be rejected in a
+        // rule body — where it can never match.
+        let err = parse_config(
+            r#"(define sneaky (scope prefix)) (rule "ls" (if sneaky (allow) (deny)))"#,
+        )
+        .expect_err("(scope …) via a define in a rule body must be rejected");
+        assert!(format!("{err:?}").contains("scope"), "{err:?}");
+    }
+
+    #[test]
+    fn scope_via_define_allowed_in_env_decision() {
+        // The same define IS permitted inside an (env …) decision.
+        let config = parse_config(
+            r#"(define reaches (scope reaches-child)) (env "PATH" (when reaches (ask)))"#,
+        )
+        .expect("scope via define is valid inside (env …)");
+        assert_eq!(config.security.env_caps.len(), 1);
+    }
+
+    #[test]
+    fn scope_predicate_rejected_in_redirect_decision() {
+        let err = parse_config(r#"(redirect (regex "^/tmp/") (when (scope prefix) (allow)))"#)
+            .expect_err("(scope …) in a redirect decision must be rejected");
+        assert!(format!("{err:?}").contains("scope"), "{err:?}");
+    }
+
+    #[test]
+    fn unknown_scope_value_rejected() {
+        let err = parse_config(r#"(env "PATH" (when (scope bogus) (ask)))"#)
+            .expect_err("unknown scope value must be rejected");
+        assert!(format!("{err:?}").contains("scope"), "{err:?}");
     }
 
     #[test]

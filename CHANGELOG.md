@@ -4,6 +4,20 @@
 
 ### Security fixes
 
+- **`export NAME=…` / `declare -x NAME=…` no longer slip past the env-write
+  floor.** The floor previously keyed on whether an assignment landed in a
+  simple command's assignment list — a parsing artifact that missed an exported
+  scalar (`export LD_PRELOAD=/evil.so; cmd` evaluated as `:allow` even though
+  every later command inherited it). The floor now keys on whether a write
+  **reaches a child process**: a command prefix, an `export`/`declare -x`/
+  `typeset -x`/`readonly -x`/`local -x`, a bare reassignment of a name present
+  in the entry environment, or any assignment under `set -a` / `set -o
+  allexport`. Such a write floors to `:ask` unless an `(env NAME (allow))` (or
+  `(safe-env-vars …)`) lifts it. The new **entry environment** input
+  (names-only, never values) supplies the inherited-export set: `may-i hook`
+  captures it live, `may-i eval` injects it via `--env`/`--inherit-env`, and
+  `may-i check` stays hermetic via `(with-env …)`.
+
 - **`(authorise #var)` over `(rest …)`-style bindings could be bypassed by
   inner argv tokens containing shell metacharacters.** When a token-list
   binding (`(rest …)`, `(positional … *|+)`) was authorised, the tokens
@@ -24,6 +38,20 @@
   single quoted argument.
 
 ### Breaking changes
+
+- **Shell-local env writes no longer floor.** A bare assignment of a name *not*
+  in the entry environment, a `declare`/`local`/`readonly` without `-x`, and an
+  array literal (`name=(…)`, `declare -A m=([k]=v)`) are shell-local — they set
+  a variable no child inherits — and now evaluate as `:allow` instead of
+  flooring to `:ask`. The prior behaviour was a shape-keyed bug (e.g.
+  `declare -A m=([k]=v)` over-blocked while `export LD_PRELOAD=…` under-blocked).
+  A config that wants a specific shell-local name to floor can still write
+  `(env NAME (ask))`. New affordances: the `(scope prefix|export|bare|
+  reaches-child)` predicate inside an `(env …)` decision, and `(with-env [NAME
+  …] …)` in `(check …)` cases. (Internal: the parser now lifts a declaration
+  builtin's scalar `NAME=value` argument out of the command's argv into its
+  assignment list — a rule matching `export`/`declare` *arguments* by value
+  would no longer see the `NAME=value` token, though no prelude rule does.)
 
 - **Rule evaluation is now order-independent.** Every `(rule …)` whose
   command pattern matches the input runs, and the strictest decision

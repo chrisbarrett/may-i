@@ -7,4 +7,5 @@ mod parse;
 mod properties;
 mod redirect;
 mod resolve;
+mod scope;
 mod word;

@@ -64,7 +64,8 @@ fn load(config_src: &str) -> may_i_config::LoadResult {
 fn render_eval_surface(loaded: &may_i_config::LoadResult, command: &str, color: bool) -> Vec<u8> {
     let ctx = ContextFacts::default();
     let (result, traces, colored, _audit) =
-        evaluate_with_colorization(command, loaded, &ctx).expect("evaluate");
+        evaluate_with_colorization(command, loaded, &ctx, &may_i_core::EntryEnv::empty())
+            .expect("evaluate");
     let term = Terminal::new(100).with_color(color);
     let mut buf = Vec::new();
     EvalOutput {
@@ -97,6 +98,7 @@ fn render_check_surface(command: &str, reason: &str, color: bool) -> Vec<u8> {
         config_path: std::path::Path::new("cfg.lisp"),
         results: &views,
         verbose: true,
+        untested_scope_rules: &[],
     }
     .render(&mut buf, &term);
     buf
