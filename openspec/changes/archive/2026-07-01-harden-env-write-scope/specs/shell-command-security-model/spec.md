@@ -144,9 +144,10 @@ limitation, not a covered read site.
 
 - **GIVEN** `(rule "ls" (allow))` and an entry environment in which `MY_TMP` is
   absent
-- **WHEN** evaluating `MY_TMP=/x ls`
-- **THEN** the decision SHALL be `:allow` (the name is not exported, so the
-  assignment is shell-local)
+- **WHEN** evaluating `MY_TMP=/x; ls`
+- **THEN** the decision SHALL be `:allow` (the bare assignment names a variable
+  not in the entry environment, so it is shell-local; the following `ls` is
+  unaffected)
 
 #### Scenario: A `(scope …)` predicate branches on how a write crosses
 

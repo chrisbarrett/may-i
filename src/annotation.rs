@@ -61,6 +61,11 @@ pub enum TraceEntry {
     /// like a plausible (non-flag) value. Surfaced as an Advisory so the
     /// guess is observable; never changes the Decision.
     ArityGuess { flag: String, consumed: String },
+    /// The entry environment tipped an env-write decision: a bare reassignment
+    /// floored because `name` is present in the entry environment. Renders the
+    /// name and its presence only — never a value (the entry environment is
+    /// names-only).
+    EntryEnvContribution { name: String },
     /// No matching rule — default ask.
     DefaultAsk { reason: String },
     /// A call to a script-local function, resolved to `:allow` as an
@@ -1454,6 +1459,15 @@ impl EvalFold for TracingFold {
         (result, TraceNode::plain_list(docs))
     }
 
+    fn predicate_scope(
+        &mut self,
+        matcher: may_i_core::ast::EnvScopeMatcher,
+        result: PredicateResult,
+    ) -> Self::PredicateOut {
+        let docs = vec![plain_atom("scope"), plain_atom(matcher.as_str())];
+        (result, TraceNode::plain_list(docs))
+    }
+
     fn rule_matched(
         &mut self,
         rule: &Rule,
@@ -1567,6 +1581,12 @@ impl EvalFold for TracingFold {
             consumed: consumed.to_string(),
         });
     }
+
+    fn env_entry_contribution(&mut self, name: &str) {
+        self.traces.push(TraceEntry::EntryEnvContribution {
+            name: name.to_string(),
+        });
+    }
 }
 
 fn flatten_facts(facts: &ContextFacts) -> Vec<(String, String)> {
@@ -1588,6 +1608,7 @@ impl std::fmt::Debug for TraceEntry {
             Self::ArityGuess { flag, consumed } => {
                 write!(f, "ArityGuess({flag} → {consumed})")
             }
+            Self::EntryEnvContribution { name } => write!(f, "EntryEnvContribution({name})"),
             Self::DefaultAsk { reason } => write!(f, "DefaultAsk({reason})"),
             Self::LocalFunctionCall { name } => write!(f, "LocalFunctionCall({name})"),
             Self::ParseDiagnostics { .. } => write!(f, "ParseDiagnostics"),

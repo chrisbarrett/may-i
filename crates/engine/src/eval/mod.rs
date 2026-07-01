@@ -20,7 +20,7 @@ pub(crate) mod entry;
 pub(crate) mod positional;
 pub(crate) mod predicates;
 
-pub use command::{evaluate_command, evaluate_command_with_fold};
+pub use command::{evaluate_command, evaluate_command_with_fold, evaluate_command_with_fold_env};
 pub use context::{EvalContext, PredicateResult};
 pub use entry::{Evaluator, evaluate, evaluate_with_fold};
 

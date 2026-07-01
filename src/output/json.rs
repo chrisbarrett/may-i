@@ -78,6 +78,11 @@ pub fn trace_to_json(entries: &[TraceEntry]) -> Vec<serde_json::Value> {
                 "flag": flag,
                 "consumed": consumed,
             }),
+            TraceEntry::EntryEnvContribution { name } => serde_json::json!({
+                "type": "entry_env_contribution",
+                "name": name,
+                "present": true,
+            }),
             TraceEntry::DefaultAsk { reason } => serde_json::json!({
                 "type": "default_ask",
                 "reason": reason,

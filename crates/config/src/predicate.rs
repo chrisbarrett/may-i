@@ -4,7 +4,7 @@
 // Task 2.5: Implement unified predicate parser that dispatches to fact or arg parsers
 
 use may_i_core::Keyword;
-use may_i_core::ast::{BindingName, Predicate};
+use may_i_core::ast::{BindingName, EnvScopeMatcher, Predicate};
 use may_i_core::predicates::FactQuery;
 use may_i_sexpr::{RawError, Sexpr};
 
@@ -155,9 +155,38 @@ pub(crate) fn parse_predicate(sexpr: &Sexpr) -> Result<Predicate, RawError> {
             }
         }
 
+        // Env-write scope predicate. Valid only inside an `(env …)` decision;
+        // the `(env …)` parser validates placement (see `reject_scope_outside_env`).
+        "scope" => {
+            if list.len() != 2 {
+                return Err(RawError::new(
+                    "(scope …) takes exactly one value",
+                    sexpr.span(),
+                )
+                .with_help("(scope prefix), (scope export), (scope bare), or (scope reaches-child)"));
+            }
+            let value = list[1].as_atom().ok_or_else(|| {
+                RawError::new("(scope …) value must be an atom", list[1].span())
+            })?;
+            let matcher = match value {
+                "prefix" => EnvScopeMatcher::Prefix,
+                "export" => EnvScopeMatcher::Export,
+                "bare" => EnvScopeMatcher::Bare,
+                "reaches-child" => EnvScopeMatcher::ReachesChild,
+                other => {
+                    return Err(RawError::new(
+                        format!("unknown (scope …) value: {other}"),
+                        list[1].span(),
+                    )
+                    .with_help("valid values: prefix, export, bare, reaches-child"));
+                }
+            };
+            Ok(Predicate::Scope(matcher))
+        }
+
         other => Err(
             RawError::new(format!("unknown predicate form: {other}"), list[0].span()).with_help(
-                "valid predicates: fact?, and, or, not, bound?, matches?, every?, some?, positional, exact, anywhere, forbidden, flag, parameter, =",
+                "valid predicates: fact?, and, or, not, bound?, matches?, every?, some?, scope, positional, exact, anywhere, forbidden, flag, parameter, =",
             ),
         ),
     }

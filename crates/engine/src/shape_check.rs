@@ -212,7 +212,8 @@ fn check_predicate(
                 check_predicate(body, env, defines, visited, out);
             }
         }
-        Predicate::Fact(_) | Predicate::Arg(_) => {}
+        // `(scope …)` binds no `#var`; `(fact? …)` / argv patterns neither.
+        Predicate::Fact(_) | Predicate::Arg(_) | Predicate::Scope(_) => {}
         // `Predicate` is `#[non_exhaustive]`; unknown variants bind no
         // `#var` we can check.
         _ => {}

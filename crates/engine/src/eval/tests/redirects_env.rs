@@ -3,13 +3,29 @@
 //! prefix floors unless `NAME` is in the effective safe-env-vars set.
 
 use may_i_config::parse_config;
-use may_i_core::{ContextFacts, Decision};
+use may_i_core::{ContextFacts, Decision, EntryEnv};
 
-use crate::eval::evaluate_command;
+use crate::eval::{evaluate_command, evaluate_command_with_fold_env};
+use crate::fold::PureFold;
 
 fn decide(config_src: &str, input: &str) -> crate::EvalResult {
     let config = parse_config(config_src).expect("config parses");
     evaluate_command(input, &config, &ContextFacts::default()).expect("evaluation succeeds")
+}
+
+/// Evaluate against a simulated entry environment (the names-only snapshot).
+fn decide_with_env(config_src: &str, input: &str, env_names: &[&str]) -> crate::EvalResult {
+    let config = parse_config(config_src).expect("config parses");
+    let entry_env = EntryEnv::from_names(env_names.iter().copied());
+    let mut fold = PureFold;
+    evaluate_command_with_fold_env(
+        input,
+        &config,
+        &ContextFacts::default(),
+        &entry_env,
+        &mut fold,
+    )
+    .expect("evaluation succeeds")
 }
 
 fn decide_with_facts(config_src: &str, input: &str, facts: &ContextFacts) -> crate::EvalResult {
@@ -893,4 +909,300 @@ fn structural_floors_raise_overlapping_segments() {
         "the floored command's segment must not display as allow: {:?}",
         result.segment_decisions
     );
+}
+
+// ── harden-env-write-scope: reaching-write floor ────────────────────
+
+#[test]
+fn exported_write_reaches_and_floors() {
+    let result = decide(
+        r#"(rule "export" (allow)) (rule "echo" (allow))"#,
+        "export LD_PRELOAD=/evil.so; echo hi",
+    );
+    assert_eq!(result.decision, Decision::Ask, "{:?}", result.reason);
+    assert!(
+        result
+            .reason
+            .as_ref()
+            .unwrap()
+            .to_string()
+            .contains("LD_PRELOAD"),
+        "reason should name LD_PRELOAD: {:?}",
+        result.reason
+    );
+}
+
+#[test]
+fn declare_x_reaches_and_floors() {
+    let result = decide(
+        r#"(rule "declare" (allow))"#,
+        "declare -x LD_PRELOAD=/evil.so",
+    );
+    assert_eq!(result.decision, Decision::Ask, "{:?}", result.reason);
+    assert!(
+        result
+            .reason
+            .as_ref()
+            .unwrap()
+            .to_string()
+            .contains("LD_PRELOAD")
+    );
+}
+
+#[test]
+fn shell_local_array_declaration_does_not_floor() {
+    let result = decide(r#"(rule "declare" (allow))"#, "declare -A m=([k]=v)");
+    assert_eq!(result.decision, Decision::Allow, "{:?}", result.reason);
+}
+
+#[test]
+fn shell_local_scalar_declaration_does_not_floor() {
+    let result = decide(r#"(rule "declare" (allow))"#, "declare FOO=bar");
+    assert_eq!(result.decision, Decision::Allow, "{:?}", result.reason);
+}
+
+#[test]
+fn prefix_still_floors() {
+    let result = decide(r#"(rule "git" (allow))"#, "LD_PRELOAD=/evil.so git status");
+    assert_eq!(result.decision, Decision::Ask, "{:?}", result.reason);
+}
+
+#[test]
+fn bare_reassignment_of_entry_env_name_floors() {
+    let result = decide_with_env(r#"(rule "ls" (allow))"#, "PATH=/evil:$PATH; ls", &["PATH"]);
+    assert_eq!(result.decision, Decision::Ask, "{:?}", result.reason);
+    assert!(result.reason.as_ref().unwrap().to_string().contains("PATH"));
+}
+
+#[test]
+fn bare_assignment_of_non_entry_env_name_does_not_floor() {
+    let result = decide_with_env(r#"(rule "ls" (allow))"#, "MY_TMP=/x; ls", &[]);
+    assert_eq!(result.decision, Decision::Allow, "{:?}", result.reason);
+}
+
+#[test]
+fn bare_reassignment_absent_from_entry_env_does_not_floor() {
+    // Same command, but PATH is not in the (empty) entry environment.
+    let result = decide_with_env(r#"(rule "ls" (allow))"#, "PATH=/evil:$PATH; ls", &[]);
+    assert_eq!(result.decision, Decision::Allow, "{:?}", result.reason);
+}
+
+#[test]
+fn set_allexport_makes_following_assignment_reach() {
+    let result = decide_with_env(
+        r#"(rule "set" (allow)) (rule "ls" (allow))"#,
+        "set -a; m=(a b c); ls",
+        &[],
+    );
+    assert_eq!(result.decision, Decision::Ask, "{:?}", result.reason);
+    assert!(result.reason.as_ref().unwrap().to_string().contains('m'));
+}
+
+#[test]
+fn set_allexport_confined_to_subshell_does_not_escape() {
+    let result = decide_with_env(
+        r#"(rule "set" (allow)) (rule "ls" (allow))"#,
+        "(set -a); m=(a b c); ls",
+        &[],
+    );
+    assert_eq!(result.decision, Decision::Allow, "{:?}", result.reason);
+}
+
+// ── harden-env-write-scope: (scope …) predicate ─────────────────────
+
+#[test]
+fn scope_reaches_child_matches_prefix() {
+    let result = decide(
+        r#"(rule "ls" (allow)) (env "EDITOR" (when (scope reaches-child) (ask)))"#,
+        "EDITOR=vi ls",
+    );
+    assert_eq!(result.decision, Decision::Ask, "{:?}", result.reason);
+}
+
+#[test]
+fn scope_reaches_child_matches_bare_entry_env_reassignment() {
+    let result = decide_with_env(
+        r#"(rule "ls" (allow)) (env "EDITOR" (when (scope reaches-child) (ask)))"#,
+        "EDITOR=vi; ls",
+        &["EDITOR"],
+    );
+    assert_eq!(result.decision, Decision::Ask, "{:?}", result.reason);
+}
+
+#[test]
+fn scope_reaches_child_does_not_match_shell_local_bare() {
+    // EDITOR absent from the entry env → the bare write is shell-local → no
+    // unit → the (scope …) arm is never consulted → allow.
+    let result = decide_with_env(
+        r#"(rule "ls" (allow)) (env "EDITOR" (when (scope reaches-child) (ask)))"#,
+        "EDITOR=vi; ls",
+        &[],
+    );
+    assert_eq!(result.decision, Decision::Allow, "{:?}", result.reason);
+}
+
+#[test]
+fn raw_scope_prefix_resolves() {
+    // (scope prefix) matches a prefix but not an exported declaration.
+    let cfg =
+        r#"(rule "ls" (allow)) (rule "export" (allow)) (env "X" (when (scope prefix) (allow)))"#;
+    // Prefix: matches → write passes through → ls allowed.
+    assert_eq!(decide(cfg, "X=1 ls").decision, Decision::Allow);
+    // Exported declaration: (scope prefix) does not match → Nil → reaching
+    // write floors.
+    assert_eq!(decide(cfg, "export X=1").decision, Decision::Ask);
+}
+
+#[test]
+fn raw_scope_export_resolves() {
+    let cfg = r#"(rule "export" (allow)) (env "X" (when (scope export) (allow)))"#;
+    assert_eq!(decide(cfg, "export X=1").decision, Decision::Allow);
+}
+
+#[test]
+fn raw_scope_bare_resolves() {
+    let cfg = r#"(rule "ls" (allow)) (env "X" (when (scope bare) (allow)))"#;
+    // Bare reassignment of an entry-env name → reaching, scope bare → allow.
+    assert_eq!(
+        decide_with_env(cfg, "X=1; ls", &["X"]).decision,
+        Decision::Allow
+    );
+}
+
+// ── harden-env-write-scope: set -a variants and scope barriers ──────
+
+#[test]
+fn set_o_allexport_long_form_activates() {
+    let result = decide_with_env(
+        r#"(rule "set" (allow)) (rule "ls" (allow))"#,
+        "set -o allexport; m=(a b c); ls",
+        &[],
+    );
+    assert_eq!(result.decision, Decision::Ask, "{:?}", result.reason);
+}
+
+#[test]
+fn set_plus_a_clears_allexport() {
+    // set -a then set +a: the later assignment is shell-local again.
+    let result = decide_with_env(
+        r#"(rule "set" (allow)) (rule "ls" (allow))"#,
+        "set -a; set +a; m=(a b c); ls",
+        &[],
+    );
+    assert_eq!(result.decision, Decision::Allow, "{:?}", result.reason);
+}
+
+#[test]
+fn allexport_in_brace_group_escapes() {
+    // A brace group runs in the current shell — not a barrier — so a `set -a`
+    // inside it leaves allexport active for a following assignment.
+    let result = decide_with_env(
+        r#"(rule "set" (allow)) (rule "ls" (allow))"#,
+        "{ set -a; }; m=(a b c); ls",
+        &[],
+    );
+    assert_eq!(result.decision, Decision::Ask, "{:?}", result.reason);
+}
+
+#[test]
+fn allexport_in_background_does_not_escape() {
+    // A background command runs in a subshell — a barrier.
+    let result = decide_with_env(
+        r#"(rule "set" (allow)) (rule "ls" (allow))"#,
+        "set -a & m=(a b c); ls",
+        &[],
+    );
+    assert_eq!(result.decision, Decision::Allow, "{:?}", result.reason);
+}
+
+#[test]
+fn allexport_inside_if_branch_is_conservative() {
+    // Conservative toward flooring: a `set -a` reachable only in a conditional
+    // branch still marks a following assignment as reaching.
+    let result = decide_with_env(
+        r#"(rule "set" (allow)) (rule "true" (allow)) (rule "ls" (allow))"#,
+        "if true; then set -a; fi; m=(a b c); ls",
+        &[],
+    );
+    assert_eq!(result.decision, Decision::Ask, "{:?}", result.reason);
+}
+
+#[test]
+fn allexport_in_elif_branch_is_conservative() {
+    let result = decide_with_env(
+        r#"(rule "set" (allow)) (rule "true" (allow)) (rule "ls" (allow))"#,
+        "if false; then :; elif true; then set -a; fi; m=(a b c); ls",
+        &[],
+    );
+    assert_eq!(result.decision, Decision::Ask, "{:?}", result.reason);
+}
+
+#[test]
+fn allexport_in_loop_body_is_conservative() {
+    let result = decide_with_env(
+        r#"(rule "set" (allow)) (rule "true" (allow)) (rule "ls" (allow))"#,
+        "while true; do set -a; done; m=(a b c); ls",
+        &[],
+    );
+    assert_eq!(result.decision, Decision::Ask, "{:?}", result.reason);
+}
+
+#[test]
+fn scope_nested_in_and_predicate_resolves() {
+    // (and (scope export) …) inside an env decision — exercises the predicate
+    // And-arm with a scope child.
+    let cfg = r#"(rule "export" (allow)) (env "X" (when (and (scope export)) (deny)))"#;
+    assert_eq!(decide(cfg, "export X=1").decision, Decision::Deny);
+}
+
+// ── harden-env-write-scope: in-string export attribute (review) ─────
+
+#[test]
+fn attribute_only_export_then_bare_reassignment_reaches() {
+    // `export FOO` marks FOO exported; a later bare `FOO=/evil` re-crosses.
+    let result = decide(
+        r#"(rule "export" (allow)) (rule "ls" (allow))"#,
+        "export FOO; FOO=/evil; ls",
+    );
+    assert_eq!(result.decision, Decision::Ask, "{:?}", result.reason);
+    assert!(result.reason.as_ref().unwrap().to_string().contains("FOO"));
+}
+
+#[test]
+fn declare_x_attribute_then_bare_reassignment_reaches() {
+    let result = decide(
+        r#"(rule "declare" (allow)) (rule "ls" (allow))"#,
+        "declare -x FOO; FOO=/evil; ls",
+    );
+    assert_eq!(result.decision, Decision::Ask, "{:?}", result.reason);
+}
+
+#[test]
+fn export_with_value_then_bare_reassignment_reaches() {
+    // `export FOO=1` floors itself and marks FOO exported; the later bare
+    // `FOO=2` also reaches.
+    let result = decide(
+        r#"(rule "export" (allow)) (rule "ls" (allow))"#,
+        "export FOO=1; FOO=2; ls",
+    );
+    assert_eq!(result.decision, Decision::Ask, "{:?}", result.reason);
+}
+
+#[test]
+fn plain_declare_attribute_does_not_export() {
+    // `declare FOO` (no -x) does not export; a later bare FOO stays shell-local.
+    let result = decide(
+        r#"(rule "declare" (allow)) (rule "ls" (allow))"#,
+        "declare FOO; FOO=/evil; ls",
+    );
+    assert_eq!(result.decision, Decision::Allow, "{:?}", result.reason);
+}
+
+#[test]
+fn export_attribute_confined_to_subshell_does_not_escape() {
+    let result = decide(
+        r#"(rule "export" (allow)) (rule "ls" (allow))"#,
+        "(export FOO); FOO=/evil; ls",
+    );
+    assert_eq!(result.decision, Decision::Allow, "{:?}", result.reason);
 }

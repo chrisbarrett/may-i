@@ -377,12 +377,24 @@ impl<'a> Arbitrary<'a> for Rule {
     }
 }
 
+impl<'a> Arbitrary<'a> for crate::EntryEnv {
+    fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
+        let count = u.int_in_range(0..=4)?;
+        let mut names = Vec::with_capacity(count);
+        for _ in 0..count {
+            names.push(arb_alpha(u, 12)?);
+        }
+        Ok(crate::EntryEnv::from_names(names))
+    }
+}
+
 impl<'a> Arbitrary<'a> for Check {
     fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
         Ok(Check {
             command: arb_alpha(u, 15)?,
             expected: Decision::arbitrary(u)?,
             context: ContextFacts::arbitrary(u)?,
+            entry_env: crate::EntryEnv::arbitrary(u)?,
             span: Span::new(0, 0),
         })
     }

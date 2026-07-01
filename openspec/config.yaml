@@ -16,9 +16,12 @@ context: |
   discussing design or authoring user-facing specs.
 
   User vocabulary (appears in user-facing specs, DSL forms, error messages):
-  Rule, Decision, Reason, Fact, Pattern, Authorise, Binding, Style, Parser,
-  Carrier, Trust, Advisory, Trace, Prelude, Quantifier, Wildcard, Many-till,
-  Outer slice, Tokenisation, Integrity. Decisions are spelled
+  Rule, Decision, Reason, Fact, Entry environment, Pattern, Authorise, Binding,
+  Style, Parser, Carrier, Trust, Advisory, Trace, Prelude, Quantifier, Wildcard,
+  Many-till, Outer slice, Tokenisation, Integrity. The entry environment is a
+  names-only snapshot of the exported environment consulted by the env-write
+  floor; it is not a Fact and is never reachable through `(fact? …)`. Decisions
+  are spelled
   `(allow REASON?)`, `(ask REASON?)`, `(deny REASON?)` — never "verdict" or
   "effect". `Carrier` replaces the retired casual term "wrapper".
 

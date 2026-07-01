@@ -242,3 +242,39 @@ fn hook_nonexistent_mayi_config_env_exits_two() {
         .stderr(predicate::str::contains("MAYI_CONFIG"))
         .stderr(predicate::str::contains("nonexistent"));
 }
+
+// ── harden-env-write-scope: hook captures the entry environment ─────
+
+#[test]
+fn hook_captures_exported_name_so_bare_reassignment_reaches() {
+    // `GIT_DIR` is exported into the hook process. The entry environment is
+    // captured before git-env scrubbing, so a bare reassignment of `GIT_DIR`
+    // is a reaching write and floors.
+    let cfg = write_config(r#"(rule "ls" (allow))"#);
+    let output = may_i(&cfg)
+        .env("GIT_DIR", "/tmp/somegit")
+        .write_stdin(bash_payload("GIT_DIR=/evil; ls"))
+        .output()
+        .expect("run");
+    let resp = parse_json(&output);
+    assert_eq!(
+        resp["hookSpecificOutput"]["permissionDecision"], "ask",
+        "exported GIT_DIR must be in the entry environment: {resp}"
+    );
+}
+
+#[test]
+fn hook_unexported_name_stays_shell_local() {
+    // A name not in the process environment is shell-local when bare-assigned.
+    let cfg = write_config(r#"(rule "ls" (allow))"#);
+    let output = may_i(&cfg)
+        .env_remove("DEFINITELY_UNSET_NAME_XYZ")
+        .write_stdin(bash_payload("DEFINITELY_UNSET_NAME_XYZ=/evil; ls"))
+        .output()
+        .expect("run");
+    let resp = parse_json(&output);
+    assert_eq!(
+        resp["hookSpecificOutput"]["permissionDecision"], "allow",
+        "unexported name must be shell-local: {resp}"
+    );
+}

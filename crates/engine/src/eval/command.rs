@@ -1,11 +1,11 @@
 use may_i_core::ast::{Config, Effect, EffectResult};
-use may_i_core::{ContextFacts, Decision, Keyword};
+use may_i_core::{ContextFacts, Decision, EntryEnv, Keyword};
 use may_i_shell_parser as parser;
 
 use crate::fold::{EvalFold, PureFold};
 use crate::{DisplaySafe, EvalError, EvalResult, SegmentDecision};
 
-use super::context::{DEFAULT_RECURSION_LIMIT, EvalContext};
+use super::context::{DEFAULT_RECURSION_LIMIT, EnvScope, EvalContext};
 use super::decompose::{EmbeddedKind, EvalUnit, SubstitutionOrigin, decompose};
 use super::effects::evaluate_effect_fold;
 use super::entry::evaluate_at_depth;
@@ -20,10 +20,12 @@ fn capability_decision(
     decision: &Effect,
     config: &Config,
     facts: &ContextFacts,
+    env_scope: Option<EnvScope>,
 ) -> Option<(Decision, Option<String>)> {
     let no_args: [String; 0] = [];
     let bindings = EvalContext::build_bindings(&config.defines);
-    let ctx = EvalContext::new("", &no_args, facts, bindings);
+    let mut ctx = EvalContext::new("", &no_args, facts, bindings);
+    ctx.env_scope = env_scope;
     let mut pure = PureFold;
     match evaluate_effect_fold(&mut pure, decision, &ctx, &config.rules) {
         Ok(EffectResult::Decision(d, r)) => Some((d, r)),
@@ -53,10 +55,11 @@ fn fold_env_capabilities(
     config: &Config,
     facts: &ContextFacts,
     name: &str,
+    env_scope: Option<EnvScope>,
 ) -> Option<(Decision, Option<String>)> {
     let mut acc = None;
     for cap in config.security.env_capabilities(name) {
-        if let Some(decision) = capability_decision(&cap.decision.value, config, facts) {
+        if let Some(decision) = capability_decision(&cap.decision.value, config, facts, env_scope) {
             acc = meet_decision(acc, decision);
         }
     }
@@ -84,7 +87,7 @@ fn resolve_redirect_decision(
         if !matches {
             continue;
         }
-        if let Some(decision) = capability_decision(&cap.decision.value, config, facts) {
+        if let Some(decision) = capability_decision(&cap.decision.value, config, facts, None) {
             acc = meet_decision(acc, decision);
         }
     }
@@ -184,11 +187,27 @@ pub fn evaluate_command(
     evaluate_command_with_fold(input, config, facts, &mut fold)
 }
 
-/// Evaluate a command string with a custom fold for tracing.
+/// Evaluate a command string with a custom fold for tracing. Uses an empty
+/// entry environment; callers that have captured one (the `hook`/`eval`/`check`
+/// entrypoints) use [`evaluate_command_with_fold_env`].
 pub fn evaluate_command_with_fold<F: EvalFold>(
     input: &str,
     config: &Config,
     facts: &ContextFacts,
+    fold: &mut F,
+) -> Result<EvalResult, EvalError> {
+    evaluate_command_with_fold_env(input, config, facts, &EntryEnv::empty(), fold)
+}
+
+/// Evaluate a command string with a custom fold and an explicit entry
+/// environment (the names-only exported-environment snapshot). The entry
+/// environment is consulted by the env-write floor to decide whether a bare
+/// reassignment of an already-exported name reaches a child.
+pub fn evaluate_command_with_fold_env<F: EvalFold>(
+    input: &str,
+    config: &Config,
+    facts: &ContextFacts,
+    entry_env: &EntryEnv,
     fold: &mut F,
 ) -> Result<EvalResult, EvalError> {
     // The top-level entry discards the origin-annotation flag; only the
@@ -197,6 +216,7 @@ pub fn evaluate_command_with_fold<F: EvalFold>(
         input,
         config,
         facts,
+        entry_env,
         fold,
         0,
         None,
@@ -231,6 +251,7 @@ fn eval_units<F: EvalFold>(
     input: &str,
     config: &Config,
     facts: &ContextFacts,
+    entry_env: &EntryEnv,
     fold: &mut F,
     depth: usize,
     via: Option<&str>,
@@ -279,6 +300,7 @@ fn eval_units<F: EvalFold>(
         &diagnostics,
         &tainted_env,
         inherited_fns,
+        entry_env,
     );
 
     if units.is_empty() {
@@ -339,6 +361,7 @@ fn eval_units<F: EvalFold>(
                     source,
                     config,
                     &effective_facts,
+                    entry_env,
                     fold,
                     depth + 1,
                     None,
@@ -378,13 +401,21 @@ fn eval_units<F: EvalFold>(
                 ));
                 EvalResult::new(Decision::Allow, Some(reason))
             }
-            // A `NAME=VALUE` prefix. An unconditional-allow name (the
+            // An environment write that reaches a child process (prefix,
+            // exported declaration, bare reassignment of an entry-env name, or
+            // any write under `set -a`). An unconditional-allow name (the
             // safe-env-vars allowlist) passes through. Otherwise an
-            // `(env NAME …)` capability decides: an `allow` releases the
-            // floor; an `ask`/`deny` (or fact-conditional yielding one)
-            // contributes that decision. With no capability the prefix
-            // floors to `:ask`, naming the variable.
-            EvalUnit::EnvPrefix { name, span } => {
+            // `(env NAME …)` capability decides: an `allow` releases the floor;
+            // an `ask`/`deny` (or a fact/scope-conditional yielding one)
+            // contributes that decision. With no capability the write floors to
+            // `:ask`, naming the variable. A purely shell-local write never
+            // produces this unit.
+            EvalUnit::EnvWrite {
+                name,
+                scope,
+                reaches_via_entry_env,
+                span,
+            } => {
                 // The safe-env-vars allowlist contributes an implicit
                 // write-allow; every `(env NAME …)` capability contributes
                 // its decision. They meet strictest-wins, so a `(deny)` wins
@@ -393,7 +424,9 @@ fn eval_units<F: EvalFold>(
                     .security
                     .is_safe_env_var(name)
                     .then_some((Decision::Allow, None));
-                if let Some(cap) = fold_env_capabilities(config, &effective_facts, name) {
+                if let Some(cap) =
+                    fold_env_capabilities(config, &effective_facts, name, Some(*scope))
+                {
                     decision = meet_decision(decision, cap);
                 }
                 match decision {
@@ -401,17 +434,23 @@ fn eval_units<F: EvalFold>(
                     Some((decision, reason)) => {
                         let reason = DisplaySafe::new(reason.unwrap_or_else(|| {
                             format!(
-                                "environment prefix `{name}` is governed by an (env …) capability"
+                                "environment write `{name}` is governed by an (env …) capability"
                             )
                         }));
+                        if *reaches_via_entry_env {
+                            fold.env_entry_contribution(name);
+                        }
                         floor_spans.push(*span);
                         let _out = fold.default_ask(&reason);
                         EvalResult::new(decision, Some(reason))
                     }
                     None => {
                         let reason = DisplaySafe::new(format!(
-                            "environment prefix `{name}` is not in (safe-env-vars …)"
+                            "environment write `{name}` reaches a child process and is not in (safe-env-vars …)"
                         ));
+                        if *reaches_via_entry_env {
+                            fold.env_entry_contribution(name);
+                        }
                         floor_spans.push(*span);
                         let _out = fold.default_ask(&reason);
                         EvalResult::new(Decision::Ask, Some(reason))
@@ -446,7 +485,7 @@ fn eval_units<F: EvalFold>(
             // contributed; an `allow` (the read-benign default) or a
             // `Nil`-conditional contributes nothing.
             EvalUnit::EnvRead { name, span } => {
-                let cap_decision = fold_env_capabilities(config, &effective_facts, name);
+                let cap_decision = fold_env_capabilities(config, &effective_facts, name, None);
                 match cap_decision {
                     Some((decision, reason)) if decision > Decision::Allow => {
                         let reason = DisplaySafe::new(reason.unwrap_or_else(|| {
@@ -466,14 +505,14 @@ fn eval_units<F: EvalFold>(
         // (one per unit). EmbeddedCommand units are carriers — they only
         // relay their child segments, otherwise the inner range would appear
         // twice (once as the embed unit, once as the child SimpleCommand).
-        // Floor units (EnvPrefix, RedirectTarget) share the enclosing
+        // Floor units (EnvWrite, RedirectTarget) share the enclosing
         // command's span; they raise that segment after the loop instead
         // of duplicating its range.
         if let Some(base) = segments {
             if !matches!(
                 unit,
                 EvalUnit::EmbeddedCommand { .. }
-                    | EvalUnit::EnvPrefix { .. }
+                    | EvalUnit::EnvWrite { .. }
                     | EvalUnit::RedirectTarget { .. }
                     | EvalUnit::EnvRead { .. }
             ) {
@@ -594,10 +633,15 @@ pub(crate) fn evaluate_authorised_string<F: EvalFold>(
     // events, and the parse-error floor.
     // The authorise path discards the origin-annotation flag (it has no
     // enclosing substitution to re-annotate for).
+    // The authorise recursion re-evaluates a captured command string; it has no
+    // separate entry environment, so it uses an empty one. A reaching write in
+    // the captured string still floors by its syntax (`export`, prefix); only
+    // the bare-reassignment-of-entry-env case is not detected here.
     Ok(eval_units(
         input,
         effective_config,
         facts,
+        &EntryEnv::empty(),
         fold,
         depth,
         via_program,

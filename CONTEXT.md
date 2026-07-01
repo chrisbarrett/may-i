@@ -25,6 +25,7 @@ If a change doesn't fit one of these, question whether it belongs.
 | Capability | A config-level decision attached to a shell-language **effect** — a redirect-write target (`(redirect PAT? DECISION)`) or an environment variable (`(env NAME DECISION)`) — rather than to a command. It contributes its decision to the same strictest-wins meet as the command's rule, independently of which command runs. Because `:allow` is the lattice bottom, a capability `allow` only *releases a floor*; a capability `deny`/`ask` actively tightens. `(safe-env-vars …)` is one instance (env-write allowlist). The DECISION is the fact-conditioned subset of the rule-body language (facts + `(if/when/unless/cond/and/or/not …)`; no argv analysis). Primary-config-governed and trust-scoped (`:env`, `:redirect`). | `(env "LD_PRELOAD" (deny))`, `(redirect (regex "^/tmp/") (allow))` |
 | Reason    | Optional explanatory string passed to a decision verb. Shown in traces and prompts.                                                                                                                                                                                       | `"Confirm recursive deletion"`                                     |
 | Fact      | Keyed runtime context. See below.                                                                                                                                                                                                                                         | `:via`, `[:env "prod"]`                                            |
+| Entry environment | The names-only snapshot of the exported environment at the start of an invocation. Distinct from a **Fact**: observed ground truth (not asserted policy) consulted *structurally* by the env-write floor, never reachable through `(fact? …)`. Carries names only — never values — so it can never leak a secret into a trace, audit record, or error message. `hook` captures it live; `eval` injects it via `--env NAME` / `--inherit-env` (default empty); `check` is hermetic (only `(with-env …)`). See below. | `(with-env ["PATH"] (ask "PATH=/evil:$PATH"))`, `may-i eval --env PATH …` |
 | Pattern   | Anything that matches part of a command. Includes argv matchers (`(flag …)`, `(positional …)`, …) and the smaller matchers used inside them (`"lit"`, `*`, `(regex …)`, `(or …)`, …). One name, one mental model. See below.                                              |                                                                    |
 | Predicate | A test returning match / no-match. Patterns are predicates; so are `(fact? …)`, `(matches? #var PAT)`, `(bound? #var)`, and `(define …)`d names referring to any of those. Children of `and`/`or`/`not` and the test arm of `if`/`when`/`unless`/`cond` are predicates. | `(fact? [:env "prod"])`, `(and prod-host (flag ["r" "recursive"]))` |
 | Authorise | Recurse on an inner command. Spelled `(authorise #var)` — takes a binding reference. The parser declares `#var` via `(rest …)`, `(parameter NAME #var)`, `(positional #var …)`, or `(parameter NAME (many-till PAT) #var)`. Pushes a `:via` fact for the carrier program (see _Carrier_ below). | `(parameter "c" #cmd)` + `(authorise #cmd)`                        |
@@ -108,6 +109,26 @@ binding captured in a pattern, or an automatic fact like `:via` set during
 recursion. Each key holds a _set_ of values, not a single one, so wrappers
 stack: a `sudo ssh host rm …` recursion accumulates `:via` = `{sudo, ssh}`.
 Patterns test set membership; wildcard matches the non-empty set.
+
+### Entry environment
+
+The **entry environment** is the set of environment-variable _names_ exported
+into the process at the start of an invocation. The env-write floor consults it
+to decide whether a write **reaches a child**: a bare reassignment
+(`PATH=/evil`) of a name already in the entry environment re-crosses to children
+(bash preserves the export attribute), so it floors; a bare assignment of a name
+_not_ in the entry environment is shell-local and does not.
+
+It is _not_ a fact. A fact is asserted policy context you query with
+`(fact? …)`; the entry environment is observed ground truth the floor reads
+structurally, and it is **not** reachable through `(fact? …)`. It carries
+**names only** — never values — so presence is the only observable, and a trace
+can explain `PATH=/evil → :ask` without exposing environment contents.
+
+Its source depends on the invocation mode: `may-i hook` captures the live
+process environment; `may-i eval` defaults to empty and accepts `--env NAME`
+(repeatable) plus `--inherit-env`; `may-i check` is hermetic — it never reads
+the host environment and a case declares names with `(with-env [NAME …] …)`.
 
 ### Pattern
 

@@ -158,6 +158,16 @@ what runs and they live in trust-scoped `(env …)` capabilities); the
   *Accepted limitation:* `allexport` pre-activated via `SHELLOPTS` in the entry
   environment is not detected — the names-only snapshot cannot read the value;
   the analysis assumes `allexport` starts off.
+- **In-string export attribute.** → Beyond the entry environment, a name given
+  the export attribute *within* the command string — `export NAME` / `declare -x
+  NAME` (attribute-only) or `export NAME=v` — makes a later bare reassignment of
+  `NAME` a reaching write. This is tracked as a scoped per-name set alongside the
+  `allexport` flag, with the same barrier/ordering rules (`export` inside a
+  subshell does not escape; conditional branches are conservative toward
+  flooring). *Accepted limitation, in the non-flooring direction:* an `allexport`
+  toggle or `export` performed through a **dynamically-named command** (`x=set;
+  $x -a`) or `eval "…"` is not detected — the command name/body is opaque, the
+  same accepted limitation the tool already carries for dynamic command names.
 - **Entry-environment value never leaks.** → Enforced structurally by the
   names-only type; no code path holds a value to leak.
 - **Trust-hash churn for `(env …)` with `(scope …)`.** → New predicate extends

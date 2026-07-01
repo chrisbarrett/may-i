@@ -95,6 +95,16 @@ enum Command {
         /// Add a runtime fact as :key or :key=value
         #[arg(long = "fact", value_name = "FACT")]
         facts: Vec<String>,
+        /// Add NAME to a hypothetical entry environment (repeatable). The
+        /// entry environment is the names-only snapshot of the exported
+        /// environment the write-floor consults; it defaults to empty.
+        #[arg(long = "env", value_name = "NAME")]
+        env: Vec<String>,
+        /// Capture this process's exported environment names into the entry
+        /// environment, for reproducing a live hook decision. Combines with
+        /// `--env`.
+        #[arg(long = "inherit-env")]
+        inherit_env: bool,
         command: Option<String>,
     },
     /// Validate config and run all embedded checks
@@ -171,7 +181,12 @@ fn run() -> miette::Result<ExitCode> {
     let audit_ov = audit_overrides(&cli);
 
     match cli.command {
-        Some(Command::Eval { command, facts }) => {
+        Some(Command::Eval {
+            command,
+            facts,
+            env,
+            inherit_env,
+        }) => {
             let piped_stdin = if !std::io::stdin().is_terminal() {
                 use std::io::Read;
                 let mut buf = String::new();
@@ -197,7 +212,7 @@ fn run() -> miette::Result<ExitCode> {
             let mut pipeline =
                 may_i::pipeline::CommandPipeline::load(cli.config.as_deref(), cli.json)?;
             apply_audit_config(&mut pipeline, &audit_ov)?;
-            may_i::cmd_eval::cmd_eval(&mut pipeline, &resolved, &facts)?
+            may_i::cmd_eval::cmd_eval(&mut pipeline, &resolved, &facts, &env, inherit_env)?
         }
         Some(Command::Check { verbose }) => {
             let mut pipeline =

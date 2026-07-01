@@ -220,6 +220,7 @@ fn context_depth_tracking() {
         parser: ctx.parser.clone(),
         parser_bindings: Default::default(),
         config: ctx.config,
+        env_scope: None,
     };
     assert!(deep_ctx.is_depth_exceeded());
 }

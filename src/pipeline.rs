@@ -99,6 +99,9 @@ pub struct CheckOutcomeBody {
     pub passed: usize,
     pub failed: usize,
     pub display_path: String,
+    /// Names of scope-dependent env rules with no `(with-env …)` coverage.
+    /// Rendered as a non-failing `warn` advisory.
+    pub untested_scope_rules: Vec<String>,
 }
 
 pub struct CommandPipeline {
@@ -495,6 +498,7 @@ mod tests {
                     passed: 0,
                     failed: 0,
                     display_path: "/tmp/cfg.lisp".into(),
+                    untested_scope_rules: vec![],
                 })
             })
             .expect("run check");

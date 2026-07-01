@@ -1,6 +1,6 @@
 // Eval subcommand — evaluate a command and print result with trace.
 
-use may_i_core::Decision;
+use may_i_core::{Decision, EntryEnv};
 use may_i_engine as engine;
 use may_i_output::{Style, Styled};
 use may_i_shell_parser as parser;
@@ -14,12 +14,15 @@ pub fn cmd_eval(
     pipeline: &mut CommandPipeline,
     command: &str,
     raw_facts: &[String],
+    env_names: &[String],
+    inherit_env: bool,
 ) -> miette::Result<()> {
     let context_facts = parse_cli_facts(raw_facts)?;
+    let entry_env = build_entry_env(env_names, inherit_env);
 
     pipeline.run_eval(command, |ctx| {
         let (result, mut traces, colored_command, audit_rules) =
-            evaluate_with_colorization(command, ctx.loaded, &context_facts)?;
+            evaluate_with_colorization(command, ctx.loaded, &context_facts, &entry_env)?;
         if !result.parse_diagnostics.is_empty() {
             traces.push(TraceEntry::ParseDiagnostics {
                 diagnostics: result.parse_diagnostics.clone(),
@@ -49,6 +52,7 @@ pub fn evaluate_with_colorization(
     command: &str,
     loaded: &may_i_config::LoadResult,
     context: &may_i_core::ContextFacts,
+    entry_env: &EntryEnv,
 ) -> miette::Result<(engine::EvalResult, Vec<TraceEntry>, Styled, Vec<String>)> {
     // Eval needs both the Trace it renders and the audit capture: compose the
     // two folds over one traversal. Projection runs through the TracingFold
@@ -57,9 +61,14 @@ pub fn evaluate_with_colorization(
         TracingFold::from_load_result(loaded),
         engine::AuditFold::new(),
     );
-    let result =
-        engine::eval::evaluate_command_with_fold(command, &loaded.config, context, &mut fold)
-            .map_err(|e| miette::miette!("{}", may_i_core::SafeText::new(e.to_string())))?;
+    let result = engine::eval::evaluate_command_with_fold_env(
+        command,
+        &loaded.config,
+        context,
+        entry_env,
+        &mut fold,
+    )
+    .map_err(|e| miette::miette!("{}", may_i_core::SafeText::new(e.to_string())))?;
 
     let segments = parser::segment(command);
     let colored_command = if segments.is_empty() {
@@ -71,6 +80,23 @@ pub fn evaluate_with_colorization(
     let (tracing, audit) = fold.into_parts();
     let audit_rules = audit.into_deciding_hashes(result.decision);
     Ok((result, tracing.traces, colored_command, audit_rules))
+}
+
+/// Build the entry environment for `eval`. Defaults to empty; `--inherit-env`
+/// seeds it with the names exported into this process, and each `--env NAME`
+/// adds a hypothetical name. The two combine — `--inherit-env` with `--env`
+/// adds names to the inherited set. Only names are captured, never values.
+fn build_entry_env(env_names: &[String], inherit_env: bool) -> EntryEnv {
+    let mut entry = EntryEnv::empty();
+    if inherit_env {
+        for (name, _value) in std::env::vars() {
+            entry.insert(name);
+        }
+    }
+    for name in env_names {
+        entry.insert(name.clone());
+    }
+    entry
 }
 
 fn echo_style(decision: Decision) -> Style {

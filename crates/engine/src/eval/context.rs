@@ -15,6 +15,22 @@ pub enum PredicateResult {
     NoMatch,
 }
 
+/// The scope of an environment write currently under evaluation — the raw
+/// `(scope …)` value an `(env …)` decision can branch on. A write only ever
+/// produces an evaluation unit when it reaches a child process, so an
+/// `EnvScope` is present exactly when the write is a reaching write.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EnvScope {
+    /// A command prefix (`NAME=VALUE cmd`).
+    Prefix,
+    /// An exported declaration (`export …`, `declare -x …`), or any
+    /// declaration made reaching by an active `set -a`.
+    Export,
+    /// A bare assignment (`NAME=VALUE` as its own command) made reaching by the
+    /// entry environment or an active `set -a`.
+    Bare,
+}
+
 /// Context for evaluation.
 #[derive(Clone)]
 pub struct EvalContext<'a> {
@@ -51,6 +67,11 @@ pub struct EvalContext<'a> {
     /// Full config — needed by `(may-i …)` recursion to resolve the
     /// inner command's parser.
     pub config: Option<&'a Config>,
+    /// The scope of the environment write currently being evaluated, for the
+    /// `(scope …)` predicate inside an `(env …)` decision. `None` outside an
+    /// env-write evaluation (e.g. a rule body), so `(scope …)` never matches
+    /// there.
+    pub(crate) env_scope: Option<EnvScope>,
 }
 
 impl<'a> EvalContext<'a> {
@@ -76,6 +97,7 @@ impl<'a> EvalContext<'a> {
             parser_bindings: Bindings::new(),
             unresolved: Default::default(),
             config: None,
+            env_scope: None,
         }
     }
 
@@ -107,6 +129,7 @@ impl<'a> EvalContext<'a> {
             parser_bindings,
             unresolved: Default::default(),
             config: Some(config),
+            env_scope: None,
         }
     }
 

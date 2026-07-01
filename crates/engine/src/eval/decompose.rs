@@ -1,9 +1,12 @@
+use may_i_core::EntryEnv;
 use may_i_shell_parser::{
-    Command, ConstLookup, ConstValue, NameListing, ParameterOperator, ParseDiagnostic, Redirection,
-    RedirectionKind, RedirectionTarget, SimpleCommand, Subscript, SubstitutionForm, Word, WordPart,
-    constant_env, defined_function_names, enumerable_for_values,
+    AssignmentScope, Command, ConstLookup, ConstValue, NameListing, ParameterOperator,
+    ParseDiagnostic, Redirection, RedirectionKind, RedirectionTarget, SimpleCommand, Subscript,
+    SubstitutionForm, Word, WordPart, constant_env, defined_function_names, enumerable_for_values,
 };
 use std::collections::{HashMap, HashSet};
+
+use super::context::EnvScope;
 
 /// Maximum number of evaluation units an enumerable-`for` unroll may add before
 /// the loop falls back to its unresolved (flagged) walk. Nested enumerable loops
@@ -98,12 +101,22 @@ pub(crate) enum EvalUnit {
     /// `No rule for command …` reason. Embedded substitutions in the call's
     /// arguments are still extracted as their own `EmbeddedCommand` units.
     LocalFunctionCall { name: String, span: Span },
-    /// A `NAME=VALUE` environment-assignment prefix. Floors the decision
-    /// to at least `:ask` unless `NAME` is in the effective safe-env-vars
-    /// set — a prefix such as `LD_PRELOAD=…` changes what executes, so
-    /// evaluating the command as if unprefixed authorises a materially
-    /// different command.
-    EnvPrefix { name: String, span: Span },
+    /// An environment write that **reaches a child process** — a command
+    /// prefix (`NAME=VALUE cmd`), an exported declaration (`export …`,
+    /// `declare -x …`), a bare reassignment of an entry-environment name, or
+    /// any assignment under an active `set -a`. Floors the decision to at least
+    /// `:ask` unless `NAME` is in the effective safe-env-vars set or an
+    /// `(env NAME …)` capability lifts it — such a write changes what executes
+    /// in the child. A purely shell-local write produces no unit. `scope` is the
+    /// raw `(scope …)` value; `reaches_via_entry_env` is true when a bare write
+    /// reaches solely because its name is present in the entry environment (for
+    /// trace attribution).
+    EnvWrite {
+        name: String,
+        scope: EnvScope,
+        reaches_via_entry_env: bool,
+        span: Span,
+    },
     /// A **write** redirection to a non-standard file target (`> path`,
     /// `>> path`, …). Not silently ignored: floors the decision to at
     /// least `:ask` unless a redirect-write capability lifts the floor,
@@ -135,7 +148,7 @@ impl EvalUnit {
             | EvalUnit::EmbeddedCommand { span, .. }
             | EvalUnit::DynamicCommand { span, .. }
             | EvalUnit::LocalFunctionCall { span, .. }
-            | EvalUnit::EnvPrefix { span, .. }
+            | EvalUnit::EnvWrite { span, .. }
             | EvalUnit::RedirectTarget { span, .. }
             | EvalUnit::EnvRead { span, .. } => *span,
         }
@@ -157,8 +170,16 @@ pub(crate) fn decompose(
     diagnostics: &[ParseDiagnostic],
     tainted_env: &HashSet<String>,
     inherited_fns: &HashSet<String>,
+    entry_env: &EntryEnv,
 ) -> Vec<EvalUnit> {
     let mut units = Vec::new();
+
+    // The reaching-write state (allexport + export-attribute names) active at
+    // each simple-command / bare-assignment span, so an otherwise shell-local
+    // write there is treated as reaching. Computed conservatively toward
+    // flooring (see `collect_export_state`).
+    let mut export_state = HashMap::new();
+    collect_export_state(cmd, &mut ExportState::default(), &mut export_state);
 
     // Variables the command provably assigns a constant value. Used to resolve
     // a variable command name (`$BIN`) to its literal before declaring it
@@ -191,6 +212,8 @@ pub(crate) fn decompose(
         &const_env,
         &internal_call_spans,
         tainted_env,
+        entry_env,
+        &export_state,
         UNROLL_UNIT_BUDGET,
         &mut units,
     );
@@ -308,6 +331,8 @@ fn collect_simple_command_units(
     env: &HashMap<String, ConstValue>,
     internal_call_spans: &HashSet<Span>,
     tainted_env: &HashSet<String>,
+    entry_env: &EntryEnv,
+    export_state: &HashMap<Span, ExportState>,
     budget: usize,
     units: &mut Vec<EvalUnit>,
 ) {
@@ -324,8 +349,29 @@ fn collect_simple_command_units(
                 env,
                 internal_call_spans,
                 tainted_env,
+                entry_env,
+                export_state,
                 units,
             );
+        }
+        // A bare assignment (`PATH=/evil:$PATH`) as its own command. Its value
+        // substitutions are owned by `push_embedded_units_from_structural_words`
+        // (pass 3); pass 1 only emits the env-write floor when the write reaches
+        // a child. The assignment carries its own span — `Command::Assignment`
+        // has no `SimpleCommand` span to borrow.
+        Command::Assignment(a) => {
+            let span = (a.span.start, a.span.end);
+            let default_state = ExportState::default();
+            let state = export_state.get(&span).unwrap_or(&default_state);
+            if let Some((scope, via_entry)) = classify_env_write(a.scope, &a.name, entry_env, state)
+            {
+                units.push(EvalUnit::EnvWrite {
+                    name: a.name.clone(),
+                    scope,
+                    reaches_via_entry_env: via_entry,
+                    span,
+                });
+            }
         }
         Command::For { var, words, body }
             if let Some(values) = unroll_values(var, words, body, env, budget) =>
@@ -343,6 +389,8 @@ fn collect_simple_command_units(
                     &seeded,
                     internal_call_spans,
                     tainted_env,
+                    entry_env,
+                    export_state,
                     per_iter,
                     units,
                 );
@@ -357,12 +405,273 @@ fn collect_simple_command_units(
                     env,
                     internal_call_spans,
                     tainted_env,
+                    entry_env,
+                    export_state,
                     budget,
                     units,
                 );
             }
         }
     }
+}
+
+/// The reaching-write state active at a point in execution order: whether
+/// `allexport` (`set -a`) is on, and the set of names given the export
+/// attribute earlier in the command string (via `export NAME`, `export
+/// NAME=v`, `declare -x NAME`, …). Both make an otherwise shell-local *bare*
+/// write reach a child.
+#[derive(Default, Clone)]
+struct ExportState {
+    allexport: bool,
+    exported: HashSet<String>,
+}
+
+/// Classify an assignment's write. Returns the raw `(scope …)` value and
+/// whether it reaches a child *solely* via the entry environment (for trace
+/// attribution), or `None` for a purely shell-local write that produces no
+/// floor unit.
+///
+/// - A command **prefix** always reaches (exported to that one child).
+/// - An **exported declaration** (`export`/`-x`) always reaches.
+/// - A **shell-local declaration** reaches only under an active `set -a`.
+/// - A **bare** assignment reaches when its name is present in the entry
+///   environment, when the name was given the export attribute earlier in the
+///   command string (`export NAME; NAME=v`), or under an active `set -a`. In
+///   all three cases bash preserves the export attribute, so the new value
+///   re-crosses to children.
+fn classify_env_write(
+    scope: AssignmentScope,
+    name: &str,
+    entry_env: &EntryEnv,
+    state: &ExportState,
+) -> Option<(EnvScope, bool)> {
+    match scope {
+        AssignmentScope::Prefix => Some((EnvScope::Prefix, false)),
+        AssignmentScope::Declaration { exported: true } => Some((EnvScope::Export, false)),
+        AssignmentScope::Declaration { exported: false } => {
+            state.allexport.then_some((EnvScope::Export, false))
+        }
+        AssignmentScope::Bare => {
+            if entry_env.contains(name) {
+                // The entry-environment presence is what makes it reach — flag
+                // it for trace attribution.
+                Some((EnvScope::Bare, true))
+            } else if state.exported.contains(name) || state.allexport {
+                Some((EnvScope::Bare, false))
+            } else {
+                None
+            }
+        }
+    }
+}
+
+/// Record, at each simple-command / bare-assignment span, the [`ExportState`]
+/// active when it executes, returning the state *after* `cmd` runs (for
+/// sequencing). `allexport` and the export-attribute set are shell state, so a
+/// child execution scope — a subshell, a pipeline component, or a background
+/// command — inherits a copy whose changes do not escape; a brace group runs in
+/// the current shell and is not a barrier. Conservative toward flooring: state
+/// established only conditionally (an `if`/loop/`case` branch, the right of
+/// `&&`/`||`) is treated as active for everything after it, accepting false
+/// positives to avoid a false negative.
+///
+/// Accepted limitations, all conservative in the *non*-flooring direction and
+/// documented in the change design: `allexport` pre-activated via `SHELLOPTS`
+/// in the entry environment is not detected (the names-only snapshot cannot
+/// read it); an `allexport` toggle or an `export` performed through a
+/// dynamically-named command (`x=set; $x -a`) or `eval` is not detected (the
+/// command name is opaque, as elsewhere in the tool).
+fn collect_export_state(
+    cmd: &Command,
+    state: &mut ExportState,
+    out: &mut HashMap<Span, ExportState>,
+) {
+    match cmd {
+        Command::Simple(sc) => {
+            out.insert((sc.span.start, sc.span.end), state.clone());
+            // A command's own exports affect *later* writes, so mutate after
+            // recording this command's pre-state.
+            if let Some(next) = set_allexport_toggle(sc) {
+                state.allexport = next;
+            }
+            collect_exported_names(sc, &mut state.exported);
+        }
+        Command::Assignment(a) => {
+            out.insert((a.span.start, a.span.end), state.clone());
+        }
+        Command::Sequence(cmds) => {
+            for c in cmds {
+                collect_export_state(c, state, out);
+            }
+        }
+        // The right operand is conditional; threading the left's result is
+        // conservative — a `set -a`/`export` on either side stays active after.
+        Command::And(a, b) | Command::Or(a, b) => {
+            collect_export_state(a, state, out);
+            collect_export_state(b, state, out);
+        }
+        // Barriers: shell-option / attribute changes inside a subshell or
+        // background command do not escape. Analyse with a copy and discard it.
+        Command::Subshell(c) | Command::Background(c) => {
+            collect_export_state(c, &mut state.clone(), out);
+        }
+        // Each pipeline component runs in its own subshell (a barrier).
+        Command::Pipeline(cmds) => {
+            for c in cmds {
+                collect_export_state(c, &mut state.clone(), out);
+            }
+        }
+        // A brace group runs in the current shell — not a barrier.
+        Command::BraceGroup(c) => collect_export_state(c, state, out),
+        Command::Redirected { command, .. } => collect_export_state(command, state, out),
+        Command::If {
+            condition,
+            then_branch,
+            elif_branches,
+            else_branch,
+        } => {
+            collect_export_state(condition, state, out);
+            // Each branch runs in the current shell but only conditionally;
+            // merge every branch's effect into the post-state (conservative).
+            let mut merged = state.clone();
+            for branch in std::iter::once(then_branch.as_ref())
+                .chain(elif_branches.iter().flat_map(|(c, b)| [c, b]))
+                .chain(else_branch.as_deref())
+            {
+                let mut b = state.clone();
+                collect_export_state(branch, &mut b, out);
+                merge_export_state(&mut merged, &b);
+            }
+            *state = merged;
+        }
+        Command::For { body, .. } => {
+            let mut b = state.clone();
+            collect_export_state(body, &mut b, out);
+            merge_export_state(state, &b);
+        }
+        Command::Loop {
+            condition, body, ..
+        } => {
+            collect_export_state(condition, state, out);
+            let mut b = state.clone();
+            collect_export_state(body, &mut b, out);
+            merge_export_state(state, &b);
+        }
+        Command::Case { arms, .. } => {
+            let mut merged = state.clone();
+            for arm in arms {
+                if let Some(body) = &arm.body {
+                    let mut b = state.clone();
+                    collect_export_state(body, &mut b, out);
+                    merge_export_state(&mut merged, &b);
+                }
+            }
+            *state = merged;
+        }
+        // A function body is not executed at its definition.
+        Command::FunctionDef { .. } => {}
+    }
+}
+
+/// Fold `branch` state into `acc` (union of exported names, OR of allexport).
+fn merge_export_state(acc: &mut ExportState, branch: &ExportState) {
+    acc.allexport |= branch.allexport;
+    acc.exported.extend(branch.exported.iter().cloned());
+}
+
+/// Add every name `sc` gives the export attribute to `out`: the names of its
+/// exported-declaration assignments (`export NAME=v`, `declare -x NAME=v`) and,
+/// for an exporting declaration builtin, its bare attribute-only name arguments
+/// (`export NAME`, `declare -x NAME`).
+fn collect_exported_names(sc: &SimpleCommand, out: &mut HashSet<String>) {
+    for a in &sc.assignments {
+        if matches!(a.scope, AssignmentScope::Declaration { exported: true }) {
+            out.insert(a.name.clone());
+        }
+    }
+    if !command_exports(sc) {
+        return;
+    }
+    for w in sc.words.iter().skip(1) {
+        if let [WordPart::Literal(s)] = &w.parts[..] {
+            // Skip flags and `name=value` (handled as an assignment above);
+            // keep bare identifier arguments — the attribute-only exports.
+            if s.starts_with('-') || s.contains('=') {
+                continue;
+            }
+            if is_shell_name(s) {
+                out.insert(s.clone());
+            }
+        }
+    }
+}
+
+/// Whether the simple command is an *exporting* declaration builtin — `export`
+/// (always), or `declare`/`typeset`/`local`/`readonly` carrying an `-x` flag.
+fn command_exports(sc: &SimpleCommand) -> bool {
+    let Some(WordPart::Literal(name)) = sc.words.first().and_then(|w| w.parts.first()) else {
+        return false;
+    };
+    if name == "export" {
+        return true;
+    }
+    if !matches!(name.as_str(), "declare" | "typeset" | "local" | "readonly") {
+        return false;
+    }
+    sc.words[1..].iter().any(|w| {
+        matches!(&w.parts[..], [WordPart::Literal(s)]
+            if s.starts_with('-') && !s.starts_with("--") && s.contains('x'))
+    })
+}
+
+/// Whether `s` is a valid shell variable name (identifier).
+fn is_shell_name(s: &str) -> bool {
+    let mut chars = s.chars();
+    chars
+        .next()
+        .is_some_and(|c| c == '_' || c.is_ascii_alphabetic())
+        && chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
+}
+
+/// Detect whether a `set` command toggles `allexport`: `set -a` / `set -o
+/// allexport` activate (`Some(true)`); `set +a` / `set +o allexport`
+/// deactivate (`Some(false)`); any other command returns `None` (no change).
+fn set_allexport_toggle(sc: &SimpleCommand) -> Option<bool> {
+    // `command_name()` is crate-private to the parser, so read the literal
+    // first word directly.
+    let is_set = matches!(
+        sc.words.first().and_then(|w| w.parts.first()),
+        Some(WordPart::Literal(name)) if name == "set"
+    );
+    if !is_set {
+        return None;
+    }
+    let args: Vec<String> = sc.words.iter().skip(1).map(Word::to_str).collect();
+    let mut result = None;
+    let mut i = 0;
+    while i < args.len() {
+        let arg = &args[i];
+        // `--` ends option processing (`set -- -a` sets positional params).
+        if arg == "--" {
+            break;
+        }
+        if arg == "-o" || arg == "+o" {
+            if args.get(i + 1).map(String::as_str) == Some("allexport") {
+                result = Some(arg == "-o");
+            }
+            i += 2;
+            continue;
+        }
+        // A short-flag bundle: `-a`, `-ax`, `+a`. The leading sign sets vs
+        // unsets; the `a` letter selects allexport.
+        if (arg.starts_with('-') && !arg.starts_with("--") || arg.starts_with('+'))
+            && arg[1..].contains('a')
+        {
+            result = Some(arg.starts_with('-'));
+        }
+        i += 1;
+    }
+    result
 }
 
 /// Walk the command tree and emit embedded units for the word positions that
@@ -895,6 +1204,7 @@ fn scan_arithmetic_idents(text: &str, out: &mut Vec<String>) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn decompose_simple_command(
     sc: &SimpleCommand,
     _input: &str,
@@ -902,20 +1212,30 @@ fn decompose_simple_command(
     const_env: &HashMap<String, ConstValue>,
     internal_call_spans: &HashSet<Span>,
     tainted_env: &HashSet<String>,
+    entry_env: &EntryEnv,
+    export_state: &HashMap<Span, ExportState>,
     units: &mut Vec<EvalUnit>,
 ) {
     let sc_span = (sc.span.start, sc.span.end);
+    let default_state = ExportState::default();
+    let state = export_state.get(&sc_span).unwrap_or(&default_state);
 
-    // Environment-assignment prefixes gate the decision: each one is its
-    // own unit so a name outside the effective safe-env-vars set floors
-    // the segment. Embedded commands in the assigned values are extracted
-    // regardless. Assignment-only commands (`FOO=bar` with no words) gate
-    // the same way — the assignment changes shell state.
+    // An environment write that reaches a child gates the decision: it is its
+    // own unit so a name outside the effective safe-env-vars set floors the
+    // segment. A purely shell-local write produces no floor unit. Embedded
+    // commands in the assigned values are extracted regardless of the floor
+    // decision (a substitution in a shell-local value still runs).
     for assignment in &sc.assignments {
-        units.push(EvalUnit::EnvPrefix {
-            name: assignment.name.clone(),
-            span: sc_span,
-        });
+        if let Some((scope, via_entry)) =
+            classify_env_write(assignment.scope, &assignment.name, entry_env, state)
+        {
+            units.push(EvalUnit::EnvWrite {
+                name: assignment.name.clone(),
+                scope,
+                reaches_via_entry_env: via_entry,
+                span: sc_span,
+            });
+        }
         for w in assignment.value.words() {
             push_embedded_units_from_word(
                 w,
@@ -1727,6 +2047,7 @@ mod tests {
             &result.diagnostics,
             &HashSet::new(),
             &HashSet::new(),
+            &EntryEnv::empty(),
         )
     }
 
@@ -1739,6 +2060,7 @@ mod tests {
             &result.diagnostics,
             &tainted,
             &HashSet::new(),
+            &EntryEnv::empty(),
         )
     }
 
@@ -2472,7 +2794,7 @@ mod tests {
         assert!(
             units
                 .iter()
-                .any(|u| matches!(u, EvalUnit::EnvPrefix { name, .. } if name == "LD_PRELOAD")),
+                .any(|u| matches!(u, EvalUnit::EnvWrite { name, .. } if name == "LD_PRELOAD")),
             "{units:?}"
         );
     }

@@ -30,15 +30,15 @@ pub use trivia::{Trivia, TriviaAnn, TriviaSource};
 pub use primitives::{Decision, Keyword, ToDoc};
 
 // Re-export context types
-pub use context::ContextFacts;
+pub use context::{ContextFacts, EntryEnv};
 
 // Re-export predicate types
 pub use predicates::{FactPattern, FactQuery};
 
 // Re-export canonical types
 pub use ast::{
-    Config, Define, Effect, EffectResult, MatcherBudget, ParameterDecl, ParameterTreatment, Parser,
-    Predicate, Provenance, PunPolicy, ResolvedParser, Rule, SecurityConfig, Spanned, Style,
-    StyleRegistry, StyleResolveError, StyleSpec,
+    Config, Define, Effect, EffectResult, EnvScopeMatcher, MatcherBudget, ParameterDecl,
+    ParameterTreatment, Parser, Predicate, Provenance, PunPolicy, ResolvedParser, Rule,
+    SecurityConfig, Spanned, Style, StyleRegistry, StyleResolveError, StyleSpec,
 };
 pub use pattern::{ArgPattern, CommandPattern, Expr, ExprBranch, PosTerm, PosTermView, Quantifier};

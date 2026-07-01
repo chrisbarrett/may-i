@@ -161,6 +161,9 @@ fn trace_to_layout(
             TraceEntry::ArityGuess { flag, consumed } => {
                 builder.on_arity_guess(flag, consumed);
             }
+            TraceEntry::EntryEnvContribution { name } => {
+                builder.on_entry_env_contribution(name);
+            }
             TraceEntry::DefaultAsk { .. } => {
                 builder.on_default_ask();
             }
@@ -320,6 +323,18 @@ impl<'a> TraceLayoutBuilder<'a> {
             .with(" ", Style::Plain)
             .with(detail, Style::Emphasis);
         let right = colorize_right("→ guessed value");
+        self.current_rows
+            .push(ColRow::new(label, right).right_aligned());
+        self.first = false;
+    }
+
+    fn on_entry_env_contribution(&mut self, name: &str) {
+        // Names-only: render the name and its presence, never a value.
+        let label = Styled::span("entry environment:", Style::Dimmed)
+            .with(" ", Style::Plain)
+            .with(name, Style::Emphasis)
+            .with(" present", Style::Dimmed);
+        let right = colorize_right("→ reaches a child");
         self.current_rows
             .push(ColRow::new(label, right).right_aligned());
         self.first = false;

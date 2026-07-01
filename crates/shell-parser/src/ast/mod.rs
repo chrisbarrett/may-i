@@ -102,10 +102,56 @@ impl std::fmt::Debug for SimpleCommand {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Clone, PartialEq, Serialize)]
 pub struct Assignment {
     pub name: String,
     pub value: AssignmentValue,
+    /// How the assignment binds — the syntactic part of whether the write can
+    /// reach a child process. The dynamic part (a bare reassignment of an
+    /// already-exported name, or `set -a`) is resolved later against the entry
+    /// environment and the `set -a` state; the parser records only what the
+    /// syntax fixes. Excluded from `Serialize` so `may-i parse` output and AST
+    /// snapshots are unaffected.
+    #[serde(skip)]
+    pub scope: AssignmentScope,
+    /// Byte range covering this assignment in the original input. Used to floor
+    /// the enclosing segment for a bare `Command::Assignment`, which has no
+    /// `SimpleCommand` span to borrow. Empty span `(0, 0)` when constructed
+    /// without a source. Excluded from `Debug`/`Serialize` so snapshots stay
+    /// stable, mirroring [`SimpleCommand`].
+    #[serde(skip)]
+    pub span: Span,
+}
+
+// Hand-rolled to keep `span` out of Debug output so AST snapshots stay stable,
+// mirroring `SimpleCommand`.
+impl std::fmt::Debug for Assignment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Assignment")
+            .field("name", &self.name)
+            .field("value", &self.value)
+            .field("scope", &self.scope)
+            .finish()
+    }
+}
+
+/// The syntactic scope of an assignment — what the parser can determine about
+/// whether the write reaches a child process, independent of runtime state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum AssignmentScope {
+    /// A command prefix (`NAME=VALUE cmd`) — exported to that one child.
+    Prefix,
+    /// A declaration-builtin argument (`export`/`declare`/`typeset`/`local`/
+    /// `readonly`). `exported` is true for `export …` or an `-x` flag (the
+    /// write reaches a child); false for a plain `declare`/`local`/`readonly`
+    /// (shell-local).
+    Declaration { exported: bool },
+    /// A bare `NAME=VALUE` as its own command (no command word). Whether it
+    /// reaches a child depends on the entry environment (re-export of an
+    /// already-exported name) or an active `set -a`. The default.
+    #[default]
+    Bare,
 }
 
 /// The right-hand side of an assignment: a scalar word (`x=foo`) or an array

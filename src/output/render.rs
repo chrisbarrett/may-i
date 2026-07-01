@@ -143,6 +143,7 @@ fn render_check_text(stdout: &mut impl Write, terminal: &Terminal, body: &CheckO
         config_path,
         results: &views,
         verbose: body.verbose,
+        untested_scope_rules: &body.untested_scope_rules,
     };
     builder.render(stdout, terminal);
 }
@@ -206,6 +207,7 @@ mod tests {
             passed: 1,
             failed: 0,
             display_path: "/tmp/cfg.lisp".into(),
+            untested_scope_rules: vec![],
         }
     }
 

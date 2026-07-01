@@ -27,6 +27,7 @@ proptest! {
                 command: cmd_name,
                 expected: Decision::Allow,
                 context: ContextFacts::default(),
+                entry_env: may_i_core::EntryEnv::empty(),
                 span: dummy_span(),
             }],
             ..Config::default()
@@ -56,6 +57,7 @@ proptest! {
                 command: cmd_name,
                 expected: Decision::Allow, // Expect Allow but get Deny
                 context: ContextFacts::default(),
+                entry_env: may_i_core::EntryEnv::empty(),
                 span: dummy_span(),
             }],
             ..Config::default()
@@ -78,6 +80,7 @@ proptest! {
                 command: cmd_name,
                 expected: Decision::Ask,
                 context: ContextFacts::default(),
+                entry_env: may_i_core::EntryEnv::empty(),
                 span: dummy_span(),
             }],
             ..Config::default()
@@ -113,6 +116,7 @@ proptest! {
                 command: cmd_name,
                 expected: decision,
                 context: ContextFacts::default(),
+                entry_env: may_i_core::EntryEnv::empty(),
                 span: dummy_span(),
             }],
             ..Config::default()
@@ -142,6 +146,7 @@ proptest! {
                 command: cmd_name,
                 expected: Decision::Deny,
                 context: ContextFacts::default(),
+                entry_env: may_i_core::EntryEnv::empty(),
                 span: dummy_span(),
             }],
             ..Config::default()

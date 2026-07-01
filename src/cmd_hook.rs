@@ -6,7 +6,7 @@
 
 use std::io::Read;
 
-use may_i_core::{ContextFacts, Keyword};
+use may_i_core::{ContextFacts, EntryEnv, Keyword};
 use may_i_engine as engine;
 use miette::Context;
 
@@ -14,6 +14,13 @@ use may_i::audit::AuditTap;
 use may_i::pipeline::{CommandPipeline, HarnessProfile, HookOutcomeBody};
 
 pub(crate) fn cmd_hook(pipeline: &mut CommandPipeline) -> miette::Result<()> {
+    // Capture the entry environment as the very first action — the names-only
+    // snapshot of the exported environment — before any internal mutation.
+    // The git-environment scrubbing (`io.rs`) only edits spawned child
+    // `Command`s, never this process's `std::env`, so a name exported at entry
+    // (e.g. `GIT_DIR`) survives in this snapshot.
+    let entry_env = EntryEnv::from_names(std::env::vars().map(|(name, _value)| name));
+
     let mut input = String::new();
     std::io::stdin()
         .take(65536)
@@ -38,9 +45,10 @@ pub(crate) fn cmd_hook(pipeline: &mut CommandPipeline) -> miette::Result<()> {
     pipeline.run_hook(&command, profile, |ctx| {
         // Hook runs `AuditFold` alone — no trace-tree cost on the hot path.
         let mut fold = engine::AuditFold::new();
-        let result =
-            engine::eval::evaluate_command_with_fold(&command, ctx.config, &context, &mut fold)
-                .map_err(|e| miette::miette!("{}", may_i_core::SafeText::new(e.to_string())))?;
+        let result = engine::eval::evaluate_command_with_fold_env(
+            &command, ctx.config, &context, &entry_env, &mut fold,
+        )
+        .map_err(|e| miette::miette!("{}", may_i_core::SafeText::new(e.to_string())))?;
         let audit_rules = fold.into_deciding_hashes(result.decision);
         let audit = AuditTap::from_eval(&result, &command, audit_rules, cwd.clone());
         Ok(HookOutcomeBody { result, audit })

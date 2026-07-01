@@ -228,3 +228,88 @@ fn deeply_nested_substitution_depth_limit() {
         "deeply nested substitution should hit depth limit and return :ask"
     );
 }
+
+// ── harden-env-write-scope: entry environment via eval flags ────────
+
+#[test]
+fn eval_env_flag_makes_bare_reassignment_reach_and_traces_it() {
+    let cfg = write_config(r#"(rule "ls" (allow))"#);
+    let output = may_i(&cfg)
+        .args(["--json", "eval", "--env", "PATH", "PATH=/evil:$PATH; ls"])
+        .output()
+        .expect("run");
+    let resp = parse_json(&output);
+    assert_eq!(resp["decision"], "ask", "{resp}");
+    let traces = resp["trace"].as_array().expect("trace array");
+    let contribution = traces
+        .iter()
+        .find(|t| t["type"] == "entry_env_contribution")
+        .expect("entry-env contribution in trace");
+    assert_eq!(contribution["name"], "PATH");
+    // Names-only: the contribution carries presence, never a value.
+    assert!(contribution.get("value").is_none(), "{contribution}");
+}
+
+#[test]
+fn eval_without_env_flag_treats_name_absent() {
+    let cfg = write_config(r#"(rule "ls" (allow))"#);
+    let output = may_i(&cfg)
+        .args(["--json", "eval", "PATH=/evil:$PATH; ls"])
+        .output()
+        .expect("run");
+    let resp = parse_json(&output);
+    assert_eq!(resp["decision"], "allow", "{resp}");
+}
+
+#[test]
+fn eval_shell_local_write_has_no_entry_env_annotation() {
+    let cfg = write_config(r#"(rule "ls" (allow))"#);
+    let output = may_i(&cfg)
+        .args(["--json", "eval", "MY_TMP=/x; ls"])
+        .output()
+        .expect("run");
+    let resp = parse_json(&output);
+    assert_eq!(resp["decision"], "allow", "{resp}");
+    let traces = resp["trace"].as_array().expect("trace array");
+    assert!(
+        !traces.iter().any(|t| t["type"] == "entry_env_contribution"),
+        "shell-local write must not attribute an entry-env contribution: {resp}"
+    );
+}
+
+#[test]
+fn eval_inherit_env_captures_process_names() {
+    let cfg = write_config(r#"(rule "ls" (allow))"#);
+    let output = may_i(&cfg)
+        .env("MAYI_TEST_INHERIT", "1")
+        .args(["--json", "eval", "--inherit-env", "MAYI_TEST_INHERIT=x; ls"])
+        .output()
+        .expect("run");
+    let resp = parse_json(&output);
+    assert_eq!(
+        resp["decision"], "ask",
+        "inherited name should reach: {resp}"
+    );
+}
+
+#[test]
+fn eval_inherit_env_combines_with_env_flag() {
+    let cfg = write_config(r#"(rule "ls" (allow))"#);
+    let output = may_i(&cfg)
+        .env("MAYI_TEST_INHERIT", "1")
+        .args([
+            "--json",
+            "eval",
+            "--inherit-env",
+            "--env",
+            "EXTRA",
+            "EXTRA=x; ls",
+        ])
+        .output()
+        .expect("run");
+    let resp = parse_json(&output);
+    assert_eq!(
+        resp["decision"], "ask",
+        "--env name should reach alongside --inherit-env: {resp}"
+    );
+}

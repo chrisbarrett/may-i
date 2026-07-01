@@ -1,5 +1,5 @@
 ---
-source: tests/parser_snapshots.rs
+source: crates/shell-parser/tests/parser_snapshots.rs
 expression: "parse(\"FOO=bar\")"
 ---
 Assignment(
@@ -14,5 +14,6 @@ Assignment(
                 ],
             },
         ),
+        scope: Bare,
     },
 )
