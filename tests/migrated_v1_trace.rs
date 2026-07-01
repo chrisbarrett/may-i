@@ -60,9 +60,14 @@ fn parse_facts(raw_facts: &[String]) -> may_i_core::ContextFacts {
 fn render_output(command: &str, facts: &[String], color: bool) -> Vec<u8> {
     let context = parse_facts(facts);
     let config = load_config();
-    let (result, traces, colored_command, _audit) =
-        evaluate_with_colorization(command, &config, &context, &may_i_core::EntryEnv::empty())
-            .unwrap();
+    let (result, traces, colored_command, _audit) = evaluate_with_colorization(
+        command,
+        &config,
+        &context,
+        &may_i_core::EntryEnv::empty(),
+        may_i_shell_parser::Dialect::Bash,
+    )
+    .unwrap();
     let config_path = fixture_dir().join("config.lisp");
 
     let trust = InvocationTrust::with_loader(false, Box::new(|| None));

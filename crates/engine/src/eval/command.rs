@@ -196,7 +196,14 @@ pub fn evaluate_command_with_fold<F: EvalFold>(
     facts: &ContextFacts,
     fold: &mut F,
 ) -> Result<EvalResult, EvalError> {
-    evaluate_command_with_fold_env(input, config, facts, &EntryEnv::empty(), fold)
+    evaluate_command_with_fold_env(
+        input,
+        config,
+        facts,
+        &EntryEnv::empty(),
+        parser::Dialect::Bash,
+        fold,
+    )
 }
 
 /// Evaluate a command string with a custom fold and an explicit entry
@@ -208,6 +215,7 @@ pub fn evaluate_command_with_fold_env<F: EvalFold>(
     config: &Config,
     facts: &ContextFacts,
     entry_env: &EntryEnv,
+    dialect: parser::Dialect,
     fold: &mut F,
 ) -> Result<EvalResult, EvalError> {
     // The top-level entry discards the origin-annotation flag; only the
@@ -217,6 +225,7 @@ pub fn evaluate_command_with_fold_env<F: EvalFold>(
         config,
         facts,
         entry_env,
+        dialect,
         fold,
         0,
         None,
@@ -252,6 +261,7 @@ fn eval_units<F: EvalFold>(
     config: &Config,
     facts: &ContextFacts,
     entry_env: &EntryEnv,
+    dialect: parser::Dialect,
     fold: &mut F,
     depth: usize,
     via: Option<&str>,
@@ -290,7 +300,7 @@ fn eval_units<F: EvalFold>(
         None => facts.clone(),
     };
 
-    let parse_result = parser::parse(input);
+    let parse_result = parser::parse_with_dialect(input, dialect);
     let diagnostics = parse_result.diagnostics.clone();
     let has_parse_errors = parse_result.has_errors();
     let tainted_env = config.security.env_capability_names();
@@ -347,6 +357,7 @@ fn eval_units<F: EvalFold>(
                 arg_expansions,
                 config,
                 &effective_facts,
+                dialect,
                 fold,
                 depth,
             )?,
@@ -362,6 +373,7 @@ fn eval_units<F: EvalFold>(
                     config,
                     &effective_facts,
                     entry_env,
+                    dialect,
                     fold,
                     depth + 1,
                     None,
@@ -624,6 +636,7 @@ pub(crate) fn evaluate_authorised_string<F: EvalFold>(
     fold: &mut F,
     depth: usize,
     via_program: Option<&str>,
+    dialect: parser::Dialect,
 ) -> Result<EvalResult, EvalError> {
     let default_config = Config::default();
     let effective_config = config.unwrap_or(&default_config);
@@ -642,6 +655,7 @@ pub(crate) fn evaluate_authorised_string<F: EvalFold>(
         effective_config,
         facts,
         &EntryEnv::empty(),
+        dialect,
         fold,
         depth,
         via_program,
@@ -680,6 +694,7 @@ pub(crate) fn evaluate_authorised_string<F: EvalFold>(
 ///   the inner parser as a single argument; the inner program's own
 ///   parser handles any further structure (e.g. bash's
 ///   `(parameter "c" #cmd)`).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn evaluate_authorised_tokens<F: EvalFold>(
     tokens: &[String],
     expansions: &[super::decompose::Expansion],
@@ -688,6 +703,7 @@ pub(crate) fn evaluate_authorised_tokens<F: EvalFold>(
     fold: &mut F,
     depth: usize,
     via_program: Option<&str>,
+    dialect: parser::Dialect,
 ) -> Result<EvalResult, EvalError> {
     debug_assert_eq!(tokens.len(), expansions.len());
     if depth >= DEFAULT_RECURSION_LIMIT {
@@ -713,8 +729,15 @@ pub(crate) fn evaluate_authorised_tokens<F: EvalFold>(
         // unless the token is expansion-bearing, in which case its
         // flattened text is unfaithful to what will run and cannot
         // prove an allow.
-        let result =
-            evaluate_authorised_string(&tokens[0], config, facts, fold, depth, via_program)?;
+        let result = evaluate_authorised_string(
+            &tokens[0],
+            config,
+            facts,
+            fold,
+            depth,
+            via_program,
+            dialect,
+        )?;
         return Ok(match &expansions[0] {
             Some(display) if result.decision == Decision::Allow => EvalResult::new(
                 Decision::Ask,
@@ -762,6 +785,7 @@ pub(crate) fn evaluate_authorised_tokens<F: EvalFold>(
         &expansions[1..],
         effective_config,
         &effective_facts,
+        dialect,
         fold,
         depth,
     )
@@ -1804,6 +1828,7 @@ mod tests {
             &mut fold,
             1,
             Some("bash"),
+            may_i_shell_parser::Dialect::Bash,
         )
         .unwrap();
         assert_eq!(result.decision, Decision::Ask);
@@ -2003,6 +2028,7 @@ mod tests {
             &mut fold,
             DEFAULT_RECURSION_LIMIT,
             Some("bash"),
+            may_i_shell_parser::Dialect::Bash,
         )
         .unwrap();
         assert_eq!(result.decision, Decision::Ask);
@@ -2043,6 +2069,7 @@ mod tests {
             &mut fold,
             1,
             Some("bash"),
+            may_i_shell_parser::Dialect::Bash,
         )
         .unwrap();
         // Both inner echo units see :via "bash" — both deny — aggregate denies.
@@ -2438,6 +2465,7 @@ mod tests {
                 &mut fold,
                 1,
                 None,
+                may_i_shell_parser::Dialect::Bash,
             )
             .unwrap();
             prop_assert_eq!(top.decision, auth.decision);
@@ -2467,6 +2495,7 @@ mod tests {
                 &mut fold_s,
                 1,
                 Some("wrapper"),
+                may_i_shell_parser::Dialect::Bash,
             )
             .unwrap();
             let from_tokens = evaluate_authorised_tokens(
@@ -2477,6 +2506,7 @@ mod tests {
                 &mut fold_t,
                 1,
                 Some("wrapper"),
+                may_i_shell_parser::Dialect::Bash,
             )
             .unwrap();
             prop_assert_eq!(from_string.decision, from_tokens.decision);

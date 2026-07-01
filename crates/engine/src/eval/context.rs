@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use may_i_core::ContextFacts;
 use may_i_core::ast::{Config, Define, Predicate, ResolvedParser};
+use may_i_shell_parser::Dialect;
 
 use super::bindings::Bindings;
 
@@ -72,6 +73,12 @@ pub struct EvalContext<'a> {
     /// env-write evaluation (e.g. a rule body), so `(scope …)` never matches
     /// there.
     pub(crate) env_scope: Option<EnvScope>,
+    /// The shell dialect the command line was parsed under, so recursive
+    /// re-parses of embedded/captured command sources inherit it. Observed
+    /// ground truth (from the executing shell), never a Fact. Defaults to
+    /// [`Dialect::Bash`]; set by `evaluate_at_depth` from the resolved
+    /// invocation dialect.
+    pub(crate) dialect: Dialect,
 }
 
 impl<'a> EvalContext<'a> {
@@ -98,6 +105,7 @@ impl<'a> EvalContext<'a> {
             unresolved: Default::default(),
             config: None,
             env_scope: None,
+            dialect: Dialect::Bash,
         }
     }
 
@@ -130,6 +138,7 @@ impl<'a> EvalContext<'a> {
             unresolved: Default::default(),
             config: Some(config),
             env_scope: None,
+            dialect: Dialect::Bash,
         }
     }
 

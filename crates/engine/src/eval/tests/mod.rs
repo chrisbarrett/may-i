@@ -221,6 +221,7 @@ fn context_depth_tracking() {
         parser_bindings: Default::default(),
         config: ctx.config,
         env_scope: None,
+        dialect: ctx.dialect,
     };
     assert!(deep_ctx.is_depth_exceeded());
 }
@@ -775,6 +776,7 @@ fn named_predicate_missing_returns_unresolved_error() {
 mod array_arguments;
 mod const_arguments;
 mod const_command_names;
+mod dialect;
 mod embedded_word_positions;
 mod expansion;
 mod heredoc;

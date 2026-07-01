@@ -76,6 +76,9 @@ fn run_checks_with_traces(
             &loaded.config,
             &check.context,
             &check.entry_env,
+            // `check` is dialect-hermetic — always Bash, independent of the
+            // ambient `$SHELL`.
+            may_i_shell_parser::Dialect::Bash,
             &mut fold,
         )
         .map_err(|e| miette::miette!("{}", may_i_core::SafeText::new(e.to_string())))?;

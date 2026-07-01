@@ -17,6 +17,31 @@ command requires overall approval to proceed.
 The most restrictive rule in the command determines the overall need for
 approval.
 
+### Shell dialect
+
+The parser judges a command against a **shell dialect**. The default is
+`bash`; a `zsh` dialect is also supported. The dialect only changes which
+constructs parse cleanly — it never changes which rules apply, how rules are
+matched, or how a decision is reached. Recognising a zsh construct can only
+remove a spurious diagnostic; it never widens a decision.
+
+Under the `zsh` dialect two zsh-only constructs that bash rejects are accepted:
+
+- **No-semicolon brace terminators** — `foo() { echo hi }` and `{ echo a }`,
+  where `}` closes the group without a preceding `;` or newline.
+- **Glob qualifiers** — a trailing parenthesised qualifier on a glob word,
+  `ls **/*(.)` or `print -l *(.om[1])`. The qualified glob stays an
+  unresolved, expansion-bearing glob, so it floors an `:allow` exactly as a
+  plain glob does.
+
+The dialect is resolved per invocation from the shell that will run the
+command: in hook mode and `eval` it is derived from the basename of `$SHELL`
+(`zsh` → the zsh dialect, anything else — or an absent `$SHELL` — → bash).
+`may-i check` is always hermetic bash, independent of the ambient shell. The
+executing shell is observed ground truth, not a fact: there is no `:dialect`
+or `:zsh` fact and rules cannot branch on the dialect. Use `eval --dialect` to
+force a dialect when reproducing a decision.
+
 ## The DSL at a glance
 
 Configuration for `may-i` is written in an S-expression language. The entrypoint
@@ -1056,12 +1081,17 @@ may-i eval 'rm -rf /tmp/foo'                    # → :ask "Recursive deletion"
 may-i eval --fact :ci 'systemctl restart nginx'         # set a presence fact
 may-i eval --fact :env=prod 'systemctl restart nginx'   # set a value fact
 may-i eval --json 'sudo rm /etc/passwd'          # JSON output
+may-i eval --dialect zsh 'ls **/*(.)'            # force the zsh dialect
 ```
 
 The default text mode prints a trace of how the decision was reached —
 which rule matched, which patterns fired, how recursion routed through
 wrappers. JSON mode emits a structured record suitable for harness
 integration.
+
+`--dialect <bash|zsh>` forces the shell dialect (see
+[Shell dialect](#shell-dialect)), overriding the value derived from `$SHELL`.
+Without it, `eval` uses the `$SHELL` basename, defaulting to bash.
 
 ### `may-i check`
 

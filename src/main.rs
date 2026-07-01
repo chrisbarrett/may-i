@@ -4,6 +4,7 @@ use std::io::{IsTerminal, Write};
 use std::process::ExitCode;
 
 use clap::{CommandFactory, Parser, Subcommand};
+use may_i_shell_parser::Dialect;
 
 mod cmd_fmt;
 mod cmd_help;
@@ -105,6 +106,11 @@ enum Command {
         /// `--env`.
         #[arg(long = "inherit-env")]
         inherit_env: bool,
+        /// Force the shell dialect (`bash` or `zsh`), overriding the dialect
+        /// derived from `$SHELL`. Reproduces a decision under a chosen
+        /// dialect independent of the ambient shell.
+        #[arg(long = "dialect", value_name = "DIALECT")]
+        dialect: Option<String>,
         command: Option<String>,
     },
     /// Validate config and run all embedded checks
@@ -155,6 +161,50 @@ enum Command {
     },
 }
 
+/// Map an executing shell path to a dialect by its basename: a path whose
+/// final component is `zsh` (`zsh`, `/usr/bin/zsh`, `/opt/homebrew/bin/zsh`)
+/// selects [`Dialect::Zsh`]; every other basename (`bash`, `sh`, `fish`, …)
+/// falls back to [`Dialect::Bash`].
+fn dialect_from_shell_path(path: &str) -> Dialect {
+    let basename = path.rsplit('/').next().unwrap_or(path);
+    if basename == "zsh" {
+        Dialect::Zsh
+    } else {
+        Dialect::Bash
+    }
+}
+
+/// Resolve the invocation dialect. An explicit override (the `eval --dialect`
+/// flag) always wins; otherwise the dialect is derived from the executing
+/// shell's `$SHELL` basename, defaulting to [`Dialect::Bash`] when `$SHELL`
+/// is absent or empty.
+fn resolve_dialect(explicit: Option<Dialect>, shell_env: Option<&str>) -> Dialect {
+    if let Some(dialect) = explicit {
+        return dialect;
+    }
+    match shell_env {
+        Some(shell) if !shell.is_empty() => dialect_from_shell_path(shell),
+        _ => Dialect::Bash,
+    }
+}
+
+/// Parse the `eval --dialect` flag value into a [`Dialect`].
+fn parse_dialect_flag(value: &str) -> miette::Result<Dialect> {
+    match value {
+        "bash" => Ok(Dialect::Bash),
+        "zsh" => Ok(Dialect::Zsh),
+        other => Err(miette::miette!(
+            "invalid --dialect {:?}: expected `bash` or `zsh`",
+            may_i_core::SafeText::new(other.to_string())
+        )),
+    }
+}
+
+/// The executing shell reported by the environment (`$SHELL`), if any.
+fn shell_env() -> Option<String> {
+    std::env::var("SHELL").ok().filter(|s| !s.is_empty())
+}
+
 fn main() -> ExitCode {
     miette::set_hook(Box::new(|_| {
         Box::new(miette::MietteHandlerOpts::new().build())
@@ -186,7 +236,10 @@ fn run() -> miette::Result<ExitCode> {
             facts,
             env,
             inherit_env,
+            dialect,
         }) => {
+            let explicit_dialect = dialect.as_deref().map(parse_dialect_flag).transpose()?;
+            let dialect = resolve_dialect(explicit_dialect, shell_env().as_deref());
             let piped_stdin = if !std::io::stdin().is_terminal() {
                 use std::io::Read;
                 let mut buf = String::new();
@@ -212,7 +265,7 @@ fn run() -> miette::Result<ExitCode> {
             let mut pipeline =
                 may_i::pipeline::CommandPipeline::load(cli.config.as_deref(), cli.json)?;
             apply_audit_config(&mut pipeline, &audit_ov)?;
-            may_i::cmd_eval::cmd_eval(&mut pipeline, &resolved, &facts, &env, inherit_env)?
+            may_i::cmd_eval::cmd_eval(&mut pipeline, &resolved, &facts, &env, inherit_env, dialect)?
         }
         Some(Command::Check { verbose }) => {
             let mut pipeline =
@@ -247,7 +300,10 @@ fn run() -> miette::Result<ExitCode> {
                 let mut pipeline =
                     may_i::pipeline::CommandPipeline::load(cli.config.as_deref(), cli.json)?;
                 apply_audit_config(&mut pipeline, &audit_ov)?;
-                cmd_hook::cmd_hook(&mut pipeline)?;
+                // Hook mode derives the dialect from the executing shell; there
+                // is no override flag on the stdin-driven path.
+                let dialect = resolve_dialect(None, shell_env().as_deref());
+                cmd_hook::cmd_hook(&mut pipeline, dialect)?;
             }
         }
     }
@@ -319,5 +375,57 @@ mod tests {
     fn resolve_empty_stdin_is_error() {
         let result = resolve_eval_command(None, Some("   \n".into()));
         assert!(result.is_err());
+    }
+
+    // ── Dialect resolution ──────────────────────────────────────────
+
+    #[test]
+    fn shell_path_basename_maps_to_dialect() {
+        assert_eq!(dialect_from_shell_path("zsh"), Dialect::Zsh);
+        assert_eq!(dialect_from_shell_path("/usr/bin/zsh"), Dialect::Zsh);
+        assert_eq!(
+            dialect_from_shell_path("/opt/homebrew/bin/zsh"),
+            Dialect::Zsh
+        );
+        assert_eq!(dialect_from_shell_path("bash"), Dialect::Bash);
+        assert_eq!(dialect_from_shell_path("/bin/bash"), Dialect::Bash);
+        assert_eq!(dialect_from_shell_path("/usr/bin/fish"), Dialect::Bash);
+        assert_eq!(dialect_from_shell_path("/bin/sh"), Dialect::Bash);
+        // A path whose basename merely contains `zsh` is not `zsh`.
+        assert_eq!(dialect_from_shell_path("/bin/myzsh"), Dialect::Bash);
+        assert_eq!(dialect_from_shell_path(""), Dialect::Bash);
+    }
+
+    #[test]
+    fn resolve_dialect_uses_shell_when_no_override() {
+        assert_eq!(resolve_dialect(None, Some("/usr/bin/zsh")), Dialect::Zsh);
+        assert_eq!(resolve_dialect(None, Some("/bin/bash")), Dialect::Bash);
+    }
+
+    #[test]
+    fn resolve_dialect_defaults_bash_when_shell_absent_or_empty() {
+        assert_eq!(resolve_dialect(None, None), Dialect::Bash);
+        assert_eq!(resolve_dialect(None, Some("")), Dialect::Bash);
+    }
+
+    #[test]
+    fn resolve_dialect_override_wins_over_shell() {
+        // Explicit override beats the `$SHELL`-derived value in both directions.
+        assert_eq!(
+            resolve_dialect(Some(Dialect::Bash), Some("/usr/bin/zsh")),
+            Dialect::Bash
+        );
+        assert_eq!(
+            resolve_dialect(Some(Dialect::Zsh), Some("/bin/bash")),
+            Dialect::Zsh
+        );
+    }
+
+    #[test]
+    fn parse_dialect_flag_accepts_known_values() {
+        assert_eq!(parse_dialect_flag("bash").unwrap(), Dialect::Bash);
+        assert_eq!(parse_dialect_flag("zsh").unwrap(), Dialect::Zsh);
+        assert!(parse_dialect_flag("fish").is_err());
+        assert!(parse_dialect_flag("").is_err());
     }
 }

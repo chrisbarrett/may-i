@@ -63,9 +63,14 @@ fn load(config_src: &str) -> may_i_config::LoadResult {
 /// at the given colour setting.
 fn render_eval_surface(loaded: &may_i_config::LoadResult, command: &str, color: bool) -> Vec<u8> {
     let ctx = ContextFacts::default();
-    let (result, traces, colored, _audit) =
-        evaluate_with_colorization(command, loaded, &ctx, &may_i_core::EntryEnv::empty())
-            .expect("evaluate");
+    let (result, traces, colored, _audit) = evaluate_with_colorization(
+        command,
+        loaded,
+        &ctx,
+        &may_i_core::EntryEnv::empty(),
+        may_i_shell_parser::Dialect::Bash,
+    )
+    .expect("evaluate");
     let term = Terminal::new(100).with_color(color);
     let mut buf = Vec::new();
     EvalOutput {

@@ -1,6 +1,7 @@
 mod ast;
 mod const_env;
 mod diagnostic;
+mod dialect;
 mod glob;
 mod lexer;
 mod parse;
@@ -17,13 +18,23 @@ mod tests;
 pub use ast::*;
 pub use const_env::{ConstLookup, ConstValue, constant_env, enumerable_for_values};
 pub use diagnostic::*;
+pub use dialect::Dialect;
 use parse::Parser;
 pub use segment::{Segment, segment};
 
-/// Parse a shell command string into an AST with diagnostics.
-/// Returns a partial AST on malformed input (never panics).
+/// Parse a shell command string into an AST with diagnostics under the bash
+/// dialect (the default). Returns a partial AST on malformed input (never
+/// panics). Use [`parse_with_dialect`] to select another dialect.
 pub fn parse(input: &str) -> ParseResult {
-    let mut parser = Parser::new(input);
+    parse_with_dialect(input, Dialect::Bash)
+}
+
+/// Parse a shell command string under an explicit [`Dialect`]. Under
+/// [`Dialect::Bash`] the result is identical to [`parse`]; under
+/// [`Dialect::Zsh`] the enumerated zsh-only constructs are accepted without
+/// their bash diagnostics.
+pub fn parse_with_dialect(input: &str, dialect: Dialect) -> ParseResult {
+    let mut parser = Parser::new_with_dialect(input, dialect);
     let command = parser.parse_complete();
     ParseResult {
         command,

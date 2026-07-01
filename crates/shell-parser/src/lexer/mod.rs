@@ -1,5 +1,6 @@
 use super::ast::*;
 use super::diagnostic::{ParseDiagnostic, ParseDiagnosticKind, Severity, Span};
+use super::dialect::Dialect;
 
 /// Scan the byte region `input[start..end]` (an unquoted heredoc body)
 /// for the expansions bash performs there that embed a command: command
@@ -215,10 +216,20 @@ pub(super) struct Lexer {
     /// function name, and the construct that follows *it* (typically `{`) is
     /// again in command position even though a name is not a separator.
     expect_function_name: bool,
+    /// The shell dialect this lexer tokenises under. Governs zsh-only lexing
+    /// (a glob qualifier's trailing `(…)` folded into the glob word).
+    pub(super) dialect: Dialect,
 }
 
 impl Lexer {
+    /// Bash-dialect convenience constructor for dialect-agnostic callers
+    /// (segmentation, the `$()`-matcher debug hook). Dialect-sensitive
+    /// entry points use [`Self::new_with_dialect`].
     pub(super) fn new(input: &str) -> Self {
+        Self::new_with_dialect(input, Dialect::Bash)
+    }
+
+    pub(super) fn new_with_dialect(input: &str, dialect: Dialect) -> Self {
         Lexer {
             input: input.chars().collect(),
             input_str: input.to_string(),
@@ -227,6 +238,7 @@ impl Lexer {
             diagnostics: Vec::new(),
             at_command_position: true,
             expect_function_name: false,
+            dialect,
         }
     }
 
