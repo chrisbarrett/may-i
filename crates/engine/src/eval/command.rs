@@ -6,7 +6,7 @@ use crate::fold::{EvalFold, PureFold};
 use crate::{DisplaySafe, EvalError, EvalResult, SegmentDecision};
 
 use super::context::{DEFAULT_RECURSION_LIMIT, EnvScope, EvalContext};
-use super::decompose::{EmbeddedKind, EvalUnit, SubstitutionOrigin, decompose};
+use super::decompose::{Argv, EmbeddedKind, EvalUnit, SubstitutionOrigin, decompose};
 use super::effects::evaluate_effect_fold;
 use super::entry::evaluate_at_depth;
 
@@ -353,8 +353,7 @@ fn eval_units<F: EvalFold>(
                 ..
             } => evaluate_at_depth(
                 command,
-                args,
-                arg_expansions,
+                Argv::new(args, arg_expansions),
                 config,
                 &effective_facts,
                 dialect,
@@ -694,10 +693,8 @@ pub(crate) fn evaluate_authorised_string<F: EvalFold>(
 ///   the inner parser as a single argument; the inner program's own
 ///   parser handles any further structure (e.g. bash's
 ///   `(parameter "c" #cmd)`).
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn evaluate_authorised_tokens<F: EvalFold>(
-    tokens: &[String],
-    expansions: &[super::decompose::Expansion],
+    argv: Argv,
     config: Option<&Config>,
     facts: &ContextFacts,
     fold: &mut F,
@@ -705,7 +702,10 @@ pub(crate) fn evaluate_authorised_tokens<F: EvalFold>(
     via_program: Option<&str>,
     dialect: parser::Dialect,
 ) -> Result<EvalResult, EvalError> {
-    debug_assert_eq!(tokens.len(), expansions.len());
+    let Argv {
+        args: tokens,
+        expansions,
+    } = argv;
     if depth >= DEFAULT_RECURSION_LIMIT {
         return Ok(EvalResult::new(
             Decision::Ask,
@@ -781,8 +781,7 @@ pub(crate) fn evaluate_authorised_tokens<F: EvalFold>(
 
     evaluate_at_depth(
         command,
-        &tokens[1..],
-        &expansions[1..],
+        Argv::new(&tokens[1..], &expansions[1..]),
         effective_config,
         &effective_facts,
         dialect,
@@ -2498,9 +2497,9 @@ mod tests {
                 may_i_shell_parser::Dialect::Bash,
             )
             .unwrap();
+            let token_expansions = vec![None; tokens.len()];
             let from_tokens = evaluate_authorised_tokens(
-                &tokens,
-                &vec![None; tokens.len()],
+                Argv::new(&tokens, &token_expansions),
                 Some(&config),
                 &empty_facts(),
                 &mut fold_t,

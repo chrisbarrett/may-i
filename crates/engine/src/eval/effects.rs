@@ -323,8 +323,7 @@ fn recurse_into_bound_command<F: EvalFold>(
                 .map(|t| (t.text.clone(), t.expansion.clone()))
                 .unzip();
             super::command::evaluate_authorised_tokens(
-                &texts,
-                &expansions,
+                super::decompose::Argv::new(&texts, &expansions),
                 ctx.config,
                 ctx.facts,
                 fold,
@@ -547,8 +546,7 @@ fn evaluate_tail_authorise_fold<F: EvalFold>(
     } else {
         fold.begin_recursive_eval();
         let eval_result = super::command::evaluate_authorised_tokens(
-            &owned,
-            &tail_exp,
+            super::decompose::Argv::new(&owned, &tail_exp),
             ctx.config,
             ctx.facts,
             fold,

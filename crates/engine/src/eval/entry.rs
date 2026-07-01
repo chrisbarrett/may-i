@@ -8,6 +8,7 @@ use crate::fold::{EvalFold, PureFold};
 use crate::{DisplaySafe, EvalError, EvalResult};
 
 use super::context::EvalContext;
+use super::decompose::Argv;
 use super::effects::evaluate_effect_fold;
 
 /// Evaluate a command against config and context using PureFold.
@@ -41,8 +42,7 @@ pub fn evaluate_with_fold<F: EvalFold>(
     let expansions = vec![None; args.len()];
     evaluate_at_depth(
         command,
-        args,
-        &expansions,
+        Argv::new(args, &expansions),
         config,
         facts,
         Dialect::Bash,
@@ -52,18 +52,21 @@ pub fn evaluate_with_fold<F: EvalFold>(
 }
 
 /// Common implementation; entry-points just pick a starting depth.
-/// `arg_expansions` is per-token expansion provenance aligned with `args`.
-#[allow(clippy::too_many_arguments)]
+/// `argv` carries the argument tokens with their per-token expansion
+/// provenance.
 pub(crate) fn evaluate_at_depth<F: EvalFold>(
     command: &str,
-    args: &[String],
-    arg_expansions: &[super::decompose::Expansion],
+    argv: Argv,
     config: &may_i_core::ast::Config,
     facts: &ContextFacts,
     dialect: Dialect,
     fold: &mut F,
     depth: usize,
 ) -> Result<EvalResult, EvalError> {
+    let Argv {
+        args,
+        expansions: arg_expansions,
+    } = argv;
     if depth >= super::context::DEFAULT_RECURSION_LIMIT {
         return Ok(EvalResult::new(
             Decision::Ask,
