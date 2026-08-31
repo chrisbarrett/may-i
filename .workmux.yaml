@@ -1,7 +1,0 @@
-panes:
-  - command: <agent>
-    focus: true
-
-files:
-  copy:
-    - .may-i.lisp
