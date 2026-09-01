@@ -23,3 +23,7 @@ insta = "1"
 proptest = "1"
 temp-env = "0.3"
 tempfile = "3"
+
+# No doctests in this workspace; skip the harness build.
+[lib]
+doctest = false

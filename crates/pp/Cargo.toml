@@ -12,3 +12,7 @@ may-i-core = { path = "../core" }
 [dev-dependencies]
 may-i-sexpr = { path = "../sexpr" }
 proptest = "1"
+
+# No doctests in this workspace; skip the harness build.
+[lib]
+doctest = false

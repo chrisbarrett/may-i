@@ -7,10 +7,16 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  # Cold cache: incremental state cannot survive between jobs.
+  CARGO_INCREMENTAL: "0"
 
 jobs:
   coverage:
     runs-on: ubuntu-latest
+    env:
+      # Full oracle sweep: tarpaulin runs the integration tests, including
+      # the zsh oracle, which defaults to the pre-push tier's reduced count.
+      PROPTEST_CASES: "512"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:

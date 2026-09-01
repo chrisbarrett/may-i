@@ -8,6 +8,8 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  # Cold cache: incremental state cannot survive between jobs.
+  CARGO_INCREMENTAL: "0"
 
 jobs:
   check:

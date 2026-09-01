@@ -5,6 +5,9 @@
 //! scoped to the constructs this change supports (shared bash forms plus the
 //! two zsh-only forms); it does not probe the deferred long tail.
 //!
+//! Case count comes from `PROPTEST_CASES` (default 256, sized for the
+//! pre-push tier); the nightly workflow runs the full 512-case sweep.
+//!
 //! Skipped entirely when `zsh` is absent from `PATH`.
 
 use std::process::Command;
@@ -13,13 +16,13 @@ use std::sync::OnceLock;
 use may_i_shell_parser::{Dialect, Severity, parse_with_dialect};
 use proptest::prelude::*;
 
-/// Whether a usable `zsh` is on `PATH`. Probed once.
+/// Whether a usable `zsh` is on `PATH`. Probed once. `-f` suppresses startup
+/// files so the contributor's dotfiles cannot alter the oracle's grammar.
 fn zsh_available() -> bool {
     static AVAILABLE: OnceLock<bool> = OnceLock::new();
     *AVAILABLE.get_or_init(|| {
         Command::new("zsh")
-            .arg("-nc")
-            .arg(":")
+            .args(["-nfc", ":"])
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false)
@@ -27,10 +30,10 @@ fn zsh_available() -> bool {
 }
 
 /// Whether `zsh -n` accepts `input` as syntactically valid (no execution).
+/// `-f` suppresses startup files for the same reason.
 fn zsh_accepts(input: &str) -> bool {
     Command::new("zsh")
-        .arg("-nc")
-        .arg(input)
+        .args(["-nfc", input])
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
@@ -110,8 +113,8 @@ fn arb_command_line() -> impl Strategy<Value = String> {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig { cases: 512, ..ProptestConfig::default() })]
-
+    // No `proptest_config` override: `Config::default()` reads
+    // `PROPTEST_CASES` and falls back to its built-in 256 cases.
     #[test]
     fn zsh_accepted_input_has_no_error_under_zsh_dialect(input in arb_command_line()) {
         if !zsh_available() {

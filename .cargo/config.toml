@@ -1,0 +1,7 @@
+# Local build policy. Overrides the contributor's user-level config inside
+# this workspace: incremental compilation for fast edit-rebuild loops, and no
+# rustc-wrapper, because sccache refuses incremental invocations outright.
+# CI disables incremental via CARGO_INCREMENTAL=0 in the workflow env.
+[build]
+incremental = true
+rustc-wrapper = ""

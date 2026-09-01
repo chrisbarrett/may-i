@@ -13,3 +13,7 @@ terminal_size = "0.4"
 [dev-dependencies]
 insta = "1"
 proptest = "1"
+
+# No doctests in this workspace; skip the harness build.
+[lib]
+doctest = false

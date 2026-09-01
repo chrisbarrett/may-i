@@ -1439,9 +1439,9 @@ mod parser_engine_invariants {
     //       directly; the display path makes no call to
     //       `engine::eval::evaluate_command`.
 
-    /// For any fact set and any value query: the query matches iff some
-    /// member satisfies it, and the witness — when recorded — is a member
-    /// of the set that satisfies the query.
+    // For any fact set and any value query: the query matches iff some
+    // member satisfies it, and the witness — when recorded — is a member
+    // of the set that satisfies the query.
     proptest::proptest! {
         #[test]
         fn fact_query_witness_is_a_satisfying_member(

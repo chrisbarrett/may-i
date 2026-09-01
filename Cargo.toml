@@ -63,3 +63,7 @@ temp-env = "0.3"
 tempfile = "3"
 terminal_size = "0.4"
 toml = "0.8"
+
+# No doctests in this workspace; skip the harness build.
+[lib]
+doctest = false
