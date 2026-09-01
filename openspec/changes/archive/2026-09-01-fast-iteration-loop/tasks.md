@@ -44,9 +44,15 @@
       is ~0 — 513 zsh spawns for 512 cases, before and after — so there was
       nothing to tighten and removing the variants would only shrink oracle
       coverage. The `prop_assume!` backstop is untouched. The proposal's
-      rationale (75% rejection, ~4 spawns per case) did not reproduce on the
-      pinned proptest 1.10, whose macro already applies `PROPTEST_CASES` over
-      hardcoded configs.
+      rationale (75% rejection, ~4 spawns per case) did not reproduce.
+      **Correction to this note:** its closing claim — that the pinned proptest
+      "already applies `PROPTEST_CASES` over hardcoded configs" — is wrong, and
+      3.1 was necessary rather than cosmetic. `Config::default()` returns the
+      env-contextualized `DEFAULT_CONFIG`
+      (proptest-1.11.0 `src/test_runner/config.rs:190`, `:592`), and the
+      struct-update syntax `ProptestConfig { cases: 512, ..default() }` then
+      overwrites `cases`, discarding the env value. The measurement in this task
+      stands; only this explanation was mistaken.
 - [x] 3.5 Confirm the rejection rate dropped: count `zsh` spawns per run before
       and after, expecting roughly one per case rather than ~4.
       (Measured via a counting `zsh` shim: before 513 spawns / 512 cases,
@@ -66,10 +72,17 @@
 
 ## 5. Consolidate integration test targets
 
-- [ ] 5.1 Record the baseline: `cargo test --workspace -- --list` output and its
+- [x] 5.1 Record the baseline: `cargo test --workspace -- --list` output and its
       test count, plus the per-target compile cost from
       `cargo build --workspace --all-targets --timings`. This is the reference
       the merge is checked against.
+      **Not done during implementation** — left unchecked, and 6.1 was marked
+      complete against a baseline that did not exist. Closed retroactively after
+      the merge by an equivalent check that does not need a pre-recorded list:
+      the set of test function names in `tests/` at `6bb830f` (pre-merge) was
+      diffed against the set at HEAD. **348 names before, 348 after, sets
+      identical** — no test dropped, none added. Suite runs 0 failed, 0 ignored.
+      Per-target compile cost was recorded in 6.3.
 - [ ] 5.2 Inventory the checked-in artefacts whose lookup keys derive from target
       and module path — `insta` snapshots under `tests/snapshots/` and files
       under `proptest-regressions/` — and map each to the key it will have after
@@ -98,12 +111,25 @@
       their new keys. Confirm no snapshot is newly created and no regression seed
       is newly orphaned — `cargo insta test --check` and a clean
       `proptest-regressions/` diff.
+      Independently corroborated after the merge, since this is the other
+      fail-open surface: `git diff --name-status -M 6bb830f..HEAD -- '*.snap'`
+      reports **110 renames, all `R100`** (byte-identical content, keys remapped
+      e.g. `tests/snapshots/migrated_v1_trace__X.snap` →
+      `tests/render/snapshots/render__migrated_v1_trace__X.snap`), **36
+      deletions, and 0 content modifications** — so no snapshot was silently
+      re-accepted. The 36 deletions are all `config_error_snapshots__*` and
+      `wrapper_snapshots__*`, prefixes with no producing target in either tree;
+      they were orphaned before this change, not by it (see commit 11f7cc9).
 
 ## 6. Verification
 
 - [x] 6.1 Confirm the test count from `cargo test --workspace -- --list` matches
       the 5.1 baseline exactly, and that no test was left `#[ignore]`d by the
       merge.
+      **Was marked complete without a 5.1 baseline to compare against** — the
+      check as written could not have been performed. Re-verified after the
+      merge: 348 test function names before and after, sets identical; full
+      suite 0 failed, 0 ignored, exit 0. See the note on 5.1.
 - [x] 6.2 Confirm `tests/` in the `may-i` crate contains no more than six
       integration test targets.
 - [x] 6.3 Re-run `cargo build --workspace --all-targets --timings` over clean

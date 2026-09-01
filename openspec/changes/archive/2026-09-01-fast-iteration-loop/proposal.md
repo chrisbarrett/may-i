@@ -39,6 +39,24 @@ spawns at ~15ms each. Its `#![proptest_config(… cases: 512 …)]` hardcodes th
 count, which also overrides `PROPTEST_CASES`, so there is no way to dial it down
 for a fast local run.
 
+> [!WARNING]
+> **Correction (post-implementation).** The rejection claim above is wrong.
+> Measured during implementation with a counting `zsh` shim: **513 spawns for
+> 512 cases** — approximately one per case, not four. `prop_assume!` was
+> discarding almost nothing, because `zsh -n` does accept the unterminated
+> brace-group and function-definition forms the generator produces.
+>
+> The error was in the derivation, not the observation: the spawn count was
+> inferred by dividing the test's wall time by a per-spawn cost measured in a
+> shell loop on trivial input (~15ms). The real in-test cost is ~55–60ms per
+> spawn, which accounts for the full 29s at one spawn per case.
+>
+> Consequence: the generator-tightening work below was correctly abandoned (see
+> `tasks.md` 3.4) — it would have shrunk oracle coverage for no gain. The
+> case-count and `-f` changes stand. The sentence about `PROPTEST_CASES` being
+> overridden by the hardcoded config **is** correct; see the correction note in
+> `tasks.md` 3.4.
+
 Two further defects make the loop worse than the numbers suggest. An ambient
 shell outside `nix develop` resolves stable `rustc`, and every `cargo` command
 then fails immediately with `E0554: #![feature] may not be used on the stable
@@ -58,9 +76,10 @@ must go through the dev shell, or that `cargo affected` exists.
   number of themed targets, so per-target link and monomorphisation cost is paid
   a handful of times instead of 32.
 - **Make the zsh oracle's case count environment-tunable** with a small default,
-  and run the full sweep at the nightly tier. Tighten its generator so it emits
+  and run the full sweep at the nightly tier. ~~Tighten its generator so it emits
   zsh-valid forms directly rather than discarding roughly three quarters of
-  generated cases through `prop_assume!`, and pass `-f` to `zsh` so the
+  generated cases through `prop_assume!`~~ (withdrawn — see the correction above;
+  the rejection rate was already ~0), and pass `-f` to `zsh` so the
   contributor's `~/.zshenv` cannot change what the oracle considers valid syntax.
 - **Document the command surface.** `AGENTS.md` gains the dev-shell requirement,
   the per-tier commands, and `cargo affected`.
@@ -115,9 +134,10 @@ preserve every test name, since `proptest-regressions/` files and
 single `mod common` per consolidated target instead of one per file.
 
 **zsh oracle.** `crates/shell-parser/tests/zsh_oracle.rs:113` hardcodes
-`cases: 512`; `:31` and `:20` invoke `zsh -nc` without `-f`. The generator's
+`cases: 512`; `:31` and `:20` invoke `zsh -nc` without `-f`. ~~The generator's
 `semi=false` variants at `:72` and `:85` are the main source of `prop_assume!`
-rejection.
+rejection.~~ (Withdrawn — `zsh -n` accepts those forms; measured rejection rate
+was ~0. See the correction above.)
 
 **Cargo manifests.** `[lib] doctest = false` on the eight workspace libraries.
 `tarpaulin.toml` keeps `run-types = ["Lib", "Tests", "Doctests"]` — the

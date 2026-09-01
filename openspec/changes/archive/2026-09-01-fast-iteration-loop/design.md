@@ -111,14 +111,33 @@ target with a genuinely distinct harness need without another spec change.
 
 ### Make the zsh oracle tunable, generate valid inputs, and suppress startup files
 
+> [!WARNING]
+> **Correction (post-implementation).** Edit 2 below was withdrawn during
+> implementation and never made. Measured with a counting `zsh` shim: **513
+> spawns for 512 cases**, so `prop_assume!` was discarding almost nothing and
+> there was nothing to tighten. `zsh -n` accepts the unterminated brace-group and
+> function-definition forms the generator produces; removing them would have cut
+> oracle coverage for no gain.
+>
+> The "~2,000 spawns" figure was inferred by dividing wall time by a per-spawn
+> cost measured in a shell loop on trivial input (~15ms), not observed directly.
+> The real in-test cost is ~55–60ms per spawn, which accounts for the full 29s at
+> one spawn per case — and it also invalidates the ~12–17ms figure used to reject
+> the persistent-process alternative below. That rejection still holds on its
+> other ground (a fresh syntax check needs a fresh parse), but the cost argument
+> should not be reused as measured.
+>
+> Edits 1 and 3 landed as described. Delivered: 30.6s → 13.9s, entirely from the
+> case-count halving. See `tasks.md` 3.4 and 3.5.
+
 Three independent edits to `crates/shell-parser/tests/zsh_oracle.rs`:
 
 1. Drop `cases: 512` from `proptest_config` so `ProptestConfig::default()` reads
    `PROPTEST_CASES`. Compiled-in default sized for pre-push; nightly sets 512.
-2. Emit only forms `zsh -n` accepts, rather than generating invalid ones and
+2. ~~Emit only forms `zsh -n` accepts, rather than generating invalid ones and
    discarding them through `prop_assume!`. The measured ~2,000 spawns for 512
    cases means roughly three quarters of generated cases are thrown away, and
-   each rejection still costs a process spawn.
+   each rejection still costs a process spawn.~~ (Withdrawn — see above.)
 3. Pass `-f` to both `zsh` invocations.
 
 The third is a correctness fix that happens to belong here. `zsh -nc` sources
