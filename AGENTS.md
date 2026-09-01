@@ -14,6 +14,27 @@ Before staging:
 > Pre-1.0; no back-compat guarantee. Use the migration system for user-config
 > changes.
 
+## Commands
+
+Every build, test, lint, and coverage command runs inside the pinned toolchain
+via the dev shell: prefix it with `nix develop --command …` (or enter the shell
+first). A shell outside it fails with `E0554` on `crates/core/src/lib.rs:1`
+because `crates/core` uses an unstable feature on nightly.
+
+Verification tiers (defined in `testing-strategy`):
+
+| Tier | Command |
+| :--- | :--- |
+| pre-commit | `nix develop --command prek run --stage pre-commit` |
+| pre-push | `nix develop --command prek run --stage pre-push` |
+| release | `nix develop --command scripts/release.sh <version>` |
+| nightly | scheduled CI on `main` (`gh workflow run Nightly` to trigger manually) |
+
+Scoped runs over only the crates a staged edit affects:
+
+- `nix develop --command cargo affected --staged test`
+- `nix develop --command cargo affected --staged clippy`
+
 ## Testing
 
 Prefer proptests; fall back to unit tests only for branches a proptest can't

@@ -2,9 +2,7 @@
 // parse → positional match → decision. Exercises the motivating
 // "leading element required" semantics of `(? "run" (? "fast"))`.
 
-mod common;
-
-use common::{may_i, parse_json, write_config};
+use crate::common::{may_i, parse_json, write_config};
 
 /// A read-only gate where the optional `run [fast]` prefix may precede the
 /// verb, but a bare `fast` (without its leading `run`) must not slip through.

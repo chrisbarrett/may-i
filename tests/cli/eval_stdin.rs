@@ -1,8 +1,6 @@
 // Integration tests for eval reading commands from stdin.
 
-mod common;
-
-use common::{may_i, parse_json, write_config};
+use crate::common::{may_i, parse_json, write_config};
 use predicates::prelude::*;
 
 const TEST_CONFIG: &str = r#"

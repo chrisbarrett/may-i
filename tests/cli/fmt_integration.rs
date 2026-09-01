@@ -1,8 +1,6 @@
 // Integration tests for the `fmt` subcommand.
 
-mod common;
-
-use common::{may_i, may_i_cmd, write_config};
+use crate::common::{may_i, may_i_cmd, write_config};
 use predicates::prelude::*;
 use tempfile::NamedTempFile;
 

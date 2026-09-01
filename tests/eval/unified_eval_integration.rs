@@ -1,8 +1,6 @@
 // Integration tests for the unified evaluation pipeline.
 
-mod common;
-
-use common::{bash_payload, may_i, may_i_cmd, parse_json, write_config};
+use crate::common::{bash_payload, may_i, may_i_cmd, parse_json, write_config};
 
 // 5.1: echo hello && rm -rf / with echo allowed → :ask (verifies hook path fix)
 #[test]

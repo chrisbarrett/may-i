@@ -3,9 +3,7 @@
 // changes (e.g. `(allow)` → `(allow)`), an existing approval
 // for that rule SHALL carry forward without re-prompting.
 
-mod common;
-
-use common::may_i_cmd;
+use crate::common::may_i_cmd;
 use std::io::Write;
 
 #[test]
@@ -66,14 +64,14 @@ fn class_a_rehash_preserves_approval() {
     let mut eval = may_i_cmd();
     eval.env("MAYI_CONFIG", config.path())
         .env("XDG_DATA_HOME", trust_dir.path())
-        .write_stdin(common::bash_payload("echo hi"));
+        .write_stdin(crate::common::bash_payload("echo hi"));
     let eval_out = eval.output().expect("run");
     assert!(
         eval_out.status.success(),
         "eval after migration failed: {}",
         String::from_utf8_lossy(&eval_out.stderr)
     );
-    let resp = common::parse_json(&eval_out);
+    let resp = crate::common::parse_json(&eval_out);
     let decision = resp["hookSpecificOutput"]["permissionDecision"]
         .as_str()
         .unwrap_or("");

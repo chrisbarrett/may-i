@@ -1,8 +1,6 @@
 // Integration tests for the `check` subcommand.
 
-mod common;
-
-use common::{may_i, may_i_cmd, parse_json, write_config};
+use crate::common::{may_i, may_i_cmd, parse_json, write_config};
 use predicates::prelude::*;
 
 #[test]

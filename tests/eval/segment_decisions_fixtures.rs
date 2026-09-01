@@ -7,8 +7,6 @@ use std::path::PathBuf;
 use may_i::cmd_eval::evaluate_with_colorization;
 use may_i_core::ContextFacts;
 
-mod common;
-
 fn fixture_path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/segment_decisions")
@@ -16,7 +14,7 @@ fn fixture_path(name: &str) -> PathBuf {
 }
 
 fn run(command: &str) -> (String, String) {
-    let cfg = common::write_config(
+    let cfg = crate::common::write_config(
         r#"
 (rule "echo" (allow))
 (rule "cat" (allow))

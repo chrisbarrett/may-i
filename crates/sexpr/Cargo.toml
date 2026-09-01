@@ -16,3 +16,7 @@ test-generators = ["proptest"]
 
 [dev-dependencies]
 proptest = "1"
+
+# No doctests in this workspace; skip the harness build.
+[lib]
+doctest = false

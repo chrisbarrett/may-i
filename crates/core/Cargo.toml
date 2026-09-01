@@ -18,3 +18,7 @@ proptest = "1"
 [features]
 test-generators = ["proptest"]
 arbitrary = ["dep:arbitrary"]
+
+# No doctests in this workspace; skip the harness build.
+[lib]
+doctest = false

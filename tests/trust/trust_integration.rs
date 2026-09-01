@@ -1,8 +1,6 @@
 // Integration tests for the trust boundary.
 
-mod common;
-
-use common::{bash_payload, may_i_cmd, parse_json};
+use crate::common::{bash_payload, may_i_cmd, parse_json};
 use std::io::Write;
 
 /// Create a config with a load directive pointing to a rules file.
@@ -298,7 +296,7 @@ fn trust_nonexistent_program_fails() {
 
 #[test]
 fn primary_only_config_bypasses_trust() {
-    let config = common::write_config(r#"(rule "echo" (allow "safe"))"#);
+    let config = crate::common::write_config(r#"(rule "echo" (allow "safe"))"#);
     let trust_dir = tempfile::tempdir().unwrap();
 
     let mut cmd = may_i_cmd();

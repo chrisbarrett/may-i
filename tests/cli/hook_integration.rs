@@ -2,9 +2,7 @@
 // Claude Code profile and the Codex profile (selected by the presence
 // of `turn_id` in the stdin payload).
 
-mod common;
-
-use common::{bash_payload, codex_bash_payload, may_i, may_i_cmd, parse_json, write_config};
+use crate::common::{bash_payload, codex_bash_payload, may_i, may_i_cmd, parse_json, write_config};
 use predicates::prelude::*;
 
 #[test]

@@ -1,8 +1,6 @@
 // Integration tests for eval with define predicates.
 
-mod common;
-
-use common::{may_i, parse_json, write_config};
+use crate::common::{may_i, parse_json, write_config};
 
 // ---------------------------------------------------------------------------
 // 6.1 – End-to-end: eval with defines produces correct decision

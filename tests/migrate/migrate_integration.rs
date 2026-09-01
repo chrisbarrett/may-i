@@ -1,8 +1,6 @@
 // Integration tests for the `migrate` subcommand.
 
-mod common;
-
-use common::{may_i, write_config};
+use crate::common::{may_i, write_config};
 use predicates::prelude::*;
 
 #[test]

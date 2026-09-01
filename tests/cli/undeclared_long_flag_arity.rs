@@ -7,9 +7,7 @@
 // temp dir and neutralises config discovery, so repo-local `.may-i.lisp`
 // files never leak into these checks.
 
-mod common;
-
-use common::{may_i, parse_json, write_config};
+use crate::common::{may_i, parse_json, write_config};
 
 // Repro #1 — value-shape guard: `--quiet` no longer eats the flag-shaped
 // `--bin`, so the `run … -- … eval` adjacency survives and

@@ -1,9 +1,7 @@
 // Integration tests for the Audit log: which invocation modes write, the
 // threshold gate, the parse-failure floor, and the record's shape end-to-end.
 
-mod common;
-
-use common::{bash_payload, may_i, may_i_cmd, write_config};
+use crate::common::{bash_payload, may_i, may_i_cmd, write_config};
 use predicates::prelude::*;
 use std::path::PathBuf;
 use tempfile::TempDir;

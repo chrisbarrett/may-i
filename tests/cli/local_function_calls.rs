@@ -1,9 +1,7 @@
 // Integration tests for recognising calls to script-local functions as
 // internal calls (resolve to :allow, never `No rule for command …`).
 
-mod common;
-
-use common::{bash_payload, may_i, parse_json, write_config};
+use crate::common::{bash_payload, may_i, parse_json, write_config};
 
 /// The motivating shape: a script defines functions and calls them, some
 /// from inside another body. Only the dynamic `"$TGBIN"` command — out of

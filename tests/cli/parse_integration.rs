@@ -1,8 +1,6 @@
 // Integration tests for the `parse` subcommand.
 
-mod common;
-
-use common::{may_i, write_config};
+use crate::common::{may_i, write_config};
 use predicates::prelude::*;
 
 const MINIMAL_CONFIG: &str = r#"(rule "echo" (allow "ok"))"#;

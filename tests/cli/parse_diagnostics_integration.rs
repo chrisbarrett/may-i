@@ -1,8 +1,6 @@
 // Integration tests for parse diagnostics.
 
-mod common;
-
-use common::{bash_payload, may_i, parse_json, write_config};
+use crate::common::{bash_payload, may_i, parse_json, write_config};
 
 // 6.5: echo "unterminated shows miette-formatted diagnostic on stderr
 #[test]

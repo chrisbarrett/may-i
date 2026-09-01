@@ -3,9 +3,7 @@
 // every reachable loaded file in place, and that --dry-run previews
 // without writing.
 
-mod common;
-
-use common::may_i_cmd;
+use crate::common::may_i_cmd;
 use predicates::prelude::*;
 use tempfile::TempDir;
 
