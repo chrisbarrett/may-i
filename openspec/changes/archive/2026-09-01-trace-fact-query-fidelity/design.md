@@ -29,7 +29,10 @@ as `Doc::atom("has")`, overriding `Predicate::to_doc`, which already renders
 **Non-Goals:**
 
 - The JSON Trace. It emits the full observed set and picks no witness
-  (`src/output/json.rs:219`), so it is already accurate.
+  (`src/output/json.rs:219`), so it is already accurate. (Its `structure`
+  field mirrors the human trace's Doc and shared the `has` spelling; the
+  producer-side spelling fix corrects both surfaces at once. Verified
+  byte-identical apart from that correction.)
 - Fact storage, query semantics, or any Decision. Both defects are
   explanation-only; the Decisions are correct today.
 - Rendering more than one witness when several members match. One suffices to
