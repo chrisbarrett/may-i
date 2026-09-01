@@ -1,21 +1,21 @@
 ## 1. Validator script
 
-- [ ] 1.1 Create `scripts/validate-archive-complete.sh` following the shape of
+- [x] 1.1 Create `scripts/validate-archive-complete.sh` following the shape of
       `scripts/validate-change-doc-sync.sh`: `set -euo pipefail`, re-exec into
       the Nix devshell when mikefarah `yq` is absent, a header comment naming
       `openspec/specs/spec-conventions/spec.md` as the authority.
-- [ ] 1.2 Implement the scan: for each `openspec/changes/archive/*/tasks.md`,
+- [x] 1.2 Implement the scan: for each `openspec/changes/archive/*/tasks.md`,
       report every line matching `- [ ]` with its task number and text, and exit
       non-zero if any change has one.
-- [ ] 1.3 Implement the cutoff: skip archived changes whose directory-name date
+- [x] 1.3 Implement the cutoff: skip archived changes whose directory-name date
       precedes the date this change lands. Carry a comment naming this change and
       the 19 changes grandfathered, so the constant is not later deleted as dead.
-- [ ] 1.4 Add a `--self-test` mode with fixtures, matching the other two
+- [x] 1.4 Add a `--self-test` mode with fixtures, matching the other two
       validators: a complete change (passes), a change with one unchecked task
       (fails, names it), a pre-cutoff change with unchecked tasks (skipped), a
       post-cutoff change with unchecked tasks (fails), and a `tasks.md` with no
       checkboxes at all (passes — nothing to enforce).
-- [ ] 1.5 Run `scripts/validate-archive-complete.sh --self-test` and confirm all
+- [x] 1.5 Run `scripts/validate-archive-complete.sh --self-test` and confirm all
       cases pass.
 
 ## 2. Hook wiring
