@@ -46,4 +46,4 @@
 - [x] 4.3 Run `cargo fmt --all`, `openspec validate archive-completeness-gate
       --strict --no-interactive`, `scripts/validate-spec-frontmatter.sh`, and
       `scripts/validate-change-doc-sync.sh`.
-- [ ] 4.4 Confirm CI is green on the branch.
+- [x] 4.4 Confirm CI is green on the branch.
