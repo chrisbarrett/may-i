@@ -118,5 +118,5 @@
 - [x] 6.6 Run `cargo fmt --all`, then `openspec validate fast-iteration-loop
       --strict --no-interactive`, `scripts/validate-spec-frontmatter.sh`, and
       `scripts/validate-change-doc-sync.sh`.
-- [ ] 6.7 Confirm CI is green on the branch, including that the CI jobs build
+- [x] 6.7 Confirm CI is green on the branch, including that the CI jobs build
       with `CARGO_INCREMENTAL=0`.
