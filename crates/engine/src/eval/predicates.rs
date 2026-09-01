@@ -42,8 +42,8 @@ pub(crate) fn evaluate_predicate_fold<F: EvalFold>(
 ) -> Result<F::PredicateOut, EvalError> {
     match predicate {
         Predicate::Fact(query) => {
-            let result = evaluate_fact_query(query, ctx);
-            let detail = build_fact_detail(query, ctx.facts);
+            let (result, witness) = evaluate_fact_query(query, ctx);
+            let detail = build_fact_detail(query, ctx.facts, witness);
             Ok(fold.predicate_fact(query, result, detail))
         }
         Predicate::Arg(pattern) => {
@@ -288,25 +288,32 @@ fn collect_captures(pred: &Predicate, ctx: &EvalContext, out: &mut may_i_core::C
     }
 }
 
-/// Evaluate a fact query against the context.
-fn evaluate_fact_query(query: &FactQuery, ctx: &EvalContext) -> PredicateResult {
+/// Evaluate a fact query against the context, returning the verdict and —
+/// for value queries that matched — the member that satisfied the query
+/// (the *witness*).
+pub(crate) fn evaluate_fact_query(
+    query: &FactQuery,
+    ctx: &EvalContext,
+) -> (PredicateResult, Option<String>) {
     match query {
         FactQuery::Presence { key, .. } => {
             if ctx.facts.has(key) {
-                PredicateResult::Match
+                (PredicateResult::Match, None)
             } else {
-                PredicateResult::NoMatch
+                (PredicateResult::NoMatch, None)
             }
         }
         FactQuery::Value { key, pattern } => {
             if let Some(set) = ctx.facts.get(key) {
-                if set.iter().any(|s| match_fact_pattern(pattern, s)) {
+                let witness = set.iter().find(|s| match_fact_pattern(pattern, s)).cloned();
+                let result = if witness.is_some() {
                     PredicateResult::Match
                 } else {
                     PredicateResult::NoMatch
-                }
+                };
+                (result, witness)
             } else {
-                PredicateResult::NoMatch
+                (PredicateResult::NoMatch, None)
             }
         }
     }

@@ -37,6 +37,12 @@ Not in scope: the JSON Trace, which already emits the full observed set and need
 no witness selection; and any change to Fact storage or query semantics — the
 Decision is correct in both defects, only its explanation is wrong.
 
+*Implementation note (task 4.3):* the JSON Trace's per-query annotations were
+verified byte-identical against the pre-change build for presence, exact, and
+pattern queries over single- and multi-member sets. The JSON `structure` field,
+however, mirrors the same rendered Doc as the human trace and did emit `has`
+there; the spelling fix corrects it identically. No other JSON byte changes.
+
 ## Capabilities
 
 Bucket: **tracing-and-output**.

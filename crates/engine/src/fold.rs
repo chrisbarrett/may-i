@@ -116,6 +116,8 @@ pub enum ExprMatchDetail {
 pub struct FactDetail {
     /// The observed values (if any).
     pub observed: Option<Vec<String>>,
+    /// The member that satisfied the query, for value queries that matched.
+    pub witness: Option<String>,
     /// Why the query failed (if it did).
     pub failure_reason: Option<String>,
 }
@@ -599,8 +601,14 @@ impl EvalFold for PureFold {
     }
 }
 
-/// Build a FactDetail for a fact query against the given context.
-pub(crate) fn build_fact_detail(query: &FactQuery, facts: &ContextFacts) -> FactDetail {
+/// Build a FactDetail for a fact query against the given context. The
+/// witness (which member satisfied a value query) is threaded in from
+/// evaluation.
+pub(crate) fn build_fact_detail(
+    query: &FactQuery,
+    facts: &ContextFacts,
+    witness: Option<String>,
+) -> FactDetail {
     match query {
         FactQuery::Presence { key, .. } => {
             if facts.has(key) {
@@ -611,11 +619,13 @@ pub(crate) fn build_fact_detail(query: &FactQuery, facts: &ContextFacts) -> Fact
                             .map(|s| s.iter().cloned().collect())
                             .unwrap_or_default(),
                     ),
+                    witness: None,
                     failure_reason: None,
                 }
             } else {
                 FactDetail {
                     observed: None,
+                    witness: None,
                     failure_reason: Some("absent".to_string()),
                 }
             }
@@ -625,11 +635,13 @@ pub(crate) fn build_fact_detail(query: &FactQuery, facts: &ContextFacts) -> Fact
                 let values: Vec<String> = set.iter().cloned().collect();
                 FactDetail {
                     observed: Some(values),
+                    witness,
                     failure_reason: None,
                 }
             } else {
                 FactDetail {
                     observed: None,
+                    witness: None,
                     failure_reason: Some("absent".to_string()),
                 }
             }

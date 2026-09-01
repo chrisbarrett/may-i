@@ -2,7 +2,6 @@
 source: tests/migrated_v1_trace.rs
 expression: normalised
 ---
-
 Trace
 
                                         command │ rm foo
@@ -19,22 +18,22 @@ Trace
         (when (and                              │
                (build-mode                      │ build-mode → no
                 (or                             │
-                 (has                           │ no
+                 (fact?                         │ no
                   [:claude-code/permission-mode │
                    "acceptEdits"])              │
-                 (has [:opencode/agent          │ no
-                       "build"])))              │
+                 (fact? [:opencode/agent        │ no
+                         "build"])))            │
                …)                               │
           <if-effect>))                         │
                                                 │
   37: (rule "rm"                                │
         (when (build-mode                       │ build-mode → no
                (or                              │
-                (has                            │ no
+                (fact?                          │ no
                  [:claude-code/permission-mode  │
                   "acceptEdits"])               │
-                (has [:opencode/agent           │ no
-                      "build"])))               │
+                (fact? [:opencode/agent         │ no
+                        "build"])))             │
           (allow                                │ → :allow "Non-recursive delete is allowed"
            "Non-recursive delete is allowed"))) │
                                No matching rule │ → :ask (default)

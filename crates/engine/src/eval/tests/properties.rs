@@ -1439,6 +1439,54 @@ mod parser_engine_invariants {
     //       directly; the display path makes no call to
     //       `engine::eval::evaluate_command`.
 
+    /// For any fact set and any value query: the query matches iff some
+    /// member satisfies it, and the witness — when recorded — is a member
+    /// of the set that satisfies the query.
+    proptest::proptest! {
+        #[test]
+        fn fact_query_witness_is_a_satisfying_member(
+            set in proptest::collection::btree_set("[ab]{1,3}", 1..6usize),
+            pattern in proptest::prop_oneof![
+                proptest::prelude::Just(may_i_core::FactPattern::Wildcard),
+                proptest::prelude::Just(may_i_core::FactPattern::Regex(
+                    regex::Regex::new("[ab]").unwrap()
+                )),
+                proptest::prelude::Just(may_i_core::FactPattern::Regex(
+                    regex::Regex::new("^b").unwrap()
+                )),
+            ],
+        ) {
+            use crate::eval::predicates::{evaluate_fact_query, match_fact_pattern};
+            use crate::eval::{EvalContext, PredicateResult};
+            use may_i_core::{FactQuery, Keyword};
+
+            let key = Keyword::new(":k").unwrap();
+            let mut facts = ContextFacts::default();
+            for value in &set {
+                facts.insert_scalar(key.clone(), value.clone());
+            }
+            let ctx = EvalContext::new("cmd", &[], &facts, Default::default());
+            let query = FactQuery::Value {
+                key: key.clone(),
+                pattern: pattern.clone(),
+            };
+            let (result, witness) = evaluate_fact_query(&query, &ctx);
+
+            let any_match = set.iter().any(|s| match_fact_pattern(&pattern, s));
+            proptest::prop_assert_eq!(
+                result == PredicateResult::Match,
+                any_match
+            );
+            match witness {
+                Some(w) => {
+                    proptest::prop_assert!(set.contains(&w));
+                    proptest::prop_assert!(match_fact_pattern(&pattern, &w));
+                }
+                None => proptest::prop_assert!(!any_match),
+            }
+        }
+    }
+
     /// Grep-based check: every Requirement heading in the
     /// `parser-engine-invariants` spec is named in the property body via its
     /// `Spec: § …` doc-comment. Failures here mean the spec and the

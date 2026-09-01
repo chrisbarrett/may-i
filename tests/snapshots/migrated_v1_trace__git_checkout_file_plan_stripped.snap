@@ -2,7 +2,6 @@
 source: tests/migrated_v1_trace.rs
 expression: normalised
 ---
-
 Trace
 
                                                              command │ git checkout -- main.ts
@@ -32,11 +31,11 @@ Trace
                    …)                                                │
                (plan-mode                                            │ plan-mode → yes
                 (or                                                  │
-                 (has                                                │ no
+                 (fact?                                              │ no
                   [:claude-code/permission-mode                      │
                    "plan"])                                          │
-                 (has [:opencode/agent                               │ "plan" → yes
-                       "plan"]))))                                   │
+                 (fact? [:opencode/agent                             │ yes
+                         "plan"]))))                                 │
           (ask                                                       │ → :ask "git mutation requires approval in non-writing agents"
            "git mutation requires approval in non-writing agents"))) │
                                                                      │
