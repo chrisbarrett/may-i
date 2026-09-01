@@ -83,10 +83,17 @@
       diffed against the set at HEAD. **348 names before, 348 after, sets
       identical** — no test dropped, none added. Suite runs 0 failed, 0 ignored.
       Per-target compile cost was recorded in 6.3.
-- [ ] 5.2 Inventory the checked-in artefacts whose lookup keys derive from target
+- [x] 5.2 Inventory the checked-in artefacts whose lookup keys derive from target
       and module path — `insta` snapshots under `tests/snapshots/` and files
       under `proptest-regressions/` — and map each to the key it will have after
       the merge.
+      **Not done during implementation** — left unchecked, and 5.9 ("relocate the
+      artefacts identified in 5.2") was marked complete against an inventory that
+      was never produced. The same dependent-claim shape as 5.1/6.1. Closed
+      retroactively after the merge: the mapping was reconstructed from the
+      rename records themselves, which is equivalent evidence — all 110 moves are
+      `R100` with content byte-identical, and no snapshot was added or modified.
+      See the corroboration note on 5.9.
 - [x] 5.3 Create `tests/cli.rs` and move `check_integration`,
       `parse_integration`, `parse_diagnostics_integration`, `eval_stdin`,
       `eval_defines`, `fmt_integration`, `hook_integration`, `load_directive`,
