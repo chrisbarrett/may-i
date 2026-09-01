@@ -220,6 +220,7 @@ fn node_annotation_to_json(node: &TraceNode) -> Option<serde_json::Value> {
                 expected,
                 observed,
                 matched,
+                ..
             },
         ) => serde_json::json!({
             "type": "fact_query",

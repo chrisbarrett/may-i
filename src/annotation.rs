@@ -8,7 +8,7 @@ use may_i_core::ast::{Effect, EffectResult, FlagsMode, Rule};
 use may_i_core::doc::Doc;
 use may_i_core::pattern::{ArgPattern, CommandPattern, MatchMode};
 use may_i_core::primitives::ToDoc;
-use may_i_core::{ContextFacts, Decision, FactQuery};
+use may_i_core::{ContextFacts, Decision, FactPattern, FactQuery, Predicate};
 
 use may_i_engine::eval::PredicateResult;
 use may_i_engine::fold::{
@@ -234,7 +234,7 @@ fn flag_names_to_doc(names: &[String]) -> Doc<()> {
 }
 
 fn fact_query_to_doc(query: &FactQuery) -> Doc<()> {
-    Doc::list(vec![Doc::atom("has"), query.to_doc()])
+    Predicate::Fact(query.clone()).to_doc()
 }
 
 /// True if the top-level pattern doc represents a forbidden pattern shape:
@@ -1316,9 +1316,21 @@ impl EvalFold for TracingFold {
         let matched = result == PredicateResult::Match;
         let evidence = if let Some(observed) = detail.observed {
             let observed: BTreeSet<String> = observed.into_iter().collect();
+            // The witness names the member that decided the query. An
+            // exact literal query already states its value, so no
+            // witness is recorded for it.
+            let is_exact = matches!(
+                query,
+                FactQuery::Value {
+                    pattern: FactPattern::Literal(_),
+                    ..
+                }
+            );
+            let witness = if is_exact { None } else { detail.witness };
             Some(Evidence::FactValues {
                 expected,
                 observed,
+                witness,
                 matched,
             })
         } else if matches!(detail.failure_reason.as_deref(), Some("absent")) {
@@ -1623,6 +1635,7 @@ impl std::fmt::Debug for TraceEntry {
 #[allow(clippy::wildcard_enum_match_arm)]
 mod tests {
     use super::*;
+    use may_i_core::Keyword;
     use may_i_core::Span;
     use may_i_core::ast::{Config, Spanned};
     use may_i_core::pattern::{Expr, PosTerm};
@@ -1630,6 +1643,135 @@ mod tests {
     use may_i_engine::fold::PureFold;
     use may_i_engine::test_generators::*;
     use proptest::prelude::*;
+
+    #[test]
+    fn fact_query_left_column_uses_accepted_spelling() {
+        let query = FactQuery::Value {
+            key: Keyword::new(":via").unwrap(),
+            pattern: FactPattern::Literal("ssh".into()),
+        };
+        let rendered = fact_query_to_doc(&query).to_flat_string();
+        assert!(
+            rendered.contains("fact?"),
+            "left column must use the accepted spelling, got: {rendered}"
+        );
+        assert!(
+            !rendered.contains("has"),
+            "retired spelling leaked into trace: {rendered}"
+        );
+    }
+
+    fn fact_query_evidence_for(
+        cfg: &Config,
+        cmd: &str,
+        args: &[String],
+        facts: &ContextFacts,
+    ) -> Vec<Evidence> {
+        fn collect(node: &TraceNode, out: &mut Vec<Evidence>) {
+            if node.role() == &Role::FactQuery
+                && let Some(ev) = node.evidence()
+            {
+                out.push(ev.clone());
+            }
+            for child in node.children() {
+                collect(child, out);
+            }
+        }
+        let mut fold = TracingFold::new();
+        evaluate_with_fold(cmd, args, cfg, facts, &mut fold).unwrap();
+        let mut out = Vec::new();
+        for entry in &fold.traces {
+            if let TraceEntry::Rule { node, .. } = entry {
+                collect(node, &mut out);
+            }
+        }
+        out
+    }
+
+    /// `(rule "echo" (if (fact? [:o/all "a=1"]) (deny "remote") (allow)))`
+    fn multi_member_fact_query_rule() -> Config {
+        exact_fact_query_rule(FactPattern::Literal("a=1".into()))
+    }
+
+    /// `(rule "echo" (if (fact? [:o/all (regex "^a=")]) (deny "remote") (allow)))`
+    fn pattern_fact_query_rule() -> Config {
+        exact_fact_query_rule(FactPattern::Regex(regex::Regex::new("^a=").unwrap()))
+    }
+
+    /// `(rule "echo" (if (fact? [:o/all PATTERN]) (deny "remote") (allow)))`
+    fn exact_fact_query_rule(pattern: FactPattern) -> Config {
+        let pred = Predicate::Fact(FactQuery::Value {
+            key: Keyword::new(":o/all").unwrap(),
+            pattern,
+        });
+        let effect = Effect::If {
+            predicate: spanned(pred),
+            then_effect: Box::new(spanned(Effect::Terminal {
+                decision: Decision::Deny,
+                reason: Some("remote".into()),
+            })),
+            else_effect: Box::new(spanned(Effect::Terminal {
+                decision: Decision::Allow,
+                reason: None,
+            })),
+        };
+        make_config(vec![make_rule(
+            CommandPattern::Literal("echo".into()),
+            effect,
+        )])
+    }
+
+    /// A multi-member pattern match records the member that satisfied the
+    /// query, not an arbitrary one.
+    #[test]
+    fn multi_member_pattern_match_records_satisfying_witness() {
+        let mut facts = ContextFacts::default();
+        facts.insert_scalar(Keyword::new(":o/all").unwrap(), "BAD");
+        facts.insert_scalar(Keyword::new(":o/all").unwrap(), "a=1");
+        let ev = fact_query_evidence_for(&pattern_fact_query_rule(), "echo", &[], &facts);
+        assert_eq!(ev.len(), 1, "exactly one fact-query node expected");
+        match &ev[0] {
+            Evidence::FactValues {
+                observed,
+                witness,
+                matched,
+                ..
+            } => {
+                assert!(matched);
+                assert_eq!(
+                    observed,
+                    &BTreeSet::from(["BAD".to_string(), "a=1".to_string()])
+                );
+                assert_eq!(
+                    witness.as_deref(),
+                    Some("a=1"),
+                    "witness must be the member that decided the query"
+                );
+            }
+            other => panic!("expected FactValues evidence, got {other:?}"),
+        }
+    }
+
+    /// An exact literal query records no witness: its text already states
+    /// the value, so the renderer can never name a member that did not
+    /// decide the query.
+    #[test]
+    fn exact_query_records_no_witness() {
+        let mut facts = ContextFacts::default();
+        facts.insert_scalar(Keyword::new(":o/all").unwrap(), "BAD");
+        facts.insert_scalar(Keyword::new(":o/all").unwrap(), "a=1");
+        let ev = fact_query_evidence_for(&multi_member_fact_query_rule(), "echo", &[], &facts);
+        assert_eq!(ev.len(), 1);
+        match &ev[0] {
+            Evidence::FactValues {
+                witness, matched, ..
+            } => {
+                assert!(matched);
+                assert_eq!(witness.as_deref(), None);
+            }
+            other => panic!("expected FactValues evidence, got {other:?}"),
+        }
+    }
 
     /// Walk a trace node, collecting every positional-match annotation as
     /// `(pattern_text, actual, matched)`.

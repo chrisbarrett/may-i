@@ -66,6 +66,10 @@ pub enum Evidence {
     FactValues {
         expected: String,
         observed: BTreeSet<String>,
+        /// The member that satisfied the query — the *witness*. `None`
+        /// when nothing matched or when the query is an exact literal,
+        /// whose text already states the value.
+        witness: Option<String>,
         matched: bool,
     },
     FactAbsent,
